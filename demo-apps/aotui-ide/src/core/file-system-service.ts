@@ -1,7 +1,9 @@
+import {createWorkspaceFileCreator} from './conditional-file-create.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { glob } from 'glob';
 import type { ListDirectoryOptions, ReadFileOptions } from '../types.js';
+import { readVersionedFile, replaceFileIfVersion } from './versioned-file-write.js';
 
 interface IncrementalListOptions extends ListDirectoryOptions {
     /** 已展开的目录路径集合（绝对路径） */
@@ -404,7 +406,7 @@ const contextAwareReplacer: Replacer = function* (content, find) {
     }
 };
 
-function applyEditReplacement(content: string, oldString: string, newString: string, replaceAll = false): string {
+export function applyEditReplacement(content: string, oldString: string, newString: string, replaceAll = false): string {
     if (oldString === newString) {
         throw new Error('No changes to apply: oldString and newString are identical.');
     }
@@ -447,6 +449,10 @@ function applyEditReplacement(content: string, oldString: string, newString: str
  * 封装所有文件操作，Worker Thread 可直接访问 Node.js fs 模块
  */
 export const fileSystemService = {
+    createWorkspaceFileCreator,
+    // Opt-in only: versioned workspace mutations. Legacy write/edit stay unchanged.
+    readVersionedFile,
+    replaceFileIfVersion,
     /**
      * 列出目录结构（类似 tree 命令）
      * 
@@ -681,18 +687,17 @@ export const fileSystemService = {
      * 创建文件
      */
     async createFile(filePath: string, content: string): Promise<void> {
-        // 检查文件是否已存在
+        // O_EXCL prevents another process from creating the file between
+        // the old access() existence check and a truncating writeFile().
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
         try {
-            await fs.access(filePath);
-            throw new Error(`File already exists: ${filePath}`);
+            await fs.writeFile(filePath, content, { encoding: 'utf-8', flag: 'wx' });
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-                throw error;
+            if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+                throw new Error(`File already exists: ${filePath}`);
             }
+            throw error;
         }
-
-        // 创建文件
-        await this.writeFile(filePath, content);
     },
 
     /**

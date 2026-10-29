@@ -5,14 +5,12 @@ import { Operation, createDesktopId, createAppId, createSnapshotId, createOperat
 // Mock dependencies
 vi.mock('../engine/desktop-manager/index.js');
 vi.mock('../registry/index.js');
-vi.mock('../transformer/index.js');
 vi.mock('../dispatcher/index.js');
 
 describe('Kernel Lock Security', () => {
     let kernel: Kernel;
     let mockDesktopManager: any;
     let mockRegistry: any;
-    let mockTransformer: any;
     let mockDispatcher: any;
     let mockSystemOps: any;
 
@@ -45,9 +43,6 @@ describe('Kernel Lock Security', () => {
             release: vi.fn(),
             resolve: vi.fn()
         };
-        mockTransformer = {
-            transform: vi.fn().mockReturnValue({ markup: '# Test', indexMap: {} })
-        };
         mockDispatcher = {
             dispatch: vi.fn().mockResolvedValue(undefined)
         };
@@ -61,7 +56,6 @@ describe('Kernel Lock Security', () => {
         kernel = new Kernel(
             mockDesktopManager,
             mockRegistry,
-            mockTransformer,
             mockDispatcher,
             mockSystemOps
         );

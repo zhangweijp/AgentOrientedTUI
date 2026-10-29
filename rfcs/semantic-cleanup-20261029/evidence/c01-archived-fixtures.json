@@ -1,0 +1,13 @@
+{
+  "command": [
+    "pnpm",
+    "exec",
+    "vitest",
+    "run",
+    "src/engine/app/worker-host.persistence-e2e.test.ts",
+    "src/engine/app/worker-sandbox.lifecycle-e2e.test.ts",
+    "src/kernel/close-reporting-e2e.test.ts"
+  ],
+  "exitCode": 0,
+  "seconds": 6.134
+}

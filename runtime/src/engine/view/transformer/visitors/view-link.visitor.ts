@@ -49,7 +49,6 @@ export const viewLinkVisitor: IElementVisitor = {
         const linkId = el.getAttribute('data-link-id');
         if (linkId) {
             const boundViewId = el.getAttribute('data-bound-view');
-            const viewType = el.getAttribute('data-view-type') || 'View';
             const description = el.getAttribute('data-view-description');
 
             // If already mounted, output link with ViewID in title

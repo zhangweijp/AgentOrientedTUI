@@ -12,10 +12,12 @@
  */
 
 import type { IDesktop, AppID, TUIAppFactory, AOAppManifest } from '../../spi/index.js';
-import { isTUIAppFactory, isLegacyFactory, validateManifest, isValidAppName, isKernelConfigFactory } from '../../spi/index.js';
+import { isTUIAppFactory, isLegacyFactory, validateManifest, isKernelConfigFactory } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import type { TUIConfig, AppConfigEntry } from './config.js';
 import type { AppLaunchConfig } from '../../spi/app/app-config.interface.js';
+import type { AppInteractionOptions } from '../../spi/runtime/app-interaction.interface.js';
+import { captureInteractionModes } from './interaction-config.js';
 import { createDefaultConfig, validateConfig } from './config.js';
 // [Option C] ESM-compatible imports for file system operations
 import * as fs from 'fs';
@@ -52,6 +54,12 @@ export interface AppRegistryOptions {
     configPath?: string;
     /** 是否自动加载 (默认 true) */
     autoLoad?: boolean;
+}
+
+/** Host-owned installation policy; business launch config cannot enable Runtime capabilities. */
+export interface AppRegistryInstallOptions extends AppInteractionOptions {
+    defaultWorkerScript?: string;
+    dynamicConfig?: AppLaunchConfig;
 }
 
 /**
@@ -313,11 +321,7 @@ export class AppRegistry {
      */
     async installAll(
         desktop: IDesktop,
-        options?: { 
-            defaultWorkerScript?: string;
-            /** [RFC-025] Dynamic config to inject into all apps (e.g. projectPath) */
-            dynamicConfig?: AppLaunchConfig;
-        }
+        options?: AppRegistryInstallOptions
     ): Promise<AppID[]> {
         // 获取默认 Worker 脚本路径
         const defaultWorkerScript = options?.defaultWorkerScript
@@ -329,16 +333,14 @@ export class AppRegistry {
         return this.installEntries(desktop, Array.from(this.apps.keys()), {
             defaultWorkerScript,
             dynamicConfig: options?.dynamicConfig,
+            experimentalInteractionModes: captureInteractionModes(options),
         });
     }
 
     async installSelected(
         desktop: IDesktop,
         names: string[],
-        options?: {
-            defaultWorkerScript?: string;
-            dynamicConfig?: AppLaunchConfig;
-        }
+        options?: AppRegistryInstallOptions
     ): Promise<AppID[]> {
         const defaultWorkerScript = options?.defaultWorkerScript
             ?? this.config.runtime?.workerScript;
@@ -346,6 +348,7 @@ export class AppRegistry {
         return this.installEntries(desktop, names, {
             defaultWorkerScript,
             dynamicConfig: options?.dynamicConfig,
+            experimentalInteractionModes: captureInteractionModes(options),
         });
     }
 
@@ -500,10 +503,7 @@ export class AppRegistry {
     private async installEntries(
         desktop: IDesktop,
         names: string[],
-        options: {
-            defaultWorkerScript?: string;
-            dynamicConfig?: AppLaunchConfig;
-        }
+        options: AppRegistryInstallOptions
     ): Promise<AppID[]> {
         const installedIds: AppID[] = [];
 
@@ -562,7 +562,8 @@ export class AppRegistry {
                             whatItIs,
                             whenToUse,
                             promptRole,
-                            config: dynamicConfig
+                            config: dynamicConfig,
+                            experimentalInteractionModes: options.experimentalInteractionModes,
                         }
                     );
                     installedIds.push(appId as AppID);
@@ -575,7 +576,9 @@ export class AppRegistry {
                         whenToUse,
                         modulePath,
                         workerScriptPath: workerScript,
-                        promptRole
+                        promptRole,
+                        config: dynamicConfig,
+                        experimentalInteractionModes: options.experimentalInteractionModes,
                     });
                     installedIds.push(appId as AppID);
                     console.log(`[AppRegistry] Registered "${name}" to Desktop ${desktop.id} (Pending mode)`);

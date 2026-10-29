@@ -1,3 +1,5 @@
+import type { RuntimeCloseReporting } from '../spi/runtime/close.interface.js';
+import type { RuntimeInteractionAccess } from '../spi/runtime/app-interaction.interface.js';
 /**
  * SDK Layer - Runtime Facade
  * 
@@ -58,7 +60,7 @@ export interface LegacyRuntimeConfig {
  * await runtime.installDynamicApp(desktopId, new MyChatApp());
  * ```
  */
-export function createRuntime(input: LegacyRuntimeConfig | RuntimeConfigInput = {}): IKernel {
+export function createRuntime(input: LegacyRuntimeConfig | RuntimeConfigInput = {}): IKernel & RuntimeCloseReporting & RuntimeInteractionAccess {
     // [RFC-005] Normalize Configuration
     let config: RuntimeConfig;
 

@@ -1,0 +1,390 @@
+A  .agents/skills/aotui-app-builder/SKILL.md
+A  .agents/skills/aotui-app-builder/references/AOTUI_APP_LLM_FRIENDLY_GUIDELINES.md
+A  .agents/skills/aotui-app-builder/references/sdk_api.md
+AD .agents/skills/business-plan/SKILL.md
+A  .agents/skills/feature-migration/SKILL.md
+A  .agents/skills/feature-migration/assets/migration-template/01-feature-overview.md
+A  .agents/skills/feature-migration/assets/migration-template/02-user-journeys.md
+A  .agents/skills/feature-migration/assets/migration-template/03-module-map.md
+A  .agents/skills/feature-migration/assets/migration-template/04-data-flow.md
+A  .agents/skills/feature-migration/assets/migration-template/05-migration-plan.md
+A  .agents/skills/feature-migration/assets/migration-template/06-risks-and-verification.md
+A  .agents/skills/feature-migration/assets/migration-template/code/_bundle-template/index.md
+A  .agents/skills/feature-migration/assets/migration-template/code/index.md
+A  .agents/skills/feature-migration/assets/migration-template/index.md
+A  .agents/skills/feature-migration/references/migration-directory-blueprint.md
+A  .agents/skills/feature-migration/references/migration-writing-rules.md
+A  .agents/skills/feature-migration/scripts/init_migration_dir.py
+AD .agents/skills/pdf/LICENSE.txt
+AD .agents/skills/pdf/SKILL.md
+AD .agents/skills/pdf/forms.md
+AD .agents/skills/pdf/reference.md
+AD .agents/skills/pdf/scripts/check_bounding_boxes.py
+AD .agents/skills/pdf/scripts/check_fillable_fields.py
+AD .agents/skills/pdf/scripts/convert_pdf_to_images.py
+AD .agents/skills/pdf/scripts/create_validation_image.py
+AD .agents/skills/pdf/scripts/extract_form_field_info.py
+AD .agents/skills/pdf/scripts/extract_form_structure.py
+AD .agents/skills/pdf/scripts/fill_fillable_fields.py
+AD .agents/skills/pdf/scripts/fill_pdf_form_with_annotations.py
+AD .agents/skills/skill-creator/LICENSE.txt
+AD .agents/skills/skill-creator/SKILL.md
+AD .agents/skills/skill-creator/scripts/init_skill.py
+AD .agents/skills/skill-creator/scripts/package_skill.py
+AD .agents/skills/skill-creator/scripts/quick_validate.py
+AD .agents/skills/ui-ux-pro-max/SKILL.md
+AD .agents/skills/ui-ux-pro-max/scripts/core.py
+AD .agents/skills/ui-ux-pro-max/scripts/design_system.py
+AD .agents/skills/ui-ux-pro-max/scripts/search.py
+A  CODE_CLEANUP_COMPATIBILITY.zh-CN.md
+A  CODE_CLEANUP_PLAN.zh-CN.md
+A  PROJECT_ASSESSMENT.zh-CN.md
+M  agent-driver-v2/package.json
+ M agent-driver-v2/src/core/agent-driver-v2.ts
+ M agent-driver-v2/src/core/interfaces.ts
+M  agent-driver-v2/src/core/provider-factory.ts
+ M agent-driver-v2/src/index.ts
+ M demo-apps/aotui-ide/README.md
+ M demo-apps/aotui-ide/aoapp.json
+ M demo-apps/aotui-ide/package-lock.json
+ M demo-apps/aotui-ide/package.json
+ M demo-apps/aotui-ide/src/__tests__/create-file-workflow.test.ts
+ M demo-apps/aotui-ide/src/core/file-system-service.ts
+ M demo-apps/aotui-ide/src/core/lsp/adapters.ts
+ M demo-apps/aotui-ide/src/core/lsp/client.ts
+ M demo-apps/aotui-ide/src/core/lsp/server.ts
+ M demo-apps/aotui-ide/src/core/persistence-service.ts
+ M demo-apps/aotui-ide/src/index.ts
+ M demo-apps/aotui-ide/src/tui/FileDetailContent.tsx
+ M demo-apps/aotui-ide/src/tui/RootView.tsx
+ M demo-apps/aotui-ide/src/tui/SystemIDEApp.tsx
+ M demo-apps/aotui-ide/src/tui/create-file-workflow.ts
+ M demo-apps/aotui-ide/tsconfig.json
+ M demo-apps/lite-browser-app/src/tui/LiteBrowserApp.tsx
+ M demo-apps/lite-browser-app/src/tui/ResultListView.tsx
+ M demo-apps/lite-browser-app/src/tui/RootView.tsx
+ M demo-apps/terminal-app/aoapp.json
+ M demo-apps/terminal-app/src/tui/RootView.tsx
+ M demo-apps/terminal-app/src/tui/TerminalApp.tsx
+ M demo-apps/terminal-app/src/tui/TerminalConsoleView.tsx
+ M demo-apps/terminal-app/src/tui/TerminalView.tsx
+A  experiments/semantic-kernel/.nvmrc
+A  experiments/semantic-kernel/README.md
+A  experiments/semantic-kernel/VERIFICATION.md
+A  experiments/semantic-kernel/package.json
+A  experiments/semantic-kernel/pnpm-lock.yaml
+A  experiments/semantic-kernel/src/adapters.ts
+A  experiments/semantic-kernel/src/contracts.ts
+A  experiments/semantic-kernel/src/demo.ts
+A  experiments/semantic-kernel/src/index.ts
+A  experiments/semantic-kernel/src/kernel.ts
+A  experiments/semantic-kernel/src/task-app.ts
+A  experiments/semantic-kernel/test/adapters.test.ts
+A  experiments/semantic-kernel/test/kernel.test.ts
+A  experiments/semantic-kernel/tsconfig.build.json
+A  experiments/semantic-kernel/tsconfig.json
+A  experiments/semantic-kernel/vitest.config.ts
+ M host/src/core/desktop-manager.ts
+ M host/src/core/host-manager-v2.ts
+ M host/src/core/session-manager-v3.ts
+ M host/src/core/source-controls.ts
+ M host/src/types/session.ts
+ M host/test/core/desktop-manager.test.ts
+A  rfcs/0001-semantic-runtime-technology.zh-CN.md
+ M run.sh
+ M runtime/package-lock.json
+MM runtime/package.json
+ M runtime/pnpm-lock.yaml
+ M runtime/src/adapters/aotui-driven-source.test.ts
+M  runtime/src/adapters/aotui-driven-source.ts
+ M runtime/src/adapters/index.ts
+ D runtime/src/adapters/session/index.ts
+ D runtime/src/adapters/session/session.ts
+ D runtime/src/adapters/session/types.ts
+ M runtime/src/engine/app/index.ts
+ M runtime/src/engine/app/manager.test.ts
+MM runtime/src/engine/app/manager.ts
+ M runtime/src/engine/app/registry.test.ts
+MM runtime/src/engine/app/registry.ts
+MM runtime/src/engine/app/worker-host.ts
+MM runtime/src/engine/app/worker-pool.ts
+ M runtime/src/engine/app/worker-sandbox.ts
+ M runtime/src/engine/core/desktop-logger.ts
+MM runtime/src/engine/core/desktop.ts
+ M runtime/src/engine/core/manager.ts
+ D runtime/src/engine/core/operation-log-buffer.test.ts
+ D runtime/src/engine/core/operation-log-buffer.ts
+M  runtime/src/engine/core/operation-log-formatter.ts
+M  runtime/src/engine/system/registry.ts
+ M runtime/src/engine/view/index.ts
+ D runtime/src/engine/view/snapshot/builder.test.ts
+MD runtime/src/engine/view/snapshot/builder.ts
+ M runtime/src/engine/view/snapshot/index.ts
+ D runtime/src/engine/view/transformer/index.ts
+M  runtime/src/engine/view/transformer/pure.ts
+M  runtime/src/engine/view/transformer/visitors/view-link.visitor.ts
+ M runtime/src/engine/view/types.ts
+ M runtime/src/facades/facades.ts
+M  runtime/src/facades/index.ts
+ M runtime/src/factory/createKernel.ts
+ M runtime/src/index.ts
+ M runtime/src/internal/integration/sdk-runtime.test.ts
+MM runtime/src/kernel/index.ts
+ M runtime/src/kernel/kernel.test.ts
+ M runtime/src/kernel/lifecycle.test.ts
+ M runtime/src/kernel/security.test.ts
+ M runtime/src/spi/app/index.ts
+ M runtime/src/spi/app/public-types.ts
+M  runtime/src/spi/app/view-context-ext.interface.ts
+ D runtime/src/spi/app/view-tree.interface.ts
+ M runtime/src/spi/component-factory.interface.ts
+ M runtime/src/spi/config/domains/worker.config.ts
+ M runtime/src/spi/config/validate.ts
+M  runtime/src/spi/core/errors.ts
+ M runtime/src/spi/core/index.ts
+ M runtime/src/spi/core/operation-log.ts
+ M runtime/src/spi/core/operations.ts
+ M runtime/src/spi/core/tool-call.ts
+ M runtime/src/spi/runtime/desktop-manager.interface.ts
+ M runtime/src/spi/runtime/index.ts
+MM runtime/src/spi/runtime/kernel.interface.ts
+ D runtime/src/spi/runtime/transformer.interface.ts
+ M runtime/src/spi/runtime/worker-message.interface.ts
+ M runtime/src/spi/worker-protocol/messages.ts
+MM runtime/src/worker-runtime/app-kernel/AppKernel.ts
+ M runtime/src/worker-runtime/app-kernel/index.ts
+M  runtime/src/worker-runtime/app-kernel/view-registry.ts
+MD runtime/src/worker-runtime/app-kernel/view-tree.ts
+MM runtime/src/worker-runtime/index.ts
+ M sdk/package-lock.json
+MM sdk/package.json
+ M sdk/pnpm-lock.yaml
+M  sdk/src/adapter/createInlineView.ts
+D  sdk/src/app-base/AOTUIApp.d.ts.map
+D  sdk/src/app-base/ViewBasedApp.d.ts.map
+D  sdk/src/app-base/index.d.ts.map
+ M sdk/src/app-factory/createTUIApp.test.ts
+MM sdk/src/app-factory/createTUIApp.ts
+D  sdk/src/components/Operation.d.ts.map
+D  sdk/src/components/View.d.ts.map
+MM sdk/src/components/View.tsx
+D  sdk/src/components/index.d.ts.map
+ M sdk/src/context/AppRuntimeContext.tsx
+MM sdk/src/contexts/index.ts
+ M sdk/src/contexts/view-runtime-context.ts
+D  sdk/src/hooks/context.d.ts.map
+D  sdk/src/hooks/index.d.ts.map
+ M sdk/src/hooks/index.ts
+ D sdk/src/hooks/persistence-manager.ts
+ D sdk/src/hooks/persistence-shutdown.ts
+ M sdk/src/hooks/preact-hooks.ts
+MM sdk/src/hooks/useArrayRef.ts
+ M sdk/src/hooks/useLLMOutputChannel.ts
+ M sdk/src/hooks/usePersistentState.ts
+MM sdk/src/hooks/useRef.ts
+D  sdk/src/hooks/useSignalStore.d.ts.map
+ D sdk/src/hooks/useSignalStore.ts
+D  sdk/src/hooks/useViewContext.d.ts.map
+MM sdk/src/hooks/useViewContext.ts
+MM sdk/src/hooks/useViewTypeTool.ts
+D  sdk/src/index.d.ts.map
+MM sdk/src/index.ts
+ M sdk/src/operation/types.ts
+D  sdk/src/ref-registry.ts
+D  sdk/src/utils/index.d.ts.map
+D  sdk/src/utils/validateArgs.d.ts.map
+MM sdk/src/utils/validateArgs.ts
+D  sdk/src/utils/validation.d.ts.map
+ D sdk/src/utils/validation.ts
+ D sdk/test/utils/validation.test.ts
+M  sdk/vitest.config.ts
+A  skills-lock.json
+?? .agents/skills/minimalist/
+?? AGENTS.md
+?? AOTUI_INFRA_READINESS.zh-CN.md
+?? AOTUI_RUNTIME_SDK_DRIVER_ARCHITECTURE.zh-CN.md
+?? AOTUI_SDK_RUNTIME_CRITIQUE.zh-CN.md
+?? AOTUI_SEMANTIC_CLEANUP_PLAN.zh-CN.md
+?? AOTUI_SEMANTIC_CLEANUP_TASKS.json
+?? AOTUI_VALUE_ANALYSIS.zh-CN.md
+?? "Runtime Core Semantic Contract RFC/"
+?? agent-driver-v2/tests/core/semantic-context.test.ts
+?? demo-apps/aotui-ide/SCOPED_IDE.md
+?? demo-apps/aotui-ide/examples/
+?? demo-apps/aotui-ide/src/__tests__/app-options.test.ts
+?? demo-apps/aotui-ide/src/__tests__/conditional-file-create.test.ts
+?? demo-apps/aotui-ide/src/__tests__/exclusive-file-create.test.ts
+?? demo-apps/aotui-ide/src/__tests__/file-view-ids.test.ts
+?? demo-apps/aotui-ide/src/__tests__/loaded-diagnostics.test.ts
+?? demo-apps/aotui-ide/src/__tests__/versioned-file-write.test.ts
+?? demo-apps/aotui-ide/src/core/app-options.ts
+?? demo-apps/aotui-ide/src/core/conditional-file-create.ts
+?? demo-apps/aotui-ide/src/core/ide-errors.ts
+?? demo-apps/aotui-ide/src/core/ide-history.ts
+?? demo-apps/aotui-ide/src/core/ide-session.ts
+?? demo-apps/aotui-ide/src/core/lsp/process-resources.ts
+?? demo-apps/aotui-ide/src/core/observed-file-operations.ts
+?? demo-apps/aotui-ide/src/core/scoped-lsp.ts
+?? demo-apps/aotui-ide/src/core/scoped-search.ts
+?? demo-apps/aotui-ide/src/core/search-worker.ts
+?? demo-apps/aotui-ide/src/core/versioned-file-write.ts
+?? demo-apps/aotui-ide/src/scoped.ts
+?? demo-apps/aotui-ide/src/tui/DiagnosticsReadTool.tsx
+?? demo-apps/aotui-ide/src/tui/ScopedIDEApp.tsx
+?? demo-apps/aotui-ide/src/tui/WorkspaceCreateView.tsx
+?? demo-apps/aotui-ide/src/tui/file-view-ids.ts
+?? demo-apps/aotui-ide/src/tui/ide-tool-contracts.ts
+?? demo-apps/aotui-ide/src/tui/loaded-diagnostics.ts
+?? demo-apps/aotui-ide/tests/
+?? demo-apps/lite-browser-app/src/tui/BrowserTools.tsx
+?? demo-apps/terminal-app/src/tui/TerminalTools.tsx
+?? host/src/core/semantic-desktop-snapshot.ts
+?? host/test/semantic-host-llm.e2e.ts
+?? host/test/semantic-host.e2e.ts
+?? host/test/session-manager-v3.tool-receipts.test.ts
+?? rfcs/0002-semantic-core-consolidation.zh-CN.md
+?? rfcs/0003-sdk-runtime-architecture-route.zh-CN.md
+?? rfcs/0004-wave2c-ref-execution-architecture.zh-CN.md
+?? rfcs/sdk-runtime-delivery/
+?? rfcs/semantic-cleanup-20261029/
+?? runtime/src/adapters/app-lifecycle-protocol.ts
+?? runtime/src/adapters/create-if-absent-invocation-v1.test.ts
+?? runtime/src/adapters/create-if-absent-invocation-v1.ts
+?? runtime/src/adapters/ordinary-invocation-v1.test.ts
+?? runtime/src/adapters/ordinary-invocation-v1.ts
+?? runtime/src/adapters/ordinary-invocation-v2.test.ts
+?? runtime/src/adapters/ordinary-invocation-v2.ts
+?? runtime/src/adapters/ref-invocation-v1.test.ts
+?? runtime/src/adapters/ref-invocation-v1.ts
+?? runtime/src/adapters/ref-invocation-v2.test.ts
+?? runtime/src/adapters/ref-invocation-v2.ts
+?? runtime/src/adapters/semantic-aotui-driven-source.test.ts
+?? runtime/src/adapters/semantic-aotui-driven-source.ts
+?? runtime/src/adapters/semantic-capability-policy.test.ts
+?? runtime/src/adapters/semantic-capability-policy.ts
+?? runtime/src/adapters/snapshot/
+?? runtime/src/adapters/storage/
+?? runtime/src/adapters/view-tool-invocation-v1.ts
+?? runtime/src/core/
+?? runtime/src/e2e-test/fixtures/ide-create-slice.mjs
+?? runtime/src/e2e-test/fixtures/ide-read-slice.mjs
+?? runtime/src/e2e-test/fixtures/snapshot-value-sdk.mjs
+?? runtime/src/e2e-test/fixtures/tool-lifecycle.mjs
+?? runtime/src/engine/app/interaction-config.test.ts
+?? runtime/src/engine/app/interaction-config.ts
+?? runtime/src/engine/app/manager.interaction.test.ts
+?? runtime/src/engine/app/manager.lifecycle.test.ts
+?? runtime/src/engine/app/state-storage-host.test.ts
+?? runtime/src/engine/app/state-storage-host.ts
+?? runtime/src/engine/app/worker-app-lifecycle-e2e.test.ts
+?? runtime/src/engine/app/worker-host.app-lifecycle-protocol.test.ts
+?? runtime/src/engine/app/worker-host.create-if-absent-e2e.test.ts
+?? runtime/src/engine/app/worker-host.create-if-absent.test.ts
+?? runtime/src/engine/app/worker-host.dual-producer-e2e.test.ts
+?? runtime/src/engine/app/worker-host.ide-read-e2e.test.ts
+?? runtime/src/engine/app/worker-host.interaction-lifecycle.test.ts
+?? runtime/src/engine/app/worker-host.m3-sdk-e2e.test.ts
+?? runtime/src/engine/app/worker-host.m4-lifecycle.test.ts
+?? runtime/src/engine/app/worker-host.m4-producer-race.test.ts
+?? runtime/src/engine/app/worker-host.m4-readonly.test.ts
+?? runtime/src/engine/app/worker-host.m4-stage8-outcome.test.ts
+?? runtime/src/engine/app/worker-host.m4-v2-shadow.test.ts
+?? runtime/src/engine/app/worker-host.m4-versioned-file.test.ts
+?? runtime/src/engine/app/worker-host.m4-view-owned-e2e.test.ts
+?? runtime/src/engine/app/worker-host.ordinary-interaction.test.ts
+?? runtime/src/engine/app/worker-host.ordinary-v2.test.ts
+?? runtime/src/engine/app/worker-host.p0-tool-result.test.ts
+?? runtime/src/engine/app/worker-host.persistence-e2e.test.ts
+?? runtime/src/engine/app/worker-host.persistence.test.ts
+?? runtime/src/engine/app/worker-host.r1-terminal-race.test.ts
+?? runtime/src/engine/app/worker-host.ref-execution-e2e.test.ts
+?? runtime/src/engine/app/worker-host.ref-execution.test.ts
+?? runtime/src/engine/app/worker-host.ref-v1-e2e.test.ts
+?? runtime/src/engine/app/worker-host.ref-v1.test.ts
+?? runtime/src/engine/app/worker-host.ref-v2.test.ts
+?? runtime/src/engine/app/worker-host.resources-e2e.test.ts
+?? runtime/src/engine/app/worker-host.resources.test.ts
+?? runtime/src/engine/app/worker-host.scoped-interaction-e2e.test.ts
+?? runtime/src/engine/app/worker-host.scoped-interaction.test.ts
+?? runtime/src/engine/app/worker-host.shadow-e2e.test.ts
+?? runtime/src/engine/app/worker-host.shadow-init-lifecycle.test.ts
+?? runtime/src/engine/app/worker-host.snapshot-shadow.test.ts
+?? runtime/src/engine/app/worker-host.tool-lifecycle-e2e.test.ts
+?? runtime/src/engine/app/worker-host.wave2a-readonly.test.ts
+?? runtime/src/engine/app/worker-host.wave2a-request.test.ts
+?? runtime/src/engine/app/worker-host.wave2c-declarations.test.ts
+?? runtime/src/engine/app/worker-pool.e2e.test.ts
+?? runtime/src/engine/app/worker-pool.test.ts
+?? runtime/src/engine/app/worker-sandbox.lifecycle-e2e.test.ts
+?? runtime/src/engine/app/worker-sandbox.lifecycle.test.ts
+?? runtime/src/engine/core/close-interaction-report.test.ts
+?? runtime/src/engine/core/close-operation.test.ts
+?? runtime/src/engine/core/close-operation.ts
+?? runtime/src/engine/core/desktop-logger.scope.test.ts
+?? runtime/src/engine/core/desktop.channels-lifecycle.test.ts
+?? runtime/src/engine/core/desktop.lifecycle.test.ts
+?? runtime/src/engine/core/manager.lifecycle.test.ts
+?? runtime/src/engine/core/manager.worker-resources.test.ts
+?? runtime/src/kernel/close-reporting-e2e.test.ts
+?? runtime/src/kernel/close-reporting.test.ts
+?? runtime/src/kernel/interaction-e2e.test.ts
+?? runtime/src/kernel/interaction.test.ts
+?? runtime/src/spi/config/worker-pool-validation.test.ts
+?? runtime/src/spi/runtime/app-interaction.interface.ts
+?? runtime/src/spi/runtime/app-lifecycle.interface.ts
+?? runtime/src/spi/runtime/close.interface.ts
+?? runtime/src/spi/runtime/projection.interface.ts
+?? runtime/src/spi/runtime/state-persistence.interface.ts
+?? runtime/src/spi/runtime/view-owned-tools.interface.ts
+?? runtime/src/worker-runtime/app-kernel/AppKernel.core-disposal.test.ts
+?? runtime/src/worker-runtime/app-kernel/AppKernel.lifecycle.test.ts
+?? runtime/src/worker-runtime/app-kernel/AppKernel.ordinary-v2.test.ts
+?? runtime/src/worker-runtime/app-kernel/AppKernel.persistence.test.ts
+?? runtime/src/worker-runtime/app-kernel/AppKernel.ref-v2.test.ts
+?? runtime/src/worker-runtime/app-kernel/AppKernel.type-tool-contract.test.ts
+?? runtime/src/worker-runtime/app-lifecycle.test.ts
+?? runtime/src/worker-runtime/app-lifecycle.ts
+?? runtime/src/worker-runtime/create-if-absent-invocation-v1.test.ts
+?? runtime/src/worker-runtime/create-if-absent-invocation-v1.ts
+?? runtime/src/worker-runtime/dom-snapshot-producer.empty.test.ts
+?? runtime/src/worker-runtime/dom-snapshot-producer.test.ts
+?? runtime/src/worker-runtime/dom-snapshot-producer.ts
+?? runtime/src/worker-runtime/ordinary-invocation-v1.test.ts
+?? runtime/src/worker-runtime/ordinary-invocation-v1.ts
+?? runtime/src/worker-runtime/ordinary-invocation-v2.test.ts
+?? runtime/src/worker-runtime/ordinary-invocation-v2.ts
+?? runtime/src/worker-runtime/ref-invocation-v1.test.ts
+?? runtime/src/worker-runtime/ref-invocation-v1.ts
+?? runtime/src/worker-runtime/ref-invocation-v2.test.ts
+?? runtime/src/worker-runtime/ref-invocation-v2.ts
+?? runtime/src/worker-runtime/state-persistence.test.ts
+?? runtime/src/worker-runtime/state-persistence.ts
+?? runtime/src/worker-runtime/state-storage-proxy.test.ts
+?? runtime/src/worker-runtime/state-storage-proxy.ts
+?? runtime/tests/
+?? scripts/scoped-ide.mjs
+?? sdk/README.md
+?? sdk/src/create-if-absent-wrapper.test.ts
+?? sdk/src/hooks/useAppLifecycle.ts
+?? sdk/src/hooks/useCreateIfAbsentTool.ts
+?? sdk/src/hooks/usePersistentState.integration.test.tsx
+?? sdk/src/hooks/useReadOnlyTool.test.ts
+?? sdk/src/hooks/useReadOnlyTool.ts
+?? sdk/src/ordinary-wrapper.test.ts
+?? sdk/src/projection-coordinator.test.ts
+?? sdk/src/public-api-contract.test.tsx
+?? sdk/src/read-only-ref-tools.test.ts
+?? sdk/src/read-only-tools.test.ts
+?? sdk/src/ref-contract.wave2b.test.ts
+?? sdk/src/ref-declarations.wave2c.test.ts
+?? sdk/src/snapshot-value-wrapper.test.ts
+?? sdk/src/utils/create-if-absent-tool.ts
+?? sdk/src/utils/ordinary-parameter-tool.test.ts
+?? sdk/src/utils/ordinary-parameter-tool.ts
+?? sdk/src/utils/ordinary-tool.ts
+?? sdk/src/utils/snapshot-value-tool.ts
+?? sdk/src/view-local-tools.test.ts
+?? sdk/src/view-owned-tools.test.ts
+?? sdk/test/utils/create-if-absent-tool.test.ts
+?? sdk/test/utils/ordinary-tool.test.ts
+?? sdk/test/utils/snapshot-value-tool.test.ts

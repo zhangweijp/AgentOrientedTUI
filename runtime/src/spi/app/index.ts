@@ -31,7 +31,6 @@ export { createBindingKey } from './view-link.types.js';
 // ============================================================================
 // View Tree Interface [RFC-011]
 // ============================================================================
-export type { IViewTree, ViewNode, ViewContextFactory, MountableViewEntry } from './view-tree.interface.js';
 
 // ============================================================================
 // App Interface
@@ -88,9 +87,7 @@ export type {
     ITypeToolRegistry,
     TypeToolDefinition,
     IViewLinkRegistry,
-    IMountableViewRegistry,
     IOperationRegistry,
-    IDynamicViewRegistry,
     IAppConfig,
     RegisterLinkOptions as RegisterLinkOptionsPublic,
     SimpleOperationHandler,

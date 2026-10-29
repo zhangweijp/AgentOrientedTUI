@@ -120,7 +120,6 @@ export type { ErrorCode } from './errors.js';
 export type {
     OperationLogScope,
     OperationLogEntry,
-    IOperationLogBuffer,
     OperationLogParams,
 } from './operation-log.js';
 

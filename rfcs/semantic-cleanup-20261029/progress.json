@@ -1,0 +1,1130 @@
+{
+  "objective": "C00–C10 single Semantic cleanup; complete full original Markdown scope and all 53 task IDs plus I01–I20.",
+  "planSha256": "d83c6d5122e882f30ca96e3d811b5b4a9ceddee7a659e86c5b20743bb48017e8",
+  "taskIndexSha256": "d18e82e3bbb7dcaad3321b63f502e2a0b7efd647a0b02aca81ad96b68607a6d5",
+  "baseline": "baseline/summary.json",
+  "gates": {
+    "G0": "verified",
+    "G1": "pending owner acceptance; async question already sent",
+    "G2": "C01 verified for retained affected behavior and against recorded baseline; 10 pre-existing Runtime failures remain for subsequent resolution.",
+    "G3": "pending"
+  },
+  "phases": [
+    {
+      "id": "C00",
+      "status": "verified",
+      "work": "保存工作树基线、保留 API/能力清单、测试矩阵",
+      "evidence": [
+        "baseline/summary.json",
+        "evidence/c00-build.json",
+        "evidence/c00-public-exports.json",
+        "evidence/c00-tests.json",
+        "evidence/c00-runtime-ready.json",
+        "evidence/c00-recheck.json",
+        "evidence/c00-token-monitor-build.json"
+      ],
+      "prerequisites": "无",
+      "exit_evidence": "可复现当前源码；已知失败与跳过有记录"
+    },
+    {
+      "id": "C01",
+      "status": "verified",
+      "work": "删除孤立实现/throw-only API/无消费者便利工具",
+      "prerequisites": "C00",
+      "exit_evidence": "静态调用/导出消失；必要测试与构建通过",
+      "evidence": [
+        "evidence/c01-files.json",
+        "evidence/c01-build.json",
+        "evidence/c01-canonical-build.json",
+        "evidence/c01-sdk-tests.log",
+        "evidence/c01-runtime-verified.log",
+        "evidence/c01-failure-comparison.json",
+        "evidence/c01-test-migration.json",
+        "evidence/c01-api-check.json",
+        "evidence/c01-artifacts.json",
+        "evidence/c01-package-consumer-final.json",
+        "evidence/c01-audit.json"
+      ],
+      "qualification": "All twelve C01 items closed. Full Runtime remains red on the same ten C00 failures; C10 must resolve them. No full-goal completion claimed."
+    },
+    {
+      "id": "C02",
+      "status": "blocked",
+      "work": "Semantic 独立发布、提交后通知、失败可见；停发 legacy Fragment",
+      "blocked_by": "G1: owner Semantic acceptance has not been provided; the earlier async question is still unanswered.",
+      "prerequisites": "G1、C00",
+      "exit_evidence": "无 Fragment 仍能初始观察、后台更新、Ref/Tool-only 更新、空态关闭"
+    },
+    {
+      "id": "C03",
+      "status": "pending",
+      "work": "删除旧 Snapshot/IndexMap/execute/dispatcher/system registry/桌面锁",
+      "prerequisites": "C02",
+      "exit_evidence": "默认 Host 多 App 与 Core 调用测试通过；旧 API 不再导出"
+    },
+    {
+      "id": "C04",
+      "status": "pending",
+      "work": "SDK/AppKernel 单一 View 注册、Factory 和 Context 收敛",
+      "prerequisites": "C03",
+      "exit_evidence": "真实 mount/unmount/remount、onClose、Ref 注册与 Tool 生命周期通过"
+    },
+    {
+      "id": "C05",
+      "status": "pending",
+      "work": "ordinary-v1/ref-v1 调用迁移；单一 authoring、规范 schema",
+      "prerequisites": "C04",
+      "exit_evidence": "空只读、带参普通、Ref V2、错误参数、旧绑定拒绝全部通过"
+    },
+    {
+      "id": "C06",
+      "status": "pending",
+      "work": "移除 pre-Scope 调用、框架文件 CAS/entity/create 专用路径",
+      "prerequisites": "C05",
+      "exit_evidence": "真实业务写入与未知效果映射保持；框架不再持有文件专用状态"
+    },
+    {
+      "id": "C07",
+      "status": "pending",
+      "work": "删除旧生命周期/Factory/注入对象 fallback，实验能力转正",
+      "prerequisites": "C04–C06",
+      "exit_evidence": "停止、失败清理、迟到初始化、物理退出与持久化故障测试通过"
+    },
+    {
+      "id": "C08",
+      "status": "pending",
+      "work": "移除 Semantic Source 分离方法兼容缓存，收窄 exports/类型",
+      "prerequisites": "C03–C07",
+      "exit_evidence": "Context 唯一接入；关联 Host/Driver/应用编译通过"
+    },
+    {
+      "id": "C09",
+      "status": "pending",
+      "work": "清依赖、干净产物、当前文档/Skill/示例和实验目录",
+      "prerequisites": "C08",
+      "exit_evidence": "新 tar 无旧实现/测试泄漏；文档所有默认示例可运行"
+    },
+    {
+      "id": "C10",
+      "status": "pending",
+      "work": "全量剩余测试、真实 Worker/Host/IDE/外部消费者验证",
+      "prerequisites": "C09",
+      "exit_evidence": "完整新报告，性能/资源无越线；无旧回退"
+    }
+  ],
+  "items": [
+    {
+      "id": "D01",
+      "phase": "C01",
+      "status": "verified",
+      "target": "`runtime/src/engine/view/snapshot/builder.ts`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "删除重导出、专属测试；现行消息呈现不使用它",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [
+        "evidence/c01-files.json",
+        "evidence/c01-build.json",
+        "evidence/c01-canonical-build.json",
+        "evidence/c01-sdk-tests.log",
+        "evidence/c01-runtime-verified.log",
+        "evidence/c01-failure-comparison.json",
+        "evidence/c01-test-migration.json",
+        "evidence/c01-api-check.json",
+        "evidence/c01-artifacts.json",
+        "evidence/c01-package-consumer-final.json",
+        "evidence/c01-audit.json"
+      ],
+      "actual_result": "Deleted unused SnapshotBuilder, both barrels and its exclusive tests.",
+      "actual_paths": [
+        "runtime/src/engine/view/snapshot/builder.ts",
+        "runtime/src/engine/view/snapshot/index.ts",
+        "runtime/src/engine/view/index.ts"
+      ]
+    },
+    {
+      "id": "D02",
+      "phase": "C01",
+      "status": "verified",
+      "target": "Kernel 的 `transformer` 成员与工厂中无效注入",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "修改 `factory/createKernel.ts`、构造测试；不是删 Worker 内纯转换器",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [
+        "evidence/c01-files.json",
+        "evidence/c01-build.json",
+        "evidence/c01-canonical-build.json",
+        "evidence/c01-sdk-tests.log",
+        "evidence/c01-runtime-verified.log",
+        "evidence/c01-failure-comparison.json",
+        "evidence/c01-test-migration.json",
+        "evidence/c01-api-check.json",
+        "evidence/c01-artifacts.json",
+        "evidence/c01-package-consumer-final.json",
+        "evidence/c01-audit.json"
+      ],
+      "actual_result": "Removed unused Kernel transformer injection, compatibility Transformer class and SPI; constructor tests migrated and transformation assertions use pure functions.",
+      "actual_paths": [
+        "runtime/src/kernel/index.ts",
+        "runtime/src/factory/createKernel.ts",
+        "runtime/src/engine/view/transformer/index.ts",
+        "runtime/src/spi/runtime/transformer.interface.ts",
+        "runtime/src/internal/integration/sdk-runtime.test.ts"
+      ]
+    },
+    {
+      "id": "D03",
+      "phase": "C01",
+      "status": "verified",
+      "target": "`runtime/src/adapters/session/`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "删除私有 barrel 与废弃会话类型，不引入新 Session 框架",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [
+        "evidence/c01-files.json",
+        "evidence/c01-build.json",
+        "evidence/c01-canonical-build.json",
+        "evidence/c01-sdk-tests.log",
+        "evidence/c01-runtime-verified.log",
+        "evidence/c01-failure-comparison.json",
+        "evidence/c01-test-migration.json",
+        "evidence/c01-api-check.json",
+        "evidence/c01-artifacts.json",
+        "evidence/c01-package-consumer-final.json",
+        "evidence/c01-audit.json"
+      ],
+      "actual_result": "Removed private session implementation/types/barrel without replacement.",
+      "actual_paths": [
+        "runtime/src/adapters/session/index.ts",
+        "runtime/src/adapters/session/session.ts",
+        "runtime/src/adapters/session/types.ts"
+      ]
+    },
+    {
+      "id": "D04",
+      "phase": "C01",
+      "status": "verified",
+      "target": "`core/invocation/bound-action-executor.ts`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "删除专属实验测试；保留仍被 scoped 调用的 ledger",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [
+        "evidence/c01-files.json",
+        "evidence/c01-build.json",
+        "evidence/c01-canonical-build.json",
+        "evidence/c01-sdk-tests.log",
+        "evidence/c01-runtime-verified.log",
+        "evidence/c01-failure-comparison.json",
+        "evidence/c01-test-migration.json",
+        "evidence/c01-api-check.json",
+        "evidence/c01-artifacts.json",
+        "evidence/c01-package-consumer-final.json",
+        "evidence/c01-audit.json"
+      ],
+      "actual_result": "Removed unused pre-Scope executor and exclusive tests; scoped invocation ledger remains.",
+      "actual_paths": [
+        "runtime/src/core/invocation/bound-action-executor.ts",
+        "runtime/src/core/invocation/scoped-interaction.ts",
+        "runtime/src/core/invocation/invocation-ledger.ts"
+      ]
+    },
+    {
+      "id": "D05",
+      "phase": "C01",
+      "status": "verified",
+      "target": "`engine/core/operation-log-buffer.ts`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "当前扫描没有生产导入，仅专属测试；保留仍使用的 logger",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [
+        "evidence/c01-files.json",
+        "evidence/c01-build.json",
+        "evidence/c01-canonical-build.json",
+        "evidence/c01-sdk-tests.log",
+        "evidence/c01-runtime-verified.log",
+        "evidence/c01-failure-comparison.json",
+        "evidence/c01-test-migration.json",
+        "evidence/c01-api-check.json",
+        "evidence/c01-artifacts.json",
+        "evidence/c01-package-consumer-final.json",
+        "evidence/c01-audit.json"
+      ],
+      "actual_result": "Removed unused log buffer, exclusive interface and tests; live logger retained.",
+      "actual_paths": [
+        "runtime/src/engine/core/operation-log-buffer.ts",
+        "runtime/src/spi/core/operation-log.ts"
+      ]
+    },
+    {
+      "id": "D06",
+      "phase": "C01",
+      "status": "verified",
+      "target": "`worker-runtime/app-kernel/view-tree.ts`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "删除旧 tree 类型、barrel 及纯旧测试；不连带删除现行 View 身份",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [
+        "evidence/c01-files.json",
+        "evidence/c01-build.json",
+        "evidence/c01-canonical-build.json",
+        "evidence/c01-sdk-tests.log",
+        "evidence/c01-runtime-verified.log",
+        "evidence/c01-failure-comparison.json",
+        "evidence/c01-test-migration.json",
+        "evidence/c01-api-check.json",
+        "evidence/c01-artifacts.json",
+        "evidence/c01-package-consumer-final.json",
+        "evidence/c01-audit.json"
+      ],
+      "actual_result": "Removed unused tree implementation, sole tree SPI and reexports; actual flat registry and owned identities retained.",
+      "actual_paths": [
+        "runtime/src/worker-runtime/app-kernel/view-tree.ts",
+        "runtime/src/spi/app/view-tree.interface.ts",
+        "runtime/src/worker-runtime/app-kernel/index.ts",
+        "runtime/src/engine/view/types.ts"
+      ]
+    },
+    {
+      "id": "D07",
+      "phase": "C01",
+      "status": "verified",
+      "target": "`sdk/src/hooks/persistence-manager.ts`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "删除根导出及 throw-only 过渡测试",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [
+        "evidence/c01-files.json",
+        "evidence/c01-build.json",
+        "evidence/c01-canonical-build.json",
+        "evidence/c01-sdk-tests.log",
+        "evidence/c01-runtime-verified.log",
+        "evidence/c01-failure-comparison.json",
+        "evidence/c01-test-migration.json",
+        "evidence/c01-api-check.json",
+        "evidence/c01-artifacts.json",
+        "evidence/c01-package-consumer-final.json",
+        "evidence/c01-audit.json"
+      ],
+      "actual_result": "Removed throw-only manager singleton, exports and migration-only test; managed persistence retained.",
+      "actual_paths": [
+        "sdk/src/hooks/persistence-manager.ts",
+        "sdk/src/hooks/index.ts",
+        "sdk/src/index.ts",
+        "sdk/docs/persistence.md"
+      ]
+    },
+    {
+      "id": "D08",
+      "phase": "C01",
+      "status": "verified",
+      "target": "`useMountableViewRegistry/useDynamicViewRegistry`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "同删 View 上的抛错字段、Context 字段及类型",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [
+        "evidence/c01-files.json",
+        "evidence/c01-build.json",
+        "evidence/c01-canonical-build.json",
+        "evidence/c01-sdk-tests.log",
+        "evidence/c01-runtime-verified.log",
+        "evidence/c01-failure-comparison.json",
+        "evidence/c01-test-migration.json",
+        "evidence/c01-api-check.json",
+        "evidence/c01-artifacts.json",
+        "evidence/c01-package-consumer-final.json",
+        "evidence/c01-audit.json"
+      ],
+      "actual_result": "Removed unavailable registry Hooks, Context fields and sole public types; preserved actual mount/ref/release assertions.",
+      "actual_paths": [
+        "sdk/src/hooks/useViewContext.ts",
+        "sdk/src/contexts/view-runtime-context.ts",
+        "sdk/src/components/View.tsx",
+        "runtime/src/spi/app/public-types.ts",
+        "sdk/src/public-api-contract.test.tsx"
+      ]
+    },
+    {
+      "id": "D09",
+      "phase": "C01",
+      "status": "verified",
+      "target": "`useResourceRef` 别名",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "现行声明统一 `useDataRef/useArrayRef`；Preact `useRef` 保留",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [
+        "evidence/c01-files.json",
+        "evidence/c01-build.json",
+        "evidence/c01-canonical-build.json",
+        "evidence/c01-sdk-tests.log",
+        "evidence/c01-runtime-verified.log",
+        "evidence/c01-failure-comparison.json",
+        "evidence/c01-test-migration.json",
+        "evidence/c01-api-check.json",
+        "evidence/c01-artifacts.json",
+        "evidence/c01-package-consumer-final.json",
+        "evidence/c01-audit.json"
+      ],
+      "actual_result": "Removed resource alias and internal data useRef alias; root Preact useRef retained.",
+      "actual_paths": [
+        "sdk/src/hooks/useRef.ts",
+        "sdk/src/hooks/index.ts",
+        "sdk/src/index.ts"
+      ]
+    },
+    {
+      "id": "D10",
+      "phase": "C01",
+      "status": "verified",
+      "target": "`sdk/src/hooks/useSignalStore.ts`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "当前扫描只见导出；移除其类型和独占的 `@preact/signals` 依赖",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [
+        "evidence/c01-files.json",
+        "evidence/c01-build.json",
+        "evidence/c01-canonical-build.json",
+        "evidence/c01-sdk-tests.log",
+        "evidence/c01-runtime-verified.log",
+        "evidence/c01-failure-comparison.json",
+        "evidence/c01-test-migration.json",
+        "evidence/c01-api-check.json",
+        "evidence/c01-artifacts.json",
+        "evidence/c01-package-consumer-final.json",
+        "evidence/c01-audit.json",
+        "evidence/c01-archived-fixtures.json",
+        "evidence/c01-locks.json"
+      ],
+      "actual_result": "Removed SignalStore implementation/types/exports and SDK production dependency. Current SDK works without signals; archived SDK fixtures explicitly use Runtime devDependency.",
+      "actual_paths": [
+        "sdk/src/hooks/useSignalStore.ts",
+        "sdk/package.json",
+        "sdk/pnpm-lock.yaml",
+        "sdk/package-lock.json",
+        "runtime/package.json",
+        "runtime/pnpm-lock.yaml",
+        "runtime/package-lock.json",
+        "runtime/tests/fixtures/archived-sdk-dependencies.mjs"
+      ],
+      "revision_reason": "Current reference recheck found archived SDK lifecycle consumers of signals. Moved it to explicit Runtime devDependency and test fixture assembly. This temporary test dependency/helper must disappear when those old tests exit in C09 after G1; no permanent production compatibility is retained."
+    },
+    {
+      "id": "D11",
+      "phase": "C01",
+      "status": "verified",
+      "target": "SDK 纯通用命名校验工具的公共再导出",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "`utils/validation.ts` 当前仅根导出与测试；Runtime 必需身份验证不删",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [
+        "evidence/c01-files.json",
+        "evidence/c01-build.json",
+        "evidence/c01-canonical-build.json",
+        "evidence/c01-sdk-tests.log",
+        "evidence/c01-runtime-verified.log",
+        "evidence/c01-failure-comparison.json",
+        "evidence/c01-test-migration.json",
+        "evidence/c01-api-check.json",
+        "evidence/c01-artifacts.json",
+        "evidence/c01-package-consumer-final.json",
+        "evidence/c01-audit.json"
+      ],
+      "actual_result": "Removed SDK naming helpers/exports/exclusive tests, preserving View and Runtime identity/input checks.",
+      "actual_paths": [
+        "sdk/src/utils/validation.ts",
+        "sdk/test/utils/validation.test.ts",
+        "sdk/src/index.ts"
+      ]
+    },
+    {
+      "id": "D12",
+      "phase": "C01",
+      "status": "verified",
+      "target": "`core/snapshot/workspace.ts` 旧 composer",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "当前只见内层 barrel；保留 Semantic Source 真实多 App 聚合",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [
+        "evidence/c01-files.json",
+        "evidence/c01-build.json",
+        "evidence/c01-canonical-build.json",
+        "evidence/c01-sdk-tests.log",
+        "evidence/c01-runtime-verified.log",
+        "evidence/c01-failure-comparison.json",
+        "evidence/c01-test-migration.json",
+        "evidence/c01-api-check.json",
+        "evidence/c01-artifacts.json",
+        "evidence/c01-package-consumer-final.json",
+        "evidence/c01-audit.json"
+      ],
+      "actual_result": "Removed unused workspace composer, exclusive types/export/tests; live Semantic Source multi-App aggregation retained.",
+      "actual_paths": [
+        "runtime/src/core/snapshot/workspace.ts",
+        "runtime/src/core/snapshot/types.ts",
+        "runtime/src/core/snapshot/index.ts"
+      ]
+    },
+    {
+      "id": "M01",
+      "phase": "C03",
+      "status": "pending",
+      "target": "`adapters/aotui-driven-source.ts` 与旧默认 instruction",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "当前 Host 已使用 Semantic；删除 adapters 旧导出与旧专属测试",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "M02",
+      "phase": "C03",
+      "status": "pending",
+      "target": "`Kernel.acquireSnapshot/releaseSnapshot/execute/getSystemToolDefinitions`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "产品调用只用 Semantic/直接 App 生命周期入口；保留 Core 的 Snapshot lease",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "M03",
+      "phase": "C03",
+      "status": "pending",
+      "target": "`engine/system/registry.ts` 的旧 SnapshotRegistry",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "Kernel 和旧适配器不再持有它",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "M04",
+      "phase": "C03",
+      "status": "pending",
+      "target": "`engine/system/dispatcher.ts`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "不再按任意字符串和当前 IndexMap 猜测 Ref/操作目标",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "M05",
+      "phase": "C03",
+      "status": "pending",
+      "target": "旧系统操作 registry、open/close/dismount 操作包装",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "保留 Desktop.openApp/closeApp 和 Semantic Source 控制工具",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "M06",
+      "phase": "C03",
+      "status": "pending",
+      "target": "`engine/view/snapshot/formatter.ts`、templates、旧 StructuredSnapshot 类型",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "XML/Markdown 呈现来自 Semantic Observation；共享格式工具先迁出",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "M07",
+      "phase": "C03",
+      "status": "pending",
+      "target": "Desktop/Sandbox/WorkerHost 的 Fragment getter/cache",
+      "disposition_or_action": "M→D",
+      "dependency_or_preserved_behavior": "发布通知职责先转移，真实消费者为零",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "M08",
+      "phase": "C03",
+      "status": "pending",
+      "target": "`SNAPSHOT_FRAGMENT`、`APP_OPERATION/VIEW_OPERATION`、旧 `OPERATION_RESPONSE`",
+      "disposition_or_action": "M→D",
+      "dependency_or_preserved_behavior": "新调用通道与 Semantic 发布可以独立完成所有必留场景",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "M09",
+      "phase": "C03",
+      "status": "pending",
+      "target": "旧桌面锁 `acquire/release/verify/refreshLock` 及 lock 配置",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "已无 Kernel.execute 消费；保留 Scope 并发限制、存储所有权和业务文件合作锁",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "M10",
+      "phase": "C03",
+      "status": "pending",
+      "target": "`OperationPayload/IndexMap/CachedSnapshot` 等纯旧类型",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "逐符号删；不能把现行 `OperationResult` 因名字含 Operation 一并删掉",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "P01",
+      "phase": "C02",
+      "status": "blocked",
+      "target": "`SnapshotShadowReceiver`",
+      "disposition_or_action": "R：保留 Core 接纳、Scope 创建、关闭；删 legacy 比较/配对/差异计数，重命名为正式接收器",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [],
+      "blocked_by": "G1: no owner acceptance supplied in this chat or by an explicitly supplied record."
+    },
+    {
+      "id": "P02",
+      "phase": "C02",
+      "status": "blocked",
+      "target": "`DomSnapshotShadowProducer.capture()` V1 分支",
+      "disposition_or_action": "D：保留 V2 捕获，去掉混合/type-wide 自动降级",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [],
+      "blocked_by": "G1: no owner acceptance supplied in this chat or by an explicitly supplied record."
+    },
+    {
+      "id": "P03",
+      "phase": "C02",
+      "status": "blocked",
+      "target": "全 App legacy transform、IndexMap 合并、type-tool 元数据导出",
+      "disposition_or_action": "D：保留按 View 的正文与 Ref 投影",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [],
+      "blocked_by": "G1: no owner acceptance supplied in this chat or by an explicitly supplied record."
+    },
+    {
+      "id": "P04",
+      "phase": "C02",
+      "status": "blocked",
+      "target": "`AOTUI_SNAPSHOT_SHADOW`、显式 shadow 开关和纯双轨诊断",
+      "disposition_or_action": "D：Semantic 成为必需路径，失配明确拒绝",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [],
+      "blocked_by": "G1: no owner acceptance supplied in this chat or by an explicitly supplied record."
+    },
+    {
+      "id": "P05",
+      "phase": "C02",
+      "status": "blocked",
+      "target": "原 `exportRefsToIndexMap()`",
+      "disposition_or_action": "M→D：改为 Semantic Ref 清单端口；保留其真正导出 View 内 Ref 的功能",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [],
+      "blocked_by": "G1: no owner acceptance supplied in this chat or by an explicitly supplied record."
+    },
+    {
+      "id": "P06",
+      "phase": "C02",
+      "status": "blocked",
+      "target": "Snapshot V1 类型、validator、兼容分支",
+      "disposition_or_action": "M→D：最终只接受现行结构；共有 JSON/refKey/容量工具迁入保留模块",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": [],
+      "blocked_by": "G1: no owner acceptance supplied in this chat or by an explicitly supplied record."
+    },
+    {
+      "id": "S01",
+      "phase": "C04",
+      "status": "pending",
+      "target": "`useViewTypeTool` type-wide 重载与 `isLegacy` 分支",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "只保留当前 View-local 声明方式；不需要为清理额外改主 Hook 名称",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "S02",
+      "phase": "C04",
+      "status": "pending",
+      "target": "AppKernel.typeTools、callTypeTool、legacy Ref resolver",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "所有调用按 ViewInstance/Binding 路由",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "S03",
+      "phase": "C04",
+      "status": "pending",
+      "target": "`createInlineView`、operationsRef、旧 IView registry",
+      "disposition_or_action": "M→D",
+      "dependency_or_preserved_behavior": "从 `<View>` 移除第二套操作注册；保留真实挂载时的 owned identity、Ref、Tool 和 onClose 行为",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "S04",
+      "phase": "C04",
+      "status": "pending",
+      "target": "`ViewRegistry`、renderViewTree、data-view-tree、markDirty 对旧 tree 的刷新",
+      "disposition_or_action": "M→D",
+      "dependency_or_preserved_behavior": "Context 的 dirty/更新通知若仍需要，应接到投影端口，不再渲染旧 tree",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "S05",
+      "phase": "C04",
+      "status": "pending",
+      "target": "SDK Factory.create() throw-only、callable factory、view factory",
+      "disposition_or_action": "M→D",
+      "dependency_or_preserved_behavior": "`createTUIApp` 直接满足唯一组件 Factory；更新 AppRegistry 检测及 manifest 生成脚本",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "S06",
+      "phase": "C04",
+      "status": "pending",
+      "target": "`use-view-selector` 的缓存/比较包装",
+      "disposition_or_action": "M→D",
+      "dependency_or_preserved_behavior": "内部调用简化为必需 Context 读取与错误提示，不新建细粒度响应式框架",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "S07",
+      "phase": "C04",
+      "status": "pending",
+      "target": "重复 AppConfig Context/Hook",
+      "disposition_or_action": "M→D",
+      "dependency_or_preserved_behavior": "保留 `useAppConfig/useAppEnv` 的实际配置获取；将实现收敛到一个权威 Context",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "S08",
+      "phase": "C04",
+      "status": "pending",
+      "target": "根入口暴露的内部 registry/adapter/factory",
+      "disposition_or_action": "D 公共导出；按引用决定实现",
+      "dependency_or_preserved_behavior": "App 开发者不用的底层装配不在根入口；不通过新建大量 subpath 保存旧 API",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "T01",
+      "phase": "C05",
+      "status": "pending",
+      "target": "ordinary-v1 适配器/Worker handler/SDK wrapper",
+      "disposition_or_action": "空参数只读调用迁到 ordinary-v2，仍显式只读；不得通过改成 mutating 来逃避迁移",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "T02",
+      "phase": "C05",
+      "status": "pending",
+      "target": "snapshot-value-v1 传输与 SDK wrapper",
+      "disposition_or_action": "原观察值、同 View 归属、只读不可变与普通参数组合均迁到 Ref V2",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "T03",
+      "phase": "C05",
+      "status": "pending",
+      "target": "`experimental_useReadOnlyTool` 的平行注册实现",
+      "disposition_or_action": "将其必要 Ref V2 编译/只读类型能力合入唯一 View-local 声明路径；迁移调用后删除旧 Hook，不留 alias",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "T04",
+      "phase": "C05",
+      "status": "pending",
+      "target": "`sdk/utils/validateArgs.ts` 和手写 legacy Schema 转换",
+      "disposition_or_action": "所有正式调用使用同一规范参数合同；先迁出任何真实共享校验",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "T05",
+      "phase": "C05",
+      "status": "pending",
+      "target": "AppKernel/WorkerHost 中 `experimentalInteractionModes` 等实验资格开关",
+      "disposition_or_action": "用正式能力配置/默认支持集替代；保留 Worker ACK、实例与实际 callable 资格验证",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "T06",
+      "phase": "C05",
+      "status": "pending",
+      "target": "`view-tool-invocation-v1.ts` 旧文件名和混合职责",
+      "disposition_or_action": "迁出仍由 V2 和 lifecycle 使用的有界捕获/终态校验到正式共用模块，再删旧文件",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "B01",
+      "phase": "C06",
+      "status": "pending",
+      "target": "`WorkerHost.executeVersionedFileReplace()` 及专用 preflight",
+      "disposition_or_action": "删除；框架不拥有 IDE 文件写入",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "B02",
+      "phase": "C06",
+      "status": "pending",
+      "target": "`unobservedFileVersions/activeFileReplacements/fileReplacementWaiters` 等专用状态",
+      "disposition_or_action": "随 B01 删除其独占字段、报告字段和分支；通用在途调用、存储 I/O 与应用 close 等待保留",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "B03",
+      "phase": "C06",
+      "status": "pending",
+      "target": "`validateSnapshotValueRefTool/executeSnapshotValueRefTool/executeReadOnlyViewTool` 旧旁路",
+      "disposition_or_action": "删除；只允许 Scope 来源绑定调用",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "B04",
+      "phase": "C06",
+      "status": "pending",
+      "target": "SDK `useEntityRef`、旧 entity File mutation 切片",
+      "disposition_or_action": "删除该实验 authoring/执行链；业务自行维护实体 ID、版本和条件写入",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "B05",
+      "phase": "C06",
+      "status": "pending",
+      "target": "`create-if-absent-v1` Core/IPC/SDK 专用通道",
+      "disposition_or_action": "迁移后删除；已有业务改用普通工具 + 应用资源 adapter",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "B06",
+      "phase": "C06",
+      "status": "pending",
+      "target": "`experimental_useCreateIfAbsentTool` 与专用 outcome 类型",
+      "disposition_or_action": "迁移 WorkspaceCreateView 后删除；结果映射只做一次，测试其保真",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "L01",
+      "phase": "C07",
+      "target": "WorkerAppHostService / SignalServiceImpl / ViewManager 与旧注入分支",
+      "action": "删除多余装配与回退；保留唯一真实资源所有者",
+      "status": "pending",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "L02",
+      "phase": "C07",
+      "target": "legacy Factory / persistence / lifecycle fallback",
+      "action": "删除；正式 managed 协议失配明确拒绝；不把缺少 ACK 判成功",
+      "status": "pending",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "L03",
+      "phase": "C07",
+      "target": "experimental_useAppLifecycle / experimentalCreateAppScope",
+      "action": "正式命名与唯一入口；删除过渡 alias；回调可选",
+      "status": "pending",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "A01",
+      "phase": "C08",
+      "target": "SemanticAOTUIDrivenSource compatibilityContext/compatibilityPending 与 split methods",
+      "action": "删除；只保留 getContext/release，并同步关联类型及调用点",
+      "status": "pending",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    },
+    {
+      "id": "E01",
+      "phase": "C09",
+      "target": "依赖/exports/构建产物/lock/Skill/当前文档/实验包",
+      "action": "按正文 3.9 执行；不删除用户数据或尚未冻结的验收证据",
+      "status": "pending",
+      "requires_reference_recheck_before_change": true,
+      "evidence": []
+    }
+  ],
+  "invariants": [
+    {
+      "id": "I01",
+      "scenario": "未打开文件",
+      "required_result": "不暴露已打开文件的编辑 Binding",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I02",
+      "scenario": "打开 test.txt",
+      "required_result": "内容、Tool schema 与目标来自同一 Observation",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I03",
+      "scenario": "编辑后下一次观察",
+      "required_result": "只有一个最新 FileDetail 当前快照，正文不作为普通操作结果重复返回",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I04",
+      "scenario": "关闭再同 ID 重开",
+      "required_result": "原 ViewInstance/Binding 不重绑；旧调用拒绝",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I05",
+      "scenario": "Tool 停用/合同更新",
+      "required_result": "旧 Binding 拒绝；不能靠猜工具名调用",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I06",
+      "scenario": "无关 View/面板变化",
+      "required_result": "不无谓撤销未变化的合法绑定",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I07",
+      "scenario": "31 秒思考、Context 释放",
+      "required_result": "默认 owner lifetime 继续可用；显式 release 后拒绝",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I08",
+      "scenario": "300 轮上下文",
+      "required_result": "Observation/Scope 按所有权释放，不因固定 Scope 去重表累积耗尽",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I09",
+      "scenario": "Ref-only/Tool-only/后台 DOM 变化",
+      "required_result": "无 legacy Fragment 仍发布更新且按策略通知",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I10",
+      "scenario": "初始空/最后 View 关闭",
+      "required_result": "合法空 Semantic 状态；不保留幽灵能力",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I11",
+      "scenario": "五种 outcome/失败副作用",
+      "required_result": "rejected、failed-none、partial、accepted、unknown 不被误报为成功或安全重试",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I12",
+      "scenario": "请求重复或冲突",
+      "required_result": "同 Scope 同请求不二次进入；同 ID 不同请求拒绝",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I13",
+      "scenario": "参数与引用",
+      "required_result": "空只读、普通约束、额外字段、Ref 归属及原始快照值一致",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I14",
+      "scenario": "发布/传输失败",
+      "required_result": "不把写入不确定性清零，不自动重放",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I15",
+      "scenario": "stop/close 与迟到工作",
+      "required_result": "停止准入；实际 pending/I/O/子资源的责任不提前消失",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I16",
+      "scenario": "生命周期故障",
+      "required_result": "flush/unmount/close/release 失败分别保留；仍尝试独立清理",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I17",
+      "scenario": "Worker 复用",
+      "required_result": "旧 lease/旧 listener/旧 App 回调不能影响新实例",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "I18",
+      "scenario": "容量与纯 Core",
+      "required_result": "超限明确拒绝；ES2022、无 Node/DOM 类型消费者仍成立",
+      "status": "pending",
+      "evidence": [],
+      "partialEvidence": [
+        "evidence/c01-package-consumer-final.json: ES2022-only types:[] Core compile and execute; final capacities/resources still require C10"
+      ]
+    },
+    {
+      "id": "I19",
+      "scenario": "包与 CLI/宿主",
+      "required_result": "使用新 tar 严格类型检查；默认 ./run.sh 无旧路由依赖",
+      "status": "pending",
+      "evidence": [],
+      "partialEvidence": [
+        "evidence/c01-artifacts.json",
+        "evidence/c01-package-consumer-final.json: real new tar entries; third-party deps reused, not clean npm installation or default GUI launch"
+      ]
+    },
+    {
+      "id": "I20",
+      "scenario": "业务 adapter",
+      "required_result": "IDE 真实文件冲突/独占创建/LSP；Terminal 后台进度；Browser；Token Monitor 均不丢能力",
+      "status": "pending",
+      "evidence": [],
+      "partialEvidence": [
+        "evidence/c01-build.json: four App builds",
+        "evidence/c01-package-consumer-final.json: actual IDE disk write and LSP; remaining app scenarios require C10"
+      ]
+    }
+  ],
+  "baselineKnownFailures": {
+    "runtime": {
+      "failed": 10,
+      "passed": 2945,
+      "skipped": 3,
+      "todo": 7,
+      "filesFailed": 6,
+      "log": "evidence/c00-runtime-ready.log"
+    },
+    "sdk": {
+      "passed": 429,
+      "failed": 0,
+      "log": "evidence/c00-sdk-tests.log"
+    },
+    "details": [
+      "FAIL  src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode ordinary-v1 keeps other execution modes unavailable without handler fallback",
+      "FAIL  src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode ordinary-v2 keeps other execution modes unavailable without handler fallback",
+      "FAIL  src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode snapshot-value-v1 keeps other execution modes unavailable without handler fallback",
+      "FAIL  src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode snapshot-value-v2 keeps other execution modes unavailable without handler fallback",
+      "FAIL  src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode create-if-absent-v1 keeps other execution modes unavailable without handler fallback",
+      "FAIL  src/adapters/snapshot/shadow-receiver.test.ts > C receiver interaction lifetime > uses one injected clock for current leases, retired history and observation/Scope deadlines",
+      "FAIL  src/internal/integration/sdk-runtime.test.ts > SDK → Runtime Integration > Edge Cases > demo app root views preserve the application instruction contract",
+      "FAIL  src/engine/app/worker-host.create-if-absent-e2e.test.ts > W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual archived compatibility old-sdk never implicitly creates",
+      "FAIL  src/engine/app/worker-host.ide-read-e2e.test.ts > W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > A/B ownership, old observation new state, duplicate original receipt, reads cause no LSP/FS/update",
+      "FAIL  src/engine/app/worker-host.ref-v2.test.ts > R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R22 uses actual saved product combination off"
+    ]
+  },
+  "initialInspectedHashes": {
+    "AGENTS.md": {
+      "plan": "a0365e3e59d9f481dffc9de95bd49acca00e72aa690b4158ca7827c61932ca9a",
+      "actualBaseline": "a0365e3e59d9f481dffc9de95bd49acca00e72aa690b4158ca7827c61932ca9a",
+      "matches": true
+    },
+    "runtime/src/adapters/semantic-aotui-driven-source.ts": {
+      "plan": "e499bafad60e610692bf30e23fcbd3dccf5acd2bdb2babc711308c3a64c2be34",
+      "actualBaseline": "e499bafad60e610692bf30e23fcbd3dccf5acd2bdb2babc711308c3a64c2be34",
+      "matches": true
+    },
+    "runtime/src/worker-runtime/index.ts": {
+      "plan": "227a84514f2dd815e4c9c5912b72b62d06ac2a7a93d27419e0564ea8c5188450",
+      "actualBaseline": "227a84514f2dd815e4c9c5912b72b62d06ac2a7a93d27419e0564ea8c5188450",
+      "matches": true
+    },
+    "runtime/src/engine/app/worker-host.ts": {
+      "plan": "d7f651426bf8d940155a8ca87c7bf6644347300bd3cd737241094fda3baa45a7",
+      "actualBaseline": "d7f651426bf8d940155a8ca87c7bf6644347300bd3cd737241094fda3baa45a7",
+      "matches": true
+    },
+    "sdk/src/hooks/useViewTypeTool.ts": {
+      "plan": "d2e7934a572f5beb20b5d8f2b6f2b69bfdc7b703fa58427911d6df44a2a8169a",
+      "actualBaseline": "d2e7934a572f5beb20b5d8f2b6f2b69bfdc7b703fa58427911d6df44a2a8169a",
+      "matches": true
+    },
+    "runtime/src/core/invocation/scoped-interaction.ts": {
+      "plan": "80c99e5239cf81960e56f37dcfe6a739fcceeafac4989c721b60904b42db4ba8",
+      "actualBaseline": "80c99e5239cf81960e56f37dcfe6a739fcceeafac4989c721b60904b42db4ba8",
+      "matches": true
+    }
+  },
+  "nextAction": "Await the already requested owner Semantic acceptance (G1), then execute C02–C10 in original dependency order. Do not re-request the same approval if supplied.",
+  "fullObjectiveComplete": false,
+  "verification": {
+    "sdk": {
+      "passed": 416,
+      "failed": 0,
+      "log": "evidence/c01-sdk-tests.log"
+    },
+    "runtime": {
+      "passed": 2914,
+      "failed": 10,
+      "skipped": 3,
+      "todo": 7,
+      "newFailures": [],
+      "log": "evidence/c01-runtime-verified.log"
+    },
+    "archivedSdkLifecycle": {
+      "passed": 32,
+      "log": "evidence/c01-archived-fixtures.log"
+    },
+    "tarConsumer": {
+      "passed": 5,
+      "log": "evidence/c01-package-consumer-final.log",
+      "cleanThirdPartyInstallation": false
+    },
+    "api": {
+      "sdkValues": 35,
+      "sdkTypes": 61,
+      "report": "evidence/c01-api-check.json"
+    },
+    "realModel": "not run; authorization not supplied",
+    "ownerAcceptance": "not supplied"
+  },
+  "recovery": {
+    "sourceArchive": "baseline/active-source.tar.gz",
+    "patch": "changes.patch",
+    "patchSha256": "65f01df13fb95648e511ef34e2722be9d2c434ac4e123d771259a31e472c5dc7",
+    "reverseApplyCheckPassed": true,
+    "stagingUnchanged": true,
+    "fileHashes": "evidence/c01-files.json"
+  }
+}

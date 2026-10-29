@@ -1,0 +1,673 @@
+{
+  "kind": "cleanup-plan",
+  "status": "planning-only",
+  "language": "zh-CN",
+  "project_root": "/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI",
+  "head_at_inspection": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "baseline_is_dirty_worktree": true,
+  "owner_semantic_acceptance_recorded_in_this_run": false,
+  "gate": "生产 legacy 下线以项目所有者已约定的 Semantic 验收为前提；历史测试不是该事实。",
+  "no_remote_writes_or_tests_performed": true,
+  "constraints": [
+    "保留正式能力依赖闭包，闭包外默认删除",
+    "引用检查不等于行为证明，逐批通过契约测试",
+    "不得使用 reset --hard / clean -fdx 处理用户工作树",
+    "不得删除真实工作区、配置、凭据、持久数据或未冻结的历史证据",
+    "不新增 CLI/DSL/任务调度/自动业务刷新体系",
+    "不保留长期 legacy 包、回退或实验代码存档目录"
+  ],
+  "phases": [
+    {
+      "id": "C00",
+      "work": "保存工作树基线、保留 API/能力清单、测试矩阵",
+      "prerequisites": "无",
+      "exit_evidence": "可复现当前源码；已知失败与跳过有记录"
+    },
+    {
+      "id": "C01",
+      "work": "删除孤立实现/throw-only API/无消费者便利工具",
+      "prerequisites": "C00",
+      "exit_evidence": "静态调用/导出消失；必要测试与构建通过"
+    },
+    {
+      "id": "C02",
+      "work": "Semantic 独立发布、提交后通知、失败可见；停发 legacy Fragment",
+      "prerequisites": "G1、C00",
+      "exit_evidence": "无 Fragment 仍能初始观察、后台更新、Ref/Tool-only 更新、空态关闭"
+    },
+    {
+      "id": "C03",
+      "work": "删除旧 Snapshot/IndexMap/execute/dispatcher/system registry/桌面锁",
+      "prerequisites": "C02",
+      "exit_evidence": "默认 Host 多 App 与 Core 调用测试通过；旧 API 不再导出"
+    },
+    {
+      "id": "C04",
+      "work": "SDK/AppKernel 单一 View 注册、Factory 和 Context 收敛",
+      "prerequisites": "C03",
+      "exit_evidence": "真实 mount/unmount/remount、onClose、Ref 注册与 Tool 生命周期通过"
+    },
+    {
+      "id": "C05",
+      "work": "ordinary-v1/ref-v1 调用迁移；单一 authoring、规范 schema",
+      "prerequisites": "C04",
+      "exit_evidence": "空只读、带参普通、Ref V2、错误参数、旧绑定拒绝全部通过"
+    },
+    {
+      "id": "C06",
+      "work": "移除 pre-Scope 调用、框架文件 CAS/entity/create 专用路径",
+      "prerequisites": "C05",
+      "exit_evidence": "真实业务写入与未知效果映射保持；框架不再持有文件专用状态"
+    },
+    {
+      "id": "C07",
+      "work": "删除旧生命周期/Factory/注入对象 fallback，实验能力转正",
+      "prerequisites": "C04–C06",
+      "exit_evidence": "停止、失败清理、迟到初始化、物理退出与持久化故障测试通过"
+    },
+    {
+      "id": "C08",
+      "work": "移除 Semantic Source 分离方法兼容缓存，收窄 exports/类型",
+      "prerequisites": "C03–C07",
+      "exit_evidence": "Context 唯一接入；关联 Host/Driver/应用编译通过"
+    },
+    {
+      "id": "C09",
+      "work": "清依赖、干净产物、当前文档/Skill/示例和实验目录",
+      "prerequisites": "C08",
+      "exit_evidence": "新 tar 无旧实现/测试泄漏；文档所有默认示例可运行"
+    },
+    {
+      "id": "C10",
+      "work": "全量剩余测试、真实 Worker/Host/IDE/外部消费者验证",
+      "prerequisites": "C09",
+      "exit_evidence": "完整新报告，性能/资源无越线；无旧回退"
+    }
+  ],
+  "items": [
+    {
+      "id": "D01",
+      "phase": "C01",
+      "status": "planned",
+      "target": "`runtime/src/engine/view/snapshot/builder.ts`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "删除重导出、专属测试；现行消息呈现不使用它",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "D02",
+      "phase": "C01",
+      "status": "planned",
+      "target": "Kernel 的 `transformer` 成员与工厂中无效注入",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "修改 `factory/createKernel.ts`、构造测试；不是删 Worker 内纯转换器",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "D03",
+      "phase": "C01",
+      "status": "planned",
+      "target": "`runtime/src/adapters/session/`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "删除私有 barrel 与废弃会话类型，不引入新 Session 框架",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "D04",
+      "phase": "C01",
+      "status": "planned",
+      "target": "`core/invocation/bound-action-executor.ts`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "删除专属实验测试；保留仍被 scoped 调用的 ledger",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "D05",
+      "phase": "C01",
+      "status": "planned",
+      "target": "`engine/core/operation-log-buffer.ts`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "当前扫描没有生产导入，仅专属测试；保留仍使用的 logger",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "D06",
+      "phase": "C01",
+      "status": "planned",
+      "target": "`worker-runtime/app-kernel/view-tree.ts`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "删除旧 tree 类型、barrel 及纯旧测试；不连带删除现行 View 身份",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "D07",
+      "phase": "C01",
+      "status": "planned",
+      "target": "`sdk/src/hooks/persistence-manager.ts`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "删除根导出及 throw-only 过渡测试",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "D08",
+      "phase": "C01",
+      "status": "planned",
+      "target": "`useMountableViewRegistry/useDynamicViewRegistry`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "同删 View 上的抛错字段、Context 字段及类型",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "D09",
+      "phase": "C01",
+      "status": "planned",
+      "target": "`useResourceRef` 别名",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "现行声明统一 `useDataRef/useArrayRef`；Preact `useRef` 保留",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "D10",
+      "phase": "C01",
+      "status": "planned",
+      "target": "`sdk/src/hooks/useSignalStore.ts`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "当前扫描只见导出；移除其类型和独占的 `@preact/signals` 依赖",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "D11",
+      "phase": "C01",
+      "status": "planned",
+      "target": "SDK 纯通用命名校验工具的公共再导出",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "`utils/validation.ts` 当前仅根导出与测试；Runtime 必需身份验证不删",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "D12",
+      "phase": "C01",
+      "status": "planned",
+      "target": "`core/snapshot/workspace.ts` 旧 composer",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "当前只见内层 barrel；保留 Semantic Source 真实多 App 聚合",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "M01",
+      "phase": "C03",
+      "status": "planned",
+      "target": "`adapters/aotui-driven-source.ts` 与旧默认 instruction",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "当前 Host 已使用 Semantic；删除 adapters 旧导出与旧专属测试",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "M02",
+      "phase": "C03",
+      "status": "planned",
+      "target": "`Kernel.acquireSnapshot/releaseSnapshot/execute/getSystemToolDefinitions`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "产品调用只用 Semantic/直接 App 生命周期入口；保留 Core 的 Snapshot lease",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "M03",
+      "phase": "C03",
+      "status": "planned",
+      "target": "`engine/system/registry.ts` 的旧 SnapshotRegistry",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "Kernel 和旧适配器不再持有它",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "M04",
+      "phase": "C03",
+      "status": "planned",
+      "target": "`engine/system/dispatcher.ts`",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "不再按任意字符串和当前 IndexMap 猜测 Ref/操作目标",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "M05",
+      "phase": "C03",
+      "status": "planned",
+      "target": "旧系统操作 registry、open/close/dismount 操作包装",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "保留 Desktop.openApp/closeApp 和 Semantic Source 控制工具",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "M06",
+      "phase": "C03",
+      "status": "planned",
+      "target": "`engine/view/snapshot/formatter.ts`、templates、旧 StructuredSnapshot 类型",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "XML/Markdown 呈现来自 Semantic Observation；共享格式工具先迁出",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "M07",
+      "phase": "C03",
+      "status": "planned",
+      "target": "Desktop/Sandbox/WorkerHost 的 Fragment getter/cache",
+      "disposition_or_action": "M→D",
+      "dependency_or_preserved_behavior": "发布通知职责先转移，真实消费者为零",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "M08",
+      "phase": "C03",
+      "status": "planned",
+      "target": "`SNAPSHOT_FRAGMENT`、`APP_OPERATION/VIEW_OPERATION`、旧 `OPERATION_RESPONSE`",
+      "disposition_or_action": "M→D",
+      "dependency_or_preserved_behavior": "新调用通道与 Semantic 发布可以独立完成所有必留场景",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "M09",
+      "phase": "C03",
+      "status": "planned",
+      "target": "旧桌面锁 `acquire/release/verify/refreshLock` 及 lock 配置",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "已无 Kernel.execute 消费；保留 Scope 并发限制、存储所有权和业务文件合作锁",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "M10",
+      "phase": "C03",
+      "status": "planned",
+      "target": "`OperationPayload/IndexMap/CachedSnapshot` 等纯旧类型",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "逐符号删；不能把现行 `OperationResult` 因名字含 Operation 一并删掉",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "P01",
+      "phase": "C02",
+      "status": "planned",
+      "target": "`SnapshotShadowReceiver`",
+      "disposition_or_action": "R：保留 Core 接纳、Scope 创建、关闭；删 legacy 比较/配对/差异计数，重命名为正式接收器",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "P02",
+      "phase": "C02",
+      "status": "planned",
+      "target": "`DomSnapshotShadowProducer.capture()` V1 分支",
+      "disposition_or_action": "D：保留 V2 捕获，去掉混合/type-wide 自动降级",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "P03",
+      "phase": "C02",
+      "status": "planned",
+      "target": "全 App legacy transform、IndexMap 合并、type-tool 元数据导出",
+      "disposition_or_action": "D：保留按 View 的正文与 Ref 投影",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "P04",
+      "phase": "C02",
+      "status": "planned",
+      "target": "`AOTUI_SNAPSHOT_SHADOW`、显式 shadow 开关和纯双轨诊断",
+      "disposition_or_action": "D：Semantic 成为必需路径，失配明确拒绝",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "P05",
+      "phase": "C02",
+      "status": "planned",
+      "target": "原 `exportRefsToIndexMap()`",
+      "disposition_or_action": "M→D：改为 Semantic Ref 清单端口；保留其真正导出 View 内 Ref 的功能",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "P06",
+      "phase": "C02",
+      "status": "planned",
+      "target": "Snapshot V1 类型、validator、兼容分支",
+      "disposition_or_action": "M→D：最终只接受现行结构；共有 JSON/refKey/容量工具迁入保留模块",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "S01",
+      "phase": "C04",
+      "status": "planned",
+      "target": "`useViewTypeTool` type-wide 重载与 `isLegacy` 分支",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "只保留当前 View-local 声明方式；不需要为清理额外改主 Hook 名称",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "S02",
+      "phase": "C04",
+      "status": "planned",
+      "target": "AppKernel.typeTools、callTypeTool、legacy Ref resolver",
+      "disposition_or_action": "D",
+      "dependency_or_preserved_behavior": "所有调用按 ViewInstance/Binding 路由",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "S03",
+      "phase": "C04",
+      "status": "planned",
+      "target": "`createInlineView`、operationsRef、旧 IView registry",
+      "disposition_or_action": "M→D",
+      "dependency_or_preserved_behavior": "从 `<View>` 移除第二套操作注册；保留真实挂载时的 owned identity、Ref、Tool 和 onClose 行为",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "S04",
+      "phase": "C04",
+      "status": "planned",
+      "target": "`ViewRegistry`、renderViewTree、data-view-tree、markDirty 对旧 tree 的刷新",
+      "disposition_or_action": "M→D",
+      "dependency_or_preserved_behavior": "Context 的 dirty/更新通知若仍需要，应接到投影端口，不再渲染旧 tree",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "S05",
+      "phase": "C04",
+      "status": "planned",
+      "target": "SDK Factory.create() throw-only、callable factory、view factory",
+      "disposition_or_action": "M→D",
+      "dependency_or_preserved_behavior": "`createTUIApp` 直接满足唯一组件 Factory；更新 AppRegistry 检测及 manifest 生成脚本",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "S06",
+      "phase": "C04",
+      "status": "planned",
+      "target": "`use-view-selector` 的缓存/比较包装",
+      "disposition_or_action": "M→D",
+      "dependency_or_preserved_behavior": "内部调用简化为必需 Context 读取与错误提示，不新建细粒度响应式框架",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "S07",
+      "phase": "C04",
+      "status": "planned",
+      "target": "重复 AppConfig Context/Hook",
+      "disposition_or_action": "M→D",
+      "dependency_or_preserved_behavior": "保留 `useAppConfig/useAppEnv` 的实际配置获取；将实现收敛到一个权威 Context",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "S08",
+      "phase": "C04",
+      "status": "planned",
+      "target": "根入口暴露的内部 registry/adapter/factory",
+      "disposition_or_action": "D 公共导出；按引用决定实现",
+      "dependency_or_preserved_behavior": "App 开发者不用的底层装配不在根入口；不通过新建大量 subpath 保存旧 API",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "T01",
+      "phase": "C05",
+      "status": "planned",
+      "target": "ordinary-v1 适配器/Worker handler/SDK wrapper",
+      "disposition_or_action": "空参数只读调用迁到 ordinary-v2，仍显式只读；不得通过改成 mutating 来逃避迁移",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "T02",
+      "phase": "C05",
+      "status": "planned",
+      "target": "snapshot-value-v1 传输与 SDK wrapper",
+      "disposition_or_action": "原观察值、同 View 归属、只读不可变与普通参数组合均迁到 Ref V2",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "T03",
+      "phase": "C05",
+      "status": "planned",
+      "target": "`experimental_useReadOnlyTool` 的平行注册实现",
+      "disposition_or_action": "将其必要 Ref V2 编译/只读类型能力合入唯一 View-local 声明路径；迁移调用后删除旧 Hook，不留 alias",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "T04",
+      "phase": "C05",
+      "status": "planned",
+      "target": "`sdk/utils/validateArgs.ts` 和手写 legacy Schema 转换",
+      "disposition_or_action": "所有正式调用使用同一规范参数合同；先迁出任何真实共享校验",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "T05",
+      "phase": "C05",
+      "status": "planned",
+      "target": "AppKernel/WorkerHost 中 `experimentalInteractionModes` 等实验资格开关",
+      "disposition_or_action": "用正式能力配置/默认支持集替代；保留 Worker ACK、实例与实际 callable 资格验证",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "T06",
+      "phase": "C05",
+      "status": "planned",
+      "target": "`view-tool-invocation-v1.ts` 旧文件名和混合职责",
+      "disposition_or_action": "迁出仍由 V2 和 lifecycle 使用的有界捕获/终态校验到正式共用模块，再删旧文件",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "B01",
+      "phase": "C06",
+      "status": "planned",
+      "target": "`WorkerHost.executeVersionedFileReplace()` 及专用 preflight",
+      "disposition_or_action": "删除；框架不拥有 IDE 文件写入",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "B02",
+      "phase": "C06",
+      "status": "planned",
+      "target": "`unobservedFileVersions/activeFileReplacements/fileReplacementWaiters` 等专用状态",
+      "disposition_or_action": "随 B01 删除其独占字段、报告字段和分支；通用在途调用、存储 I/O 与应用 close 等待保留",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "B03",
+      "phase": "C06",
+      "status": "planned",
+      "target": "`validateSnapshotValueRefTool/executeSnapshotValueRefTool/executeReadOnlyViewTool` 旧旁路",
+      "disposition_or_action": "删除；只允许 Scope 来源绑定调用",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "B04",
+      "phase": "C06",
+      "status": "planned",
+      "target": "SDK `useEntityRef`、旧 entity File mutation 切片",
+      "disposition_or_action": "删除该实验 authoring/执行链；业务自行维护实体 ID、版本和条件写入",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "B05",
+      "phase": "C06",
+      "status": "planned",
+      "target": "`create-if-absent-v1` Core/IPC/SDK 专用通道",
+      "disposition_or_action": "迁移后删除；已有业务改用普通工具 + 应用资源 adapter",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "B06",
+      "phase": "C06",
+      "status": "planned",
+      "target": "`experimental_useCreateIfAbsentTool` 与专用 outcome 类型",
+      "disposition_or_action": "迁移 WorkspaceCreateView 后删除；结果映射只做一次，测试其保真",
+      "dependency_or_preserved_behavior": "",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "L01",
+      "phase": "C07",
+      "target": "WorkerAppHostService / SignalServiceImpl / ViewManager 与旧注入分支",
+      "action": "删除多余装配与回退；保留唯一真实资源所有者",
+      "status": "planned",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "L02",
+      "phase": "C07",
+      "target": "legacy Factory / persistence / lifecycle fallback",
+      "action": "删除；正式 managed 协议失配明确拒绝；不把缺少 ACK 判成功",
+      "status": "planned",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "L03",
+      "phase": "C07",
+      "target": "experimental_useAppLifecycle / experimentalCreateAppScope",
+      "action": "正式命名与唯一入口；删除过渡 alias；回调可选",
+      "status": "planned",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "A01",
+      "phase": "C08",
+      "target": "SemanticAOTUIDrivenSource compatibilityContext/compatibilityPending 与 split methods",
+      "action": "删除；只保留 getContext/release，并同步关联类型及调用点",
+      "status": "planned",
+      "requires_reference_recheck_before_change": true
+    },
+    {
+      "id": "E01",
+      "phase": "C09",
+      "target": "依赖/exports/构建产物/lock/Skill/当前文档/实验包",
+      "action": "按正文 3.9 执行；不删除用户数据或尚未冻结的验收证据",
+      "status": "planned",
+      "requires_reference_recheck_before_change": true
+    }
+  ],
+  "invariants": [
+    {
+      "id": "I01",
+      "scenario": "未打开文件",
+      "required_result": "不暴露已打开文件的编辑 Binding"
+    },
+    {
+      "id": "I02",
+      "scenario": "打开 test.txt",
+      "required_result": "内容、Tool schema 与目标来自同一 Observation"
+    },
+    {
+      "id": "I03",
+      "scenario": "编辑后下一次观察",
+      "required_result": "只有一个最新 FileDetail 当前快照，正文不作为普通操作结果重复返回"
+    },
+    {
+      "id": "I04",
+      "scenario": "关闭再同 ID 重开",
+      "required_result": "原 ViewInstance/Binding 不重绑；旧调用拒绝"
+    },
+    {
+      "id": "I05",
+      "scenario": "Tool 停用/合同更新",
+      "required_result": "旧 Binding 拒绝；不能靠猜工具名调用"
+    },
+    {
+      "id": "I06",
+      "scenario": "无关 View/面板变化",
+      "required_result": "不无谓撤销未变化的合法绑定"
+    },
+    {
+      "id": "I07",
+      "scenario": "31 秒思考、Context 释放",
+      "required_result": "默认 owner lifetime 继续可用；显式 release 后拒绝"
+    },
+    {
+      "id": "I08",
+      "scenario": "300 轮上下文",
+      "required_result": "Observation/Scope 按所有权释放，不因固定 Scope 去重表累积耗尽"
+    },
+    {
+      "id": "I09",
+      "scenario": "Ref-only/Tool-only/后台 DOM 变化",
+      "required_result": "无 legacy Fragment 仍发布更新且按策略通知"
+    },
+    {
+      "id": "I10",
+      "scenario": "初始空/最后 View 关闭",
+      "required_result": "合法空 Semantic 状态；不保留幽灵能力"
+    },
+    {
+      "id": "I11",
+      "scenario": "五种 outcome/失败副作用",
+      "required_result": "rejected、failed-none、partial、accepted、unknown 不被误报为成功或安全重试"
+    },
+    {
+      "id": "I12",
+      "scenario": "请求重复或冲突",
+      "required_result": "同 Scope 同请求不二次进入；同 ID 不同请求拒绝"
+    },
+    {
+      "id": "I13",
+      "scenario": "参数与引用",
+      "required_result": "空只读、普通约束、额外字段、Ref 归属及原始快照值一致"
+    },
+    {
+      "id": "I14",
+      "scenario": "发布/传输失败",
+      "required_result": "不把写入不确定性清零，不自动重放"
+    },
+    {
+      "id": "I15",
+      "scenario": "stop/close 与迟到工作",
+      "required_result": "停止准入；实际 pending/I/O/子资源的责任不提前消失"
+    },
+    {
+      "id": "I16",
+      "scenario": "生命周期故障",
+      "required_result": "flush/unmount/close/release 失败分别保留；仍尝试独立清理"
+    },
+    {
+      "id": "I17",
+      "scenario": "Worker 复用",
+      "required_result": "旧 lease/旧 listener/旧 App 回调不能影响新实例"
+    },
+    {
+      "id": "I18",
+      "scenario": "容量与纯 Core",
+      "required_result": "超限明确拒绝；ES2022、无 Node/DOM 类型消费者仍成立"
+    },
+    {
+      "id": "I19",
+      "scenario": "包与 CLI/宿主",
+      "required_result": "使用新 tar 严格类型检查；默认 ./run.sh 无旧路由依赖"
+    },
+    {
+      "id": "I20",
+      "scenario": "业务 adapter",
+      "required_result": "IDE 真实文件冲突/独占创建/LSP；Terminal 后台进度；Browser；Token Monitor 均不丢能力"
+    }
+  ],
+  "inspected_sha256": {
+    "AGENTS.md": "a0365e3e59d9f481dffc9de95bd49acca00e72aa690b4158ca7827c61932ca9a",
+    "runtime/src/adapters/semantic-aotui-driven-source.ts": "e499bafad60e610692bf30e23fcbd3dccf5acd2bdb2babc711308c3a64c2be34",
+    "runtime/src/worker-runtime/index.ts": "227a84514f2dd815e4c9c5912b72b62d06ac2a7a93d27419e0564ea8c5188450",
+    "runtime/src/engine/app/worker-host.ts": "d7f651426bf8d940155a8ca87c7bf6644347300bd3cd737241094fda3baa45a7",
+    "sdk/src/hooks/useViewTypeTool.ts": "d2e7934a572f5beb20b5d8f2b6f2b69bfdc7b703fa58427911d6df44a2a8169a",
+    "runtime/src/core/invocation/scoped-interaction.ts": "80c99e5239cf81960e56f37dcfe6a739fcceeafac4989c721b60904b42db4ba8"
+  },
+  "plan_file": "AOTUI_SEMANTIC_CLEANUP_PLAN.zh-CN.md",
+  "plan_sha256": "d83c6d5122e882f30ca96e3d811b5b4a9ceddee7a659e86c5b20743bb48017e8"
+}

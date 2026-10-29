@@ -1,0 +1,165 @@
+=== STAGE5_RUN_1 ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+·····[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+stderr | src/engine/app/worker-host.m4-versioned-file.test.ts
+[AppWorkerHost] Worker versioned_app exited with code 1
+
+··stderr | src/engine/app/worker-host.m4-v2-shadow.test.ts
+[AppWorkerHost] Worker m4_app exited with code 1
+
+
+
+ Test Files  3 passed (3)
+      Tests  7 passed (7)
+   Start at  12:24:25
+   Duration  1.18s (transform 284ms, setup 0ms, collect 519ms, tests 924ms, environment 0ms, prepare 172ms)
+
+RUNTIME_RUN_1_EXIT=0
+PASS src/__tests__/versioned-file-write.test.ts
+  M4 Stage 5: scoped versioned file replacement (real filesystem)
+    ✓ reads an exact content version and atomically replaces only that version (8 ms)
+    ✓ stale observation after an external edit never overwrites the newer content (4 ms)
+    ✓ 8 concurrent cooperating writers with the same version cannot overwrite the winner (5 ms)
+    ✓ a stale second call after the first successful write does not run again (6 ms)
+    ✓ does not allow writing a file outside the explicit workspace (7 ms)
+    ✓ disallows symlink parents escaping the workspace (1 ms)
+    ✓ refuses a symlink target even if it points inside workspace (5 ms)
+    ✓ refuses hardlinks, preserving any alias to the existing inode (2 ms)
+    ✓ does not replace an unexpectedly missing file (2 ms)
+    ✓ refuses malformed version, oversize text, and non-UTF8 files (9 ms)
+    ✓ existing lock never gets overridden or deleted by another writer (1 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       11 passed, 11 total
+Snapshots:   0 total
+Time:        0.845 s, estimated 2 s
+Ran all test suites matching /src\/__tests__\/versioned-file-write.test.ts/i.
+IDE_RUN_1_EXIT=0
+=== STAGE5_RUN_2 ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+·····[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+·stderr | src/engine/app/worker-host.m4-v2-shadow.test.ts > M4 Stage 2: real Worker V2 source-bound Shadow > publishes immutable View-instance/Tool targets in one V2 commit while the legacy route stays unchanged
+[AppWorkerHost] Worker m4_app exited with code 1
+
+·
+
+ Test Files  3 passed (3)
+      Tests  7 passed (7)
+   Start at  12:24:28
+   Duration  1.09s (transform 175ms, setup 0ms, collect 383ms, tests 909ms, environment 0ms, prepare 158ms)
+
+RUNTIME_RUN_2_EXIT=0
+PASS src/__tests__/versioned-file-write.test.ts
+  M4 Stage 5: scoped versioned file replacement (real filesystem)
+    ✓ reads an exact content version and atomically replaces only that version (10 ms)
+    ✓ stale observation after an external edit never overwrites the newer content (5 ms)
+    ✓ 8 concurrent cooperating writers with the same version cannot overwrite the winner (6 ms)
+    ✓ a stale second call after the first successful write does not run again (6 ms)
+    ✓ does not allow writing a file outside the explicit workspace (6 ms)
+    ✓ disallows symlink parents escaping the workspace (2 ms)
+    ✓ refuses a symlink target even if it points inside workspace (5 ms)
+    ✓ refuses hardlinks, preserving any alias to the existing inode (1 ms)
+    ✓ does not replace an unexpectedly missing file (2 ms)
+    ✓ refuses malformed version, oversize text, and non-UTF8 files (8 ms)
+    ✓ existing lock never gets overridden or deleted by another writer (1 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       11 passed, 11 total
+Snapshots:   0 total
+Time:        0.781 s, estimated 1 s
+Ran all test suites matching /src\/__tests__\/versioned-file-write.test.ts/i.
+IDE_RUN_2_EXIT=0
+=== STAGE5_RUN_3 ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+·····[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+stderr | src/engine/app/worker-host.m4-versioned-file.test.ts > M4 Stage 5 real Worker source-to-file safety > rejects stale files and mutating Worker Tool requests, then writes only via explicit filesystem CAS
+[AppWorkerHost] Worker versioned_app exited with code 1
+
+·stderr | src/engine/app/worker-host.m4-v2-shadow.test.ts > M4 Stage 2: real Worker V2 source-bound Shadow > publishes immutable View-instance/Tool targets in one V2 commit while the legacy route stays unchanged
+[AppWorkerHost] Worker m4_app exited with code 1
+
+·
+
+ Test Files  3 passed (3)
+      Tests  7 passed (7)
+   Start at  12:24:31
+   Duration  1.10s (transform 180ms, setup 0ms, collect 386ms, tests 887ms, environment 0ms, prepare 177ms)
+
+RUNTIME_RUN_3_EXIT=0
+PASS src/__tests__/versioned-file-write.test.ts
+  M4 Stage 5: scoped versioned file replacement (real filesystem)
+    ✓ reads an exact content version and atomically replaces only that version (9 ms)
+    ✓ stale observation after an external edit never overwrites the newer content (4 ms)
+    ✓ 8 concurrent cooperating writers with the same version cannot overwrite the winner (7 ms)
+    ✓ a stale second call after the first successful write does not run again (6 ms)
+    ✓ does not allow writing a file outside the explicit workspace (6 ms)
+    ✓ disallows symlink parents escaping the workspace (2 ms)
+    ✓ refuses a symlink target even if it points inside workspace (5 ms)
+    ✓ refuses hardlinks, preserving any alias to the existing inode (2 ms)
+    ✓ does not replace an unexpectedly missing file (2 ms)
+    ✓ refuses malformed version, oversize text, and non-UTF8 files (8 ms)
+    ✓ existing lock never gets overridden or deleted by another writer (1 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       11 passed, 11 total
+Snapshots:   0 total
+Time:        0.765 s, estimated 1 s
+Ran all test suites matching /src\/__tests__\/versioned-file-write.test.ts/i.
+IDE_RUN_3_EXIT=0
+=== STAGE5_RUN_4 ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+·····[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+stderr | src/engine/app/worker-host.m4-versioned-file.test.ts
+[AppWorkerHost] Worker versioned_app exited with code 1
+
+·stderr | src/engine/app/worker-host.m4-v2-shadow.test.ts > M4 Stage 2: real Worker V2 source-bound Shadow > publishes immutable View-instance/Tool targets in one V2 commit while the legacy route stays unchanged
+[AppWorkerHost] Worker m4_app exited with code 1
+
+·
+
+ Test Files  3 passed (3)
+      Tests  7 passed (7)
+   Start at  12:24:34
+   Duration  1.13s (transform 191ms, setup 0ms, collect 405ms, tests 901ms, environment 0ms, prepare 176ms)
+
+RUNTIME_RUN_4_EXIT=0
+PASS src/__tests__/versioned-file-write.test.ts
+  M4 Stage 5: scoped versioned file replacement (real filesystem)
+    ✓ reads an exact content version and atomically replaces only that version (11 ms)
+    ✓ stale observation after an external edit never overwrites the newer content (2 ms)
+    ✓ 8 concurrent cooperating writers with the same version cannot overwrite the winner (9 ms)
+    ✓ a stale second call after the first successful write does not run again (4 ms)
+    ✓ does not allow writing a file outside the explicit workspace (8 ms)
+    ✓ disallows symlink parents escaping the workspace (2 ms)
+    ✓ refuses a symlink target even if it points inside workspace (5 ms)
+    ✓ refuses hardlinks, preserving any alias to the existing inode (2 ms)
+    ✓ does not replace an unexpectedly missing file (1 ms)
+    ✓ refuses malformed version, oversize text, and non-UTF8 files (9 ms)
+    ✓ existing lock never gets overridden or deleted by another writer (1 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       11 passed, 11 total
+Snapshots:   0 total
+Time:        0.767 s, estimated 1 s
+Ran all test suites matching /src\/__tests__\/versioned-file-write.test.ts/i.
+IDE_RUN_4_EXIT=0

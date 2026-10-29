@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AppManager, type InstalledApp } from './index.js';
 import type { IDesktop, AppID } from '../../spi/index.js';
+import { WorkerSandbox } from './worker-sandbox.js';
 
 // ============================================================================
 // Mock Desktop
@@ -42,6 +43,18 @@ function createMockDesktop(): IDesktop & {
     } as any;
 }
 
+// These private fixture objects own no OS resources. Their C1 reports describe only
+// the controlled close attempt, retaining a rejected close as a known failure.
+function c1Worker(reinitialize = vi.fn().mockResolvedValue(undefined), close = vi.fn().mockResolvedValue(undefined)) {
+    let settled = false;const issues: string[] = [];
+    const getCloseReport = () => ({ state: settled ? 'settled' : 'active', intent: settled ? 'close' : null,
+        ok: settled && !issues.length, resourcesReleased: settled, issues: [...issues] });
+    return { reinitialize, close, getCloseReport, disposeAsync: vi.fn(async () => {
+        try { await close(); } catch { issues.push('APP_CLOSE_FAILED'); }settled = true;return getCloseReport();
+    }) };
+}
+function launchConfig(manager: AppManager, appId: string) { return (manager.getWorkerSandbox(appId) as any).config; }
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -55,9 +68,8 @@ describe('AppManager', () => {
         manager = new AppManager(desktop);
     });
 
-    afterEach(() => {
-        // 清理所有 Worker（防止泄漏）
-        manager.cleanup();
+    afterEach(async () => {
+        await manager.cleanupAsync();
     });
 
     // ════════════════════════════════════════════════════════════════
@@ -153,23 +165,11 @@ describe('AppManager', () => {
 
     describe('reinitializeAll', () => {
         it('对 running / paused / collapsed app 重新初始化，并跳过 closed / pending', async () => {
-            const installSpy = vi.spyOn(manager, 'install').mockResolvedValue('app_running' as any);
+            const startSpy = vi.spyOn(WorkerSandbox.prototype, 'installDynamic').mockResolvedValue(undefined);
 
-            const runningWorker = {
-                reinitialize: vi.fn().mockResolvedValue(undefined),
-                close: vi.fn().mockResolvedValue(undefined),
-                dispose: vi.fn(),
-            };
-            const pausedWorker = {
-                reinitialize: vi.fn().mockResolvedValue(undefined),
-                close: vi.fn().mockResolvedValue(undefined),
-                dispose: vi.fn(),
-            };
-            const collapsedWorker = {
-                reinitialize: vi.fn().mockResolvedValue(undefined),
-                close: vi.fn().mockResolvedValue(undefined),
-                dispose: vi.fn(),
-            };
+            const runningWorker = c1Worker();
+            const pausedWorker = c1Worker();
+            const collapsedWorker = c1Worker();
 
             (manager as any).installedApps.set('app_running', {
                 appId: 'app_running',
@@ -217,11 +217,6 @@ describe('AppManager', () => {
             (manager as any).workers.set('app_paused', pausedWorker);
             (manager as any).workers.set('app_collapsed', collapsedWorker);
 
-            installSpy
-                .mockResolvedValueOnce('app_running' as any)
-                .mockResolvedValueOnce('app_paused' as any)
-                .mockResolvedValueOnce('app_collapsed' as any);
-
             const result = await manager.reinitializeAll({ reason: 'context_compaction' });
 
             expect(result).toEqual({
@@ -235,28 +230,23 @@ describe('AppManager', () => {
             expect(runningWorker.close).toHaveBeenCalledTimes(1);
             expect(pausedWorker.close).toHaveBeenCalledTimes(1);
             expect(collapsedWorker.close).toHaveBeenCalledTimes(1);
-            expect(installSpy).toHaveBeenNthCalledWith(1, '/running', expect.objectContaining({ appId: 'app_running' }));
-            expect(installSpy).toHaveBeenNthCalledWith(2, '/paused', expect.objectContaining({ appId: 'app_paused' }));
-            expect(installSpy).toHaveBeenNthCalledWith(3, '/collapsed', expect.objectContaining({ appId: 'app_collapsed' }));
+            expect(startSpy).toHaveBeenCalledTimes(3);
+            for (const [appId, modulePath] of [['app_running','/running'],['app_paused','/paused'],['app_collapsed','/collapsed']]) {
+                expect(launchConfig(manager, appId)).toMatchObject({ appId, appModulePath: modulePath,
+                    config: { __aotuiLifecycle: { startupKind: 'reinitialize', reason: 'context_compaction' } } });
+            }
+            expect(launchConfig(manager, 'app_running').config.projectPath).toBe('/repo');
             expect(manager.getInstalledApps().find((app) => app.appId === 'app_closed')?.status).toBe('closed');
             expect(manager.getInstalledApps().find((app) => app.appId === 'app_pending')?.status).toBe('pending');
 
-            installSpy.mockRestore();
+            startSpy.mockRestore();
         });
 
         it('单个 app 重新初始化失败时不影响其他 app，并将失败 app 置为 closed', async () => {
-            const installSpy = vi.spyOn(manager, 'install').mockResolvedValue('app_ok' as any);
+            const startSpy = vi.spyOn(WorkerSandbox.prototype, 'installDynamic').mockResolvedValue(undefined);
 
-            const okWorker = {
-                reinitialize: vi.fn().mockResolvedValue(undefined),
-                close: vi.fn().mockResolvedValue(undefined),
-                dispose: vi.fn(),
-            };
-            const badWorker = {
-                reinitialize: vi.fn().mockRejectedValue(new Error('boom')),
-                close: vi.fn().mockRejectedValue(new Error('boom')),
-                dispose: vi.fn(),
-            };
+            const okWorker = c1Worker();
+            const badWorker = c1Worker(vi.fn().mockRejectedValue(new Error('boom')), vi.fn().mockRejectedValue(new Error('boom')));
 
             (manager as any).installedApps.set('app_ok', {
                 appId: 'app_ok',
@@ -283,11 +273,11 @@ describe('AppManager', () => {
             expect(result.reinitializedAppIds).toEqual(['app_ok']);
             expect(result.failedAppIds).toEqual(['app_bad']);
             expect(result.skippedAppIds).toEqual([]);
-            expect(installSpy).toHaveBeenCalledTimes(1);
-            expect(installSpy).toHaveBeenCalledWith('/ok', expect.objectContaining({ appId: 'app_ok' }));
+            expect(startSpy).toHaveBeenCalledTimes(1);
+            expect(launchConfig(manager, 'app_ok')).toMatchObject({ appId: 'app_ok', appModulePath: '/ok' });
             expect(manager.getInstalledApps().find((app) => app.appId === 'app_bad')?.status).toBe('closed');
 
-            installSpy.mockRestore();
+            startSpy.mockRestore();
         });
     });
 
@@ -307,10 +297,7 @@ describe('AppManager', () => {
 
         it('应该真正关闭 worker 并将 app 标记为 closed', async () => {
             const appId = 'app_0' as AppID;
-            const worker = {
-                close: vi.fn().mockResolvedValue(undefined),
-                dispose: vi.fn(),
-            };
+            const worker = c1Worker();
 
             (manager as any).installedApps.set(appId, {
                 appId,
@@ -325,7 +312,8 @@ describe('AppManager', () => {
             await manager.closeApp(appId);
 
             expect(worker.close).toHaveBeenCalledTimes(1);
-            expect(worker.dispose).toHaveBeenCalledTimes(1);
+            expect(worker.disposeAsync).toHaveBeenCalledTimes(1);
+            expect(worker.getCloseReport()).toMatchObject({ state: 'settled', resourcesReleased: true });
             expect(manager.getAllWorkers().has(appId)).toBe(false);
             expect(manager.getInstalledApps()[0]?.status).toBe('closed');
         });
@@ -374,7 +362,7 @@ describe('AppManager', () => {
 
         it('openApp 应该自动启动 pending 状态的 App', async () => {
             // Mock install 方法以避开 WorkerSandbox 创建
-            const installSpy = vi.spyOn(manager, 'install').mockResolvedValue('app_0' as any);
+            const startSpy = vi.spyOn(WorkerSandbox.prototype, 'installDynamic').mockResolvedValue(undefined);
 
             const appId = manager.registerPendingApp({
                 name: 'lazy-app',
@@ -383,16 +371,15 @@ describe('AppManager', () => {
 
             await manager.openApp(appId);
 
-            expect(installSpy).toHaveBeenCalledWith('/path/to/module', expect.objectContaining({
-                appId: appId,
-                name: 'lazy-app'
-            }));
+            expect(startSpy).toHaveBeenCalledTimes(1);
+            expect(launchConfig(manager, appId)).toMatchObject({ appId, appModulePath: '/path/to/module', name: 'lazy-app' });
+            expect(manager.getInstalledApps()[0].status).toBe('running');
 
-            installSpy.mockRestore();
+            startSpy.mockRestore();
         });
 
         it('openApp 应该自动重新启动 closed 状态的 App', async () => {
-            const installSpy = vi.spyOn(manager, 'install').mockResolvedValue('app_0' as any);
+            const startSpy = vi.spyOn(WorkerSandbox.prototype, 'installDynamic').mockResolvedValue(undefined);
 
             const appId = manager.registerPendingApp({
                 name: 'lazy-app',
@@ -400,32 +387,28 @@ describe('AppManager', () => {
                 workerScriptPath: '/path/to/worker',
             });
 
-            const installedApp = manager.getInstalledApps()[0]!;
+            const installedApp = (manager as any).installedApps.get(appId)!;
             installedApp.status = 'closed';
             installedApp.whatItIs = 'IDE';
             installedApp.whenToUse = 'Use for code';
             installedApp.config = { projectPath: '/repo' };
+            expect(manager.getInstalledApps()[0]).toMatchObject({ appId, status: 'closed', whatItIs: 'IDE', whenToUse: 'Use for code', config: { projectPath: '/repo' } });
 
             await manager.openApp(appId);
 
-            expect(installSpy).toHaveBeenCalledWith('/path/to/module', {
-                appId,
-                name: 'lazy-app',
-                description: undefined,
-                whatItIs: 'IDE',
-                whenToUse: 'Use for code',
-                workerScriptPath: '/path/to/worker',
-                config: { projectPath: '/repo' },
-                runtimeConfig: undefined,
-                promptRole: undefined,
+            expect(startSpy).toHaveBeenCalledTimes(1);
+            expect(launchConfig(manager, appId)).toMatchObject({
+                appId, name: 'lazy-app', appModulePath: '/path/to/module', workerScriptPath: '/path/to/worker',
+                config: { projectPath: '/repo', __aotuiLifecycle: { startupKind: 'normal' } }
             });
+            expect(manager.getInstalledApps()[0]).toMatchObject({ appId, status: 'running', whatItIs: 'IDE', whenToUse: 'Use for code' });
 
-            installSpy.mockRestore();
+            startSpy.mockRestore();
         });
 
         it('startPendingApp 应该启动 App 并更新状态', async () => {
             // Mock install 方法
-            const installSpy = vi.spyOn(manager, 'install').mockResolvedValue('app_0' as any);
+            const startSpy = vi.spyOn(WorkerSandbox.prototype, 'installDynamic').mockResolvedValue(undefined);
 
             const appId = manager.registerPendingApp({
                 name: 'lazy-app',
@@ -436,14 +419,11 @@ describe('AppManager', () => {
             const result = await manager.startPendingApp(appId);
 
             expect(result).toBe(true);
-            expect(installSpy).toHaveBeenCalledWith('/path/to/module', {
-                appId,
-                name: 'lazy-app',
-                description: undefined,
-                workerScriptPath: '/path/to/worker'
-            });
+            expect(startSpy).toHaveBeenCalledTimes(1);
+            expect(launchConfig(manager, appId)).toMatchObject({ appId, name: 'lazy-app', appModulePath: '/path/to/module', workerScriptPath: '/path/to/worker' });
+            expect(manager.getInstalledApps()[0].status).toBe('running');
 
-            installSpy.mockRestore();
+            startSpy.mockRestore();
         });
 
         it('startPendingApp 对非 staged App 应返回 false', async () => {

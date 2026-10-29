@@ -1,0 +1,111 @@
+{
+  "stage": "Wave 2A independent review",
+  "verdict": {
+    "wave2a": "LIMITED_PASS",
+    "stage8R1": "REMAINS_CLOSED",
+    "fullM4": "NO_GO",
+    "strict": "NO_GO",
+    "defaultAgentRouterSwitch": "NOT_AUTHORIZED",
+    "mutatingEnablement": "NOT_AUTHORIZED",
+    "nextWaveExecuted": false,
+    "codexInvokedByReviewer": false
+  },
+  "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "indexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "acceptedHostSha256": "28ede7ca387b143e45cbb9df2da8c779ac9a82d5a22f75931d298a2cdfbbfeee",
+  "environment": {
+    "node": "v24.15.0",
+    "pnpm": "10.15.1"
+  },
+  "commandsActuallyRun": 12,
+  "independentRegression": {
+    "runtime": {
+      "files": 70,
+      "passed": 631,
+      "skipped": 3,
+      "todo": 7
+    },
+    "sdk": {
+      "files": 9,
+      "passed": 86
+    },
+    "ide": {
+      "suites": 6,
+      "passed": 27
+    }
+  },
+  "stability": {
+    "rounds": 3,
+    "filesPerRound": 9,
+    "passedPerRound": 108,
+    "allExitZero": true
+  },
+  "independentTtlDifferential": [
+    {
+      "version": "before",
+      "hostSha256": "3326f6b0f84caae9d189e8856dcc71a1ed16cea61784df0bd140572820b3087e",
+      "success": true,
+      "error": null,
+      "result": {
+        "who": "A"
+      },
+      "handlerCalls": {
+        "A": 1,
+        "B": 0
+      },
+      "activeLeases": 0
+    },
+    {
+      "version": "after",
+      "hostSha256": "28ede7ca387b143e45cbb9df2da8c779ac9a82d5a22f75931d298a2cdfbbfeee",
+      "success": false,
+      "error": "SNAPSHOT_EXPIRED",
+      "result": null,
+      "handlerCalls": {
+        "A": 0,
+        "B": 0
+      },
+      "activeLeases": 0
+    }
+  ],
+  "performance": "NOT_TESTED",
+  "coverage": "NOT_TESTED",
+  "integrity": {
+    "checkedUTC": "2026-10-23T13:49:21.161358+00:00",
+    "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+    "indexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+    "preexistingPathsChecked": 1184,
+    "changedPreexistingPaths": [],
+    "writesOnlyUnder": "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01",
+    "ignoredBuildProductsExcluded": true,
+    "issues": []
+  },
+  "blockingFindings": [],
+  "records": "independent-reruns.json",
+  "differential": "differential-review.json",
+  "acceptanceReport": {
+    "path": "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/CHATGPT_WAVE2A_ACCEPTANCE.md",
+    "sha256": "14c812f8b42f4dc342c0aabecce9169044e4d4ce346024fa9dc5c15d32a83f6f"
+  },
+  "evidenceSha256": {
+    "CHATGPT_WAVE2A_ACCEPTANCE.md": "14c812f8b42f4dc342c0aabecce9169044e4d4ce346024fa9dc5c15d32a83f6f",
+    "differential-review.json": "21a867fc009dd82fb805f54bffe94494c4d69d8182f785270d14a9b26ee9804f",
+    "ide-jest.log": "cbefa0404709597ea5a5a83189fd41ac03f55833f91f282370dc940e6d9fb488",
+    "ide-tsc.log": "0c2bcaa780552744d9ade66da1328590b4c2801791f26fd603c9003259c8fd04",
+    "independent-reruns.json": "615a29d2d8d61e798f8120ab126ba5c72de65669a805348687b2f92b1d97f245",
+    "integrity-after.json": "ce8ebe8209be8f6af054b7b18c3f01c7d9a875ba25e7bffa0658091597644435",
+    "integrity-before.json": "529ad0064399be57feba7af9199f097bb77b35d8a9b41702d65b475f371644bb",
+    "r1-original-controlled.log": "2d1de8dff925ea45a1c4f8c7749c4f014411a75f7f1a9098fba28106f312d6c1",
+    "r1-original-real-worker.log": "9b1695337ecd24919ebe4d32e527ebb925f80a7b68f527712618ba27b5158a3c",
+    "review-start-file-hashes.json": "dad8ecbb3b88bc425e5a5290410fe61fc16ce9caf88a5d9dd6c1974a15316ba5",
+    "runtime-tsc.log": "d686f0fe00fbf7e1e423112863626a7846dac6f657082fb33f0bc1becc82a957",
+    "runtime-vitest.log": "c6c8710b921406f41ef672fd6fa87c9c620983ab5f8d78a3f40712b70594774e",
+    "sdk-tsc.log": "bc1b80999c317acb71360bd9cd2ee0af3ed57e92d02b08fb8345735593d05bfb",
+    "sdk-vitest.log": "0d8df3b22d863d1cbbafac078d1fcf6abd6d3d4393f56820c9efafaf17b2cc5f",
+    "stability-1.log": "3cf7971ba83a9554b5dbed12f0be0af05ba2bc553e1f71dd2e4ba361bb63b153",
+    "stability-2.log": "82f428c7cddc87ca0bc5651d87d2b5a44a8fd923d5a745f00c9392edfc97874a",
+    "stability-3.log": "b89670c9c042f9ba89754c7ac99090fcf379a835f0b87579d12db82a4e3dcb1b",
+    "ttl-source-differential.log": "4566d78359dafa1a92e9922237556c9d44659d40365b5d4c6cdc64e873a81045",
+    "ttl-source-differential.mjs": "7227f8c78e2d9b19e52f1c7e983e34b5a5bf37814b1f7bfaab7b2703dd7baeb7"
+  }
+}

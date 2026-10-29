@@ -1,0 +1,34 @@
+COMMAND: node 'Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race.mjs'
+START_UTC: 2026-10-23T12:17:33.391421+00:00
+{"method":"start","terminal":"terminate","atTermination":"closed","afterContinuation":"ready","workerIsNull":true,"lifecyclePromise":"resolved","violated":true}
+{"method":"start","terminal":"exit","atTermination":"error","afterContinuation":"ready","workerIsNull":true,"lifecyclePromise":"resolved","violated":true}
+{"method":"open","terminal":"terminate","atTermination":"closed","afterContinuation":"running","workerIsNull":true,"lifecyclePromise":"resolved","violated":true}
+{"method":"open","terminal":"exit","atTermination":"error","afterContinuation":"running","workerIsNull":true,"lifecyclePromise":"resolved","violated":true}
+{"method":"pause","terminal":"terminate","atTermination":"closed","afterContinuation":"paused","workerIsNull":true,"lifecyclePromise":"resolved","violated":true}
+{"method":"pause","terminal":"exit","atTermination":"error","afterContinuation":"paused","workerIsNull":true,"lifecyclePromise":"resolved","violated":true}
+{"method":"resume","terminal":"terminate","atTermination":"closed","afterContinuation":"running","workerIsNull":true,"lifecyclePromise":"resolved","violated":true}
+{"method":"resume","terminal":"exit","atTermination":"error","afterContinuation":"running","workerIsNull":true,"lifecyclePromise":"resolved","violated":true}
+{"method":"reinitialize","terminal":"terminate","atTermination":"closed","afterContinuation":"closed","workerIsNull":true,"lifecyclePromise":"resolved","violated":true}
+{"method":"reinitialize","terminal":"exit","atTermination":"error","afterContinuation":"error","workerIsNull":true,"lifecyclePromise":"resolved","violated":true}
+REVIEW_ASSERTION: terminal Host must not revive, and invalidated lifecycle must reject
+VIOLATIONS=10/10
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Terminal lifecycle invariant violated by fulfilled transport continuation
+
+10 !== 0
+
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/Runtime%20Core%20Semantic%20Contract%20RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race.mjs:49:8 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 10,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.15.0
+
+EXIT_CODE: 1

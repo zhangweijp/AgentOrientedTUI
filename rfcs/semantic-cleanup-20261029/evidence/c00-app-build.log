@@ -1,0 +1,21 @@
+
+> @agentina/aotui-ide@0.1.2 build /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/aotui-ide
+> tsc && node ../../scripts/generate-aoapp.mjs .
+
+[generate-aoapp] Wrote /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/aotui-ide/aoapp.json
+
+> @agentina/aotui-terminal@1.0.2 build /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/terminal-app
+> tsc && node ../../scripts/generate-aoapp.mjs .
+
+[generate-aoapp] Wrote /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/terminal-app/aoapp.json
+
+> @aotui/system-lite-browser@0.1.0 build /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/lite-browser-app
+> tsc && node ../../scripts/generate-aoapp.mjs .
+
+[generate-aoapp] Wrote /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/lite-browser-app/aoapp.json
+
+> @aotui/system-token-monitor@0.1.0 build /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/token-monitor-app
+> tsc && node ../../scripts/generate-aoapp.mjs .
+
+sh: tsc: command not found
+ ELIFECYCLE  Command failed.

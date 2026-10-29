@@ -89,57 +89,6 @@ export interface OperationLogEntry {
 }
 
 // ============================================================================
-// Operation Log Buffer Interface
-// ============================================================================
-
-/**
- * Operation Log Buffer Interface
- * 
- * Manages a ring buffer of operation log entries with filtering capabilities.
- * 
- * Default limits:
- * - System logs: 5 most recent
- * - App logs: 3 most recent per app
- */
-export interface IOperationLogBuffer {
-    /**
-     * Push a new log entry to the buffer
-     * 
-     * @param entry - The log entry to add
-     */
-    push(entry: OperationLogEntry): void;
-
-    /**
-     * Get recent system-scope logs
-     * 
-     * @param count - Maximum number of logs to return
-     * @returns Array of log entries, most recent last
-     */
-    getSystemLogs(count: number): OperationLogEntry[];
-
-    /**
-     * Get recent logs for a specific app
-     * 
-     * @param appId - The app ID to filter by
-     * @param count - Maximum number of logs to return
-     * @returns Array of log entries, most recent last
-     */
-    getAppLogs(appId: AppID, count: number): OperationLogEntry[];
-
-    /**
-     * Get all logs (for debugging)
-     * 
-     * @returns All log entries
-     */
-    getAllLogs(): OperationLogEntry[];
-
-    /**
-     * Clear all logs
-     */
-    clear(): void;
-}
-
-// ============================================================================
 // Log Entry Builder Helper
 // ============================================================================
 

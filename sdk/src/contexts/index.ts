@@ -21,9 +21,7 @@ export type {
   IViewMeta,
   IRefRegistry,
   IViewLinkRegistry,
-  IMountableViewRegistry,
   IOperationRegistry,
-  IDynamicViewRegistry,
   ITypeToolRegistry,
   IAppConfig,
   RegisterLinkOptionsPublic as RegisterLinkOptions,
@@ -31,16 +29,7 @@ export type {
 } from "@aotui/runtime/spi";
 
 // Import for context creation (need the actual types)
-import type {
-  IViewMeta,
-  IRefRegistry,
-  IViewLinkRegistry,
-  IMountableViewRegistry,
-  IOperationRegistry,
-  IDynamicViewRegistry,
-  ITypeToolRegistry,
-  IAppConfig,
-} from "@aotui/runtime/spi";
+import type { IAppConfig } from "@aotui/runtime/spi";
 
 /**
  * IView 的 Context 别名 (避免循环依赖)

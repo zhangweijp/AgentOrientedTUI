@@ -124,7 +124,7 @@ const ERROR_MESSAGES: Record<ErrorCode, MessageFormatter> = {
     VIEW_NOT_FOUND: (c) => `View '${c.viewId ?? 'unknown'}' not found`,
     VIEW_DUPLICATE: (c) => `View '${c.viewId ?? 'unknown'}' already exists`,
     VIEW_PARENT_NOT_FOUND: (c) => `Parent view '${c.parentId ?? 'unknown'}' not found`,
-    VIEW_ROOT_EXISTS: (c) => `Root view already exists. Remove it first.`,
+    VIEW_ROOT_EXISTS: () => `Root view already exists. Remove it first.`,
     VIEW_MOUNTABLE_NOT_FOUND: (c) => `Mountable view '${c.viewId ?? 'unknown'}' not registered`,
     VIEW_INVALID_FACTORY: (c) => `Invalid factory for view '${c.viewId ?? 'unknown'}'. Expected function or Factory object`,
 

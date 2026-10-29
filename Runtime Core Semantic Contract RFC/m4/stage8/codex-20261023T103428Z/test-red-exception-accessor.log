@@ -1,0 +1,34 @@
+COMMAND: pnpm --dir runtime exec vitest run src/engine/app/worker-host.m4-stage8-outcome.test.ts --reporter=dot
+START_UTC: 2026-10-23T10:57:29.620176+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+···········x·
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/engine/app/worker-host.m4-stage8-outcome.test.ts > Stage 8: file adapter outcome and in-flight replay boundaries > does not inspect a policy exception message accessor when returning a deterministic failure
+AssertionError: promise rejected "Error: Exception message must not execute" instead of resolving
+ ❯ src/engine/app/worker-host.m4-stage8-outcome.test.ts:143:100
+    141|         const exception = Object.defineProperty(new Error(), 'message'…
+    142|         const adapter = vi.fn();
+    143|         await expect(host.executeVersionedFileReplace(request, () => {…
+       |                                                                                                    ^
+    144|             .resolves.toMatchObject({ success: false, error: { code: '…
+    145|         expect(getter).not.toHaveBeenCalled();
+
+Caused by: Error: Exception message must not execute
+ ❯ Error.<anonymous> src/engine/app/worker-host.m4-stage8-outcome.test.ts:140:44
+ ❯ AppWorkerHost.executeVersionedFileReplace src/engine/app/worker-host.ts:741:48
+ ❯ src/engine/app/worker-host.m4-stage8-outcome.test.ts:143:27
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 12 passed (13)
+   Start at  18:57:30
+   Duration  439ms (transform 120ms, setup 0ms, collect 152ms, tests 57ms, environment 0ms, prepare 46ms)
+
+
+EXIT_CODE: 1

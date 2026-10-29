@@ -1,0 +1,10 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+···················
+
+ Test Files  1 passed (1)
+      Tests  19 passed (19)
+   Start at  19:00:41
+   Duration  285ms (transform 69ms, setup 0ms, collect 63ms, tests 19ms, environment 0ms, prepare 48ms)
+

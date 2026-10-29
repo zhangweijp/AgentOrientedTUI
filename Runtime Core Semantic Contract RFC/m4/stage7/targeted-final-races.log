@@ -1,0 +1,15 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+············[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'race_app', desktopId: 'race_desktop' }
+stderr | src/engine/app/worker-host.m4-producer-race.test.ts > M3/M4 regression: a semantic mutation during V2 preparation cannot publish a torn Draft > rejects the inconsistent prepare and recovers at a later stable epoch
+[AppWorkerHost] Worker race_app exited with code 1
+
+·
+
+ Test Files  3 passed (3)
+      Tests  13 passed (13)
+   Start at  17:18:15
+   Duration  495ms (transform 140ms, setup 0ms, collect 342ms, tests 274ms, environment 0ms, prepare 148ms)
+

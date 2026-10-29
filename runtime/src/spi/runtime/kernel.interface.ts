@@ -11,8 +11,7 @@ import type {
     ViewID,
     DataPayload,
     IndexMap,
-    DesktopState,
-    AppConfig
+    DesktopState
 } from '../core/types.js';
 import type { Tool } from '../core/tool-call.js';
 // [C1 FIX] Command type removed - unified to Operation
@@ -20,8 +19,9 @@ import type { Operation, OperationResult, OperationPayload } from '../core/opera
 import type { UpdateSignal } from '../core/signals.js';
 import type { CachedSnapshot } from '../core/snapshot.js';
 import type { IRuntimeContext } from './context.interface.js'; // New
-
-import type { IAOTUIApp } from '../app/app.interface.js';
+import type { ShutdownOptions, DesktopCloseOptions, DesktopCloseOperation, RuntimeCloseOperation } from './close.interface.js';
+export type { ShutdownOptions } from './close.interface.js';
+import type { AppInteractionOptions, RuntimeInteractionAccess, DesktopInteractionAccess } from './app-interaction.interface.js';
 
 export interface ReinitializeDesktopAppsOptions {
     reason?: string;
@@ -49,8 +49,22 @@ export interface ReinitializeDesktopAppsResult {
  * [Worker-Only] 隔离的运行时沙箱，托管多个 App。
  * 所有 App 运行在独立的 Worker Thread 中。
  */
+export interface AppDiscoveryInfo {
+    readonly appId: AppID;
+    readonly name?: string;
+    readonly status: 'pending' | 'running' | 'paused' | 'closed' | 'collapsed';
+    readonly description?: string;
+    readonly whatItIs?: string;
+    readonly whenToUse?: string;
+}
+
 export interface IDesktop {
+    experimentalCreateAppScope?: DesktopInteractionAccess['experimentalCreateAppScope'];
+    beginClose?(options?: DesktopCloseOptions): DesktopCloseOperation;
     id: DesktopID;
+
+    /** App discovery is independent of snapshot serialization and tool execution. */
+    getInstalledApps(): readonly AppDiscoveryInfo[];
 
     /**
      * [Worker-Only] 安装 App
@@ -61,7 +75,7 @@ export interface IDesktop {
      */
     installDynamicWorkerApp(
         appModulePath: string,
-        options?: {
+        options?: AppInteractionOptions & {
             workerScriptPath?: string;
             appId?: string;
             name?: string;
@@ -80,7 +94,7 @@ export interface IDesktop {
      * App 信息写入 installedApps，但不启动 Worker。
      * Agent 可以在 Snapshot 中看到这些 App，并通过 open_app 启动。
      */
-    registerPendingApp(options: {
+    registerPendingApp(options: AppInteractionOptions & {
         appId?: string;
         name?: string;
         description?: string;
@@ -88,6 +102,7 @@ export interface IDesktop {
         whenToUse?: string;
         modulePath: string;
         workerScriptPath?: string;
+        config?: import('../app/app-config.interface.js').AppLaunchConfig;
         promptRole?: 'user' | 'assistant';
     }): Promise<string>;
 
@@ -213,6 +228,9 @@ export interface IRegistry {
  * Runtime 的核心编排器。
  */
 export interface IKernel {
+    experimentalCreateAppScope?: RuntimeInteractionAccess['experimentalCreateAppScope'];
+    beginShutdown?(reason?: string): RuntimeCloseOperation;
+    beginDesktopShutdown?(id: DesktopID, options?: ShutdownOptions): DesktopCloseOperation;
     createDesktop(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID>;
     // [M1 FIX] Changed from void to Promise<void> to match implementation
     destroyDesktop(desktopId: DesktopID): Promise<void>;
@@ -232,7 +250,7 @@ export interface IKernel {
     installDynamicWorkerApp(
         desktopId: DesktopID,
         appModulePath: string,
-        options?: {
+        options?: AppInteractionOptions & {
             workerScriptPath?: string;
             appId?: string;
             name?: string;
@@ -317,9 +335,3 @@ export interface IKernel {
 /**
  * [RFC-014] 优雅关闭选项
  */
-export interface ShutdownOptions {
-    /** 超时时间(ms)，默认 30000 */
-    timeoutMs?: number;
-    /** 关闭前回调 */
-    beforeClose?: () => Promise<void>;
-}

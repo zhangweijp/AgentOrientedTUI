@@ -1,0 +1,10 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+ ✓ src/engine/app/worker-host.shadow-e2e.test.ts > M2 real Worker Runtime shadow projection, opt-in > publishes an AppSnapshot via versioned Worker IPC without replacing the legacy Snapshot 94ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  10:51:33
+   Duration  431ms (transform 103ms, setup 0ms, collect 126ms, tests 95ms, environment 0ms, prepare 39ms)
+

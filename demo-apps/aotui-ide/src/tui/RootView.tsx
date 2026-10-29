@@ -120,6 +120,7 @@ const batchEditParams = defineParams({
 export function RootView({
   workspaceFolders,
   activeFiles,
+  fileViewIds,
   searchResultView,
   onOpenFileDetail,
   onCloseFile,
@@ -134,6 +135,7 @@ export function RootView({
 }: {
   workspaceFolders: string[];
   activeFiles: string[];
+  fileViewIds: ReadonlyMap<string, string>;
   searchResultView: { query: string; results: FileInfo[] } | null;
   onOpenFileDetail: (filePath: string) => void;
   onCloseFile: (filePath: string) => void;
@@ -147,12 +149,9 @@ export function RootView({
   eventBus: Emittery<AppEvents>;
 }) {
   const availableFileDetailViews = activeFiles
-    .map((filePath, index) => `- fd_${index}: ${filePath}`)
+    .map(filePath => `- ${fileViewIds.get(filePath)}: ${filePath}`)
     .join('\n');
-  const viewIdForFile = (filePath: string) => {
-    const index = activeFiles.indexOf(filePath);
-    return index >= 0 ? `fd_${index}` : undefined;
-  };
+  const viewIdForFile = (filePath: string) => fileViewIds.get(filePath);
   const isPathInWorkspaceFolders = (targetPath: string) => {
     if (!path.isAbsolute(targetPath)) {
       return false;
@@ -619,15 +618,14 @@ REQUIRED PARAMETER:
       };
     }
 
-    const index = Number(view_id.replace('fd_', ''));
-    if (!Number.isInteger(index) || index < 0 || index >= activeFiles.length) {
+    const filePath = activeFiles.find(path => fileViewIds.get(path) === view_id);
+    if (!filePath) {
       return {
         success: false,
         error: { code: 'INVALID_VIEW_ID', message: `Unknown FileDetail view: ${view_id}` }
       };
     }
 
-    const filePath = activeFiles[index];
     onCloseFile(filePath);
     return {
       success: true,
@@ -1027,10 +1025,9 @@ You call: create_file({ filePath: "/project/src/utils.ts", content: "export clas
     params: createFileParams
   }, async ({ filePath, content }: { filePath: string; content: string }) => {
     try {
-      const { message, viewId } = await completeCreateFileWorkflow({
+      const { message, warnings } = await completeCreateFileWorkflow({
         filePath: filePath as string,
         content: content as string,
-        activeFiles,
         workspaceFolders,
         fileSystemService,
         persistenceService,
@@ -1040,10 +1037,7 @@ You call: create_file({ filePath: "/project/src/utils.ts", content: "export clas
 
       return {
         success: true,
-        data: {
-          message,
-          view_id: viewId
-        }
+        data: { message, ...(warnings ? { warnings } : {}) }
       };
     } catch (error) {
       return { success: false, error: { code: 'CREATE_ERROR', message: (error as Error).message } };

@@ -1,0 +1,51 @@
+COMMAND: pnpm --dir runtime exec vitest run src/engine/app/worker-host.m4-lifecycle.test.ts --reporter=dot
+START_UTC: 2026-10-23T10:54:55.496171+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+stdout | src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > does not push new fire-and-forget LLM output during or after shutdown
+[AppWorkerHost] Pushing LLM text to Worker app_1, total length: 11
+
+······x··············
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > does not push new fire-and-forget LLM output during or after shutdown
+AssertionError: expected "spy" to not be called at all, but actually been called 1 times
+
+Received: 
+
+  1st spy call:
+
+    Array [
+      Object {
+        "content": "late output",
+        "eventType": "complete",
+        "meta": undefined,
+        "reasoning": undefined,
+        "timestamp": 1792752896567,
+        "type": "LLM_OUTPUT_PUSH",
+      },
+    ]
+
+
+Number of calls: 1
+
+ ❯ src/engine/app/worker-host.m4-lifecycle.test.ts:161:44
+    159|         try {
+    160|             host.pushLLMOutput({ content: 'late output' }, 'complete');
+    161|             expect(worker.postMessage).not.toHaveBeenCalled();
+       |                                            ^
+    162|         } finally {
+    163|             finishDiskOperation();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 20 passed (21)
+   Start at  18:54:56
+   Duration  520ms (transform 168ms, setup 0ms, collect 195ms, tests 73ms, environment 0ms, prepare 56ms)
+
+
+EXIT_CODE: 1

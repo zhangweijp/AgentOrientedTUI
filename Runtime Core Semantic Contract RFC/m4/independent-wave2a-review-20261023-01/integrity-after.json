@@ -1,0 +1,10 @@
+{
+  "checkedUTC": "2026-10-23T13:49:21.161358+00:00",
+  "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "indexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "preexistingPathsChecked": 1184,
+  "changedPreexistingPaths": [],
+  "writesOnlyUnder": "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01",
+  "ignoredBuildProductsExcluded": true,
+  "issues": []
+}

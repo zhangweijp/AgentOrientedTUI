@@ -1,0 +1,1168 @@
+{
+  "stage": "Wave 2A limited read-only source execution contract",
+  "generatedUTC": "2026-10-23T13:29:53.494718+00:00",
+  "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "baselineIndexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "finalIndexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "indexUnchanged": true,
+  "baselineHostSha256": "3326f6b0f84caae9d189e8856dcc71a1ed16cea61784df0bd140572820b3087e",
+  "finalHostSha256": "28ede7ca387b143e45cbb9df2da8c779ac9a82d5a22f75931d298a2cdfbbfeee",
+  "baselineWorktreeDiffSha256": "57a2cf481cbf455414760cc653d467d6cec0d3d03fe689a8207bc51bb4f24623",
+  "finalWorktreeDiffSha256": "fee75edd170d139f96c30ff1323a199993bab6480b6286aac8dec2af081bdcd2",
+  "environment": {
+    "node": "v24.15.0",
+    "pnpm": "10.15.1"
+  },
+  "tests": [
+    {
+      "name": "red-request-and-core",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T12:56:20.928690+00:00",
+      "durationSeconds": 0.8826820840185974,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-red-request-and-core.log",
+      "tests": {
+        "passed": 8,
+        "failed": 14,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 1,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": null,
+      "logSha256": "3c1742345d78daf1e965f2b2b4c3457e127b2a31a5b2e626cba284060a6906a3"
+    },
+    {
+      "name": "red-real-sdk-worker",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T13:00:36.078865+00:00",
+      "durationSeconds": 3.5628552500274964,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-red-real-sdk-worker.log",
+      "tests": {
+        "passed": 13,
+        "failed": 3,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": {
+        "success": true,
+        "calls": {
+          "A": 1,
+          "B": 0,
+          "query": 0
+        }
+      },
+      "logSha256": "08d06496a269f7fc203aca4db07b66c2b78eeabd5ad2f44551446bcc61c9fb8a"
+    },
+    {
+      "name": "red-real-sdk-worker-confirmed",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T13:01:32.579311+00:00",
+      "durationSeconds": 3.4964457919995766,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-red-real-sdk-worker-confirmed.log",
+      "tests": {
+        "passed": 14,
+        "failed": 2,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": {
+        "success": true,
+        "calls": {
+          "A": 1,
+          "B": 0,
+          "query": 0
+        }
+      },
+      "logSha256": "02b99b31cc7430cc1ac15869614f72bc6822b695c2d1a296f790f3369fe0d771"
+    },
+    {
+      "name": "green-wave2a-first",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:02:57.706645+00:00",
+      "durationSeconds": 3.4907939579861704,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-green-wave2a-first.log",
+      "tests": {
+        "passed": 38,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": {
+        "success": false,
+        "code": "SNAPSHOT_EXPIRED",
+        "calls": {
+          "A": 0,
+          "B": 0,
+          "query": 0
+        }
+      },
+      "logSha256": "e57df2c99d665abf714d9f8cdc04e9f90d0a12ca0ce1314556b47f838ce01595"
+    },
+    {
+      "name": "final-wave2a-runtime-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "tsc",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:05.402026+00:00",
+      "durationSeconds": 1.6171767089981586,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-runtime-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "r1Violations": null,
+      "ttlSourceProbe": null,
+      "logSha256": "f5c6af8aa8fcce32f261d7bb4e61c2458ca9533020757089edf1635e9121f6c3"
+    },
+    {
+      "name": "final-wave2a-sdk-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:07.019850+00:00",
+      "durationSeconds": 0.8812742919835728,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-sdk-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "r1Violations": null,
+      "ttlSourceProbe": null,
+      "logSha256": "eee5a6876fffc5f986a8b9893ecc38d4c93f4e4f613e77420cb45933d6449624"
+    },
+    {
+      "name": "final-wave2a-ide-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:07.901460+00:00",
+      "durationSeconds": 1.1589089170156512,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-ide-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "r1Violations": null,
+      "ttlSourceProbe": null,
+      "logSha256": "dded4bbfa558b41b785998490e7a94354221937e1aa026000e5a62160edd4ed1"
+    },
+    {
+      "name": "final-wave2a-runtime-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:09.060694+00:00",
+      "durationSeconds": 4.481715000001714,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-runtime-vitest.log",
+      "tests": {
+        "passed": 631,
+        "failed": 0,
+        "skipped": 3,
+        "todo": 7
+      },
+      "testFilesOrSuites": {
+        "passed": 70,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": {
+        "success": false,
+        "code": "SNAPSHOT_EXPIRED",
+        "calls": {
+          "A": 0,
+          "B": 0,
+          "query": 0
+        }
+      },
+      "logSha256": "4c9d4d3574df30d31d18bc7ec93001c86df9847909060ec537bc4411298e6e8c"
+    },
+    {
+      "name": "final-wave2a-sdk-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:13.543108+00:00",
+      "durationSeconds": 2.5317017500055954,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-sdk-vitest.log",
+      "tests": {
+        "passed": 86,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": null,
+      "logSha256": "539c7acace73448adfc2f199f29a76a2a3bf1c1c216cf3b794a9eb05d0622409"
+    },
+    {
+      "name": "final-wave2a-ide-jest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "jest",
+        "--runInBand"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:16.075264+00:00",
+      "durationSeconds": 1.5629060000064783,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-ide-jest.log",
+      "tests": {
+        "passed": 27,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": null,
+      "logSha256": "92d6c4c297b7b86e4deedb7da6ae1e383459462d06ff65946f74be733f4bbff4"
+    },
+    {
+      "name": "r1-independent-real-worker",
+      "command": [
+        "node",
+        "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race-real-worker.mjs"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:49.418277+00:00",
+      "durationSeconds": 0.10957383300410584,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-r1-independent-real-worker.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "r1Violations": {
+        "violated": 0,
+        "cases": 4
+      },
+      "ttlSourceProbe": null,
+      "logSha256": "11ed1d15b52b3b960ddf02733b0e6ad9543566ef52f0f044295c9dca9d24ff11"
+    },
+    {
+      "name": "r1-independent-controlled",
+      "command": [
+        "node",
+        "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race.mjs"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:49.584212+00:00",
+      "durationSeconds": 0.03815095900790766,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-r1-independent-controlled.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "r1Violations": {
+        "violated": 0,
+        "cases": 10
+      },
+      "ttlSourceProbe": null,
+      "logSha256": "3e10a03fae3a53de62ed287897805f3343952a8980cbd86f9f101a2d2216b930"
+    },
+    {
+      "name": "stability-wave2a-1",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "src/engine/app/worker-host.r1-terminal-race.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/core/tool/source-binding.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:49.727162+00:00",
+      "durationSeconds": 4.451432208006736,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-stability-wave2a-1.log",
+      "tests": {
+        "passed": 108,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": {
+        "success": false,
+        "code": "SNAPSHOT_EXPIRED",
+        "calls": {
+          "A": 0,
+          "B": 0,
+          "query": 0
+        }
+      },
+      "logSha256": "358d7d7fde5926512978cc0f096c3dc7651410abf3b6ae5b451fca5ca0f56cf0"
+    },
+    {
+      "name": "stability-wave2a-2",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "src/engine/app/worker-host.r1-terminal-race.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/core/tool/source-binding.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:54.211224+00:00",
+      "durationSeconds": 4.306689874996664,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-stability-wave2a-2.log",
+      "tests": {
+        "passed": 108,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": {
+        "success": false,
+        "code": "SNAPSHOT_EXPIRED",
+        "calls": {
+          "A": 0,
+          "B": 0,
+          "query": 0
+        }
+      },
+      "logSha256": "fe95dbc61153650fd43f09dbdcaccacae91b03ec4363887a1a83ebedaf4e75ee"
+    },
+    {
+      "name": "stability-wave2a-3",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "src/engine/app/worker-host.r1-terminal-race.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/core/tool/source-binding.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:58.554065+00:00",
+      "durationSeconds": 4.3441622919926886,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-stability-wave2a-3.log",
+      "tests": {
+        "passed": 108,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": {
+        "success": false,
+        "code": "SNAPSHOT_EXPIRED",
+        "calls": {
+          "A": 0,
+          "B": 0,
+          "query": 0
+        }
+      },
+      "logSha256": "0921d11def7fe79dded5933851f92969dc4fa5f381485d323316a294aa9fad9a"
+    },
+    {
+      "name": "integrity-wave2a",
+      "command": [
+        "python3",
+        "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/audit-integrity.py"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:26:14.417473+00:00",
+      "durationSeconds": 0.9083270829869434,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-integrity-wave2a.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "r1Violations": null,
+      "ttlSourceProbe": null,
+      "logSha256": "52c715284c494a193f5c669ae261c90f3dcf811f25c3782505733e4fb5532349"
+    }
+  ],
+  "finalRegression": [
+    {
+      "name": "final-wave2a-runtime-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "tsc",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:05.402026+00:00",
+      "durationSeconds": 1.6171767089981586,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-runtime-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "r1Violations": null,
+      "ttlSourceProbe": null,
+      "logSha256": "f5c6af8aa8fcce32f261d7bb4e61c2458ca9533020757089edf1635e9121f6c3"
+    },
+    {
+      "name": "final-wave2a-sdk-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:07.019850+00:00",
+      "durationSeconds": 0.8812742919835728,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-sdk-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "r1Violations": null,
+      "ttlSourceProbe": null,
+      "logSha256": "eee5a6876fffc5f986a8b9893ecc38d4c93f4e4f613e77420cb45933d6449624"
+    },
+    {
+      "name": "final-wave2a-ide-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:07.901460+00:00",
+      "durationSeconds": 1.1589089170156512,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-ide-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "r1Violations": null,
+      "ttlSourceProbe": null,
+      "logSha256": "dded4bbfa558b41b785998490e7a94354221937e1aa026000e5a62160edd4ed1"
+    },
+    {
+      "name": "final-wave2a-runtime-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:09.060694+00:00",
+      "durationSeconds": 4.481715000001714,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-runtime-vitest.log",
+      "tests": {
+        "passed": 631,
+        "failed": 0,
+        "skipped": 3,
+        "todo": 7
+      },
+      "testFilesOrSuites": {
+        "passed": 70,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": {
+        "success": false,
+        "code": "SNAPSHOT_EXPIRED",
+        "calls": {
+          "A": 0,
+          "B": 0,
+          "query": 0
+        }
+      },
+      "logSha256": "4c9d4d3574df30d31d18bc7ec93001c86df9847909060ec537bc4411298e6e8c"
+    },
+    {
+      "name": "final-wave2a-sdk-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:13.543108+00:00",
+      "durationSeconds": 2.5317017500055954,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-sdk-vitest.log",
+      "tests": {
+        "passed": 86,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": null,
+      "logSha256": "539c7acace73448adfc2f199f29a76a2a3bf1c1c216cf3b794a9eb05d0622409"
+    },
+    {
+      "name": "final-wave2a-ide-jest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "jest",
+        "--runInBand"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:16.075264+00:00",
+      "durationSeconds": 1.5629060000064783,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-ide-jest.log",
+      "tests": {
+        "passed": 27,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": null,
+      "logSha256": "92d6c4c297b7b86e4deedb7da6ae1e383459462d06ff65946f74be733f4bbff4"
+    }
+  ],
+  "stabilityRounds": [
+    {
+      "name": "stability-wave2a-1",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "src/engine/app/worker-host.r1-terminal-race.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/core/tool/source-binding.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:49.727162+00:00",
+      "durationSeconds": 4.451432208006736,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-stability-wave2a-1.log",
+      "tests": {
+        "passed": 108,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": {
+        "success": false,
+        "code": "SNAPSHOT_EXPIRED",
+        "calls": {
+          "A": 0,
+          "B": 0,
+          "query": 0
+        }
+      },
+      "logSha256": "358d7d7fde5926512978cc0f096c3dc7651410abf3b6ae5b451fca5ca0f56cf0"
+    },
+    {
+      "name": "stability-wave2a-2",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "src/engine/app/worker-host.r1-terminal-race.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/core/tool/source-binding.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:54.211224+00:00",
+      "durationSeconds": 4.306689874996664,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-stability-wave2a-2.log",
+      "tests": {
+        "passed": 108,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": {
+        "success": false,
+        "code": "SNAPSHOT_EXPIRED",
+        "calls": {
+          "A": 0,
+          "B": 0,
+          "query": 0
+        }
+      },
+      "logSha256": "fe95dbc61153650fd43f09dbdcaccacae91b03ec4363887a1a83ebedaf4e75ee"
+    },
+    {
+      "name": "stability-wave2a-3",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "src/engine/app/worker-host.r1-terminal-race.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/core/tool/source-binding.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:05:58.554065+00:00",
+      "durationSeconds": 4.3441622919926886,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-stability-wave2a-3.log",
+      "tests": {
+        "passed": 108,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": {
+        "success": false,
+        "code": "SNAPSHOT_EXPIRED",
+        "calls": {
+          "A": 0,
+          "B": 0,
+          "query": 0
+        }
+      },
+      "logSha256": "0921d11def7fe79dded5933851f92969dc4fa5f381485d323316a294aa9fad9a"
+    }
+  ],
+  "newTests": {
+    "total": 38,
+    "hostCore": 20,
+    "pureCore": 2,
+    "realSdkWorker": 16
+  },
+  "redGreen": {
+    "hostCoreRed": {
+      "name": "red-request-and-core",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T12:56:20.928690+00:00",
+      "durationSeconds": 0.8826820840185974,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-red-request-and-core.log",
+      "tests": {
+        "passed": 8,
+        "failed": 14,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 1,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": null,
+      "logSha256": "3c1742345d78daf1e965f2b2b4c3457e127b2a31a5b2e626cba284060a6906a3"
+    },
+    "realRedConfirmed": {
+      "name": "red-real-sdk-worker-confirmed",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T13:01:32.579311+00:00",
+      "durationSeconds": 3.4964457919995766,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-red-real-sdk-worker-confirmed.log",
+      "tests": {
+        "passed": 14,
+        "failed": 2,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": {
+        "success": true,
+        "calls": {
+          "A": 1,
+          "B": 0,
+          "query": 0
+        }
+      },
+      "logSha256": "02b99b31cc7430cc1ac15869614f72bc6822b695c2d1a296f790f3369fe0d771"
+    },
+    "green": {
+      "name": "green-wave2a-first",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T13:02:57.706645+00:00",
+      "durationSeconds": 3.4907939579861704,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-green-wave2a-first.log",
+      "tests": {
+        "passed": 38,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": {
+        "success": false,
+        "code": "SNAPSHOT_EXPIRED",
+        "calls": {
+          "A": 0,
+          "B": 0,
+          "query": 0
+        }
+      },
+      "logSha256": "e57df2c99d665abf714d9f8cdc04e9f90d0a12ca0ce1314556b47f838ce01595"
+    },
+    "initialFixtureRun": {
+      "name": "red-real-sdk-worker",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T13:00:36.078865+00:00",
+      "durationSeconds": 3.5628552500274964,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-red-real-sdk-worker.log",
+      "tests": {
+        "passed": 13,
+        "failed": 3,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "r1Violations": null,
+      "ttlSourceProbe": {
+        "success": true,
+        "calls": {
+          "A": 1,
+          "B": 0,
+          "query": 0
+        }
+      },
+      "logSha256": "08d06496a269f7fc203aca4db07b66c2b78eeabd5ad2f44551446bcc61c9fb8a"
+    },
+    "fixtureCorrection": "Strengthened wait to require actual remounted View and matching Tool target; no timeout or security expectation relaxed."
+  },
+  "securityCases": [
+    {
+      "id": "full-request-getters-json-selectors-and-proxy-boundary",
+      "status": "VERIFIED_HOST_CORE",
+      "red": "red-request-and-core",
+      "note": "Ordinary getters rejected without invocation. Proxy trap may execute; no JS sandbox claim."
+    },
+    {
+      "id": "args-original-depth-node-byte-budgets",
+      "status": "VERIFIED_HOST_CORE",
+      "note": "Depth 24, nodes 10000 and 128 KiB approximate UTF-8 boundaries unchanged; full request separately bounded."
+    },
+    {
+      "id": "literal-true-controller-authorization",
+      "status": "VERIFIED_HOST_CORE",
+      "red": "red-request-and-core",
+      "note": "Truthy 1/string/object used to reach simulated dispatch; not claimed as public business-role exploitation."
+    },
+    {
+      "id": "fixed-source-and-args-during-authorization",
+      "status": "VERIFIED_REAL_SDK_WORKER",
+      "red": "red-real-sdk-worker-confirmed",
+      "note": "Rechecking B while dispatching originally authorized A was observed; selector mismatch alone is not proof of foreign Handler execution."
+    },
+    {
+      "id": "expired-pinned-source-cannot-be-laundered-with-new-selector",
+      "status": "VERIFIED_REAL_SDK_WORKER",
+      "red": "red-real-sdk-worker-confirmed",
+      "note": "Actual A Handler count 1 before fix; SNAPSHOT_EXPIRED with A/B/query counts 0 after fix. Source TTL bypass, not a claimed business-ACL bypass."
+    },
+    {
+      "id": "source-policy-dispatch-exception-boundaries",
+      "status": "VERIFIED_HOST_CORE",
+      "red": "red-request-and-core",
+      "note": "Static failure data; Host does not inspect arbitrary thrown message getters."
+    },
+    {
+      "id": "core-pin-history-ttl-current-snapshot-lease-renewal",
+      "status": "EXISTING_IMPLEMENTATION_VERIFIED_CORE_ONLY",
+      "note": "Pinned data availability differs from fresh acquire authority. No Core TTL rules changed."
+    },
+    {
+      "id": "two-filedetails-same-tool-real-handler-and-remount-isolation",
+      "status": "EXISTING_IMPLEMENTATION_VERIFIED_REAL_SDK_WORKER",
+      "note": "Old A rejects after close/remount, cannot hit fresh A/B, old still-valid B remains callable."
+    },
+    {
+      "id": "tool-only-disabled-reregister-schema-and-live-registry",
+      "status": "EXISTING_IMPLEMENTATION_VERIFIED_REAL_SDK_WORKER",
+      "note": "Authorization gates and dropped PREPARED fault injection exercise Core and Worker checks independently; user Handler counts zero on rejection."
+    },
+    {
+      "id": "display-ref-only-and-no-latest-ref-fallback",
+      "status": "VERIFIED_REAL_SDK_WORKER",
+      "note": "Old valid Tool remains callable. Reference-shaped JSON remains literal; generic source-bound Ref argument decoding is unsupported."
+    },
+    {
+      "id": "sdk-args-and-operationresult-business-failure",
+      "status": "EXISTING_IMPLEMENTATION_VERIFIED_REAL_SDK_WORKER",
+      "note": "E_INVALID_ARGS before user Handler; IPC delivery success=true can contain business success=false."
+    },
+    {
+      "id": "app-close-error-reset-appinstance-and-r1",
+      "status": "VERIFIED_REAL_SDK_WORKER_AND_R1_SCRIPTS",
+      "note": "Late grants do not dispatch; reset uses fresh AppInstance and rejects old Snapshot. All R1 cases retained."
+    }
+  ],
+  "sourceChanges": [
+    {
+      "path": "runtime/src/engine/app/worker-host.ts",
+      "origin": "PREEXISTING_STAGED_AND_UNSTAGED",
+      "baselineSha256": "3326f6b0f84caae9d189e8856dcc71a1ed16cea61784df0bd140572820b3087e",
+      "finalSha256": "28ede7ca387b143e45cbb9df2da8c779ac9a82d5a22f75931d298a2cdfbbfeee",
+      "addedLines": 39,
+      "removedLines": 29
+    },
+    {
+      "path": "runtime/src/engine/app/worker-host.wave2a-request.test.ts",
+      "origin": "NEW_THIS_WAVE2A",
+      "baselineSha256": null,
+      "finalSha256": "30e8657738fc6f9f130efbbc217de8316c8ce50cd272d7439f833d20533133bc",
+      "addedLines": 198,
+      "removedLines": 0
+    },
+    {
+      "path": "runtime/src/core/tool/source-binding.wave2a.test.ts",
+      "origin": "NEW_THIS_WAVE2A",
+      "baselineSha256": null,
+      "finalSha256": "eaaace1723c58e8f1b611d01dfe12c25fc23566c65337a39906ccd90ba0d4394",
+      "addedLines": 51,
+      "removedLines": 0
+    },
+    {
+      "path": "runtime/src/engine/app/worker-host.wave2a-readonly.test.ts",
+      "origin": "NEW_THIS_WAVE2A",
+      "baselineSha256": null,
+      "finalSha256": "5f117c2a4d51e6572cda19f74f119ded348aff3767505501e335dee8ad5ba13e",
+      "addedLines": 278,
+      "removedLines": 0
+    }
+  ],
+  "integrity": {
+    "report": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/final-integrity.json",
+    "log": "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-integrity-wave2a.log",
+    "baselinePaths": 1145,
+    "changedPreexistingPaths": [
+      {
+        "path": "runtime/src/engine/app/worker-host.ts",
+        "baselineSha256": "3326f6b0f84caae9d189e8856dcc71a1ed16cea61784df0bd140572820b3087e",
+        "finalSha256": "28ede7ca387b143e45cbb9df2da8c779ac9a82d5a22f75931d298a2cdfbbfeee"
+      }
+    ],
+    "hostOutsideReadOnlyUnchanged": true,
+    "unexpectedBaselineChanges": [],
+    "unexpectedNewPaths": [],
+    "protectedStage8EvidenceFiles": 144
+  },
+  "compatibility": {
+    "existingTestsModified": false,
+    "coreSdkIdeWorkerProductionChanged": false,
+    "snapshotSchemaChanged": false,
+    "ipcSchemaChanged": false,
+    "legacyFiveParameterApiChanged": false,
+    "defaultRouterChanged": false,
+    "experimentalReadOnlyDefault": "OFF",
+    "experimentalMutatingDefaultsChanged": false,
+    "producerConsistency": "unverified",
+    "strictEligible": false,
+    "agentsStarted": false
+  },
+  "performance": {
+    "status": "NOT_TESTED",
+    "cpu": null,
+    "heap": null,
+    "productP50Ms": null,
+    "productP95Ms": null,
+    "note": "No dedicated performance Gate. Existing readonly test diagnostics and command duration are not product SLA."
+  },
+  "coverage": {
+    "status": "NOT_TESTED",
+    "linesPercent": null,
+    "branchesPercent": null
+  },
+  "unsupported": [
+    "Generic source-bound Ref argument codec/authorization; reference strings/objects are caller JSON only.",
+    "Frozen business/closure state inside one SDK stable Handler binding.",
+    "Atomic Host/Worker deadline, post-dispatch TTL cancellation, rollback or exactly-once.",
+    "Hostile JavaScript/Proxy/Handler OS sandbox guarantees."
+  ],
+  "goNoGo": {
+    "recommendation": "Wave 2A 限定交付完成，等待 ChatGPT 验收",
+    "independentAcceptance": "PENDING",
+    "fullM4": "NOT_DECLARED",
+    "strict": "NO_GO",
+    "defaultAgentRouterSwitch": "NOT_AUTHORIZED",
+    "mutatingEnablement": "NOT_AUTHORIZED",
+    "subsequentWaves": "NOT_STARTED"
+  },
+  "blockers": []
+}

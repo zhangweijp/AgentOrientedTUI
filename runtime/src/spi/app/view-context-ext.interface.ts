@@ -9,7 +9,6 @@
 
 import type { ViewID } from '../core/types.js';
 import type { IView } from './view.interface.js';
-import type { LinkEntry } from './view-link.types.js';
 
 // ============================================================================
 // ViewLink Registration Options
@@ -123,6 +122,5 @@ export function hasMountableSupport(ctx: unknown): ctx is IViewContextMountable 
         typeof (ctx as any).getBoundViewId === 'function'
     );
 }
-
 
 

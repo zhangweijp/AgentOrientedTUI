@@ -1,0 +1,45 @@
+COMMAND=["pnpm", "--dir", "runtime", "exec", "vitest", "run", "src/engine/app/worker-host.m4-versioned-file.test.ts", "src/engine/app/worker-host.m4-producer-race.test.ts", "src/engine/app/worker-host.m4-v2-shadow.test.ts", "src/engine/app/worker-host.m4-lifecycle.test.ts", "src/engine/app/worker-host.m4-stage8-outcome.test.ts", "src/engine/app/worker-host.p0-tool-result.test.ts", "src/engine/app/worker-host.m4-readonly.test.ts", "src/engine/app/worker-host.m4-view-owned-e2e.test.ts", "src/core/tool/versioned-file-integration.test.ts", "--reporter=dot"]
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+········································[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'result_app', desktopId: 'result_desktop' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'race_app', desktopId: 'race_desktop' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+·[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+·[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+·stdout | src/engine/app/worker-host.m4-readonly.test.ts > M4 Stage 3: explicitly authorized source-bound READ-ONLY Worker Tool > rejects unavailable, stale, mutating, unauthorized Tools and preserves the Handler result
+M4_READONLY_WORKER_DIAGNOSTIC={"count":25,"p50_ms":0.109,"p95_ms":0.196,"max_ms":0.276,"note":"host policy + V2 leases + Worker IPC + SDK Handler; no IDE/LSP or model"}
+
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+·[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+·[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+·
+
+ Test Files  9 passed (9)
+      Tests  46 passed (46)
+   Start at  19:25:00
+   Duration  4.13s (transform 922ms, setup 0ms, collect 2.14s, tests 7.61s, environment 1ms, prepare 695ms)
+
+
+REVIEW_EXIT_CODE=0

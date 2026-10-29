@@ -1,0 +1,14 @@
+{
+  "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "newSources": {
+    "runtime/src/core/tool/view-owned-tools.ts": {
+      "sha256": "1485eff545cc0dc7d17d2a12c5247c39b9e879a4511185d501ae7a1882282da2",
+      "bytes": 12555
+    },
+    "runtime/src/core/tool/view-owned-tools.test.ts": {
+      "sha256": "d19f3a14a11448c3f79dc924b0e35750c010e0b5b228fae4709e273252e453fd",
+      "bytes": 19642
+    }
+  },
+  "priorSnapshotsAndM3FilesUnchanged": true
+}

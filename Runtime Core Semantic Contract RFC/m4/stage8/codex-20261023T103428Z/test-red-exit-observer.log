@@ -1,0 +1,36 @@
+COMMAND: pnpm --dir runtime exec vitest run src/engine/app/worker-host.m4-lifecycle.test.ts --reporter=dot
+START_UTC: 2026-10-23T10:53:44.472434+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+······x·············
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > termination detaches only Host listeners and preserves an external exit observer
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ src/engine/app/worker-host.m4-lifecycle.test.ts:168:46
+    166|         host.terminate();
+    167|         expect(worker.listenerCount('message')).toBe(0);
+    168|         expect(worker.listenerCount('exit')).toBe(1);
+       |                                              ^
+    169|         worker.emit('exit', 1);
+    170|         expect(externalExit).toHaveBeenCalledWith(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 19 passed (20)
+   Start at  18:53:45
+   Duration  539ms (transform 162ms, setup 0ms, collect 194ms, tests 71ms, environment 0ms, prepare 58ms)
+
+
+EXIT_CODE: 1

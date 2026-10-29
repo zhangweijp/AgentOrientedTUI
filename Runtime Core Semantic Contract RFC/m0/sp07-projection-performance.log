@@ -1,0 +1,13 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+stdout | src/__m0_formatter_bench.test.ts > M0 SP-07 measures DOM transform + View extraction + Formatter + Registry as a partial baseline
+M0_SP07_PROJECTION_PERF={"node":"v23.11.0","partialBaseline":true,"summary":[{"views":1,"bytes":13917,"iterations":30,"stagesMs":{"domTransform":{"p50":0.009,"p95":0.019,"max":0.021},"viewExtract":{"p50":0.022,"p95":0.041,"max":0.07},"snapshotFormat":{"p50":0.007,"p95":0.053,"max":0.12},"registryCreateRelease":{"p50":0.003,"p95":0.017,"max":0.042},"total":{"p50":0.043,"p95":0.126,"max":0.206}}},{"views":10,"bytes":43617,"iterations":30,"stagesMs":{"domTransform":{"p50":0.035,"p95":0.09,"max":0.131},"viewExtract":{"p50":0.151,"p95":0.286,"max":0.401},"snapshotFormat":{"p50":0.011,"p95":0.024,"max":0.024},"registryCreateRelease":{"p50":0.003,"p95":0.011,"max":0.013},"total":{"p50":0.202,"p95":0.403,"max":0.516}}},{"views":50,"bytes":175817,"iterations":30,"stagesMs":{"domTransform":{"p50":0.119,"p95":0.192,"max":0.291},"viewExtract":{"p50":0.666,"p95":0.765,"max":0.787},"snapshotFormat":{"p50":0.029,"p95":0.274,"max":0.378},"registryCreateRelease":{"p50":0.005,"p95":0.011,"max":0.015},"total":{"p50":0.843,"p95":1.137,"max":1.146}}},{"views":100,"bytes":341067,"iterations":30,"stagesMs":{"domTransform":{"p50":0.222,"p95":0.322,"max":0.348},"viewExtract":{"p50":1.273,"p95":1.524,"max":1.636},"snapshotFormat":{"p50":0.07,"p95":0.099,"max":0.108},"registryCreateRelease":{"p50":0.005,"p95":0.014,"max":0.04},"total":{"p50":1.557,"p95":1.939,"max":1.988}}}]}
+
+ ✓ src/__m0_formatter_bench.test.ts > M0 SP-07 measures DOM transform + View extraction + Formatter + Registry as a partial baseline 178ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  22:33:44
+   Duration  618ms (transform 127ms, setup 0ms, collect 202ms, tests 178ms, environment 0ms, prepare 56ms)
+

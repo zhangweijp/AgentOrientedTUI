@@ -7,7 +7,7 @@
  * @module @aotui/runtime/engine/transformer/pure
  */
 
-import type { IndexMap, DesktopID } from '../../../spi/index.js';
+import type { DesktopID } from '../../../spi/index.js';
 import type { TransformResult, TransformContext } from './types.js';
 import { createTransformContext } from './types.js';
 import { isElement, isText, DOMNode } from './helpers.js';

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "business-plan": {
+      "source": "jk-0001/skills",
+      "sourceType": "github",
+      "computedHash": "d14e15d567ec8778decf2b679f5ed91fba5fe907d33802ef5b3593001c47b5da"
+    }
+  }
+}

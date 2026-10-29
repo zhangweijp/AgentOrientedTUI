@@ -1,0 +1,14 @@
+COMMAND: pnpm --dir runtime exec vitest run src/engine/app/worker-host.snapshot-shadow.test.ts src/engine/app/worker-host.m4-lifecycle.test.ts --reporter=dot
+START_UTC: 2026-10-23T10:53:58.891215+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+·························
+
+ Test Files  2 passed (2)
+      Tests  25 passed (25)
+   Start at  18:53:59
+   Duration  541ms (transform 247ms, setup 0ms, collect 413ms, tests 150ms, environment 0ms, prepare 104ms)
+
+
+EXIT_CODE: 0

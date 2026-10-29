@@ -1,0 +1,14 @@
+COMMAND: pnpm --dir runtime exec vitest run src/engine/app/worker-host.m4-stage8-outcome.test.ts --reporter=dot
+START_UTC: 2026-10-23T10:57:38.048869+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+·············
+
+ Test Files  1 passed (1)
+      Tests  13 passed (13)
+   Start at  18:57:38
+   Duration  573ms (transform 125ms, setup 0ms, collect 156ms, tests 65ms, environment 0ms, prepare 119ms)
+
+
+EXIT_CODE: 0

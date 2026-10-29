@@ -1,3 +1,7 @@
+import type { AppLifecycleAck } from '../../adapters/app-lifecycle-protocol.js';
+import type { AppCleanupReport } from '../runtime/app-lifecycle.interface.js';
+import type { StatePersistenceOffer, StatePersistenceAck, StateStorageRequest, StateStorageResponse } from '../../adapters/storage/state-storage-protocol.js';
+import type { ManagedPersistenceReport } from '../../worker-runtime/state-persistence.js';
 /**
  * Worker Protocol - Message Definitions
  * 
@@ -21,6 +25,8 @@
 import type { RequestID, AppID, DesktopID, ViewID, OperationID, SnapshotID, DataPayload } from './types.js';
 import type { OperationResult } from '../core/index.js';
 import type { AppLaunchConfig } from '../app/app-config.interface.js';
+import type { ToolDescriptorV2, ToolTargetV2 } from '../../core/snapshot/types.js';
+import type { SnapshotValueRefSource } from '../../core/tool/snapshot-value-arguments.js';
 
 // ============================================================================
 // Re-export WorkerMessageType from canonical source
@@ -39,6 +45,8 @@ export type { WorkerMessageType } from '../runtime/worker-message.interface.js';
  */
 export interface InitMessage {
     type: 'INIT';
+    persistence?: StatePersistenceOffer;
+    appLifecycle?: AppLifecycleAck;
     requestId: RequestID;
     appId: AppID;
     desktopId: DesktopID;
@@ -46,13 +54,22 @@ export interface InitMessage {
     appModulePath: string;
     /** 应用启动配置 (Configuration Injection) */
     config?: AppLaunchConfig;
+    /** M2: Runtime-generated logical App execution instance token. */
+    appInstanceId?: string;
+    /** M2: opt-in observational Snapshot transport (never changes legacy execution). */
+    snapshotShadow?: boolean;
+    /** Internal M4 opt-in, only for read-only source-bound Tool execution. */
+    experimentalReadOnlyViewTools?: boolean;
+    /** Separate opt-in: validate mutating Tool bindings without invoking handlers. */
+    experimentalVersionedMutations?: boolean;
+    requestedCapabilities?: string[];
 }
 
 /**
  * App 生命周期消息
  */
 export interface AppLifecycleMessage {
-    type: 'APP_OPEN' | 'APP_PAUSE' | 'APP_RESUME' | 'APP_CLOSE' | 'APP_DELETE' | 'APP_SHUTDOWN' | 'APP_REINITIALIZE';
+    type: 'APP_STOP' | 'APP_OPEN' | 'APP_PAUSE' | 'APP_RESUME' | 'APP_CLOSE' | 'APP_DELETE' | 'APP_SHUTDOWN' | 'APP_REINITIALIZE';
     requestId: RequestID;
     reason?: string;
 }
@@ -78,6 +95,97 @@ export interface OperationMessage {
     args: Record<string, unknown>;
     snapshotId: SnapshotID;
 }
+
+/**
+ * Internal M4 Stage 3, opt-in source-bound READ-ONLY execution.
+ * A Runtime Host may emit only a tool/target selected from its pinned V2 Store.
+ * A Worker must revalidate against its current, instance-owned registry.
+ */
+export interface ViewToolInvokeMessage {
+    type: 'VIEW_TOOL_INVOKE';
+    requestId: RequestID;
+    appId: AppID;
+    instanceId: string;
+    tool: ToolDescriptorV2;
+    target: ToolTargetV2;
+    args: Record<string, unknown>;
+}
+
+/** Internal versioned Ref transport; declaration support alone cannot enable it. */
+export interface ViewToolInvokeRefV1Message {
+    type: 'VIEW_TOOL_INVOKE_REF_V1';
+    requestId: RequestID;
+    appId: AppID;
+    instanceId: string;
+    snapshotId: string;
+    tool: ToolDescriptorV2;
+    target: ToolTargetV2;
+    argumentMode: 'snapshot-value-v1';
+    rawArgs: Readonly<Record<string, unknown>>;
+    effectiveArgs: Readonly<Record<string, unknown>>;
+    refSources: readonly SnapshotValueRefSource[];
+}
+
+export type { InteractionModeV1, InteractionMode } from '../runtime/app-interaction.interface.js';
+export type { SnapshotValueParameterContract } from '../../core/tool/snapshot-value-parameter-contract.js';
+export interface ViewToolInvokeRefV2Message extends Omit<ViewToolInvokeRefV1Message, 'type' | 'argumentMode'> {
+    type: 'VIEW_TOOL_INVOKE_REF_V2'; argumentMode: 'snapshot-value-v2';
+}
+export interface ViewToolInvokeRefV2Response extends Omit<ViewToolInvokeRefV1Response, 'type' | 'argumentMode'> {
+    type: 'VIEW_TOOL_INVOKE_REF_V2_RESPONSE'; argumentMode: 'snapshot-value-v2';
+}
+export type { OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
+export type {CreateIfAbsentOutcome,CreateIfAbsentTerminal} from '../../core/tool/create-if-absent-contract.js';
+import type {CreateIfAbsentTerminal} from '../../core/tool/create-if-absent-contract.js';
+export interface ViewToolInvokeCreateIfAbsentV1Message {
+    type:'VIEW_TOOL_INVOKE_CREATE_IF_ABSENT_V1';requestId:RequestID;appId:AppID;instanceId:string;snapshotId:string;
+    tool:ToolDescriptorV2;target:ToolTargetV2;argumentMode:'create-if-absent-v1';args:Readonly<Record<string,unknown>>;
+}
+export interface ViewToolInvokeCreateIfAbsentV1Response {
+    type:'VIEW_TOOL_INVOKE_CREATE_IF_ABSENT_V1_RESPONSE';requestId:RequestID;appId:AppID;instanceId:string;
+    argumentMode:'create-if-absent-v1';success:true;terminal:CreateIfAbsentTerminal;
+}
+import type { ViewToolInvocationTerminal, RefV1Terminal } from '../../core/tool/invocation-terminal.js';
+export type { ViewToolInvocationTerminal, RefV1Terminal } from '../../core/tool/invocation-terminal.js';
+
+export interface ViewToolInvokeOrdinaryV1Message {
+    type: 'VIEW_TOOL_INVOKE_ORDINARY_V1';
+    requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string;
+    tool: ToolDescriptorV2; target: ToolTargetV2; argumentMode: 'ordinary-v1';
+    args: Readonly<Record<string, unknown>>;
+}
+export interface ViewToolInvokeOrdinaryV1Response {
+    type: 'VIEW_TOOL_INVOKE_ORDINARY_V1_RESPONSE';
+    requestId: RequestID; appId: AppID; instanceId: string; argumentMode: 'ordinary-v1';
+    success: true; terminal: ViewToolInvocationTerminal;
+}
+
+export interface ViewToolInvokeOrdinaryV2Message {
+    type: 'VIEW_TOOL_INVOKE_ORDINARY_V2';
+    requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string;
+    tool: ToolDescriptorV2; target: ToolTargetV2; argumentMode: 'ordinary-v2';
+    args: Readonly<Record<string, unknown>>;
+}
+export interface ViewToolInvokeOrdinaryV2Response {
+    type: 'VIEW_TOOL_INVOKE_ORDINARY_V2_RESPONSE';
+    requestId: RequestID; appId: AppID; instanceId: string; argumentMode: 'ordinary-v2';
+    success: true; terminal: ViewToolInvocationTerminal;
+}
+
+export interface ViewToolInvokeRefV1Response {
+    type: 'VIEW_TOOL_INVOKE_REF_V1_RESPONSE';
+    requestId: RequestID;
+    appId: AppID;
+    instanceId: string;
+    argumentMode: 'snapshot-value-v1';
+    success: true;
+    terminal: RefV1Terminal;
+}
+
+/** No Handler invocation: confirm the Worker still owns the exact binding. */
+export type ViewToolValidateMessage = Omit<ViewToolInvokeMessage, 'type' | 'args'> & {
+    type: 'VIEW_TOOL_VALIDATE';
+};
 
 /**
  * 外部事件消息
@@ -144,11 +252,19 @@ export interface LLMOutputPushMessage {
  * 主线程 → Worker 消息联合类型
  */
 export type MainToWorkerMessage =
+    | ViewToolInvokeOrdinaryV2Message
+    | StateStorageResponse
     | InitMessage
     | AppLifecycleMessage
     | ViewLifecycleMessage
     | ViewMountByLinkMessage
     | OperationMessage
+    | ViewToolInvokeMessage
+    | ViewToolInvokeCreateIfAbsentV1Message
+    | ViewToolInvokeOrdinaryV1Message
+    | ViewToolInvokeRefV2Message
+    | ViewToolInvokeRefV1Message
+    | ViewToolValidateMessage
     | ExternalEventMessage
     | TerminateMessage
     | ResetMessage
@@ -179,6 +295,10 @@ export interface ResponseBase {
  */
 export interface InitResponse extends ResponseBase {
     type: 'INIT_RESPONSE';
+    persistence?: StatePersistenceAck;
+    appLifecycle?: AppLifecycleAck;
+    acceptedCapabilities?: string[];
+    appInstanceId?: string;
 }
 
 /**
@@ -186,6 +306,8 @@ export interface InitResponse extends ResponseBase {
  */
 export interface LifecycleResponse extends ResponseBase {
     type: 'LIFECYCLE_RESPONSE';
+    persistence?: ManagedPersistenceReport;
+    appCleanup?: AppCleanupReport;
 }
 
 /**
@@ -242,8 +364,10 @@ export interface SnapshotFragmentPush {
     type: 'SNAPSHOT_FRAGMENT';
     /** App ID */
     appId: AppID;
-    /** 更新时间戳 (用于去重) */
+    /** Worker capture timestamp, diagnostic only (not a uniqueness token). */
     timestamp: number;
+    /** Runtime-provisioned App instance identity; optional for old Workers. */
+    appInstanceId?: string;
     /** TUI Markdown for this App */
     markup: string;
     /** Partial IndexMap (app-scoped paths) */
@@ -274,6 +398,9 @@ export interface SnapshotFragmentPush {
     viewTree?: string;
     /** Version for incremental updates (future) */
     version?: number;
+    /** M2 optional correlation with a PREPARED draft from the same capture. */
+    shadowCaptureSeq?: number;
+    shadowInstanceId?: string;
 
     /**
      * [RFC-012] Signal Suppression Flag
@@ -283,6 +410,26 @@ export interface SnapshotFragmentPush {
      * without triggering Agent reaction loops.
      */
     suppressSignal?: boolean;
+}
+
+/**
+ * M2 Shadow: a prepared, versioned App Snapshot Draft from a Worker Producer.
+ * Wire data is untrusted until the Runtime Core validator accepts it.
+ * No handler functions or live Ref objects are part of this contract.
+ */
+export interface SnapshotPreparedPush {
+    type: 'SNAPSHOT_PREPARED';
+    draft: unknown;
+}
+
+/** M2 Shadow: worker could not prepare or transport a Draft. */
+export interface SnapshotPrepareFailedPush {
+    type: 'SNAPSHOT_PREPARE_FAILED';
+    appId: AppID;
+    instanceId: string;
+    producerSeq: number;
+    sourceEpoch: number;
+    error: { code: 'SNAPSHOT_INVALID' | 'SNAPSHOT_SERIALIZATION_ERROR'; message: string };
 }
 
 /**
@@ -296,6 +443,12 @@ export interface ResetResponse extends ResponseBase {
  * Worker → 主线程消息联合类型
  */
 export type WorkerToMainMessage =
+    | StateStorageRequest
+    | ViewToolInvokeOrdinaryV2Response
+    | ViewToolInvokeCreateIfAbsentV1Response
+    | ViewToolInvokeOrdinaryV1Response
+    | ViewToolInvokeRefV2Response
+    | ViewToolInvokeRefV1Response
     | InitResponse
     | LifecycleResponse
     | OperationResponse
@@ -305,6 +458,8 @@ export type WorkerToMainMessage =
     | DismountChildRequest
 
     | SnapshotFragmentPush
+    | SnapshotPreparedPush
+    | SnapshotPrepareFailedPush
     | ResetResponse;
 
 // ============================================================================

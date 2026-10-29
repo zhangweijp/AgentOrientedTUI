@@ -1,0 +1,21 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+      Coverage enabled with v8
+
+························
+
+ Test Files  2 passed (2)
+      Tests  24 passed (24)
+   Start at  20:44:00
+   Duration  370ms (transform 82ms, setup 0ms, collect 135ms, tests 28ms, environment 0ms, prepare 99ms)
+
+ % Coverage report from v8
+-------------------|---------|----------|---------|---------|-------------------
+File               | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s 
+-------------------|---------|----------|---------|---------|-------------------
+All files          |   94.71 |    85.58 |     100 |   94.71 |                   
+ snapshot          |   94.79 |     82.5 |     100 |   94.79 |                   
+  v2-validator.ts  |   94.79 |     82.5 |     100 |   94.79 | ...,81-85,206-208 
+ tool              |   94.52 |    93.54 |     100 |   94.52 |                   
+  ...ce-binding.ts |   94.52 |    93.54 |     100 |   94.52 | 57-58,81-82       
+-------------------|---------|----------|---------|---------|-------------------

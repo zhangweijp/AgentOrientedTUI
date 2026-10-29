@@ -1,0 +1,219 @@
+=== RUN 1 SDK ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/sdk
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > aggregates two FileDetails into one Tool while their independently bound handlers target the correct file
+[PersistenceShutdown] Shutdown listener initialized
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > aggregates two FileDetails into one Tool while their independently bound handlers target the correct file
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > closing A never unregisters B; reopening fd_0 gives a new ViewInstanceId
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > per-View enabled flags operate independently even during rapid re-render
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+···stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > old five-argument Root useViewTypeTool stays in the legacy Registry, not the new instance Registry
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > APP_CLOSE fully unmounts Tool-owning Views, and APP_OPEN gets fresh IDs
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > APP_CLOSE fully unmounts Tool-owning Views, and APP_OPEN gets fresh IDs
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > a real parameter schema change invalidates only its own Tool registration
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > View-local Tool preserves a failed business outcome in a real SDK/AppKernel environment
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: deterministic multi-View lifecycle stress > 60 rapid commits preserve exclusive owners and never resurrect removed Tools
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+·····stdout | src/view-owned-tools.test.ts > M4 Stage 1: stable canonical Tool schema > a merely reordered parameter object does not recreate the Tool binding
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: stable canonical Tool schema > a malicious accessor in parameter metadata is rejected without executing its getter
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: concurrent legacy and new local APIs > Root legacy and FileDetail local declarations of the same name remain isolated
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+···
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  19:41:21
+   Duration  1.48s (transform 121ms, setup 0ms, collect 162ms, tests 862ms, environment 245ms, prepare 57ms)
+
+SDK_RUN_1_EXIT=0
+=== RUN 1 REAL WORKER ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+·
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  19:41:23
+   Duration  1.41s (transform 77ms, setup 0ms, collect 100ms, tests 1.12s, environment 0ms, prepare 45ms)
+
+WORKER_RUN_1_EXIT=0
+=== RUN 2 SDK ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/sdk
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > aggregates two FileDetails into one Tool while their independently bound handlers target the correct file
+[PersistenceShutdown] Shutdown listener initialized
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > aggregates two FileDetails into one Tool while their independently bound handlers target the correct file
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > closing A never unregisters B; reopening fd_0 gives a new ViewInstanceId
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > per-View enabled flags operate independently even during rapid re-render
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+···stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > old five-argument Root useViewTypeTool stays in the legacy Registry, not the new instance Registry
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > APP_CLOSE fully unmounts Tool-owning Views, and APP_OPEN gets fresh IDs
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > APP_CLOSE fully unmounts Tool-owning Views, and APP_OPEN gets fresh IDs
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > a real parameter schema change invalidates only its own Tool registration
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > View-local Tool preserves a failed business outcome in a real SDK/AppKernel environment
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: deterministic multi-View lifecycle stress > 60 rapid commits preserve exclusive owners and never resurrect removed Tools
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+·····stdout | src/view-owned-tools.test.ts > M4 Stage 1: stable canonical Tool schema > a merely reordered parameter object does not recreate the Tool binding
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: stable canonical Tool schema > a malicious accessor in parameter metadata is rejected without executing its getter
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: concurrent legacy and new local APIs > Root legacy and FileDetail local declarations of the same name remain isolated
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+···
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  19:41:25
+   Duration  1.47s (transform 127ms, setup 0ms, collect 174ms, tests 868ms, environment 237ms, prepare 40ms)
+
+SDK_RUN_2_EXIT=0
+=== RUN 2 REAL WORKER ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+stderr | src/engine/app/worker-host.m4-view-owned-e2e.test.ts > M4 Stage 1: actual WorkerHost + Runtime-issued View identity + SDK local Tool > runs without Shadow, inherits trusted Host instance identity, and does NOT leak local Tools into Agent index
+[AppWorkerHost] Worker m4_app exited with code 1
+
+·
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  19:41:27
+   Duration  1.39s (transform 75ms, setup 0ms, collect 99ms, tests 1.11s, environment 0ms, prepare 43ms)
+
+WORKER_RUN_2_EXIT=0
+=== RUN 3 SDK ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/sdk
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > aggregates two FileDetails into one Tool while their independently bound handlers target the correct file
+[PersistenceShutdown] Shutdown listener initialized
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > aggregates two FileDetails into one Tool while their independently bound handlers target the correct file
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > closing A never unregisters B; reopening fd_0 gives a new ViewInstanceId
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > per-View enabled flags operate independently even during rapid re-render
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+···stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > old five-argument Root useViewTypeTool stays in the legacy Registry, not the new instance Registry
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > APP_CLOSE fully unmounts Tool-owning Views, and APP_OPEN gets fresh IDs
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > APP_CLOSE fully unmounts Tool-owning Views, and APP_OPEN gets fresh IDs
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > a real parameter schema change invalidates only its own Tool registration
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > View-local Tool preserves a failed business outcome in a real SDK/AppKernel environment
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: deterministic multi-View lifecycle stress > 60 rapid commits preserve exclusive owners and never resurrect removed Tools
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+·····stdout | src/view-owned-tools.test.ts > M4 Stage 1: stable canonical Tool schema > a merely reordered parameter object does not recreate the Tool binding
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: stable canonical Tool schema > a malicious accessor in parameter metadata is rejected without executing its getter
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: concurrent legacy and new local APIs > Root legacy and FileDetail local declarations of the same name remain isolated
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+···
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  19:41:29
+   Duration  1.46s (transform 121ms, setup 0ms, collect 154ms, tests 877ms, environment 235ms, prepare 45ms)
+
+SDK_RUN_3_EXIT=0
+=== RUN 3 REAL WORKER ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+·
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  19:41:31
+   Duration  1.43s (transform 75ms, setup 0ms, collect 99ms, tests 1.12s, environment 0ms, prepare 49ms)
+
+WORKER_RUN_3_EXIT=0

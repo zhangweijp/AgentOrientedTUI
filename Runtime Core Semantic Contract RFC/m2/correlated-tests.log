@@ -1,0 +1,16 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+stderr | src/engine/app/worker-host.snapshot-shadow.test.ts > M2 AppWorkerHost versioned snapshot shadow transport > validates instance-bound PREPARED on a REAL worker_threads channel without changing legacy notifications
+[AppWorkerHost] Worker app_0 exited with code 1
+
+···stderr | src/engine/app/worker-host.shadow-e2e.test.ts
+[AppWorkerHost] Worker app_0 exited with code 1
+
+·
+
+ Test Files  2 passed (2)
+      Tests  4 passed (4)
+   Start at  11:01:25
+   Duration  456ms (transform 157ms, setup 0ms, collect 252ms, tests 193ms, environment 0ms, prepare 129ms)
+

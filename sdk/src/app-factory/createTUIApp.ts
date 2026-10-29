@@ -7,28 +7,20 @@
  */
 
 import type {
-    AppID,
-    ViewID,
-    OperationID,
-    OperationResult,
-    OperationContext,
     AppContext,
     IAOTUIApp,
-    IView,
     AppKernelConfig,
     AppReinitializeContext,
     AppOperationHandler,
     SignalPolicy,
     RuntimeContext,
     ComponentRenderer,
-    ComponentFactory,
 } from '@aotui/runtime/spi';
 
 import { TUI_FACTORY, type Factory } from '../factory/index.js';
 import type { ComponentType } from 'preact';
 import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
 import { AppConfigContext } from '../contexts/index.js';
-import { initPersistenceShutdown } from '../hooks/persistence-shutdown.js';
 
 // ═══════════════════════════════════════════════════════════════
 //  Types
@@ -38,6 +30,7 @@ import { initPersistenceShutdown } from '../hooks/persistence-shutdown.js';
  * TUI App Configuration (Component Based)
  */
 export interface TUIAppConfig {
+    experimentalAppLifecycle?: boolean;
     /**
      * App 唯一名称（用于展示、Tool 前缀、配置键、持久化命名空间）
      *
@@ -86,6 +79,8 @@ export interface TUIComponentAppFactory extends Factory<IAOTUIApp> {
 
     /** 传递给Runtime的Kernel配置 */
     kernelConfig: AppKernelConfig;
+    readonly persistenceSupport: 'state-session-v1';
+    readonly appLifecycleSupport?: 'app-lifecycle-v2';
 
     /** @deprecated Legacy app-instance creation is unsupported in component mode. */
     create: () => IAOTUIApp;
@@ -122,6 +117,9 @@ export interface TUIComponentAppFactory extends Factory<IAOTUIApp> {
  * ```
  */
 export function createTUIApp(config: TUIAppConfig): TUIComponentAppFactory {
+    if (typeof config.app_name !== 'string') {
+        throw new Error('[AOTUI SDK] app_name must be a string matching /^[a-z0-9_]+$/; name is not a substitute.');
+    }
     if (!/^[a-z0-9_]+$/.test(config.app_name)) {
         throw new Error(
             `[AOTUI SDK] Invalid app_name "${config.app_name}". ` +
@@ -152,6 +150,8 @@ export function createTUIApp(config: TUIAppConfig): TUIComponentAppFactory {
         [TUI_FACTORY]: 'app',
         displayName: config.app_name,
         kernelConfig,
+        persistenceSupport: 'state-session-v1',
+        ...(config.experimentalAppLifecycle ? { appLifecycleSupport: 'app-lifecycle-v2' as const } : {}),
 
         /**
          * [RFC-027-C] Factory Injection Pattern
@@ -159,8 +159,6 @@ export function createTUIApp(config: TUIAppConfig): TUIComponentAppFactory {
          * SDK内部处理所有Preact渲染逻辑
          */
         async initializeComponent(container: HTMLElement, context: RuntimeContext): Promise<ComponentRenderer> {
-            // [Persistence] 初始化持久化关闭监听器
-            initPersistenceShutdown();
 
             // [长期主义] 使用标准ESM动态导入，不依赖CommonJS require
             const { render, h } = await import('preact');
@@ -181,7 +179,14 @@ export function createTUIApp(config: TUIAppConfig): TUIComponentAppFactory {
                 refExporter: context.refExporter,
                 typeTools: (context as { typeTools: any }).typeTools, // [RFC-020] Pass Type Tool Registry
                 markDirty: context.markDirty,
+                projection: context.projection,
+                persistence: context.persistence,
+                appLifecycle: context.appLifecycle,
+                viewTools: context.viewTools,
             };
+
+            if (config.experimentalAppLifecycle && context.appLifecycle?.protocol !== 'app-lifecycle-v2')
+                throw new Error('APP_LIFECYCLE_UNSUPPORTED');
 
             // 创建根VNode
             const rootVNode = h(
@@ -194,19 +199,32 @@ export function createTUIApp(config: TUIAppConfig): TUIComponentAppFactory {
                 )
             );
 
-            // 初次渲染
-            render(rootVNode, container);
+            // M3: bracket explicit SDK render commits. Preact's synchronous
+            // layout effects register View/Ref/ViewTypeTool inside this boundary.
+            // Internal component setState commits are tracked by registry mutations
+            // and DOM invalidations; these explicit brackets are not their only gate.
+            const renderCommitted = (node: typeof rootVNode | null) => {
+                context.projection?.beginCommit();
+                try {
+                    render(node, container);
+                } finally {
+                    context.projection?.endCommit();
+                }
+            };
+
+            // A failed initial commit must not leave earlier View/Tool effects
+            // registered. Unmount the partial tree before propagating the error.
+            try {
+                renderCommitted(rootVNode);
+            } catch (error) {
+                try { renderCommitted(null); } catch { /* preserve initial error */ }
+                throw error;
+            }
 
             // 返回Renderer控制接口
             return {
-                render: () => {
-                    // 强制重新渲染
-                    render(rootVNode, container);
-                },
-                unmount: () => {
-                    // 卸载组件树
-                    render(null, container);
-                },
+                render: () => renderCommitted(rootVNode),
+                unmount: () => renderCommitted(null),
             };
         },
 

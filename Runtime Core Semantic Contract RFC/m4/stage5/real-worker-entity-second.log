@@ -1,0 +1,31 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+stderr | src/engine/app/worker-host.m4-v2-shadow.test.ts
+[AppWorkerHost] Worker m4_app exited with code 1
+
+ × src/engine/app/worker-host.m4-v2-shadow.test.ts > M4 Stage 2: real Worker V2 source-bound Shadow > publishes immutable View-instance/Tool targets in one V2 commit while the legacy route stays unchanged 398ms
+   → versionSource is not defined
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/engine/app/worker-host.m4-v2-shadow.test.ts > M4 Stage 2: real Worker V2 source-bound Shadow > publishes immutable View-instance/Tool targets in one V2 commit while the legacy route stays unchanged
+ReferenceError: versionSource is not defined
+ ❯ src/engine/app/worker-host.m4-v2-shadow.test.ts:149:13
+    147|                 kind: 'entity', entityVersion: 'sha256:' + 'b'.repeat(…
+    148|             });
+    149|             expect(versionSource(old.id)).toMatchObject({
+       |             ^
+    150|                 status: 'rejected', issue: { code: 'RESOURCE_VERSION_S…
+    151|             });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  12:17:42
+   Duration  917ms (transform 138ms, setup 0ms, collect 173ms, tests 398ms, environment 0ms, prepare 59ms)
+

@@ -1,0 +1,6 @@
+COMMAND: pnpm --dir runtime exec tsc --pretty false
+START_UTC: 2026-10-24T01:05:31.278448+00:00
+src/core/tool/ref-declarations.ts(114,81): error TS2345: Argument of type 'string | number | boolean | readonly JsonValue[] | Readonly<{ [key: string]: JsonValue; }>' is not assignable to parameter of type 'object'.
+  Type 'string' is not assignable to type 'object'.
+
+EXIT_CODE: 2

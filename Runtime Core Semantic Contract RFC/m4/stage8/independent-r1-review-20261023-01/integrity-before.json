@@ -1,0 +1,23 @@
+{
+  "dateUTC": "2026-10-23T12:38:04.435963+00:00",
+  "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "indexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "node": "v24.15.0",
+  "pnpm": "10.15.1",
+  "baselinePaths": 1096,
+  "baselineAlreadyAbsentPaths": 22,
+  "changedBaselinePaths": [
+    {
+      "path": "runtime/src/engine/app/worker-host.ts",
+      "baseline": "9331beb95ac0991e273eeb289211a42ad26cf8c2ea50186ea4fbb02e1a0b4c7a",
+      "current": "3326f6b0f84caae9d189e8856dcc71a1ed16cea61784df0bd140572820b3087e"
+    }
+  ],
+  "sourceFilesChecked": 2,
+  "artifactFilesChecked": 30,
+  "independentReviewFilesPreserved": 18,
+  "logFilesChecked": 17,
+  "productionAddedLines": 8,
+  "productionRemovedLines": 0,
+  "issues": []
+}

@@ -1,0 +1,68 @@
+=== V2_REAL_WORKER_RUN_1 ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+·stderr | src/engine/app/worker-host.m4-v2-shadow.test.ts
+[AppWorkerHost] Worker m4_app exited with code 1
+
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  20:42:34
+   Duration  1.13s (transform 119ms, setup 0ms, collect 142ms, tests 795ms, environment 0ms, prepare 51ms)
+
+V2_WORKER_RUN_1_EXIT=0
+=== V2_REAL_WORKER_RUN_2 ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+stderr | src/engine/app/worker-host.m4-v2-shadow.test.ts > M4 Stage 2: real Worker V2 source-bound Shadow > publishes immutable View-instance/Tool targets in one V2 commit while the legacy route stays unchanged
+[AppWorkerHost] Worker m4_app exited with code 1
+
+·
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  20:42:35
+   Duration  1.02s (transform 85ms, setup 0ms, collect 105ms, tests 726ms, environment 0ms, prepare 46ms)
+
+V2_WORKER_RUN_2_EXIT=0
+=== V2_REAL_WORKER_RUN_3 ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+stderr | src/engine/app/worker-host.m4-v2-shadow.test.ts > M4 Stage 2: real Worker V2 source-bound Shadow > publishes immutable View-instance/Tool targets in one V2 commit while the legacy route stays unchanged
+[AppWorkerHost] Worker m4_app exited with code 1
+
+·
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  20:42:37
+   Duration  1.05s (transform 79ms, setup 0ms, collect 103ms, tests 768ms, environment 0ms, prepare 49ms)
+
+V2_WORKER_RUN_3_EXIT=0
+=== V2_REAL_WORKER_RUN_4 ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+stderr | src/engine/app/worker-host.m4-v2-shadow.test.ts > M4 Stage 2: real Worker V2 source-bound Shadow > publishes immutable View-instance/Tool targets in one V2 commit while the legacy route stays unchanged
+[AppWorkerHost] Worker m4_app exited with code 1
+
+·
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  20:42:38
+   Duration  1.07s (transform 79ms, setup 0ms, collect 104ms, tests 776ms, environment 0ms, prepare 39ms)
+
+V2_WORKER_RUN_4_EXIT=0

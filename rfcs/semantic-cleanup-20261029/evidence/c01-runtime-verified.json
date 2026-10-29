@@ -1,0 +1,11 @@
+{
+  "command": [
+    "pnpm",
+    "exec",
+    "vitest",
+    "run"
+  ],
+  "cwd": "/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/runtime",
+  "exitCode": 1,
+  "seconds": 17.087
+}

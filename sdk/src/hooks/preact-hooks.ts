@@ -13,6 +13,7 @@ export {
   useState,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useMemo,
   useReducer,

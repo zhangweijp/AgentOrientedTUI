@@ -1,0 +1,14 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+·
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  21:20:07
+   Duration  1.18s (transform 120ms, setup 0ms, collect 145ms, tests 790ms, environment 0ms, prepare 42ms)
+

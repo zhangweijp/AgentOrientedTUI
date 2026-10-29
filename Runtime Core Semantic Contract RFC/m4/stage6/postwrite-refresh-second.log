@@ -1,0 +1,16 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+stderr | src/engine/app/worker-host.m4-versioned-file.test.ts > M4 Stage 5 real Worker source-to-file safety > rejects stale files and mutating Worker Tool requests, then writes only via explicit filesystem CAS
+[AppWorkerHost] Worker versioned_app exited with code 1
+
+ ✓ src/engine/app/worker-host.m4-versioned-file.test.ts > M4 Stage 5 real Worker source-to-file safety > rejects stale files and mutating Worker Tool requests, then writes only via explicit filesystem CAS 2140ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  13:54:17
+   Duration  2.71s (transform 185ms, setup 0ms, collect 239ms, tests 2.14s, environment 0ms, prepare 69ms)
+

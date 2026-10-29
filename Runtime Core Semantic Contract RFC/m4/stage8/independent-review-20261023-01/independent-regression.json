@@ -1,0 +1,99 @@
+[
+  {
+    "name": "runtime-tsc",
+    "command": [
+      "pnpm",
+      "--dir",
+      "runtime",
+      "exec",
+      "tsc",
+      "--pretty",
+      "false"
+    ],
+    "exitCode": 0,
+    "seconds": 2.043,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/runtime-tsc.log",
+    "sha256": "4ea5361da637198a79c3c25e70cf56fb63a14e1e3de7f849baffb4c6f0334bf3"
+  },
+  {
+    "name": "sdk-tsc",
+    "command": [
+      "pnpm",
+      "--dir",
+      "sdk",
+      "exec",
+      "tsc",
+      "--noEmit",
+      "--pretty",
+      "false"
+    ],
+    "exitCode": 0,
+    "seconds": 1.119,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/sdk-tsc.log",
+    "sha256": "40dec6007a27c036857ec1d76a4b640959e31c0e3895e5f67c92680374a41f49"
+  },
+  {
+    "name": "ide-tsc",
+    "command": [
+      "pnpm",
+      "--dir",
+      "demo-apps/aotui-ide",
+      "exec",
+      "tsc",
+      "--noEmit",
+      "--pretty",
+      "false"
+    ],
+    "exitCode": 0,
+    "seconds": 1.509,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/ide-tsc.log",
+    "sha256": "e1b86b922403a6988951fea5f0c33f63042beaee76c00b445b78151ec1b06744"
+  },
+  {
+    "name": "runtime-vitest",
+    "command": [
+      "pnpm",
+      "--dir",
+      "runtime",
+      "exec",
+      "vitest",
+      "run",
+      "--reporter=dot"
+    ],
+    "exitCode": 0,
+    "seconds": 4.801,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/runtime-vitest.log",
+    "sha256": "d2c66d90ec944e395f73e053db57e0ce10e37910b1bf4021ce1af0e8383747a9"
+  },
+  {
+    "name": "sdk-vitest",
+    "command": [
+      "pnpm",
+      "--dir",
+      "sdk",
+      "exec",
+      "vitest",
+      "run",
+      "--reporter=dot"
+    ],
+    "exitCode": 0,
+    "seconds": 2.857,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/sdk-vitest.log",
+    "sha256": "4e60300f209f578672e74b5054b55fa87c997de9a1028d84d59c0e0a1b37ac4f"
+  },
+  {
+    "name": "ide-jest",
+    "command": [
+      "pnpm",
+      "--dir",
+      "demo-apps/aotui-ide",
+      "exec",
+      "jest",
+      "--runInBand"
+    ],
+    "exitCode": 0,
+    "seconds": 2.267,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/ide-jest.log",
+    "sha256": "8d960222929530fe38ef15ec412e68f226fd6a83a88830ac86d0a06edd295208"
+  }
+]

@@ -1,0 +1,8 @@
+COMMAND: node 'Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/ref-projection-observation.mjs'
+START_UTC: 2026-10-23T15:36:01.285701+00:00
+NODE: v24.15.0
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'ref_design_audit', desktopId: 'independent_audit' }
+INDEPENDENT_REAL_SDK_REF_FACTS={"distinctDeveloperRefTypes":["File","Todo"],"aggregatedInspectDefinitions":1,"publicPropertySchema":{"type":"string"},"projectedRefTypes":["unknown","unknown"],"callerStringNotDecoded":"file","callerObjectNotProvenance":{"id":"caller-value","type":"NotTodo"},"historicalA":"rejected","historicalReadBeforeRelease":true,"historicalVersion":0,"newVersion":1,"freshAcquireAfterHistoryTTL":"SNAPSHOT_EXPIRED","handlerCounts":{"A":1,"B":1},"activeLeases":0,"proposedRefResolverImplemented":false,"productionSourcesEdited":false}
+
+EXIT_CODE: 0

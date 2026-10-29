@@ -1,4 +1,4 @@
-import type { AOTUIDrivenSource } from '@aotui/runtime/adapters';
+import type { SemanticAOTUIDrivenSource } from '@aotui/runtime/adapters';
 import type { McpDrivenSource } from '../mcp/source.js';
 import type { SkillDrivenSource } from '../skills/skill-driven-source.js';
 import {
@@ -128,7 +128,7 @@ export function createSourceControlsFromAgent(
     });
 }
 
-function asAOTUIControllableSource(source: AOTUIDrivenSource): AOTUIControllableSource | null {
+function asAOTUIControllableSource(source: SemanticAOTUIDrivenSource): AOTUIControllableSource | null {
     const candidate = source as unknown as Partial<AOTUIControllableSource>;
     if (typeof candidate.setEnabled !== 'function' || typeof candidate.setAppEnabled !== 'function') {
         return null;
@@ -140,7 +140,7 @@ function asAOTUIControllableSource(source: AOTUIDrivenSource): AOTUIControllable
 export function applySourceControlsToSources(
     controlsInput: SourceControlsSnapshot | undefined,
     options: {
-        aotuiSource?: AOTUIDrivenSource;
+        aotuiSource?: SemanticAOTUIDrivenSource;
         mcpSource?: McpDrivenSource;
         skillSource?: SkillDrivenSource;
     },

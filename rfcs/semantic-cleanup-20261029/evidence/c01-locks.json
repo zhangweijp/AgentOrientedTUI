@@ -1,0 +1,30 @@
+[
+  {
+    "package": "runtime",
+    "command": [
+      "pnpm",
+      "install",
+      "--ignore-workspace",
+      "--lockfile-only",
+      "--offline",
+      "--frozen-lockfile",
+      "--ignore-scripts"
+    ],
+    "exitCode": 0,
+    "unchanged": false
+  },
+  {
+    "package": "sdk",
+    "command": [
+      "pnpm",
+      "install",
+      "--ignore-workspace",
+      "--lockfile-only",
+      "--offline",
+      "--frozen-lockfile",
+      "--ignore-scripts"
+    ],
+    "exitCode": 0,
+    "unchanged": true
+  }
+]

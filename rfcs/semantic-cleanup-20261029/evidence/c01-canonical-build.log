@@ -1,0 +1,12 @@
+
+> @aotui/agent-driver-v2@0.2.2 build /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2
+> node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })" && tsc
+
+
+> @aotui/runtime@2.0.0 build /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+> node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })" && tsc && chmod +x dist/cli.js
+
+
+> @aotui/sdk@0.2.0 build /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/sdk
+> node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })" && tsc
+

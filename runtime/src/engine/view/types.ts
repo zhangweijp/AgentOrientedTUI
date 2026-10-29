@@ -83,21 +83,3 @@ export interface ViewContext {
 // [H1 FIX] IView interface is now defined in SPI (spi/view.interface.ts)
 // Re-exported at line 20 for backward compatibility
 
-// [H1 FIX] ViewNode interface removed to resolve conflict with SPI re-export.
-// See line 119 for the re-export.
-
-// ============================================================================
-// IViewTree - Re-exported from SPI (B1 FIX)
-// ============================================================================
-
-/**
- * [B1 FIX] IViewTree is now defined in SPI layer.
- * Re-exported here for backward compatibility within Engine.
- */
-export type {
-    IViewTree,
-    ViewNode, // Consolidated export
-    ViewNode as ViewNodeFromSPI,
-    ViewContextFactory
-} from '../../spi/index.js';
-

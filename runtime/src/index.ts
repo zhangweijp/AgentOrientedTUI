@@ -17,7 +17,7 @@
  * 
  * ### For Integration (Adapters Layer)
  * ```typescript
- * import { AOTUIDrivenSource, DEFAULT_AOTUI_SYSTEM_INSTRUCTION } from '@aotui/runtime/adapters';
+ * import { SemanticAOTUIDrivenSource } from '@aotui/runtime/adapters';
  * ```
  * 
  * ## ⚠️ Internal APIs
@@ -49,7 +49,7 @@ export * from './kernel/index.js';
 // Used by Product Layer to load and manage third-party TUI apps
 // ============================================================================
 export { AppRegistry } from './engine/app/index.js';
-export type { LoadedApp, AppRegistryEntry, AppRegistryOptions, TUIConfig, AppConfigEntry } from './engine/app/index.js';
+export type { LoadedApp, AppRegistryEntry, AppRegistryOptions, AppRegistryInstallOptions, TUIConfig, AppConfigEntry } from './engine/app/index.js';
 
 // ============================================================================
 // 🟢 Public: App Distribution Helpers

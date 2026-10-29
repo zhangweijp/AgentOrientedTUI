@@ -1,0 +1,40 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > returns a frozen, lease-backed selection without any Handler or execute method 3ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > old observation remains usable when only Ref or displayed View content changes 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > rejects old source when same View gets a new Tool registration version 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > rejects an old fd_0 that now points to a NEW ViewInstanceId 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > rejects a Tool whose schema changed even if a faulty Producer reused bindingVersion 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > rejects caller-invented Tool name, target viewId, or snapshotId 0ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > does not accept an old AppInstance after Runtime restart, even when historical snapshot exists 1ms
+ × src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > fails closed while latest App is degraded, stopped or has fallen back to V1 4ms
+   → expected 'unchanged' to be 'published' // Object.is equality
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > rejects a V1 snapshot as a View-owned Tool source 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > respects historical lease TTL rather than reading expired but pinned data as authority 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > fails closed while latest App is degraded, stopped or has fallen back to V1
+AssertionError: expected 'unchanged' to be 'published' // Object.is equality
+
+Expected: [32m"[7mpublish[27med"[39m
+Received: [31m"[7munchang[27med"[39m
+
+ ❯ commit src/core/tool/source-binding.test.ts:39:27
+     37| function commit(core: ReturnType<typeof start>, draft = v2()) {
+     38|     const result = core.committer.accept(draft);
+     39|     expect(result.status).toBe('published');
+       |                           ^
+     40|     if (result.status !== 'published') throw Error(JSON.stringify(resu…
+     41|     return result.snapshot;
+ ❯ src/core/tool/source-binding.test.ts:144:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 9 passed (10)
+   Start at  20:39:23
+   Duration  322ms (transform 89ms, setup 0ms, collect 94ms, tests 14ms, environment 0ms, prepare 47ms)
+

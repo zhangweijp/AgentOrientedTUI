@@ -42,10 +42,6 @@ export class ViewRegistry {
         }
 
         this.views.set(view.id, view);
-
-        if (process.env.NODE_ENV !== 'production') {
-            // console.log(`[ViewRegistry] Registered ${view.id} (${view.name})`);
-        }
     }
 
     /**
@@ -54,11 +50,7 @@ export class ViewRegistry {
      * Idempotent: no error if view doesn't exist
      */
     unregister(viewId: ViewID): void {
-        const existed = this.views.delete(viewId);
-
-        if (existed && process.env.NODE_ENV !== 'production') {
-            // console.log(`[ViewRegistry] Unregistered ${viewId}`);
-        }
+        this.views.delete(viewId);
     }
 
     /**
@@ -119,9 +111,6 @@ export class ViewRegistry {
      * Used during app teardown
      */
     clear(): void {
-        if (process.env.NODE_ENV !== 'production') {
-            // console.log(`[ViewRegistry] Clearing ${this.views.size} views`);
-        }
         this.views.clear();
     }
 }

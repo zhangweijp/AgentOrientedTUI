@@ -19,7 +19,7 @@
  * }
  * ```
  */
-import { useEffect, useRef as usePreactRef } from "./preact-hooks.js";
+import { useLayoutEffect, useMemo, useRef as usePreactRef } from "./preact-hooks.js";
 // [P1 ISP] Use specialized hook instead of useInternalViewContext
 import { useRefRegistry } from "./useViewContext.js";
 
@@ -52,18 +52,14 @@ export function useDataRef<T extends object>(refId: string, data: T): RefHandle<
   const registeredRef = usePreactRef(false);
 
   // 注册到 RefRegistry
-  useEffect(() => {
-    if (process.env.NODE_ENV !== "production") {
-      // console.log(`[useDataRef] Mounting ref: ${refId}`, data);
-    }
+  // Align Ref registration with View's synchronous commit phase.
+  // A passive useEffect leaves DOM-visible Ref markers without registry entries.
+  useLayoutEffect(() => {
     registerRef(refId, data);
     registeredRef.current = true;
 
     return () => {
       if (registeredRef.current) {
-        if (process.env.NODE_ENV !== "production") {
-          // console.log(`[useDataRef] Unmounting ref: ${refId}`);
-        }
         unregisterRef(refId);
         registeredRef.current = false;
       }
@@ -83,6 +79,26 @@ export function useDataRef<T extends object>(refId: string, data: T): RefHandle<
 }
 
 /**
- * @deprecated Use `useDataRef` instead.
+ * V2-only versioned entity Ref. The marker is JSON-compatible so legacy
+ * Snapshot V1 can retain it as data; V2 Producer converts it to an entity
+ * target. It does NOT authorize a mutation and doesn't read disk versions.
  */
-export const useRef = useDataRef;
+export function useEntityRef(
+  refId: string,
+  target: { entityType: string; entityId: string; entityVersion: string },
+): RefHandle<{ $aotuiEntityRefV1: {
+    entityType: string; entityId: string; entityVersion: string;
+  } }> {
+  const { entityType, entityId, entityVersion } = target;
+  const payload = useMemo(() => {
+    if (![entityType, entityId, entityVersion].every(
+      value => typeof value === 'string' && value.trim().length > 0
+    )) {
+      throw new Error('[AOTUI SDK] useEntityRef requires a nonempty entity identity and version');
+    }
+    return Object.freeze({
+      $aotuiEntityRefV1: Object.freeze({ entityType, entityId, entityVersion }),
+    });
+  }, [entityType, entityId, entityVersion]);
+  return useDataRef(refId, payload);
+}

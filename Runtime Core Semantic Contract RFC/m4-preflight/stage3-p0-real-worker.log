@@ -1,0 +1,18 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+ ✓ src/worker-runtime/app-kernel/AppKernel.type-tool-contract.test.ts > P0: real AppKernel TypeTool result and Ref scope > preserves a business failure instead of reporting outer success 2ms
+ ✓ src/worker-runtime/app-kernel/AppKernel.type-tool-contract.test.ts > P0: real AppKernel TypeTool result and Ref scope > keeps structured success status/data and supports legacy raw-value handlers 0ms
+ ✓ src/worker-runtime/app-kernel/AppKernel.type-tool-contract.test.ts > P0: real AppKernel TypeTool result and Ref scope > fails closed on ambiguous Ref names within the SAME ViewType 1ms
+ ✓ src/worker-runtime/app-kernel/AppKernel.type-tool-contract.test.ts > P0: real AppKernel TypeTool result and Ref scope > never resolves a matching Ref from a different ViewType 0ms
+ ✓ src/worker-runtime/app-kernel/AppKernel.type-tool-contract.test.ts > P0: real AppKernel TypeTool result and Ref scope > resolves a unique typed Ref within its ViewType, without scanning global suffixes 1ms
+ ✓ src/worker-runtime/app-kernel/AppKernel.type-tool-contract.test.ts > P0: real AppKernel TypeTool result and Ref scope > rejects any ambiguous reference array without executing the handler 0ms
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'result_app', desktopId: 'result_desktop' }
+ ✓ src/engine/app/worker-host.p0-tool-result.test.ts > P0: real WorkerHost TypeTool outcome is not transport status > preserves business failure, succeeds on success and fails closed on an invalid Ref 124ms
+
+ Test Files  2 passed (2)
+      Tests  7 passed (7)
+   Start at  21:07:35
+   Duration  490ms (transform 226ms, setup 0ms, collect 291ms, tests 129ms, environment 0ms, prepare 126ms)
+

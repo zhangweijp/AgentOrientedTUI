@@ -1,0 +1,5 @@
+COMMAND: python3 'Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/audit-integrity.py' integrity-final.json
+START_UTC: 2026-10-23T15:19:17.998666+00:00
+{"head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0", "headUnchanged": true, "baselineIndexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54", "finalIndexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54", "indexUnchanged": true, "baselineTrackedWorktreeSha256": "fee75edd170d139f96c30ff1323a199993bab6480b6286aac8dec2af081bdcd2", "finalTrackedWorktreeSha256": "fee75edd170d139f96c30ff1323a199993bab6480b6286aac8dec2af081bdcd2", "trackedDiffUnchanged": true, "workerHostSha256": "28ede7ca387b143e45cbb9df2da8c779ac9a82d5a22f75931d298a2cdfbbfeee", "workerHostUnchanged": true, "protectedExistingFiles": 1204, "changedExistingFiles": [], "protectedPriorAuditAndDeliveryFiles": 200, "changedPriorAuditAndDeliveryFiles": [], "unexpectedNewPaths": [], "scope": "tracked and nonignored untracked at batch start; ignored compiler output/cache is outside the inventory", "ok": true}
+
+EXIT_CODE: 0

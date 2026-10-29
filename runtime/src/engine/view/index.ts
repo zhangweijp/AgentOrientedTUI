@@ -1,13 +1,10 @@
 /**
  * View Domain
  * 
- * 包含视图状态管理、Transformer 及 Snapshot 构建。
+ * 包含视图状态管理及 DOM 转换类型。
  * 
  * @module @aotui/runtime/engine/view
  */
-
-// Re-export types from SPI for backward compatibility
-export type { IViewTree, ViewContextFactory } from '../../spi/index.js';
 
 // Export local ViewContext type for backward compatibility
 export type { ViewContext } from './types.js';
@@ -23,9 +20,4 @@ export { ViewManager } from './manager.js';
 // ============================================================================
 // Transformer - DOM → TUI Markdown
 // ============================================================================
-export { Transformer, type TransformResult } from './transformer/index.js';
-
-// ============================================================================
-// SnapshotBuilder - 快照构建
-// ============================================================================
-export { SnapshotBuilder, type SnapshotResult } from './snapshot/index.js';
+export type { TransformResult } from './transformer/types.js';

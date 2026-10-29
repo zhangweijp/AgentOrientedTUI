@@ -1,0 +1,33 @@
+{
+  "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "report": "m4/stage4/RESULTS.md",
+  "changedM1CoreExpected": [
+    "runtime/src/core/snapshot/index.ts",
+    "runtime/src/core/snapshot/store.ts",
+    "runtime/src/core/snapshot/types.ts",
+    "runtime/src/core/snapshot/validator.ts"
+  ],
+  "sourceSha256": {
+    "runtime/src/core/snapshot/validator.ts": "3bc87f00a4239680a8ba34dc39bb422f65abfdd11f16c077b24f44bf8f307b78",
+    "runtime/src/core/snapshot/v2-validator.ts": "00aedcca1d66919d994b82ac0071b2a0d179bec4ded5c406472a61e5303b2ef4",
+    "runtime/src/engine/app/worker-host.ts": "deb29317670539a9f1957ae0c0d3f187b71abcef238c6946229038e54d2e57d6",
+    "runtime/src/engine/app/worker-host.snapshot-shadow.test.ts": "4fd75858825b4f243aaaceb08807a169654fc90fdd48b71a99ca39b664fb0510",
+    "runtime/src/worker-runtime/index.ts": "8f94e601ede8d57099e2e7b2913cd412ab44b7ba64520904db8b3f1240998947",
+    "runtime/src/worker-runtime/app-kernel/AppKernel.ts": "b4cf9307a8dc852928f0bb905660131cd5a55ae283d284b58ee69595de37e86b",
+    "runtime/src/worker-runtime/app-kernel/AppKernel.type-tool-contract.test.ts": "8b0ad14d07be51185b167d05aa886a12f6ceb740d086d4065d43a8839a4eed1a",
+    "runtime/src/spi/worker-protocol/messages.ts": "f029d463b1e680aa81e3f7b693db258a1ccc9cec8ae6dc42a6e9ea62a0be4d8d",
+    "demo-apps/aotui-ide/src/tui/file-view-ids.ts": "5602a96f890bf29d734445f71d4ba0f2fe428ef2f7f66ebb363e5b919917a389",
+    "demo-apps/aotui-ide/src/tui/SystemIDEApp.tsx": "1b9fa82b85d16d47a103c139a19d31def9ce5517bcbfdf02a5919b4b06bef9e1",
+    "demo-apps/aotui-ide/src/tui/RootView.tsx": "6279ccb284c57dfb58e6e6eb312bed5be093d3396130e2c9f6913a20d996c96e",
+    "demo-apps/aotui-ide/src/tui/create-file-workflow.ts": "2ea8ff473f21ecd4f75216b3ad742cc036e06d4ae9b819348bb7aa6f706978b6",
+    "demo-apps/aotui-ide/src/core/file-system-service.ts": "33cae34462c29f341d8a7f6bf97a83d7deedcdbe087e39ed92ccbe76d52b8788",
+    "demo-apps/aotui-ide/src/__tests__/create-file-workflow.test.ts": "6ec2f4525437050d9ff82c8d6d1f38550f4ea126d8046ae69948bf5461853372",
+    "demo-apps/aotui-ide/src/__tests__/exclusive-file-create.test.ts": "ab91eb8195da8c2f357d34f2a07bbbf339df3b3aa2a0432e23d45ff386db0ecc"
+  },
+  "testEvidence": {
+    "runtimePass": 509,
+    "sdkPass": 84,
+    "idePass": 14,
+    "rust": false
+  }
+}

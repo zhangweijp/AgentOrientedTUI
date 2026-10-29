@@ -593,7 +593,7 @@ export class AOTUIDrivenSource implements IDrivenSource {
 
         const parsedDirectToolName = this.parseClassicToolName(toolName);
         if (parsedDirectToolName && directToolEntry !== undefined) {
-            const directToolContext = this.resolveClassicToolContext(toolName, parsedDirectToolName, directToolEntry, snapshot.id);
+            const directToolContext = this.resolveClassicToolContext(parsedDirectToolName, directToolEntry, snapshot.id);
             if (directToolContext) {
                 return directToolContext;
             }
@@ -621,7 +621,6 @@ export class AOTUIDrivenSource implements IDrivenSource {
     }
 
     private resolveClassicToolContext(
-        toolName: string,
         parsed: { viewId?: string; operationName: string },
         entry: unknown,
         snapshotId: string

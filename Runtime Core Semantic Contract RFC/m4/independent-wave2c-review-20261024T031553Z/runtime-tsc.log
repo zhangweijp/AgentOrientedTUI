@@ -1,0 +1,4 @@
+COMMAND: ["pnpm", "--dir", "runtime", "exec", "tsc", "--pretty", "false"]
+START_UTC: 2026-10-24T03:15:53.836058+00:00
+
+EXIT_CODE: 0

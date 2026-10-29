@@ -1,0 +1,12 @@
+{
+  "name": "independent-real-sdk-ref-facts",
+  "command": [
+    "node",
+    "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/ref-projection-observation.mjs"
+  ],
+  "exitCode": 0,
+  "startedUTC": "2026-10-23T15:36:01.285701+00:00",
+  "seconds": 0.361,
+  "log": "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/ref-projection-observation.log",
+  "sha256": "eb7bb525dbab70e80f2f8934ec712a6b0c52c99f631fa859e7a0f4d3502101f8"
+}

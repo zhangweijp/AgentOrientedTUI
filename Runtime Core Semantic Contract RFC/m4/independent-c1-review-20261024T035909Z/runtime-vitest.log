@@ -1,0 +1,178 @@
+COMMAND ["pnpm", "--dir", "runtime", "exec", "vitest", "run", "--reporter=dot"]
+START 2026-10-24T03:59:13.241796+00:00
+
+[1m[46m RUN [49m[22m [36mv3.2.4 [39m[90m/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime[39m
+
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm3_app', desktopId: 'desktop_m3' }
+[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'race_app', desktopId: 'race_desktop' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Shutdown listener initialized
+[33m[39m[32m·[39m[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[33m[39m[32m·[39m[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[PersistenceShutdown] Shutdown listener initialized
+[33m[39m[32m·[39m[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'result_app', desktopId: 'result_desktop' }
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm3_app', desktopId: 'desktop_m3' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[90mstdout[2m | src/engine/app/worker-host.wave2a-readonly.test.ts[2m > [22m[2mWave 2A: real SDK + Worker + View-owned read-only contract[2m > [22m[2mrefuses an expired pinned source instead of laundering it through a caller replacement snapshot
+[22m[39mWAVE2A_TTL_RECHECK={"success":false,"code":"SNAPSHOT_EXPIRED","calls":{"A":0,"B":0,"query":0}}
+
+[PersistenceShutdown] Shutdown listener initialized
+[33m[39m[32m·[39m[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[PersistenceShutdown] Shutdown listener initialized
+[33m[39m[32m·[39m[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[90mstdout[2m | src/engine/app/registry.test.ts[2m > [22m[2mAppRegistry[2m > [22m[2mApp Management[2m > [22m[2mshould use canonical app_name from kernel metadata when manifest identity is missing
+[22m[39m[AppRegistry] Added app: system_ide from local:/tmp/cache/node_modules/@agentina/aotui-ide
+
+[PersistenceShutdown] Shutdown listener initialized
+[90mstdout[2m | src/engine/app/registry.test.ts[2m > [22m[2mAppRegistry[2m > [22m[2mApp Management[2m > [22m[2mshould delete managed npm install artifacts on remove
+[22m[39m[AppRegistry] Removed app: aotui-ide
+
+[33m[39m[32m·[39m[90mstderr[2m | src/engine/app/registry.test.ts[2m > [22m[2mAppRegistry[2m > [22m[2mApp Management[2m > [22m[2mshould not delete npm artifacts outside managed root on remove
+[22m[39m[AppRegistry] Skip deleting npm cache outside managed root: /var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/tui-test-oW3SwO/external-cache/latest
+
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[90mstdout[2m | src/engine/app/registry.test.ts[2m > [22m[2mAppRegistry[2m > [22m[2mApp Management[2m > [22m[2mshould not delete npm artifacts outside managed root on remove
+[22m[39m[AppRegistry] Removed app: aotui-ide
+
+[90mstdout[2m | src/engine/app/registry.test.ts[2m > [22m[2mAppRegistry[2m > [22m[2mInstallation (AppRegistry)[2m > [22m[2mshould install autoStart=true apps immediately
+[22m[39m[AppRegistry] Installed "worker-app" to Desktop dt_test (Worker mode)
+
+[33m[39m[32m·[39m[90mstdout[2m | src/engine/app/registry.test.ts[2m > [22m[2mAppRegistry[2m > [22m[2mInstallation (AppRegistry)[2m > [22m[2mshould inject only canonical AOTUI_APP_NAME into launch config
+[22m[39m[AppRegistry] Installed "worker-app" to Desktop dt_test (Worker mode)
+
+[90mstdout[2m | src/engine/app/registry.test.ts[2m > [22m[2mAppRegistry[2m > [22m[2mInstallation (AppRegistry)[2m > [22m[2mshould register autoStart=false apps as pending
+[22m[39m[AppRegistry] Registered "pending-app" to Desktop dt_test (Pending mode)
+
+[90mstdout[2m | src/engine/app/registry.test.ts[2m > [22m[2mAppRegistry[2m > [22m[2mInstallation (AppRegistry)[2m > [22m[2mshould install only selected explicit entries without consulting config apps
+[22m[39m[AppRegistry] Loaded app: explicit-app
+
+[90mstdout[2m | src/engine/app/registry.test.ts[2m > [22m[2mAppRegistry[2m > [22m[2mInstallation (AppRegistry)[2m > [22m[2mshould install only selected explicit entries without consulting config apps
+[22m[39m[AppRegistry] Installed "explicit-app" to Desktop dt_test (Worker mode)
+
+[90mstdout[2m | src/engine/app/registry.test.ts[2m > [22m[2mAppRegistry[2m > [22m[2mInstallation (AppRegistry)[2m > [22m[2mshould keep non-selected explicit entries out of installation
+[22m[39m[AppRegistry] Loaded app: alpha-app
+
+[90mstdout[2m | src/engine/app/registry.test.ts[2m > [22m[2mAppRegistry[2m > [22m[2mInstallation (AppRegistry)[2m > [22m[2mshould keep non-selected explicit entries out of installation
+[22m[39m[AppRegistry] Loaded app: beta-app
+
+[90mstdout[2m | src/engine/app/registry.test.ts[2m > [22m[2mAppRegistry[2m > [22m[2mInstallation (AppRegistry)[2m > [22m[2mshould keep non-selected explicit entries out of installation
+[22m[39m[AppRegistry] Installed "beta-app" to Desktop dt_test (Worker mode)
+
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[90mstdout[2m | src/engine/app/worker-host.m4-readonly.test.ts[2m > [22m[2mM4 Stage 3: explicitly authorized source-bound READ-ONLY Worker Tool[2m > [22m[2mrejects unavailable, stale, mutating, unauthorized Tools and preserves the Handler result
+[22m[39mM4_READONLY_WORKER_DIAGNOSTIC={"count":25,"p50_ms":0.138,"p95_ms":0.265,"max_ms":0.291,"note":"host policy + V2 leases + Worker IPC + SDK Handler; no IDE/LSP or model"}
+
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[33m[39m[32m·[39m[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[PersistenceShutdown] Shutdown listener initialized
+[33m[39m[32m·[39m[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[90mstdout[2m | src/e2e-test/config-injection-e2e.test.ts[2m > [22m[2mE2E: Configuration Injection[2m > [22m[2mshould inject config into real worker and echo it back
+[22m[39m[Performance] App Start + Config Echo took 26ms
+
+[33m[39m[32m·[39m[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[33m[39m[32m·[39m[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[90mstdout[2m | src/engine/app/registry-role.test.ts[2m > [22m[2mAppRegistry Role Propagation[2m > [22m[2mshould propagate promptRole from manifest
+[22m[39m[AppRegistry] Installed "assistant-app" to Desktop dt_test (Worker mode)
+
+[90mstdout[2m | src/engine/app/registry-role.test.ts[2m > [22m[2mAppRegistry Role Propagation[2m > [22m[2mshould propagate promptRole from kernelConfig
+[22m[39m[AppRegistry] Installed "kernel-assistant-app" to Desktop dt_test (Worker mode)
+
+[90mstdout[2m | src/engine/app/registry-role.test.ts[2m > [22m[2mAppRegistry Role Propagation[2m > [22m[2mshould allow config override of promptRole
+[22m[39m[AppRegistry] Installed "override-app" to Desktop dt_test (Worker mode)
+
+[90mstdout[2m | src/engine/app/registry-role.test.ts[2m > [22m[2mAppRegistry Role Propagation[2m > [22m[2mshould propagate promptRole to registerPendingApp (lazy load)
+[22m[39m[AppRegistry] Registered "lazy-assistant" to Desktop dt_test (Pending mode)
+
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[90mstderr[2m | src/engine/app/manager.test.ts[2m > [22m[2mAppManager[2m > [22m[2mLazily Loaded Apps[2m > [22m[2mstartPendingApp 对非 staged App 应返回 false
+[22m[39m[AppManager] Cannot start nonexistent: not found
+
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[2m[90m-[39m[22m[33m[39m[2m[90m-[39m[22m[33m[39m[2m[90m-[39m[22m[33m[39m[2m[90m-[39m[22m[33m[39m[2m[90m-[39m[22m[33m[39m[2m[90m-[39m[22m[33m[39m[2m[90m-[39m[22m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[90mstderr[2m | src/engine/core/llm-text-channel.test.ts[2m > [22m[2mLLMOutputChannelService[2m > [22m[2merror handling[2m > [22m[2mshould continue notifying other subscribers if one throws
+[22m[39m[LLMOutputChannel] Error in listener: Error: Test error
+    at [90m/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39msrc/engine/core/llm-text-channel.test.ts:162:56
+    at LLMOutputChannelService.push [90m(/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39msrc/engine/core/llm-output-channel.ts:114:17[90m)[39m
+    at [90m/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39msrc/engine/core/llm-text-channel.test.ts:168:25
+    at Proxy.assertThrows [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/chai@5.3.3/node_modules/[4mchai[24m/index.js:2767:5[90m)[39m
+    at Proxy.methodWrapper [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/chai@5.3.3/node_modules/[4mchai[24m/index.js:1686:25[90m)[39m
+    at Proxy.<anonymous> [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/@vitest+expect@3.2.4/node_modules/[4m@vitest/expect[24m/dist/index.js:1088:12[90m)[39m
+    at Proxy.overwritingMethodWrapper [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/chai@5.3.3/node_modules/[4mchai[24m/index.js:1735:33[90m)[39m
+    at Proxy.<anonymous> [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/@vitest+expect@3.2.4/node_modules/[4m@vitest/expect[24m/dist/index.js:1420:16[90m)[39m
+    at Proxy.<anonymous> [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/@vitest+expect@3.2.4/node_modules/[4m@vitest/expect[24m/dist/index.js:1029:14[90m)[39m
+    at Proxy.methodWrapper [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/chai@5.3.3/node_modules/[4mchai[24m/index.js:1686:25[90m)[39m
+
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[2m[90m-[39m[22m[33m[39m[2m[90m-[39m[22m[33m[39m[2m[90m-[39m[22m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[Worker] APP_SHUTDOWN flush timeout fallback
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[33m[39m[32m·[39m[33m[39m[32m·[39m[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[33m[39m[32m·[39m[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[33m[39m[32m·[39m
+
+[2m Test Files [22m [1m[32m74 passed[39m[22m[90m (74)[39m
+[2m      Tests [22m [1m[32m723 passed[39m[22m[2m | [22m[33m3 skipped[39m[2m | [22m[90m7 todo[39m[90m (733)[39m
+[2m   Start at [22m 11:59:13
+[2m   Duration [22m 4.07s[2m (transform 1.63s, setup 0ms, collect 5.61s, tests 13.47s, environment 7ms, prepare 3.35s)[22m
+
+
+EXIT_CODE 0

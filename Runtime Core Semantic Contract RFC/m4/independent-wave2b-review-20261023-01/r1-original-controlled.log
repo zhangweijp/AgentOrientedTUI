@@ -1,0 +1,18 @@
+COMMAND: node 'Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race.mjs'
+START_UTC: 2026-10-23T15:34:38.290274+00:00
+NODE: v24.15.0
+PNPM: 10.15.1
+{"method":"start","terminal":"terminate","atTermination":"closed","afterContinuation":"closed","workerIsNull":true,"lifecyclePromise":"rejected","violated":false}
+{"method":"start","terminal":"exit","atTermination":"error","afterContinuation":"error","workerIsNull":true,"lifecyclePromise":"rejected","violated":false}
+{"method":"open","terminal":"terminate","atTermination":"closed","afterContinuation":"closed","workerIsNull":true,"lifecyclePromise":"rejected","violated":false}
+{"method":"open","terminal":"exit","atTermination":"error","afterContinuation":"error","workerIsNull":true,"lifecyclePromise":"rejected","violated":false}
+{"method":"pause","terminal":"terminate","atTermination":"closed","afterContinuation":"closed","workerIsNull":true,"lifecyclePromise":"rejected","violated":false}
+{"method":"pause","terminal":"exit","atTermination":"error","afterContinuation":"error","workerIsNull":true,"lifecyclePromise":"rejected","violated":false}
+{"method":"resume","terminal":"terminate","atTermination":"closed","afterContinuation":"closed","workerIsNull":true,"lifecyclePromise":"rejected","violated":false}
+{"method":"resume","terminal":"exit","atTermination":"error","afterContinuation":"error","workerIsNull":true,"lifecyclePromise":"rejected","violated":false}
+{"method":"reinitialize","terminal":"terminate","atTermination":"closed","afterContinuation":"closed","workerIsNull":true,"lifecyclePromise":"rejected","violated":false}
+{"method":"reinitialize","terminal":"exit","atTermination":"error","afterContinuation":"error","workerIsNull":true,"lifecyclePromise":"rejected","violated":false}
+REVIEW_ASSERTION: terminal Host must not revive, and invalidated lifecycle must reject
+VIOLATIONS=0/10
+
+EXIT_CODE: 0

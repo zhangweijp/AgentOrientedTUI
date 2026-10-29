@@ -1,0 +1,1 @@
+src/engine/app/worker-host.ts(348,51): error TS2367: This comparison appears to be unintentional because the types '"closing"' and '"closed"' have no overlap.

@@ -1,0 +1,192 @@
+COMMAND: pnpm --dir sdk exec vitest run src/ref-declarations.wave2c.test.ts --reporter=verbose
+START_UTC: 2026-10-24T01:01:33.107468+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/sdk
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > preserves the one declaration-only support marker, Schema metadata and lifecycle cleanup
+[PersistenceShutdown] Shutdown listener initialized
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > preserves the one declaration-only support marker, Schema metadata and lifecycle cleanup
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > refuses a port with missing declaration support before registration
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > refuses a port with unknown declaration support before registration
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > old ports keep unannotated reference declarations usable
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > rejects mutating/default-mutating new declarations: true
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > rejects mutating/default-mutating new declarations: undefined
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > rejects Legacy five-argument opt-in before the legacy registration effect
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > new validation works in production without defineParams dev checks
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > equivalent declaration key order does not re-register the Tool
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > a getter in an opt-in field is rejected without execution
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+ × src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > preserves the one declaration-only support marker, Schema metadata and lifecycle cleanup 18ms
+   → expected undefined to be 'snapshot-value-v1' // Object.is equality
+ × src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > refuses a port with missing declaration support before registration 4ms
+   → promise resolved "undefined" instead of rejecting
+ × src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > refuses a port with unknown declaration support before registration 2ms
+   → promise resolved "undefined" instead of rejecting
+ ✓ src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > old ports keep unannotated reference declarations usable 2ms
+ × src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > rejects mutating/default-mutating new declarations: true 2ms
+   → promise resolved "undefined" instead of rejecting
+ × src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > rejects mutating/default-mutating new declarations: undefined 1ms
+   → promise resolved "undefined" instead of rejecting
+ × src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > rejects Legacy five-argument opt-in before the legacy registration effect 1ms
+   → promise resolved "undefined" instead of rejecting
+ × src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > the direct Legacy Runtime registration boundary also refuses the new declaration atomically 1ms
+   → expected [Function] to throw an error
+ × src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > new validation works in production without defineParams dev checks 1ms
+   → promise resolved "undefined" instead of rejecting
+ ✓ src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > equivalent declaration key order does not re-register the Tool 2ms
+ ✓ src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > a getter in an opt-in field is rejected without execution 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > preserves the one declaration-only support marker, Schema metadata and lifecycle cleanup
+AssertionError: expected undefined to be 'snapshot-value-v1' // Object.is equality
+
+- Expected: 
+"snapshot-value-v1"
+
++ Received: 
+undefined
+
+ ❯ src/ref-declarations.wave2c.test.ts:54:52
+     52|         try {
+     53|             await env.open();
+     54|             expect(env.port.refDeclarationSupport).toBe('snapshot-valu…
+       |                                                    ^
+     55|             expect(env.register).toHaveBeenCalledTimes(1);
+     56|             expect(env.kernel.getViewOwnedToolDefinitions()[0].inputSc…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > refuses a port with missing declaration support before registration
+ FAIL  src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > refuses a port with unknown declaration support before registration
+AssertionError: promise resolved "undefined" instead of rejecting
+
+- Expected: 
+Error {
+  "message": "rejected promise",
+}
+
++ Received: 
+undefined
+
+ ❯ src/ref-declarations.wave2c.test.ts:71:36
+     69|         const env = setup(Content, support);
+     70|         try {
+     71|             await expect(env.open()).rejects.toThrow('REF_CONTRACT_UNS…
+       |                                    ^
+     72|             expect(env.register).not.toHaveBeenCalled();
+     73|             expect(env.kernel.getViewOwnedToolDefinitions()).toEqual([…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+ FAIL  src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > rejects mutating/default-mutating new declarations: true
+ FAIL  src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > rejects mutating/default-mutating new declarations: undefined
+AssertionError: promise resolved "undefined" instead of rejecting
+
+- Expected: 
+Error {
+  "message": "rejected promise",
+}
+
++ Received: 
+undefined
+
+ ❯ src/ref-declarations.wave2c.test.ts:98:36
+     96|         const env = setup(Content);
+     97|         try {
+     98|             await expect(env.open()).rejects.toThrow('REF_DECLARATION_…
+       |                                    ^
+     99|             expect(env.register).not.toHaveBeenCalled();
+    100|             expect(env.kernel.getViewOwnedToolDefinitions()).toEqual([…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
+
+ FAIL  src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > rejects Legacy five-argument opt-in before the legacy registration effect
+AssertionError: promise resolved "undefined" instead of rejecting
+
+- Expected: 
+Error {
+  "message": "rejected promise",
+}
+
++ Received: 
+undefined
+
+ ❯ src/ref-declarations.wave2c.test.ts:111:36
+    109|         const env = setup(Content);
+    110|         try {
+    111|             await expect(env.open()).rejects.toThrow('REF_CONTRACT_UNS…
+       |                                    ^
+    112|             expect(env.kernel.getAllTypeTools().size).toBe(0);
+    113|             expect(env.kernel.getViewOwnedToolDefinitions()).toEqual([…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯
+
+ FAIL  src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > the direct Legacy Runtime registration boundary also refuses the new declaration atomically
+AssertionError: expected [Function] to throw an error
+
+- Expected: 
+null
+
++ Received: 
+undefined
+
+ ❯ src/ref-declarations.wave2c.test.ts:121:13
+    119|         expect(() => env.kernel.registerTypeTool('FileDetail', 'inspec…
+    120|             description: 'Inspect', params: { file: declaration }, han…
+    121|         })).toThrow('REF_CONTRACT_UNSUPPORTED');
+       |             ^
+    122|         expect(env.kernel.getAllTypeTools().size).toBe(0);
+    123|         return env.close();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/8]⎯
+
+ FAIL  src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > new validation works in production without defineParams dev checks
+AssertionError: promise resolved "undefined" instead of rejecting
+
+- Expected: 
+Error {
+  "message": "rejected promise",
+}
+
++ Received: 
+undefined
+
+ ❯ src/ref-declarations.wave2c.test.ts:135:36
+    133|         const env = setup(Content);
+    134|         try {
+    135|             await expect(env.open()).rejects.toThrow('REF_DECLARATION_…
+       |                                    ^
+    136|             expect(env.register).not.toHaveBeenCalled();
+    137|             expect(env.kernel.getViewOwnedToolDefinitions()).toEqual([…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/8]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  8 failed | 3 passed (11)
+   Start at  09:01:33
+   Duration  1.42s (transform 186ms, setup 0ms, collect 405ms, tests 36ms, environment 512ms, prepare 73ms)
+
+
+EXIT_CODE: 1

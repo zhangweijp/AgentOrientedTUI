@@ -1,0 +1,43 @@
+{
+  "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "node": "v23.11.0",
+  "m1Source": {
+    "runtime/src/core/snapshot/json.ts": {
+      "sha256": "fc8442a55dc77fa3ebea00c6050daa8cfb73348465db7425745b8d5c6f11ced2",
+      "bytes": 6539
+    },
+    "runtime/src/core/snapshot/workspace.ts": {
+      "sha256": "7f26336f328c6d73641d5a948d1cc1813670fe54b1cc93ac70497a7a415d36d3",
+      "bytes": 4215
+    },
+    "runtime/src/core/snapshot/memory-app.test.ts": {
+      "sha256": "224d6f45154f6eb7f0ea6b1d8c1d2b910b85b4d884d3c2341664470b62a0ba94",
+      "bytes": 5067
+    },
+    "runtime/src/core/snapshot/workspace.test.ts": {
+      "sha256": "29dbeabc8276772e51c32a0884e1f484c3bed6d525f4c52628c72a1c2e46082e",
+      "bytes": 6173
+    },
+    "runtime/src/core/snapshot/snapshot.test.ts": {
+      "sha256": "dd3b88f0ac26f7d857cc1fc747a2423775d3f08d31fd5f4332a9520c20200431",
+      "bytes": 39141
+    },
+    "runtime/src/core/snapshot/types.ts": {
+      "sha256": "72156c239bed19a71b21b05e6f98accef79dbcd428d195eae60dfcc68c09ca1e",
+      "bytes": 8224
+    },
+    "runtime/src/core/snapshot/index.ts": {
+      "sha256": "2911001b88e389a737e4c12906ae261c5cd9e16a34d5939e425e47fe4208312c",
+      "bytes": 1078
+    },
+    "runtime/src/core/snapshot/store.ts": {
+      "sha256": "f68d63b1eb6a7fe3f3635511dbcba88c2bcca18efbef5b031bb176807af02760",
+      "bytes": 20461
+    },
+    "runtime/src/core/snapshot/validator.ts": {
+      "sha256": "ed12e34ce2bcd4a572699aa18bca21ce2ac5f7e5898ec784f8da5f72b924e15e",
+      "bytes": 13449
+    }
+  },
+  "baselineCodeSHA256Preserved": true
+}

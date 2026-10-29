@@ -1,0 +1,212 @@
+HEAD=789ef07 NODE=v23.11.0 PNPM=10.15.1
+===== RUNTIME TSC =====
+RUNTIME_TSC_EXIT=0
+===== SDK TSC =====
+SDK_TSC_EXIT=0
+===== IDE TSC =====
+IDE_TSC_EXIT=0
+===== RUNTIME VITEST ALL =====
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+····················stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should propagate promptRole from manifest
+[AppRegistry] Installed "assistant-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should propagate promptRole from kernelConfig
+[AppRegistry] Installed "kernel-assistant-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should allow config override of promptRole
+[AppRegistry] Installed "override-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should propagate promptRole to registerPendingApp (lazy load)
+[AppRegistry] Registered "lazy-assistant" to Desktop dt_test (Pending mode)
+
+····stderr | src/engine/app/worker-host.snapshot-shadow.test.ts > M2 AppWorkerHost versioned snapshot shadow transport > validates instance-bound PREPARED on a REAL worker_threads channel without changing legacy notifications
+[AppWorkerHost] Worker app_0 exited with code 1
+
+···stdout | src/engine/app/registry.test.ts > AppRegistry > App Management > should use canonical app_name from kernel metadata when manifest identity is missing
+[AppRegistry] Added app: system_ide from local:/tmp/cache/node_modules/@agentina/aotui-ide
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > App Management > should delete managed npm install artifacts on remove
+[AppRegistry] Removed app: aotui-ide
+
+stderr | src/engine/app/registry.test.ts > AppRegistry > App Management > should not delete npm artifacts outside managed root on remove
+[AppRegistry] Skip deleting npm cache outside managed root: /var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/tui-test-N5VnoA/external-cache/latest
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > App Management > should not delete npm artifacts outside managed root on remove
+[AppRegistry] Removed app: aotui-ide
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should install autoStart=true apps immediately
+[AppRegistry] Installed "worker-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should inject only canonical AOTUI_APP_NAME into launch config
+[AppRegistry] Installed "worker-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should register autoStart=false apps as pending
+[AppRegistry] Registered "pending-app" to Desktop dt_test (Pending mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should install only selected explicit entries without consulting config apps
+[AppRegistry] Loaded app: explicit-app
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should install only selected explicit entries without consulting config apps
+[AppRegistry] Installed "explicit-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should keep non-selected explicit entries out of installation
+[AppRegistry] Loaded app: alpha-app
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should keep non-selected explicit entries out of installation
+[AppRegistry] Loaded app: beta-app
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should keep non-selected explicit entries out of installation
+[AppRegistry] Installed "beta-app" to Desktop dt_test (Worker mode)
+
+···················[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+[createTUIApp] initializeComponent { appId: 'm3_app', desktopId: 'desktop_m3' }
+·····················································stdout | src/e2e-test/config-injection-e2e.test.ts > E2E: Configuration Injection > should inject config into real worker and echo it back
+[Performance] App Start + Config Echo took 22ms
+
+·stderr | AppWorkerHost.handleExit (/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/src/engine/app/worker-host.ts:608:21)
+[AppWorkerHost] Worker e2e_app exited with code 1
+
+stderr | src/engine/app/manager.test.ts > AppManager > Lazily Loaded Apps > startPendingApp 对非 staged App 应返回 false
+[AppManager] Cannot start nonexistent: not found
+
+··························-------·········································stderr | src/engine/app/worker-host.m3-sdk-e2e.test.ts > M3 real Worker / SDK projection round trip > advances the Shadow Snapshot on a Ref-only update without DOM mutation
+[AppWorkerHost] Worker m3_app exited with code 1
+
+···························[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm3_app', desktopId: 'desktop_m3' }
+···········stderr | src/engine/app/worker-host.m4-v2-shadow.test.ts
+[AppWorkerHost] Worker m4_app exited with code 1
+
+··········stderr | src/engine/core/llm-text-channel.test.ts > LLMOutputChannelService > error handling > should continue notifying other subscribers if one throws
+[LLMOutputChannel] Error in listener: Error: Test error
+    at [90m/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39msrc/engine/core/llm-text-channel.test.ts:162:56
+    at LLMOutputChannelService.push [90m(/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39msrc/engine/core/llm-output-channel.ts:114:17[90m)[39m
+    at [90m/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39msrc/engine/core/llm-text-channel.test.ts:168:25
+    at Proxy.assertThrows [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/chai@5.3.3/node_modules/[4mchai[24m/index.js:2767:5[90m)[39m
+    at Proxy.methodWrapper [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/chai@5.3.3/node_modules/[4mchai[24m/index.js:1686:25[90m)[39m
+    at Proxy.<anonymous> [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/@vitest+expect@3.2.4/node_modules/[4m@vitest[24m/expect/dist/index.js:1088:12[90m)[39m
+    at Proxy.overwritingMethodWrapper [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/chai@5.3.3/node_modules/[4mchai[24m/index.js:1735:33[90m)[39m
+    at Proxy.<anonymous> [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/@vitest+expect@3.2.4/node_modules/[4m@vitest[24m/expect/dist/index.js:1420:16[90m)[39m
+    at Proxy.<anonymous> [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/@vitest+expect@3.2.4/node_modules/[4m@vitest[24m/expect/dist/index.js:1029:14[90m)[39m
+    at Proxy.methodWrapper [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/chai@5.3.3/node_modules/[4mchai[24m/index.js:1686:25[90m)[39m
+
+··············································stderr | src/engine/app/worker-host.m3-sdk-e2e.test.ts > M3 real Worker / SDK projection round trip > advances the Shadow Snapshot on a Ref-only update without DOM mutation
+[AppWorkerHost] Worker m3_app exited with code 1
+
+······························································[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+stderr | src/engine/app/worker-host.m4-view-owned-e2e.test.ts > M4 Stage 1: actual WorkerHost + Runtime-issued View identity + SDK local Tool > runs without Shadow, inherits trusted Host instance identity, and does NOT leak local Tools into Agent index
+[AppWorkerHost] Worker m4_app exited with code 1
+
+······································································································································---········································
+
+ Test Files  58 passed (58)
+      Tests  497 passed | 3 skipped | 7 todo (507)
+   Start at  20:53:20
+   Duration  2.40s (transform 1.36s, setup 0ms, collect 4.77s, tests 4.07s, environment 5ms, prepare 4.13s)
+
+RUNTIME_FULL_EXIT=0
+===== SDK VITEST ALL =====
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/sdk
+
+································································stdout | src/projection-coordinator.test.ts > M3 SDK semantic projection commit > exposes View, single Ref, ArrayRef and ViewTypeTool on the initial committed frame
+[PersistenceShutdown] Shutdown listener initialized
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > aggregates two FileDetails into one Tool while their independently bound handlers target the correct file
+[PersistenceShutdown] Shutdown listener initialized
+
+stdout | src/projection-coordinator.test.ts > M3 SDK semantic projection commit > exposes View, single Ref, ArrayRef and ViewTypeTool on the initial committed frame
+[createTUIApp] initializeComponent { appId: [32m'm3_app_0'[39m, desktopId: [32m'desktop_0'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > aggregates two FileDetails into one Tool while their independently bound handlers target the correct file
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/projection-coordinator.test.ts > M3 SDK semantic projection commit > publishes Ref-only epoch changes even when the DOM and Tool descriptor remain unchanged
+[createTUIApp] initializeComponent { appId: [32m'm3_app_0'[39m, desktopId: [32m'desktop_0'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > closing A never unregisters B; reopening fd_0 gives a new ViewInstanceId
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/projection-coordinator.test.ts > M3 SDK semantic projection commit > unregisters disabled ViewTypeTool in the same commit as availability changes
+[createTUIApp] initializeComponent { appId: [32m'm3_app_0'[39m, desktopId: [32m'desktop_0'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > per-View enabled flags operate independently even during rapid re-render
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+·····stdout | src/projection-coordinator.test.ts > M3 SDK semantic projection commit > changes View generation after unmount/remount with identical View ID
+[createTUIApp] initializeComponent { appId: [32m'm3_app_0'[39m, desktopId: [32m'desktop_0'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > old five-argument Root useViewTypeTool stays in the legacy Registry, not the new instance Registry
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > APP_CLOSE fully unmounts Tool-owning Views, and APP_OPEN gets fresh IDs
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > APP_CLOSE fully unmounts Tool-owning Views, and APP_OPEN gets fresh IDs
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > a real parameter schema change invalidates only its own Tool registration
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > View-local Tool preserves a failed business outcome in a real SDK/AppKernel environment
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: deterministic multi-View lifecycle stress > 60 rapid commits preserve exclusive owners and never resurrect removed Tools
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+··stdout | src/projection-coordinator.test.ts > M3 observable commit-phase consistency > never notifies a mixed pair of Ref bindings or a stale Tool after one SDK state commit
+[createTUIApp] initializeComponent { appId: [32m'm3_app_0'[39m, desktopId: [32m'desktop_0'[39m }
+
+····stdout | src/projection-coordinator.test.ts > M3 typed ArrayRef marker and registry parity > resolves every emitted typed Ref marker, preserves bare aliases and cleans up stale items
+[createTUIApp] initializeComponent { appId: [32m'm3_app_0'[39m, desktopId: [32m'desktop_0'[39m }
+
+··stdout | src/projection-coordinator.test.ts > M3 rapid lifecycle and asynchronous projection resilience > never exposes dangling Ref/Tool at notification boundaries through repeated mount/reorder/unmount
+[createTUIApp] initializeComponent { appId: [32m'm3_app_0'[39m, desktopId: [32m'desktop_0'[39m }
+
+·stdout | src/view-owned-tools.test.ts > M4 Stage 1: stable canonical Tool schema > a merely reordered parameter object does not recreate the Tool binding
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: stable canonical Tool schema > a malicious accessor in parameter metadata is rejected without executing its getter
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: concurrent legacy and new local APIs > Root legacy and FileDetail local declarations of the same name remain isolated
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+·stdout | src/projection-coordinator.test.ts > M3 batched semantic updates > coalesces rapid component state changes and observes only the final coherent Ref/Tool state
+[createTUIApp] initializeComponent { appId: [32m'm3_app_0'[39m, desktopId: [32m'desktop_0'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: failed mount is not a partially published Tool > rejects incompatible same-type definitions without exposing a conflicting group
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+·····
+
+ Test Files  9 passed (9)
+      Tests  84 passed (84)
+   Start at  20:53:23
+   Duration  2.05s (transform 541ms, setup 0ms, collect 1.27s, tests 1.78s, environment 5.66s, prepare 907ms)
+
+SDK_FULL_EXIT=0
+===== IDE JEST =====
+PASS src/__tests__/create-file-workflow.test.ts
+PASS src/__tests__/persistence-schema.test.ts
+PASS src/__tests__/workspace-folders.test.ts
+
+Test Suites: 3 passed, 3 total
+Tests:       5 passed, 5 total
+Snapshots:   0 total
+Time:        0.814 s, estimated 1 s
+Ran all test suites.
+IDE_JEST_EXIT=0
+STAGE2_FINAL_GATE_EXIT=0

@@ -1,0 +1,198 @@
+[
+  {
+    "name": "runtime-tsc",
+    "command": [
+      "pnpm",
+      "--dir",
+      "runtime",
+      "exec",
+      "tsc",
+      "--pretty",
+      "false"
+    ],
+    "exitCode": 0,
+    "startedUTC": "2026-10-23T12:38:34.844695+00:00",
+    "seconds": 1.614,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/runtime-tsc.log",
+    "sha256": "956c0fc20856bc8e6f6fd7959956aa061fc4ec0ad69a9640e4e77b70280705d7"
+  },
+  {
+    "name": "sdk-tsc",
+    "command": [
+      "pnpm",
+      "--dir",
+      "sdk",
+      "exec",
+      "tsc",
+      "--noEmit",
+      "--pretty",
+      "false"
+    ],
+    "exitCode": 0,
+    "startedUTC": "2026-10-23T12:38:36.459613+00:00",
+    "seconds": 0.855,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/sdk-tsc.log",
+    "sha256": "30f34cb08bdfaf3121373cd0ea42eea7d979bb58dc1d0f7348e49466f2d64aac"
+  },
+  {
+    "name": "ide-tsc",
+    "command": [
+      "pnpm",
+      "--dir",
+      "demo-apps/aotui-ide",
+      "exec",
+      "tsc",
+      "--noEmit",
+      "--pretty",
+      "false"
+    ],
+    "exitCode": 0,
+    "startedUTC": "2026-10-23T12:38:37.315449+00:00",
+    "seconds": 1.136,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/ide-tsc.log",
+    "sha256": "e5cec6992a2dbe4692c6fd277abdcab02d34bf5b3f94967f201f1797b61f77ec"
+  },
+  {
+    "name": "runtime-vitest",
+    "command": [
+      "pnpm",
+      "--dir",
+      "runtime",
+      "exec",
+      "vitest",
+      "run",
+      "--reporter=dot"
+    ],
+    "exitCode": 0,
+    "startedUTC": "2026-10-23T12:38:38.452316+00:00",
+    "seconds": 4.514,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/runtime-vitest.log",
+    "sha256": "2e46e1d113223ecab32d244996d37e44afabb1fe3ec8737fd593e43f0361b9e3"
+  },
+  {
+    "name": "sdk-vitest",
+    "command": [
+      "pnpm",
+      "--dir",
+      "sdk",
+      "exec",
+      "vitest",
+      "run",
+      "--reporter=dot"
+    ],
+    "exitCode": 0,
+    "startedUTC": "2026-10-23T12:38:42.967657+00:00",
+    "seconds": 2.599,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/sdk-vitest.log",
+    "sha256": "981dcfb77ff8a46815c2f046c47288275a028b562032cd2acd745e44a23f8f1d"
+  },
+  {
+    "name": "ide-jest",
+    "command": [
+      "pnpm",
+      "--dir",
+      "demo-apps/aotui-ide",
+      "exec",
+      "jest",
+      "--runInBand"
+    ],
+    "exitCode": 0,
+    "startedUTC": "2026-10-23T12:38:45.567104+00:00",
+    "seconds": 1.566,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/ide-jest.log",
+    "sha256": "f2ed1e7b3e62769553d81ff14985310d38002315c99db605f71237c414111750"
+  },
+  {
+    "name": "original-real-worker-repro",
+    "command": [
+      "node",
+      "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race-real-worker.mjs"
+    ],
+    "exitCode": 0,
+    "startedUTC": "2026-10-23T12:38:47.134069+00:00",
+    "seconds": 0.151,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/original-real-worker-repro.log",
+    "sha256": "36ffa5a12831944c7e89fe9e1c13aa44979836e2c8428e55e2e33a896aa019e5"
+  },
+  {
+    "name": "original-controlled-repro",
+    "command": [
+      "node",
+      "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race.mjs"
+    ],
+    "exitCode": 0,
+    "startedUTC": "2026-10-23T12:38:47.286224+00:00",
+    "seconds": 0.089,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/original-controlled-repro.log",
+    "sha256": "a305747de22ab5fa67893844e5af5e82d5ff0bf2701c0bf5925b94d996c4df59"
+  },
+  {
+    "name": "stability-1",
+    "command": [
+      "pnpm",
+      "--dir",
+      "runtime",
+      "exec",
+      "vitest",
+      "run",
+      "src/engine/app/worker-host.r1-terminal-race.test.ts",
+      "src/engine/app/worker-host.m4-lifecycle.test.ts",
+      "src/engine/app/worker-host.m4-versioned-file.test.ts",
+      "src/engine/app/worker-host.m4-readonly.test.ts",
+      "src/engine/app/worker-host.m4-producer-race.test.ts",
+      "src/engine/app/worker-host.snapshot-shadow.test.ts",
+      "--reporter=dot"
+    ],
+    "exitCode": 0,
+    "startedUTC": "2026-10-23T12:38:47.375560+00:00",
+    "seconds": 4.36,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/stability-1.log",
+    "sha256": "49478fd790a95490b606efff6d3feab6acad9ae9cea94199e65b4c85fc2c5f5e"
+  },
+  {
+    "name": "stability-2",
+    "command": [
+      "pnpm",
+      "--dir",
+      "runtime",
+      "exec",
+      "vitest",
+      "run",
+      "src/engine/app/worker-host.r1-terminal-race.test.ts",
+      "src/engine/app/worker-host.m4-lifecycle.test.ts",
+      "src/engine/app/worker-host.m4-versioned-file.test.ts",
+      "src/engine/app/worker-host.m4-readonly.test.ts",
+      "src/engine/app/worker-host.m4-producer-race.test.ts",
+      "src/engine/app/worker-host.snapshot-shadow.test.ts",
+      "--reporter=dot"
+    ],
+    "exitCode": 0,
+    "startedUTC": "2026-10-23T12:38:51.736598+00:00",
+    "seconds": 4.433,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/stability-2.log",
+    "sha256": "e13d918d50b831533f81312f6b0878ff22aa5064ca89e73a9e6be0cd7809f14a"
+  },
+  {
+    "name": "stability-3",
+    "command": [
+      "pnpm",
+      "--dir",
+      "runtime",
+      "exec",
+      "vitest",
+      "run",
+      "src/engine/app/worker-host.r1-terminal-race.test.ts",
+      "src/engine/app/worker-host.m4-lifecycle.test.ts",
+      "src/engine/app/worker-host.m4-versioned-file.test.ts",
+      "src/engine/app/worker-host.m4-readonly.test.ts",
+      "src/engine/app/worker-host.m4-producer-race.test.ts",
+      "src/engine/app/worker-host.snapshot-shadow.test.ts",
+      "--reporter=dot"
+    ],
+    "exitCode": 0,
+    "startedUTC": "2026-10-23T12:38:56.170363+00:00",
+    "seconds": 4.348,
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/stability-3.log",
+    "sha256": "d0eb9b010a671ccf56d17c230d9fbe03b60176204aee40b4da2297aa969f7d3b"
+  }
+]

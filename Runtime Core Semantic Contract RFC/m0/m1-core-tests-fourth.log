@@ -1,0 +1,46 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+···································x·x·
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/core/snapshot/snapshot.test.ts > M1 Core — adversarial resource and publication invariants > does not let a degraded App masquerade as ready after rejected schema or invalid source
+AssertionError: expected 'unchanged' to be 'published' // Object.is equality
+
+Expected: [32m"[7mpublish[27med"[39m
+Received: [31m"[7munchang[27med"[39m
+
+ ❯ published src/core/snapshot/snapshot.test.ts:58:27
+     56| function published(core: SnapshotCore, next: PreparedAppSnapshotDraft)…
+     57|     const result = core.committer.accept(next);
+     58|     expect(result.status).toBe('published');
+       |                           ^
+     59|     if (result.status !== 'published') throw Error('not published: ' +…
+     60|     return result.snapshot;
+ ❯ src/core/snapshot/snapshot.test.ts:532:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/core/snapshot/snapshot.test.ts > M1 Core — adversarial resource and publication invariants > can recover from a full pinned history without altering a retained historical Ref
+AssertionError: expected 'published' to be 'rejected' // Object.is equality
+
+Expected: [32m"[7mreject[27med"[39m
+Received: [31m"[7mpublish[27med"[39m
+
+ ❯ src/core/snapshot/snapshot.test.ts:558:32
+    556|         const second = published(core, draft(2, 2, 'b'));
+    557|         const refused = core.committer.accept(draft(3, 3, 'c'));
+    558|         expect(refused.status).toBe('rejected');
+       |                                ^
+    559|         if (refused.status === 'rejected') expect(refused.issue.code).…
+    560|         expect(readyOrLastGood(core).id).toBe(second.id);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  2 failed | 37 passed (39)
+   Start at  00:49:56
+   Duration  310ms (transform 174ms, setup 0ms, collect 263ms, tests 37ms, environment 0ms, prepare 143ms)
+

@@ -1,0 +1,27 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/sdk
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: failed mount is not a partially published Tool > rejects incompatible same-type definitions without exposing a conflicting group
+[PersistenceShutdown] Shutdown listener initialized
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: failed mount is not a partially published Tool > rejects incompatible same-type definitions without exposing a conflicting group
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+ ↓ src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > aggregates two FileDetails into one Tool while their independently bound handlers target the correct file
+ ↓ src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > closing A never unregisters B; reopening fd_0 gives a new ViewInstanceId
+ ↓ src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > per-View enabled flags operate independently even during rapid re-render
+ ↓ src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > old five-argument Root useViewTypeTool stays in the legacy Registry, not the new instance Registry
+ ↓ src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > APP_CLOSE fully unmounts Tool-owning Views, and APP_OPEN gets fresh IDs
+ ↓ src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > a real parameter schema change invalidates only its own Tool registration
+ ↓ src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > View-local Tool preserves a failed business outcome in a real SDK/AppKernel environment
+ ↓ src/view-owned-tools.test.ts > M4 Stage 1: deterministic multi-View lifecycle stress > 60 rapid commits preserve exclusive owners and never resurrect removed Tools
+ ↓ src/view-owned-tools.test.ts > M4 Stage 1: stable canonical Tool schema > a merely reordered parameter object does not recreate the Tool binding
+ ↓ src/view-owned-tools.test.ts > M4 Stage 1: stable canonical Tool schema > a malicious accessor in parameter metadata is rejected without executing its getter
+ ↓ src/view-owned-tools.test.ts > M4 Stage 1: concurrent legacy and new local APIs > Root legacy and FileDetail local declarations of the same name remain isolated
+ ✓ src/view-owned-tools.test.ts > M4 Stage 1: failed mount is not a partially published Tool > rejects incompatible same-type definitions without exposing a conflicting group 11ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 11 skipped (12)
+   Start at  19:44:32
+   Duration  724ms (transform 131ms, setup 0ms, collect 169ms, tests 12ms, environment 349ms, prepare 55ms)
+

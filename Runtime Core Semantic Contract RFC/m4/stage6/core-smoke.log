@@ -1,0 +1,17 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+····································[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+stdout | src/engine/app/worker-host.m4-readonly.test.ts > M4 Stage 3: explicitly authorized source-bound READ-ONLY Worker Tool > rejects unavailable, stale, mutating, unauthorized Tools and preserves the Handler result
+M4_READONLY_WORKER_DIAGNOSTIC={"count":25,"p50_ms":0.227,"p95_ms":0.503,"max_ms":0.529,"note":"host policy + V2 leases + Worker IPC + SDK Handler; no IDE/LSP or model"}
+
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+·
+
+ Test Files  3 passed (3)
+      Tests  37 passed (37)
+   Start at  13:34:37
+   Duration  1.32s (transform 345ms, setup 0ms, collect 470ms, tests 890ms, environment 0ms, prepare 233ms)
+

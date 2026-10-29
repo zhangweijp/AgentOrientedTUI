@@ -25,10 +25,8 @@
 
 import type {
   ParamSchema,
-  ParamType,
   ParamDef,
   ParamBaseType,
-  ParamConstraints,
 } from "../operation/types.js";
 
 /**
@@ -57,37 +55,66 @@ export function validateArgs(
   schema: ParamSchema,
 ): ValidationError[] {
   const errors: ValidationError[] = [];
+  validateArguments(args, schema, (_name, _reason, legacy) => errors.push(legacy()), false);
+  return errors;
+}
 
+/** Internal safe diagnostics; not re-exported by the SDK entry point. */
+export interface SafeArgumentDiagnostic {
+  param: string;
+  reason: string;
+}
+export const SNAPSHOT_VALUE_DIAGNOSTIC_LIMITS = Object.freeze({
+  maxItems: 16, maxParamLength: 128, maxReasonLength: 256, maxMessageLength: 512,
+});
+const SAFE_REASONS = {
+  required: "Required parameter is missing or null",
+  type: "Parameter does not match its declared type",
+  "array-item": "Array item does not match its declared type",
+  enum: "Parameter is outside the declared choices",
+  reference: "Reference parameter has an unsupported type",
+  "string-min": "String is shorter than the declared minimum",
+  "string-max": "String is longer than the declared maximum",
+  pattern: "String does not match the declared pattern",
+  min: "Number is below the declared minimum",
+  max: "Number is above the declared maximum",
+  "array-min": "Array has fewer items than the declared minimum",
+  "array-max": "Array has more items than the declared maximum",
+} as const;
+type Reporter = (name: string, reason: keyof typeof SAFE_REASONS, legacy: () => ValidationError) => void;
+
+/** Caller supplies already bounded, detached declarations and strict JSON arguments. */
+export function validateArgsForSnapshotValue(
+  args: Record<string, unknown>, schema: ParamSchema,
+): SafeArgumentDiagnostic[] {
+  const diagnostics: SafeArgumentDiagnostic[] = [];
+  validateArguments(args, schema, (name, reason) => {
+    if (diagnostics.length < SNAPSHOT_VALUE_DIAGNOSTIC_LIMITS.maxItems) {
+      diagnostics.push({ param: name.slice(0, SNAPSHOT_VALUE_DIAGNOSTIC_LIMITS.maxParamLength),
+        reason: SAFE_REASONS[reason].slice(0, SNAPSHOT_VALUE_DIAGNOSTIC_LIMITS.maxReasonLength) });
+    }
+  }, true);
+  return diagnostics;
+}
+
+function validateArguments(
+  args: Record<string, unknown>, schema: ParamSchema, report: Reporter, ownValues: boolean,
+): void {
   for (const [name, def] of Object.entries(schema)) {
-    const value = args[name];
-
-    // Check required
+    const value = ownValues && !Object.hasOwn(args, name) ? undefined : args[name];
     if (def.required === true && (value === undefined || value === null)) {
-      errors.push({
+      report(name, "required", () => ({
         param: name,
         expected: formatExpected(def),
         received: value === null ? "null" : "undefined",
         message: `Parameter '${name}' is required but was ${value === null ? "null" : "undefined"}`,
-      });
+      }));
       continue;
     }
-
-    // Skip validation if optional and not provided
     if (value === undefined) continue;
-
-    // Type validation
-    const typeError = validateType(name, value, def);
-    if (typeError) {
-      errors.push(typeError);
-      continue; // Skip constraint validation if type is wrong
-    }
-
-    // Constraint validation
-    const constraintErrors = validateConstraints(name, value, def);
-    errors.push(...constraintErrors);
+    if (!validateType(name, value, def, report)) continue;
+    validateConstraints(name, value, def, report);
   }
-
-  return errors;
 }
 
 /**
@@ -97,18 +124,20 @@ function validateType(
   name: string,
   value: unknown,
   def: ParamDef,
-): ValidationError | null {
+  report: Reporter,
+): boolean {
   const actualType = getActualType(value);
 
   switch (def.type) {
     case "array":
       if (!Array.isArray(value)) {
-        return {
+        report(name, "type", () => ({
           param: name,
           expected: `array<${def.itemType || "any"}>`,
           received: actualType,
           message: `Parameter '${name}' expected array, got ${actualType}`,
-        };
+        }));
+        return false;
       }
       // Validate item types if itemType is specified
       if (def.itemType) {
@@ -116,27 +145,29 @@ function validateType(
           const item = (value as unknown[])[i];
           const itemType = getActualType(item);
           if (!isBaseTypeMatch(itemType, def.itemType)) {
-            return {
+            report(name, "array-item", () => ({
               param: name,
               expected: `array<${def.itemType}>`,
               received: `array containing ${itemType} at index ${i}`,
               message: `Parameter '${name}[${i}]' expected ${def.itemType}, got ${itemType}`,
-            };
+            }));
+            return false;
           }
         }
       }
-      return null;
+      return true;
 
     case "enum":
       if (!def.options || !def.options.includes(String(value))) {
-        return {
+        report(name, "enum", () => ({
           param: name,
           expected: `enum(${def.options?.join(" | ") || "no options"})`,
           received: String(value),
           message: `Parameter '${name}' must be one of [${def.options?.join(", ")}], got '${value}'`,
-        };
+        }));
+        return false;
       }
-      return null;
+      return true;
 
     case "reference":
       // [RFC-Reference] Reference types can be:
@@ -144,26 +175,28 @@ function validateType(
       // 2. Object (Resolved Reference from Runtime, e.g. Message object)
       // Both are valid depending on the resolution stage.
       if (actualType === "string" || actualType === "object") {
-        return null;
+        return true;
       }
-      return {
+      report(name, "reference", () => ({
         param: name,
         expected: `reference<${def.refType || "any"}>`,
         received: actualType,
         message: `Parameter '${name}' expected reference (string or object), got ${actualType}`,
-      };
+      }));
+      return false;
 
     default:
       // Basic types: string, number, boolean, object
       if (!isBaseTypeMatch(actualType, def.type as ParamBaseType)) {
-        return {
+        report(name, "type", () => ({
           param: name,
           expected: def.type,
           received: actualType,
           message: `Parameter '${name}' expected ${def.type}, got ${actualType}`,
-        };
+        }));
+        return false;
       }
-      return null;
+      return true;
   }
 }
 
@@ -174,39 +207,39 @@ function validateConstraints(
   name: string,
   value: unknown,
   def: ParamDef,
-): ValidationError[] {
-  const errors: ValidationError[] = [];
+  report: Reporter,
+): void {
   const c = def.constraints;
-  if (!c) return errors;
+  if (!c) return;
 
   // String constraints
   if (typeof value === "string") {
     if (c.minLength !== undefined && value.length < c.minLength) {
-      errors.push({
+      report(name, "string-min", () => ({
         param: name,
         expected: `length >= ${c.minLength}`,
         received: `length = ${value.length}`,
         message: `Parameter '${name}' must have at least ${c.minLength} characters`,
-      });
+      }));
     }
     if (c.maxLength !== undefined && value.length > c.maxLength) {
-      errors.push({
+      report(name, "string-max", () => ({
         param: name,
         expected: `length <= ${c.maxLength}`,
         received: `length = ${value.length}`,
         message: `Parameter '${name}' must have at most ${c.maxLength} characters`,
-      });
+      }));
     }
     if (c.pattern !== undefined) {
       try {
         const regex = new RegExp(c.pattern);
         if (!regex.test(value)) {
-          errors.push({
+          report(name, "pattern", () => ({
             param: name,
             expected: `match pattern ${c.pattern}`,
             received: value,
             message: `Parameter '${name}' must match pattern /${c.pattern}/`,
-          });
+          }));
         }
       } catch {
         // Invalid regex pattern - skip validation
@@ -217,44 +250,43 @@ function validateConstraints(
   // Number constraints
   if (typeof value === "number") {
     if (c.min !== undefined && value < c.min) {
-      errors.push({
+      report(name, "min", () => ({
         param: name,
         expected: `>= ${c.min}`,
         received: String(value),
         message: `Parameter '${name}' must be at least ${c.min}`,
-      });
+      }));
     }
     if (c.max !== undefined && value > c.max) {
-      errors.push({
+      report(name, "max", () => ({
         param: name,
         expected: `<= ${c.max}`,
         received: String(value),
         message: `Parameter '${name}' must be at most ${c.max}`,
-      });
+      }));
     }
   }
 
   // Array length constraints
   if (Array.isArray(value)) {
     if (c.minLength !== undefined && value.length < c.minLength) {
-      errors.push({
+      report(name, "array-min", () => ({
         param: name,
         expected: `length >= ${c.minLength}`,
         received: `length = ${value.length}`,
         message: `Parameter '${name}' must have at least ${c.minLength} items`,
-      });
+      }));
     }
     if (c.maxLength !== undefined && value.length > c.maxLength) {
-      errors.push({
+      report(name, "array-max", () => ({
         param: name,
         expected: `length <= ${c.maxLength}`,
         received: `length = ${value.length}`,
         message: `Parameter '${name}' must have at most ${c.maxLength} items`,
-      });
+      }));
     }
   }
 
-  return errors;
 }
 
 /**

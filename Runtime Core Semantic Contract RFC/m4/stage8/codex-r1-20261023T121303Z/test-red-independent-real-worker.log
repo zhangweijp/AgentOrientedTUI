@@ -1,0 +1,28 @@
+COMMAND: node 'Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race-real-worker.mjs'
+START_UTC: 2026-10-23T12:17:33.215329+00:00
+{"method":"start","realWorker":true,"atTermination":"closed","afterContinuation":"ready","workerIsNull":true,"result":"resolved","violated":true}
+{"method":"open","realWorker":true,"atTermination":"closed","afterContinuation":"running","workerIsNull":true,"result":"resolved","violated":true}
+{"method":"pause","realWorker":true,"atTermination":"closed","afterContinuation":"paused","workerIsNull":true,"result":"resolved","violated":true}
+{"method":"resume","realWorker":true,"atTermination":"closed","afterContinuation":"running","workerIsNull":true,"result":"resolved","violated":true}
+REAL_WORKER_VIOLATIONS=4/4
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Real Worker termination must invalidate the resolved-but-not-resumed lifecycle continuation
+
+4 !== 0
+
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/Runtime%20Core%20Semantic%20Contract%20RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race-real-worker.mjs:48:8
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 4,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.15.0
+
+EXIT_CODE: 1

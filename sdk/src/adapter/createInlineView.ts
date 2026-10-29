@@ -12,7 +12,6 @@
  */
 
 import type { IView, ViewID, OperationResult, IViewContextFull } from '@aotui/runtime/spi';
-import { createViewId } from '@aotui/runtime/spi';
 
 /**
  * Inline View配置

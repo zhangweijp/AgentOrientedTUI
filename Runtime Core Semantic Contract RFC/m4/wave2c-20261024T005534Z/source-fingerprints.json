@@ -1,0 +1,624 @@
+{
+  "stage": "Wave 2C - authoritative Ref declaration preservation and misuse refusal",
+  "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "baselineStagedDiffSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "finalStagedDiffSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "baselineInventorySha256": "dc1e8c95884450beee0bc73cbf35f43744c99acae0c9ab064f8b60461cb80143",
+  "baselinePathRecords": 1257,
+  "baselineMissingPaths": 22,
+  "unexpectedExistingChanges": [],
+  "sourceFiles": [
+    {
+      "path": "runtime/src/core/snapshot/types.ts",
+      "baselineSha256": "194b64c801a0a19e260104601e1aa5faad55cc1a336f98477ea7dd02d3251e8f",
+      "finalSha256": "5c253c62f67b4477b67df170132cf6642e4a238d3f8839352cec3ec4ced85821",
+      "origin": "PREEXISTING_WORKTREE_MODIFIED_THIS_BATCH",
+      "gitTrackedAtBaseline": false,
+      "preexistingStagedDiff": false,
+      "preexistingUnstagedDiff": false,
+      "preexistingUntracked": true,
+      "impact": "declaration preservation / refusal only"
+    },
+    {
+      "path": "runtime/src/core/snapshot/validator.ts",
+      "baselineSha256": "3bc87f00a4239680a8ba34dc39bb422f65abfdd11f16c077b24f44bf8f307b78",
+      "finalSha256": "19abc28f88d1362961a4fee6112c014a3905a69d39cf3ffbfd7715b8b9a82590",
+      "origin": "PREEXISTING_WORKTREE_MODIFIED_THIS_BATCH",
+      "gitTrackedAtBaseline": false,
+      "preexistingStagedDiff": false,
+      "preexistingUnstagedDiff": false,
+      "preexistingUntracked": true,
+      "impact": "declaration preservation / refusal only"
+    },
+    {
+      "path": "runtime/src/core/snapshot/v2-validator.ts",
+      "baselineSha256": "00aedcca1d66919d994b82ac0071b2a0d179bec4ded5c406472a61e5303b2ef4",
+      "finalSha256": "217d3f4dfe47c3c955b3e8af19844931decd38391f3dec692eba0fdf4ef62d38",
+      "origin": "PREEXISTING_WORKTREE_MODIFIED_THIS_BATCH",
+      "gitTrackedAtBaseline": false,
+      "preexistingStagedDiff": false,
+      "preexistingUnstagedDiff": false,
+      "preexistingUntracked": true,
+      "impact": "declaration preservation / refusal only"
+    },
+    {
+      "path": "runtime/src/core/tool/view-owned-tools.ts",
+      "baselineSha256": "7600933646912bb5dc19752815d8a72652fff9b59f442d555ddeeba9543fb75a",
+      "finalSha256": "fdcaa35488910233a829681f33ba82db00b9b0416c4330cc3506be5ba73f5ea6",
+      "origin": "PREEXISTING_WORKTREE_MODIFIED_THIS_BATCH",
+      "gitTrackedAtBaseline": false,
+      "preexistingStagedDiff": false,
+      "preexistingUnstagedDiff": false,
+      "preexistingUntracked": true,
+      "impact": "declaration preservation / refusal only"
+    },
+    {
+      "path": "runtime/src/worker-runtime/dom-snapshot-producer.ts",
+      "baselineSha256": "15dee5a1bb5c21fb03825a232dc4f757569d9c76ca7d92bed0e02217114b6342",
+      "finalSha256": "638c5624a1aea54a7629c4fca014fdf93a2191a67556b648e9d3ee1f8a8d83c0",
+      "origin": "PREEXISTING_WORKTREE_MODIFIED_THIS_BATCH",
+      "gitTrackedAtBaseline": false,
+      "preexistingStagedDiff": false,
+      "preexistingUnstagedDiff": false,
+      "preexistingUntracked": true,
+      "impact": "declaration preservation / refusal only"
+    },
+    {
+      "path": "runtime/src/worker-runtime/app-kernel/AppKernel.ts",
+      "baselineSha256": "5d6fdde4af27fd580388841ca3907bfb38c07be845159099551bbbbf0c34dc26",
+      "finalSha256": "bbcb09e84d67f931a9c68ba84c45626d4977cf40af1ae2b996f1e8817dae1e2f",
+      "origin": "PREEXISTING_WORKTREE_MODIFIED_THIS_BATCH",
+      "gitTrackedAtBaseline": true,
+      "preexistingStagedDiff": true,
+      "preexistingUnstagedDiff": true,
+      "preexistingUntracked": false,
+      "impact": "declaration preservation / refusal only"
+    },
+    {
+      "path": "runtime/src/engine/app/worker-host.ts",
+      "baselineSha256": "28ede7ca387b143e45cbb9df2da8c779ac9a82d5a22f75931d298a2cdfbbfeee",
+      "finalSha256": "5524508576cc210e10c7434f925c2381002bc25e7cbba2257228cd8c5da2db24",
+      "origin": "PREEXISTING_WORKTREE_MODIFIED_THIS_BATCH",
+      "gitTrackedAtBaseline": true,
+      "preexistingStagedDiff": true,
+      "preexistingUnstagedDiff": true,
+      "preexistingUntracked": false,
+      "impact": "declaration preservation / refusal only"
+    },
+    {
+      "path": "runtime/src/spi/runtime/view-owned-tools.interface.ts",
+      "baselineSha256": "83334c6653bb938e464515fffa627207e16be3d1a20f891e108f094a74d3fef1",
+      "finalSha256": "7a62367e3e42e706add4ff8a190d4a34bb785082181415c7289a71e5d948dc17",
+      "origin": "PREEXISTING_WORKTREE_MODIFIED_THIS_BATCH",
+      "gitTrackedAtBaseline": false,
+      "preexistingStagedDiff": false,
+      "preexistingUnstagedDiff": false,
+      "preexistingUntracked": true,
+      "impact": "declaration preservation / refusal only"
+    },
+    {
+      "path": "sdk/src/operation/types.ts",
+      "baselineSha256": "d053eea2486d27d08ada6b7553345a0ccf81d01ab7a4eed6852abb95843d785a",
+      "finalSha256": "9a2a6587ce7d42ae58eeabc24243b55d89e3cda817e93c4a1188a23422a851bc",
+      "origin": "PREEXISTING_WORKTREE_MODIFIED_THIS_BATCH",
+      "gitTrackedAtBaseline": true,
+      "preexistingStagedDiff": false,
+      "preexistingUnstagedDiff": false,
+      "preexistingUntracked": false,
+      "impact": "declaration preservation / refusal only"
+    },
+    {
+      "path": "sdk/src/contexts/view-runtime-context.ts",
+      "baselineSha256": "d67fd746079f8d767d34b17551a566d6dd1661dc619a885aa9e6ca2587965b48",
+      "finalSha256": "b28a02e4cd48064c874be8b08f450ca5ba5f13b3032c1d740ab84f83a413a660",
+      "origin": "PREEXISTING_WORKTREE_MODIFIED_THIS_BATCH",
+      "gitTrackedAtBaseline": true,
+      "preexistingStagedDiff": false,
+      "preexistingUnstagedDiff": true,
+      "preexistingUntracked": false,
+      "impact": "declaration preservation / refusal only"
+    },
+    {
+      "path": "sdk/src/components/View.tsx",
+      "baselineSha256": "5c390532db20219636ba514286419fa0d45b33c07138ded9ea2eaa78ce89113e",
+      "finalSha256": "d730e66e41c782d1bcb80299b46e1cc234f9eb40be33c21977ae06ee208fbe7e",
+      "origin": "PREEXISTING_WORKTREE_MODIFIED_THIS_BATCH",
+      "gitTrackedAtBaseline": true,
+      "preexistingStagedDiff": true,
+      "preexistingUnstagedDiff": true,
+      "preexistingUntracked": false,
+      "impact": "declaration preservation / refusal only"
+    },
+    {
+      "path": "sdk/src/hooks/useViewTypeTool.ts",
+      "baselineSha256": "cfe57fa3ef6cec1a59b0bfeeb084aa47cb2573ee3b610188fc13dc10e576fe60",
+      "finalSha256": "1d6a313f574afc4ebab866bc64e3967c1e9a9e85f9649e440317bf104a6fe13f",
+      "origin": "PREEXISTING_WORKTREE_MODIFIED_THIS_BATCH",
+      "gitTrackedAtBaseline": true,
+      "preexistingStagedDiff": true,
+      "preexistingUnstagedDiff": true,
+      "preexistingUntracked": false,
+      "impact": "declaration preservation / refusal only"
+    },
+    {
+      "path": "runtime/src/core/tool/ref-declarations.ts",
+      "baselineSha256": null,
+      "finalSha256": "1dd8fbd3f9e583fd2607dc5c399fc4bd73eb19467d67dda88a01d4d2d38c7a29",
+      "origin": "NEW_THIS_BATCH",
+      "gitTrackedAtBaseline": false,
+      "preexistingStagedDiff": false,
+      "preexistingUnstagedDiff": false,
+      "preexistingUntracked": false,
+      "impact": "declaration preservation / refusal only"
+    },
+    {
+      "path": "runtime/src/core/tool/ref-declarations.wave2c.test.ts",
+      "baselineSha256": null,
+      "finalSha256": "74baa9e274bba4a9e5967e3857e544983f494454cb056d906566a8445d5177c7",
+      "origin": "NEW_THIS_BATCH",
+      "gitTrackedAtBaseline": false,
+      "preexistingStagedDiff": false,
+      "preexistingUnstagedDiff": false,
+      "preexistingUntracked": false,
+      "impact": "test only"
+    },
+    {
+      "path": "runtime/src/engine/app/worker-host.wave2c-declarations.test.ts",
+      "baselineSha256": null,
+      "finalSha256": "e217f0737de2882e4c1b3b26f5ad8fc7aa95db2a30cd67ab1d4f35f8b360ca83",
+      "origin": "NEW_THIS_BATCH",
+      "gitTrackedAtBaseline": false,
+      "preexistingStagedDiff": false,
+      "preexistingUnstagedDiff": false,
+      "preexistingUntracked": false,
+      "impact": "test only"
+    },
+    {
+      "path": "sdk/src/ref-declarations.wave2c.test.ts",
+      "baselineSha256": null,
+      "finalSha256": "b6a959ef51c5d4f82a0371d0a5cf1c05f16f4ba4ccd778462a386abbed9f2da1",
+      "origin": "NEW_THIS_BATCH",
+      "gitTrackedAtBaseline": false,
+      "preexistingStagedDiff": false,
+      "preexistingUnstagedDiff": false,
+      "preexistingUntracked": false,
+      "impact": "test only"
+    }
+  ],
+  "incrementalPatch": {
+    "paths": [
+      "runtime/src/core/snapshot/types.ts",
+      "runtime/src/core/snapshot/validator.ts",
+      "runtime/src/core/snapshot/v2-validator.ts",
+      "runtime/src/core/tool/view-owned-tools.ts",
+      "runtime/src/worker-runtime/dom-snapshot-producer.ts",
+      "runtime/src/worker-runtime/app-kernel/AppKernel.ts",
+      "runtime/src/engine/app/worker-host.ts",
+      "runtime/src/spi/runtime/view-owned-tools.interface.ts",
+      "sdk/src/operation/types.ts",
+      "sdk/src/contexts/view-runtime-context.ts",
+      "sdk/src/components/View.tsx",
+      "sdk/src/hooks/useViewTypeTool.ts",
+      "runtime/src/core/tool/ref-declarations.ts",
+      "runtime/src/core/tool/ref-declarations.wave2c.test.ts",
+      "runtime/src/engine/app/worker-host.wave2c-declarations.test.ts",
+      "sdk/src/ref-declarations.wave2c.test.ts",
+      "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/APPROVED_SCOPE.md",
+      "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/CONTRACT.md",
+      "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/CODEX_WAVE2C_RESULTS.md",
+      "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/NEXT_MINIMAL_SLICE.md"
+    ],
+    "sha256": "2ae46edbdbc0c13caa3561ecb6f5e0606ed76d6e0f7c4eb953802ecb6cf87253",
+    "baseline": "batch-start source backups, not HEAD/index",
+    "excludes": "raw logs, machine manifests, baseline and helper scripts; all fingerprinted separately"
+  },
+  "evidenceFiles": [
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/APPROVED_SCOPE.md",
+      "sha256": "ff8f3944cb5dd9dd71f4d1d2496501c240cb5701f29cdb8429ed5337af4ff449",
+      "sizeBytes": 1834
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/CODEX_WAVE2C_RESULTS.md",
+      "sha256": "fddb9c70c677668f19164926c1ad9ab7b0de43e277e17f3c97542256b0de6fd3",
+      "sizeBytes": 10991
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/CONTRACT.md",
+      "sha256": "5d931b97f5e359db6312e0fb82ca2c85e8774ce0fe13cf592b85ded7327bab5f",
+      "sizeBytes": 10717
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/GATE_STATUS.json",
+      "sha256": "dbd23337801a24f7cb5d47875c839675c068f34a09e42f474ca251e2c009b9fc",
+      "sizeBytes": 58950
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/NEXT_MINIMAL_SLICE.md",
+      "sha256": "95379362e235c710683a358db5d63c5978b64b1275416925f5aa416576cbc8af",
+      "sizeBytes": 2088
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/audit-integrity.py",
+      "sha256": "477029a19a7ace5b6997c54855515cad75d5759c5ecd5cfeb60deec1e5971fd8",
+      "sizeBytes": 4718
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/head.txt",
+      "sha256": "4a498b95474d6fb499b8a7acc540beac697bb28410e2270fe6742d274d81475b",
+      "sizeBytes": 41
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/index.patch",
+      "sha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+      "sizeBytes": 503292
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/inventory.json",
+      "sha256": "dc1e8c95884450beee0bc73cbf35f43744c99acae0c9ab064f8b60461cb80143",
+      "sizeBytes": 256477
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/core/snapshot/types.ts",
+      "sha256": "194b64c801a0a19e260104601e1aa5faad55cc1a336f98477ea7dd02d3251e8f",
+      "sizeBytes": 10466
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/core/snapshot/v2-validator.ts",
+      "sha256": "00aedcca1d66919d994b82ac0071b2a0d179bec4ded5c406472a61e5303b2ef4",
+      "sizeBytes": 10968
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/core/snapshot/validator.ts",
+      "sha256": "3bc87f00a4239680a8ba34dc39bb422f65abfdd11f16c077b24f44bf8f307b78",
+      "sizeBytes": 13927
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/core/tool/view-owned-tools.ts",
+      "sha256": "7600933646912bb5dc19752815d8a72652fff9b59f442d555ddeeba9543fb75a",
+      "sizeBytes": 13226
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/engine/app/worker-host.ts",
+      "sha256": "28ede7ca387b143e45cbb9df2da8c779ac9a82d5a22f75931d298a2cdfbbfeee",
+      "sizeBytes": 45332
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/spi/runtime/view-owned-tools.interface.ts",
+      "sha256": "83334c6653bb938e464515fffa627207e16be3d1a20f891e108f094a74d3fef1",
+      "sizeBytes": 522
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/worker-runtime/app-kernel/AppKernel.ts",
+      "sha256": "5d6fdde4af27fd580388841ca3907bfb38c07be845159099551bbbbf0c34dc26",
+      "sizeBytes": 35883
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/worker-runtime/dom-snapshot-producer.ts",
+      "sha256": "15dee5a1bb5c21fb03825a232dc4f757569d9c76ca7d92bed0e02217114b6342",
+      "sizeBytes": 14760
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/sdk/src/components/View.tsx",
+      "sha256": "5c390532db20219636ba514286419fa0d45b33c07138ded9ea2eaa78ce89113e",
+      "sizeBytes": 9592
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/sdk/src/contexts/view-runtime-context.ts",
+      "sha256": "d67fd746079f8d767d34b17551a566d6dd1661dc619a885aa9e6ca2587965b48",
+      "sizeBytes": 4993
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/sdk/src/hooks/useViewTypeTool.ts",
+      "sha256": "cfe57fa3ef6cec1a59b0bfeeb084aa47cb2573ee3b610188fc13dc10e576fe60",
+      "sizeBytes": 10259
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/sdk/src/operation/types.ts",
+      "sha256": "d053eea2486d27d08ada6b7553345a0ccf81d01ab7a4eed6852abb95843d785a",
+      "sizeBytes": 7443
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/status-porcelain-v1.txt",
+      "sha256": "b20c203b96e2cc65f2fb227954b5e5ebda45d382abdefdde8c65f494eea41c8b",
+      "sizeBytes": 7543
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/worktree.patch",
+      "sha256": "fee75edd170d139f96c30ff1323a199993bab6480b6286aac8dec2af081bdcd2",
+      "sizeBytes": 305891
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/build-packet.py",
+      "sha256": "c86d4c0ff7b713f3c2fe0028e96718f21b5fe0c199bc1dd69d030af657184fc5",
+      "sizeBytes": 12150
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/commands.jsonl",
+      "sha256": "6558ab87e196dcf58e1396538a16426eece256cd9531f4affdce4f99e7737c66",
+      "sizeBytes": 21143
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/incremental-changes.patch",
+      "sha256": "2ae46edbdbc0c13caa3561ecb6f5e0606ed76d6e0f7c4eb953802ecb6cf87253",
+      "sizeBytes": 90389
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/integrity-after-order.json",
+      "sha256": "0f0668c428dae5e6228c2434f9358d988a177191b25c23528e7abbbf7199d6b8",
+      "sizeBytes": 1994
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/integrity-final.json",
+      "sha256": "0f0668c428dae5e6228c2434f9358d988a177191b25c23528e7abbbf7199d6b8",
+      "sizeBytes": 1994
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/run-check.py",
+      "sha256": "34934baae67e0df1b874ea0c4a091b39b01297393a8db7c21ab8b3d7baa00e17",
+      "sizeBytes": 1894
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/run-stability.py",
+      "sha256": "115e6b9e6d5f0257e6845be6e6c7f5e192f8f714d222127b3c3691ee0e7d2c44",
+      "sizeBytes": 1496
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-canonical-r1-original-controlled.log",
+      "sha256": "06b57b90f976e6a2600a9b90e95741252aa21d5efb8e16267bb5b6b9f9033354",
+      "sizeBytes": 1890
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-canonical-r1-original-real-worker.log",
+      "sha256": "ba0933c0327d54ac1f668ddf131fc4d05eca0661c44d228456f9995a16d2457b",
+      "sizeBytes": 1125
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-canonical-stability-1.log",
+      "sha256": "e2937ef1a46c58f8c5f6b17584da9ceb0cc204c5183621472253362a2f94e021",
+      "sizeBytes": 7027
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-canonical-stability-2.log",
+      "sha256": "432a6e41291db6ad154a463b4a33a625bf2306fbaa58a4642f3c55860a4d30db",
+      "sizeBytes": 7027
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-canonical-stability-3.log",
+      "sha256": "5079b5450711fef47e7065bc44e785a05df07520203444e8be80bab2b8dd65f8",
+      "sizeBytes": 7027
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-canonical-ide-jest.log",
+      "sha256": "31050c7821741c8661c0928d278a5e07a053d6462c8eb6a7d86c9fd97b20bf43",
+      "sizeBytes": 540
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-canonical-ide-tsc.log",
+      "sha256": "bc20a61a0ea9b543bf73ad40be7269b7265a16913d950a9d2cdc61db03cd9c1a",
+      "sizeBytes": 131
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-canonical-runtime-tsc.log",
+      "sha256": "6195eca600e82cab795d46a8874895d4ed2f0c60725765221ac45b434eaa35a4",
+      "sizeBytes": 110
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-canonical-runtime-vitest.log",
+      "sha256": "f4aa056942505e717e4f8e10d78ec557d3b9c3e8166545f959ace17a31c44ee9",
+      "sizeBytes": 14180
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-canonical-sdk-tsc.log",
+      "sha256": "cfa43a996c653a393895d7257c986cf9bc736cbecebea687a637268f6d0b242a",
+      "sizeBytes": 115
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-canonical-sdk-vitest.log",
+      "sha256": "1635488913542977ffac740b002068d3eee436143055e23067c8683206366477",
+      "sizeBytes": 10764
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-ide-jest.log",
+      "sha256": "cf2ac802d4e78d25547d74646e545cfe45f5bd881db47e44dd8bd8d19891c6e2",
+      "sizeBytes": 525
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-ide-tsc.log",
+      "sha256": "8fa30f06aeba1e00aa8f41ee41c27d28197db456601a2325ea1718342298c558",
+      "sizeBytes": 131
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-runtime-tsc.log",
+      "sha256": "d69a57c677746184f21c4e7bc25cdd70a01e1ab0d76d3093502b832c9a140ebf",
+      "sizeBytes": 110
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-runtime-vitest.log",
+      "sha256": "f845dcd17fab5d90f9660264f9190fc72dc44c045fa39b6ed01a2b624b7c0555",
+      "sizeBytes": 14177
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sdk-tsc.log",
+      "sha256": "0449361df1ad3e72e38da4b8d6f2cfcb7acbe9a5b499e6348103858e84d03cce",
+      "sizeBytes": 115
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sdk-vitest.log",
+      "sha256": "94fffc0b65a75c68ac282496caecafafe43d321231c8f38aadbdf6a16f4548c6",
+      "sizeBytes": 11191
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sealed-ide-jest.log",
+      "sha256": "8943e5b756b401b84a2fe688d026de111531708337bbfec91ae45424909e00d1",
+      "sizeBytes": 539
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sealed-ide-tsc.log",
+      "sha256": "ebb1023c3dd81c6082cc3114aa0c3749454169b45a117967f71e1973368c2fcd",
+      "sizeBytes": 131
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sealed-runtime-tsc.log",
+      "sha256": "2b1a762c9adf72130ce29457066e44b1945bb007d63e9a0193a6e42e5a117208",
+      "sizeBytes": 110
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sealed-runtime-vitest.log",
+      "sha256": "adbb476dec91f3aafdf7dbe182b45f9849920b46b515b8c18795ffd95853adf3",
+      "sizeBytes": 14178
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sealed-sdk-tsc.log",
+      "sha256": "899d19889b345b3ad155a15b42fe6f577c97d3358968db1c161a0ad7060e94b7",
+      "sizeBytes": 115
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sealed-sdk-vitest.log",
+      "sha256": "29bc8e92ce5c96c10bca676eb1fd230b4f5281499306d4cf892f43113b3aebe4",
+      "sizeBytes": 10764
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-verified-ide-jest.log",
+      "sha256": "c38a5e666c3a262cecf171f3f96a9c3d51e034cb5fa66855fced69a2c381db30",
+      "sizeBytes": 539
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-verified-ide-tsc.log",
+      "sha256": "53528a93050db35e99f3b0b76357d7940ec80bd5cb7c745dbbf365450fb4b8e1",
+      "sizeBytes": 131
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-verified-runtime-tsc.log",
+      "sha256": "1376d5185cdc6d8b1b1d97edbdb392da2ea5b16e4b3ac4cfc84093ef20746a8e",
+      "sizeBytes": 110
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-verified-runtime-vitest.log",
+      "sha256": "8a6ccf9e9c3f14df6f43d8e6981859d65249b39681bf5e2e47f00a5ddf94fdb1",
+      "sizeBytes": 14178
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-verified-sdk-tsc.log",
+      "sha256": "594324c36bef52661d48db8508c80a29dbfd5efdbdba4a9598602210425cfa89",
+      "sizeBytes": 115
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-verified-sdk-vitest.log",
+      "sha256": "d2bc4d12639b9c877793db41600186e733c67fda7a7d996d54fdcf16cd038cea",
+      "sizeBytes": 10220
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-green-core-first.log",
+      "sha256": "6f27c5d99f43261fd367fe2e664975a30f0a51a431c4c0bcbd349d3ab5a6c842",
+      "sizeBytes": 6494
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-green-outer-metadata-getters.log",
+      "sha256": "213c9b82f99e197455cbfa7b4c5b6fbcbf4823e9f897e28d08b1c75f440481d6",
+      "sizeBytes": 13476
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-green-sdk-first.log",
+      "sha256": "9baf67395d1af5dea7d85fe6a712ff5a7e0abcc0c8a682c4ba86f5c37211753b",
+      "sizeBytes": 5276
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-green-worker-first.log",
+      "sha256": "307f58e54fc21143337439bdf579f2d403d6c359a207ae5f993b01d17b2f3520",
+      "sizeBytes": 4036
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-implementation-runtime-tsc-corrected.log",
+      "sha256": "9141eaeaae3f61908111c7ed3e2a984eb2beaa0db8f5f055f3fdde56e19ab919",
+      "sizeBytes": 110
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-implementation-runtime-tsc.log",
+      "sha256": "832c7a005a89434122586f3e755f78f565eb3e728b6f1c63dbff34947013c715",
+      "sizeBytes": 378
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-patch-check-after-order.log",
+      "sha256": "53cede11cca457a8884e84f3c3135b5bf5b175f3b56c7d235f25a8fc99a6eee9",
+      "sizeBytes": 179
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-patch-check.log",
+      "sha256": "c87118ca63a1919afbe05cd43298ecbcb86e7383ffa43dedd169595485b0c6ff",
+      "sizeBytes": 179
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-protection-after-order.log",
+      "sha256": "bd3553b581f639d5ed894f56b71bde605ad4ba9bc00b8be7f31b6f12da441f97",
+      "sizeBytes": 2075
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-protection-final.log",
+      "sha256": "b6bbf70cb4caea9bf22f975be9648cbfb0e70b1ba1db9d53bff2984bd317ee46",
+      "sizeBytes": 2069
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-r1-original-controlled.log",
+      "sha256": "a1b113dd80b8152270ea248dd879df54d2a8529076fc298246b5106ad4ac3194",
+      "sizeBytes": 1890
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-r1-original-real-worker.log",
+      "sha256": "8e4b99cf3040987d6a8e3d666b3a9e236603e1d2d2caaee237f3d49a8294e356",
+      "sizeBytes": 1125
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-red-core.log",
+      "sha256": "e4e5311efc856e972d47821692e834d273a57f5eeee5e549d793da6c850a02fc",
+      "sizeBytes": 20699
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-red-outer-metadata-getters.log",
+      "sha256": "4e5b9b88053905fa94d2f502479b864b30c6f886164ad9fdd1d4c6719585158a",
+      "sizeBytes": 8509
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-red-required-order.log",
+      "sha256": "8e82b33f53915765e7d93e8b7df1b1dd740c7f9aecc29ba4f17fa5e7407a799c",
+      "sizeBytes": 8007
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-red-sdk.log",
+      "sha256": "0d1094ac52f33392de950a1a883fd0b80b60434ff5f818a98ffc67c5ad6f1327",
+      "sizeBytes": 10997
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-red-worker.log",
+      "sha256": "eb5aeb6c8e03997694a8ecb3e78b9700b9446fade20d17865c33883919725789",
+      "sizeBytes": 12068
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-sdk-compatibility-message.log",
+      "sha256": "d29c6095866a61296bea0d1b329eb7759f710eb95ce4223a3723ba1fada37254",
+      "sizeBytes": 12554
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-stability-1.log",
+      "sha256": "788c05873406755a96ca037af0e6926c3e75736f489f51d8fa996348f0e73106",
+      "sizeBytes": 7024
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-stability-2.log",
+      "sha256": "908f8201bc85b606b2fe3b34d4c4e2864a2f72fb565b7e95614036fc2c5eb695",
+      "sizeBytes": 7025
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-stability-3.log",
+      "sha256": "9adc73bafc2346ff27be32bf9119ce3555f5d898943bda80cbcadbd55457f178",
+      "sizeBytes": 7025
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/verify-patch.py",
+      "sha256": "78709dee1899eac1e764d9342651741adb4bdac27d5fe1bd4e7db82b5e027f75",
+      "sizeBytes": 708
+    }
+  ],
+  "selfHash": null,
+  "selfHashReason": "Manifest excludes itself to avoid recursive hashing."
+}

@@ -1,0 +1,12 @@
+{
+  "checkedUTC": "2026-10-23T15:42:25.305425+00:00",
+  "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "indexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "worktreeSha256": "fee75edd170d139f96c30ff1323a199993bab6480b6286aac8dec2af081bdcd2",
+  "preexistingPathsChecked": 1238,
+  "changedPreexistingPaths": [],
+  "unexpectedNewPaths": [],
+  "writesOnlyUnder": "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01",
+  "ignoredBuildProductsExcluded": true,
+  "issues": []
+}

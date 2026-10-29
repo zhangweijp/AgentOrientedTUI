@@ -22,6 +22,7 @@ import {
     type AppLaunchConfig,
     // Third-party Apps
     AppRegistry,
+    SEMANTIC_INTERACTION_MODES,
     installNpmPackage,
     parseInstallSource,
     resolveCatalog,
@@ -35,6 +36,7 @@ import {
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
+import { readSemanticDesktopSnapshot } from './semantic-desktop-snapshot.js';
 
 export type { DesktopID };
 
@@ -169,16 +171,18 @@ export class DesktopManager {
         // [RFC-021] No more ChatApp installation
         // Desktop is now a pure TUI container for tool applications
 
-        // Install third-party apps via AppRegistry (if any configured)
         try {
             const desktop = this.kernel.getDesktop(actualDesktopId);
             const thirdPartyIds = await this.appRegistry.installAll(desktop, {
-                dynamicConfig: config
-            } as any);
+                dynamicConfig: config,
+                experimentalInteractionModes: SEMANTIC_INTERACTION_MODES,
+            });
             installedAppIds.push(...thirdPartyIds);
-            console.log(`[DesktopManager] Created Desktop ${actualDesktopId} with ${thirdPartyIds.length} third-party apps`);
+            console.log(`[DesktopManager] Created Desktop ${actualDesktopId} with ${thirdPartyIds.length} third-party apps (Semantic)`);
         } catch (error) {
-            console.error('[DesktopManager] Failed to install third-party apps:', error);
+            console.error('[DesktopManager] Failed to install apps:', error);
+            await this.kernel.destroyDesktop(actualDesktopId);
+            throw error;
         }
 
         this.desktopAppMap.set(actualDesktopId, installedAppIds);
@@ -232,11 +236,11 @@ export class DesktopManager {
     /**
      * Get snapshot for a Desktop
      * 
-     * [SDK 标准化] 使用 kernel.acquireSnapshot() 替代 snapshotBuilder
+     * Uses the same Semantic projection as the Agent with an independent observation.
      */
     async getSnapshot(desktopId: DesktopID): Promise<string | null> {
         try {
-            const snapshot = await this.kernel.acquireSnapshot(desktopId);
+            const snapshot = await readSemanticDesktopSnapshot(this.kernel.getDesktop(desktopId), this.kernel);
             return snapshot.markup;
         } catch {
             return null;

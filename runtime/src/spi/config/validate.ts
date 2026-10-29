@@ -22,17 +22,17 @@ const VALIDATION_RULES: ValidationRule[] = [
     },
     {
         path: 'worker.pool.maxSize',
-        validate: (c) => c.worker.pool.maxSize >= c.worker.pool.initialSize,
-        message: 'worker.pool.maxSize must be >= worker.pool.initialSize',
+        validate: (c) => Number.isSafeInteger(c.worker.pool.maxSize) && c.worker.pool.maxSize >= 1 && c.worker.pool.maxSize <= 100 && c.worker.pool.maxSize >= c.worker.pool.initialSize,
+        message: 'worker.pool.maxSize must be a safe integer between 1 and 100 and >= worker.pool.initialSize',
     },
     {
         path: 'worker.pool.initialSize',
-        validate: (c) => c.worker.pool.initialSize >= 0 && c.worker.pool.initialSize <= 100,
+        validate: (c) => Number.isSafeInteger(c.worker.pool.initialSize) && c.worker.pool.initialSize >= 0 && c.worker.pool.initialSize <= 100,
         message: 'worker.pool.initialSize must be between 0 and 100',
     },
     {
         path: 'worker.pool.idleTimeoutMs',
-        validate: (c) => c.worker.pool.idleTimeoutMs >= 5000 && c.worker.pool.idleTimeoutMs <= 600_000,
+        validate: (c) => Number.isSafeInteger(c.worker.pool.idleTimeoutMs) && c.worker.pool.idleTimeoutMs >= 5000 && c.worker.pool.idleTimeoutMs <= 600_000,
         message: 'worker.pool.idleTimeoutMs must be between 5000ms and 600000ms',
     },
 

@@ -1,0 +1,51 @@
+{
+  "verifiedUTC": "2026-10-24T03:50:51.867297+00:00",
+  "manifestSha256": "a93423cd8623d3b7baabbe408fd41799d5360ba42f3f7c1d717e66f686cde734",
+  "verifiedArtifactCount": 37,
+  "verifiedRawCommandLogCount": 19,
+  "artifactErrors": [],
+  "sourceErrors": [],
+  "baselineBackupErrors": [],
+  "changedExistingPaths": [
+    "runtime/src/core/tool/ref-declarations.ts"
+  ],
+  "unexpectedNewPaths": [],
+  "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "stagedDiffOutputSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "indexFileSha256": "8ed3a27a94f2a4f13caa9afb06e52923139484f882e83999ce836c6834a34162",
+  "priorRFCRecords": 586,
+  "priorRFCRecordsUnchanged": true,
+  "originalReviewScriptsUnmodified": true,
+  "commandExitCodeErrors": [],
+  "patchReplay": [
+    {
+      "command": [
+        "git",
+        "apply",
+        "--check",
+        "/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/incremental-changes.patch"
+      ],
+      "cwd": "isolated mkdtemp copy, never repository",
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "git",
+        "apply",
+        "/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/incremental-changes.patch"
+      ],
+      "cwd": "isolated mkdtemp copy, never repository",
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "temporaryReplayMatchesFinalSources": {
+    "runtime/src/core/tool/ref-declarations.ts": true,
+    "runtime/src/core/tool/ref-declarations.wave2c-c1.test.ts": true
+  },
+  "scope": "Current source/evidence fingerprints and baseline data; ignored build artifacts/caches excluded. Manifest excludes itself and this seal.",
+  "pass": true
+}

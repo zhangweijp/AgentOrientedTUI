@@ -1,0 +1,148 @@
+COMMAND: pnpm --dir runtime exec vitest run src/engine/app/worker-host.wave2a-readonly.test.ts --reporter=verbose
+START_UTC: 2026-10-23T13:00:36.078865+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+ ✓ src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > executes the selected View Handler, keeps SDK validation and preserves business failure through successful IPC 141ms
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+ × src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > cannot redirect an old A observation to a remounted A or to B 129ms
+   → expected { success: false, error: { …(2) } } to match object { success: true, data: { who: 'A' } }
+(3 matching properties omitted from actual)
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+ × src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > keeps original selectors and args while the caller replaces them with another valid Tool during authorization 75ms
+   → expected [ [ { …(5) } ] ] to have a length of 2 but got 1
+stdout | src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > refuses an expired pinned source instead of laundering it through a caller replacement snapshot
+WAVE2A_TTL_RECHECK={"success":true,"calls":{"A":1,"B":0,"query":0}}
+
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+ × src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > refuses an expired pinned source instead of laundering it through a caller replacement snapshot 120ms
+   → expected { success: true, …(2) } to match object { success: false, …(1) }
+(4 matching properties omitted from actual)
+[PersistenceShutdown] Shutdown listener initialized
+ ✓ src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > allows display/Ref-only updates and passes reference-shaped JSON literally without latest-Ref fallback 130ms
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+ ✓ src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > rechecks unchanged caller source after authorization: 'disable' 128ms
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+ ✓ src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > rechecks unchanged caller source after authorization: 'reregister' 124ms
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+ ✓ src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > rechecks unchanged caller source after authorization: 'schema' 126ms
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+ ✓ src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > rechecks unchanged caller source after authorization: 'remount' 127ms
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+ ✓ src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > Worker live registry rejects 'disable' even if Host misses the newer prepared snapshots 73ms
+ ✓ src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > Worker live registry rejects 'reregister' even if Host misses the newer prepared snapshots 66ms
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+ ✓ src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > Worker live registry rejects 'schema' even if Host misses the newer prepared snapshots 65ms
+ ✓ src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > Worker live registry rejects 'remount' even if Host misses the newer prepared snapshots 66ms
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+[Worker] APP_SHUTDOWN flush timeout fallback
+[PersistenceShutdown] Shutdown listener initialized
+ ✓ src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > does not dispatch a late authorization after App $s 1073ms
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+ ✓ src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > does not dispatch a late authorization after App $s 100ms
+ ✓ src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > does not dispatch a late authorization after App $s 70ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > cannot redirect an old A observation to a remounted A or to B
+AssertionError: expected { success: false, error: { …(2) } } to match object { success: true, data: { who: 'A' } }
+(3 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "data": {
+-     "who": "A",
+-   },
+-   "success": true,
++   "success": false,
+  }
+
+ ❯ src/engine/app/worker-host.wave2a-readonly.test.ts:159:23
+    157|         expect(await host.executeReadOnlyViewTool(b, () => true)).toMa…
+    158|         const fresh = await host.executeReadOnlyViewTool(request(), ()…
+    159|         expect(fresh).toMatchObject({ success: true, data: { who: 'A' …
+       |                       ^
+    160|         expect((fresh.data as any).identity).not.toBe((first.data as a…
+    161|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > keeps original selectors and args while the caller replaces them with another valid Tool during authorization
+AssertionError: expected [ [ { …(5) } ] ] to have a length of 2 but got 1
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ src/engine/app/worker-host.wave2a-readonly.test.ts:177:32
+    175|         expect(await pending).toMatchObject({ success: true, data: { w…
+    176|         const originalChecks = select.mock.calls.filter(([value]: any)…
+    177|         expect(originalChecks).toHaveLength(2);
+       |                                ^
+    178|         for (const [value] of originalChecks as any[]) expect(value).t…
+    179|         expect(Object.isFrozen(authorized)).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > refuses an expired pinned source instead of laundering it through a caller replacement snapshot
+AssertionError: expected { success: true, …(2) } to match object { success: false, …(1) }
+(4 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "error": {
+-     "code": "SNAPSHOT_EXPIRED",
+-   },
+-   "success": false,
++   "error": undefined,
++   "success": true,
+  }
+
+ ❯ src/engine/app/worker-host.wave2a-readonly.test.ts:194:24
+    192|         const result = await pending; const observed = await stats();
+    193|         console.log('WAVE2A_TTL_RECHECK=' + JSON.stringify({ success: …
+    194|         expect(result).toMatchObject({ success: false, error: { code: …
+       |                        ^
+    195|         expect(observed.calls).toEqual({ A: 0, B: 0, query: 0 });
+    196|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 13 passed (16)
+   Start at  21:00:36
+   Duration  3.01s (transform 134ms, setup 0ms, collect 165ms, tests 2.64s, environment 0ms, prepare 43ms)
+
+
+EXIT_CODE: 1

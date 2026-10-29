@@ -8,13 +8,14 @@
  * - FileDetail: id="fd_0", "fd_1"..., type="FileDetail"
  * - SearchResult: id="search", type="SearchResult"
  */
-import { createTUIApp, View, useState, useMemo, useAppEnv, useEffect, useCallback, usePersistentState } from '@aotui/sdk';
+import { createTUIApp, View, useState, useMemo, useAppEnv, useEffect, useCallback, usePersistentState, useRef } from '@aotui/sdk';
 import Emittery from 'emittery';
 import { WorkspaceContent } from './WorkspaceContent.js';
 import { FileDetailView } from './FileDetailContent.js';
 import { SearchResultView } from './SearchResultView.js';
 import { RootView } from './RootView.js';
 import { mergeWorkspaceFolders } from './workspace-folders.js';
+import { reconcileFileViewIds } from './file-view-ids.js';
 import { lspService } from '../core/index.js';
 import { persistenceService } from '../core/persistence-service.js';
 import type { FileInfo, AppEvents } from '../types.js';
@@ -44,12 +45,19 @@ function SystemIDEApp() {
   // FileDetailView 管理（使用数组而非Set，保持插入顺序）
   const [activeFiles, setActiveFiles] = usePersistentState<string[]>('activeFiles', [], {
     deserialize: (value) => Array.isArray(value)
-      ? value.filter((item): item is string => typeof item === 'string')
+      ? [...new Set(value.filter((item): item is string => typeof item === 'string'))]
       : [],
     serialize: (value) => Array.isArray(value)
-      ? value.filter((item): item is string => typeof item === 'string')
+      ? [...new Set(value.filter((item): item is string => typeof item === 'string'))]
       : [],
   });
+
+  // Runtime-stable public FileDetail IDs, never positional array indexes.
+  const fileViewState = useRef({ ids: new Map<string, string>() as ReadonlyMap<string, string>, nextId: 0 });
+  fileViewState.current = reconcileFileViewIds(
+    activeFiles, fileViewState.current.ids, fileViewState.current.nextId
+  );
+  const fileViewIds = fileViewState.current.ids;
 
   // SearchResultView 管理
   const [searchResultView, setSearchResultView] = useState<{
@@ -59,6 +67,7 @@ function SystemIDEApp() {
 
   // ─── Multi-Folder Workspace ────────────────────────────────
   const envProjectPath = useAppEnv<string>('projectPath');
+  const explicitLegacyDatabase = useAppEnv<string>('ideLegacyDatabasePath');
 
   // workspaceFolders: 统一使用 multi-folder 模式
   // 若 projectPath 存在则作为初始 folder，否则空数组
@@ -104,7 +113,7 @@ function SystemIDEApp() {
     let cancelled = false;
 
     const initPersistence = async () => {
-      await persistenceService.initDatabase();
+      await persistenceService.initDatabase(explicitLegacyDatabase);
       const persistedFolders = await persistenceService.getWorkspaceFolders();
       if (cancelled) {
         return;
@@ -252,6 +261,7 @@ function SystemIDEApp() {
         <RootView
           workspaceFolders={workspaceFolders}
           activeFiles={activeFiles}
+          fileViewIds={fileViewIds}
           searchResultView={searchResultView}
           onOpenFileDetail={handleOpenFile}
           onCloseFile={handleCloseFile}
@@ -281,10 +291,10 @@ function SystemIDEApp() {
       {/* FileDetail Views - 动态挂载 */}
       {/* id: fd_0, fd_1, fd_2... */}
       {/* ════════════════════════════════════════════════ */}
-      {activeFiles.map((filePath, index) => (
+      {activeFiles.map((filePath) => (
         <FileDetailView
           key={filePath}
-          viewId={`fd_${index}`}
+          viewId={fileViewIds.get(filePath)!}
           filePath={filePath}
           eventBus={eventBus}
           onClose={() => handleCloseFile(filePath)}

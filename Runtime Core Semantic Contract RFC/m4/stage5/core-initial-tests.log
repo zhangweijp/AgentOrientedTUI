@@ -1,0 +1,26 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > returns a frozen, lease-backed selection without any Handler or execute method 3ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > old observation remains usable when only Ref or displayed View content changes 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > rejects old source when same View gets a new Tool registration version 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > rejects an old fd_0 that now points to a NEW ViewInstanceId 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > rejects a Tool whose schema changed even if a faulty Producer reused bindingVersion 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > rejects caller-invented Tool name, target viewId, or snapshotId 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > does not accept an old AppInstance after Runtime restart, even when historical snapshot exists 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > fails closed while latest App is degraded, stopped or has fallen back to V1 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > rejects a V1 snapshot as a View-owned Tool source 0ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot > respects historical lease TTL rather than reading expired but pinned data as authority 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 5: mutating Tool must derive resource version from pinned V2 Ref > returns the exact versioned entity from a Store-committed source with a live lease 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 5: mutating Tool must derive resource version from pinned V2 Ref > rejects a historically valid Tool when its file version changed in the latest Snapshot 2ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 5: mutating Tool must derive resource version from pinned V2 Ref > rejects reusing the same Ref ID for a different file identity 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 5: mutating Tool must derive resource version from pinned V2 Ref > continues to allow a source if only unrelated view markup changed 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 5: mutating Tool must derive resource version from pinned V2 Ref > rejects unversioned entity, arbitrary snapshot values, absent refs and unapproved tools 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 5: mutating Tool must derive resource version from pinned V2 Ref > rejects a different source target, App instance, View remount and Tool binding update 1ms
+ ✓ src/core/tool/source-binding.test.ts > M4 Stage 5: mutating Tool must derive resource version from pinned V2 Ref > does not allow an old source after only the Tool binding version changes 0ms
+
+ Test Files  1 passed (1)
+      Tests  17 passed (17)
+   Start at  12:06:35
+   Duration  374ms (transform 125ms, setup 0ms, collect 118ms, tests 16ms, environment 0ms, prepare 61ms)
+

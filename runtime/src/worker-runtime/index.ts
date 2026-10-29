@@ -1,3 +1,9 @@
+import { captureAppLifecycleAck } from '../adapters/app-lifecycle-protocol.js';
+import { createStateStorageProxy } from './state-storage-proxy.js';
+import { createAppStatePersistence } from './state-persistence.js';
+import { capturePersistenceOffer } from '../adapters/storage/state-storage-protocol.js';
+import { REF_V2_CAPABILITY } from '../adapters/ref-invocation-v2.js';
+import { invokeRefInvocationV2 } from './ref-invocation-v2.js';
 /**
  * AOTUI Runtime - Worker Runtime
  * 
@@ -21,6 +27,8 @@ import { parseHTML } from 'linkedom';
 import type {
     MainToWorkerMessage,
     WorkerToMainMessage,
+    ViewToolInvokeMessage,
+    ViewToolValidateMessage,
     InitMessage,
     RequestID,
     ViewID,
@@ -31,14 +39,23 @@ import type {
 // [RFC-001] Transformer for Worker-Side Transformation
 import { transformElement } from '../engine/view/transformer/pure.js';
 import { createViewFragmentExtractor } from './view-fragment-extractor.js';
+import { DomSnapshotShadowProducer } from './dom-snapshot-producer.js';
 
 // Runtime SPI types
-import type { IAOTUIApp, AppContext, OperationContext, AppKernelConfig, SignalPolicy } from '../spi/index.js';
-import { createAppId, createDesktopId, createSnapshotId, createOperationId, type SnapshotID, type OperationID } from '../spi/index.js';
+import type { IAOTUIApp, AppContext, IProjectionPort, OperationContext, SignalPolicy } from '../spi/index.js';
+import { createAppId, createDesktopId, type SnapshotID, type OperationID } from '../spi/index.js';
 import { AOTUIError } from '../spi/core/errors.js';
 
 // [方案 B] AppKernel from worker-runtime
 import { AppKernel } from './app-kernel/index.js';
+import { captureRefCapabilities, REF_V1_CAPABILITY } from '../adapters/ref-invocation-v1.js';
+import {CREATE_IF_ABSENT_V1_CAPABILITY} from '../adapters/create-if-absent-invocation-v1.js';
+import {invokeCreateIfAbsentInvocationV1} from './create-if-absent-invocation-v1.js';
+import { ORDINARY_V2_CAPABILITY } from '../adapters/ordinary-invocation-v2.js';
+import { invokeOrdinaryInvocationV2 } from './ordinary-invocation-v2.js';
+import { ORDINARY_V1_CAPABILITY } from '../adapters/ordinary-invocation-v1.js';
+import { invokeOrdinaryInvocationV1 } from './ordinary-invocation-v1.js';
+import { invokeRefInvocationV1 } from './ref-invocation-v1.js';
 
 // [RFC-002] Global Ref Registry from SDK -> REMOVED
 // Ref data is now exported via AppKernel (explicit dependency)
@@ -48,9 +65,47 @@ import { AppKernel } from './app-kernel/index.js';
 // ============================================================================
 
 let app: IAOTUIApp | null = null;
+type PersistenceRecord = { app: IAOTUIApp; proxy: ReturnType<typeof createStateStorageProxy>; session: ReturnType<typeof createAppStatePersistence> };
+let persistenceRecord: PersistenceRecord | null = null;
+let lastInitInstanceId = '';
+function persistenceResponse(requestId: RequestID, record: PersistenceRecord, ok: boolean): void {
+    parentPort?.postMessage({ type: 'LIFECYCLE_RESPONSE', requestId, success: ok, persistence: record.session.getReport(),
+        ...(record.app instanceof AppKernel && record.app.getAppCleanupReport() ? { appCleanup: record.app.getAppCleanupReport() } : {}),
+        ...(!ok ? { error: { code: 'PERSISTENCE_CLOSE_FAILED', message: 'Managed persistence did not complete successfully' } } : {}) });
+}
+
 let appId: AppID = '' as AppID;  // Will be set by INIT message
 let desktopId: DesktopID = '' as DesktopID;  // Will be set by INIT message
 let appContainer: HTMLElement | null = null;
+// M2 shadow only: independent, versioned App instance transport.
+let shadowInstanceId = '';
+// One recent trusted identity survives RESET; this is not an unbounded replay history.
+let lastShadowInitInstanceId = '';
+let shadowEnabled = false;
+let experimentalReadOnlyViewTools = false;
+let experimentalVersionedMutations = false;
+let lifecycleGeneration = 0;
+let refV2NegotiatedApp: IAOTUIApp | null = null;
+let refNegotiatedApp: IAOTUIApp | null = null;
+let ordinaryParametersNegotiatedApp: IAOTUIApp | null = null;
+let ordinaryNegotiatedApp: IAOTUIApp | null = null;
+let createNegotiatedApp: IAOTUIApp | null = null;
+function revokeRefProtocol(): number {
+    refV2NegotiatedApp = null;
+    refNegotiatedApp = null;
+    ordinaryNegotiatedApp = null;
+    ordinaryParametersNegotiatedApp = null;
+    createNegotiatedApp = null;
+    return ++lifecycleGeneration;
+}
+let shadowProducerSeq = 0;
+let shadowObservedEpoch = 0; // Fallback for non-component App implementations.
+const shadowProducer = new DomSnapshotShadowProducer();
+let projectionUnsubscribe: (() => void) | undefined;
+function currentProjection(): IProjectionPort | undefined {
+    const candidate = app as IAOTUIApp & { getProjectionCoordinator?: () => IProjectionPort } | null;
+    return candidate?.getProjectionCoordinator?.();
+}
 
 // ============================================================================
 // DOM 观察与推送 (Worker-Only 架构)
@@ -59,9 +114,6 @@ let appContainer: HTMLElement | null = null;
 let domObserver: MutationObserver | null = null;
 let domUpdateTimer: ReturnType<typeof setTimeout> | null = null;
 const DOM_UPDATE_THROTTLE_MS = 16;  // ~60fps 节流
-
-// Dirty 标记 - App 调用 markDirty() 后设为 true，DOM_UPDATE 后重置
-let isDirty = false;
 
 const extractViewFragments = createViewFragmentExtractor();
 
@@ -77,7 +129,6 @@ let signalPolicy: SignalPolicy = 'auto';
 
 let document!: Document;
 let window!: Window;
-let hasLoggedLinkedOM = false;
 
 function initLinkedOM() {
     const dom = parseHTML(
@@ -102,6 +153,79 @@ initLinkedOM();
 // ============================================================================
 
 parentPort?.on('message', async (msg: MainToWorkerMessage) => {
+    if (msg.type === 'STATE_STORAGE_RESPONSE') { persistenceRecord?.proxy.receive(msg);return; }
+    if(msg.type==='VIEW_TOOL_INVOKE_CREATE_IF_ABSENT_V1'){
+        try {
+            const kernel=app instanceof AppKernel?app:null;
+            const response=await invokeCreateIfAbsentInvocationV1(msg,{appId,instanceId:shadowInstanceId,
+                negotiated:createNegotiatedApp!==null && createNegotiatedApp===app && shadowEnabled,
+                ...(kernel?{validateBinding:(tool,target)=>kernel.validateBoundViewTool(tool,target),
+                    validateWrapper:(tool,target)=>kernel.validateBoundCreateIfAbsentViewTool(tool,target),
+                    invokeBinding:(tool,target,args)=>kernel.invokeBoundCreateIfAbsentViewTool(tool,target,args)}:{}),
+            });
+            if (response) { await flushInteractionProjection(); parentPort?.postMessage(response); }
+        }catch{/* No valid terminal can be delivered; Host records unknown. */}
+        return;
+    }
+    if (msg.type === 'VIEW_TOOL_INVOKE_ORDINARY_V2') {
+        try {
+            const kernel = app instanceof AppKernel ? app : null;
+            const response = await invokeOrdinaryInvocationV2(msg,{appId,instanceId:shadowInstanceId,
+                negotiated:ordinaryParametersNegotiatedApp!==null && ordinaryParametersNegotiatedApp===app && shadowEnabled,
+                ...(kernel ? {validateBinding:(tool,target)=>kernel.validateBoundViewTool(tool,target),
+                    validateWrapper:(tool,target)=>kernel.validateBoundOrdinaryParametersViewTool(tool,target),
+                    invokeBinding:(tool,target,args)=>kernel.invokeBoundOrdinaryParametersViewTool(tool,target,args)} : {}),
+            });
+            if (response) { await flushInteractionProjection(); parentPort?.postMessage(response); }
+        } catch { /* No trusted terminal: Host records unknown. */ }
+        return;
+    }
+    if (msg.type === 'VIEW_TOOL_INVOKE_ORDINARY_V1') {
+        try {
+            const kernel = app instanceof AppKernel ? app : null;
+            const response = await invokeOrdinaryInvocationV1(msg,{appId,instanceId:shadowInstanceId,
+                negotiated:ordinaryNegotiatedApp!==null && ordinaryNegotiatedApp===app && shadowEnabled && experimentalReadOnlyViewTools,
+                ...(kernel ? {validateBinding:(tool,target)=>kernel.validateBoundViewTool(tool,target),
+                    validateWrapper:(tool,target)=>kernel.validateBoundOrdinaryViewTool(tool,target),
+                    invokeBinding:(tool,target,args)=>kernel.invokeBoundOrdinaryViewTool(tool,target,args)} : {}),
+            });
+            if (response) { await flushInteractionProjection(); parentPort?.postMessage(response); }
+        } catch { /* No trusted terminal: Host records unknown. */ }
+        return;
+    }
+    if (msg.type === 'VIEW_TOOL_INVOKE_REF_V2') {
+        try {
+            const kernel = app instanceof AppKernel ? app : null;
+            const response = await invokeRefInvocationV2(msg, { appId, instanceId: shadowInstanceId,
+                negotiated: refV2NegotiatedApp !== null && refV2NegotiatedApp === app && shadowEnabled && experimentalReadOnlyViewTools,
+                ...(kernel ? { validateBinding: (tool, target) => kernel.validateBoundViewTool(tool, target),
+                    validateWrapper: (tool, target) => kernel.validateBoundSnapshotValueParametersViewTool(tool, target),
+                    invokeBinding: (tool, target, args) => kernel.invokeBoundSnapshotValueParametersViewTool(tool, target, args) } : {}),
+            });
+            if (response) { await flushInteractionProjection(); parentPort?.postMessage(response); }
+        } catch { /* No trusted terminal: Host records unknown. */ }
+        return;
+    }
+    if (msg.type === 'VIEW_TOOL_INVOKE_REF_V1') {
+        // This branch never reaches the legacy catch which formats arbitrary exceptions.
+        try {
+            const kernel = app instanceof AppKernel ? app : null;
+            const response = await invokeRefInvocationV1(msg, { appId, instanceId: shadowInstanceId,
+                negotiated: refNegotiatedApp !== null && refNegotiatedApp === app &&
+                    shadowEnabled && experimentalReadOnlyViewTools,
+                ...(kernel ? { validateBinding: (tool, target) => kernel.validateBoundViewTool(tool, target),
+                    validateWrapper: (tool, target) => kernel.validateBoundRefViewTool(tool, target),
+                    invokeBinding: (tool, target, args) => kernel.invokeBoundRefViewTool(tool, target, args) } : {}),
+            });
+            if (response) { await flushInteractionProjection(); parentPort?.postMessage(response); }
+        } catch { /* No valid terminal can be delivered: Host must report unknown. */ }
+        return;
+    }
+    if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE', 'APP_REINITIALIZE', 'TERMINATE'].includes(msg.type)) revokeRefProtocol();
+    // STOP revokes business admission while allowing an already-started render
+    // to commit its sole resource owner. Final close joins that initialization.
+    if (msg.type === 'APP_STOP' && app instanceof AppKernel) app.stopApplication();
+    if (['APP_SHUTDOWN', 'APP_CLOSE', 'TERMINATE', 'RESET'].includes(msg.type) && app instanceof AppKernel) app.beginShutdown();
     try {
         switch (msg.type) {
             case 'INIT':
@@ -115,6 +239,9 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
                 break;
             case 'APP_RESUME':
                 await handleAppResume(msg.requestId);
+                break;
+            case 'APP_STOP':
+                sendResponse(msg.requestId, 'LIFECYCLE_RESPONSE', true);
                 break;
             case 'APP_SHUTDOWN':
                 await handleAppShutdown(msg.requestId);
@@ -133,6 +260,12 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
                 break;
             case 'VIEW_MOUNT_BY_LINK':
                 await handleViewMountByLink(msg.requestId, msg.parentViewId, msg.linkId);
+                break;
+            case 'VIEW_TOOL_INVOKE':
+                await handleViewToolInvoke(msg);
+                break;
+            case 'VIEW_TOOL_VALIDATE':
+                await handleViewToolValidate(msg);
                 break;
             case 'APP_OPERATION':
             case 'VIEW_OPERATION':
@@ -165,9 +298,21 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
 // 消息处理函数
 // ============================================================================
 
-async function handleReset(requestId: RequestID): Promise<void> {
-    // console.log(`[Worker] Resetting worker state for reuse...`);
-
+async function handleReset(requestId: RequestID, initGeneration?: number): Promise<void> {
+    const resetGeneration = initGeneration ?? revokeRefProtocol();
+    const closingApp = app, closingPersistence = persistenceRecord;
+    if (closingApp instanceof AppKernel) closingApp.beginShutdown();
+    if (closingPersistence) {
+        const result = await closingPersistence.session.close(() => closingPersistence.app.onClose());
+        if (!result.ok) { persistenceResponse(requestId, closingPersistence, false);return; }
+        if (resetGeneration !== lifecycleGeneration || app !== closingApp || persistenceRecord !== closingPersistence) {
+            sendError(requestId, 'E_RESET_INVALIDATED', 'Worker reset was invalidated');return;
+        }
+        if (persistenceRecord === closingPersistence) persistenceRecord = null;
+    }
+    app = null;
+    projectionUnsubscribe?.();
+    projectionUnsubscribe = undefined;
     // 1. 停止 DOM 观察
     if (domObserver) {
         domObserver.disconnect();
@@ -176,16 +321,6 @@ async function handleReset(requestId: RequestID): Promise<void> {
     if (domUpdateTimer) {
         clearTimeout(domUpdateTimer);
         domUpdateTimer = null;
-    }
-
-    // 2. 调用 App 清理
-    if (app) {
-        try {
-            await app.onClose();
-        } catch (e) {
-            console.error('[Worker] Error closing app during reset:', e);
-        }
-        app = null;
     }
 
     // 3. 重置 DOM 环境 (完全重建 LinkedOM 以清除 head/events)
@@ -200,9 +335,19 @@ async function handleReset(requestId: RequestID): Promise<void> {
     // 4. 重置状态
     appId = createAppId('');
     desktopId = createDesktopId('');
-    isDirty = false;
+    shadowInstanceId = '';
+    shadowEnabled = false;
+    experimentalReadOnlyViewTools = false;
+    experimentalVersionedMutations = false;
+    shadowProducerSeq = 0;
+    shadowObservedEpoch = 0;
+    shadowProducer.reset();
 
-    // console.log(`[Worker] Worker state reset complete`);
+    // Detach/reset synchronously. A late old close must not erase a newer INIT.
+    if (closingApp && !closingPersistence) {
+        try { await closingApp.onClose(); }
+        catch { console.error('[Worker] App cleanup failed during reset'); }
+    }
 
     // 发送响应
     parentPort?.postMessage({
@@ -213,26 +358,45 @@ async function handleReset(requestId: RequestID): Promise<void> {
 }
 
 async function handleInit(msg: InitMessage): Promise<void> {
-    // 如果已经初始化过 (从池中获取但未重置? 理论上不应发生)，先重置
-    if (appId && appId !== msg.appId) {
-        console.warn(`[Worker] Re-initializing worker (prev: ${appId}, new: ${msg.appId})`);
-        await handleReset('internal_reset');
+    const persistenceInit = Object.hasOwn(msg, 'persistence');
+    if (msg.appInstanceId && msg.appInstanceId === lastInitInstanceId) {
+        sendError(msg.requestId, 'APP_INSTANCE_REUSE_UNSUPPORTED', 'A logical App instance can initialize only once');return;
     }
-
+    if (persistenceInit && msg.appInstanceId) lastInitInstanceId = msg.appInstanceId;
+    const shadowIdentity = msg.snapshotShadow === true && typeof msg.appInstanceId === 'string' && msg.appInstanceId.length > 0
+        ? msg.appInstanceId : '';
+    if (shadowIdentity && (shadowIdentity === lastShadowInitInstanceId || shadowEnabled && shadowIdentity === shadowInstanceId)) {
+        sendError(msg.requestId, 'APP_INSTANCE_REUSE_UNSUPPORTED',
+            'APP_INSTANCE_REUSE_UNSUPPORTED: Create a new Host for another Shadow initialization');
+        return;
+    }
+    if (shadowIdentity) lastShadowInitInstanceId = shadowIdentity;
+    const generation = revokeRefProtocol();
+    const field = Object.getOwnPropertyDescriptor(msg, 'requestedCapabilities');
+    const requested = field && !('value' in field) ? null : captureRefCapabilities(field?.value);
+    if (appId) {
+        await handleReset('internal_reset', generation);
+        if (persistenceRecord) { sendError(msg.requestId, 'PERSISTENCE_CLOSE_FAILED', 'Previous instance did not close successfully');return; }
+    }
+    if (generation !== lifecycleGeneration) {
+        sendError(msg.requestId, 'E_INIT_INVALIDATED', 'App initialization was invalidated');
+        return;
+    }
+    app = null;
     appId = msg.appId;
     desktopId = msg.desktopId;
-    if (!hasLoggedLinkedOM) {
-        // console.log('[Worker] LinkedOM initialized');
-        hasLoggedLinkedOM = true;
-    }
+    // Identity is supplied by the bound Runtime WorkerHost, never inferred from
+    // appId or Date.now. Reused physical Workers receive a fresh INIT token.
+    shadowEnabled = msg.snapshotShadow === true && typeof msg.appInstanceId === 'string' && msg.appInstanceId.length > 0;
+    experimentalReadOnlyViewTools = shadowEnabled && msg.experimentalReadOnlyViewTools === true;
+    experimentalVersionedMutations = shadowEnabled && msg.experimentalVersionedMutations === true;
+    shadowInstanceId = typeof msg.appInstanceId === 'string' ? msg.appInstanceId : '';
+    shadowProducerSeq = 0;
+    shadowObservedEpoch = 0;
+    shadowProducer.reset();
 
     // [重构] 不再使用 globalThis，config 将通过 AppKernel 构造函数传递
     const launchConfig = msg.config;
-    if (launchConfig) {
-        // console.log(`[Worker] App config received:`, launchConfig);
-    }
-
-    // console.log(`[Worker] Initializing app ${appId} from ${msg.appModulePath}`);
 
     // 动态加载 App 模块
     try {
@@ -241,14 +405,28 @@ async function handleInit(msg: InitMessage): Promise<void> {
         // but here we focus on App Config.
 
         const appModule = await import(msg.appModulePath);
+        if (generation !== lifecycleGeneration) {
+            sendError(msg.requestId, 'E_INIT_INVALIDATED', 'App initialization was invalidated');
+            return;
+        }
 
         // [方案 B] 支持多种导出方式，优先使用 kernelConfig
         const factory = appModule.default;
+        const marker = factory && Object.getOwnPropertyDescriptor(factory, 'persistenceSupport');
+        if (marker && (!('value' in marker) || marker.value !== 'state-session-v1')) throw new Error('Invalid persistence factory');
+        const offerField = Object.getOwnPropertyDescriptor(msg, 'persistence');
+        const offer = offerField && 'value' in offerField ? capturePersistenceOffer(offerField.value, msg.appInstanceId ?? '') : null;
+        if (marker && offerField && !offer) throw new Error('Invalid persistence offer');
+
+        const lifecycleMarker = factory && Object.getOwnPropertyDescriptor(factory, 'appLifecycleSupport');
+        const lifecycleOffer = Object.getOwnPropertyDescriptor(msg, 'appLifecycle');
+        if (lifecycleMarker && (!('value' in lifecycleMarker) || lifecycleMarker.value !== 'app-lifecycle-v2' ||
+            !lifecycleOffer || !('value' in lifecycleOffer) || !captureAppLifecycleAck(lifecycleOffer.value, msg.appInstanceId ?? '')))
+            throw new Error('APP_LIFECYCLE_UNSUPPORTED');
 
         if (factory?.kernelConfig) {
             // 新模式: 使用 kernelConfig 在 Worker Runtime 中实例化 AppKernel
             // [重构] 将 launchConfig 注入到 kernelConfig 中
-            // console.log('[Worker] Using kernelConfig mode (方案 B)');
             const configWithLaunch = {
                 ...factory.kernelConfig,
                 launchConfig,  // 注入运行时配置
@@ -257,7 +435,6 @@ async function handleInit(msg: InitMessage): Promise<void> {
             // [RFC-012] 读取 signalPolicy
             if (factory.kernelConfig.signalPolicy) {
                 signalPolicy = factory.kernelConfig.signalPolicy;
-                // console.log(`[Worker] SignalPolicy set to: ${signalPolicy}`);
             }
 
             app = new AppKernel(configWithLaunch);
@@ -281,23 +458,58 @@ async function handleInit(msg: InitMessage): Promise<void> {
             throw new AOTUIError('APP_INVALID_EXPORT', { modulePath: msg.appModulePath });
         }
 
+        // Keep the SDK/AppKernel App identity equal to the authenticated
+        // Worker INIT appId. Otherwise Tool IDs and SDK AppRuntimeContext use ''.
+        if (app instanceof AppKernel) {
+            app.setId(appId);
+            if (msg.appInstanceId) app.setAppExecutionInstanceId(msg.appInstanceId);
+            if (lifecycleMarker) app.enableAppLifecycle();
+            if (marker && offer) {
+                const proxy = createStateStorageProxy(offer.instanceId, offer.transport, request => {
+                    if (!parentPort) return false;parentPort.postMessage(request);
+                });
+                const configured = launchConfig?.AOTUI_APP_NAME;
+                const session = createAppStatePersistence({ instanceId: offer.instanceId, desktopId: String(msg.desktopId),
+                    appKey: typeof configured === 'string' && configured.length ? configured : String(msg.appId),
+                    storage: proxy.storage, limits: offer.limits });
+                app.setPersistence(session.port);
+                persistenceRecord = { app, proxy, session };
+            }
+        }
+
         // 创建 App 容器
         appContainer = document.createElement('div') as unknown as HTMLElement;
         appContainer.id = `app-root-${appId}`;
         document.body.appendChild(appContainer as unknown as Node);
 
-        // [RFC-002] Global ref registry loading removed in favor of AppKernel export
-        // console.log('[Worker] App initialized via AppKernel');
-
-        sendResponse(msg.requestId, 'INIT_RESPONSE', true);
-        // console.log(`[Worker] App ${appId} initialized`);
+        const refV2Accepted = requested?.includes(REF_V2_CAPABILITY) === true && shadowEnabled && experimentalReadOnlyViewTools;
+        refV2NegotiatedApp = refV2Accepted ? app : null;
+        const accepted = requested?.includes(REF_V1_CAPABILITY) === true && shadowEnabled && experimentalReadOnlyViewTools;
+        refNegotiatedApp = accepted ? app : null;
+        const parametersAccepted = requested?.includes(ORDINARY_V2_CAPABILITY) === true && shadowEnabled && app instanceof AppKernel;
+        ordinaryParametersNegotiatedApp = parametersAccepted ? app : null;
+        const ordinaryAccepted = requested?.includes(ORDINARY_V1_CAPABILITY) === true && shadowEnabled && experimentalReadOnlyViewTools;
+        ordinaryNegotiatedApp = ordinaryAccepted ? app : null;
+        const createAccepted=requested?.includes(CREATE_IF_ABSENT_V1_CAPABILITY)===true && shadowEnabled;
+        createNegotiatedApp=createAccepted?app:null;
+        const capabilities = [...(refV2Accepted ? [REF_V2_CAPABILITY] : []),...(parametersAccepted ? [ORDINARY_V2_CAPABILITY] : []),...(ordinaryAccepted ? [ORDINARY_V1_CAPABILITY] : []),...(accepted ? [REF_V1_CAPABILITY] : []),...(createAccepted ? [CREATE_IF_ABSENT_V1_CAPABILITY] : [])];
+        parentPort?.postMessage({ type: 'INIT_RESPONSE', requestId: msg.requestId, success: true,
+            ...(lifecycleMarker ? { appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: msg.appInstanceId! } } : {}),
+            ...(persistenceRecord ? { persistence: { protocol: 'state-session-v1', version: 1, instanceId: persistenceRecord.session.port.instanceId } } : {}),
+            ...(capabilities.length ? { acceptedCapabilities: capabilities, appInstanceId: shadowInstanceId } : {}),
+        } as WorkerToMainMessage);
     } catch (error) {
-        sendError(msg.requestId, 'E_INIT_FAILED', String(error));
+        if (generation === lifecycleGeneration) { refV2NegotiatedApp = null; refNegotiatedApp = null; ordinaryNegotiatedApp = null; ordinaryParametersNegotiatedApp = null; createNegotiatedApp=null; }
+        const failed = persistenceRecord;
+        if (failed) { if (failed.app instanceof AppKernel) failed.app.beginShutdown(); await failed.session.close(() => failed.app.onClose(), true); }
+        sendError(msg.requestId, 'E_INIT_FAILED', 'App initialization failed');
     }
 }
 
 async function handleAppOpen(requestId: RequestID): Promise<void> {
-    if (!app || !appContainer) {
+    const openingApp = app;
+    const generation = lifecycleGeneration;
+    if (!openingApp || !appContainer) {
         sendError(requestId, 'E_NOT_INITIALIZED', 'App not initialized');
         return;
     }
@@ -312,7 +524,7 @@ async function handleAppOpen(requestId: RequestID): Promise<void> {
     let needsRerender = false;
 
     function scheduleRender(): void {
-        if (!renderCallback) return;
+        if (!renderCallback || app !== openingApp || generation !== lifecycleGeneration) return;
 
         isRendering = true;
         try {
@@ -322,7 +534,6 @@ async function handleAppOpen(requestId: RequestID): Promise<void> {
             // Check if a deferred render was requested during the render phase
             if (needsRerender) {
                 needsRerender = false;
-                // console.log('[Worker] Deferred render scheduled (update during render)');
                 // Use queueMicrotask to break the synchronous call chain
                 queueMicrotask(() => scheduleRender());
             }
@@ -334,9 +545,7 @@ async function handleAppOpen(requestId: RequestID): Promise<void> {
         desktopId,
 
         markDirty: () => {
-            // console.log('[Worker] AppContext.markDirty() called, isRendering:', isRendering);
-            isDirty = true;
-
+            if (app !== openingApp || generation !== lifecycleGeneration) return;
             // If currently rendering, defer the re-render
             if (isRendering) {
                 needsRerender = true;
@@ -345,19 +554,44 @@ async function handleAppOpen(requestId: RequestID): Promise<void> {
 
             // Not in render phase - schedule render normally
             if (renderCallback) {
-                // console.log('[Worker] Calling scheduleRender()');
                 scheduleRender();
             }
         },
         onRender: (callback: () => void) => {
-            // console.log('[Worker] onRender callback registered');
             renderCallback = callback;
         },
     };
 
-    await app.onOpen(context, appContainer);
+    const openingPersistence = persistenceRecord;
+    try { await openingApp.onOpen(context, appContainer); }
+    catch {
+        if (openingPersistence) {
+            if (openingPersistence.app instanceof AppKernel) openingPersistence.app.beginShutdown();
+            await openingPersistence.session.close(() => openingPersistence.app.onClose(), true);
+            persistenceResponse(requestId, openingPersistence, false);
+        } else sendError(requestId, 'E_OPEN_FAILED', 'App initial commit failed');
+        return;
+    }
+    if (app !== openingApp || generation !== lifecycleGeneration) {
+        sendError(requestId, 'E_OPEN_INVALIDATED', 'App opening was invalidated');
+        return;
+    }
 
-    // console.log('[Worker] After onOpen, appContainer.innerHTML:', appContainer.innerHTML.slice(0, 200));
+    // M3: semantic-only Ref / ViewTypeTool changes can leave DOM unchanged.
+    // This is a Worker Adapter subscription, not a Core dependency on DOM.
+    // Preserve signalPolicy: manual apps do not auto-publish observations.
+    projectionUnsubscribe?.();
+    const projection = currentProjection();
+    if (projection) {
+        // Do not replay the initial render's already-observed notifications.
+        const subscribedAtEpoch = projection.token().epoch;
+        projectionUnsubscribe = projection.subscribe(token => {
+            // Even without Shadow, Ref-only changes must refresh legacy Snapshot.
+            if (token.epoch > subscribedAtEpoch && signalPolicy !== 'manual') {
+                scheduleDomUpdate();
+            }
+        });
+    }
 
     // [Worker-Only] 启动 DOM 观察并推送初始状态
     startDomObserver();
@@ -382,8 +616,14 @@ async function handleAppResume(requestId: RequestID): Promise<void> {
 }
 
 async function handleAppClose(requestId: RequestID): Promise<void> {
+    const record = persistenceRecord;
+    if (record) {
+        const result = await record.session.close(() => record.app.onClose());
+        persistenceResponse(requestId, record, result.ok);return;
+    }
     if (app) {
-        await app.onClose();
+        try { await app.onClose(); }
+        catch { sendResponse(requestId, 'LIFECYCLE_RESPONSE', false); return; }
     }
     sendResponse(requestId, 'LIFECYCLE_RESPONSE', true);
 }
@@ -393,9 +633,7 @@ async function handleAppReinitialize(requestId: RequestID, _reason?: string): Pr
         await app.onReinitialize({
             appId,
             desktopId,
-            markDirty: () => {
-                isDirty = true;
-            },
+            markDirty: () => {},
             onRender: () => {},
             reason: _reason,
         });
@@ -408,6 +646,11 @@ async function handleAppReinitialize(requestId: RequestID, _reason?: string): Pr
  * 触发SDK的持久化flush操作
  */
 async function handleAppShutdown(requestId: RequestID): Promise<void> {
+    const record = persistenceRecord;
+    if (record) {
+        const result = await record.session.shutdown();
+        persistenceResponse(requestId, record, result.ok);return;
+    }
     try {
         // 触发 window 上的 'aotui:shutdown' 事件，让 SDK 层执行 persistence flush
         const shutdownPromise = new Promise<void>((resolve, reject) => {
@@ -466,17 +709,12 @@ async function handleAppShutdown(requestId: RequestID): Promise<void> {
 }
 
 async function handleAppDelete(requestId: RequestID): Promise<void> {
-    if (app && app.onDelete) {
-        try {
-            await app.onDelete();
-        } catch (error) {
-            console.error('[Worker] Error in app.onDelete:', error);
-            // Delete should try best effort, but ensure we return execution
-        }
+    try { await app?.onDelete?.(); }
+    catch {
+        parentPort?.postMessage({ type: 'LIFECYCLE_RESPONSE', requestId, success: false,
+            error: { code: 'APP_DELETE_FAILED', message: 'APP_DELETE_FAILED' } } as WorkerToMainMessage);
+        return;
     }
-    // Delete implies Close (Runtime will call Close separately, but App might rely on onDelete -> Close flow)
-    // Actually, AppManager calls delete() then close(). 
-    // Here we just handle the delete hook.
     sendResponse(requestId, 'LIFECYCLE_RESPONSE', true);
 }
 
@@ -509,6 +747,46 @@ async function handleViewMountByLink(requestId: RequestID, parentViewId: ViewID,
         appContainer.dispatchEvent(event);
     }
     sendResponse(requestId, 'LIFECYCLE_RESPONSE', true);
+}
+
+async function handleViewToolValidate(message: ViewToolValidateMessage): Promise<void> {
+    const denied = (code: string, message: string) => ({
+        success: false, error: { code, message },
+    });
+    let result;
+    if (!experimentalVersionedMutations || !shadowEnabled) {
+        result = denied('TOOL_UNAVAILABLE', 'Versioned mutation preflight is disabled');
+    } else if (message.appId !== appId || message.instanceId !== shadowInstanceId ||
+        !(app instanceof AppKernel)) {
+        result = denied('APP_INSTANCE_MISMATCH', 'Tool preflight App instance is no longer active');
+    } else if (!message.tool.isMutating) {
+        result = denied('TOOL_PERMISSION_DENIED', 'Mutation preflight requires a mutating Tool');
+    } else {
+        result = app.validateBoundViewTool(message.tool, message.target);
+    }
+    // Validation NEVER calls a business Tool Handler.
+    parentPort?.postMessage({
+        type: 'OPERATION_RESPONSE', requestId: message.requestId,
+        success: true, result,
+    } as WorkerToMainMessage);
+}
+
+async function handleViewToolInvoke(message: ViewToolInvokeMessage): Promise<void> {
+    const denied = (code: string, text: string) => ({
+        success: false, error: { code, message: text },
+    });
+    const result = !experimentalReadOnlyViewTools ||
+        !shadowEnabled || message.instanceId !== shadowInstanceId ||
+        message.appId !== appId || !(app instanceof AppKernel)
+        ? denied('APP_INSTANCE_MISMATCH', 'View Tool source is not the current trusted Worker')
+        : await app.invokeBoundReadOnlyTool(message.tool, message.target, message.args);
+    // Transport delivery success and business Tool success remain distinct.
+    parentPort?.postMessage({
+        type: 'OPERATION_RESPONSE',
+        requestId: message.requestId,
+        success: true,
+        result,
+    } as WorkerToMainMessage);
 }
 
 async function handleOperation(
@@ -586,9 +864,6 @@ function handleLLMTextPush(msg: {
         };
     }
 }): void {
-    const totalLength = (msg.reasoning?.length ?? 0) + (msg.content?.length ?? 0);
-    // console.log(`[Worker] Received LLM_OUTPUT_PUSH, total length: ${totalLength}`);
-
     if (!appContainer) {
         console.warn('[Worker] Cannot dispatch LLM text: appContainer not initialized');
         return;
@@ -608,7 +883,6 @@ function handleLLMTextPush(msg: {
         }
     });
     appContainer.dispatchEvent(event);
-    // console.log('[Worker] LLM text event dispatched');
 }
 
 
@@ -624,7 +898,7 @@ function handleLLMTextPush(msg: {
  * [RFC-012] 根据 signalPolicy 决定行为:
  * - 'auto': 正常触发
  * - 'never': 仍然推送 snapshot (保持数据鲜度) 但带 suppressSignal 标志
- * - 'manual': 只设置 dirty 标志
+ * - 'manual': 不自动推送 snapshot
  */
 function startDomObserver(): void {
     if (!appContainer || domObserver) return;
@@ -634,9 +908,11 @@ function startDomObserver(): void {
 
     // LinkedOM 支持 MutationObserver
     domObserver = new MutationObserver(() => {
-        // [RFC-012] manual 模式下只更新 dirty 标记，不推送
+        // M3: DOM changes are semantic projection changes even when no Ref/Tool
+        // registration changed. This epoch is a version, not Date.now().
+        currentProjection()?.recordMutation('content');
+        // [RFC-012] manual 模式下不自动推送
         if (signalPolicy === 'manual') {
-            isDirty = true;
             return;
         }
         scheduleDomUpdate();
@@ -649,7 +925,6 @@ function startDomObserver(): void {
         characterData: true,
     });
 
-    // console.log(`[Worker] DOM observer started for ${appId}, signalPolicy: ${signalPolicy}`);
 }
 
 /**
@@ -663,6 +938,22 @@ function scheduleDomUpdate(): void {
         // [RFC-001] Enforce Worker-Side Transformation
         pushSnapshotFragment();
     }, DOM_UPDATE_THROTTLE_MS);
+}
+
+/**
+ * Publish the handler's committed render before its terminal response. MessagePort
+ * ordering lets the Host accept that projection before resolving the invocation.
+ * Background business work still publishes when the application completes it.
+ */
+async function flushInteractionProjection(): Promise<void> {
+    // Drain the already queued component/MutationObserver microtask, not a wall-clock delay.
+    await Promise.resolve();
+    if (!shadowEnabled || !appContainer) return;
+    if (domUpdateTimer) {
+        clearTimeout(domUpdateTimer);
+        domUpdateTimer = null;
+    }
+    pushSnapshotFragment();
 }
 
 // [RFC-001 Phase 3] Removed legacy pushDomUpdate
@@ -682,6 +973,7 @@ function pushSnapshotFragment(): void {
     if (!appContainer) return;
 
     const now = Date.now();
+    const projectionBefore = shadowEnabled ? currentProjection()?.token() : undefined;
 
     // 在 Worker 内执行 Transform (传入 appId 以支持 operation 路径生成)
     const { markup, indexMap: transformerIndexMap } = transformElement(appContainer, appId);
@@ -706,7 +998,6 @@ function pushSnapshotFragment(): void {
         const refCount = Object.keys(refIndexMap).length;
         if (refCount > 0) {
             finalIndexMap = { ...transformerIndexMap, ...refIndexMap } as typeof transformerIndexMap;
-            // console.log(`[Worker] Merged ${refCount} refs from Registry into IndexMap`);
         }
     }
 
@@ -718,16 +1009,9 @@ function pushSnapshotFragment(): void {
         viewTree = app.renderViewTree();
     }
 
-    // [View Type Aggregation] Extract Type Instructions from DOM
-    const typeInstructions = extractTypeInstructions(appContainer);
-
     // [View Type Aggregation] Get Type Tools from AppKernel
-    let typeToolsMarkdown: string | undefined;
     if (kernel?.getAllTypeTools) {
         const allTypeTools = kernel.getAllTypeTools();
-        // console.log('[Worker] Type Tools from AppKernel:', Array.from(allTypeTools.entries()).map(([type, tools]) => `${type}: ${tools.length} tools`));
-        typeToolsMarkdown = renderTypeTools(allTypeTools);
-        // console.log('[Worker] Type Tools Markdown length:', typeToolsMarkdown?.length || 0);
 
         // [RFC-020] Export Type Tools to IndexMap for AgentDriver discovery
         // AgentDriver uses generateToolsFromIndexMap to find tools
@@ -765,16 +1049,20 @@ function pushSnapshotFragment(): void {
                 };
             }
         }
-        // console.log(`[Worker] Exported ${Object.keys(finalIndexMap).length - Object.keys(transformerIndexMap).length} tools/refs to IndexMap`);
-    } else {
-        // console.log('[Worker] ⚠️  AppKernel.getAllTypeTools not available');
     }
 
-    // console.log('[Worker] pushSnapshotFragment, markup length:', markup.length, 'indexMap keys:', Object.keys(finalIndexMap).length);
+    const shadowCaptureSeq = shadowEnabled && shadowInstanceId ? ++shadowProducerSeq : undefined;
+    const shadowCaptureEpoch = shadowCaptureSeq !== undefined
+        ? (projectionBefore?.epoch ?? ++shadowObservedEpoch) : undefined;
     parentPort?.postMessage({
         type: 'SNAPSHOT_FRAGMENT',
         appId,
         timestamp: now,
+        ...(shadowInstanceId ? { appInstanceId: shadowInstanceId } : {}),
+        ...(shadowCaptureSeq !== undefined ? {
+            shadowCaptureSeq,
+            shadowInstanceId,
+        } : {}),
         markup,
         indexMap: finalIndexMap,
         views: viewFragments,
@@ -782,7 +1070,71 @@ function pushSnapshotFragment(): void {
         // [RFC-012] 根据 signalPolicy 决定是否抑制信号
         suppressSignal: signalPolicy === 'never',
     } as WorkerToMainMessage);
-    isDirty = false;
+
+    // M2: only when explicitly enabled, derive a structured Draft from the
+    // SAME best-effort capture. The legacy Fragment above remains authoritative.
+    // SDK component Apps now use semantic+DOM mutation epochs; legacy Apps
+    // retain the M2 capture-counter fallback until they adopt the same contract.
+    if (shadowCaptureSeq !== undefined && shadowCaptureEpoch !== undefined) {
+        const producerSeq = shadowCaptureSeq;
+        const sourceEpoch = shadowCaptureEpoch;
+        const projectionAfter = projectionBefore ? currentProjection()?.token() : undefined;
+        if (projectionBefore && (!projectionBefore.ready || !projectionAfter?.ready ||
+            projectionAfter.epoch !== projectionBefore.epoch)) {
+            // Legacy Fragment is untouched, but the semantic Draft did not have
+            // a stable capture epoch. A subsequent mutation event triggers retry.
+            parentPort?.postMessage({
+                type: 'SNAPSHOT_PREPARE_FAILED',
+                appId, instanceId: shadowInstanceId, producerSeq, sourceEpoch,
+                error: { code: 'SNAPSHOT_INVALID', message: 'Projection changed while capturing' },
+            } as WorkerToMainMessage);
+            return;
+        }
+        try {
+            // M4 Stage 2 read-only V2 is selected only for fully View-owned
+            // Tool Apps. Mixed/legacy TypeTools retain their exact V1 contract.
+            // Do not downgrade an inconsistent V2 Draft to V1 on failure.
+            const v2Only = app instanceof AppKernel &&
+                (app.getViewOwnedViewInstances().length > 0 || viewFragments.length === 0) &&
+                [...app.getAllTypeTools().values()].every(tools => tools.length === 0);
+            const captureInput = {
+                appId, instanceId: shadowInstanceId,
+                producerSeq, sourceEpoch, capturedAt: now,
+                container: appContainer,
+                fragments: viewFragments,
+                kernel,
+            };
+            const draft = v2Only
+                ? shadowProducer.captureV2(captureInput)
+                : shadowProducer.capture(captureInput);
+            if (projectionBefore) {
+                const finalToken = currentProjection()?.token();
+                if (!finalToken?.ready || finalToken.epoch !== sourceEpoch) {
+                    throw new Error('Projection epoch changed while preparing Draft');
+                }
+            }
+            parentPort?.postMessage({
+                type: 'SNAPSHOT_PREPARED',
+                draft,
+            } as WorkerToMainMessage);
+        } catch (error) {
+            // No live Ref values, SDK data or stack traces in diagnostics.
+            try {
+                parentPort?.postMessage({
+                    type: 'SNAPSHOT_PREPARE_FAILED',
+                    appId, instanceId: shadowInstanceId,
+                    producerSeq, sourceEpoch,
+                    error: {
+                        code: error instanceof Error && error.name === 'DataCloneError'
+                            ? 'SNAPSHOT_SERIALIZATION_ERROR' : 'SNAPSHOT_INVALID',
+                        message: 'Shadow snapshot preparation or transport failed',
+                    },
+                } as WorkerToMainMessage);
+            } catch {
+                // Shadow path is never allowed to crash the primary app.
+            }
+        }
+    }
 }
 
 function sendResponse(
@@ -794,6 +1146,7 @@ function sendResponse(
         type,
         requestId,
         success,
+        ...(type === 'LIFECYCLE_RESPONSE' && app instanceof AppKernel && app.getAppCleanupReport() ? { appCleanup: app.getAppCleanupReport() } : {}),
     } as WorkerToMainMessage);
 }
 
@@ -805,61 +1158,3 @@ function sendError(requestID: RequestID, code: string, message: string): void {
         error: { code, message },
     } as WorkerToMainMessage);
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// View Type Aggregation - Helper Functions
-// ────────────────────────────────────────────────────────────────────────────
-
-/**
- * Extract Type Instructions from DOM
- * Searches for elements with data-role="type-instruction"
- */
-function extractTypeInstructions(container: Element): Map<string, string> {
-    const typeInstructions = new Map<string, string>();
-
-    const elements = container.querySelectorAll('[data-role="type-instruction"]');
-    elements.forEach((el) => {
-        const viewType = el.getAttribute('data-type');
-        if (viewType && el.textContent) {
-            typeInstructions.set(viewType, el.textContent.trim());
-        }
-    });
-
-    return typeInstructions;
-}
-
-/**
- * Render Type Tools to Markdown
- * @param typeToolsMap - Map from viewType to Array of TypeTool
- */
-function renderTypeTools(
-    typeToolsMap: Map<string, Array<{
-        id: string;
-        name: string;
-        viewType: string;
-        description: string;
-        params: Record<string, unknown>;
-    }>>
-): string {
-    if (typeToolsMap.size === 0) {
-        return '';
-    }
-
-    let markdown = '## Type-level Tools\n\n';
-
-    for (const [viewType, tools] of typeToolsMap) {
-        if (tools.length === 0) continue;
-
-        markdown += `### ${viewType} Tools\n\n`;
-
-        for (const tool of tools) {
-            markdown += `- **${tool.id}**: ${tool.description}\n`;
-        }
-
-        markdown += '\n';
-    }
-
-    return markdown;
-}
-
-// console.log('[Worker] Runtime started, waiting for messages...');

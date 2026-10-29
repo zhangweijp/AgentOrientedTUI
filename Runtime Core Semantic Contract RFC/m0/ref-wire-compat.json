@@ -1,0 +1,176 @@
+{
+  "getterReads": 2,
+  "results": [
+    {
+      "name": "plain-record",
+      "json": {
+        "ok": true,
+        "json": "{\"id\":\"a\",\"nested\":{\"status\":\"ok\"}}"
+      },
+      "structuredClone": {
+        "ok": true,
+        "json": {
+          "ok": true,
+          "json": "{\"id\":\"a\",\"nested\":{\"status\":\"ok\"}}"
+        },
+        "resultTypes": {
+          "whenIsDate": false,
+          "valuesIsMap": false,
+          "classPrototypePreserved": false,
+          "circularPreserved": false
+        }
+      }
+    },
+    {
+      "name": "date",
+      "json": {
+        "ok": true,
+        "json": "{\"when\":\"2026-10-21T00:00:00.000Z\"}"
+      },
+      "structuredClone": {
+        "ok": true,
+        "json": {
+          "ok": true,
+          "json": "{\"when\":\"2026-10-21T00:00:00.000Z\"}"
+        },
+        "resultTypes": {
+          "whenIsDate": true,
+          "valuesIsMap": false,
+          "classPrototypePreserved": false,
+          "circularPreserved": false
+        }
+      }
+    },
+    {
+      "name": "map",
+      "json": {
+        "ok": true,
+        "json": "{\"values\":{}}"
+      },
+      "structuredClone": {
+        "ok": true,
+        "json": {
+          "ok": true,
+          "json": "{\"values\":{}}"
+        },
+        "resultTypes": {
+          "whenIsDate": false,
+          "valuesIsMap": true,
+          "classPrototypePreserved": false,
+          "circularPreserved": false
+        }
+      }
+    },
+    {
+      "name": "class-instance",
+      "json": {
+        "ok": true,
+        "json": "{\"value\":{\"id\":\"class\"}}"
+      },
+      "structuredClone": {
+        "ok": true,
+        "json": {
+          "ok": true,
+          "json": "{\"value\":{\"id\":\"class\"}}"
+        },
+        "resultTypes": {
+          "whenIsDate": false,
+          "valuesIsMap": false,
+          "classPrototypePreserved": false,
+          "circularPreserved": false
+        }
+      }
+    },
+    {
+      "name": "getter",
+      "json": {
+        "ok": true,
+        "json": "{\"secret\":\"accessed\"}"
+      },
+      "structuredClone": {
+        "ok": true,
+        "json": {
+          "ok": true,
+          "json": "{\"secret\":\"accessed\"}"
+        },
+        "resultTypes": {
+          "whenIsDate": false,
+          "valuesIsMap": false,
+          "classPrototypePreserved": false,
+          "circularPreserved": false
+        }
+      }
+    },
+    {
+      "name": "circular",
+      "json": {
+        "ok": false,
+        "error": "TypeError"
+      },
+      "structuredClone": {
+        "ok": true,
+        "json": {
+          "ok": false,
+          "error": "TypeError"
+        },
+        "resultTypes": {
+          "whenIsDate": false,
+          "valuesIsMap": false,
+          "classPrototypePreserved": false,
+          "circularPreserved": true
+        }
+      }
+    },
+    {
+      "name": "function-field",
+      "json": {
+        "ok": true,
+        "json": "{\"id\":\"fn\"}"
+      },
+      "structuredClone": {
+        "ok": false,
+        "error": "DataCloneError"
+      }
+    },
+    {
+      "name": "bigint-field",
+      "json": {
+        "ok": false,
+        "error": "TypeError"
+      },
+      "structuredClone": {
+        "ok": true,
+        "json": {
+          "ok": false,
+          "error": "TypeError"
+        },
+        "resultTypes": {
+          "whenIsDate": false,
+          "valuesIsMap": false,
+          "classPrototypePreserved": false,
+          "circularPreserved": false
+        }
+      }
+    },
+    {
+      "name": "nan-field",
+      "json": {
+        "ok": true,
+        "json": "{\"id\":\"nan\",\"n\":null}"
+      },
+      "structuredClone": {
+        "ok": true,
+        "json": {
+          "ok": true,
+          "json": "{\"id\":\"nan\",\"n\":null}"
+        },
+        "resultTypes": {
+          "whenIsDate": false,
+          "valuesIsMap": false,
+          "classPrototypePreserved": false,
+          "circularPreserved": false
+        }
+      }
+    }
+  ]
+}

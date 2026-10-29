@@ -16,7 +16,7 @@
  */
 
 import type { IKernel, IDesktop } from '@aotui/runtime';
-import { AOTUIDrivenSource } from '@aotui/runtime/adapters';
+import { SemanticAOTUIDrivenSource } from '@aotui/runtime/adapters';
 import { AgentDriverV2 } from '@aotui/agent-driver-v2';
 import type { ModelMessage } from 'ai';
 import { EventEmitter } from 'events';
@@ -74,7 +74,7 @@ export class SessionManagerV3 extends EventEmitter {
         mcp: { enabled: boolean; disabledItems: Set<string> };
         skill: { enabled: boolean; disabledItems: Set<string> };
     }> = new Map();
-    private asAOTUIControllableSource(source: AOTUIDrivenSource): AOTUIControllableSource | null {
+    private asAOTUIControllableSource(source: SemanticAOTUIDrivenSource): AOTUIControllableSource | null {
         const candidate = source as unknown as Partial<AOTUIControllableSource>;
         if (typeof candidate.setEnabled !== 'function' || typeof candidate.setAppEnabled !== 'function') {
             return null;
@@ -412,8 +412,8 @@ export class SessionManagerV3 extends EventEmitter {
             systemPrompt: effectiveSystemPrompt,
         });
 
-        const aotuiSource = new AOTUIDrivenSource(desktop, this.kernel, {
-            includeInstruction: true, // 注入 AOTUI System Instruction
+        const aotuiSource = new SemanticAOTUIDrivenSource(desktop, this.kernel, {
+            includeInstruction: true,
         });
 
         const hostSource = new HostDrivenSourceV2(
@@ -599,7 +599,7 @@ export class SessionManagerV3 extends EventEmitter {
         return existing;
     }
 
-    private applySourceControls(topicId: string, aotuiSource?: AOTUIDrivenSource, mcpSource?: McpDrivenSource, skillSource?: SkillDrivenSource): void {
+    private applySourceControls(topicId: string, aotuiSource?: SemanticAOTUIDrivenSource, mcpSource?: McpDrivenSource, skillSource?: SkillDrivenSource): void {
         const controls = this.getOrInitSourceControls(topicId);
         if (aotuiSource) {
             const controllableSource = this.asAOTUIControllableSource(aotuiSource);
@@ -941,6 +941,8 @@ export class SessionManagerV3 extends EventEmitter {
         try {
             // 1. 停止 AgentDriver
             session.agentDriver.stop();
+            session.agentDriver.dispose();
+            await session.sources.aotui.dispose();
 
             // 2. 销毁 Desktop
             await this.kernel.destroyDesktop(session.desktop.id);
@@ -981,6 +983,8 @@ export class SessionManagerV3 extends EventEmitter {
 
         try {
             session.agentDriver.stop();
+            session.agentDriver.dispose();
+            await session.sources.aotui.dispose();
             await this.kernel.gracefulShutdown(session.desktop.id, { timeoutMs: 5000 });
             session.state = 'destroyed';
             this.sessions.delete(topicId);
@@ -1141,6 +1145,13 @@ export class SessionManagerV3 extends EventEmitter {
                     session.sources.host.markToolCompactionAnchor(saved.id, summaryText);
                 }
             }
+        }
+
+        // A persisted tool receipt is new conversation input, even when a read-only
+        // operation did not change a View. Schedule observation of that result;
+        // this does not replay the operation. Final assistant text is not a trigger.
+        if (type === 'tool') {
+            session?.sources.host.notifyNewMessage();
         }
 
         // 2. 触发 GUI 更新（通过事件总线）

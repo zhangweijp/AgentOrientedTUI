@@ -17,7 +17,7 @@
  *     });
  *     
  *     return (
- *         <View name="Chat">
+ *         <View id="chat" type="Chat" name="Chat">
  *             {thoughts.map((t, i) => <p key={i}>💭 {t}</p>)}
  *         </View>
  *     );
@@ -38,10 +38,7 @@ import type { LLMOutputEvent, LLMOutputListener } from '@aotui/runtime/spi';
  * useLLMOutputChannel 配置选项
  */
 export interface LLMOutputChannelOptions {
-    /** 
-     * 是否在订阅时接收历史消息
-     * @default true
-     */
+    /** @deprecated Unsupported option: omit it. DOM delivers future events; a Provider owns its replay policy. */
     includeHistory?: boolean;
 }
 
@@ -77,7 +74,17 @@ export function useLLMOutputChannel(
 ): void {
     // 从 ViewRuntimeContext 获取 llmOutput 通道 (null-safe: 允许在 View 外调用)
     const viewCtx = useContext(ViewRuntimeContext);
-    const llmOutput = viewCtx?.llmOutput ?? null;
+    const llmOutput = viewCtx?.llmOutput;
+    if (options?.includeHistory !== undefined) {
+        throw new Error('SDK_LLM_HISTORY_OPTION_UNSUPPORTED: useLLMOutputChannel does not implement includeHistory; omit it and follow the source Provider replay contract.');
+    }
+    if (llmOutput != null && typeof llmOutput.subscribe !== 'function') {
+        throw new Error('SDK_LLM_OUTPUT_UNAVAILABLE: useLLMOutputChannel requires a callable Provider.subscribe; an invalid Provider cannot fall back to DOM events.');
+    }
+    const dom = typeof document === 'undefined' ? undefined : document;
+    if (llmOutput == null && !dom) {
+        throw new Error('SDK_LLM_OUTPUT_UNAVAILABLE: useLLMOutputChannel requires an actual Provider or a document event bridge.');
+    }
 
     // 使用 ref 保持回调引用最新
     const callbackRef = useRef(onText);
@@ -89,8 +96,8 @@ export function useLLMOutputChannel(
             callbackRef.current(event);
         };
 
-        // [RFC-011] 方案1: 通过 Context Subscribe (用于 Embedded 模式)
-        const unsubscribeFn = llmOutput?.subscribe(handler) ?? (() => {});
+        // Select one actual source; Provider failures propagate without DOM fallback.
+        if (llmOutput != null) return llmOutput.subscribe(handler);
 
         // [RFC-011] 方案2: Worker 模式通过 DOM 事件接收
         // 兼容两种事件名：
@@ -117,19 +124,14 @@ export function useLLMOutputChannel(
         };
 
         // 监听 document 级别的自定义事件 (bubbles: true)
-        if (typeof document !== 'undefined') {
-            document.addEventListener('aotui:llm-output', domHandler);
-            document.addEventListener('aotui:llm-text', domHandler);
-        }
+        dom!.addEventListener('aotui:llm-output', domHandler);
+        dom!.addEventListener('aotui:llm-text', domHandler);
 
         return () => {
-            unsubscribeFn();
-            if (typeof document !== 'undefined') {
-                document.removeEventListener('aotui:llm-output', domHandler);
-                document.removeEventListener('aotui:llm-text', domHandler);
-            }
+            dom!.removeEventListener('aotui:llm-output', domHandler);
+            dom!.removeEventListener('aotui:llm-text', domHandler);
         };
-    }, [llmOutput]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [llmOutput, dom]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 // ============================================================================
@@ -139,7 +141,7 @@ export function useLLMOutputChannel(
 /**
  * 获取 LLM 文本历史
  * 
- * 返回最近 N 条 LLM 文本消息 (默认 3 条)。
+ * 查询实际 Provider 的历史；组件 DOM 桥不提供历史查询。
  * 
  * @returns 历史事件数组
  * 
@@ -158,6 +160,9 @@ export function useLLMOutputChannel(
  */
 export function useLLMOutputHistory(): LLMOutputEvent[] {
     const viewCtx = useContext(ViewRuntimeContext);
-    const llmOutput = viewCtx?.llmOutput ?? null;
-    return llmOutput?.getHistory() ?? [];
+    const llmOutput = viewCtx?.llmOutput;
+    if (llmOutput == null || typeof llmOutput.getHistory !== 'function') {
+        throw new Error('SDK_LLM_HISTORY_UNAVAILABLE: useLLMOutputHistory requires a callable Provider.getHistory; the component DOM bridge does not provide history.');
+    }
+    return llmOutput.getHistory();
 }

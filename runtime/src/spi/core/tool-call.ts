@@ -4,7 +4,7 @@
  * OpenAI 兼容的 Tool Call 格式定义
  * 
  * 注意：这些类型从 adapters/llm/types.ts 移动到 SPI 层，
- * 因为 IAgentSession 需要使用它们。
+ * 供模型调用适配器使用。
  */
 
 /** LLM Tool 定义 (OpenAI Function Calling 格式) */

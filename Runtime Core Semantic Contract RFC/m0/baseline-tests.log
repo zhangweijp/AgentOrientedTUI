@@ -1,0 +1,42 @@
+=== SDK targeted baseline ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/sdk
+
+··········
+
+ Test Files  2 passed (2)
+      Tests  10 passed (10)
+   Start at  22:21:43
+   Duration  747ms (transform 71ms, setup 0ms, collect 74ms, tests 5ms, environment 923ms, prepare 123ms)
+
+SDK_EXIT=0
+=== Runtime targeted baseline ===
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+···········
+
+ Test Files  2 passed (2)
+      Tests  11 passed (11)
+   Start at  22:21:45
+   Duration  338ms (transform 162ms, setup 0ms, collect 265ms, tests 11ms, environment 0ms, prepare 95ms)
+
+RUNTIME_EXIT=0
+=== Semantic experiment baseline ===
+ WARN  Unsupported engine: wanted: {"node":">=24.22.0 <25"} (current: {"node":"v23.11.0","pnpm":"10.15.1"})
+
+> @aotui/semantic-kernel-spike@0.0.0 test /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/experiments/semantic-kernel
+> vitest run --maxWorkers=2
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.5 [39m[90m/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/experiments/semantic-kernel[39m
+
+ [32m✓[39m test/kernel.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 68[2mms[22m[39m
+ [32m✓[39m test/adapters.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 69[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m2 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[32m26 passed[39m[22m[90m (26)[39m
+[2m   Start at [22m 22:21:46
+[2m   Duration [22m 375ms[2m (import 71%, tests 24%, transform 3%, worker 1%)[22m
+
+EXPERIMENT_EXIT=0

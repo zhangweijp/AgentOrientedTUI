@@ -95,10 +95,12 @@ export interface ParamDef {
   itemType?: ParamBaseType;
   /** 枚举选项 (type: 'enum' 时必填) */
   options?: readonly string[];
-  /** 默认值 */
+  /** 描述默认值，不自动填充缺席参数；实际规则由所用 API/Runtime 合同决定。 */
   default?: unknown;
-  /** 引用类型 (type: 'reference' 时必填，如 'Message', 'Todo') */
+  /** 可省略；受支持的快照 Ref 执行路径在显式声明时要求与实际 Ref 类型匹配。 */
   refType?: string;
+  /** View-local readonly snapshot declaration; execution requires its matching negotiated private qualification. */
+  refSource?: 'snapshot-value-v1';
 }
 
 /**
@@ -211,6 +213,8 @@ export interface OperationResult {
   data?: Record<string, unknown>;
   /** 失败时的错误信息 */
   error?: OperationError;
+  /** Application-declared effects on failure; omission leaves effects unknown. */
+  effects?: 'none' | 'partial';
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -1,0 +1,9 @@
+PASS src/__tests__/create-file-workflow.test.ts
+PASS src/__tests__/persistence-schema.test.ts
+PASS src/__tests__/workspace-folders.test.ts
+
+Test Suites: 3 passed, 3 total
+Tests:       5 passed, 5 total
+Snapshots:   0 total
+Time:        1.38 s
+Ran all test suites.

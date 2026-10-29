@@ -12,13 +12,11 @@ import { createContext } from "preact";
 import type {
   IViewMeta,
   IOperationRegistry,
-  IMountableViewRegistry,
-  IDynamicViewRegistry,
   IRefRegistry,
   ITypeToolRegistry,
   IAppConfig,
 } from "./index.js";
-import type { LLMOutputEvent, LLMOutputListener } from "@aotui/runtime/spi";
+import type { LLMOutputEvent, LLMOutputListener, TypeToolDefinition, ViewToolRegistrationOptions } from "@aotui/runtime/spi";
 
 // ═══════════════════════════════════════════════════════════════
 //  LLM Output Channel Context (RFC-011)
@@ -69,17 +67,25 @@ export interface ViewRuntimeContextValue {
   /** Operation 注册表 - <Operation> */
   readonly operations: Readonly<IOperationRegistry>;
 
-  /** 可挂载视图注册表 - <ViewLink> */
-  readonly mountable: Readonly<IMountableViewRegistry>;
-
-  /** 动态子视图注册表 - <ChildView> */
-  readonly dynamic: Readonly<IDynamicViewRegistry>;
-
   /** Ref 注册表 - useArrayRef, useRef */
   readonly refs: Readonly<IRefRegistry>;
 
   /** Type Tool 注册表 - useViewTypeTool (RFC-020) */
   readonly typeTools: Readonly<ITypeToolRegistry>;
+
+  /** M4 Stage 1: View-local binding; not yet published to Agent tools. */
+  readonly viewTools?: Readonly<{
+    readonly refDeclarationSupport?: 'snapshot-value-v1';
+    readonly safeRefInvocationSupport?: 'snapshot-value-v1';
+    readonly safeOrdinaryInvocationSupport?: 'ordinary-v1';
+    readonly safeOrdinaryParametersInvocationSupport?: 'ordinary-v2';
+    readonly safeSnapshotValueParametersInvocationSupport?: 'snapshot-value-v2';
+    fingerprintReadOnlyParams?(params: unknown, additionalProperties: boolean): Readonly<{ kind: 'ordinary' | 'snapshot-value'; fingerprint: string }>;
+    fingerprintOrdinaryParams?(params: unknown, additionalProperties: boolean): string;
+    readonly safeCreateIfAbsentInvocationSupport?: 'create-if-absent-v1';
+    registerTool(name: string, definition: TypeToolDefinition, options?: ViewToolRegistrationOptions): () => void;
+    fingerprintParams(params: unknown): string;
+  }>;
 
   /** App 配置 - useAppEnv */
   readonly config: Readonly<IAppConfig>;
@@ -88,8 +94,8 @@ export interface ViewRuntimeContextValue {
   // LLM Output Channel (RFC-011)
   // ═══════════════════════════════════════════════════════════
 
-  /** LLM 文本通道 - useLLMOutputChannel */
-  readonly llmOutput: Readonly<ILLMOutputChannelContext>;
+  /** Actual Provider, when supplied. Component DOM delivery does not provide history. */
+  readonly llmOutput?: Readonly<ILLMOutputChannelContext>;
 }
 
 // ═══════════════════════════════════════════════════════════════

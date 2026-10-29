@@ -12,8 +12,6 @@
 import type {
     OperationLogEntry,
     OperationLogParams,
-    OperationID,
-    DesktopID
 } from '../../spi/index.js';
 
 // ============================================================================

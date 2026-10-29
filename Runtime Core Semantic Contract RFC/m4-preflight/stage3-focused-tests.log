@@ -1,0 +1,18 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+······[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'result_app', desktopId: 'result_desktop' }
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+··stderr | src/engine/app/worker-host.m4-readonly.test.ts
+[AppWorkerHost] Worker m4_readonly_app exited with code 1
+
+
+
+ Test Files  3 passed (3)
+      Tests  8 passed (8)
+   Start at  21:18:37
+   Duration  1.25s (transform 297ms, setup 0ms, collect 514ms, tests 957ms, environment 0ms, prepare 192ms)
+

@@ -1,0 +1,41 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+stdout | src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows SnapshotRegistry retains a mutable payload and generates a new ID for unchanged content
+M0_SNAPSHOT_STORE={"firstId":"snap_571cfb00","duplicateId":"snap_1bfdd650","sameId":false,"contentAfterExternalMutation":{"title":"after","nested":{"flag":"mutated"}}}
+
+stdout | src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows WorkerHost drops different valid fragments with equal millisecond timestamps
+M0_WORKER_TIMESTAMP={"observed":"first","updateCount":1,"sameMsSecondDropped":true}
+
+stdout | src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows AppKernel can fall back to an unrelated same-named Ref in another view
+M0_REF_FALLBACK={"foreign":{"id":"A"},"refKeys":["view_a:selected","view_b:selected"]}
+
+stdout | src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows Type Tool business rejection is wrapped as top-level success
+M0_TOOL_RESULT={"success":true,"data":{"success":false,"error":{"code":"BUSINESS_DENIED","message":"Rejected"}}}
+
+stdout | src/__m0_runtime_probe.test.ts > M0 SP-04/05/06 boundary checks > source Snapshot ref and live AppKernel RefRegistry disagree after list reindex
+M0_SP05_SPLIT_REF={"fromOldSnapshot":{"id":"A"},"fromCurrentWorker":{"id":"B"},"tool":{"success":true,"data":{"success":true,"data":{"selectedId":"B"}}}}
+
+stdout | src/__m0_runtime_probe.test.ts > M0 SP-04/05/06 boundary checks > uses real worker_threads IPC to show equal-ms loss and absent appId source validation
+M0_SP04_REAL_IPC={"hostAppId":"app_0","updates":2,"currentMarkup":"wrong-app-accepted"}
+
+stdout | src/__m0_runtime_probe.test.ts > M0 SP-04/05/06 boundary checks > shows Workspace formatter projects two app fragments without an app revision vector
+M0_SP06_WORKSPACE_COMPOSITE={"structuredKeys":["systemInstruction","desktopState","desktopTimestamp","applicationInstructions","appStates","viewStates"],"viewCount":2,"refs":["app_0:workspace:selected","app_1:workspace:selected"],"vector":null}
+
+ ✓ src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows SnapshotRegistry retains a mutable payload and generates a new ID for unchanged content 1ms
+ ✓ src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows WorkerHost drops different valid fragments with equal millisecond timestamps 0ms
+ ✓ src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows AppKernel can fall back to an unrelated same-named Ref in another view 0ms
+ ✓ src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows Type Tool business rejection is wrapped as top-level success 0ms
+ ✓ src/__m0_runtime_probe.test.ts > M0 SP-04/05/06 boundary checks > source Snapshot ref and live AppKernel RefRegistry disagree after list reindex 0ms
+ ✓ src/__m0_runtime_probe.test.ts > M0 SP-04/05/06 boundary checks > uses real worker_threads IPC to show equal-ms loss and absent appId source validation 20ms
+ ✓ src/__m0_runtime_probe.test.ts > M0 SP-04/05/06 boundary checks > shows Workspace formatter projects two app fragments without an app revision vector 2ms
+stdout | src/__m0_formatter_bench.test.ts > M0 SP-07 measures DOM transform + View extraction + Formatter + Registry as a partial baseline
+M0_SP07_PROJECTION_PERF={"node":"v23.11.0","partialBaseline":true,"summary":[{"views":1,"bytes":13917,"iterations":30,"stagesMs":{"domTransform":{"p50":0.01,"p95":0.013,"max":0.016},"viewExtract":{"p50":0.023,"p95":0.043,"max":0.05},"snapshotFormat":{"p50":0.006,"p95":0.022,"max":0.12},"registryCreateRelease":{"p50":0.003,"p95":0.019,"max":0.049},"total":{"p50":0.042,"p95":0.096,"max":0.21}}},{"views":10,"bytes":43617,"iterations":30,"stagesMs":{"domTransform":{"p50":0.033,"p95":0.092,"max":0.118},"viewExtract":{"p50":0.144,"p95":0.234,"max":0.289},"snapshotFormat":{"p50":0.009,"p95":0.016,"max":0.022},"registryCreateRelease":{"p50":0.002,"p95":0.008,"max":0.02},"total":{"p50":0.189,"p95":0.374,"max":0.423}}},{"views":50,"bytes":175817,"iterations":30,"stagesMs":{"domTransform":{"p50":0.119,"p95":0.341,"max":0.344},"viewExtract":{"p50":0.695,"p95":0.796,"max":0.947},"snapshotFormat":{"p50":0.03,"p95":0.288,"max":0.515},"registryCreateRelease":{"p50":0.004,"p95":0.013,"max":0.016},"total":{"p50":0.864,"p95":1.191,"max":1.278}}},{"views":100,"bytes":341067,"iterations":30,"stagesMs":{"domTransform":{"p50":0.204,"p95":0.553,"max":1.143},"viewExtract":{"p50":1.245,"p95":1.31,"max":1.326},"snapshotFormat":{"p50":0.065,"p95":0.087,"max":0.121},"registryCreateRelease":{"p50":0.003,"p95":0.014,"max":0.028},"total":{"p50":1.537,"p95":1.968,"max":2.446}}}]}
+
+ ✓ src/__m0_formatter_bench.test.ts > M0 SP-07 measures DOM transform + View extraction + Formatter + Registry as a partial baseline 173ms
+
+ Test Files  2 passed (2)
+      Tests  8 passed (8)
+   Start at  22:41:19
+   Duration  511ms (transform 179ms, setup 0ms, collect 289ms, tests 199ms, environment 0ms, prepare 93ms)
+

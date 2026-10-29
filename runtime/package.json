@@ -19,10 +19,18 @@
     "./adapters": {
       "import": "./dist/adapters/index.js",
       "types": "./dist/adapters/index.d.ts"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./adapters/memory-state-storage": {
+      "types": "./dist/adapters/storage/memory-state-storage.d.ts",
+      "import": "./dist/adapters/storage/memory-state-storage.js"
     }
   },
   "scripts": {
-    "build": "tsc && chmod +x dist/cli.js",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc && chmod +x dist/cli.js",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -42,9 +50,11 @@
     "access": "public"
   },
   "files": [
-    "dist"
+    "dist",
+    "docs"
   ],
   "devDependencies": {
+    "@preact/signals": "^2.5.1",
     "@types/node": "^24.10.2",
     "@typescript-eslint/eslint-plugin": "^8.49.0",
     "@typescript-eslint/parser": "^8.49.0",
@@ -62,6 +72,7 @@
   },
   "dependencies": {
     "@aotui/agent-driver-v2": "^0.2.1",
+    "@types/json-schema": "^7.0.15",
     "ai": "^6.0.77",
     "happy-dom": "^20.8.9",
     "linkedom": "^0.18.12",

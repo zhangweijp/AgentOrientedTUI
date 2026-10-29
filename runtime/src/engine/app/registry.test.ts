@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AppRegistry, validateManifest, isValidAppName } from './index.js';
+import { SEMANTIC_INTERACTION_MODES } from '../../spi/runtime/app-interaction.interface.js';
 import type { TUIAppFactory } from '../../spi/app-factory.interface.js';
 import type { IAOTUIApp } from '../../spi/index.js';
 import * as fs from 'fs/promises';
@@ -214,6 +215,35 @@ describe('AppRegistry', () => {
             // Mock resolveModulePath to avoid file system dependency
             // @ts-ignore
             registry.resolveModulePath = vi.fn().mockReturnValue('/mock/module/path');
+        });
+
+        it.each([true, false])('negotiates Semantic capabilities and preserves launch config for autoStart=%s', async autoStart => {
+            registry['apps'].set('semantic-app', {
+                name: 'semantic-app', source: 'local:/semantic', factory: createMockFactory('semantic-app'),
+            });
+            registry['config'].apps['semantic-app'] = { source: 'local:/semantic', enabled: true, autoStart };
+            await registry.installAll(mockDesktop, {
+                dynamicConfig: { projectPath: '/test/workspace', AOTUI_DATA_DIR: '/test/data' },
+                experimentalInteractionModes: SEMANTIC_INTERACTION_MODES,
+            });
+            const options = autoStart ? mockDesktop.installDynamicWorkerApp.mock.calls[0][1]
+                : mockDesktop.registerPendingApp.mock.calls[0][0];
+            expect(options.experimentalInteractionModes).toEqual(SEMANTIC_INTERACTION_MODES);
+            expect(options.config).toMatchObject({
+                projectPath: '/test/workspace', AOTUI_DATA_DIR: '/test/data', AOTUI_APP_NAME: 'semantic-app',
+            });
+        });
+
+        it('does not accept capability negotiation from app launch data and rejects invalid Host modes before installation', async () => {
+            registry['apps'].set('semantic-app', {
+                name: 'semantic-app', source: 'local:/semantic', factory: createMockFactory('semantic-app'),
+            });
+            await registry.installAll(mockDesktop, { dynamicConfig: { experimentalInteractionModes: ['ordinary-v2'] } });
+            expect(mockDesktop.installDynamicWorkerApp.mock.calls[0][1].experimentalInteractionModes).toBeUndefined();
+            mockDesktop.installDynamicWorkerApp.mockClear();
+            await expect(registry.installAll(mockDesktop, { experimentalInteractionModes: ['unsupported'] as any }))
+                .rejects.toMatchObject({ code: 'INTERACTION_MODES_INVALID' });
+            expect(mockDesktop.installDynamicWorkerApp).not.toHaveBeenCalled();
         });
 
         it('should install autoStart=true apps immediately', async () => {

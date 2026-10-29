@@ -1,0 +1,642 @@
+--- Wave2A-baseline/runtime/src/engine/app/worker-host.ts
++++ Wave2A-current/runtime/src/engine/app/worker-host.ts
+@@ -481,13 +481,41 @@
+         if (!this.enableReadOnlyViewTools || !this.shadowReceiver || this.status !== 'running') {
+             return reject('TOOL_UNAVAILABLE', 'Experimental View Tool execution is disabled');
+         }
+-        const selection = this.shadowReceiver.selectToolSource({
+-            snapshotId: request.snapshotId,
++        let stableRequest: Readonly<typeof request>;
++        try {
++            const copied = copyJson(request, {
++                maxDepth: 25, maxNodes: 10_004, maxApproxBytes: 136 * 1024,
++            });
++            if (!copied || typeof copied !== 'object' || Array.isArray(copied)) {
++                throw new Error('Expected a request object');
++            }
++            const values = copied as Readonly<Record<string, unknown>>;
++            if (Object.keys(values).length !== 4 ||
++                ['snapshotId', 'toolId', 'viewId'].some(field =>
++                    typeof values[field] !== 'string' || !(values[field] as string).trim()) ||
++                !values.args || typeof values.args !== 'object' || Array.isArray(values.args)) {
++                throw new Error('Invalid request fields');
++            }
++            // Recheck the original args budget on the frozen copy, never by
++            // reading caller data again. Execute only the first complete copy.
++            copyJson(values.args, { maxDepth: 24, maxNodes: 10_000, maxApproxBytes: 128 * 1024 });
++            stableRequest = copied as unknown as typeof request;
++        } catch {
++            return reject('OPERATION_INVALID_ARGS', 'Expected a getter-free JSON request within read-only Tool limits');
++        }
++        const sourceRequest = {
++            snapshotId: stableRequest.snapshotId,
+             appId: String(this.appId),
+             instanceId: this.appInstanceId,
+-            toolId: request.toolId,
+-            viewId: request.viewId,
+-        });
++            toolId: stableRequest.toolId,
++            viewId: stableRequest.viewId,
++        };
++        let selection: ReturnType<SnapshotShadowReceiver['selectToolSource']>;
++        try {
++            selection = this.shadowReceiver.selectToolSource(sourceRequest);
++        } catch {
++            return reject('VIEW_TOOL_DISPATCH_FAILED', 'Read-only View Tool source acquisition failed');
++        }
+         if (selection.status !== 'found') {
+             return reject(selection.issue.code, selection.issue.message);
+         }
+@@ -495,26 +523,15 @@
+             if (selection.tool.isMutating) {
+                 return reject('TOOL_PERMISSION_DENIED', 'Mutating View Tools are not permitted');
+             }
+-            let args: Record<string, unknown>;
+-            try {
+-                const copied = copyJson(request.args, {
+-                    maxDepth: 24, maxNodes: 10_000, maxApproxBytes: 128 * 1024,
+-                });
+-                if (!copied || Array.isArray(copied) || typeof copied !== 'object') {
+-                    return reject('OPERATION_INVALID_ARGS', 'Tool arguments must be an object');
+-                }
+-                args = copied as Record<string, unknown>;
+-            } catch {
+-                return reject('OPERATION_INVALID_ARGS', 'Tool arguments are not safe JSON data');
+-            }
+-            if (typeof authorize !== 'function' || !await authorize({
++            const args = stableRequest.args;
++            if (typeof authorize !== 'function' || await authorize(Object.freeze({
+                 appId: String(this.appId),
+                 snapshotId: selection.snapshotId,
+                 toolId: selection.tool.id,
+                 viewId: selection.target.viewId,
+                 viewInstanceId: selection.target.viewInstanceId,
+                 args,
+-            })) {
++            })) !== true) {
+                 return reject('TOOL_PERMISSION_DENIED', 'Tool authorization was not granted');
+             }
+             if (this.status !== 'running') {
+@@ -522,13 +539,7 @@
+             }
+             // Authorization may await external state. Re-check Store and TTL
+             // after it resolves, before handing the source to the Worker.
+-            const stillCurrent = this.shadowReceiver.selectToolSource({
+-                snapshotId: request.snapshotId,
+-                appId: String(this.appId),
+-                instanceId: this.appInstanceId,
+-                toolId: request.toolId,
+-                viewId: request.viewId,
+-            });
++            const stillCurrent = this.shadowReceiver.selectToolSource(sourceRequest);
+             if (stillCurrent.status !== 'found') {
+                 return reject(stillCurrent.issue.code, stillCurrent.issue.message);
+             }
+@@ -542,9 +553,8 @@
+                 target: selection.target,
+                 args,
+             });
+-        } catch (error) {
+-            return reject('VIEW_TOOL_DISPATCH_FAILED',
+-                error instanceof Error ? error.message : 'View Tool dispatch failed');
++        } catch {
++            return reject('VIEW_TOOL_DISPATCH_FAILED', 'Read-only View Tool dispatch or authorization failed');
+         } finally {
+             selection.release();
+         }
+--- /dev/null
++++ Wave2A-current/runtime/src/engine/app/worker-host.wave2a-request.test.ts
+@@ -0,0 +1,198 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
++import { createSnapshotCore } from '../../core/snapshot/index.js';
++import { AppWorkerHost } from './worker-host.js';
++
++function gate() {
++    let release!: () => void;
++    const promise = new Promise<void>(resolve => { release = resolve; });
++    return { promise, release };
++}
++
++describe('Wave 2A: one immutable read-only invocation and deterministic failures', () => {
++    let host: AppWorkerHost;
++    let core: ReturnType<typeof createSnapshotCore>;
++    let receiver: any;
++    let clock: number;
++    let request: { snapshotId: string; toolId: string; viewId: string; args: Record<string, unknown> };
++    let handler: ReturnType<typeof vi.fn>;
++    let dispatch: ReturnType<typeof vi.spyOn>;
++    const toolId = JSON.stringify(['wave2a', 'FileDetail', 'inspect']);
++
++    function publish(seq: number) {
++        const views = ['A', 'B'].map(name => ({
++            id: 'fd_' + name, viewInstanceId: name, type: 'FileDetail', name,
++            kind: 'state', content: { format: 'markdown-v1', value: 'display ' + seq },
++        }));
++        const result = core.committer.accept({
++            schemaVersion: 2, appId: 'wave2a', instanceId: host.appInstanceId,
++            producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
++            views, refs: {}, tools: { [toolId]: {
++                id: toolId, name: 'inspect', viewType: 'FileDetail', description: 'Inspect',
++                inputSchema: { type: 'object' }, isMutating: false,
++                targets: views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId, bindingVersion: 1 })),
++            } },
++        });
++        if (result.status !== 'published') throw new Error('Expected committed V2');
++        return result.snapshot.id;
++    }
++
++    beforeEach(() => {
++        clock = 0;
++        host = new AppWorkerHost({
++            appId: 'wave2a' as any, desktopId: 'test' as any, appModulePath: 'not-loaded',
++            snapshotShadow: true, experimentalReadOnlyViewTools: true,
++        });
++        (host as any).status = 'running';
++        (host as any).worker = { off() {}, removeAllListeners() {}, postMessage() {}, terminate() { return Promise.resolve(0); } };
++        receiver = (host as any).shadowReceiver;
++        core = createSnapshotCore({ now: () => clock, historyTtlMs: 20, leaseTtlMs: 100 });
++        core.lifecycle.startApp('wave2a', host.appInstanceId);
++        receiver.core = core;
++        request = { snapshotId: publish(1), toolId, viewId: 'fd_A', args: { line: 7 } };
++        handler = vi.fn(async (message: any) => ({ success: true, data: { target: message.target.viewId, args: message.args } }));
++        dispatch = vi.spyOn(host as any, 'sendRequest').mockImplementation(async (message: any) =>
++            message.type === 'VIEW_TOOL_INVOKE' ? handler(message) : undefined);
++    });
++    afterEach(() => {
++        host.terminate();
++        expect(core.store.inspect().activeLeases).toBe(0);
++        vi.restoreAllMocks();
++    });
++
++    it.each(['snapshotId', 'toolId', 'viewId', 'args'] as const)('rejects a request %s getter without executing it', async field => {
++        const getter = vi.fn(() => request[field]);
++        const input = Object.defineProperty({ ...request }, field, { enumerable: true, get: getter });
++        const authorize = vi.fn(() => true);
++        await expect(host.executeReadOnlyViewTool(input, authorize)).resolves.toMatchObject({
++            success: false, error: { code: 'OPERATION_INVALID_ARGS' },
++        });
++        expect(getter).not.toHaveBeenCalled();
++        expect(authorize).not.toHaveBeenCalled();
++        expect(handler).not.toHaveBeenCalled();
++    });
++
++    it('rejects invalid selectors, shapes and non-JSON input before source acquisition', async () => {
++        const cyclic: any = {}; cyclic.self = cyclic;
++        const inputs = [null, [], new Date(), { ...request, extra: true },
++            { ...request, snapshotId: '' }, { ...request, toolId: ' ' }, { ...request, viewId: 1 },
++            { ...request, args: null }, { ...request, args: [] }, { ...request, args: { date: new Date() } },
++            { ...request, args: cyclic }, { ...request, args: { value: Infinity } },
++            { ...request, args: { value: () => 1 } }, { ...request, [Symbol('extra')]: 1 },
++            { ...request, snapshotId: 'x'.repeat(136 * 1024) }];
++        const source = vi.spyOn(receiver, 'selectToolSource');
++        const authorize = vi.fn(() => true);
++        for (const input of inputs) {
++            await expect(host.executeReadOnlyViewTool(input as any, authorize)).resolves.toMatchObject({
++                success: false, error: { code: 'OPERATION_INVALID_ARGS' },
++            });
++        }
++        expect(source).not.toHaveBeenCalled();
++        expect(authorize).not.toHaveBeenCalled();
++        expect(handler).not.toHaveBeenCalled();
++    });
++
++    it('converts a throwing Proxy trap to invalid args, without claiming the trap cannot run', async () => {
++        const trap = vi.fn(() => { throw new Error('Reflection failed'); });
++        const authorize = vi.fn(() => true);
++        await expect(host.executeReadOnlyViewTool(new Proxy(request, { getPrototypeOf: trap }), authorize))
++            .resolves.toMatchObject({ success: false, error: { code: 'OPERATION_INVALID_ARGS' } });
++        expect(trap).toHaveBeenCalledTimes(1);
++        expect(authorize).not.toHaveBeenCalled();
++        expect(handler).not.toHaveBeenCalled();
++    });
++
++    it.each([1, 'false', {}, null, undefined])('requires literal true authorization, received %j', async grant => {
++        expect(await host.executeReadOnlyViewTool(request, (() => grant) as any)).toMatchObject({
++            success: false, error: { code: 'TOOL_PERMISSION_DENIED' },
++        });
++        expect(handler).not.toHaveBeenCalled();
++    });
++
++    it('keeps every source recheck on A when the caller replaces all selectors and args during authorization', async () => {
++        const started = gate(); const resume = gate();
++        const original = { ...request };
++        const source = vi.spyOn(receiver, 'selectToolSource');
++        let scope: any;
++        const pending = host.executeReadOnlyViewTool(request, async context => {
++            scope = context; started.release(); await resume.promise; return true;
++        });
++        try {
++            await started.promise;
++            request.snapshotId = publish(2); request.toolId = 'replacement'; request.viewId = 'fd_B'; request.args = { line: 99 };
++        } finally { resume.release(); }
++        expect(await pending).toMatchObject({ success: true, data: { target: 'fd_A', args: { line: 7 } } });
++        expect(source).toHaveBeenCalledTimes(2);
++        for (const [selection] of source.mock.calls) expect(selection).toMatchObject({
++            snapshotId: original.snapshotId, toolId: original.toolId, viewId: original.viewId,
++        });
++        expect(Object.isFrozen(scope)).toBe(true);
++        expect(Object.isFrozen(scope.args)).toBe(true);
++        expect(handler.mock.calls[0][0].args).toBe(scope.args);
++    });
++
++    it('cannot launder an expired historical A source with a fresh caller-supplied B snapshot', async () => {
++        const started = gate(); const resume = gate();
++        const oldId = request.snapshotId;
++        const pending = host.executeReadOnlyViewTool(request, async () => {
++            started.release(); await resume.promise; return true;
++        });
++        try {
++            await started.promise;
++            clock = 1; request.snapshotId = publish(2); request.viewId = 'fd_B';
++            clock = 22;
++            expect(core.store.getById(oldId).status).toBe('found'); // retained by the initial lease
++        } finally { resume.release(); }
++        expect(await pending).toMatchObject({ success: false, error: { code: 'SNAPSHOT_EXPIRED' } });
++        expect(handler).not.toHaveBeenCalled();
++    });
++
++    it.each(['source', 'policy', 'dispatch'] as const)('does not read a %s exception message accessor', async point => {
++        const getter = vi.fn(() => { throw new Error('Message accessor executed'); });
++        const exception = Object.defineProperty(new Error(), 'message', { get: getter });
++        const authorize = vi.fn(() => true);
++        if (point === 'source') vi.spyOn(receiver, 'selectToolSource').mockImplementation(() => { throw exception; });
++        if (point === 'policy') authorize.mockImplementation(() => { throw exception; });
++        if (point === 'dispatch') dispatch.mockRejectedValueOnce(exception);
++        await expect(host.executeReadOnlyViewTool(request, authorize)).resolves.toMatchObject({
++            success: false, error: { code: 'VIEW_TOOL_DISPATCH_FAILED' },
++        });
++        expect(getter).not.toHaveBeenCalled();
++        expect(handler).not.toHaveBeenCalled();
++    });
++
++    it('preserves the existing args depth=24, nodes=10000 and 128 KiB approximate UTF-8 boundaries', async () => {
++        const depth = (n: number) => { let value: any = 0; for (let i = 0; i < n; i++) value = { n: value }; return value; };
++        const atBytes = '🙂'.repeat((128 * 1024 - 12) / 4);
++        const cases = [
++            { args: depth(24), valid: true }, { args: depth(25), valid: false },
++            { args: { n: Array(9998).fill(null) }, valid: true }, { args: { n: Array(9999).fill(null) }, valid: false },
++            { args: { text: atBytes }, valid: true }, { args: { text: atBytes + 'x' }, valid: false },
++        ];
++        for (const { args, valid } of cases) {
++            const authorize = vi.fn(() => false);
++            expect(await host.executeReadOnlyViewTool({ ...request, args }, authorize)).toMatchObject({
++                success: false, error: { code: valid ? 'TOOL_PERMISSION_DENIED' : 'OPERATION_INVALID_ARGS' },
++            });
++            expect(authorize).toHaveBeenCalledTimes(valid ? 1 : 0);
++        }
++        expect(handler).not.toHaveBeenCalled();
++    });
++
++    it.each(['close', 'error', 'reset'] as const)('rejects after authorization if the App reached %s', async terminal => {
++        const started = gate(); const resume = gate();
++        const pending = host.executeReadOnlyViewTool(request, async () => {
++            started.release(); await resume.promise; return true;
++        });
++        try {
++            await started.promise;
++            if (terminal === 'close') await host.close();
++            if (terminal === 'reset') await host.releaseWorker();
++            if (terminal === 'error') {
++                vi.spyOn(console, 'error').mockImplementation(() => {});
++                (host as any).handleError(new Error('Injected Worker failure'));
++            }
++        } finally { resume.release(); }
++        expect(await pending).toMatchObject({ success: false, error: { code: 'APP_STOPPED' } });
++        expect(handler).not.toHaveBeenCalled();
++    });
++});
+--- /dev/null
++++ Wave2A-current/runtime/src/core/tool/source-binding.wave2a.test.ts
+@@ -0,0 +1,51 @@
++import { describe, expect, it } from 'vitest';
++import { createSnapshotCore } from '../snapshot/index.js';
++import { acquireToolSource } from './source-binding.js';
++
++describe('Wave 2A: current Store lease and historical-source contract', () => {
++    function setup() {
++        let time = 0;
++        const core = createSnapshotCore({ now: () => time, historyTtlMs: 20, leaseTtlMs: 100 });
++        core.lifecycle.startApp('app', 'instance');
++        const toolId = JSON.stringify(['app', 'Detail', 'inspect']);
++        const publish = (seq: number) => {
++            const result = core.committer.accept({
++                schemaVersion: 2, appId: 'app', instanceId: 'instance', producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
++                views: [{ id: 'detail', viewInstanceId: 'mount', type: 'Detail', name: 'Detail', kind: 'state', content: { format: 'markdown-v1', value: String(seq) } }],
++                refs: {}, tools: { [toolId]: { id: toolId, name: 'inspect', viewType: 'Detail', description: 'Inspect', inputSchema: { type: 'object' }, isMutating: false,
++                    targets: [{ viewId: 'detail', viewInstanceId: 'mount', bindingVersion: 1 }] } },
++            });
++            if (result.status !== 'published') throw new Error('Expected V2');
++            return result.snapshot.id;
++        };
++        const select = (snapshotId: string) => acquireToolSource(core.store, { snapshotId, appId: 'app', instanceId: 'instance', toolId, viewId: 'detail' });
++        return { core, publish, select, time(value: number) { time = value; } };
++    }
++
++    it('a pinned historical entry is retained data, but cannot be acquired as a new source after history TTL', () => {
++        const env = setup(); const oldId = env.publish(1); const selected = env.select(oldId);
++        if (selected.status !== 'found') throw new Error('Expected source');
++        env.time(1); env.publish(2); env.time(21);
++        expect(env.core.store.getById(oldId).status).toBe('found');
++        expect(env.core.store.inspect().activeLeases).toBe(1);
++        expect(env.select(oldId)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
++        selected.release(); selected.release();
++        expect(env.core.store.getById(oldId)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
++        expect(env.core.store.inspect().activeLeases).toBe(0);
++    });
++
++    it('expiration of one lease does not expire a still-current Snapshot; execution must freshly acquire it', () => {
++        const env = setup(); const id = env.publish(1); const old = env.select(id);
++        if (old.status !== 'found') throw new Error('Expected source');
++        env.time(100);
++        expect(env.core.store.inspect().activeLeases).toBe(0);
++        const fresh = env.select(id);
++        expect(fresh.status).toBe('found');
++        if (fresh.status !== 'found') throw new Error('Expected fresh lease on current source');
++        expect(env.core.store.inspect().activeLeases).toBe(1);
++        old.release();
++        expect(env.core.store.inspect().activeLeases).toBe(1);
++        fresh.release();
++        expect(env.core.store.inspect().activeLeases).toBe(0);
++    });
++});
+--- /dev/null
++++ Wave2A-current/runtime/src/engine/app/worker-host.wave2a-readonly.test.ts
+@@ -0,0 +1,278 @@
++import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
++import { build } from 'esbuild';
++import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { join, resolve } from 'node:path';
++import type { Worker } from 'node:worker_threads';
++import { createSnapshotCore } from '../../core/snapshot/index.js';
++import { AppWorkerHost } from './worker-host.js';
++
++function gate() {
++    let release!: () => void;
++    const promise = new Promise<void>(resolve => { release = resolve; });
++    return { promise, release };
++}
++
++describe('Wave 2A: real SDK + Worker + View-owned read-only contract', () => {
++    let temporary: string;
++    let workerFile: string;
++    let appFile: string;
++    let host: AppWorkerHost;
++    let clock: number;
++    const id = (type: string, name: string) => JSON.stringify(['wave2a_real', type, name]);
++    const snapshot = () => {
++        const receiver = (host as any).shadowReceiver;
++        const read = receiver.core.store.readLatest('wave2a_real');
++        if (read.status !== 'ready') throw new Error('Expected ready V2');
++        return read.snapshot;
++    };
++    const request = (viewId = 'fd_A', name = 'inspect', args: Record<string, unknown> = { line: 7 }) => ({
++        snapshotId: snapshot().id, toolId: id('FileDetail', name), viewId, args,
++    });
++    const stats = async () => {
++        const result = await host.executeReadOnlyViewTool({
++            snapshotId: snapshot().id, toolId: id('Workspace', 'stats'), viewId: 'workspace', args: {},
++        }, () => true);
++        if (!result.success) throw new Error('Fixture stats unavailable: ' + result.error?.code);
++        return result.data as any;
++    };
++    const update = async (patch: Record<string, unknown>) => {
++        await host.sendExternalEvent('workspace' as any, 'update', patch);
++        await vi.waitFor(async () => { expect((await stats()).state).toMatchObject(patch); });
++    };
++    async function open(existingWorker?: Worker) {
++        const current = new AppWorkerHost({
++            appId: 'wave2a_real' as any, desktopId: 'wave2a' as any,
++            appModulePath: appFile, workerScriptPath: workerFile, existingWorker,
++            snapshotShadow: true, experimentalReadOnlyViewTools: true,
++        });
++        // Test-only clock configuration, before INIT or any Draft. The same
++        // existing Core factory is used; production Host has no alternate Store.
++        const core = createSnapshotCore({ now: () => clock, historyTtlMs: 20, leaseTtlMs: 100 });
++        core.lifecycle.startApp('wave2a_real', current.appInstanceId);
++        (current as any).shadowReceiver.core = core;
++        host = current;
++        await current.start(); await current.open();
++        await vi.waitFor(() => expect(current.getSnapshotShadowReport()).toMatchObject({
++            health: 'ready', lastViewCount: 3, lastToolCount: 3,
++            producerConsistency: 'unverified', strictEligible: false,
++        }));
++        return current;
++    }
++
++    beforeAll(async () => {
++        temporary = await mkdtemp(join(tmpdir(), 'aotui-wave2a-'));
++        const root = resolve(process.cwd());
++        workerFile = join(temporary, 'worker.mjs'); appFile = join(temporary, 'app.mjs');
++        const modules = join(temporary, 'node_modules');
++        await mkdir(join(modules, '@aotui'), { recursive: true });
++        await symlink(join(root, 'node_modules/preact'), join(modules, 'preact'), 'dir');
++        await symlink(join(root, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
++        await symlink(root, join(modules, '@aotui/runtime'), 'dir');
++        await build({ entryPoints: [join(root, 'src/worker-runtime/index.ts')], outfile: workerFile,
++            bundle: true, platform: 'node', format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent' });
++        const fixture = `
++            import { h } from 'preact';
++            import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
++            import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
++            import { View } from './sdk/src/components/View.tsx';
++            import { useDataRef } from './sdk/src/hooks/useRef.ts';
++            import { useViewTypeTool } from './sdk/src/hooks/useViewTypeTool.ts';
++            let mounts = 0;
++            const calls = { A: 0, B: 0, query: 0 };
++            const params = { line:{type:'number',required:true}, fail:{type:'boolean'},
++                reference:{type:'reference',refType:'File'}, extra:{type:'object'} };
++            function Detail({who,enabled,queryType,refValue}) {
++                const [identity] = useState(() => who + ':' + (++mounts));
++                const data = useMemo(() => ({who,refValue}), [who,refValue]);
++                const file = useDataRef('file', data);
++                useViewTypeTool('inspect', { description:'Inspect current file',params,isMutating:false }, async args => {
++                    calls[who]++;
++                    return args.fail ? {success:false,error:{code:'BUSINESS_FAILED',message:'Expected query failure'}}
++                        : {success:true,data:{who,identity,args}};
++                }, {enabled});
++                useViewTypeTool('query', { description:'Query A',params:{value:{type:queryType,required:true}},isMutating:false },
++                    async args => { calls.query++; return {success:true,data:{who,identity,args}}; },
++                    {enabled:who==='A' && enabled});
++                return h('p',{},file('File ' + who));
++            }
++            function Content() {
++                const [state,set] = useState({showA:true,aKey:0,enabledA:true,queryType:'number',display:0,refValue:0});
++                useLayoutEffect(() => {
++                    const onEvent = event => {
++                        if (event.detail?.viewId==='workspace' && event.detail?.type==='update')
++                            set(old => ({...old,...event.detail.data}));
++                    };
++                    document.body.addEventListener('aotui:external-event',onEvent);
++                    return () => document.body.removeEventListener('aotui:external-event',onEvent);
++                },[]);
++                useViewTypeTool('stats',{description:'Fixture observation',params:{},isMutating:false},
++                    async () => ({success:true,data:{calls:{...calls},state}}));
++                return h('section',{}, h('p',{},'display '+state.display),
++                    state.showA && h(View,{id:'fd_A',type:'FileDetail',key:'A'+state.aKey},
++                        h(Detail,{who:'A',enabled:state.enabledA,queryType:state.queryType,refValue:state.refValue})),
++                    h(View,{id:'fd_B',type:'FileDetail',key:'B'},
++                        h(Detail,{who:'B',enabled:true,queryType:'number',refValue:state.refValue})));
++            }
++            export default createTUIApp({app_name:'wave2a_fixture',component:()=>h(View,{id:'workspace',type:'Workspace'},h(Content,{}))});
++        `;
++        await build({ stdin: { contents: fixture, resolveDir: resolve(root, '..'), sourcefile: 'wave2a.tsx', loader: 'tsx' },
++            outfile: appFile, bundle: true, platform: 'node', format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent' });
++    });
++    beforeEach(async () => { clock = 0; await open(); });
++    afterEach(async () => {
++        const worker = (host as any)?.worker as Worker | undefined;
++        host?.terminate(); await worker?.terminate();
++        expect((host as any).shadowReceiver.core.store.inspect().activeLeases).toBe(0);
++        vi.restoreAllMocks();
++    });
++    afterAll(async () => { await rm(temporary, { recursive: true, force: true }); });
++
++    it('executes the selected View Handler, keeps SDK validation and preserves business failure through successful IPC', async () => {
++        const messages: any[] = [];
++        (host as any).worker.on('message', (message: any) => messages.push(message));
++        expect(await host.executeReadOnlyViewTool(request(), () => true)).toMatchObject({ success: true, data: { who: 'A' } });
++        expect(await host.executeReadOnlyViewTool(request('fd_B'), () => true)).toMatchObject({ success: true, data: { who: 'B' } });
++        expect(await host.executeReadOnlyViewTool(request('fd_A', 'inspect', { line: 'bad' }), () => true))
++            .toMatchObject({ success: false, error: { code: 'E_INVALID_ARGS' } });
++        expect((await stats()).calls).toEqual({ A: 1, B: 1, query: 0 });
++        expect(await host.executeReadOnlyViewTool(request('fd_A', 'inspect', { line: 7, fail: true }), () => true))
++            .toMatchObject({ success: false, error: { code: 'BUSINESS_FAILED' } });
++        expect(messages.some(message => message.type === 'OPERATION_RESPONSE' && message.success === true &&
++            message.result?.success === false && message.result.error?.code === 'BUSINESS_FAILED')).toBe(true);
++    });
++
++    it('cannot redirect an old A observation to a remounted A or to B', async () => {
++        const a = request(); const b = request('fd_B');
++        const first = await host.executeReadOnlyViewTool(a, () => true);
++        const oldInstance = snapshot().views.find((view: any) => view.id === 'fd_A').viewInstanceId;
++        await update({ showA: false });
++        await vi.waitFor(() => expect(snapshot().views.some((view: any) => view.id === 'fd_A')).toBe(false));
++        const before = (await stats()).calls;
++        expect(await host.executeReadOnlyViewTool(a, () => true)).toMatchObject({ success: false, error: { code: 'VIEW_INSTANCE_REVOKED' } });
++        await update({ showA: true, aKey: 1 });
++        await vi.waitFor(() => {
++            const current = snapshot().views.find((view: any) => view.id === 'fd_A');
++            expect(current).toBeDefined();
++            expect(current.viewInstanceId).not.toBe(oldInstance);
++            expect(snapshot().tools[a.toolId]?.targets.find((target: any) => target.viewId === 'fd_A')?.viewInstanceId)
++                .toBe(current.viewInstanceId);
++        });
++        expect(await host.executeReadOnlyViewTool(a, () => true)).toMatchObject({ success: false, error: { code: 'VIEW_INSTANCE_REVOKED' } });
++        expect((await stats()).calls).toEqual(before);
++        expect(await host.executeReadOnlyViewTool(b, () => true)).toMatchObject({ success: true, data: { who: 'B' } });
++        const fresh = await host.executeReadOnlyViewTool(request(), () => true);
++        expect(fresh).toMatchObject({ success: true, data: { who: 'A' } });
++        expect((fresh.data as any).identity).not.toBe((first.data as any).identity);
++    });
++
++    it('keeps original selectors and args while the caller replaces them with another valid Tool during authorization', async () => {
++        const input = request('fd_A', 'inspect', { line: 7, extra: { value: 'original' } });
++        const original = { ...input }; const started = gate(); const resume = gate();
++        const select = vi.spyOn((host as any).shadowReceiver, 'selectToolSource');
++        let authorized: any;
++        const pending = host.executeReadOnlyViewTool(input, async scope => {
++            authorized = scope; started.release(); await resume.promise; return true;
++        });
++        try {
++            await started.promise; await update({ display: 1 });
++            input.snapshotId = snapshot().id; input.toolId = id('Workspace', 'stats'); input.viewId = 'workspace'; input.args = {};
++        } finally { resume.release(); }
++        expect(await pending).toMatchObject({ success: true, data: { who: 'A', args: { line: 7, extra: { value: 'original' } } } });
++        const originalChecks = select.mock.calls.filter(([value]: any) => value.toolId === original.toolId);
++        expect(originalChecks).toHaveLength(2);
++        for (const [value] of originalChecks as any[]) expect(value).toMatchObject({ snapshotId: original.snapshotId, viewId: 'fd_A' });
++        expect(Object.isFrozen(authorized)).toBe(true);
++        expect(Object.isFrozen(authorized.args.extra)).toBe(true);
++    });
++
++    it('refuses an expired pinned source instead of laundering it through a caller replacement snapshot', async () => {
++        const input = request(); const oldId = input.snapshotId; const started = gate(); const resume = gate();
++        const pending = host.executeReadOnlyViewTool(input, async () => { started.release(); await resume.promise; return true; });
++        try {
++            await started.promise; clock = 1; await update({ display: 1 });
++            await vi.waitFor(() => expect(snapshot().id).not.toBe(oldId));
++            input.snapshotId = snapshot().id; input.viewId = 'fd_B'; clock = 22;
++            expect((host as any).shadowReceiver.core.store.getById(oldId).status).toBe('found');
++        } finally { resume.release(); }
++        const result = await pending; const observed = await stats();
++        console.log('WAVE2A_TTL_RECHECK=' + JSON.stringify({ success: result.success, code: result.error?.code, calls: observed.calls }));
++        expect(result).toMatchObject({ success: false, error: { code: 'SNAPSHOT_EXPIRED' } });
++        expect(observed.calls).toEqual({ A: 0, B: 0, query: 0 });
++    });
++
++    it('allows display/Ref-only updates and passes reference-shaped JSON literally without latest-Ref fallback', async () => {
++        const input = request('fd_A', 'inspect', { line: 7, reference: '[File B](file)' });
++        const binding = snapshot().tools[input.toolId].targets.find((target: any) => target.viewId === 'fd_A');
++        await update({ display: 2, refValue: 2 });
++        await vi.waitFor(() => expect(Object.values(snapshot().refs).some((ref: any) =>
++            ref.ownerViewId === 'fd_A' && ref.target.payload?.refValue === 2)).toBe(true));
++        expect(snapshot().tools[input.toolId].targets.find((target: any) => target.viewId === 'fd_A')).toEqual(binding);
++        expect(await host.executeReadOnlyViewTool(input, () => true)).toMatchObject({
++            success: true, data: { who: 'A', args: { reference: '[File B](file)' } },
++        });
++    });
++
++    const mutations = [
++        { action: 'disable', code: 'TOOL_UNAVAILABLE' }, { action: 'reregister', code: 'TOOL_SOURCE_STALE' },
++        { action: 'schema', code: 'TOOL_SOURCE_STALE' }, { action: 'remount', code: 'VIEW_INSTANCE_REVOKED' },
++    ];
++    async function mutate(action: string) {
++        if (action === 'disable' || action === 'reregister') await update({ enabledA: false });
++        if (action === 'reregister') await update({ enabledA: true });
++        if (action === 'schema') await update({ queryType: 'string' });
++        if (action === 'remount') { await update({ showA: false }); await update({ showA: true, aKey: 1 }); }
++    }
++    it.each(mutations)('rechecks unchanged caller source after authorization: $action', async ({ action, code }) => {
++        const input = action === 'schema' ? request('fd_A', 'query', { value: 7 }) : request();
++        const old = snapshot().tools[input.toolId].targets.find((target: any) => target.viewId === 'fd_A');
++        const started = gate(); const resume = gate();
++        const pending = host.executeReadOnlyViewTool(input, async () => { started.release(); await resume.promise; return true; });
++        try {
++            await started.promise; await mutate(action);
++            await vi.waitFor(() => {
++                const current = snapshot().tools[input.toolId]?.targets.find((target: any) => target.viewId === 'fd_A');
++                if (action === 'disable') expect(current).toBeUndefined();
++                else if (action === 'remount') expect(current?.viewInstanceId).not.toBe(old.viewInstanceId);
++                else expect(current?.bindingVersion).not.toBe(old.bindingVersion);
++            });
++        } finally { resume.release(); }
++        expect(await pending).toMatchObject({ success: false, error: { code } });
++        expect((await stats()).calls).toEqual({ A: 0, B: 0, query: 0 });
++    });
++
++    it.each(mutations)('Worker live registry rejects $action even if Host misses the newer prepared snapshots', async ({ action, code }) => {
++        const input = action === 'schema' ? request('fd_A', 'query', { value: 7 }) : request();
++        const drop = vi.spyOn((host as any).shadowReceiver, 'acceptPrepared').mockImplementation(() => {});
++        try {
++            await mutate(action);
++            expect(snapshot().id).toBe(input.snapshotId);
++            expect(await host.executeReadOnlyViewTool(input, () => true)).toMatchObject({ success: false, error: { code } });
++            expect((await stats()).calls).toEqual({ A: 0, B: 0, query: 0 });
++        } finally { drop.mockRestore(); }
++    });
++
++    it.each(['close', 'error', 'reset'] as const)('does not dispatch a late authorization after App %s', async terminal => {
++        const prior = host; const input = request(); const started = gate(); const resume = gate();
++        const dispatch = vi.spyOn(prior as any, 'sendRequest');
++        const pending = prior.executeReadOnlyViewTool(input, async () => { started.release(); await resume.promise; return true; });
++        try {
++            await started.promise;
++            if (terminal === 'close') await prior.close();
++            if (terminal === 'error') {
++                vi.spyOn(console, 'error').mockImplementation(() => {});
++                (prior as any).worker.emit('error', new Error('Injected failure while policy awaits'));
++            }
++            if (terminal === 'reset') {
++                const worker = await prior.releaseWorker();
++                if (!worker) throw new Error('Expected RESET handoff');
++                await open(worker);
++                expect(host.appInstanceId).not.toBe(prior.appInstanceId);
++                expect(await host.executeReadOnlyViewTool(input, () => true)).toMatchObject({ success: false, error: { code: 'SNAPSHOT_EXPIRED' } });
++            }
++        } finally { resume.release(); }
++        expect(await pending).toMatchObject({ success: false, error: { code: 'APP_STOPPED' } });
++        expect(dispatch.mock.calls.filter(([message]: any) => message.type === 'VIEW_TOOL_INVOKE')).toHaveLength(0);
++        expect((prior as any).shadowReceiver.core.store.inspect().activeLeases).toBe(0);
++    });
++});

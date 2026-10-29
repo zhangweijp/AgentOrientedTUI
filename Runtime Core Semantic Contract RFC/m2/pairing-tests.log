@@ -1,0 +1,17 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+ ✓ src/adapters/snapshot/shadow-receiver.test.ts > M2 SnapshotShadowReceiver — Core-only, observational > does not change the legacy path and exposes only metrics, not data or tool handlers 3ms
+ ✓ src/adapters/snapshot/shadow-receiver.test.ts > M2 SnapshotShadowReceiver — Core-only, observational > rejects wrong App or instance and stale sequence without degrading another instance 1ms
+ ✓ src/adapters/snapshot/shadow-receiver.test.ts > M2 SnapshotShadowReceiver — Core-only, observational > invalid Draft and PREPARE_FAILED mark only the matching App degraded 1ms
+ ✓ src/adapters/snapshot/shadow-receiver.test.ts > M2 SnapshotShadowReceiver — Core-only, observational > stops safely and ignores late Worker messages 0ms
+ ✓ src/engine/app/worker-host.shadow-e2e.test.ts > M2 real Worker Runtime shadow projection, opt-in > publishes an AppSnapshot via versioned Worker IPC without replacing the legacy Snapshot 109ms
+stderr | AppWorkerHost.handleExit (/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/src/engine/app/worker-host.ts:610:21)
+[AppWorkerHost] Worker app_0 exited with code 1
+
+
+ Test Files  2 passed (2)
+      Tests  5 passed (5)
+   Start at  11:00:27
+   Duration  451ms (transform 154ms, setup 0ms, collect 216ms, tests 115ms, environment 0ms, prepare 89ms)
+

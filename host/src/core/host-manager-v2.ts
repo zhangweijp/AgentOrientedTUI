@@ -20,7 +20,8 @@ import type { ModelMessage } from 'ai';
 import { AgentDriverV2, type LLMConfig } from '@aotui/agent-driver-v2';
 import type { AppConfigEntry } from '@aotui/runtime';
 import type { IDesktop, IKernel } from '@aotui/runtime/spi';
-import { AOTUIDrivenSource } from '@aotui/runtime/adapters';
+import { SemanticAOTUIDrivenSource } from '@aotui/runtime/adapters';
+import { readSemanticDesktopSnapshot } from './semantic-desktop-snapshot.js';
 import { MessageServiceV2 } from './message-service-v2.js';
 import { Logger } from '../utils/logger.js';
 import { EventEmitter } from 'events';
@@ -325,15 +326,7 @@ export class HostManagerV2 {
 
         await this.sessionManager.ensureSession(topicId);
 
-        const snapshot = await this.kernel.acquireSnapshot(topicId as any);
-        try {
-            return {
-                markup: snapshot.markup ?? null,
-                structured: snapshot.structured,
-            };
-        } finally {
-            this.kernel.releaseSnapshot(snapshot.id);
-        }
+        return readSemanticDesktopSnapshot(this.kernel.getDesktop(topicId as any), this.kernel);
     }
 
     /**
@@ -448,7 +441,7 @@ export class HostManagerV2 {
         const systemPromptSource = new SystemPromptDrivenSource({
             systemPrompt,
         });
-        const aotuiSource = new AOTUIDrivenSource(input.desktop, this.requireKernel(), {
+        const aotuiSource = new SemanticAOTUIDrivenSource(input.desktop, this.requireKernel(), {
             includeInstruction: true,
         });
         const skillDrivenSource = new SkillDrivenSource();

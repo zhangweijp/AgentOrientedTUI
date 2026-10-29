@@ -1,0 +1,43 @@
+COMMAND: pnpm --dir runtime exec vitest run src/engine/app/worker-host.wave2c-declarations.test.ts --reporter=verbose
+START_UTC: 2026-10-24T01:06:23.176044+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[PersistenceShutdown] Shutdown listener initialized
+ ✓ src/engine/app/worker-host.wave2c-declarations.test.ts > Wave 2C: declaration-only contract through real SDK + Worker + V2 Store > preserves approved declaration metadata in a real V2 Snapshot without inventing typed Ref payloads 153ms
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[PersistenceShutdown] Shutdown listener initialized
+ ✓ src/engine/app/worker-host.wave2c-declarations.test.ts > Wave 2C: declaration-only contract through real SDK + Worker + V2 Store > Host refuses the entire declared Tool before policy or dispatch: {} 101ms
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[PersistenceShutdown] Shutdown listener initialized
+ ✓ src/engine/app/worker-host.wave2c-declarations.test.ts > Wave 2C: declaration-only contract through real SDK + Worker + V2 Store > Host refuses the entire declared Tool before policy or dispatch: {"file":"file"} 101ms
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+ ✓ src/engine/app/worker-host.wave2c-declarations.test.ts > Wave 2C: declaration-only contract through real SDK + Worker + V2 Store > Host refuses the entire declared Tool before policy or dispatch: {"file":"[File B](file)"} 101ms
+ ✓ src/engine/app/worker-host.wave2c-declarations.test.ts > Wave 2C: declaration-only contract through real SDK + Worker + V2 Store > Host refuses the entire declared Tool before policy or dispatch: {"file":{"who":"caller"}} 98ms
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[PersistenceShutdown] Shutdown listener initialized
+ ✓ src/engine/app/worker-host.wave2c-declarations.test.ts > Wave 2C: declaration-only contract through real SDK + Worker + V2 Store > old invocation straight to the Worker is refused by its live registration, without Host policy 96ms
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+ ✓ src/engine/app/worker-host.wave2c-declarations.test.ts > Wave 2C: declaration-only contract through real SDK + Worker + V2 Store > stripping the message annotation cannot bypass the current canonical registration 100ms
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+ ✓ src/engine/app/worker-host.wave2c-declarations.test.ts > Wave 2C: declaration-only contract through real SDK + Worker + V2 Store > a re-registered declaration invalidates the old plain source at Host and Worker 204ms
+[PersistenceShutdown] Shutdown listener initialized
+ ✓ src/engine/app/worker-host.wave2c-declarations.test.ts > Wave 2C: declaration-only contract through real SDK + Worker + V2 Store > changing a valid refType changes the binding and canonical source contract 152ms
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+ ✓ src/engine/app/worker-host.wave2c-declarations.test.ts > Wave 2C: declaration-only contract through real SDK + Worker + V2 Store > unannotated caller JSON, SDK parameter errors and business failure remain unchanged 97ms
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+   Start at  09:06:23
+   Duration  1.93s (transform 197ms, setup 0ms, collect 268ms, tests 1.24s, environment 0ms, prepare 97ms)
+
+
+EXIT_CODE: 0

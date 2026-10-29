@@ -1,0 +1,2278 @@
+{
+  "stage": "M4 Stage 8 / Wave 1",
+  "generatedUTC": "2026-10-23T11:09:53.241911+00:00",
+  "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "baselineIndexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "finalIndexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "indexUnchanged": true,
+  "baselineWorktreeDiffSha256": "800a991934dba25b11ce50d75f13fe678b59df7b4a55a519d10ff4ce859325bd",
+  "finalWorktreeDiffSha256": "9820faaa60acfcfa943217f939b56e0ce3ccbd3896fc23b53f89ee90764751e2",
+  "environment": {
+    "node": "v24.15.0",
+    "pnpm": "10.15.1",
+    "platform": "User Mac; Node worker_threads; isolated mkdtemp file workspaces"
+  },
+  "baselineTests": [
+    {
+      "name": "baseline-runtime-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "tsc",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:35:00.412397+00:00",
+      "durationSeconds": 2.115550667018397,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-runtime-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "05763bf83f888197d19ef6bfa300819b35691c7f63687f5d704f7c0876ccf752"
+    },
+    {
+      "name": "baseline-sdk-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:35:02.528901+00:00",
+      "durationSeconds": 1.0793260000064038,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-sdk-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "392525d18813bc06ec0c26de03aaeb7c6be26c76de9a3cff6c32fce003e23ad7"
+    },
+    {
+      "name": "baseline-ide-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:35:03.608627+00:00",
+      "durationSeconds": 1.4647459169791546,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-ide-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "abe80ea750b94eef2bf3d09a279ccf14c36040e452207fd95558d733afd3f568"
+    },
+    {
+      "name": "baseline-runtime-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:35:05.073828+00:00",
+      "durationSeconds": 4.463934458995936,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-runtime-vitest.log",
+      "tests": {
+        "passed": 538,
+        "failed": 0,
+        "skipped": 3,
+        "todo": 7
+      },
+      "testFilesOrSuites": {
+        "passed": 65,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "55e5e714d553681faa8c3720af9a95d534305cd4b08d3f855f14fc4fdbd6612b"
+    },
+    {
+      "name": "baseline-sdk-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:35:09.538231+00:00",
+      "durationSeconds": 2.8072206669894513,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-sdk-vitest.log",
+      "tests": {
+        "passed": 86,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "d9b6cd861fd6d9ed483699590536e5376864319c716fc12f034a19b80a2546a0"
+    },
+    {
+      "name": "baseline-ide-jest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "jest",
+        "--runInBand"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:35:12.346279+00:00",
+      "durationSeconds": 2.0744236660248134,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-ide-jest.log",
+      "tests": {
+        "passed": 27,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "f1900bb13aaeee085184be521a4bb047cacf2a6a557db33e2c8b31ff2c2b7a49"
+    }
+  ],
+  "tests": [
+    {
+      "name": "final-delivery-runtime-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "tsc",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:07:38.527703+00:00",
+      "durationSeconds": 2.0606533749960363,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-runtime-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "d14a9e20d45d68de33a590a666861d5032e0807863eac61a6461189585676037"
+    },
+    {
+      "name": "final-delivery-sdk-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:07:40.589314+00:00",
+      "durationSeconds": 1.0863729999982752,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-sdk-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "d7080f302d84418e23e57f313f9acd75dd598c1b8397e6dd8976c24a36836b14"
+    },
+    {
+      "name": "final-delivery-ide-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:07:41.676196+00:00",
+      "durationSeconds": 1.5034462500188965,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-ide-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "a4ab957b8fdb08a17b99cda29eef37ed246f95d5da563014545349ee26de9389"
+    },
+    {
+      "name": "final-delivery-runtime-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:07:43.180111+00:00",
+      "durationSeconds": 4.694917124987114,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-runtime-vitest.log",
+      "tests": {
+        "passed": 564,
+        "failed": 0,
+        "skipped": 3,
+        "todo": 7
+      },
+      "testFilesOrSuites": {
+        "passed": 66,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "51e0479e79402611d34ac7909861a81be7722eedb1f355116a90dc06f21a557f"
+    },
+    {
+      "name": "final-delivery-sdk-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:07:47.875481+00:00",
+      "durationSeconds": 2.734935625019716,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-sdk-vitest.log",
+      "tests": {
+        "passed": 86,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "3f7fa545affea8f4bad342c06cfd667a6e22d04be73ebaf764c5063bdf72f427"
+    },
+    {
+      "name": "final-delivery-ide-jest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "jest",
+        "--runInBand"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:07:50.610912+00:00",
+      "durationSeconds": 1.8112710840068758,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-ide-jest.log",
+      "tests": {
+        "passed": 27,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "4dd05b3764c041144aef4ab0e586c45d22c0804289e7ec893180688016c77b71"
+    },
+    {
+      "name": "stability-delivery-1",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-v2-shadow.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "src/engine/app/worker-host.p0-tool-result.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-view-owned-e2e.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:08:24.500970+00:00",
+      "durationSeconds": 4.720008083007997,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-1.log",
+      "tests": {
+        "passed": 46,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "2a0b3ea10baf1fb1779af9d2bfb8e6e374cbeb05b52b8a41e5ec2876fa692305"
+    },
+    {
+      "name": "stability-delivery-2",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-v2-shadow.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "src/engine/app/worker-host.p0-tool-result.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-view-owned-e2e.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:08:29.267217+00:00",
+      "durationSeconds": 4.561971458024345,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-2.log",
+      "tests": {
+        "passed": 46,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "f2a7fb66ef041b6c9c54e97535d7bf2647c9e5662be0744fe06c2a54cc4130d1"
+    },
+    {
+      "name": "stability-delivery-3",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-v2-shadow.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "src/engine/app/worker-host.p0-tool-result.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-view-owned-e2e.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:08:33.876820+00:00",
+      "durationSeconds": 4.560096250002971,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-3.log",
+      "tests": {
+        "passed": 46,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "70e068a513785cd8da1c6a91e259b1cdc407f64d286ffb40f104a957b68c0d83"
+    }
+  ],
+  "allRuns": [
+    {
+      "name": "baseline-runtime-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "tsc",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:35:00.412397+00:00",
+      "durationSeconds": 2.115550667018397,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-runtime-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "05763bf83f888197d19ef6bfa300819b35691c7f63687f5d704f7c0876ccf752"
+    },
+    {
+      "name": "baseline-sdk-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:35:02.528901+00:00",
+      "durationSeconds": 1.0793260000064038,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-sdk-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "392525d18813bc06ec0c26de03aaeb7c6be26c76de9a3cff6c32fce003e23ad7"
+    },
+    {
+      "name": "baseline-ide-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:35:03.608627+00:00",
+      "durationSeconds": 1.4647459169791546,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-ide-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "abe80ea750b94eef2bf3d09a279ccf14c36040e452207fd95558d733afd3f568"
+    },
+    {
+      "name": "baseline-runtime-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:35:05.073828+00:00",
+      "durationSeconds": 4.463934458995936,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-runtime-vitest.log",
+      "tests": {
+        "passed": 538,
+        "failed": 0,
+        "skipped": 3,
+        "todo": 7
+      },
+      "testFilesOrSuites": {
+        "passed": 65,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "55e5e714d553681faa8c3720af9a95d534305cd4b08d3f855f14fc4fdbd6612b"
+    },
+    {
+      "name": "baseline-sdk-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:35:09.538231+00:00",
+      "durationSeconds": 2.8072206669894513,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-sdk-vitest.log",
+      "tests": {
+        "passed": 86,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "d9b6cd861fd6d9ed483699590536e5376864319c716fc12f034a19b80a2546a0"
+    },
+    {
+      "name": "baseline-ide-jest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "jest",
+        "--runInBand"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:35:12.346279+00:00",
+      "durationSeconds": 2.0744236660248134,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-ide-jest.log",
+      "tests": {
+        "passed": 27,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "f1900bb13aaeee085184be521a4bb047cacf2a6a557db33e2c8b31ff2c2b7a49"
+    },
+    {
+      "name": "red-lifecycle",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T10:39:18.544060+00:00",
+      "durationSeconds": 1.1985694999748375,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-lifecycle.log",
+      "tests": {
+        "passed": 8,
+        "failed": 6,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "af0c4d15fdf521ccc2ce8a2078a98a8444b283498fb10470f3a3b36c0e09131e"
+    },
+    {
+      "name": "green-lifecycle-first",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T10:40:38.632164+00:00",
+      "durationSeconds": 1.0904267079895362,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-lifecycle-first.log",
+      "tests": {
+        "passed": 13,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "9d3fffb3da331cd26083dc297876ffe71146cffea1fbc85e7a7d9c168f28a65a"
+    },
+    {
+      "name": "lifecycle-typecheck",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "tsc",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 2,
+      "startedUTC": "2026-10-23T10:40:46.982204+00:00",
+      "durationSeconds": 1.9911964579951018,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-lifecycle-typecheck.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "680518ff4deeecfaf07e170fba726340bb31de3364e4a50807cd1d9c1e389e24"
+    },
+    {
+      "name": "red-termination",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T10:41:38.655793+00:00",
+      "durationSeconds": 1.1001115840044804,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-termination.log",
+      "tests": {
+        "passed": 14,
+        "failed": 2,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "9f625108370cf4dd88c58b6d7a0d1ca4ea12cbe3768404a1e60ac294560a779c"
+    },
+    {
+      "name": "green-lifecycle-second",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:41:39.874884+00:00",
+      "durationSeconds": 0.9929130829987116,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-lifecycle-second.log",
+      "tests": {
+        "passed": 16,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "2de9c8ee139f0cacb23118f4ff393bf781f926bc327f01da17cc2f2e4c146f80"
+    },
+    {
+      "name": "red-outcome",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T10:43:11.684770+00:00",
+      "durationSeconds": 1.160530374996597,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-outcome.log",
+      "tests": {
+        "passed": 1,
+        "failed": 5,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "f965a9a3c9ce46e8a09e4ea65420a02330b8198b8fcf6e6fc02047f7aeb98cc6"
+    },
+    {
+      "name": "green-outcome",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:43:48.510465+00:00",
+      "durationSeconds": 1.0993595830223057,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-outcome.log",
+      "tests": {
+        "passed": 22,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "b28b9004e3aac03f7ced329d610b3af2fb98f707c8f3615725c798af9385e41a"
+    },
+    {
+      "name": "host-typecheck",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "tsc",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:43:49.694222+00:00",
+      "durationSeconds": 2.058581999997841,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-host-typecheck.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "4039e44f1caaac4dc785fb2578e5efda7ac27ddeefed1d06e2093a092530821b"
+    },
+    {
+      "name": "red-authorization-boundary",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T10:45:50.292654+00:00",
+      "durationSeconds": 1.3528415419859812,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-authorization-boundary.log",
+      "tests": {
+        "passed": 8,
+        "failed": 4,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "1e4ab0c67a0463d35201f51a5ea2ce4ed6f23078b99e9ad4ae4717785cd78c00"
+    },
+    {
+      "name": "green-authorization-boundary",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:45:51.769932+00:00",
+      "durationSeconds": 1.0784507080097683,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-authorization-boundary.log",
+      "tests": {
+        "passed": 12,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "398280df715b2f2240567d672bdd33fb858e69edf73e13e156e365effc21dc4a"
+    },
+    {
+      "name": "real-worker-first",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T10:46:42.542207+00:00",
+      "durationSeconds": 3.6551893329888117,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-real-worker-first.log",
+      "tests": {
+        "passed": 7,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 2,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "3116b1c337a448e2f168bc2a718102b28c1adcc1afac2162d0853891a4d9a167"
+    },
+    {
+      "name": "real-worker-second",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:47:27.023975+00:00",
+      "durationSeconds": 4.657158583024284,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-real-worker-second.log",
+      "tests": {
+        "passed": 8,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "568b543a4c54898cbbbaf05fda1c92a40b7e3993b580f9bb80861e3be467d65b"
+    },
+    {
+      "name": "red-worker-exit",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T10:48:51.610971+00:00",
+      "durationSeconds": 1.105376375024207,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-worker-exit.log",
+      "tests": {
+        "passed": 17,
+        "failed": 2,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "7161490c1581f5dff1b6cab838076f238d3eb3ebddd626f518784878fbe5757d"
+    },
+    {
+      "name": "green-worker-exit",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:48:52.835128+00:00",
+      "durationSeconds": 1.1739093750074971,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-worker-exit.log",
+      "tests": {
+        "passed": 19,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "390dcb416ec84224cc5536b81d17988ea4838e0e4b1f3b9f74c694cff93c0d5e"
+    },
+    {
+      "name": "regression-audit",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T10:50:15.547039+00:00",
+      "durationSeconds": 6.485835833009332,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-regression-audit.log",
+      "tests": {
+        "passed": 560,
+        "failed": 1,
+        "skipped": 3,
+        "todo": 7
+      },
+      "testFilesOrSuites": {
+        "passed": 65,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "43cfada67f9c30e1caf51a48e64e740de4ff750d66bcae5f1755ce679b0efb34"
+    },
+    {
+      "name": "red-exit-observer",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T10:53:44.472434+00:00",
+      "durationSeconds": 1.2810392079991288,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-exit-observer.log",
+      "tests": {
+        "passed": 19,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "3bb984839346cb23bc83a5866a008ace8682b333fd8ce9dd601d40460ffe9d1f"
+    },
+    {
+      "name": "green-exit-observer",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.snapshot-shadow.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:53:58.891215+00:00",
+      "durationSeconds": 1.235411583998939,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-exit-observer.log",
+      "tests": {
+        "passed": 25,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 2,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "0eac30131a1190f64eb6c60fae47ff9c8b88f14e62dc8d0a4ae3da705e367e36"
+    },
+    {
+      "name": "red-shutdown-output",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T10:54:55.496171+00:00",
+      "durationSeconds": 1.2250217920227442,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-shutdown-output.log",
+      "tests": {
+        "passed": 20,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "4edbe537e741acecd5a08604deb3521298b1d5adfff0e35d44516d273b94fbad"
+    },
+    {
+      "name": "green-shutdown-output",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:55:14.499799+00:00",
+      "durationSeconds": 1.1475957919901703,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-shutdown-output.log",
+      "tests": {
+        "passed": 21,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "8532df6447395ff3175a2442101eacf103a416c85c037bda6ec46cbc4e041a50"
+    },
+    {
+      "name": "final-runtime-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "tsc",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:55:25.546791+00:00",
+      "durationSeconds": 2.155814208002994,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-runtime-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "279e93f8812ff2a2a036fa359fdc647a7eb5652ed61d1f81c2b40a063f5998f1"
+    },
+    {
+      "name": "final-sdk-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:55:27.703457+00:00",
+      "durationSeconds": 1.1029975829878822,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-sdk-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "7d6f7659677948ea67edf83365a8c24cdc2a14ab9fc8c6323dd6a7980015864c"
+    },
+    {
+      "name": "final-ide-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:55:28.806898+00:00",
+      "durationSeconds": 1.480892584018875,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-ide-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "6892f83d6216d9d67343ff816fc5a3e146bcc71be57ff3c2c48228c81cc1111c"
+    },
+    {
+      "name": "final-runtime-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:55:30.288259+00:00",
+      "durationSeconds": 4.799256667000009,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-runtime-vitest.log",
+      "tests": {
+        "passed": 563,
+        "failed": 0,
+        "skipped": 3,
+        "todo": 7
+      },
+      "testFilesOrSuites": {
+        "passed": 66,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "c5fd434d20d7af1c4d31f91f4a0de58e01682eb72f7e5961c4b40b5724ef155c"
+    },
+    {
+      "name": "final-sdk-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:55:35.087905+00:00",
+      "durationSeconds": 2.7604213330196217,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-sdk-vitest.log",
+      "tests": {
+        "passed": 86,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "4d87df2881e1d34630257a0001f251ab34f7fd46b0ba4c92b0feb6c5eca75cc3"
+    },
+    {
+      "name": "final-ide-jest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "jest",
+        "--runInBand"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:55:37.848930+00:00",
+      "durationSeconds": 2.027862165996339,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-ide-jest.log",
+      "tests": {
+        "passed": 27,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "218b35a7fdfd40ebd93af1d3b363228a95f1357c66965512f28db2791eb32923"
+    },
+    {
+      "name": "stability-1",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-v2-shadow.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "src/engine/app/worker-host.p0-tool-result.test.ts",
+        "src/engine/app/worker-host.m4-view-tools.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:55:49.263606+00:00",
+      "durationSeconds": 4.598099625000032,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-1.log",
+      "tests": {
+        "passed": 43,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 7,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "a65b0f53cbdf6de560a3a00e6cbadd7d4ecd3cfba08c5b555a35a183acde8827"
+    },
+    {
+      "name": "stability-round-1",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-v2-shadow.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "src/engine/app/worker-host.p0-tool-result.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-view-owned-e2e.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:56:22.520951+00:00",
+      "durationSeconds": 4.744003416999476,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-round-1.log",
+      "tests": {
+        "passed": 45,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "d29c427940817a332dc53d3b6f3673776e2b0315a00e23f51292e8509d35114c"
+    },
+    {
+      "name": "stability-round-2",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-v2-shadow.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "src/engine/app/worker-host.p0-tool-result.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-view-owned-e2e.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:56:27.314352+00:00",
+      "durationSeconds": 4.640906666987576,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-round-2.log",
+      "tests": {
+        "passed": 45,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "934cacb144dc3815390e6ba562cd69e32cd74f92daf4bc985a43e2f48c16724f"
+    },
+    {
+      "name": "stability-round-3",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-v2-shadow.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "src/engine/app/worker-host.p0-tool-result.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-view-owned-e2e.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:56:32.003255+00:00",
+      "durationSeconds": 4.635877207998419,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-round-3.log",
+      "tests": {
+        "passed": 45,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "20ba83bc0c4ac799b78b7bbfec2e1252b47848dd47c44c5fe80cb34b20991d95"
+    },
+    {
+      "name": "red-exception-accessor",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-23T10:57:29.620176+00:00",
+      "durationSeconds": 1.0436372499971185,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-exception-accessor.log",
+      "tests": {
+        "passed": 12,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "835b4320e3374629c89603408d48bcc3213c20920f257722db5c960421c76211"
+    },
+    {
+      "name": "green-exception-accessor",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:57:38.048869+00:00",
+      "durationSeconds": 1.213240582990693,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-exception-accessor.log",
+      "tests": {
+        "passed": 13,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "d034dde7e699e676a5afdf25397baf1d7e0f3194ca66c3ce99345ba5c9560fe0"
+    },
+    {
+      "name": "final-recheck-runtime-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "tsc",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:58:20.447106+00:00",
+      "durationSeconds": 2.2434415830066428,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-recheck-runtime-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "e6d3373a4e3ed855a605e0e5d0c7c4bc6c915288c17f56bd9ae0cbc558efcdf1"
+    },
+    {
+      "name": "final-recheck-sdk-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:58:22.691577+00:00",
+      "durationSeconds": 1.104725375014823,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-recheck-sdk-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "bf130eb5481eac8a3ce17e6e4ace485fbabf4aebf5e1c70356f004495ed6f949"
+    },
+    {
+      "name": "final-recheck-ide-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:58:23.796778+00:00",
+      "durationSeconds": 1.530879832978826,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-recheck-ide-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "3385350fe092f305eed8beec7e528923b948fa4a1857e1408845b829543447c9"
+    },
+    {
+      "name": "final-recheck-runtime-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:58:25.328148+00:00",
+      "durationSeconds": 4.846484334004344,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-recheck-runtime-vitest.log",
+      "tests": {
+        "passed": 564,
+        "failed": 0,
+        "skipped": 3,
+        "todo": 7
+      },
+      "testFilesOrSuites": {
+        "passed": 66,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "525fd7d661059a94a2a78001eb98b5ae49a8268d4d4db3eac1829f5c76174c7a"
+    },
+    {
+      "name": "final-recheck-sdk-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:58:30.175210+00:00",
+      "durationSeconds": 2.789921207993757,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-recheck-sdk-vitest.log",
+      "tests": {
+        "passed": 86,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "fd0ef58a71eab8e7645c3ef97803bdbabfc04850cc552792f1eb26e6965e0b4a"
+    },
+    {
+      "name": "final-recheck-ide-jest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "jest",
+        "--runInBand"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:58:32.965571+00:00",
+      "durationSeconds": 1.84497045801254,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-recheck-ide-jest.log",
+      "tests": {
+        "passed": 27,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "0d5e6fb1e5ea80a72427765bf862d8f9cdf317a256cf203fd48fecbcfae8f327"
+    },
+    {
+      "name": "stability-final-1",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-v2-shadow.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "src/engine/app/worker-host.p0-tool-result.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-view-owned-e2e.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:59:28.775735+00:00",
+      "durationSeconds": 4.677565707999747,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-final-1.log",
+      "tests": {
+        "passed": 46,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "47711bcf619576e894fd05d326e198a1aae4c0d36d96d8f6c1ece5b2e3bae3c4"
+    },
+    {
+      "name": "stability-final-2",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-v2-shadow.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "src/engine/app/worker-host.p0-tool-result.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-view-owned-e2e.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:59:33.501280+00:00",
+      "durationSeconds": 4.593618875020184,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-final-2.log",
+      "tests": {
+        "passed": 46,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "8779066ee08e39df1217c05d096a09fcc4079950713292a7a1f57c4a816cb8f9"
+    },
+    {
+      "name": "stability-final-3",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-v2-shadow.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "src/engine/app/worker-host.p0-tool-result.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-view-owned-e2e.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T10:59:38.142829+00:00",
+      "durationSeconds": 4.646426667022752,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-final-3.log",
+      "tests": {
+        "passed": 46,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "5a32660b51048bd3a73e445cae8f78bb449e02c7e3555b05f120c910cc64d2a2"
+    },
+    {
+      "name": "integrity",
+      "command": [
+        "python3",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/audit-integrity.py"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:03:29.817567+00:00",
+      "durationSeconds": 1.3784459590096958,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-integrity.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "ad73ecb23770acb691afcf54c6fa12354533c637d38320993195a45edb3d3218"
+    },
+    {
+      "name": "dual-view-both-directions",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:06:48.129262+00:00",
+      "durationSeconds": 1.1659455839835573,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-dual-view-both-directions.log",
+      "tests": {
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "afcf831ac7a9fe0d7eb0e17c10c944a016f8cf87565faead592cef363808d39d"
+    },
+    {
+      "name": "final-delivery-runtime-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "tsc",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:07:38.527703+00:00",
+      "durationSeconds": 2.0606533749960363,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-runtime-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "d14a9e20d45d68de33a590a666861d5032e0807863eac61a6461189585676037"
+    },
+    {
+      "name": "final-delivery-sdk-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:07:40.589314+00:00",
+      "durationSeconds": 1.0863729999982752,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-sdk-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "d7080f302d84418e23e57f313f9acd75dd598c1b8397e6dd8976c24a36836b14"
+    },
+    {
+      "name": "final-delivery-ide-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:07:41.676196+00:00",
+      "durationSeconds": 1.5034462500188965,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-ide-tsc.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "a4ab957b8fdb08a17b99cda29eef37ed246f95d5da563014545349ee26de9389"
+    },
+    {
+      "name": "final-delivery-runtime-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:07:43.180111+00:00",
+      "durationSeconds": 4.694917124987114,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-runtime-vitest.log",
+      "tests": {
+        "passed": 564,
+        "failed": 0,
+        "skipped": 3,
+        "todo": 7
+      },
+      "testFilesOrSuites": {
+        "passed": 66,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "51e0479e79402611d34ac7909861a81be7722eedb1f355116a90dc06f21a557f"
+    },
+    {
+      "name": "final-delivery-sdk-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:07:47.875481+00:00",
+      "durationSeconds": 2.734935625019716,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-sdk-vitest.log",
+      "tests": {
+        "passed": 86,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "3f7fa545affea8f4bad342c06cfd667a6e22d04be73ebaf764c5063bdf72f427"
+    },
+    {
+      "name": "final-delivery-ide-jest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "jest",
+        "--runInBand"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:07:50.610912+00:00",
+      "durationSeconds": 1.8112710840068758,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-ide-jest.log",
+      "tests": {
+        "passed": 27,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "4dd05b3764c041144aef4ab0e586c45d22c0804289e7ec893180688016c77b71"
+    },
+    {
+      "name": "stability-delivery-1",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-v2-shadow.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "src/engine/app/worker-host.p0-tool-result.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-view-owned-e2e.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:08:24.500970+00:00",
+      "durationSeconds": 4.720008083007997,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-1.log",
+      "tests": {
+        "passed": 46,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "2a0b3ea10baf1fb1779af9d2bfb8e6e374cbeb05b52b8a41e5ec2876fa692305"
+    },
+    {
+      "name": "stability-delivery-2",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-v2-shadow.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "src/engine/app/worker-host.p0-tool-result.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-view-owned-e2e.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:08:29.267217+00:00",
+      "durationSeconds": 4.561971458024345,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-2.log",
+      "tests": {
+        "passed": 46,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "f2a7fb66ef041b6c9c54e97535d7bf2647c9e5662be0744fe06c2a54cc4130d1"
+    },
+    {
+      "name": "stability-delivery-3",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "src/engine/app/worker-host.m4-v2-shadow.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "src/engine/app/worker-host.p0-tool-result.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-view-owned-e2e.test.ts",
+        "src/core/tool/versioned-file-integration.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:08:33.876820+00:00",
+      "durationSeconds": 4.560096250002971,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-3.log",
+      "tests": {
+        "passed": 46,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "testFilesOrSuites": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "logSha256": "70e068a513785cd8da1c6a91e259b1cdc407f64d286ffb40f104a957b68c0d83"
+    },
+    {
+      "name": "integrity-delivery",
+      "command": [
+        "python3",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/audit-integrity.py"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-23T11:09:03.150071+00:00",
+      "durationSeconds": 1.2917212089814711,
+      "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-integrity-delivery.log",
+      "tests": null,
+      "testFilesOrSuites": null,
+      "logSha256": "5091001e8acaca4b037115d05abb1ba8e72e257fbf627198cc20cb84dc68b6e7"
+    }
+  ],
+  "securityCases": [
+    {
+      "id": "frozen-request-getter-proxy-byte-budget",
+      "status": "PASS",
+      "evidenceLevel": "REAL_SDK_WORKER_V2",
+      "testFiles": [
+        "runtime/src/engine/app/worker-host.m4-versioned-file.test.ts"
+      ],
+      "finalLogs": [
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-1.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-2.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-3.log"
+      ],
+      "notes": "Getter-free request; Proxy trap may execute before rejection; 4 MiB UTF-8; all selectors/content changed while policy awaits."
+    },
+    {
+      "id": "explicit-authorization-and-exception-boundaries",
+      "status": "PASS",
+      "evidenceLevel": "HOST_CORE_REAL_TEMP_FILESYSTEM",
+      "testFiles": [
+        "runtime/src/engine/app/worker-host.m4-stage8-outcome.test.ts"
+      ],
+      "finalLogs": [
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-1.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-2.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-3.log"
+      ],
+      "notes": "Only literal true grants; source selection and thrown message accessors become deterministic failures without adapter IO."
+    },
+    {
+      "id": "close-reset-single-flight-and-late-lifecycle-responses",
+      "status": "PASS",
+      "evidenceLevel": "HOST_UNIT_AND_REAL_WORKER",
+      "testFiles": [
+        "runtime/src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "runtime/src/engine/app/worker-host.m4-versioned-file.test.ts"
+      ],
+      "finalLogs": [
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-1.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-2.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-3.log"
+      ],
+      "notes": "Waits existing INIT/open/pause/resume/reinitialize, file IO, close and RESET; does not revive closing Host or duplicate shutdown/reset."
+    },
+    {
+      "id": "close-during-authorization",
+      "status": "PASS",
+      "evidenceLevel": "REAL_SDK_WORKER_V2_REAL_TEMP_FILESYSTEM",
+      "testFiles": [
+        "runtime/src/engine/app/worker-host.m4-versioned-file.test.ts"
+      ],
+      "finalLogs": [
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-1.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-2.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-3.log"
+      ],
+      "notes": "Late grant after close returns APP_STOPPED, adapter is not invoked."
+    },
+    {
+      "id": "close-during-successful-write-and-worker-reuse",
+      "status": "PASS",
+      "evidenceLevel": "REAL_SDK_WORKER_V2_REAL_TEMP_FILESYSTEM",
+      "testFiles": [
+        "runtime/src/engine/app/worker-host.m4-versioned-file.test.ts"
+      ],
+      "finalLogs": [
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-1.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-2.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-3.log"
+      ],
+      "notes": "Gated successful disk write still returns success; one APP_SHUTDOWN/APP_CLOSE/RESET; new AppInstance rejects old snapshot."
+    },
+    {
+      "id": "terminate-and-worker-exit-cleanup",
+      "status": "PASS",
+      "evidenceLevel": "HOST_UNIT_AND_EXISTING_REAL_WORKER_CHANNEL",
+      "testFiles": [
+        "runtime/src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "runtime/src/engine/app/worker-host.snapshot-shadow.test.ts"
+      ],
+      "finalLogs": [
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-1.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-2.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-3.log"
+      ],
+      "notes": "Deferred termination; broken postMessage; pending request rejection; external exit observers preserved."
+    },
+    {
+      "id": "same-hash-inflight-replay-fence",
+      "status": "PASS",
+      "evidenceLevel": "HOST_CORE_REAL_TEMP_FILESYSTEM",
+      "testFiles": [
+        "runtime/src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "runtime/src/engine/app/worker-host.m4-lifecycle.test.ts"
+      ],
+      "finalLogs": [
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-1.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-2.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-3.log"
+      ],
+      "notes": "Reserves before adapter await; identical bytes cannot prove operation did not execute; UI-only snapshot changes cannot remove fence."
+    },
+    {
+      "id": "written-conflict-unknown-outcomes",
+      "status": "PASS",
+      "evidenceLevel": "HOST_CORE_REAL_TEMP_FILESYSTEM_AND_REAL_WORKER",
+      "testFiles": [
+        "runtime/src/engine/app/worker-host.m4-stage8-outcome.test.ts",
+        "runtime/src/engine/app/worker-host.m4-versioned-file.test.ts"
+      ],
+      "finalLogs": [
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-1.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-2.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-3.log"
+      ],
+      "notes": "Actual committed write with invalid result/accessor remains unknown; no blind retry. Valid conflict releases only pending reservation."
+    },
+    {
+      "id": "v2-producer-epoch-fault-injection",
+      "status": "PASS_EXISTING_IMPLEMENTATION_REVERIFIED",
+      "evidenceLevel": "REAL_SDK_WORKER_V2",
+      "testFiles": [
+        "runtime/src/engine/app/worker-host.m4-producer-race.test.ts"
+      ],
+      "finalLogs": [
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-1.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-2.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-3.log"
+      ],
+      "notes": "Epoch advances during Draft capture, Prepare Failed without torn publication, later stable capture recovers. Remains unverified/non-Strict."
+    },
+    {
+      "id": "two-filedetails-shared-ref-and-tool-names",
+      "status": "PASS_EXISTING_IMPLEMENTATION_EXTENDED_TEST",
+      "evidenceLevel": "CORE_REAL_TEMP_FILESYSTEM",
+      "testFiles": [
+        "runtime/src/core/tool/versioned-file-integration.test.ts"
+      ],
+      "finalLogs": [
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-1.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-2.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-3.log"
+      ],
+      "notes": "Distinct ViewInstances and files share file/replace_file names; real writes verify B preserves A and A preserves B; A policy rejects B. Not a full dual-view Host E2E claim."
+    },
+    {
+      "id": "business-result-legacy-and-optin-compatibility",
+      "status": "PASS",
+      "evidenceLevel": "FULL_REGRESSION_AND_REAL_WORKER",
+      "testFiles": [
+        "runtime/src/engine/app/worker-host.p0-tool-result.test.ts",
+        "runtime/src/engine/app/worker-host.m4-readonly.test.ts",
+        "runtime/src/engine/app/worker-host.m4-view-owned-e2e.test.ts"
+      ],
+      "finalLogs": [
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-1.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-2.log",
+        "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-3.log"
+      ],
+      "notes": "Preserves business ToolResult; no default Agent router switch; read-only mutating rejection and live tool/schema checks retained."
+    }
+  ],
+  "performance": {
+    "status": "NOT_TESTED",
+    "cpu": null,
+    "heap": null,
+    "snapshotCommitP50Ms": null,
+    "snapshotCommitP95Ms": null,
+    "invocationP50Ms": null,
+    "invocationP95Ms": null,
+    "rejectionRate": null,
+    "workloadBudget": null,
+    "note": "Command durations are raw test execution evidence only, not product latency or SLA. Real IDE/LSP and scale profiling deferred to Wave 4."
+  },
+  "coverage": {
+    "status": "NOT_TESTED",
+    "linesPercent": null,
+    "branchesPercent": null,
+    "addedRuntimeTestCases": 26,
+    "baselineRuntimePassed": 538,
+    "finalRuntimePassed": 564,
+    "note": "No coverage command run. Baseline 3 skipped / 7 todo preserved; no new skip/todo."
+  },
+  "goNoGo": {
+    "stage8Limited": "PASS_RECOMMENDED_PENDING_INDEPENDENT_REVIEW",
+    "fullM4": "NO_GO",
+    "strict": "NO_GO",
+    "defaultAgentMutatingEnablement": "NO_GO",
+    "wave2Execution": "NOT_STARTED",
+    "independentReviewer": "ChatGPT",
+    "reviewStatus": "PENDING"
+  },
+  "compatibility": {
+    "experimentalVersionedMutationsDefault": "OFF",
+    "legacyRouter": "UNCHANGED",
+    "note": "No claim that every preexisting Legacy mutating operation was disabled."
+  },
+  "blockers": [],
+  "assuranceBlockers": [
+    "No comprehensive Strict CommitBarrier proof; producer remains unverified and strictEligible=false.",
+    "Uncooperative external filesystem writers, content-hash ABA, and metadata/ACL/xattr/inode preservation are not solved.",
+    "Host replay fence is not durable exactly-once across RESET/new AppInstance or process restart.",
+    "Proxy traps may execute during JSON reflection; no hostile-JavaScript isolation or synchronous timeout guarantee.",
+    "View/Tool teardown can race filesystem commit after live Worker validation; no distributed atomicity claim.",
+    "No cancellation/time bound for an adapter or trusted policy that never settles.",
+    "No real IDE/LSP workload profile, second independent non-DOM adapter, p50/p95 or scale budgets tested."
+  ],
+  "integrity": {
+    "log": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-integrity-delivery.log",
+    "report": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/final-integrity.json",
+    "baselinePaths": 1005,
+    "preexistingPathsChanged": 4,
+    "unexpectedBaselineChanges": [],
+    "unexpectedNewPaths": []
+  },
+  "artifacts": {
+    "results": "Runtime Core Semantic Contract RFC/m4/stage8/CODEX_RESULTS.md",
+    "fingerprints": "Runtime Core Semantic Contract RFC/m4/stage8/source-fingerprints.json",
+    "nextWave": "Runtime Core Semantic Contract RFC/m4/stage8/NEXT_WAVE_RECOMMENDATION.md",
+    "incrementalPatch": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/incremental-changes.patch",
+    "rawLogsDirectory": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z",
+    "reproducer": "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/run-check.py"
+  }
+}

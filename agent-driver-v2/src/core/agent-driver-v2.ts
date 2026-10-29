@@ -16,8 +16,10 @@
 import type { ModelMessage, Tool } from 'ai';
 import type {
     IDrivenSource,
+    DrivenSourceContext,
     MessageWithTimestamp,
     ToolResult,
+    ToolOutcomeStatus,
     AgentDriverV2Config,
     AgentState,
 } from './interfaces.js';
@@ -25,6 +27,16 @@ import { debounce } from '../utils/debounce.js';
 import { Logger } from '../utils/logger.js';
 import { LLMClient } from './llm-client.js';
 import { assembleContextRegions } from './context-regions.js';
+
+interface CapturedSourceContext {
+    source: IDrivenSource;
+    context: DrivenSourceContext;
+}
+
+interface ToolExecutionRoute {
+    source: IDrivenSource;
+    executeTool: IDrivenSource['executeTool'];
+}
 
 /**
  * AgentDriverV2 - 核心类
@@ -46,7 +58,6 @@ export class AgentDriverV2 {
     private pending = false;
     private runInFlight: Promise<void> | null = null;
     private lastInputSignature: string | null = null;
-    private toolFailureStreak = 0;
 
     // Tool → Source 映射
     private toolToSourceMap = new Map<string, IDrivenSource>();
@@ -136,10 +147,12 @@ export class AgentDriverV2 {
      * - 每个 source 已经保证消息去重
      * - AgentDriver 只需拼接并排序
      */
-private async collectMessages(): Promise<ModelMessage[]> {
+    private async collectMessages(captured?: readonly CapturedSourceContext[]): Promise<ModelMessage[]> {
         const allMessages: MessageWithTimestamp[] = [];
 
-    for (const source of this.getActiveSources()) {
+        if (captured) {
+            for (const { context } of captured) allMessages.push(...context.messages);
+        } else for (const source of this.getActiveSources()) {
             try {
                 const messages = await source.getMessages();
                 allMessages.push(...messages);
@@ -343,6 +356,27 @@ private async collectMessages(): Promise<ModelMessage[]> {
         return allTools;
     }
 
+    /** Capture once per source; never silently replace a failed atomic capture. */
+    private async captureContexts(retained: CapturedSourceContext[]): Promise<void> {
+        for (const source of this.getActiveSources()) {
+            try {
+                const context = source.getContext
+                    ? await source.getContext()
+                    : { messages: await source.getMessages(), tools: await source.getTools() };
+                retained.push({ source, context });
+            } catch (error) {
+                this.logger.error(`Failed to capture context from ${source.name}:`, error);
+                // An atomic source is part of the current working state. A failed
+                // capture must fail the turn, not silently omit that state.
+                if (source.getContext) throw error;
+            }
+        }
+    }
+
+    private outcomeStatus(result: ToolResult): ToolOutcomeStatus {
+        return result.outcomeStatus ?? (result.error ? 'failed' : 'succeeded');
+    }
+
     /**
      * 执行工具调用
      * 
@@ -353,17 +387,30 @@ private async collectMessages(): Promise<ModelMessage[]> {
             toolCallId: string;
             toolName: string;
             args: unknown;
-        }>
+        }>,
+        routes?: ReadonlyMap<string, ToolExecutionRoute>
     ): Promise<ToolResult[]> {
         const results: ToolResult[] = [];
 
         for (const toolCall of toolCalls) {
             // 使用映射查找对应的 source
-            const source = this.toolToSourceMap.get(toolCall.toolName);
+            const route = routes?.get(toolCall.toolName);
+            const source = routes ? route?.source : this.toolToSourceMap.get(toolCall.toolName);
+
+            if (routes && (!this.running || (source && this.sourceEnabledMap.get(source.name) === false))) {
+                results.push({
+                    toolCallId: toolCall.toolCallId,
+                    toolName: toolCall.toolName,
+                    outcomeStatus: 'rejected',
+                    error: { code: 'E_SOURCE_UNAVAILABLE', message: 'The driver or tool source is no longer active' },
+                });
+                continue;
+            }
 
             if (source) {
                 try {
-                    const result = await source.executeTool(
+                    const execute = route?.executeTool ?? source.executeTool.bind(source);
+                    const result = await execute(
                         toolCall.toolName,
                         toolCall.args,
                         toolCall.toolCallId
@@ -382,6 +429,7 @@ private async collectMessages(): Promise<ModelMessage[]> {
                         results.push({
                             toolCallId: toolCall.toolCallId,
                             toolName: toolCall.toolName,
+                            outcomeStatus: 'rejected',
                             error: {
                                 code: 'E_TOOL_NOT_FOUND',
                                 message: `Tool ${toolCall.toolName} not found`,
@@ -396,6 +444,7 @@ private async collectMessages(): Promise<ModelMessage[]> {
                     results.push({
                         toolCallId: toolCall.toolCallId,
                         toolName: toolCall.toolName,
+                        outcomeStatus: 'unknown',
                         error: {
                             code: 'E_EXECUTION_ERROR',
                             message:
@@ -413,6 +462,7 @@ private async collectMessages(): Promise<ModelMessage[]> {
                 results.push({
                     toolCallId: toolCall.toolCallId,
                     toolName: toolCall.toolName,
+                    outcomeStatus: 'rejected',
                     error: {
                         code: 'E_TOOL_NOT_FOUND',
                         message: `No DrivenSource can execute tool: ${toolCall.toolName}`,
@@ -568,12 +618,26 @@ private async collectMessages(): Promise<ModelMessage[]> {
      */
     private async run(): Promise<void> {
         await this.setState('thinking');
+        const retained: CapturedSourceContext[] = [];
 
         try {
             // 1. 收集 Messages 和 Tools
-            const messages = await this.collectMessages();
-            const tools = await this.collectTools();
-            await this.updateToolMapping();
+            await this.captureContexts(retained);
+            const messages = await this.collectMessages(retained);
+            const tools: Record<string, Tool> = {};
+            const routes = new Map<string, ToolExecutionRoute>();
+            this.toolToSourceMap.clear();
+            for (const { source, context } of retained) {
+                const executeTool = context.executeTool
+                    ? context.executeTool.bind(context)
+                    : source.executeTool.bind(source);
+                for (const [name, tool] of Object.entries(context.tools)) {
+                    tools[name] = tool;
+                    routes.set(name, { source, executeTool });
+                    this.toolToSourceMap.set(name, source);
+                }
+            }
+            if (!this.running) return;
 
             const inputSignature = this.buildInputSignature(messages, tools);
             if (this.lastInputSignature === inputSignature) {
@@ -594,6 +658,8 @@ private async collectMessages(): Promise<ModelMessage[]> {
                 onTextDelta: this.config.onTextDelta,
                 onReasoningDelta: this.config.onReasoningDelta,
             });
+            // stop/dispose of the owning session cannot admit a late model call.
+            if (!this.running) return;
 
             this.logger.info('LLM response:', {
                 textLength: response.text.length,
@@ -628,12 +694,18 @@ private async collectMessages(): Promise<ModelMessage[]> {
                 this.logger.info(`Executing ${response.toolCalls.length} tool calls...`);
 
                 // 执行所有 ToolCalls
-                const results = await this.executeToolCalls(response.toolCalls);
+                const results = await this.executeToolCalls(response.toolCalls, routes);
+                const counts = { succeeded: 0, rejected: 0, failed: 0, accepted: 0, unknown: 0 };
+                for (const result of results) counts[this.outcomeStatus(result)] += 1;
 
                 this.logger.info('Tool execution completed:', {
                     resultsCount: results.length,
-                    successCount: results.filter(r => !r.error).length,
-                    errorCount: results.filter(r => r.error).length,
+                    successCount: counts.succeeded,
+                    errorCount: counts.rejected + counts.failed,
+                    rejectedCount: counts.rejected,
+                    failedCount: counts.failed,
+                    acceptedCount: counts.accepted,
+                    unknownCount: counts.unknown,
                 });
 
                 // ✅ 新增: 发射 toolresult message 事件
@@ -643,17 +715,9 @@ private async collectMessages(): Promise<ModelMessage[]> {
                     this.config.onToolResult(toolMessage);
                 }
 
-                const hasToolFailure = results.some((result) => Boolean(result.error));
-                if (hasToolFailure) {
-                    this.toolFailureStreak += 1;
-                    if (this.toolFailureStreak < 3) {
-                        this.pending = true;
-                    } else {
-                        this.logger.warn('Tool execution failed 3 times; stopping auto-retry');
-                    }
-                } else {
-                    this.toolFailureStreak = 0;
-                }
+                // Outcomes alone never schedule retries. In particular an unknown
+                // result is not evidence that the operation had no side effects.
+                // A new user message or source update may request a fresh turn.
 
                 // ✅ 关键改进: 执行完 Tool 后，不立即进入下一循环
                 // 而是回到 idle，等待 Source 发送新信号
@@ -666,7 +730,6 @@ private async collectMessages(): Promise<ModelMessage[]> {
             } else {
                 // 没有 ToolCalls，说明 LLM 完成了思考
                 this.logger.info('No tool calls. LLM finished thinking.');
-                this.toolFailureStreak = 0;
             }
 
             // 回到 idle 状态
@@ -677,6 +740,12 @@ private async collectMessages(): Promise<ModelMessage[]> {
             if (this.config.onRunError) {
                 const normalizedError = error instanceof Error ? error : new Error(String(error));
                 this.config.onRunError(normalizedError);
+            }
+            await this.setState('idle');
+        } finally {
+            for (const { source, context } of retained.reverse()) {
+                try { await context.release?.(); }
+                catch (error) { this.logger.error(`Failed to release context from ${source.name}:`, error); }
             }
             await this.setState('idle');
         }
@@ -697,10 +766,31 @@ private async collectMessages(): Promise<ModelMessage[]> {
                 type: 'tool-result' as const,
                 toolCallId: result.toolCallId,
                 toolName: result.toolName,
-                output: result.error
-                    ? { type: 'error-json', value: result.error }
-                    : { type: 'json', value: result.result ?? { success: true } },
+                output: this.toolOutput(result),
             })) as any,
+        };
+    }
+
+    private toolOutput(result: ToolResult): unknown {
+        if (!result.outcomeStatus) {
+            return result.error
+                ? { type: 'error-json', value: result.result === undefined
+                    ? result.error : { ...result.error, result: result.result } }
+                : { type: 'json', value: result.result ?? { success: true } };
+        }
+        const status = result.outcomeStatus;
+        const value = {
+            outcomeStatus: status,
+            ...(result.result === undefined ? {} : { result: result.result }),
+            ...(result.error ? { error: result.error } : {}),
+            ...(status === 'unknown' ? {
+                retryable: false,
+                message: 'Execution may have had effects. Check the receipt or application state before considering another invocation.',
+            } : {}),
+        };
+        return {
+            type: status === 'rejected' || status === 'failed' || status === 'unknown' ? 'error-json' : 'json',
+            value,
         };
     }
 

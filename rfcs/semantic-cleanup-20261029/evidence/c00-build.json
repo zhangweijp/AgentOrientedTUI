@@ -1,0 +1,38 @@
+[
+  {
+    "package": "agent-driver-v2",
+    "command": [
+      "pnpm",
+      "-C",
+      "/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/agent-driver-v2",
+      "run",
+      "build"
+    ],
+    "exitCode": 0,
+    "seconds": 0.982
+  },
+  {
+    "package": "runtime",
+    "command": [
+      "pnpm",
+      "-C",
+      "/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/runtime",
+      "run",
+      "build"
+    ],
+    "exitCode": 0,
+    "seconds": 2.166
+  },
+  {
+    "package": "sdk",
+    "command": [
+      "pnpm",
+      "-C",
+      "/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/sdk",
+      "run",
+      "build"
+    ],
+    "exitCode": 0,
+    "seconds": 0.965
+  }
+]

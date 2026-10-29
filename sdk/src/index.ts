@@ -1,50 +1,22 @@
 /**
- * @aotui/sdk - AOTUI Developer SDK
+ * @aotui/sdk - component application entry for the current Preact Runtime.
  *
- * Build Agent-Oriented TUI Apps with Preact
+ * Start with README.md; docs/api-status.md lists exact capability conditions,
+ * and docs/migration.md separates legacy parameter behavior from the experimental
+ * readonly contracts. Export presence does not grant execution permission.
  *
- * @example Type-Safe Tool API
- * @example Type-Safe Tool API
+ * @example
  * ```tsx
- * import { View, useArrayRef, defineParams, useViewTypeTool, createTUIApp, useState } from '@aotui/sdk'
- *
- * function HelpCenter() {
- *     const [articles, setArticles] = useState([])
- *     // Use useArrayRef for semantic lists
- *     const [listRef, itemRef] = useArrayRef('articles', articles, { itemType: 'article' })
- *     const [SearchTool] = useViewTypeTool(
- *         'HelpCenter',
- *         'search',
- *         {
- *             description: '搜索文章',
- *             params: defineParams({
- *                 keyword: { type: 'string', required: true, desc: '搜索关键词' }
- *             })
- *         },
- *         async (args) => ({ success: true, data: { keyword: args.keyword } })
- *     )
- *
- *     return (
- *         <View id="help_center" name="HelpCenter">
- *             <h1>帮助中心</h1>
- *             <h3>{listRef('文章列表')}</h3>
- *             <ul>
- *                 {articles.map((a, idx) => (
- *                     <li key={a.id}>
- *                         {itemRef(idx, a.title)}
- *                     </li>
- *                 ))}
- *             </ul>
- *             <SearchTool>搜索</SearchTool>
- *         </View>
- *     )
+ * import { h } from 'preact';
+ * import { createTUIApp, View } from '@aotui/sdk';
+ * function Root() {
+ *   return <View id="root" type="Root" name="Root"><h1>Example</h1></View>;
  * }
- *
- * export default createTUIApp({
- *     app_name: 'help_center',
- *     component: HelpCenter
- * })
+ * export default createTUIApp({ app_name: 'example', component: Root });
  * ```
+ *
+ * useRef is the Preact Hook; useDataRef declares application data references.
+ * New readonly/creation tools remain experimental.
  */
 
 // ─────────────────────────────────────────────────────────────
@@ -81,20 +53,15 @@ export {
   useReducer,
   // AOTUI hooks
   useViewContext,
-  useMountableViewRegistry,
   useRefRegistry,
-  useDynamicViewRegistry,
-  // [C2] Reactive Store
-  useSignalStore,
   // [Configuration Injection] App Config Hooks
   useAppConfig,
   useAppEnv,
   // [Persistence]
   usePersistentState,
-  persistenceManager,
   // [RFC-002] Resource Reference Hooks
   useDataRef,
-  useResourceRef,
+  useEntityRef,
   useArrayRef,
   // [RFC-003] Operation Hooks
   useViewTypeTool,  // View Type Tool Aggregation
@@ -105,11 +72,8 @@ export {
 export type {
   // [RFC-003] Context Types
   IViewMeta,
-  IMountableViewRegistry,
   IRefRegistry,
   IAppConfig,
-  // [C2] Reactive Store
-  SignalStore,
   // [RFC-002] Ref Types
   RefHandle,
   ArrayRefHandle,
@@ -141,25 +105,6 @@ export type { InlineViewConfig } from "./adapter/index.js";
 // ─────────────────────────────────────────────────────────────
 
 export { escapeHtml, escapeJsonForAttr } from "./utils/index.js";
-export {
-  validateOperationName,
-  validateAppId,
-  validateViewId,
-  validateFunctionName,
-  assertValidOperationName,
-} from "./utils/validation.js";
-
-// ─────────────────────────────────────────────────────────────
-//  [RFC-002] Global Ref Registry - INTERNAL ONLY
-// ─────────────────────────────────────────────────────────────
-/**
- * @internal
- * 
- * Ref Registry is now managed by AppKernel (runtime/worker-runtime/app-kernel).
- * The global registry functions are no longer exported as public API.
- * 
- * See: AppKernel.exportRefsToIndexMap() for the new implementation.
- */
 
 // [RFC-027] Component-Based App Factory
 export {
@@ -197,8 +142,7 @@ export type { Factory, FactoryType } from "./factory/index.js";
  * This enables developers to import everything from @aotui/sdk:
  * ```typescript
  * import {
- *     ViewBasedApp,
- *     View, List, Item, Operation,
+ *     createTUIApp, View, useArrayRef, defineParams, useViewTypeTool,
  *     type AppID, type ViewID, type OperationResult
  * } from '@aotui/sdk';
  * ```
@@ -222,3 +166,14 @@ export type {
 
 // Type guard for IViewContextMountable features
 export { hasMountableSupport, AOTUIError } from "@aotui/runtime/spi";
+
+export {experimental_useCreateIfAbsentTool,type RequiredStringParams,type RequiredStringArgs,type CreateIfAbsentHandler,type CreateIfAbsentToolOptions,type CreateIfAbsentOutcome,type CreateIfAbsentTerminal} from './hooks/useCreateIfAbsentTool.js';
+export { experimental_useReadOnlyTool } from './hooks/useReadOnlyTool.js';
+export type { OrdinaryParamDef, OrdinaryParams, ReadOnlyParams, SnapshotValueRefParamDef, ReadOnlyToolArgs, ReadOnlyToolOptions, ReadOnlyToolHandler } from './hooks/useReadOnlyTool.js';
+
+export type { AppStatePersistence, StateBindingStatus, StateFlushReport, StateValue, StateIssue } from '@aotui/runtime/spi';
+export type { PersistOptions, PersistStatus, PersistMeta } from './hooks/usePersistentState.js';
+
+
+export { experimental_useAppLifecycle } from './hooks/useAppLifecycle.js';
+export type { AppLifecycleCallbacks } from './hooks/useAppLifecycle.js';

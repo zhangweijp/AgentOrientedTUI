@@ -95,6 +95,8 @@ export interface OperationResult {
     success: boolean;
     data?: Record<string, unknown>;
     error?: OperationError;
+    /** Application-declared effects on failure; omission leaves effects unknown. */
+    effects?: 'none' | 'partial';
 }
 
 // ============================================================================

@@ -1,0 +1,986 @@
+{
+  "stage": "Wave 2C C1 limited fix",
+  "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "baselineIndexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "finalIndexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "indexHashMeaning": "SHA-256 of git diff --cached --binary output; separate raw index file hash below",
+  "worktreeProtection": {
+    "capturedUTC": "2026-10-24T03:46:18.338482+00:00",
+    "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+    "baselineIndexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+    "finalIndexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+    "indexHashMeaning": "SHA-256 of git diff --cached --binary output; separate raw index file hash below",
+    "baselineIndexFileSha256": "8ed3a27a94f2a4f13caa9afb06e52923139484f882e83999ce836c6834a34162",
+    "finalIndexFileSha256": "8ed3a27a94f2a4f13caa9afb06e52923139484f882e83999ce836c6834a34162",
+    "baselineUnstagedDiffSha256": "0bc8bea331369d1c6c5f393f700645094e7835edf36fb6a4ef95e7fdbf20848c",
+    "finalUnstagedDiffSha256": "0bc8bea331369d1c6c5f393f700645094e7835edf36fb6a4ef95e7fdbf20848c",
+    "baselinePathRecords": 1368,
+    "baselineExistingFiles": 1346,
+    "unchangedPathRecords": 1367,
+    "changedExistingPaths": [
+      "runtime/src/core/tool/ref-declarations.ts"
+    ],
+    "unexpectedChangedPaths": [],
+    "unexpectedNewPaths": [],
+    "baselineMissingPaths": 22,
+    "missingStatesUnchanged": true,
+    "protectedRFCPathRecords": 586,
+    "allPreviousRFCRecordsUnchanged": true,
+    "originalTestFilesUnchanged": {
+      "runtime/src/core/tool/ref-declarations.wave2c.test.ts": true,
+      "runtime/src/engine/app/worker-host.wave2c-declarations.test.ts": true,
+      "sdk/src/ref-declarations.wave2c.test.ts": true,
+      "runtime/src/engine/app/worker-host.r1-terminal-race.test.ts": true
+    },
+    "newSourcePaths": [
+      "runtime/src/core/tool/ref-declarations.wave2c-c1.test.ts"
+    ],
+    "scope": "Tracked/nonignored untracked paths plus all pre-existing RFC files; ignored build outputs/caches excluded",
+    "note": "The changed Core module was already untracked at batch start, so unstaged diff output alone cannot prove its preservation.",
+    "indexFileUnchanged": true,
+    "pass": true
+  },
+  "toolchain": {
+    "node": "v24.15.0",
+    "pnpm": "10.15.1"
+  },
+  "productionLastModifiedUTC": "2026-10-24T03:40:03.596469+00:00",
+  "allFinalChecksAfterLastProductionEdit": true,
+  "sixRegressionCommandsSequential": true,
+  "tests": [
+    {
+      "name": "red-initial-runtime-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "tsc",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:38:43.500955+00:00",
+      "durationSeconds": 1.922493125020992,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-red-initial-runtime-tsc.log",
+      "stats": null
+    },
+    {
+      "name": "red-c1-contract",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/core/tool/ref-declarations.wave2c-c1.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-24T03:38:45.424664+00:00",
+      "durationSeconds": 0.9241766249760985,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-red-c1-contract.log",
+      "stats": {
+        "filesPassed": 0,
+        "filesFailed": 1,
+        "passed": 17,
+        "failed": 9,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "name": "red-original-independent-v3",
+      "command": [
+        "node",
+        "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ref-declaration-map-probe-v3.mjs"
+      ],
+      "exitCode": 1,
+      "startedUTC": "2026-10-24T03:38:46.349244+00:00",
+      "durationSeconds": 0.04547412501415238,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-red-original-independent-v3.log",
+      "stats": null
+    },
+    {
+      "name": "green-core-contract",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/core/tool/ref-declarations.wave2c-c1.test.ts",
+        "src/core/tool/ref-declarations.wave2c.test.ts",
+        "--reporter=verbose"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:40:42.277398+00:00",
+      "durationSeconds": 0.9299697499955073,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-green-core-contract.log",
+      "stats": {
+        "filesPassed": 2,
+        "filesFailed": 0,
+        "passed": 65,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "name": "final-c1-runtime-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "tsc",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:41:38.102180+00:00",
+      "durationSeconds": 1.719926875026431,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-runtime-tsc.log",
+      "stats": null
+    },
+    {
+      "name": "final-c1-sdk-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:41:39.822803+00:00",
+      "durationSeconds": 0.9517022920190357,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-sdk-tsc.log",
+      "stats": null
+    },
+    {
+      "name": "final-c1-ide-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:41:40.774937+00:00",
+      "durationSeconds": 1.293979500012938,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-ide-tsc.log",
+      "stats": null
+    },
+    {
+      "name": "final-c1-runtime-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:41:42.069316+00:00",
+      "durationSeconds": 4.6917032090132125,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-runtime-vitest.log",
+      "stats": {
+        "filesPassed": 74,
+        "filesFailed": 0,
+        "passed": 723,
+        "failed": 0,
+        "skipped": 3,
+        "todo": 7
+      }
+    },
+    {
+      "name": "final-c1-sdk-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:41:46.761591+00:00",
+      "durationSeconds": 2.7187852089991793,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-sdk-vitest.log",
+      "stats": {
+        "filesPassed": 11,
+        "filesFailed": 0,
+        "passed": 110,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "name": "final-c1-ide-jest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "jest",
+        "--runInBand"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:41:49.480794+00:00",
+      "durationSeconds": 1.6447456249734387,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-ide-jest.log",
+      "stats": {
+        "suitesPassed": 6,
+        "passed": 27,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "name": "c1-stability-1",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/core/tool/ref-declarations.wave2c.test.ts",
+        "src/core/tool/ref-declarations.wave2c-c1.test.ts",
+        "src/core/tool/source-binding.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "src/core/snapshot/ref-contract.wave2b.test.ts",
+        "src/engine/app/worker-host.wave2c-declarations.test.ts",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/engine/app/worker-host.r1-terminal-race.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:42:56.179568+00:00",
+      "durationSeconds": 4.798981542000547,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-stability-1.log",
+      "stats": {
+        "filesPassed": 13,
+        "filesFailed": 0,
+        "passed": 200,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "name": "c1-stability-2",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/core/tool/ref-declarations.wave2c.test.ts",
+        "src/core/tool/ref-declarations.wave2c-c1.test.ts",
+        "src/core/tool/source-binding.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "src/core/snapshot/ref-contract.wave2b.test.ts",
+        "src/engine/app/worker-host.wave2c-declarations.test.ts",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/engine/app/worker-host.r1-terminal-race.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:43:01.017047+00:00",
+      "durationSeconds": 4.498681834025774,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-stability-2.log",
+      "stats": {
+        "filesPassed": 13,
+        "filesFailed": 0,
+        "passed": 200,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "name": "c1-stability-3",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/core/tool/ref-declarations.wave2c.test.ts",
+        "src/core/tool/ref-declarations.wave2c-c1.test.ts",
+        "src/core/tool/source-binding.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "src/core/snapshot/ref-contract.wave2b.test.ts",
+        "src/engine/app/worker-host.wave2c-declarations.test.ts",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/engine/app/worker-host.r1-terminal-race.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:43:05.552686+00:00",
+      "durationSeconds": 4.62206945795333,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-stability-3.log",
+      "stats": {
+        "filesPassed": 13,
+        "filesFailed": 0,
+        "passed": 200,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "name": "c1-r1-original-real-worker",
+      "command": [
+        "node",
+        "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race-real-worker.mjs"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:43:10.217135+00:00",
+      "durationSeconds": 0.11712741700466722,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-r1-original-real-worker.log",
+      "stats": null
+    },
+    {
+      "name": "c1-r1-original-controlled",
+      "command": [
+        "node",
+        "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race.mjs"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:43:10.371377+00:00",
+      "durationSeconds": 0.04606512497412041,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-r1-original-controlled.log",
+      "stats": null
+    },
+    {
+      "name": "green-original-independent-v3",
+      "command": [
+        "node",
+        "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ref-declaration-map-probe-v3.mjs"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:44:06.937172+00:00",
+      "durationSeconds": 0.04549079097341746,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-green-original-independent-v3.log",
+      "stats": null
+    },
+    {
+      "name": "green-ordinary-baseline-comparison",
+      "command": [
+        "node",
+        "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ordinary-schema-baseline-comparison.mjs"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:44:06.983139+00:00",
+      "durationSeconds": 0.22506466595223173,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-green-ordinary-baseline-comparison.log",
+      "stats": null
+    },
+    {
+      "name": "patch-check",
+      "command": [
+        "python3",
+        "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/verify-patch.py"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:46:17.831745+00:00",
+      "durationSeconds": 0.11245237500406802,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-patch-check.log",
+      "stats": null
+    },
+    {
+      "name": "protection-final",
+      "command": [
+        "python3",
+        "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/audit-integrity.py"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:46:18.011078+00:00",
+      "durationSeconds": 0.46263904200168326,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-protection-final.log",
+      "stats": null
+    }
+  ],
+  "finalRegression": [
+    {
+      "name": "final-c1-runtime-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "tsc",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:41:38.102180+00:00",
+      "durationSeconds": 1.719926875026431,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-runtime-tsc.log",
+      "stats": null
+    },
+    {
+      "name": "final-c1-sdk-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:41:39.822803+00:00",
+      "durationSeconds": 0.9517022920190357,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-sdk-tsc.log",
+      "stats": null
+    },
+    {
+      "name": "final-c1-ide-tsc",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:41:40.774937+00:00",
+      "durationSeconds": 1.293979500012938,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-ide-tsc.log",
+      "stats": null
+    },
+    {
+      "name": "final-c1-runtime-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:41:42.069316+00:00",
+      "durationSeconds": 4.6917032090132125,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-runtime-vitest.log",
+      "stats": {
+        "filesPassed": 74,
+        "filesFailed": 0,
+        "passed": 723,
+        "failed": 0,
+        "skipped": 3,
+        "todo": 7
+      }
+    },
+    {
+      "name": "final-c1-sdk-vitest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "sdk",
+        "exec",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:41:46.761591+00:00",
+      "durationSeconds": 2.7187852089991793,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-sdk-vitest.log",
+      "stats": {
+        "filesPassed": 11,
+        "filesFailed": 0,
+        "passed": 110,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "name": "final-c1-ide-jest",
+      "command": [
+        "pnpm",
+        "--dir",
+        "demo-apps/aotui-ide",
+        "exec",
+        "jest",
+        "--runInBand"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:41:49.480794+00:00",
+      "durationSeconds": 1.6447456249734387,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-ide-jest.log",
+      "stats": {
+        "suitesPassed": 6,
+        "passed": 27,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    }
+  ],
+  "stability": [
+    {
+      "name": "c1-stability-1",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/core/tool/ref-declarations.wave2c.test.ts",
+        "src/core/tool/ref-declarations.wave2c-c1.test.ts",
+        "src/core/tool/source-binding.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "src/core/snapshot/ref-contract.wave2b.test.ts",
+        "src/engine/app/worker-host.wave2c-declarations.test.ts",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/engine/app/worker-host.r1-terminal-race.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:42:56.179568+00:00",
+      "durationSeconds": 4.798981542000547,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-stability-1.log",
+      "stats": {
+        "filesPassed": 13,
+        "filesFailed": 0,
+        "passed": 200,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "name": "c1-stability-2",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/core/tool/ref-declarations.wave2c.test.ts",
+        "src/core/tool/ref-declarations.wave2c-c1.test.ts",
+        "src/core/tool/source-binding.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "src/core/snapshot/ref-contract.wave2b.test.ts",
+        "src/engine/app/worker-host.wave2c-declarations.test.ts",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/engine/app/worker-host.r1-terminal-race.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:43:01.017047+00:00",
+      "durationSeconds": 4.498681834025774,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-stability-2.log",
+      "stats": {
+        "filesPassed": 13,
+        "filesFailed": 0,
+        "passed": 200,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "name": "c1-stability-3",
+      "command": [
+        "pnpm",
+        "--dir",
+        "runtime",
+        "exec",
+        "vitest",
+        "run",
+        "src/core/tool/ref-declarations.wave2c.test.ts",
+        "src/core/tool/ref-declarations.wave2c-c1.test.ts",
+        "src/core/tool/source-binding.test.ts",
+        "src/core/tool/source-binding.wave2a.test.ts",
+        "src/core/snapshot/ref-contract.wave2b.test.ts",
+        "src/engine/app/worker-host.wave2c-declarations.test.ts",
+        "src/engine/app/worker-host.wave2a-readonly.test.ts",
+        "src/engine/app/worker-host.wave2a-request.test.ts",
+        "src/engine/app/worker-host.r1-terminal-race.test.ts",
+        "src/engine/app/worker-host.m4-lifecycle.test.ts",
+        "src/engine/app/worker-host.m4-readonly.test.ts",
+        "src/engine/app/worker-host.m4-versioned-file.test.ts",
+        "src/engine/app/worker-host.m4-producer-race.test.ts",
+        "--reporter=dot"
+      ],
+      "exitCode": 0,
+      "startedUTC": "2026-10-24T03:43:05.552686+00:00",
+      "durationSeconds": 4.62206945795333,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-stability-3.log",
+      "stats": {
+        "filesPassed": 13,
+        "filesFailed": 0,
+        "passed": 200,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    }
+  ],
+  "originalR1": [
+    {
+      "name": "c1-r1-original-real-worker",
+      "violations": 0,
+      "cases": 4,
+      "exitCode": 0,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-r1-original-real-worker.log"
+    },
+    {
+      "name": "c1-r1-original-controlled",
+      "violations": 0,
+      "cases": 10,
+      "exitCode": 0,
+      "log": "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-r1-original-controlled.log"
+    }
+  ],
+  "redGreen": {
+    "newContractRed": {
+      "filesPassed": 0,
+      "filesFailed": 1,
+      "passed": 17,
+      "failed": 9,
+      "skipped": 0,
+      "todo": 0
+    },
+    "newPlusOriginalCoreGreen": {
+      "filesPassed": 2,
+      "filesFailed": 0,
+      "passed": 65,
+      "failed": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "independentV3Before": {
+      "cases": 10,
+      "violations": 6,
+      "exitCode": 1
+    },
+    "independentV3After": {
+      "cases": 10,
+      "violations": 0,
+      "exitCode": 0
+    },
+    "ordinarySchemaBaselineComparison": {
+      "baselineSourceSha256": "7600933646912bb5dc19752815d8a72652fff9b59f442d555ddeeba9543fb75a",
+      "method": "Only the saved baseline Registry module is transpiled in memory. It shares the unchanged current JSON codec. This is not a historical Host/Worker binary test.",
+      "results": [
+        {
+          "keyword": "dependencies",
+          "version": "wave2c-baseline",
+          "registration": "accepted",
+          "invocation": {
+            "success": true
+          },
+          "handlerCalls": 1
+        },
+        {
+          "keyword": "dependencies",
+          "version": "wave2c-current",
+          "registration": "accepted",
+          "invocation": {
+            "success": true
+          },
+          "handlerCalls": 1
+        },
+        {
+          "keyword": "dependentRequired",
+          "version": "wave2c-baseline",
+          "registration": "accepted",
+          "invocation": {
+            "success": true
+          },
+          "handlerCalls": 1
+        },
+        {
+          "keyword": "dependentRequired",
+          "version": "wave2c-current",
+          "registration": "accepted",
+          "invocation": {
+            "success": true
+          },
+          "handlerCalls": 1
+        }
+      ]
+    }
+  },
+  "securityCases": {
+    "misplacedDependencyDeclarations": {
+      "status": "PASS",
+      "evidenceLayer": "Real Core Registry + V2 validator + synthetic Handler",
+      "cases": [
+        {
+          "name": "misplaced_dependency_ordinary",
+          "expected": "reject",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "ordinary": {
+                "type": "boolean"
+              }
+            },
+            "dependencies": {
+              "ordinary": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "x-aotui-ref": {
+                      "version": 1,
+                      "kind": "snapshot-value",
+                      "owner": "tool-target"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "semanticError": "REF_DECLARATION_INVALID",
+          "snapshotValidation": "REF_DECLARATION_INVALID",
+          "registration": "rejected",
+          "registrationError": "REF_DECLARATION_INVALID",
+          "handlerCalls": 0,
+          "contractSatisfied": true
+        },
+        {
+          "name": "misplaced_dependency_default",
+          "expected": "reject",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "default": {
+                "type": "boolean"
+              }
+            },
+            "dependencies": {
+              "default": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "x-aotui-ref": {
+                      "version": 1,
+                      "kind": "snapshot-value",
+                      "owner": "tool-target"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "semanticError": "REF_DECLARATION_INVALID",
+          "snapshotValidation": "REF_DECLARATION_INVALID",
+          "registration": "rejected",
+          "registrationError": "REF_DECLARATION_INVALID",
+          "handlerCalls": 0,
+          "contractSatisfied": true
+        },
+        {
+          "name": "misplaced_dependency_const",
+          "expected": "reject",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "const": {
+                "type": "boolean"
+              }
+            },
+            "dependencies": {
+              "const": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "x-aotui-ref": {
+                      "version": 1,
+                      "kind": "snapshot-value",
+                      "owner": "tool-target"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "semanticError": "REF_DECLARATION_INVALID",
+          "snapshotValidation": "REF_DECLARATION_INVALID",
+          "registration": "rejected",
+          "registrationError": "REF_DECLARATION_INVALID",
+          "handlerCalls": 0,
+          "contractSatisfied": true
+        },
+        {
+          "name": "misplaced_dependency_enum",
+          "expected": "reject",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "enum": {
+                "type": "boolean"
+              }
+            },
+            "dependencies": {
+              "enum": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "x-aotui-ref": {
+                      "version": 1,
+                      "kind": "snapshot-value",
+                      "owner": "tool-target"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "semanticError": "REF_DECLARATION_INVALID",
+          "snapshotValidation": "REF_DECLARATION_INVALID",
+          "registration": "rejected",
+          "registrationError": "REF_DECLARATION_INVALID",
+          "handlerCalls": 0,
+          "contractSatisfied": true
+        },
+        {
+          "name": "misplaced_dependency_examples",
+          "expected": "reject",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "examples": {
+                "type": "boolean"
+              }
+            },
+            "dependencies": {
+              "examples": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "x-aotui-ref": {
+                      "version": 1,
+                      "kind": "snapshot-value",
+                      "owner": "tool-target"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "semanticError": "REF_DECLARATION_INVALID",
+          "snapshotValidation": "REF_DECLARATION_INVALID",
+          "registration": "rejected",
+          "registrationError": "REF_DECLARATION_INVALID",
+          "handlerCalls": 0,
+          "contractSatisfied": true
+        }
+      ]
+    },
+    "plainDependencyCompatibility": {
+      "status": "PASS",
+      "historicalComparison": "Saved baseline Registry transpiled in memory with current unchanged JSON codec; not old Host/Worker binaries"
+    },
+    "legalDeclarationsRemainBlocked": {
+      "status": "PASS",
+      "handlerCalls": 0
+    },
+    "original63CasesAndR1Assertions": {
+      "status": "PASS",
+      "filesUnchanged": {
+        "runtime/src/core/tool/ref-declarations.wave2c.test.ts": true,
+        "runtime/src/engine/app/worker-host.wave2c-declarations.test.ts": true,
+        "sdk/src/ref-declarations.wave2c.test.ts": true,
+        "runtime/src/engine/app/worker-host.r1-terminal-race.test.ts": true
+      },
+      "evidence": "Unchanged original Core 39, SDK 14, native Worker 10 test files executed in full regressions; Core + Worker also in stability rounds"
+    },
+    "c1MalformedSchemaNativeWorkerE2E": "NOT_TESTED"
+  },
+  "performance": "NOT_TESTED",
+  "coverage": "NOT_TESTED",
+  "fullHistoricalBinaryCompatibilityMatrix": "NOT_TESTED",
+  "limitations": [
+    "Core change is not a general JSON Schema validator.",
+    "Actual Ref resolution/effectiveArgs/provenance/new execution IPC remain NOT_IMPLEMENTED and NO-GO.",
+    "receivedArgs expanded payload echo remains a separate pre-execution Gate.",
+    "Ignored build outputs/caches excluded from source worktree inventory; test process wall times are not performance measurements."
+  ],
+  "goNoGo": "C1_FIX_DELIVERED_PENDING_CHATGPT_REVIEW",
+  "limitedPassGranted": false,
+  "blockers": [
+    {
+      "code": "INDEPENDENT_REVIEW_PENDING",
+      "scope": "Wave 2C LIMITED PASS"
+    }
+  ]
+}

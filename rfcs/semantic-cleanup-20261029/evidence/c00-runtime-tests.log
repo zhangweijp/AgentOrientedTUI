@@ -1,0 +1,919 @@
+
+ RUN  v3.2.4 /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/runtime
+
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+ ❯ src/engine/app/worker-host.create-if-absent-e2e.test.ts (29 tests | 29 skipped) 1074ms
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > create-only without readonly flag supports real empty/Unicode files, exact dedup and normal result display
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > two workspaces share schema but retain resource permission, Scope ID and new-ID conflict semantics
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > real independent Workers and different invocation IDs compete on wx with one complete winner
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > changing creator during authorization rejects original binding (published)
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > changing creator during authorization rejects original binding (unpublished)
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > already entered A remains A after B commits, while old binding new IDs are revoked
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > unpublished unmount and same public ID remount cannot redirect the old request; companion remains usable
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > native zero-write returns honest effects and keeps valid business transport healthy
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > native partial-write returns honest effects and keeps valid business transport healthy
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > native close-fail returns honest effects and keeps valid business transport healthy
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > native unknown-open returns honest effects and keeps valid business transport healthy
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > native forged-open-error returns honest effects and keeps valid business transport healthy
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > observes an actual open empty file before failure/close rather than inferring no effects
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > successful disk output with lost terminal is unknown and never retried; a fresh instance sees EEXIST
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual unknown then posted companion settlement in direction create-first, pending authorization cannot post
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual unknown then posted companion settlement in direction read-first, pending authorization cannot post
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > post-create result render failure preserves original success and receipt while revoking only failed View
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual archived compatibility old-sdk never implicitly creates
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual archived compatibility old-worker never implicitly creates
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual archived compatibility w05-worker never implicitly creates
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual archived compatibility new-hook-old-runtime never implicitly creates
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > closing during actual authorization prevents dispatch and keeps local responsibility until policy settles
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > a create already posted but held before Worker entry is refused after shutdown revokes negotiation
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > closed Scope after native write and close has unavailable receipt and preserves completed file
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > parent removed after preflight gives native open none and is never recreated
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > static symlink escape, dangling leaf, root inode replacement and POSIX access denial preserve external facts
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > correlated old-protocol terminal after actual disk success is transport unknown
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > correlated accepted terminal after actual disk success is transport unknown
+   ↓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > correlated oversize terminal after actual disk success is transport unknown
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app_0', desktopId: 'dt_3b5a1628' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app_0', desktopId: 'dt_5eed6fb2' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+ ✓ src/engine/app/worker-app-lifecycle-e2e.test.ts (4 tests) 1217ms
+   ✓ C2-18/20 actual SDK sync unmount failure is fixed and preserves confirmed flush (Shadow=false)  338ms
+   ✓ C2-18/20 actual SDK async unmount failure is fixed and preserves confirmed flush (Shadow=true)  305ms
+   ✓ C2-20 actual SDK async onDelete failure sends a fixed failed lifecycle response exactly once and still unmounts  346ms
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+ ✓ src/engine/app/worker-host.resources-e2e.test.ts (5 tests) 1267ms
+   ✓ C1-19 a terminal backend failed release is settled but cannot claim resourcesReleased  387ms
+ ✓ src/engine/app/worker-pool.e2e.test.ts (3 tests) 910ms
+   ✓ C1-08 two actual createRuntime instances execute their own A/B scripts; same Runtime Desktops share one bound  537ms
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+stderr | src/engine/app/worker-host.ref-v2.test.ts > R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'ref' 'error' fences all seven View Tool entries and cannot pool
+[AppWorkerHost] Worker failed in Ref-capable execution
+
+stderr | src/engine/app/worker-host.ref-v2.test.ts > R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'ref' 'exit' fences all seven View Tool entries and cannot pool
+[AppWorkerHost] Worker app exited with code 1
+
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+stderr | src/engine/app/worker-host.ref-v2.test.ts > R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'generic' 'error' fences all seven View Tool entries and cannot pool
+[AppWorkerHost] Worker failed in Ref-capable execution
+
+stderr | src/engine/app/worker-host.ref-v2.test.ts > R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'generic' 'exit' fences all seven View Tool entries and cannot pool
+[AppWorkerHost] Worker app exited with code 1
+
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/engine/app/worker-host.js" points to missing source files
+stdout | src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > refuses an expired pinned source instead of laundering it through a caller replacement snapshot
+WAVE2A_TTL_RECHECK={"success":false,"code":"SNAPSHOT_EXPIRED","calls":{"A":0,"B":0,"query":0}}
+
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/tool/create-if-absent-contract.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/snapshot/json.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/adapters/create-if-absent-invocation-v1.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/invocation/invocation-outcome.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/adapters/view-tool-invocation-v1.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/tool/view-owned-tools.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/tool/ref-declarations.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/adapters/ordinary-invocation-v1.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/adapters/snapshot/shadow-receiver.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/snapshot/index.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/snapshot/store.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/snapshot/validator.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/snapshot/v2-validator.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/snapshot/workspace.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/invocation/scoped-interaction.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/tool/source-binding.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/tool/snapshot-value-arguments.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/invocation/observation-registry.js" points to missing source files
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/core/invocation/invocation-ledger.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/adapters/ref-invocation-v1.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/spi/config/index.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/spi/config/domains/worker.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/spi/config/domains/bridge.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/spi/config/domains/lock.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/spi/config/domains/snapshot.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/spi/config/domains/transform.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/spi/config/domains/logger.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/spi/config/define-config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/spi/config/validate.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/spi/core/errors.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/spi/worker-protocol/index.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/spi/worker-protocol/types.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/spi/runtime/worker-message.interface.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b2-ddmORc/old-runtime/dist/spi/worker-protocol/messages.js" points to missing source files
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/engine/app/worker-host.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/tool/create-if-absent-contract.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/snapshot/json.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/adapters/create-if-absent-invocation-v1.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/invocation/invocation-outcome.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/adapters/view-tool-invocation-v1.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/tool/view-owned-tools.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/tool/ordinary-parameter-profile.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/tool/ordinary-parameter-contract.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/tool/ref-declarations.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/adapters/ordinary-invocation-v1.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/adapters/ordinary-invocation-v2.js" points to missing source files
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/adapters/snapshot/shadow-receiver.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/snapshot/index.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/snapshot/store.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/snapshot/validator.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/snapshot/v2-validator.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/snapshot/workspace.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/invocation/scoped-interaction.js" points to missing source files
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/tool/source-binding.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/tool/snapshot-value-arguments.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/invocation/observation-registry.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/core/invocation/invocation-ledger.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/adapters/ref-invocation-v1.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/spi/config/index.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/spi/config/domains/worker.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/spi/config/domains/bridge.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/spi/config/domains/lock.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/spi/config/domains/snapshot.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/spi/config/domains/transform.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/spi/config/domains/logger.config.js" points to missing source files
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/spi/config/define-config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/spi/config/validate.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/spi/core/errors.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/spi/worker-protocol/index.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/spi/worker-protocol/types.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/spi/runtime/worker-message.interface.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-0bAxz2/old-runtime/dist/spi/worker-protocol/messages.js" points to missing source files
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+ ✓ src/engine/app/worker-host.ref-v1-e2e.test.ts (18 tests) 3903ms
+   ✓ Ref v1 genuine Node Worker transport (compiled runtime) > does not grant unsupported capability 2, ordinary calls remain usable  355ms
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'old', desktopId: 'd' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+stderr | src/engine/app/worker-host.ref-execution-e2e.test.ts > compiled genuine SDK / V2 producer / Store / authorized Host / Node Worker > reports unknown when the actual Handler entered and the Worker exits before its terminal
+[AppWorkerHost] Worker real_sdk exited with code 1
+
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+ ✓ src/engine/app/worker-host.wave2a-readonly.test.ts (16 tests) 3057ms
+   ✓ Wave 2A: real SDK + Worker + View-owned read-only contract > cannot redirect an old A observation to a remounted A or to B  311ms
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[Worker] APP_SHUTDOWN flush timeout fallback
+ ✓ src/engine/app/worker-sandbox.lifecycle-e2e.test.ts (8 tests) 4994ms
+   ✓ C1-09/16/17 actual SDK two Host rounds use one physical leased Worker, Shadow=false  397ms
+   ✓ C1-15/16 actual SDK save-failure is retained and cannot return a healthy Worker  302ms
+   ✓ C1-15/16 actual SDK lost-reply is retained and cannot return a healthy Worker  1856ms
+   ✓ C1-12 actual Sandbox keeps the Host owner while final save is held; healthy return waits for real completion  309ms
+   ✓ C1-17 actual archived SDK remains explicitly legacy-unverified through Sandbox close  1289ms
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+ ✓ src/engine/app/worker-host.wave2c-declarations.test.ts (10 tests) 1416ms
+ ✓ src/engine/app/worker-host.ref-execution-e2e.test.ts (24 tests) 5632ms
+   ✓ compiled genuine SDK / V2 producer / Store / authorized Host / Node Worker > uses historical S1/A after a real Ref-only S2/B and then deletion in the Worker  373ms
+   ✓ compiled genuine SDK / V2 producer / Store / authorized Host / Node Worker > rejects enum with safe real IPC and zero Handler calls  326ms
+   ✓ compiled genuine SDK / V2 producer / Store / authorized Host / Node Worker > preserves trustworthy entry for business throw without unsafe exception text  335ms
+   ✓ compiled genuine SDK / V2 producer / Store / authorized Host / Node Worker > preserves trustworthy entry for business reject without unsafe exception text  317ms
+   ✓ compiled genuine SDK / V2 producer / Store / authorized Host / Node Worker > reports unknown after business output non-json cannot form a terminal, without retry  346ms
+   ✓ compiled genuine SDK / V2 producer / Store / authorized Host / Node Worker > reports unknown after business output invalid-result cannot form a terminal, without retry  352ms
+   ✓ compiled genuine SDK / V2 producer / Store / authorized Host / Node Worker > reports unknown after business output oversize cannot form a terminal, without retry  353ms
+ ✓ src/engine/app/worker-host.scoped-interaction-e2e.test.ts (15 tests) 4132ms
+   ✓ C actual emitted Host / accepted SDK / safe Worker Scope chain > executes concurrent/settled duplicates once, keeps actual aa/bb ownership and rejects ID conflict  346ms
+   ✓ C actual emitted Host / accepted SDK / safe Worker Scope chain > checks each current read permission and cancels a pending reading policy before diagnostics  367ms
+   ✓ C actual emitted Host / accepted SDK / safe Worker Scope chain > retains original S1/A after actual SDK S2/B and Ref deletion, while new observations use the new source  348ms
+   ✓ C actual emitted Host / accepted SDK / safe Worker Scope chain > rejects an actually disabled SDK binding after authorize (published)  391ms
+   ✓ C actual emitted Host / accepted SDK / safe Worker Scope chain > preserves the same E_INVALID_ARGS code at both trusted phases and allows later work after completed false  356ms
+ ✓ src/core/tool/view-owned-tools.lifecycle.test.ts (34 tests) 928ms
+   ✓ W09-A Registry finite retention > A11 reaches actual default 1000 mounted Views and 10000 registrations, disabled included  913ms
+[createTUIApp] initializeComponent { appId: 'm3_app', desktopId: 'desktop_m3' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[Worker] APP_SHUTDOWN flush timeout fallback
+ ❯ src/engine/app/worker-host.ide-read-e2e.test.ts (18 tests | 18 skipped) 83ms
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > A/B ownership, old observation new state, duplicate original receipt, reads cause no LSP/FS/update
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > loading/error transitions and newer event invalidates late auto/refresh responses
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > same public id remount C rejects A, B old observation survives, including authorization race
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > Worker final validation rejects an unpublished remount and late unmounted load cannot overwrite C
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > rename invalidates pending A immediately and rebinds without changing schema
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > Tool-only enabled/disabled and real Ref-only updates publish despite unchanged View content
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > internal failed render commits explicit fallback, revokes failed target and never enters bad closure
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > default actual FileDetail has no query and failed initial render yields no ready tools
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > invalid oversized actual diagnostic output is never truncated into success
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > after ordinary unknown, posted Ref still settles; new Ref is blocked and business false stays usable
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > actual archived old SDK on new Runtime never gains ordinary callable qualification
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > actual new SDK on archived old Runtime/Worker receives no implicit ordinary capability
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > normal real Worker release is reusable only by a fresh Host and fresh instance
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > closing during an entered ordinary handler revokes scopes; late result cannot revive old source
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > default FileDetail refresh read failure preserves file contents (current)
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > default FileDetail refresh lsp failure preserves file contents (current)
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > default FileDetail refresh read failure preserves file contents (C-baseline)
+   ↓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > default FileDetail refresh lsp failure preserves file contents (C-baseline)
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+stdout | src/engine/app/worker-host.m4-readonly.test.ts > M4 Stage 3: D5 SDK compatibility for source-bound READ-ONLY Worker Tools > rejects unavailable, stale, mutating, unauthorized Tools and preserves the Handler result
+M4_READONLY_WORKER_DIAGNOSTIC={"count":25,"p50_ms":0.321,"p95_ms":0.508,"max_ms":0.696,"note":"host policy + V2 leases + Worker IPC + SDK Handler; no IDE/LSP or model"}
+
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+ ✓ src/engine/app/worker-host.m4-readonly.test.ts (1 test) 983ms
+   ✓ M4 Stage 3: D5 SDK compatibility for source-bound READ-ONLY Worker Tools > rejects unavailable, stale, mutating, unauthorized Tools and preserves the Handler result  982ms
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'm3_app', desktopId: 'desktop_m3' }
+ ✓ src/engine/app/worker-host.m4-v2-shadow.test.ts (1 test) 832ms
+   ✓ M4 Stage 2: real Worker V2 source-bound Shadow > publishes immutable View-instance/Tool targets in one V2 commit while the legacy route stays unchanged  832ms
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+ ✓ src/adapters/storage/node-state-storage.test.ts (82 tests) 782ms
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+ ✓ src/engine/app/worker-host.m3-sdk-e2e.test.ts (1 test) 1089ms
+   ✓ M3 real Worker / SDK projection round trip > advances the Shadow Snapshot on a Ref-only update without DOM mutation  1088ms
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+ ✓ src/engine/app/worker-host.m4-versioned-file.test.ts (1 test) 652ms
+   ✓ M4 Stage 5 real Worker source-to-file safety > rejects stale files and mutating Worker Tool requests, then writes only via explicit filesystem CAS  651ms
+ ✓ src/core/invocation/observation-registry.test.ts (149 tests) 238ms
+ ✓ src/adapters/ref-invocation-v1.test.ts (107 tests) 443ms
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+ ✓ src/core/tool/snapshot-value-arguments.test.ts (112 tests) 336ms
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'race_app', desktopId: 'race_desktop' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+ ✓ src/engine/app/worker-host.m4-producer-race.test.ts (1 test) 208ms
+[createTUIApp] initializeComponent { appId: 'sandbox', desktopId: 'd' }
+ ✓ src/engine/app/worker-host.persistence-e2e.test.ts (11 tests) 7934ms
+   ✓ B02/B06/B17/B19 actual emitted Worker reused for two independent managed rounds, Shadow=false  441ms
+   ✓ B17/B18 a closed Host rejects ordinary business before dispatch while its physical Worker awaits RESET  342ms
+   ✓ B04/B12 actual default Hosts share backend ownership while separate app namespaces keep the same key independent  774ms
+   ✓ B02/B23 actual archived old SDK is legacy-unverified under new Runtime; new SDK ordinary components work with archived old Worker  3908ms
+   ✓ B15/B18 actual rename with lost IPC reply stays unknown, fails close and cannot pool  1317ms
+ ✓ src/engine/app/worker-host.m4-stage8-outcome.test.ts (13 tests) 137ms
+[createTUIApp] initializeComponent { appId: 'binding-rebind', desktopId: 'd' }
+ ✓ src/core/invocation/scoped-interaction.test.ts (216 tests) 525ms
+ ✓ src/engine/app/worker-app-host.service.test.ts (9 tests) 85ms
+ ✓ src/engine/app/worker-host.r1-terminal-race.test.ts (29 tests) 142ms
+[createTUIApp] initializeComponent { appId: 'binding-disable', desktopId: 'd' }
+ ✓ src/engine/app/worker-host.ref-v1.test.ts (33 tests) 89ms
+[createTUIApp] initializeComponent { appId: 'result_app', desktopId: 'result_desktop' }
+ ✓ src/engine/app/worker-host.p0-tool-result.test.ts (1 test) 165ms
+ ✓ src/core/tool/versioned-file-integration.test.ts (6 tests) 75ms
+[createTUIApp] initializeComponent { appId: 'binding-remount', desktopId: 'd' }
+ ✓ src/core/invocation/scoped-interaction.close.test.ts (41 tests) 97ms
+ ✓ src/engine/app/worker-host.ref-execution.test.ts (38 tests) 64ms
+[createTUIApp] initializeComponent { appId: 'effect-none', desktopId: 'd' }
+ ✓ src/engine/app/state-storage-host.test.ts (5 tests) 38ms
+ ✓ src/core/tool/snapshot-value-parameter-contract.test.ts (89 tests) 135ms
+[createTUIApp] initializeComponent { appId: 'effect-partial', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+ ✓ src/engine/app/worker-host.m4-view-owned-e2e.test.ts (1 test) 197ms
+ ✓ src/engine/app/worker-host.shadow-e2e.test.ts (1 test) 168ms
+[createTUIApp] initializeComponent { appId: 'effect-undeclared', desktopId: 'd' }
+ ✓ src/engine/core/close-interaction-report.test.ts (4 tests) 73ms
+[createTUIApp] initializeComponent { appId: 'effect-throw', desktopId: 'd' }
+ ✓ src/kernel/kernel.test.ts (11 tests) 29ms
+ ✓ src/engine/app/worker-host.scoped-interaction.test.ts (36 tests) 100ms
+[createTUIApp] initializeComponent { appId: 'late', desktopId: 'd' }
+ ✓ src/kernel/close-reporting.test.ts (36 tests) 56ms
+ ✓ src/core/invocation/bound-action-executor.test.ts (15 tests) 26ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts (39 tests) 17ms
+[createTUIApp] initializeComponent { appId: 'first', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'second', desktopId: 'd' }
+ ✓ src/cli/npm-installer.test.ts (3 tests) 20ms
+ ✓ src/engine/app/worker-host.snapshot-shadow.test.ts (5 tests) 85ms
+[Worker] Legacy factory mode - using globalThis fallback for config
+ ✓ src/core/snapshot/retention-lifecycle.test.ts (33 tests) 94ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'b', desktopId: 'd' }
+ ✓ src/core/invocation/scoped-interaction.ref-v2.test.ts (5 tests) 37ms
+ ✓ src/adapters/semantic-aotui-driven-source.test.ts (16 tests) 32ms
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts (21 tests) 74ms
+ ✓ src/engine/core/close-operation.test.ts (11 tests) 41ms
+npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+ ✓ src/engine/app/worker-host.interaction-lifecycle.test.ts (12 tests) 23ms
+ ✓ src/core/tool/view-owned-tools.test.ts (22 tests) 15ms
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+ ✓ src/core/persistence/state-session.test.ts (109 tests) 40ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/engine/app/worker-host.tool-lifecycle-e2e.test.ts (13 tests) 3015ms
+   ✓ Actual SDK / Worker ordinary Tool and application cleanup > keeps business values App-owned and rechecks binding authorization across remount  348ms
+ ✓ src/engine/app/worker-host.ordinary-interaction.test.ts (27 tests) 60ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/engine/app/worker-host.wave2a-request.test.ts (20 tests) 33ms
+ ✓ src/core/snapshot/ref-contract.wave2b.test.ts (17 tests) 40ms
+ ✓ src/engine/app/worker-host.ordinary-v2.test.ts (45 tests) 9314ms
+   ✓ R11–R24 real public SDK / emitted Host / Node Worker > R11/R13 really enters the target handler with matching policy/post/handler values and no defaults  344ms
+   ✓ R11–R24 real public SDK / emitted Host / Node Worker > R12 invalid array never authorizes/posts/enters  311ms
+   ✓ R11–R24 real public SDK / emitted Host / Node Worker > R17 result malformed preserves phase and transport health  941ms
+   ✓ R11–R24 real public SDK / emitted Host / Node Worker > R17 result huge preserves phase and transport health  840ms
+   ✓ R11–R24 real public SDK / emitted Host / Node Worker > R19 four modes share one real Worker and one uncertainty state while authorization waits  851ms
+ ✓ src/engine/app/worker-host.create-if-absent.test.ts (21 tests) 40ms
+ ✓ src/worker-runtime/ordinary-invocation-v2.test.ts (12 tests) 12ms
+ ✓ src/adapters/ref-invocation-v2.test.ts (13 tests) 27ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/core/invocation/invocation-outcome.test.ts (46 tests) 13ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/core/tool/ordinary-parameter-contract.test.ts (112 tests) 39ms
+ ✓ src/engine/app/manager.lifecycle.test.ts (14 tests) 32ms
+[Worker] APP_SHUTDOWN flush timeout fallback
+ ✓ src/core/invocation/scoped-create-if-absent.test.ts (17 tests) 41ms
+ ✓ src/core/snapshot/snapshot.test.ts (51 tests) 48ms
+ ✓ src/engine/app/manager.test.ts (33 tests | 7 skipped) 37ms
+[createTUIApp] initializeComponent { appId: 'legacy', desktopId: 'legacy' }
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/cli/catalog-resolver.test.ts (4 tests) 47ms
+ ✓ src/core/snapshot/v2.test.ts (14 tests) 15ms
+[createTUIApp] initializeComponent { appId: 'legacy', desktopId: 'legacy' }
+ ✓ src/engine/app/worker-host.shadow-init-lifecycle.test.ts (32 tests) 26ms
+ ✓ src/adapters/snapshot/shadow-receiver.lifecycle.test.ts (6 tests) 25ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/worker-runtime/ref-invocation-v1.test.ts (25 tests) 16ms
+ ✓ src/engine/core/desktop.lifecycle.test.ts (9 tests) 29ms
+[createTUIApp] initializeComponent { appId: 'legacy', desktopId: 'legacy' }
+stderr | src/engine/core/llm-text-channel.test.ts > LLMOutputChannelService > error handling > should continue notifying other subscribers if one throws
+[LLMOutputChannel] Error in listener: Error: Test error
+    at /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/runtime/src/engine/core/llm-text-channel.test.ts:162:56
+    at LLMOutputChannelService.push (/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/runtime/src/engine/core/llm-output-channel.ts:114:17)
+    at /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/runtime/src/engine/core/llm-text-channel.test.ts:168:25
+    at Proxy.assertThrows (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/chai@5.3.3/node_modules/chai/index.js:2767:5)
+    at Proxy.methodWrapper (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/chai@5.3.3/node_modules/chai/index.js:1686:25)
+    at Proxy.<anonymous> (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/@vitest+expect@3.2.4/node_modules/@vitest/expect/dist/index.js:1088:12)
+    at Proxy.overwritingMethodWrapper (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/chai@5.3.3/node_modules/chai/index.js:1735:33)
+    at Proxy.<anonymous> (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/@vitest+expect@3.2.4/node_modules/@vitest/expect/dist/index.js:1420:16)
+    at Proxy.<anonymous> (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/@vitest+expect@3.2.4/node_modules/@vitest/expect/dist/index.js:1029:14)
+    at Proxy.methodWrapper (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/chai@5.3.3/node_modules/chai/index.js:1686:25)
+
+ ✓ src/engine/core/llm-text-channel.test.ts (12 tests) 7ms
+ ✓ src/engine/app/worker-host.dual-producer-e2e.test.ts (18 tests) 4408ms
+   ✓ C08/09/13 Ref source, identity changes and exact common size inputs via SDK/DOM/Node Worker  468ms
+   ✓ C10/11 project holds real ownership across reinitialize via SDK/DOM/Node Worker  327ms
+   ✓ C10/11 authorize holds real ownership across close via SDK/DOM/Node Worker  333ms
+   ✓ C05 retains actual V1 selection for non-AppKernel  1111ms
+ ✓ src/core/tool/ordinary-parameter-profile.test.ts (12 tests) 5ms
+ ✓ src/core/tool/source-binding.test.ts (17 tests) 23ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts (26 tests) 27ms
+ ✓ src/worker-runtime/app-kernel/AppKernel.lifecycle.test.ts (9 tests) 15ms
+stdout | src/e2e-test/config-injection-e2e.test.ts > E2E: Configuration Injection > should inject config into real worker and echo it back
+[Performance] App Start + Config Echo took 20ms
+
+ ✓ src/e2e-test/config-injection-e2e.test.ts (1 test) 23ms
+ ✓ src/worker-runtime/app-kernel/AppKernel.component.test.ts (8 tests) 7ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/engine/system/operations/registry.test.ts (14 tests) 5ms
+stdout | src/engine/app/registry.test.ts > AppRegistry > App Management > should use canonical app_name from kernel metadata when manifest identity is missing
+[AppRegistry] Added app: system_ide from local:/tmp/cache/node_modules/@agentina/aotui-ide
+
+ ✓ src/engine/core/desktop.test.ts (5 tests | 3 skipped) 6ms
+stdout | src/engine/app/registry.test.ts > AppRegistry > App Management > should delete managed npm install artifacts on remove
+[AppRegistry] Removed app: aotui-ide
+
+stderr | src/engine/app/registry.test.ts > AppRegistry > App Management > should not delete npm artifacts outside managed root on remove
+[AppRegistry] Skip deleting npm cache outside managed root: /var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/tui-test-1Z7hCm/external-cache/latest
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > App Management > should not delete npm artifacts outside managed root on remove
+[AppRegistry] Removed app: aotui-ide
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > negotiates Semantic capabilities and preserves launch config for autoStart=true
+[AppRegistry] Installed "semantic-app" to Desktop dt_test (Worker mode)
+
+ ✓ src/engine/app/worker-host.app-lifecycle-protocol.test.ts (12 tests) 11ms
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > negotiates Semantic capabilities and preserves launch config for autoStart=false
+[AppRegistry] Registered "semantic-app" to Desktop dt_test (Pending mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > does not accept capability negotiation from app launch data and rejects invalid Host modes before installation
+[AppRegistry] Installed "semantic-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should install autoStart=true apps immediately
+[AppRegistry] Installed "worker-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should inject only canonical AOTUI_APP_NAME into launch config
+[AppRegistry] Installed "worker-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should register autoStart=false apps as pending
+[AppRegistry] Registered "pending-app" to Desktop dt_test (Pending mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should install only selected explicit entries without consulting config apps
+[AppRegistry] Loaded app: explicit-app
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should install only selected explicit entries without consulting config apps
+[AppRegistry] Installed "explicit-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should keep non-selected explicit entries out of installation
+[AppRegistry] Loaded app: alpha-app
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should keep non-selected explicit entries out of installation
+[AppRegistry] Loaded app: beta-app
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should keep non-selected explicit entries out of installation
+[AppRegistry] Installed "beta-app" to Desktop dt_test (Worker mode)
+
+ ✓ src/engine/app/registry.test.ts (21 tests) 71ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/adapters/ordinary-invocation-v2.test.ts (25 tests) 12ms
+ ❯ src/adapters/snapshot/shadow-receiver.test.ts (10 tests | 1 failed) 17ms
+   ✓ C receiver interaction lifetime > keeps reporting lazy and closes the authority permanently before first use 1ms
+   ✓ C receiver interaction lifetime > shares the authority across sixteen Scopes and retains its identity after slots are freed 4ms
+   × C receiver interaction lifetime > uses one injected clock for current leases, retired history and observation/Scope deadlines 6ms
+     → expected 1 to be +0 // Object.is equality
+   ✓ C receiver interaction lifetime > fails closed with injected clock -1 and still allows explicit cleanup 0ms
+   ✓ C receiver interaction lifetime > fails closed with injected clock NaN and still allows explicit cleanup 0ms
+   ✓ C receiver interaction lifetime > fails closed with injected clock 9 and still allows explicit cleanup 0ms
+   ✓ M2 SnapshotShadowReceiver — Core-only, observational > does not change the legacy path and exposes only metrics, not data or tool handlers 1ms
+   ✓ M2 SnapshotShadowReceiver — Core-only, observational > rejects wrong App or instance and stale sequence without degrading another instance 2ms
+   ✓ M2 SnapshotShadowReceiver — Core-only, observational > invalid Draft and PREPARE_FAILED mark only the matching App degraded 1ms
+   ✓ M2 SnapshotShadowReceiver — Core-only, observational > stops safely and ignores late Worker messages 0ms
+ ✓ src/core/snapshot/workspace.test.ts (5 tests) 6ms
+ ✓ src/core/tool/versioned-ref-declarations.test.ts (5 tests) 3ms
+ ✓ src/worker-runtime/app-kernel/AppKernel.ordinary-v2.test.ts (8 tests) 9ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/worker-runtime/ordinary-invocation-v1.test.ts (18 tests) 9ms
+ ✓ src/cli/catalog.test.ts (4 tests) 2ms
+ ✓ src/kernel/interaction.test.ts (9 tests) 11ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/core/tool/view-owned-tools.ref-v1.test.ts (8 tests) 6ms
+ ✓ src/core/snapshot/validator.metadata-boundary.test.ts (16 tests) 10ms
+ ✓ src/core/tool/view-owned-tools.ref-v2.test.ts (7 tests) 9ms
+ ✓ src/worker-runtime/app-kernel/AppKernel.ref-v2.test.ts (7 tests) 10ms
+ ✓ src/worker-runtime/ref-invocation-v2.test.ts (7 tests) 12ms
+ ✓ src/core/public-entry.test.ts (3 tests) 9ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/spi/core/errors.test.ts (20 tests) 7ms
+ ✓ src/worker-runtime/dom-snapshot-producer.test.ts (10 tests) 12ms
+ ✓ src/worker-runtime/dom-snapshot-producer.empty.test.ts (6 tests) 8ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/engine/view/transformer/__tests__/visitors/html.visitor.test.ts (9 tests) 7ms
+ ✓ src/kernel/lifecycle.test.ts (5 tests) 6ms
+ ✓ src/core/tool/snapshot-value-arguments.ref-v2.test.ts (2 tests) 6ms
+ ✓ src/worker-runtime/create-if-absent-invocation-v1.test.ts (14 tests) 10ms
+ ✓ src/adapters/aotui-driven-source.test.ts (11 tests) 9ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/core/tool/view-owned-tools.ordinary-v2.test.ts (5 tests) 8ms
+ ✓ src/engine/app/worker-pool.test.ts (9 tests) 8ms
+ ✓ src/engine/app/manager.interaction.test.ts (6 tests) 7ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ❯ src/internal/integration/sdk-runtime.test.ts (10 tests | 1 failed) 15ms
+   ✓ SDK → Runtime Integration > ViewLink Component Integration > SDK ViewLink HTML → Runtime produces correct view link with description 3ms
+   ✓ SDK → Runtime Integration > ViewLink Component Integration > SDK ViewLink without desc → Runtime produces link without description 0ms
+   ✓ SDK → Runtime Integration > Operation Component Integration > SDK Operation with desc → Runtime produces multi-line format 1ms
+   ✓ SDK → Runtime Integration > Operation Component Integration > SDK Operation with multiple params → Runtime lists all params 0ms
+   ✓ SDK → Runtime Integration > Complete View with Mixed Components > Full SDK view output → Runtime produces complete TUI markdown 1ms
+   ✓ SDK → Runtime Integration > Complete View with Mixed Components > Conversation view with List → Runtime produces indexed items 1ms
+   × SDK → Runtime Integration > Edge Cases > demo app root views preserve the application instruction contract 6ms
+     → expected 'import { FetchToolSection, type Brows…' to contain 'What it is'
+   ✓ SDK → Runtime Integration > Edge Cases > Empty view-target should not create link 0ms
+   ✓ SDK → Runtime Integration > Edge Cases > Operation without desc should not include Desc line 0ms
+   ✓ SDK → Runtime Integration > Edge Cases > ViewLink and regular anchor coexist correctly 0ms
+ ✓ src/engine/core/signal-bus.test.ts (26 tests) 11ms
+ ✓ src/worker-runtime/app-kernel/AppKernel.core-disposal.test.ts (4 tests) 10ms
+ ✓ src/engine/app/interaction-config.test.ts (3 tests) 9ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/engine/system/registry.test.ts (6 tests) 3ms
+ ✓ src/core/tool/source-binding.wave2a.test.ts (2 tests) 8ms
+ ✓ src/core/snapshot/validator.ref-v2.test.ts (4 tests) 6ms
+ ✓ src/engine/view/transformer/__tests__/integration.test.ts (2 tests) 5ms
+ ✓ src/engine/core/desktop.channels-lifecycle.test.ts (5 tests) 8ms
+ ✓ src/engine/view/transformer/__tests__/visitors/operation.visitor.test.ts (5 tests) 6ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/engine/system/operations/system/system-operations.test.ts (10 tests) 4ms
+ ✓ src/engine/app/worker-sandbox.lifecycle.test.ts (15 tests) 8ms
+ ✓ src/engine/app/worker-host.persistence.test.ts (6 tests) 6ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+stderr | src/engine/app/worker-host.ref-v2.test.ts > R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 a Worker exit while the handler is held is unknown with no automatic retry
+[AppWorkerHost] Worker app exited with code 1
+
+ ✓ src/core/snapshot/memory-app.test.ts (1 test) 4ms
+ ✓ src/engine/core/manager.lifecycle.test.ts (5 tests) 17ms
+ ✓ src/engine/view/transformer/__tests__/visitors/view.visitor.test.ts (6 tests) 4ms
+ ✓ src/engine/app/worker-host.resources.test.ts (4 tests) 8ms
+ ✓ src/adapters/ordinary-invocation-v1.test.ts (11 tests) 6ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/engine/core/manager.worker-resources.test.ts (2 tests) 11ms
+ ✓ src/engine/core/services/lock.service.test.ts (13 tests) 5ms
+ ✓ src/spi/config/worker-pool-validation.test.ts (1 test) 6ms
+ ✓ src/core/persistence/state-storage.test.ts (32 tests) 15ms
+ ✓ src/kernel/security.test.ts (4 tests) 9ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/worker-runtime/app-lifecycle.test.ts (10 tests) 5ms
+ ✓ src/core/tool/create-if-absent-contract.test.ts (35 tests) 9ms
+ ✓ src/engine/core/manager.test.ts (21 tests) 7ms
+ ✓ src/engine/view/transformer/__tests__/visitors/view-link.visitor.test.ts (7 tests) 4ms
+ ✓ src/worker-runtime/state-storage-proxy.test.ts (5 tests) 5ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/engine/view/snapshot/formatter.test.ts (13 tests) 8ms
+ ✓ src/worker-runtime/app-kernel/AppKernel.type-tool-contract.test.ts (7 tests) 7ms
+stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should propagate promptRole from manifest
+[AppRegistry] Installed "assistant-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should propagate promptRole from kernelConfig
+[AppRegistry] Installed "kernel-assistant-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should allow config override of promptRole
+[AppRegistry] Installed "override-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should propagate promptRole to registerPendingApp (lazy load)
+[AppRegistry] Registered "lazy-assistant" to Desktop dt_test (Pending mode)
+
+ ✓ src/engine/app/registry-role.test.ts (4 tests) 15ms
+ ✓ src/worker-runtime/app-kernel/view-registry.test.ts (14 tests) 4ms
+ ✓ src/engine/core/desktop-logger.scope.test.ts (2 tests) 3ms
+ ✓ src/adapters/storage/state-storage-protocol.test.ts (4 tests) 7ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/worker-runtime/state-persistence.test.ts (5 tests) 6ms
+ ✓ src/worker-runtime/view-fragment-extractor.test.ts (5 tests) 11ms
+ ✓ src/adapters/storage/memory-state-storage.test.ts (5 tests) 4ms
+ ✓ test/spi/config/define-config.test.ts (8 tests) 3ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/engine/view/snapshot/builder.test.ts (2 tests) 6ms
+ ✓ src/adapters/semantic-capability-policy.test.ts (4 tests) 5ms
+ ✓ src/engine/view/transformer/__tests__/visitors/application.visitor.test.ts (5 tests) 4ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/adapters/create-if-absent-invocation-v1.test.ts (17 tests) 5ms
+ ✓ test/integration/context.test.ts (1 test) 5ms
+ ✓ src/engine/core/operation-log-formatter.test.ts (10 tests) 3ms
+ ✓ src/engine/core/operation-log-buffer.test.ts (9 tests) 3ms
+ ✓ src/engine/core/signal-service.test.ts (9 tests) 3ms
+ ✓ src/spi/app/view-context.test.ts (1 test) 2ms
+ ✓ src/engine/core/desktop-logger.test.ts (20 tests) 6ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ src/cli/sources.test.ts (8 tests) 2ms
+ ✓ src/core/projection/coordinator.test.ts (4 tests) 6ms
+ ✓ src/cli.list.test.ts (1 test) 1ms
+ ✓ src/core/invocation/invocation-ledger.test.ts (1 test) 1ms
+ ✓ src/engine/view/snapshot/formatter.toolname.test.ts (1 test) 4ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ✓ test/spi/config/integration.test.ts (3 tests) 2ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'a' }
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'b' }
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'first' }
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'second' }
+ ✓ src/worker-runtime/app-kernel/AppKernel.persistence.test.ts (1 test) 7ms
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'one' }
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'one' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'two' }
+[createTUIApp] initializeComponent { appId: 'b', desktopId: 'one' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'one' }
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'two' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'two' }
+[createTUIApp] initializeComponent { appId: 'a', desktopId: 'd' }
+ ❯ src/kernel/interaction-e2e.test.ts (32 tests | 5 failed) 13585ms
+   ✓ B2 C08/26 all five modes execute through actual tar package public default Runtime/SDK 172ms
+   × B2 C09 public single-mode ordinary-v1 keeps other execution modes unavailable without handler fallback 137ms
+     → Missing tool binding parameters
+   × B2 C09 public single-mode ordinary-v2 keeps other execution modes unavailable without handler fallback 131ms
+     → Missing tool binding ref
+   × B2 C09 public single-mode snapshot-value-v1 keeps other execution modes unavailable without handler fallback 139ms
+     → Missing tool binding ref_parameters
+   × B2 C09 public single-mode snapshot-value-v2 keeps other execution modes unavailable without handler fallback 146ms
+     → Missing tool binding create
+   × B2 C09 public single-mode create-if-absent-v1 keeps other execution modes unavailable without handler fallback 148ms
+     → Missing tool binding ordinary
+   ✓ B2 C09/24 missing or wrong ACK denies public ordinary-v1 while known-empty Core remains verifiable 49ms
+   ✓ B2 C09/24 missing or wrong ACK denies public ordinary-v2 while known-empty Core remains verifiable 43ms
+   ✓ B2 C09/24 missing or wrong ACK denies public snapshot-value-v1 while known-empty Core remains verifiable 59ms
+   ✓ B2 C09/24 missing or wrong ACK denies public snapshot-value-v2 while known-empty Core remains verifiable 52ms
+   ✓ B2 C09/24 missing or wrong ACK denies public create-if-absent-v1 while known-empty Core remains verifiable 57ms
+   ✓ B2 C10 public scope capacity shares the existing single authority and can release its slots 130ms
+   ✓ B2 C14/17 actual runtime close holds project until reject=false resolves actual ownership 137ms
+   ✓ B2 C14/17 actual runtime close holds project until reject=true resolves actual ownership 142ms
+   ✓ B2 C14/17 actual desktop close holds project until reject=false resolves actual ownership 144ms
+   ✓ B2 C14/17 actual desktop close holds project until reject=true resolves actual ownership 156ms
+   ✓ B2 C14/17 actual app close holds project until reject=false resolves actual ownership 141ms
+   ✓ B2 C14/17 actual app close holds project until reject=true resolves actual ownership 128ms
+   ✓ B2 C14/17 actual delete close holds project until reject=false resolves actual ownership 140ms
+   ✓ B2 C14/17 actual delete close holds project until reject=true resolves actual ownership 138ms
+   ✓ B2 C18 actual SDK/Node authorize remains owned through runtime close until resolve/reject 288ms
+   ✓ B2 C18 actual SDK/Node authorize remains owned through desktop close until resolve/reject 290ms
+   ✓ B2 C18 actual SDK/Node authorize remains owned through app close until resolve/reject  307ms
+   ✓ B2 C18 actual SDK/Node auto-read remains owned through runtime close until resolve/reject  309ms
+   ✓ B2 C18 actual SDK/Node auto-read remains owned through desktop close until resolve/reject 288ms
+   ✓ B2 C18 actual SDK/Node auto-read remains owned through app close until resolve/reject 227ms
+   ✓ B2 C18 actual SDK/Node explicit-read remains owned through runtime close until resolve/reject 228ms
+   ✓ B2 C18 actual SDK/Node explicit-read remains owned through desktop close until resolve/reject 215ms
+   ✓ B2 C18 actual SDK/Node explicit-read remains owned through app close until resolve/reject 212ms
+   ✓ B2 C06/10–12/16 public pending/collapse/pause/reopen/reinitialize keeps modes and permanently closes old clients 112ms
+   ✓ B2 C12/21 two Desktop/three App actual owners aggregate held callbacks without rerouting same IDs  312ms
+   ✓ B2 C07 public launch configuration spoofing cannot grant modes 97ms
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'one' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'two' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'one' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'two' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'd' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'old-sdk' }
+[createTUIApp] initializeComponent { appId: 'app', desktopId: 'old-worker' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+[Worker] APP_SHUTDOWN flush timeout fallback
+[Worker] APP_SHUTDOWN flush timeout fallback
+ ✓ src/kernel/close-reporting-e2e.test.ts (13 tests) 3534ms
+   ✓ C2-28 two Runtime pools / two Desktop IDs / two script paths are isolated, Shadow=false  393ms
+   ✓ C2-28 two Runtime pools / two Desktop IDs / two script paths are isolated, Shadow=true  378ms
+   ✓ C2-30 archived old SDK / archived old Worker remain legacy-unverified under the actual Kernel  1409ms
+ ❯ src/engine/app/worker-host.ref-v2.test.ts (76 tests | 1 failed) 17918ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > requires explicit new capability and refuses the old compatibility entry before policy, releasing its lease 25ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > does not infer Ref V2 from ACK undefined 5ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > does not infer Ref V2 from ACK %j 2ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > does not infer Ref V2 from ACK "view-tool-ref-invoke/v1" 3ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > does not infer Ref V2 from ACK "unknown" 3ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > does not infer Ref V2 from ACK "view-tool-ref-invoke/v2" 2ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > a lost 'inspect' terminal stops new dispatch for every mode 169ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > a lost 'old_read' terminal stops new dispatch for every mode 157ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > a lost 'plain' terminal stops new dispatch for every mode 158ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > a lost 'zero' terminal stops new dispatch for every mode 166ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > a lost 'create' terminal stops new dispatch for every mode 168ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > R18 uncertainty fences the pre-Scope Ref V1 compatibility entry before policy 166ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > R18 legacy-first timeout must fence a following Ref V2 Scope 165ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > R18 legacy-first invalid-terminal must fence a following Ref V2 Scope 4ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > R18 a held legacy authorization cannot post after another mode becomes uncertain and releases its prepared lease 156ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 ref compatibility held authorization cannot cross later uncertainty 156ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 generic compatibility held authorization cannot cross later uncertainty 155ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'ref' 'timeout' fences all seven View Tool entries and cannot pool 158ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'ref' 'post' fences all seven View Tool entries and cannot pool 7ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'ref' 'error' fences all seven View Tool entries and cannot pool 6ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'ref' 'exit' fences all seven View Tool entries and cannot pool 3ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'generic' 'timeout' fences all seven View Tool entries and cannot pool 157ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'generic' 'post' fences all seven View Tool entries and cannot pool 3ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'generic' 'error' fences all seven View Tool entries and cannot pool 7ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'generic' 'exit' fences all seven View Tool entries and cannot pool 3ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 trustworthy ref business failure preserves transport and subsequent dispatch 10ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 trustworthy generic business failure preserves transport and subsequent dispatch 14ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 lifecycle/control request post failure does not mark a View Tool uncertain 2ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 an unfinished generic View Tool cannot return the Worker to the pool 5ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R09/R12 really enters only the original target with one substituted slot and no default fill 201ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R21 invalid enum never authorizes/posts/enters 158ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R21 invalid array never authorizes/posts/enters 176ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R21 invalid range never authorizes/posts/enters 169ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R21 invalid required never authorizes/posts/enters 198ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R21 invalid extra never authorizes/posts/enters 201ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R21 invalid null never authorizes/posts/enters 158ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R21 invalid getter never authorizes/posts/enters 146ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R09/R13 uses historical A while the current committed handler observes revision2 without rebind 183ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R21 preserves open ordinary literals and whitespace without treating data as Schema markers 137ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R21 preserves special own Ref parameter names through real Core/codec/SDK execution 193ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R10 refuses foreign Ref before policy  307ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R10 refuses type Ref before policy 199ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R11 revokes default during awaited policy before dispatch 234ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R11 revokes ref-metadata during awaited policy before dispatch 185ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R11 revokes unmount during awaited policy before dispatch 183ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R11 revokes scope during awaited policy before dispatch 172ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R20 full effective 5001-node real Worker boundary 240ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R20 full effective 10000-node real Worker boundary  311ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R20 full effective 10001-node real Worker boundary 193ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R20 oversized raw input is refused before policy and Worker dispatch 156ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R14 unmount/re-mount revokes old target and disabled Tools never enter  352ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R10 actual Worker rejects a foreign App instance before entering its callable 164ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R15 Worker refuses the old binding after a queued request is disable 188ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R15 Worker refuses the old binding after a queued request is replace 188ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R16 keeps business failure details and healthy transport 163ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R16 keeps throw failure details and healthy transport 167ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 drop terminal cannot be trusted or recycled  744ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 type terminal cannot be trusted or recycled 170ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 mode terminal cannot be trusted or recycled 192ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 instance terminal cannot be trusted or recycled 189ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 request terminal cannot be trusted or recycled  770ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 huge terminal cannot be trusted or recycled  771ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 a Worker exit while the handler is held is unknown with no automatic retry 185ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R18 actual inspect response loss closes new dispatch across five modes  766ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R18 actual old_read response loss closes new dispatch across five modes  762ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R18 actual plain response loss closes new dispatch across five modes  727ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R18 actual zero response loss closes new dispatch across five modes  727ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R18 actual create response loss closes new dispatch across five modes  721ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R18 healthy RESET reuses the actual Worker under a new App identity 157ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R19 old generic View-owned compatibility keeps its healthy boundary 108ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R19 old generic View-owned compatibility keeps its uncertain boundary  712ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R23 same new Worker keeps saved old SDK Ref helper and new SDK Hook rules distinct 136ms
+   × R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R22 uses actual saved product combination off 112ms
+     → expected undefined to be defined
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R22 uses actual saved product combination old-worker 93ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R22 uses actual saved product combination old-sdk 91ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R22 uses actual saved product combination old-host 101ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/engine/app/worker-host.create-if-absent-e2e.test.ts > W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk
+Error: Build failed with 2 errors:
+src/e2e-test/fixtures/ide-create-slice.mjs:13:36: ERROR: Could not resolve "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/aotui-ide/dist/tui/WorkspaceCreateView.js" (originally "@fixture/ide/tui/WorkspaceCreateView.js")
+src/e2e-test/fixtures/ide-create-slice.mjs:14:34: ERROR: Could not resolve "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/aotui-ide/dist/core/file-system-service.js" (originally "@fixture/ide/core/file-system-service.js")
+ ❯ failureErrorWithLog ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:1467:15
+ ❯ ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:926:25
+ ❯ ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:878:52
+ ❯ buildResponseToResult ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:924:7
+ ❯ ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:951:16
+ ❯ responseCallbacks.<computed> ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:603:9
+ ❯ handleIncomingPacket ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:658:12
+ ❯ Socket.readFromStdout ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:581:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯
+
+ FAIL  src/engine/app/worker-host.ide-read-e2e.test.ts > W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core
+Error: Build failed with 2 errors:
+src/e2e-test/fixtures/ide-read-slice.mjs:10:31: ERROR: Could not resolve "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/aotui-ide/dist/tui/FileDetailContent.js" (originally "@fixture/ide/tui/FileDetailContent.js")
+src/e2e-test/fixtures/ide-read-slice.mjs:11:46: ERROR: Could not resolve "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/aotui-ide/dist/core/index.js" (originally "@fixture/ide/core/index.js")
+ ❯ failureErrorWithLog ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:1467:15
+ ❯ ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:926:25
+ ❯ ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:878:52
+ ❯ buildResponseToResult ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:924:7
+ ❯ ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:951:16
+ ❯ responseCallbacks.<computed> ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:603:9
+ ❯ handleIncomingPacket ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:658:12
+ ❯ Socket.readFromStdout ../../../../../../../../../Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/esbuild@0.27.3/node_modules/esbuild/lib/main.js:581:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/10]⎯
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode ordinary-v1 keeps other execution modes unavailable without handler fallback
+Error: Missing tool binding parameters
+ ❯ request src/kernel/interaction-e2e.test.ts:65:25
+     63| function request(observation: any, name = 'ordinary', input: any = {},…
+     64|     const tool = observation.tools.find((tool: any) => tool.name === n…
+     65|     if (!binding) throw Error('Missing tool binding ' + name);return {…
+       |                         ^
+     66| }
+     67| 
+ ❯ src/kernel/interaction-e2e.test.ts:85:94
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/10]⎯
+
+ FAIL  src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode ordinary-v2 keeps other execution modes unavailable without handler fallback
+Error: Missing tool binding ref
+ ❯ request src/kernel/interaction-e2e.test.ts:65:25
+     63| function request(observation: any, name = 'ordinary', input: any = {},…
+     64|     const tool = observation.tools.find((tool: any) => tool.name === n…
+     65|     if (!binding) throw Error('Missing tool binding ' + name);return {…
+       |                         ^
+     66| }
+     67| 
+ ❯ src/kernel/interaction-e2e.test.ts:85:94
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/10]⎯
+
+ FAIL  src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode snapshot-value-v1 keeps other execution modes unavailable without handler fallback
+Error: Missing tool binding ref_parameters
+ ❯ request src/kernel/interaction-e2e.test.ts:65:25
+     63| function request(observation: any, name = 'ordinary', input: any = {},…
+     64|     const tool = observation.tools.find((tool: any) => tool.name === n…
+     65|     if (!binding) throw Error('Missing tool binding ' + name);return {…
+       |                         ^
+     66| }
+     67| 
+ ❯ src/kernel/interaction-e2e.test.ts:85:94
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/10]⎯
+
+ FAIL  src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode snapshot-value-v2 keeps other execution modes unavailable without handler fallback
+Error: Missing tool binding create
+ ❯ request src/kernel/interaction-e2e.test.ts:65:25
+     63| function request(observation: any, name = 'ordinary', input: any = {},…
+     64|     const tool = observation.tools.find((tool: any) => tool.name === n…
+     65|     if (!binding) throw Error('Missing tool binding ' + name);return {…
+       |                         ^
+     66| }
+     67| 
+ ❯ src/kernel/interaction-e2e.test.ts:85:94
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/10]⎯
+
+ FAIL  src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode create-if-absent-v1 keeps other execution modes unavailable without handler fallback
+Error: Missing tool binding ordinary
+ ❯ request src/kernel/interaction-e2e.test.ts:65:25
+     63| function request(observation: any, name = 'ordinary', input: any = {},…
+     64|     const tool = observation.tools.find((tool: any) => tool.name === n…
+     65|     if (!binding) throw Error('Missing tool binding ' + name);return {…
+       |                         ^
+     66| }
+     67| 
+ ❯ src/kernel/interaction-e2e.test.ts:85:94
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/10]⎯
+
+ FAIL  src/engine/app/worker-host.ref-v2.test.ts > R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R22 uses actual saved product combination off
+AssertionError: expected undefined to be defined
+ ❯ Object.request src/engine/app/worker-host.ref-v2.test.ts:38:171
+
+ ❯ src/engine/app/worker-host.ref-v2.test.ts:351:118
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/10]⎯
+
+ FAIL  src/adapters/snapshot/shadow-receiver.test.ts > C receiver interaction lifetime > uses one injected clock for current leases, retired history and observation/Scope deadlines
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ src/adapters/snapshot/shadow-receiver.test.ts:35:65
+     33|         const first = await opened.client.observe({ viewIds: ['v'] });…
+     34|         if (first.status === 'observed') expect(first.observation.obse…
+     35|         time = 60001; expect(core.store.inspect().activeLeases).toBe(0…
+       |                                                                 ^
+     36|         const second = await opened.client.observe({ viewIds: ['v'] })…
+     37|         const lease = core.store.acquire(id); expect(lease.status).toB…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/10]⎯
+
+ FAIL  src/internal/integration/sdk-runtime.test.ts > SDK → Runtime Integration > Edge Cases > demo app root views preserve the application instruction contract
+AssertionError: expected 'import { FetchToolSection, type Brows…' to contain 'What it is'
+
+- Expected
++ Received
+
+- What it is
++ import { FetchToolSection, type BrowserActions } from './BrowserTools.js';
++
++ export function RootView({ onFetch }: Pick<BrowserActions, 'onFetch'>) {
++     return <>
++         <section data-role="application-instruction">
++             <h1>Lite Browser Application Instruction</h1>
++             <p>Search runs a query. ResultList contains the current results and their open/clear tools.</p>
++             <p>Fetch a URL here to open Page. Page shows fetched content and exposes its own close action.</p>
++             <p>Tool receipts describe the operation. Read search results and page content from their current Views.</p>
++         </section>
++         <FetchToolSection onFetch={onFetch} />
++     </>;
++ }
++
+
+ ❯ src/internal/integration/sdk-runtime.test.ts:233:32
+    231|                 const source = readFileSync(new URL(relativePath, impo…
+    232|                 expect(source).toContain('data-role="application-instr…
+    233|                 expect(source).toContain('What it is');
+       |                                ^
+    234|                 expect(source).toContain('How to use');
+    235|                 expect(source).toContain('Views');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/10]⎯
+
+
+ Test Files  6 failed | 160 passed (166)
+      Tests  8 failed | 2900 passed | 50 skipped | 7 todo (2965)
+   Start at  00:37:08
+   Duration  19.30s (transform 5.22s, setup 0ms, collect 19.33s, tests 97.90s, environment 406ms, prepare 8.13s)
+

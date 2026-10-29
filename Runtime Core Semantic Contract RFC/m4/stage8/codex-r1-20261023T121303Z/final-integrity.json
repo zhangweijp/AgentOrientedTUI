@@ -1,0 +1,142 @@
+{
+  "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "baselineIndexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "finalIndexSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "indexUnchanged": true,
+  "baselineWorktreeDiffSha256": "9820faaa60acfcfa943217f939b56e0ce3ccbd3896fc23b53f89ee90764751e2",
+  "finalWorktreeDiffSha256": "57a2cf481cbf455414760cc653d467d6cec0d3d03fe689a8207bc51bb4f24623",
+  "node": "v24.15.0",
+  "pnpm": "10.15.1",
+  "baselinePathCount": 1096,
+  "changedPreexistingPaths": [
+    {
+      "path": "runtime/src/engine/app/worker-host.ts",
+      "baselineSha256": "9331beb95ac0991e273eeb289211a42ad26cf8c2ea50186ea4fbb02e1a0b4c7a",
+      "finalSha256": "3326f6b0f84caae9d189e8856dcc71a1ed16cea61784df0bd140572820b3087e"
+    }
+  ],
+  "unexpectedBaselineChanges": [],
+  "newPathsAtAudit": [
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/AUDIT_PLAN.md",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/CODEX_R1_RESULTS.md",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/audit-integrity.py",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/baseline-readonly/runtime/src/engine/app/worker-host.ts",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/baseline-status.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/baseline.json",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/commands.jsonl",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/final-status.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/run-check.py",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-baseline-runtime-tsc.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-final-r1-ide-jest.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-final-r1-ide-tsc.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-final-r1-runtime-tsc.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-final-r1-runtime-vitest.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-final-r1-sdk-tsc.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-final-r1-sdk-vitest.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-green-independent-controlled.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-green-independent-real-worker.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-green-r1-regression.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-integrity-r1.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-red-independent-controlled.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-red-independent-real-worker.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-red-r1-regression.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-stability-r1-1.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-stability-r1-2.log",
+    "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-stability-r1-3.log",
+    "runtime/src/engine/app/worker-host.r1-terminal-race.test.ts"
+  ],
+  "unexpectedNewPaths": [],
+  "independentReviewFiles": [
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/ide-jest.log",
+      "baselineSha256": "8d960222929530fe38ef15ec412e68f226fd6a83a88830ac86d0a06edd295208",
+      "finalSha256": "8d960222929530fe38ef15ec412e68f226fd6a83a88830ac86d0a06edd295208"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/ide-tsc.log",
+      "baselineSha256": "e1b86b922403a6988951fea5f0c33f63042beaee76c00b445b78151ec1b06744",
+      "finalSha256": "e1b86b922403a6988951fea5f0c33f63042beaee76c00b445b78151ec1b06744"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/independent-regression.json",
+      "baselineSha256": "3c248de876e2d433479401169d7a84ffe5b28e2c45757192c619d3de62efad61",
+      "finalSha256": "3c248de876e2d433479401169d7a84ffe5b28e2c45757192c619d3de62efad61"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/independent-stability.json",
+      "baselineSha256": "073f201179c05e3fe75f3460504605bf3af0ce974f3fb1ffeeea1ae19659b5b8",
+      "finalSha256": "073f201179c05e3fe75f3460504605bf3af0ce974f3fb1ffeeea1ae19659b5b8"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/integrity-before.json",
+      "baselineSha256": "b56bf4f9b9e591eaeb46c3bfdc75f1599ef668d0d13da0378d5892b1da12cfd2",
+      "finalSha256": "b56bf4f9b9e591eaeb46c3bfdc75f1599ef668d0d13da0378d5892b1da12cfd2"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/integrity-verified.json",
+      "baselineSha256": "4bbb174607b89aa18f1a571a16f9d1108397c1f84c3a26079e8178dfc68a822b",
+      "finalSha256": "4bbb174607b89aa18f1a571a16f9d1108397c1f84c3a26079e8178dfc68a822b"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race-real-worker.log",
+      "baselineSha256": "3c5a4a874aa8a2a7675ff3cb1c560159f60413f1fcdb9b4c59343de2b0e0be8c",
+      "finalSha256": "3c5a4a874aa8a2a7675ff3cb1c560159f60413f1fcdb9b4c59343de2b0e0be8c"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race-real-worker.mjs",
+      "baselineSha256": "05850ee24ce380493e9ca222192a0e0e6f96ea0d2ed26761f4c2a932386590de",
+      "finalSha256": "05850ee24ce380493e9ca222192a0e0e6f96ea0d2ed26761f4c2a932386590de"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race.log",
+      "baselineSha256": "69eb9fc3be66e3335a0b980f801df65fb951d8cd1400a0f78aac86f370ce16a3",
+      "finalSha256": "69eb9fc3be66e3335a0b980f801df65fb951d8cd1400a0f78aac86f370ce16a3"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race.mjs",
+      "baselineSha256": "b17866e3d15f2f8f7cc97d8470350c8f2569b764c8f1080de27699ee52fe3919",
+      "finalSha256": "b17866e3d15f2f8f7cc97d8470350c8f2569b764c8f1080de27699ee52fe3919"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/review-start-file-hashes.json",
+      "baselineSha256": "119d3fea197b4498cadd79a25db3a03c8e42bacf2cc5f5fe68f9a7a25f933787",
+      "finalSha256": "119d3fea197b4498cadd79a25db3a03c8e42bacf2cc5f5fe68f9a7a25f933787"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/runtime-tsc.log",
+      "baselineSha256": "4ea5361da637198a79c3c25e70cf56fb63a14e1e3de7f849baffb4c6f0334bf3",
+      "finalSha256": "4ea5361da637198a79c3c25e70cf56fb63a14e1e3de7f849baffb4c6f0334bf3"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/runtime-vitest.log",
+      "baselineSha256": "d2c66d90ec944e395f73e053db57e0ce10e37910b1bf4021ce1af0e8383747a9",
+      "finalSha256": "d2c66d90ec944e395f73e053db57e0ce10e37910b1bf4021ce1af0e8383747a9"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/sdk-tsc.log",
+      "baselineSha256": "40dec6007a27c036857ec1d76a4b640959e31c0e3895e5f67c92680374a41f49",
+      "finalSha256": "40dec6007a27c036857ec1d76a4b640959e31c0e3895e5f67c92680374a41f49"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/sdk-vitest.log",
+      "baselineSha256": "4e60300f209f578672e74b5054b55fa87c997de9a1028d84d59c0e0a1b37ac4f",
+      "finalSha256": "4e60300f209f578672e74b5054b55fa87c997de9a1028d84d59c0e0a1b37ac4f"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/stability-review-1.log",
+      "baselineSha256": "49490a21c853fb3a8aae6446d5eb69d73359dbac95148c0cade983c91df2969c",
+      "finalSha256": "49490a21c853fb3a8aae6446d5eb69d73359dbac95148c0cade983c91df2969c"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/stability-review-2.log",
+      "baselineSha256": "0781346880e112f5a75fb47b4a848d0655daab90e4da8140b0193a0de00e6ead",
+      "finalSha256": "0781346880e112f5a75fb47b4a848d0655daab90e4da8140b0193a0de00e6ead"
+    },
+    {
+      "path": "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/stability-review-3.log",
+      "baselineSha256": "f0a0e7552d20f0b49a3552054c9f11f9d0cbc24638d0e4faf00530b7ba9af654",
+      "finalSha256": "f0a0e7552d20f0b49a3552054c9f11f9d0cbc24638d0e4faf00530b7ba9af654"
+    }
+  ],
+  "scope": "tracked + nonignored paths; ignored build outputs excluded"
+}

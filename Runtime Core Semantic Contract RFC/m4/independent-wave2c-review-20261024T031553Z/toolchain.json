@@ -1,0 +1,10 @@
+{
+  "node": "v24.15.0",
+  "pnpmByCwd": {
+    ".": "10.15.1",
+    "runtime": "10.15.1",
+    "sdk": "10.15.1",
+    "demo-apps/aotui-ide": "10.15.1"
+  },
+  "note": "Initial process metadata read pnpm outside repository; these versions use the actual command directories."
+}

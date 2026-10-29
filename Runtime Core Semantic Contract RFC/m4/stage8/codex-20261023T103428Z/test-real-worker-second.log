@@ -1,0 +1,33 @@
+COMMAND: pnpm --dir runtime exec vitest run src/engine/app/worker-host.m4-versioned-file.test.ts src/engine/app/worker-host.m4-producer-race.test.ts src/core/tool/versioned-file-integration.test.ts --reporter=verbose
+START_UTC: 2026-10-23T10:47:27.023975+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+ ✓ src/core/tool/versioned-file-integration.test.ts > M4 Stage 5: pinned V2 versioned Ref through a real workspace CAS adapter > performs a verified write from a V2 entity Ref then refuses an old replay 23ms
+ ✓ src/core/tool/versioned-file-integration.test.ts > M4 Stage 5: pinned V2 versioned Ref through a real workspace CAS adapter > rejects an external change made after the Snapshot was captured 8ms
+ ✓ src/core/tool/versioned-file-integration.test.ts > M4 Stage 5: pinned V2 versioned Ref through a real workspace CAS adapter > rejects a stale ViewInstanceId before any file operation is attempted 4ms
+ ✓ src/core/tool/versioned-file-integration.test.ts > M4 Stage 5: pinned V2 versioned Ref through a real workspace CAS adapter > rejects a newer resource version in the latest committed Snapshot 6ms
+ ✓ src/core/tool/versioned-file-integration.test.ts > M4 Stage 5: pinned V2 versioned Ref through a real workspace CAS adapter > two FileDetails may share the same Ref ID and Tool name without writing the wrong file 13ms
+ ✓ src/core/tool/versioned-file-integration.test.ts > M4 Stage 5: pinned V2 versioned Ref through a real workspace CAS adapter > fails closed when the snapshot resource URI points outside authorized workspace 11ms
+[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'race_app', desktopId: 'race_desktop' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+ ✓ src/engine/app/worker-host.m4-producer-race.test.ts > M3/M4 regression: a semantic mutation during V2 preparation cannot publish a torn Draft > rejects the inconsistent prepare and recovers at a later stable epoch 245ms
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+ ✓ src/engine/app/worker-host.m4-versioned-file.test.ts > M4 Stage 5 real Worker source-to-file safety > rejects stale files and mutating Worker Tool requests, then writes only via explicit filesystem CAS 3515ms
+
+ Test Files  3 passed (3)
+      Tests  8 passed (8)
+   Start at  18:47:27
+   Duration  3.99s (transform 334ms, setup 0ms, collect 591ms, tests 3.83s, environment 0ms, prepare 170ms)
+
+
+EXIT_CODE: 0

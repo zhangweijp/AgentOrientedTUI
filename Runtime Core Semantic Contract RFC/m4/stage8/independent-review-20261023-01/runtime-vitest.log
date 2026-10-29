@@ -1,0 +1,117 @@
+COMMAND=["pnpm", "--dir", "runtime", "exec", "vitest", "run", "--reporter=dot"]
+NODE=v24.15.0
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+·············[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'race_app', desktopId: 'race_desktop' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'result_app', desktopId: 'result_desktop' }
+·[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm3_app', desktopId: 'desktop_m3' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+·[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+······[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+···································[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm3_app', desktopId: 'desktop_m3' }
+·························································stdout | src/e2e-test/config-injection-e2e.test.ts > E2E: Configuration Injection > should inject config into real worker and echo it back
+[Performance] App Start + Config Echo took 21ms
+
+·stdout | src/engine/app/registry.test.ts > AppRegistry > App Management > should use canonical app_name from kernel metadata when manifest identity is missing
+[AppRegistry] Added app: system_ide from local:/tmp/cache/node_modules/@agentina/aotui-ide
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > App Management > should delete managed npm install artifacts on remove
+[AppRegistry] Removed app: aotui-ide
+
+stderr | src/engine/app/registry.test.ts > AppRegistry > App Management > should not delete npm artifacts outside managed root on remove
+[AppRegistry] Skip deleting npm cache outside managed root: /var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/tui-test-Z3uBp5/external-cache/latest
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > App Management > should not delete npm artifacts outside managed root on remove
+[AppRegistry] Removed app: aotui-ide
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should install autoStart=true apps immediately
+[AppRegistry] Installed "worker-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should inject only canonical AOTUI_APP_NAME into launch config
+[AppRegistry] Installed "worker-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should register autoStart=false apps as pending
+[AppRegistry] Registered "pending-app" to Desktop dt_test (Pending mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should install only selected explicit entries without consulting config apps
+[AppRegistry] Loaded app: explicit-app
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should install only selected explicit entries without consulting config apps
+[AppRegistry] Installed "explicit-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should keep non-selected explicit entries out of installation
+[AppRegistry] Loaded app: alpha-app
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should keep non-selected explicit entries out of installation
+[AppRegistry] Loaded app: beta-app
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should keep non-selected explicit entries out of installation
+[AppRegistry] Installed "beta-app" to Desktop dt_test (Worker mode)
+
+······················stdout | src/engine/app/worker-host.m4-readonly.test.ts > M4 Stage 3: explicitly authorized source-bound READ-ONLY Worker Tool > rejects unavailable, stale, mutating, unauthorized Tools and preserves the Handler result
+M4_READONLY_WORKER_DIAGNOSTIC={"count":25,"p50_ms":0.247,"p95_ms":1.259,"max_ms":1.452,"note":"host policy + V2 leases + Worker IPC + SDK Handler; no IDE/LSP or model"}
+
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+···························································stderr | src/engine/app/manager.test.ts > AppManager > Lazily Loaded Apps > startPendingApp 对非 staged App 应返回 false
+[AppManager] Cannot start nonexistent: not found
+
+··························-------stderr | src/engine/core/llm-text-channel.test.ts > LLMOutputChannelService > error handling > should continue notifying other subscribers if one throws
+[LLMOutputChannel] Error in listener: Error: Test error
+    at [90m/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39msrc/engine/core/llm-text-channel.test.ts:162:56
+    at LLMOutputChannelService.push [90m(/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39msrc/engine/core/llm-output-channel.ts:114:17[90m)[39m
+    at [90m/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39msrc/engine/core/llm-text-channel.test.ts:168:25
+    at Proxy.assertThrows [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/chai@5.3.3/node_modules/[4mchai[24m/index.js:2767:5[90m)[39m
+    at Proxy.methodWrapper [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/chai@5.3.3/node_modules/[4mchai[24m/index.js:1686:25[90m)[39m
+    at Proxy.<anonymous> [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/@vitest+expect@3.2.4/node_modules/[4m@vitest/expect[24m/dist/index.js:1088:12[90m)[39m
+    at Proxy.overwritingMethodWrapper [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/chai@5.3.3/node_modules/[4mchai[24m/index.js:1735:33[90m)[39m
+    at Proxy.<anonymous> [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/@vitest+expect@3.2.4/node_modules/[4m@vitest/expect[24m/dist/index.js:1420:16[90m)[39m
+    at Proxy.<anonymous> [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/@vitest+expect@3.2.4/node_modules/[4m@vitest/expect[24m/dist/index.js:1029:14[90m)[39m
+    at Proxy.methodWrapper [90m(file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/[39mnode_modules/[4m.pnpm[24m/chai@5.3.3/node_modules/[4mchai[24m/index.js:1686:25[90m)[39m
+
+············stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should propagate promptRole from manifest
+[AppRegistry] Installed "assistant-app" to Desktop dt_test (Worker mode)
+
+··········stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should propagate promptRole from kernelConfig
+[AppRegistry] Installed "kernel-assistant-app" to Desktop dt_test (Worker mode)
+
+[Worker] APP_SHUTDOWN flush timeout fallback
+stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should allow config override of promptRole
+[AppRegistry] Installed "override-app" to Desktop dt_test (Worker mode)
+
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+··················stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should propagate promptRole to registerPendingApp (lazy load)
+[AppRegistry] Registered "lazy-assistant" to Desktop dt_test (Pending mode)
+
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+············[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+····································································································································································································································································---·················[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+············[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+·
+
+ Test Files  66 passed (66)
+      Tests  564 passed | 3 skipped | 7 todo (574)
+   Start at  19:17:12
+   Duration  4.11s (transform 1.61s, setup 0ms, collect 5.36s, tests 9.65s, environment 8ms, prepare 3.30s)
+
+
+REVIEW_EXIT_CODE=0

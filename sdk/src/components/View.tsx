@@ -13,12 +13,15 @@
  */
 import { ComponentChildren, h } from "preact";
 import { useMemo, useEffect, useLayoutEffect, useRef as usePreactRef, useContext } from "preact/compat";
-import { useViewContext } from "../hooks/useViewContext.js";
 import { AppRuntimeContext } from "../context/AppRuntimeContext.js";
 import { ViewRuntimeContext } from "../contexts/index.js";
 import { createInlineView } from "../adapter/createInlineView.js";
 import type { ViewID } from "@aotui/runtime/spi";
 import { createViewId } from "@aotui/runtime/spi";  // ✅ Import factory function
+
+// M3: per-mount View identity, independent of list position and DOM node reuse.
+// AppInstance ID (owned by Runtime) namespaces this counter across Worker resets.
+let nextViewGeneration = 0;
 
 export interface ViewProps {
   /** 
@@ -113,6 +116,25 @@ function ComponentModeView({ id, type, name, children, onClose }: ViewProps) {
 
   // 容器ref (用于创建InlineView)
   const containerRef = usePreactRef<HTMLDivElement>(null);
+  const generationRef = usePreactRef<string | null>(null);
+  if (generationRef.current === null) generationRef.current = 'sdk_mount_' + (++nextViewGeneration).toString(36);
+
+  // Runtime assigns this identity only after Preact commits the DOM ref.
+  // Ref callbacks run before child layout effects, so View-local Tools can
+  // register during the same commit without allocating from render().
+  const instanceRef = usePreactRef<string | null>(null);
+  const viewToolsPort = appContext.viewTools;
+  const attachContainer = useMemo(() => (node: HTMLDivElement | null) => {
+    containerRef.current = node;
+    if (node && viewToolsPort && !instanceRef.current) {
+      instanceRef.current = viewToolsPort.mount(viewId, viewType);
+      // Internal Worker-only V2 projection source: allocated at actual mount.
+      node.setAttribute('data-view-instance-id', instanceRef.current);
+    } else if (!node && viewToolsPort && instanceRef.current) {
+      viewToolsPort.unmount(instanceRef.current);
+      instanceRef.current = null;
+    }
+  }, [viewId, viewType, viewToolsPort]);
 
   // Operation注册表
   const operationsRef = usePreactRef<Map<string, any>>(new Map());
@@ -191,6 +213,8 @@ function ComponentModeView({ id, type, name, children, onClose }: ViewProps) {
     meta: {
       viewId: viewId,
       viewType: viewType,  // ✅ 传递type信息
+      viewGeneration: generationRef.current!, // M3 compatibility
+      get viewInstanceId() { return instanceRef.current ?? undefined; },
       appId: appContext.appId,
       desktopId: appContext.desktopId,
       markDirty: appContext.markDirty,
@@ -211,27 +235,31 @@ function ComponentModeView({ id, type, name, children, onClose }: ViewProps) {
         appContext.refExporter.unregisterRef(viewId, refId);
       },
     },
-    typeTools: appContext.typeTools, // [RFC-020] Expose Type Tool Registry
-    // 其他context字段可能需要stub实现
-    mountable: {
-      registerLink: undefined,
-      unregisterLink: undefined,
-      getBoundViewId: undefined,
-    },
-    dynamic: {
-      registerChildView: () => {
-        throw new Error('[AOTUI SDK] registerChildView not supported in component mode');
+    typeTools: appContext.typeTools, // Legacy API is unchanged.
+    viewTools: viewToolsPort ? {
+      refDeclarationSupport: viewToolsPort.refDeclarationSupport,
+      safeRefInvocationSupport: viewToolsPort.safeRefInvocationSupport,
+      safeOrdinaryInvocationSupport: viewToolsPort.safeOrdinaryInvocationSupport,
+      safeOrdinaryParametersInvocationSupport: viewToolsPort.safeOrdinaryParametersInvocationSupport,
+      safeSnapshotValueParametersInvocationSupport: viewToolsPort.safeSnapshotValueParametersInvocationSupport,
+      fingerprintReadOnlyParams: viewToolsPort.fingerprintReadOnlyParams
+        ? (params: unknown, additionalProperties: boolean) => viewToolsPort.fingerprintReadOnlyParams!(params, additionalProperties)
+        : undefined,
+      fingerprintOrdinaryParams: viewToolsPort.fingerprintOrdinaryParams
+        ? (params: unknown, additionalProperties: boolean) => viewToolsPort.fingerprintOrdinaryParams!(params, additionalProperties)
+        : undefined,
+      safeCreateIfAbsentInvocationSupport: viewToolsPort.safeCreateIfAbsentInvocationSupport,
+      fingerprintParams: (params: unknown) => viewToolsPort.fingerprintParams(params),
+      registerTool: (toolName: string, definition: import("@aotui/runtime/spi").TypeToolDefinition,
+        options?: import("@aotui/runtime/spi").ViewToolRegistrationOptions) => {
+        if (!instanceRef.current) {
+          throw new Error('[AOTUI SDK] View-local Tool cannot register before View mount');
+        }
+        return viewToolsPort.registerTool(instanceRef.current, toolName, definition, options);
       },
-      unregisterChildView: () => {
-        throw new Error('[AOTUI SDK] unregisterChildView not supported in component mode');
-      },
-    },
+    } : undefined,
     config: appContext.launchConfig ?? {},
-    llmOutput: {
-      subscribe: () => () => { },
-      getHistory: () => [],
-    },
-  }), [viewId, viewType, appContext.launchConfig]);
+  }), [viewId, viewType, appContext.launchConfig, viewToolsPort]);
 
   // 渲染
   return h(
@@ -240,9 +268,10 @@ function ComponentModeView({ id, type, name, children, onClose }: ViewProps) {
     h(
       'div',
       {
-        ref: containerRef,
+        ref: attachContainer,
         id: viewId,
         'data-view-id': viewId,
+        'data-view-generation': generationRef.current,
         'data-view-type': viewType,  // ✅ 添加type属性
         'data-view-name': displayName,
         view: displayName

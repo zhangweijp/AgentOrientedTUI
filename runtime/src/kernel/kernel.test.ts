@@ -5,14 +5,12 @@ import { IDesktopManager, Operation } from '../spi/index.js';
 // Mocks
 vi.mock('../engine/desktop-manager/index.js'); // Mock DesktopManager
 vi.mock('../registry/index.js');
-vi.mock('../transformer/index.js');
 vi.mock('../dispatcher/index.js');
 
 describe('Kernel', () => {
     let kernel: Kernel;
     let mockDesktopManager: any; // Mocked IDesktopManager
     let mockRegistry: any;
-    let mockTransformer: any;
     let mockDispatcher: any;
     let mockSystemOps: any;
 
@@ -53,9 +51,6 @@ describe('Kernel', () => {
             retain: vi.fn(),
             release: vi.fn(),
             resolve: vi.fn()
-        };
-        mockTransformer = {
-            transform: vi.fn().mockReturnValue({ markup: '# Test', indexMap: {} })
         };
         mockDispatcher = {
             // [P0-1 FIX] dispatch now returns OperationResult
@@ -129,7 +124,6 @@ describe('Kernel', () => {
         kernel = new Kernel(
             mockDesktopManager,
             mockRegistry,
-            mockTransformer,
             mockDispatcher,
             mockSystemOps
         );

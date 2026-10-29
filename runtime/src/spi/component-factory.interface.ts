@@ -18,6 +18,11 @@ import type { ViewID } from './core/index.js';
 import type { AppID } from './core/index.js';
 import type { DesktopID } from './core/index.js';
 import type { AppLaunchConfig } from './app/app-config.interface.js';
+import type { IProjectionPort } from './runtime/projection.interface.js';
+import type { IViewOwnedToolPort } from './runtime/view-owned-tools.interface.js';
+import type { AppLifecyclePort } from './runtime/app-lifecycle.interface.js';
+import type { AppStatePersistence } from './runtime/state-persistence.interface.js';
+export type { AppStatePersistence, StateValue, StateIssue, StateBinding, StateBindingStatus, StateFlushReport } from './runtime/state-persistence.interface.js';
 
 // ═══════════════════════════════════════════════════════════════
 //  Runtime Context
@@ -30,6 +35,8 @@ import type { AppLaunchConfig } from './app/app-config.interface.js';
  * SDK通过这些接口与Runtime交互，无需知道Runtime内部实现。
  */
 export interface RuntimeContext {
+    persistence?: AppStatePersistence;
+    appLifecycle?: AppLifecyclePort;
     /** 应用ID */
     appId: AppID;
 
@@ -81,6 +88,12 @@ export interface RuntimeContext {
      * 当View内容变化时调用，触发Runtime重新推送
      */
     markDirty: () => void;
+
+    /** M3 optional semantic projection transaction port (no DOM/Preact types). */
+    projection?: IProjectionPort;
+
+    /** M4 Stage 1: optional per-View Tool registration, not Agent execution. */
+    viewTools?: IViewOwnedToolPort;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -106,7 +119,7 @@ export interface ComponentRenderer {
      * 
      * 清理所有组件、移除DOM、解绑事件
      */
-    unmount: () => void;
+    unmount: () => void | Promise<void>;
 
     // [未来扩展]
     // pause?: () => void;    // 暂停组件更新
@@ -129,6 +142,8 @@ export interface ComponentRenderer {
  * - Runtime: 提供容器、注入运行时能力、管理生命周期
  */
 export interface ComponentFactory {
+    readonly persistenceSupport?: 'state-session-v1';
+    readonly appLifecycleSupport?: 'app-lifecycle-v2';
     /**
      * 初始化组件
      * 

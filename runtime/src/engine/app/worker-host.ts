@@ -1,3 +1,11 @@
+import { captureAppLifecycleAck, captureAppCleanupReport } from '../../adapters/app-lifecycle-protocol.js';
+import { withExecutableTools } from '../../adapters/semantic-capability-policy.js';
+import type { AppCleanupReport } from '../../spi/runtime/app-lifecycle.interface.js';
+import { createStateStorageHost, resolveStateDirectory, type StateStorageBackend } from './state-storage-host.js';
+import { capturePersistenceAck, captureManagedPersistenceReport, DEFAULT_STATE_SESSION_LIMITS, DEFAULT_STATE_TRANSPORT_LIMITS } from '../../adapters/storage/state-storage-protocol.js';
+import type { ManagedPersistenceReport } from '../../worker-runtime/state-persistence.js';
+import { compileSnapshotValueProfile } from '../../core/tool/snapshot-value-parameter-contract.js';
+import { captureRefV2Request, captureRefV2Terminal, REF_V2_CAPABILITY, REF_V2_MODE } from '../../adapters/ref-invocation-v2.js';
 /**
  * AppWorkerHost - 主线程端 Worker 管理器
  * 
@@ -9,7 +17,23 @@
  * @module @aotui/runtime/engine/app-worker
  */
 
+import {isCreateIfAbsentSchema,matchesCreateIfAbsentInput} from '../../core/tool/create-if-absent-contract.js';
+import {captureCreateIfAbsentV1Request,captureCreateIfAbsentV1Terminal,CREATE_IF_ABSENT_V1_CAPABILITY,CREATE_IF_ABSENT_V1_MODE} from '../../adapters/create-if-absent-invocation-v1.js';
+import { isClosedEmptyOrdinarySchema } from '../../core/tool/view-owned-tools.js';
+import { captureOrdinaryV1Request, captureOrdinaryV1Terminal, ORDINARY_V1_CAPABILITY, ORDINARY_V1_MODE } from '../../adapters/ordinary-invocation-v1.js';
+import type { InteractionMode } from '../../spi/worker-protocol/messages.js';
+import { captureInteractionModes } from './interaction-config.js';
+import { compileOrdinaryProfile, ORDINARY_PARAMETER_MARKER } from '../../core/tool/ordinary-parameter-profile.js';
+import { captureOrdinaryV2Request, captureOrdinaryV2Terminal, ORDINARY_V2_CAPABILITY, ORDINARY_V2_MODE } from '../../adapters/ordinary-invocation-v2.js';
 import { Worker } from 'worker_threads';
+import { randomUUID } from 'node:crypto';
+import { SnapshotShadowReceiver, type SnapshotShadowReport } from '../../adapters/snapshot/shadow-receiver.js';
+import { copyJson } from '../../core/snapshot/json.js';
+import type { CancellationSignal, ExecutionBinding, ExecutionFact, InteractionAuthority, InteractionStats,
+    InvocationSource, OperationResultData, ScopePolicy } from '../../core/invocation/scoped-interaction.js';
+import { validateToolRefDeclarations } from '../../core/tool/ref-declarations.js';
+import { captureRefCapabilities, captureRefV1Request, captureRefV1Terminal, refV1Failure,
+    refV1Unknown, REF_V1_CAPABILITY, REF_V1_MODE } from '../../adapters/ref-invocation-v1.js';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 
@@ -21,8 +45,8 @@ import {
     type RequestID,
     type MainToWorkerMessage,
     type WorkerToMainMessage,
-    type ResponseBase,
     type SnapshotFragmentPush,
+    type ViewToolInvokeRefV1Message,
     type DataPayload,
     isResponse,
     isRequest,
@@ -41,6 +65,11 @@ interface PendingRequest {
     resolve: (value: any) => void;
     reject: (error: Error) => void;
     timeout: ReturnType<typeof setTimeout>;
+    init?: { worker: Worker; version: number; requested: readonly string[] };
+    ref?: { worker: Worker; version: number; scoped?: boolean; mode: InteractionMode };
+    viewTool?: true;
+    persistence?: 'APP_SHUTDOWN' | 'APP_CLOSE';
+    appCleanup?: 'APP_STOP' | 'APP_SHUTDOWN' | 'APP_CLOSE';
 }
 
 /**
@@ -50,6 +79,7 @@ interface PendingRequest {
  * AppWorkerHost 配置
  */
 export interface AppWorkerHostConfig {
+    persistenceBackend?: StateStorageBackend;
     appId: AppID;
     desktopId: DesktopID;
     name?: string;  // App name for TUI output
@@ -63,12 +93,32 @@ export interface AppWorkerHostConfig {
     existingWorker?: Worker; // [WorkerPool] 复用的 Worker 实例
     config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig; // Configuration Injection
     runtimeConfig?: { worker: WorkerConfig }; // [RFC-005] Runtime Config
+    /** M2: opt-in observational Core Snapshot path. Off by default. */
+    snapshotShadow?: boolean;
+    /** Only development/explicit opt-in: allows source-checked read-only View Tools. */
+    experimentalReadOnlyViewTools?: boolean;
+    /** Separate experimental opt-in: versioned File resource mutation with trusted policy/adapter. */
+    experimentalVersionedMutations?: boolean;
+    /** Versioned Ref protocol only; W02 still cannot enter a Ref Handler. */
+    experimentalSnapshotValueRefExecution?: boolean;
+    experimentalInteractionModes?: readonly InteractionMode[];
 }
 
 /**
  * Worker 状态
  */
-export type WorkerStatus = 'starting' | 'ready' | 'running' | 'paused' | 'closed' | 'error';
+export type WorkerStatus = 'starting' | 'ready' | 'running' | 'paused' | 'closing' | 'closed' | 'error';
+export interface HostResourceReport {
+    readonly state: 'active' | 'closing' | 'settled';
+    readonly worker: 'not-created' | 'owned' | 'retiring' | 'exited' | 'transferred';
+    readonly activeFileReplacements: number;
+    readonly appCleanup?: Readonly<{ support: 'offered' | 'managed' | 'legacy-unverified' | 'rejected'; report?: AppCleanupReport }>;
+    readonly storage: ReturnType<AppWorkerHost['getPersistenceReport']>;
+    readonly interactions: { readonly closed: boolean; readonly retainedScopes: number; readonly retainedBytes: number };
+    readonly resourcesReleased: boolean;
+    readonly issues: readonly ('WORKER_ERROR' | 'WORKER_EXITED_UNEXPECTEDLY' | 'WORKER_TERMINATION_FAILED' | 'RESET_FAILED')[];
+}
+
 
 /**
  * AppWorkerHost - 主线程端 Worker 管理
@@ -85,6 +135,224 @@ export class AppWorkerHost {
     private readonly timeout: number;
     private readonly appModulePath: string;
     private readonly workerScriptPath: string;
+    /** Assigned by the Runtime per logical App execution; distinct from Worker thread ID. */
+    readonly appInstanceId: string;
+    private readonly shadowReceiver?: SnapshotShadowReceiver;
+    private readonly enableReadOnlyViewTools: boolean;
+    private readonly enableVersionedMutations: boolean;
+    private readonly enableSnapshotValueRefExecution: boolean;
+    private readonly interactionModes: readonly InteractionMode[];
+    private createCapability: {worker:Worker;version:number}|null=null;
+    private ordinaryParametersCapability: { worker: Worker; version: number } | null = null;
+    private ordinaryCapability: { worker: Worker; version: number } | null = null;
+    private snapshotValueParametersCapability: { worker: Worker; version: number } | null = null;
+    private refCapability: { worker: Worker; version: number } | null = null;
+    private interactionTransportUncertain = false;
+    private interactionsClosed = false;
+    private readonly interactionBindings = new WeakMap<InvocationSource, ExecutionBinding>();
+    /** Fail closed after an experimental write until V2 observes its resulting version. */
+    private readonly unobservedFileVersions = new Map<string, string>();
+    private activeFileReplacements = 0;
+    private readonly fileReplacementWaiters: Array<() => void> = [];
+    private terminateAfterFileReplacement = false;
+    private closePromise: Promise<void> | null = null;
+    private releasePromise: Promise<Worker | null> | null = null;
+    private readonly lifecycleRequests = new Set<Promise<void>>();
+    private lifecycleContextVersion = 0;
+    private shadowInitAttempted = false;
+    private initAttempted = false;
+    private readonly persistenceHost: ReturnType<typeof createStateStorageHost>;
+    private persistenceSupport: 'offered' | 'managed' | 'legacy-unverified' | 'rejected' = 'offered';
+    private persistenceUnsafe = false;
+    private lastPersistence?: ManagedPersistenceReport;
+    private appLifecycleSupport: 'offered' | 'managed' | 'legacy-unverified' | 'rejected' = 'offered';
+    private appStopRequested = false;
+    private appStopPromise?: Promise<void>;
+    private lastAppCleanup?: AppCleanupReport;
+
+    getPersistenceReport() {
+        return Object.freeze({ support: this.persistenceSupport, unsafe: this.persistenceUnsafe,
+            ...this.persistenceHost.getStats(), ...(this.lastPersistence ? { lifecycle: this.lastPersistence } : {}) });
+    }
+    private resourceWorker: Worker | null = null;
+    private resourceWorkerState: HostResourceReport['worker'] = 'not-created';
+    private resourceExitListener?: () => void;
+    private resourceErrorListener?: () => void;
+    private actualExitResolve!: () => void;
+    private readonly actualExit = new Promise<void>(resolve => { this.actualExitResolve = resolve; });
+    private terminationRequested = false;
+    private resourceReleaseStarted = false;
+    private resourceSettled = false;
+    private resourcePromise?: Promise<HostResourceReport>;
+    private readonly resourceIssues = new Set<HostResourceReport['issues'][number]>();
+
+    getResourceReport(): HostResourceReport {
+        const storage = this.getPersistenceReport();
+        const core = this.shadowReceiver?.getInteractionStats();
+        const interactions = Object.freeze({ closed: this.interactionsClosed, retainedScopes: core?.scopes ?? 0, retainedBytes: core?.combinedBytes ?? 0 });
+        const resourcesReleased = ['not-created', 'exited', 'transferred'].includes(this.resourceWorkerState) &&
+            this.activeFileReplacements === 0 && storage.release?.status === 'released' && !storage.opening && storage.pending === 0 &&
+            interactions.closed && interactions.retainedScopes === 0 && interactions.retainedBytes === 0;
+        return Object.freeze({ state: this.resourceSettled ? 'settled' : this.resourceReleaseStarted || this.closePromise ? 'closing' : 'active',
+            appCleanup: Object.freeze({ support: this.appLifecycleSupport, ...(this.lastAppCleanup ? { report: this.lastAppCleanup } : {}) }),
+            worker: this.resourceWorkerState, activeFileReplacements: this.activeFileReplacements, storage, interactions, resourcesReleased,
+            issues: Object.freeze([...this.resourceIssues]) });
+    }
+    waitForResourceRelease(): Promise<HostResourceReport> {
+        if (!this.resourceReleaseStarted) return Promise.reject(Object.assign(new Error('Resource release has not started'), { code: 'RESOURCE_RELEASE_NOT_STARTED' }));
+        if (!this.resourcePromise) {
+            this.resourcePromise = Promise.resolve().then(async () => {
+                await Promise.allSettled([this.closePromise, this.releasePromise]);
+                await this.waitForFileReplacements();
+                // Do not close admission while the managed close attempt may still flush.
+                await this.persistenceHost.release();
+                if (this.resourceWorkerState === 'owned' || this.resourceWorkerState === 'retiring') await this.actualExit;
+                await this.shadowReceiver?.closeInteractions();
+                this.resourceSettled = true;return this.getResourceReport();
+            });
+            void this.resourcePromise.catch(() => {});
+        }
+        return this.resourcePromise;
+    }
+    private beginResourceRelease(): void {
+        this.resourceReleaseStarted = true;
+        // Defer reading releasePromise until the releasing caller has installed it.
+        void Promise.resolve().then(() => this.waitForResourceRelease()).catch(() => {});
+    }
+    private detachResourceListeners(worker: Worker): void {
+        if (this.resourceExitListener) worker.off('exit', this.resourceExitListener);
+        if (this.resourceErrorListener) worker.off('error', this.resourceErrorListener);
+    }
+    private workerMessageListener = this.handleMessage.bind(this);
+    private workerErrorListener = this.handleError.bind(this);
+    private workerExitListener = this.handleExit.bind(this);
+
+    beginInteractionClose(): void {
+        this.interactionsClosed = true;
+        this.revokeRefCapability();
+    }
+
+    private revokeRefCapability(): void {
+        this.shadowReceiver?.closeInteractions();
+        this.refCapability = null;
+        this.snapshotValueParametersCapability = null;
+        this.ordinaryCapability = null;
+        this.ordinaryParametersCapability = null;
+        this.createCapability = null;
+        for (const [id, pending] of this.pendingRequests) {
+            if (!pending.ref && !pending.viewTool) continue;
+            clearTimeout(pending.timeout);
+            this.pendingRequests.delete(id);
+            if (pending.ref) pending.resolve(this.unknownRef(pending.ref.scoped === true));
+            else {
+                this.interactionTransportUncertain = true;
+                pending.reject(new Error('View Tool execution revoked'));
+            }
+        }
+    }
+
+    /** Wire support is separate from any particular Tool wrapper's qualification. */
+    hasSnapshotValueRefCapability(): boolean {
+        return !this.interactionsClosed && this.enableSnapshotValueRefExecution && this.refCapability?.worker === this.worker &&
+            this.refCapability?.version === this.lifecycleContextVersion;
+    }
+
+    hasOrdinaryCapability(): boolean {
+        return !this.interactionsClosed && this.interactionModes.includes('ordinary-v1') && this.ordinaryCapability?.worker === this.worker &&
+            this.ordinaryCapability?.version === this.lifecycleContextVersion;
+    }
+
+    hasOrdinaryParametersCapability(): boolean {
+        return !this.interactionsClosed && this.interactionModes.includes('ordinary-v2') && this.ordinaryParametersCapability?.worker === this.worker &&
+            this.ordinaryParametersCapability?.version === this.lifecycleContextVersion;
+    }
+
+    hasSnapshotValueParametersCapability(): boolean {
+        return !this.interactionsClosed && this.interactionModes.includes('snapshot-value-v2') && this.snapshotValueParametersCapability?.worker === this.worker &&
+            this.snapshotValueParametersCapability?.version === this.lifecycleContextVersion;
+    }
+
+    hasCreateIfAbsentCapability(): boolean {
+        return !this.interactionsClosed && this.interactionModes.includes('create-if-absent-v1') && this.createCapability?.worker===this.worker && this.createCapability?.version===this.lifecycleContextVersion;
+    }
+
+    private unknownRef(scoped: boolean): ExecutionFact | OperationResult {
+        this.interactionTransportUncertain = true;
+        if (!scoped) return refV1Unknown();
+        return Object.freeze({ kind: 'unknown' });
+    }
+
+    private interactionAvailable(): boolean {
+        return !this.interactionsClosed && !!this.shadowReceiver && !!this.worker && (this.hasSnapshotValueParametersCapability() || this.hasSnapshotValueRefCapability() || this.hasOrdinaryCapability() || this.hasOrdinaryParametersCapability() || this.hasCreateIfAbsentCapability()) &&
+            this.status === 'running' && !this.interactionTransportUncertain && !this.closePromise && !this.releasePromise;
+    }
+
+    createInteractionScope(policy: ScopePolicy): ReturnType<InteractionAuthority['createScope']> {
+        if (!this.interactionAvailable()) return Object.freeze({ status: 'rejected', issue: Object.freeze({
+            code: 'REF_EXECUTION_UNAVAILABLE', message: 'Scoped Ref interaction is unavailable' }) });
+        const execution = { resolve: this.resolveInteractionSource };
+        return this.shadowReceiver!.createInteractionScope(withExecutableTools(policy, execution), execution);
+    }
+
+    getInteractionReport(): Readonly<{ mode: 'scoped' | 'scoped-ref-v1' | 'scoped-read-v1' | 'scoped-create-v1'; negotiatedModes: readonly InteractionMode[]; transportUncertain: boolean; core: InteractionStats }> | null {
+        const core = this.shadowReceiver?.getInteractionStats();
+        return core ? Object.freeze({
+            mode: this.interactionModes.includes('ordinary-v2') ? 'scoped' as const : this.interactionModes.includes('create-if-absent-v1') ? 'scoped-create-v1' as const : this.interactionModes.includes('ordinary-v1') ? 'scoped-read-v1' as const : 'scoped-ref-v1' as const,
+            negotiatedModes: Object.freeze(this.interactionModes.filter(mode => mode === 'create-if-absent-v1' ? this.hasCreateIfAbsentCapability() : mode === 'ordinary-v1' ? this.hasOrdinaryCapability() : mode === 'ordinary-v2' ? this.hasOrdinaryParametersCapability() : mode === 'snapshot-value-v2' ? this.hasSnapshotValueParametersCapability() : this.hasSnapshotValueRefCapability())),
+            transportUncertain: this.interactionTransportUncertain, core,
+        }) : null;
+    }
+
+    private readonly resolveInteractionSource = (source: InvocationSource): ExecutionBinding | null => {
+        if (!this.interactionAvailable() || source.appId !== String(this.appId) || source.instanceId !== this.appInstanceId) return null;
+        if (source.resource) return null;
+        const existing = this.interactionBindings.get(source);
+        if (existing) return existing;
+        const marked = source.tool.inputSchema !== null && typeof source.tool.inputSchema === 'object' &&
+            Object.hasOwn(source.tool.inputSchema, ORDINARY_PARAMETER_MARKER);
+        const parameters = marked ? compileOrdinaryProfile(source.tool.inputSchema) : null;
+        const snapshotCompiled = marked ? compileSnapshotValueProfile(source.tool.inputSchema) : null;
+        const snapshotParameters = snapshotCompiled?.ok ? snapshotCompiled.contract : null;
+        if (marked && ((!parameters && !snapshotParameters) || snapshotParameters && source.tool.isMutating ||
+            !(snapshotParameters ? this.hasSnapshotValueParametersCapability() : this.hasOrdinaryParametersCapability()))) return null;
+        const creation=source.tool.isMutating && isCreateIfAbsentSchema(source.tool.inputSchema);
+        if(source.tool.isMutating && !creation && !parameters)return null;
+        const ordinary = !source.tool.isMutating && isClosedEmptyOrdinarySchema(source.tool.inputSchema);
+        if (snapshotParameters ? !this.hasSnapshotValueParametersCapability() : parameters ? !this.hasOrdinaryParametersCapability() : creation ? !this.hasCreateIfAbsentCapability() : ordinary ? !this.hasOrdinaryCapability() : !this.hasSnapshotValueRefCapability()) return null;
+        const worker = this.worker!, version = this.lifecycleContextVersion;
+        const current = () => this.interactionAvailable() && this.worker === worker && this.lifecycleContextVersion === version && (!parameters || this.hasOrdinaryParametersCapability()) && (!snapshotParameters || this.hasSnapshotValueParametersCapability());
+        const binding: ExecutionBinding = Object.freeze({ identity: Object.freeze({}), mode: creation ? 'create-if-absent' : parameters || ordinary ? 'ordinary' : 'snapshot-value-v1',
+            validateInput: (_source, input) => {
+                if (snapshotParameters) { const result = snapshotParameters.validateEffective(input); return result.ok ? {ok:true as const,value:result.value} : {ok:false as const}; }
+                if (parameters) { const result = parameters.validate(input); return result.ok ? {ok:true as const,value:result.value} : {ok:false as const}; }
+                return (creation && !matchesCreateIfAbsentInput(source.tool.inputSchema,input) || ordinary && Object.keys(input).length !== 0) ? {ok:false as const} : {ok:true as const,value:input};
+            },
+            isLive: () => ({ ok: current() }),
+            execute: context => snapshotParameters ? this.sendRequest<ExecutionFact>({ type: 'VIEW_TOOL_INVOKE_REF_V2', requestId: generateRequestId(),
+                appId: context.source.appId as AppID, instanceId: context.source.instanceId, argumentMode: REF_V2_MODE,
+                snapshotId: context.source.snapshotId, tool: context.source.tool, target: context.source.target, rawArgs: context.rawInput,
+                effectiveArgs: context.effectiveInput, refSources: context.refSources }, { worker, version, signal: context.signal }) : parameters ? this.sendRequest<ExecutionFact>({ type:'VIEW_TOOL_INVOKE_ORDINARY_V2',requestId:generateRequestId(),
+                appId:context.source.appId as AppID,instanceId:context.source.instanceId,argumentMode:ORDINARY_V2_MODE,
+                snapshotId:context.source.snapshotId,tool:context.source.tool,target:context.source.target,args:context.effectiveInput,
+            },{worker,version,signal:context.signal}) : creation ? this.sendRequest<ExecutionFact>({type:'VIEW_TOOL_INVOKE_CREATE_IF_ABSENT_V1',requestId:generateRequestId(),
+                appId:context.source.appId as AppID,instanceId:context.source.instanceId,argumentMode:CREATE_IF_ABSENT_V1_MODE,
+                snapshotId:context.source.snapshotId,tool:context.source.tool,target:context.source.target,args:context.effectiveInput,
+            },{worker,version,signal:context.signal}) : ordinary ? this.sendRequest<ExecutionFact>({ type:'VIEW_TOOL_INVOKE_ORDINARY_V1',requestId:generateRequestId(),
+                appId:context.source.appId as AppID,instanceId:context.source.instanceId,argumentMode:ORDINARY_V1_MODE,
+                snapshotId:context.source.snapshotId,tool:context.source.tool,target:context.source.target,args:context.effectiveInput,
+            },{worker,version,signal:context.signal}) : this.sendRequest<ExecutionFact>({ type: 'VIEW_TOOL_INVOKE_REF_V1', requestId: generateRequestId(),
+                appId: context.source.appId as AppID, instanceId: context.source.instanceId, argumentMode: REF_V1_MODE,
+                snapshotId: context.source.snapshotId, tool: context.source.tool, target: context.source.target, rawArgs: context.rawInput,
+                effectiveArgs: context.effectiveInput, refSources: context.refSources }, { worker, version, signal: context.signal }),
+        } satisfies ExecutionBinding);
+        this.interactionBindings.set(source, binding);
+        return binding;
+    };
+
+    private waitForFileReplacements(): Promise<void> {
+        if (this.activeFileReplacements === 0) return Promise.resolve();
+        return new Promise(resolve => this.fileReplacementWaiters.push(resolve));
+    }
 
     // 回调: Worker 请求 notifyUpdate
     onUpdateRequest?: () => void;
@@ -93,7 +361,7 @@ export class AppWorkerHost {
     // 回调: Worker 请求 dismount 子 View
     onDismountChildRequest?: (viewId: ViewID) => Promise<void>;
 
-    private lastDomTimestamp: number = 0;
+    private lastLegacyCaptureSeq = 0;
 
     // [RFC-001] Snapshot Fragment Cache
     // [RFC-007] Added viewTree field
@@ -112,16 +380,36 @@ export class AppWorkerHost {
     } | null = null;
 
     constructor(config: AppWorkerHostConfig) {
+        const modes = captureInteractionModes(config);
         this.appId = config.appId;
         this.desktopId = config.desktopId;
         this.name = config.name;
         this.appModulePath = config.appModulePath;
+        this.appInstanceId = randomUUID();
+        this.enableReadOnlyViewTools = config.experimentalReadOnlyViewTools === true && config.snapshotShadow === true;
+        try {
+            if (modes === undefined) this.interactionModes = Object.freeze(
+                config.experimentalSnapshotValueRefExecution === true && this.enableReadOnlyViewTools ? ['snapshot-value-v1' as const] : []);
+            else {
+                if (modes.length > 0 && (config.snapshotShadow !== true || modes.some(mode => mode !== 'create-if-absent-v1' && mode !== 'ordinary-v2') && !this.enableReadOnlyViewTools)) throw new Error();
+                this.interactionModes = modes;
+            }
+        } catch { throw Object.assign(new Error('Invalid experimental interaction modes'), { code: 'INTERACTION_MODES_INVALID' }); }
+        this.enableSnapshotValueRefExecution = this.interactionModes.includes('snapshot-value-v1');
+        this.enableVersionedMutations = config.experimentalVersionedMutations === true && config.snapshotShadow === true;
+        if (config.snapshotShadow === true) {
+            this.shadowReceiver = new SnapshotShadowReceiver(String(this.appId), this.appInstanceId);
+        }
         // [C1 Fix] Default to Runtime's built-in worker-runtime
         this.workerScriptPath = config.workerScriptPath ?? DEFAULT_WORKER_SCRIPT;
 
         // [RFC-005] Use Runtime Config
         const workerConfig = config.runtimeConfig?.worker ?? WORKER_DEFAULTS;
         this.timeout = config.timeout ?? workerConfig.timeoutMs;
+        if (!Number.isSafeInteger(this.timeout) || this.timeout < 1 || this.timeout > 300000) throw new Error('INVALID_INPUT: Worker timeout must be 1–300000 ms');
+        this.persistenceHost = createStateStorageHost({ instanceId: this.appInstanceId, desktopId: String(this.desktopId),
+            rootDirectory: resolveStateDirectory(config.config), backend: config.persistenceBackend,
+            limits: { ...DEFAULT_STATE_TRANSPORT_LIMITS, timeoutMs: this.timeout } });
 
         this.config = config.config; // ✨ Store config
 
@@ -136,42 +424,78 @@ export class AppWorkerHost {
      * 启动 Worker 并初始化 App
      */
     async start(): Promise<void> {
-        if (!this.worker) {
-            // 创建新 Worker
-            this.worker = new Worker(this.workerScriptPath, {
-                workerData: {
-                    appId: this.appId,
-                    desktopId: this.desktopId,
-                    appModulePath: this.appModulePath,
-                },
-            });
-            this.bindWorkerListeners();
+        if (this.initAttempted || this.status === 'closed') throw new Error('APP_INSTANCE_REUSE_UNSUPPORTED: Create a new Host for another initialization');
+        this.initAttempted = true;
+        if (this.shadowReceiver) {
+            if (this.shadowInitAttempted || this.status !== 'starting' || this.closePromise || this.releasePromise) {
+                throw new Error('APP_INSTANCE_REUSE_UNSUPPORTED: Create a new Host for another Shadow initialization');
+            }
+            this.shadowInitAttempted = true;
         }
+        if (this.status === 'closing' || this.closePromise || this.releasePromise) {
+            throw new Error('Cannot start an App while shutdown is pending');
+        }
+        try {
+            if (!this.worker) {
+                // 创建新 Worker
+                this.worker = new Worker(this.workerScriptPath, {
+                    workerData: {
+                        appId: this.appId,
+                        desktopId: this.desktopId,
+                        appModulePath: this.appModulePath,
+                    },
+                });
+                this.bindWorkerListeners();
+            }
 
-        // 发送初始化消息
-        // 注意: 即使是复用的 Worker，也需要发送 INIT 消息来加载 App 模块
-        await this.sendRequest<void>({
-            type: 'INIT',
-            requestId: generateRequestId(),
-            appId: this.appId,
-            desktopId: this.desktopId,
-            appModulePath: this.appModulePath,
-            config: this.config, // ✨ Send config to Worker
-        });
-
-        this.status = 'ready';
+            // 发送初始化消息
+            // 注意: 即使是复用的 Worker，也需要发送 INIT 消息来加载 App 模块
+            await this.sendLifecycleRequest({
+                type: 'INIT',
+                requestId: generateRequestId(),
+                appId: this.appId,
+                desktopId: this.desktopId,
+                appModulePath: this.appModulePath,
+                config: this.config, // ✨ Send config to Worker
+                persistence: { protocol: 'state-session-v1', version: 1, instanceId: this.appInstanceId,
+                    limits: DEFAULT_STATE_SESSION_LIMITS, transport: { ...DEFAULT_STATE_TRANSPORT_LIMITS, timeoutMs: this.timeout } },
+                appInstanceId: this.appInstanceId, // Runtime-owned even when Shadow is off.
+                ...(this.shadowReceiver ? { snapshotShadow: true } : {}),
+                ...(this.enableReadOnlyViewTools ? { experimentalReadOnlyViewTools: true } : {}),
+                ...(this.enableVersionedMutations ? { experimentalVersionedMutations: true } : {}),
+                appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: this.appInstanceId },
+                ...(this.interactionModes.length ? { requestedCapabilities: this.interactionModes.map(m=>m==='create-if-absent-v1'?CREATE_IF_ABSENT_V1_CAPABILITY:m==='ordinary-v1'?ORDINARY_V1_CAPABILITY:m==='ordinary-v2'?ORDINARY_V2_CAPABILITY:m==='snapshot-value-v2'?REF_V2_CAPABILITY:REF_V1_CAPABILITY) } : {}),
+            }, 'ready');
+        } catch (error) {
+            if (this.shadowReceiver) {
+                this.revokeRefCapability();
+                this.shadowReceiver.close();
+            }
+            throw error;
+        }
     }
 
     private bindWorkerListeners(): void {
         if (!this.worker) return;
-        // 先移除旧的 (防止重复绑定)
-        this.worker.removeAllListeners('message');
-        this.worker.removeAllListeners('error');
-        this.worker.removeAllListeners('exit');
+        const worker = this.worker;
+        this.workerMessageListener = msg => { if (this.worker === worker) this.handleMessage(msg); };
+        this.workerErrorListener = error => { if (this.worker === worker) this.handleError(error); };
+        this.workerExitListener = code => { if (this.worker === worker) this.handleExit(code); };
+        this.resourceWorker = worker;this.resourceWorkerState = 'owned';
+        this.resourceErrorListener = () => { if (this.resourceWorker === worker) { this.beginInteractionClose();this.resourceIssues.add('WORKER_ERROR'); } };
+        this.resourceExitListener = () => {
+            if (this.resourceWorker !== worker || this.resourceWorkerState === 'transferred') return;
+            this.beginInteractionClose();
+            if (!this.terminationRequested) this.resourceIssues.add('WORKER_EXITED_UNEXPECTEDLY');
+            this.resourceWorkerState = 'exited';this.resourceWorker = null;
+            this.detachResourceListeners(worker);this.actualExitResolve();this.beginResourceRelease();
+        };
+        worker.on('error', this.resourceErrorListener);worker.once('exit', this.resourceExitListener);
+        if (worker.threadId < 0) this.resourceExitListener();
 
-        this.worker.on('message', this.handleMessage.bind(this));
-        this.worker.on('error', this.handleError.bind(this));
-        this.worker.on('exit', this.handleExit.bind(this));
+        this.worker.on('message', this.workerMessageListener);
+        this.worker.on('error', this.workerErrorListener);
+        this.worker.on('exit', this.workerExitListener);
     }
 
     /**
@@ -179,41 +503,64 @@ export class AppWorkerHost {
      * 
      * 会先发送 RESET 消息，成功后解绑监听器并返回 Worker 实例。
      */
-    async releaseWorker(): Promise<Worker | null> {
-        if (!this.worker || this.status === 'closed') return null;
-
-        try {
-            // 1. 发送 RESET
-            await this.sendRequest<void>({
-                type: 'RESET',
-                requestId: generateRequestId(),
-            });
-
-            const worker = this.worker;
-
-            // 2. 解绑监听器
-            worker.removeAllListeners('message');
-            worker.removeAllListeners('error');
-            worker.removeAllListeners('exit');
-
-            this.worker = null;
-            this.status = 'closed'; // Host 标记为关闭，但 Worker 存活
-
-            // 清理待处理请求
-            this.cleanupPendingRequests();
-
-            return worker;
-        } catch (error) {
-            console.error(`[AppWorkerHost] Failed to reset worker:`, error);
-            // 如果重置失败，直接终止
-            this.terminate();
-            return null;
+    releaseWorker(): Promise<Worker | null> {
+        this.beginInteractionClose();
+        this.beginResourceRelease();
+        if (this.shadowReceiver) this.shadowInitAttempted = true;
+        // Only one caller receives ownership of the pooled Worker. Other
+        // release callers still wait for RESET, but must not pool it twice.
+        if (this.releasePromise) return this.releasePromise.then(() => null);
+        if (!this.worker) {
+            this.shadowReceiver?.close();
+            return Promise.resolve(null);
         }
+        const closing = this.closePromise ?? (this.persistenceSupport === 'managed' || this.appLifecycleSupport === 'managed' ? this.close() : null);
+        const lifecycle = Promise.all([...this.lifecycleRequests]);
+        this.status = 'closing';
+        const release = async (): Promise<Worker | null> => {
+            let resetting = false;
+            try {
+                await Promise.all([closing, lifecycle, this.waitForFileReplacements()]);
+                if (!this.worker || this.terminateAfterFileReplacement) return null;
+                if (this.appLifecycleSupport === 'rejected' || this.appLifecycleSupport === 'managed' && this.lastAppCleanup?.state !== 'completed' || this.interactionTransportUncertain || this.persistenceUnsafe || this.persistenceHost.getStats().uncertain ||
+                    this.persistenceSupport === 'managed' && this.lastPersistence?.ok !== true) { this.terminate(); return null; }
+                this.status = 'closing';
+                // 1. 发送 RESET
+                resetting = true;
+                await this.sendRequest<void>({
+                    type: 'RESET',
+                    requestId: generateRequestId(),
+                });
+
+                const worker = this.worker;
+                if (!worker || this.terminationRequested || this.resourceWorkerState === 'exited') return null;
+                this.detachWorkerListeners(worker);this.detachResourceListeners(worker);
+                this.resourceWorkerState = 'transferred';this.resourceWorker = null;
+                this.worker = null;
+                this.status = 'closed'; // Host 标记为关闭，但 Worker 存活
+                this.shadowReceiver?.close();
+
+                // 清理待处理请求
+                this.cleanupPendingRequests();
+
+                return worker;
+            } catch (error) {
+                if (resetting) this.resourceIssues.add('RESET_FAILED');
+                // 如果重置失败，直接终止
+                await this.waitForFileReplacements();
+                this.terminate();
+                return null;
+            }
+        };
+        this.releasePromise = release().finally(() => { this.releasePromise = null; });
+        return this.releasePromise;
     }
 
     private cleanupPendingRequests(): void {
+        this.revokeRefCapability();
         for (const [, pending] of this.pendingRequests) {
             clearTimeout(pending.timeout);
+            if (pending.viewTool) this.interactionTransportUncertain = true;
             pending.reject(new Error('Worker released/terminated'));
         }
         this.pendingRequests.clear();
@@ -226,6 +573,10 @@ export class AppWorkerHost {
         return this.status;
     }
 
+    /** M2 diagnostic only. No snapshot data, Handler or live Ref is exposed. */
+    getSnapshotShadowReport(): SnapshotShadowReport | null {
+        return this.shadowReceiver?.report() ?? null;
+    }
 
 
     /**
@@ -264,50 +615,99 @@ export class AppWorkerHost {
     // ════════════════════════════════════════════════════════════════
 
     async open(): Promise<void> {
-        await this.sendRequest<void>({
+        if (this.status === 'closing') {
+            throw new Error('Cannot reopen an App while shutdown is pending');
+        }
+        await this.sendLifecycleRequest({
             type: 'APP_OPEN',
             requestId: generateRequestId(),
-        });
-        this.status = 'running';
+        }, 'running');
     }
 
     async pause(): Promise<void> {
-        await this.sendRequest<void>({
+        if (this.status === 'closing' || this.status === 'closed') {
+            throw new Error('Cannot pause an App while shutdown is pending');
+        }
+        await this.sendLifecycleRequest({
             type: 'APP_PAUSE',
             requestId: generateRequestId(),
-        });
-        this.status = 'paused';
+        }, 'paused');
     }
 
     async resume(): Promise<void> {
-        await this.sendRequest<void>({
+        if (this.status === 'closing') {
+            throw new Error('Cannot resume an App while shutdown is pending');
+        }
+        await this.sendLifecycleRequest({
             type: 'APP_RESUME',
             requestId: generateRequestId(),
-        });
-        this.status = 'running';
+        }, 'running');
     }
 
     async reinitialize(reason?: string): Promise<void> {
-        await this.sendRequest<void>({
+        this.beginInteractionClose();
+        if (this.status === 'closing' || this.status === 'closed') {
+            throw new Error('Cannot reinitialize an App while shutdown is pending');
+        }
+        await this.sendLifecycleRequest({
             type: 'APP_REINITIALIZE',
             requestId: generateRequestId(),
             reason,
         });
     }
 
-    async close(): Promise<void> {
-        // 发送 APP_SHUTDOWN 信号给SDK，触发持久化flush
-        await this.sendRequest<void>({
-            type: 'APP_SHUTDOWN',
-            requestId: generateRequestId(),
-        });
+    beginApplicationStop(): Promise<void> | undefined {
+        this.beginInteractionClose(); this.appStopRequested = true;
+        if (this.appLifecycleSupport !== 'managed' || !this.worker) return undefined;
+        if (!this.appStopPromise) {
+            this.appStopPromise = this.sendRequest<void>({ type: 'APP_STOP', requestId: generateRequestId() });
+            void this.appStopPromise.catch(() => {});
+        }
+        return this.appStopPromise;
+    }
 
-        // 发送 APP_CLOSE 关闭App
-        await this.sendRequest<void>({
-            type: 'APP_CLOSE',
-            requestId: generateRequestId(),
-        });
-        this.status = 'closed';
+    close(): Promise<void> {
+        this.beginInteractionClose();
+        // Multiple callers must share one shutdown, not send duplicate
+        // APP_SHUTDOWN/APP_CLOSE requests to the same Worker.
+        if (this.closePromise) return this.closePromise;
+        if (this.releasePromise) return this.releasePromise.then(() => undefined);
+        if (this.status === 'closed') return Promise.resolve();
+        if (this.terminateAfterFileReplacement) return this.waitForFileReplacements();
+        const lifecycle = Promise.all([...this.lifecycleRequests]);
+        this.status = 'closing';
+        const stopped = this.beginApplicationStop();
+        void stopped?.catch(() => {});
+        const finish = async () => {
+            try {
+                let stopError: unknown;
+                await Promise.allSettled([lifecycle, stopped, this.waitForFileReplacements()]);
+                try { await this.beginApplicationStop(); } catch (error) { stopError = error; }
+                if (this.terminateAfterFileReplacement || !this.worker) {
+                    this.terminate();
+                    return;
+                }
+                let shutdownError: unknown = stopError;
+                try { await this.sendRequest<void>({ type: 'APP_SHUTDOWN', requestId: generateRequestId() }); }
+                catch (error) { shutdownError = error; }
+                // A failed flush must still reach unmount/dispose and supervised release.
+                try { await this.sendRequest<void>({ type: 'APP_CLOSE', requestId: generateRequestId() }); }
+                catch (error) { shutdownError ??= error; }
+                if (shutdownError) throw shutdownError;
+                if (this.persistenceSupport === 'managed' && (!this.lastPersistence?.ok || this.persistenceHost.getStats().uncertain ||
+                    this.persistenceHost.getStats().release?.status !== 'released')) {
+                    this.persistenceUnsafe = true;throw new Error('PERSISTENCE_CLOSE_FAILED: Managed persistence did not complete');
+                }
+                this.status = 'closed';
+                this.shadowReceiver?.close();
+            } catch (error) {
+                await this.waitForFileReplacements();
+                this.terminate();
+                throw error;
+            }
+        };
+        this.closePromise = finish();
+        return this.closePromise;
     }
 
     /**
@@ -317,6 +717,7 @@ export class AppWorkerHost {
      * Note: This does NOT close the worker, you must call close() after delete().
      */
     async delete(): Promise<void> {
+        this.beginInteractionClose();
         await this.sendRequest<void>({
             type: 'APP_DELETE',
             requestId: generateRequestId(),
@@ -369,6 +770,355 @@ export class AppWorkerHost {
         });
     }
 
+    /**
+     * M4 experimental: a source-bound, read-only View Tool invocation.
+     * Requires explicit Host opt-in AND a caller-provided trusted policy.
+     * Never used by the default Agent Tool router. Mutating Tools fail closed.
+     */
+    /** Retired W02 entry: cannot send an executable request without a Controller. */
+    async validateSnapshotValueRefTool(_request: unknown): Promise<OperationResult> {
+        return refV1Failure('REF_EXECUTION_UNAVAILABLE', 'Use the authorized Ref invocation entry');
+    }
+
+    /** Pre-Scope experimental compatibility entry; new Scopes use the fact transport directly. */
+    async executeSnapshotValueRefTool(request: unknown, authorize: (context: Readonly<{
+        source: Readonly<{ appId: string; instanceId: string; snapshotId: string; toolId: string;
+            viewId: string; viewInstanceId: string; bindingVersion: number }>;
+        effectiveArgs: Readonly<Record<string, unknown>>;
+        refSources: readonly import('../../core/tool/snapshot-value-arguments.js').SnapshotValueRefSource[];
+    }>) => unknown | Promise<unknown>): Promise<OperationResult> {
+        if (this.interactionTransportUncertain || !this.hasSnapshotValueRefCapability() || !this.shadowReceiver || this.status !== 'running') {
+            return refV1Failure('REF_EXECUTION_UNAVAILABLE', 'Current Worker has no negotiated Ref capability');
+        }
+        let prepared;
+        try { prepared = this.shadowReceiver.prepareSnapshotValueArguments(request); }
+        catch { return refV1Failure('OPERATION_INVALID_ARGS', 'Ref preparation could not be completed'); }
+        if (prepared.status === 'rejected') return refV1Failure(prepared.issue.code, prepared.issue.message);
+        let sending = false;
+        try {
+            if (Object.hasOwn(prepared.tool.inputSchema as object, ORDINARY_PARAMETER_MARKER))
+                return refV1Failure('REF_CONTRACT_UNSUPPORTED', 'Versioned parameter profiles require their negotiated channel');
+            let allowed: unknown;
+            try {
+                allowed = typeof authorize === 'function' && await authorize(Object.freeze({
+                    source: Object.freeze({ ...prepared.sourceRequest, viewInstanceId: prepared.target.viewInstanceId,
+                        bindingVersion: prepared.target.bindingVersion }),
+                    effectiveArgs: prepared.effectiveArgs, refSources: prepared.refSources,
+                }));
+            } catch { return refV1Failure('TOOL_AUTHORIZATION_FAILED', 'Tool authorization failed'); }
+            if (allowed !== true) return refV1Failure('TOOL_PERMISSION_DENIED', 'Tool authorization was not granted');
+            if (this.interactionTransportUncertain || !this.hasSnapshotValueRefCapability() || this.status !== 'running') {
+                return refV1Failure('REF_EXECUTION_UNAVAILABLE', 'Current Worker has no negotiated Ref capability');
+            }
+            const current = this.shadowReceiver.selectToolSource(prepared.sourceRequest);
+            if (current.status === 'rejected') return refV1Failure(current.issue.code, 'Tool source is unavailable');
+            current.release();
+            const message: ViewToolInvokeRefV1Message = { type: 'VIEW_TOOL_INVOKE_REF_V1', requestId: generateRequestId(),
+                appId: this.appId, instanceId: this.appInstanceId, snapshotId: prepared.sourceRequest.snapshotId,
+                argumentMode: REF_V1_MODE, tool: prepared.tool, target: prepared.target,
+                rawArgs: prepared.rawArgs, effectiveArgs: prepared.effectiveArgs, refSources: prepared.refSources };
+            // sendRequest captures/bounds the complete envelope before registering pending work.
+            sending = true;
+            return await this.sendRequest<OperationResult>(message);
+        } catch { return sending ? this.unknownRef(false) as OperationResult : refV1Failure('REF_EXECUTION_UNAVAILABLE', 'Ref invocation could not be prepared'); }
+        finally { prepared.release(); }
+    }
+
+    async executeReadOnlyViewTool(
+        request: {
+            snapshotId: string;
+            toolId: string;
+            viewId: string;
+            args: Record<string, unknown>;
+        },
+        authorize: (context: {
+            appId: string; snapshotId: string; toolId: string;
+            viewId: string; viewInstanceId: string;
+            args: Readonly<Record<string, unknown>>;
+        }) => boolean | Promise<boolean>,
+    ): Promise<OperationResult> {
+        const reject = (code: string, message: string): OperationResult =>
+            ({ success: false, error: { code, message } });
+        if (this.interactionsClosed || this.interactionTransportUncertain || !this.enableReadOnlyViewTools || !this.shadowReceiver || this.status !== 'running') {
+            return reject('TOOL_UNAVAILABLE', 'Experimental View Tool execution is disabled');
+        }
+        let stableRequest: Readonly<typeof request>;
+        try {
+            const copied = copyJson(request, {
+                maxDepth: 25, maxNodes: 10_004, maxApproxBytes: 136 * 1024,
+            });
+            if (!copied || typeof copied !== 'object' || Array.isArray(copied)) {
+                throw new Error('Expected a request object');
+            }
+            const values = copied as Readonly<Record<string, unknown>>;
+            if (Object.keys(values).length !== 4 ||
+                ['snapshotId', 'toolId', 'viewId'].some(field =>
+                    typeof values[field] !== 'string' || !(values[field] as string).trim()) ||
+                !values.args || typeof values.args !== 'object' || Array.isArray(values.args)) {
+                throw new Error('Invalid request fields');
+            }
+            // Recheck the original args budget on the frozen copy, never by
+            // reading caller data again. Execute only the first complete copy.
+            copyJson(values.args, { maxDepth: 24, maxNodes: 10_000, maxApproxBytes: 128 * 1024 });
+            stableRequest = copied as unknown as typeof request;
+        } catch {
+            return reject('OPERATION_INVALID_ARGS', 'Expected a getter-free JSON request within read-only Tool limits');
+        }
+        const sourceRequest = {
+            snapshotId: stableRequest.snapshotId,
+            appId: String(this.appId),
+            instanceId: this.appInstanceId,
+            toolId: stableRequest.toolId,
+            viewId: stableRequest.viewId,
+        };
+        let selection: ReturnType<SnapshotShadowReceiver['selectToolSource']>;
+        try {
+            selection = this.shadowReceiver.selectToolSource(sourceRequest);
+        } catch {
+            return reject('VIEW_TOOL_DISPATCH_FAILED', 'Read-only View Tool source acquisition failed');
+        }
+        if (selection.status !== 'found') {
+            return reject(selection.issue.code, selection.issue.message);
+        }
+        try {
+            if (selection.tool.isMutating) {
+                return reject('TOOL_PERMISSION_DENIED', 'Mutating View Tools are not permitted');
+            }
+            if (validateToolRefDeclarations(selection.tool.inputSchema, selection.tool.isMutating)) {
+                return reject('REF_CONTRACT_UNSUPPORTED', 'Snapshot-value Ref execution is not implemented');
+            }
+            const args = stableRequest.args;
+            if (typeof authorize !== 'function' || await authorize(Object.freeze({
+                appId: String(this.appId),
+                snapshotId: selection.snapshotId,
+                toolId: selection.tool.id,
+                viewId: selection.target.viewId,
+                viewInstanceId: selection.target.viewInstanceId,
+                args,
+            })) !== true) {
+                return reject('TOOL_PERMISSION_DENIED', 'Tool authorization was not granted');
+            }
+            if (this.interactionsClosed || this.interactionTransportUncertain || this.status !== 'running') {
+                return reject('APP_STOPPED', 'App is no longer running');
+            }
+            // Authorization may await external state. Re-check Store and TTL
+            // after it resolves, before handing the source to the Worker.
+            const stillCurrent = this.shadowReceiver.selectToolSource(sourceRequest);
+            if (stillCurrent.status !== 'found') {
+                return reject(stillCurrent.issue.code, stillCurrent.issue.message);
+            }
+            stillCurrent.release();
+            return await this.sendRequest<OperationResult>({
+                type: 'VIEW_TOOL_INVOKE',
+                requestId: generateRequestId(),
+                appId: this.appId,
+                instanceId: this.appInstanceId,
+                tool: selection.tool,
+                target: selection.target,
+                args,
+            });
+        } catch {
+            return reject('VIEW_TOOL_DISPATCH_FAILED', 'Read-only View Tool dispatch or authorization failed');
+        } finally {
+            selection.release();
+        }
+    }
+
+    /**
+     * M4 Stage 6 experimental File mutation. NOT the default Agent Tool path.
+     * A trusted Controller supplies both the policy and an actual version-CAS
+     * resource adapter. The Worker validates its LIVE Tool binding but never
+     * runs a mutating SDK Handler; Core never imports filesystem dependencies.
+     *
+     * Cross-process noncooperating writes and async View teardown can still
+     * race a committed filesystem operation. This is NOT a Strict grant.
+     */
+    async executeVersionedFileReplace(
+        request: {
+            snapshotId: string; toolId: string; viewId: string; refId: string;
+            newContent: string;
+        },
+        authorize: (scope: Readonly<{
+            appId: string; appInstanceId: string; snapshotId: string; toolId: string;
+            viewId: string; viewInstanceId: string;
+            filePath: string; expectedVersion: string; newContent: string;
+        }>) => boolean | Promise<boolean>,
+        replace: (source: Readonly<{
+            filePath: string; expectedVersion: string; newContent: string;
+        }>) => Promise<
+            | { status: 'written'; version: string; cleanupWarning?: string }
+            | { status: 'conflict'; currentVersion: string }
+        >,
+    ): Promise<OperationResult> {
+        const denied = (code: string, message: string): OperationResult =>
+            ({ success: false, error: { code, message } });
+        if (this.interactionsClosed || !this.enableVersionedMutations || !this.shadowReceiver || this.status !== 'running') {
+            return denied('TOOL_UNAVAILABLE', 'Versioned mutations are disabled');
+        }
+        // Treat the caller's JS object like untrusted data. Freeze a single
+        // checked request BEFORE any async policy/Worker round trip; otherwise
+        // accessors or mutations could change the target/content mid-flight.
+        let stableRequest: Readonly<typeof request>;
+        try {
+            const copied = copyJson(request, {
+                maxDepth: 2, maxNodes: 12, maxApproxBytes: 4 * 1024 * 1024 + 8192,
+            });
+            if (!copied || typeof copied !== 'object' || Array.isArray(copied)) {
+                throw new Error('Expected a request object');
+            }
+            const fields = Object.keys(copied);
+            const values = copied as Readonly<Record<string, unknown>>;
+            const required = ['snapshotId', 'toolId', 'viewId', 'refId', 'newContent'];
+            if (fields.length !== required.length || required.some(field =>
+                typeof values[field] !== 'string' ||
+                (field !== 'newContent' && !(values[field] as string).trim()))) {
+                throw new Error('Invalid request field');
+            }
+            stableRequest = copied as unknown as typeof request;
+            if (Buffer.byteLength(stableRequest.newContent, 'utf8') > 4 * 1024 * 1024) {
+                throw new Error('File content exceeds size limit');
+            }
+        } catch {
+            return denied('OPERATION_INVALID_ARGS',
+                'Expected a plain, getter-free request with UTF-8 text no larger than 4 MiB');
+        }
+        const sourceRequest = {
+            snapshotId: stableRequest.snapshotId,
+            appId: String(this.appId),
+            instanceId: this.appInstanceId,
+            toolId: stableRequest.toolId,
+            viewId: stableRequest.viewId,
+            refId: stableRequest.refId,
+        };
+        let selection: ReturnType<SnapshotShadowReceiver['selectVersionedEntitySource']>;
+        try {
+            selection = this.shadowReceiver.selectVersionedEntitySource(sourceRequest);
+        } catch {
+            return denied('RESOURCE_MUTATION_FAILED', 'Versioned source acquisition failed');
+        }
+        if (selection.status !== 'found') {
+            return denied(selection.issue.code, selection.issue.message);
+        }
+        try {
+            if (selection.resource.entityType !== 'File' ||
+                !/^sha256:[0-9a-f]{64}$/.test(selection.resource.entityVersion)) {
+                return denied('RESOURCE_VERSION_REQUIRED', 'Expected a versioned File entity');
+            }
+            if (selection.tool.name !== 'replace_file') {
+                return denied('TOOL_PERMISSION_DENIED',
+                    'File replacement requires an explicitly declared replace_file Tool');
+            }
+            if (typeof authorize !== 'function' || typeof replace !== 'function') {
+                return denied('TOOL_PERMISSION_DENIED', 'Trusted policy and file adapter required');
+            }
+            const unobserved = () => {
+                const changed = this.unobservedFileVersions.get(selection.resource.entityId);
+                return changed !== undefined && changed !== selection.resource.entityVersion;
+            };
+            if (unobserved()) {
+                return denied('SNAPSHOT_SOURCE_CONFLICT',
+                    'File mutation has not yet been reflected in the V2 Snapshot');
+            }
+            const write = Object.freeze({
+                filePath: selection.resource.entityId,
+                expectedVersion: selection.resource.entityVersion,
+                newContent: stableRequest.newContent,
+            });
+            const scope = Object.freeze({
+                appId: String(this.appId), appInstanceId: this.appInstanceId,
+                snapshotId: selection.snapshotId, toolId: selection.tool.id,
+                viewId: selection.target.viewId, viewInstanceId: selection.target.viewInstanceId,
+                ...write,
+            });
+            if (await authorize(scope) !== true) {
+                return denied('TOOL_PERMISSION_DENIED', 'File mutation policy denied this request');
+            }
+            if (this.interactionsClosed || this.status !== 'running') {
+                return denied('APP_STOPPED', 'App closed before file mutation');
+            }
+            // An async policy may finish after a View/tool/ref or File version
+            // changed. Re-acquire the current Store source after every await.
+            const fresh = this.shadowReceiver.selectVersionedEntitySource(sourceRequest);
+            if (fresh.status !== 'found') return denied(fresh.issue.code, fresh.issue.message);
+            fresh.release();
+            if (unobserved()) return denied('SNAPSHOT_SOURCE_CONFLICT',
+                'Another File mutation completed during authorization');
+
+            const verified = await this.sendRequest<OperationResult>({
+                type: 'VIEW_TOOL_VALIDATE',
+                requestId: generateRequestId(),
+                appId: this.appId,
+                instanceId: this.appInstanceId,
+                tool: selection.tool,
+                target: selection.target,
+            });
+            if (!verified.success) return verified;
+            if (this.interactionsClosed || this.status !== 'running') return denied('APP_STOPPED', 'App closed before file mutation');
+
+            // A Worker round-trip can also race a Source revision.
+            const last = this.shadowReceiver.selectVersionedEntitySource(sourceRequest);
+            if (last.status !== 'found') return denied(last.issue.code, last.issue.message);
+            last.release();
+            if (unobserved()) return denied('SNAPSHOT_SOURCE_CONFLICT',
+                'Another File mutation completed before the write');
+            // The CAS adapter is trusted, but an exception can occur AFTER a
+            // successful rename. Do not falsely claim the disk write failed.
+            // Reserve synchronously before awaiting the adapter. Even identical
+            // content may replace the inode, so a concurrent source cannot replay.
+            this.unobservedFileVersions.set(write.filePath, 'outcome-pending');
+            this.activeFileReplacements++;
+            try {
+                let result: Awaited<ReturnType<typeof replace>>;
+                try {
+                    const copied = copyJson(await replace(write), {
+                        maxDepth: 2, maxNodes: 8, maxApproxBytes: 8192,
+                    });
+                    if (!copied || typeof copied !== 'object' || Array.isArray(copied)) {
+                        throw new Error('Invalid adapter result');
+                    }
+                    const fields = Object.keys(copied);
+                    const value = copied as Readonly<Record<string, unknown>>;
+                    const conflict = value.status === 'conflict';
+                    const allowed = conflict ? ['status', 'currentVersion'] : ['status', 'version', 'cleanupWarning'];
+                    const version = conflict ? value.currentVersion : value.version;
+                    if ((!conflict && value.status !== 'written') ||
+                        fields.some(field => !allowed.includes(field)) ||
+                        typeof version !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(version) ||
+                        ('cleanupWarning' in value && typeof value.cleanupWarning !== 'string')) {
+                        throw new Error('Invalid adapter result');
+                    }
+                    result = copied as unknown as Awaited<ReturnType<typeof replace>>;
+                } catch {
+                    this.unobservedFileVersions.set(write.filePath, 'outcome-unknown');
+                    return denied('RESOURCE_OUTCOME_UNKNOWN',
+                        'File adapter outcome unknown; inspect disk and refresh the App before retrying');
+                }
+                if (result.status === 'conflict') {
+                    this.unobservedFileVersions.delete(write.filePath);
+                    return denied('RESOURCE_VERSION_STALE', 'File changed since the source Snapshot');
+                }
+                // Same-content writes and unknown outcomes cannot be proved
+                // fresh by a content hash; retain their fail-closed fence.
+                this.unobservedFileVersions.set(write.filePath,
+                    result.version === write.expectedVersion ? 'version-unchanged' : result.version);
+                return { success: true, data: {
+                    filePath: write.filePath, version: result.version,
+                    ...(result.cleanupWarning ? { cleanupWarning: result.cleanupWarning } : {}),
+                } };
+            } finally {
+                this.activeFileReplacements--;
+                if (this.activeFileReplacements === 0) {
+                    for (const resume of this.fileReplacementWaiters.splice(0)) resume();
+                }
+            }
+        } catch {
+            // Thrown JS values can also contain accessors or Proxy traps.
+            return denied('RESOURCE_MUTATION_FAILED', 'Versioned file validation or authorization failed');
+        } finally {
+            selection.release();
+        }
+    }
+
     // ════════════════════════════════════════════════════════════════
     //  External Event
     // ════════════════════════════════════════════════════════════════
@@ -414,6 +1164,7 @@ export class AppWorkerHost {
             };
         }
     ): void {
+        if (this.status === 'closing' || this.status === 'closed') return;
         if (!this.worker) {
             console.warn('[AppWorkerHost] Cannot push LLM text: Worker not started');
             return;
@@ -438,12 +1189,33 @@ export class AppWorkerHost {
     // ════════════════════════════════════════════════════════════════
 
     terminate(): void {
+        this.beginInteractionClose();
+        this.terminationRequested = true;this.beginResourceRelease();
+        if (this.resourceWorkerState === 'owned') this.resourceWorkerState = 'retiring';
+        if (this.persistenceSupport === 'managed' && !this.lastPersistence?.ok) this.persistenceUnsafe = true;
+        if (this.activeFileReplacements > 0) {
+            this.status = 'closing';
+            if (!this.terminateAfterFileReplacement) {
+                this.terminateAfterFileReplacement = true;
+                void this.waitForFileReplacements().then(() => this.terminate());
+            }
+            return;
+        }
+        this.terminateAfterFileReplacement = false;
         if (this.worker) {
-            this.worker.postMessage({ type: 'TERMINATE' } as MainToWorkerMessage);
-            this.worker.terminate();
+            const worker = this.worker;
             this.worker = null;
+            this.detachWorkerListeners(worker);
+            try {
+                worker.postMessage({ type: 'TERMINATE' } as MainToWorkerMessage);
+            } catch {
+                // A broken channel must not prevent the native teardown.
+            }
+            try { void Promise.resolve(worker.terminate()).catch(() => { this.resourceIssues.add('WORKER_TERMINATION_FAILED'); }); }
+            catch { this.resourceIssues.add('WORKER_TERMINATION_FAILED'); }
         }
         this.status = 'closed';
+        this.shadowReceiver?.close();
 
         // 清理所有待处理请求
         this.cleanupPendingRequests();
@@ -455,38 +1227,207 @@ export class AppWorkerHost {
     //  Internal
     // ════════════════════════════════════════════════════════════════
 
-    private sendRequest<T>(message: MainToWorkerMessage): Promise<T> {
+    private async sendLifecycleRequest(
+        message: MainToWorkerMessage, nextStatus?: WorkerStatus,
+    ): Promise<void> {
+        if (this.status === 'closing' || this.closePromise || this.releasePromise) {
+            throw new Error('Cannot change App lifecycle while shutdown is pending');
+        }
+        if (message.type === 'INIT' || message.type === 'APP_REINITIALIZE') {
+            // A fresh Host cannot have a negotiated Scope before its first INIT.
+            if (message.type !== 'INIT' || this.lifecycleContextVersion !== 0) this.revokeRefCapability();
+            this.lifecycleContextVersion++;
+        }
+        const worker = this.worker;
+        const contextVersion = this.lifecycleContextVersion;
+        const pending = this.sendRequest<void>(message);
+        this.lifecycleRequests.add(pending);
+        try {
+            await pending;
+            if (this.worker !== worker || this.lifecycleContextVersion !== contextVersion) {
+                throw new Error('App lifecycle request was invalidated by a Worker or execution context change');
+            }
+            if (this.getStatus() === 'closing' || this.closePromise || this.releasePromise) {
+                throw new Error('App shutdown is pending; lifecycle response cannot reopen it');
+            }
+            if (nextStatus) this.status = nextStatus;
+        } finally {
+            this.lifecycleRequests.delete(pending);
+        }
+    }
+
+    private sendRequest<T>(message: MainToWorkerMessage, scoped?: { worker: Worker; version: number; signal: CancellationSignal }): Promise<T> {
+        if (['RESET', 'APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE'].includes(message.type)) this.lifecycleContextVersion++;
+        if (['RESET', 'APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE', 'APP_REINITIALIZE'].includes(message.type)) {
+            this.revokeRefCapability();
+        }
+        const creation=message.type==='VIEW_TOOL_INVOKE_CREATE_IF_ABSENT_V1';
+        const snapshotParameters = message.type === 'VIEW_TOOL_INVOKE_REF_V2';
+        const parameters = message.type === 'VIEW_TOOL_INVOKE_ORDINARY_V2';
+        const ordinary = message.type === 'VIEW_TOOL_INVOKE_ORDINARY_V1';
+        const ref = snapshotParameters || message.type === 'VIEW_TOOL_INVOKE_REF_V1' || ordinary || parameters || creation;
+        const viewTool = message.type === 'VIEW_TOOL_INVOKE';
         return new Promise((resolve, reject) => {
-            if (!this.worker) {
-                reject(new Error('Worker not started'));
+            const refused = (code: string, text: string) => scoped && creation ? {kind:'action',phase:'not-entered',outcome:{status:'rejected',code,message:text}} : scoped ? { kind: 'operation-result', phase: 'not-entered',
+                result: { success: false, error: { code, message: text } } } : refV1Failure(code, text);
+            const stale = () => scoped && (!this.interactionAvailable() || scoped.worker !== this.worker ||
+                scoped.version !== this.lifecycleContextVersion || scoped.signal.aborted);
+            if (ref && (this.interactionTransportUncertain || !(snapshotParameters ? this.hasSnapshotValueParametersCapability() : creation ? this.hasCreateIfAbsentCapability() : parameters ? this.hasOrdinaryParametersCapability() : ordinary ? this.hasOrdinaryCapability() : this.hasSnapshotValueRefCapability()) || this.status !== 'running' || stale())) {
+                resolve(refused('REF_EXECUTION_UNAVAILABLE', 'Current Worker has no negotiated Ref capability') as T);
                 return;
             }
-
-            const requestId = (message as any).requestId;
-            if (!requestId) {
-                reject(new Error('Message missing requestId'));
+            if ((viewTool || message.type === 'VIEW_TOOL_VALIDATE') && this.interactionsClosed || viewTool && this.interactionTransportUncertain) {
+                resolve(refV1Failure('TOOL_UNAVAILABLE', 'View Tool transport is uncertain') as T);
                 return;
             }
-
-            // 设置超时
+            if ((this.status === 'closing' || this.status === 'closed') && !['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'RESET'].includes(message.type)) {
+                reject(new Error('Cannot send a new request while App shutdown is pending'));
+                return;
+            }
+            if (this.appStopRequested && (message.type === 'APP_OPERATION' || message.type === 'VIEW_OPERATION')) {
+                resolve(refV1Failure('TOOL_UNAVAILABLE', 'App shutdown has stopped new operations') as T);
+                return;
+            }
+            const worker = this.worker;
+            if (!worker) { reject(new Error('Worker not started')); return; }
+            const requestId = 'requestId' in message ? message.requestId : undefined;
+            if (!requestId) { reject(new Error('Message missing requestId')); return; }
+            if (ref) {
+                try { message = snapshotParameters ? captureRefV2Request(message) : creation ? captureCreateIfAbsentV1Request(message) : parameters ? captureOrdinaryV2Request(message) : ordinary ? captureOrdinaryV1Request(message) : captureRefV1Request(message); }
+                catch {
+                    resolve(refused('REF_ARGUMENT_BUDGET_EXCEEDED', 'Complete Ref request exceeds the transport budget') as T);
+                    return;
+                }
+            }
+            if (stale()) { resolve(refused('REF_EXECUTION_UNAVAILABLE', 'Scoped Ref interaction is unavailable') as T); return; }
             const timeout = setTimeout(() => {
                 this.pendingRequests.delete(requestId);
-                reject(new Error(`Request ${requestId} timed out after ${this.timeout}ms`));
+                if (ref) resolve(this.unknownRef(!!scoped) as T);
+                else {
+                    if (viewTool) this.interactionTransportUncertain = true;
+                    reject(new Error(`Request ${requestId} timed out after ${this.timeout}ms`));
+                }
             }, this.timeout);
-
-            // 注册待处理请求
-            this.pendingRequests.set(requestId, { resolve, reject, timeout });
-
-            // 发送消息
-            this.worker.postMessage(message);
+            this.pendingRequests.set(requestId, { resolve, reject, timeout,
+                ...(this.appLifecycleSupport === 'managed' && (message.type === 'APP_STOP' || message.type === 'APP_SHUTDOWN' || message.type === 'APP_CLOSE') ? { appCleanup: message.type } : {}),
+                ...(this.persistenceSupport === 'managed' && (message.type === 'APP_SHUTDOWN' || message.type === 'APP_CLOSE') ? { persistence: message.type } : {}),
+                ...(viewTool ? { viewTool: true as const } : {}),
+                ...(ref ? { ref: { worker, version: this.lifecycleContextVersion, mode: snapshotParameters ? REF_V2_MODE : creation ? CREATE_IF_ABSENT_V1_MODE : parameters ? ORDINARY_V2_MODE : ordinary ? ORDINARY_V1_MODE : REF_V1_MODE, ...(scoped ? { scoped: true } : {}) } } : {}),
+                ...(message.type === 'INIT' ? { init: { worker, version: this.lifecycleContextVersion,
+                    requested: captureRefCapabilities(message.requestedCapabilities) ?? [] } } : {}),
+            });
+            try { worker.postMessage(message); }
+            catch {
+                clearTimeout(timeout);
+                this.pendingRequests.delete(requestId);
+                if (ref) resolve(this.unknownRef(!!scoped) as T);
+                else {
+                    if (viewTool) this.interactionTransportUncertain = true;
+                    reject(new Error('Worker request could not be sent'));
+                }
+            }
         });
     }
 
     private handleMessage(msg: WorkerToMainMessage): void {
+        if (!msg || typeof msg !== 'object') return;
+        const typeField = Object.getOwnPropertyDescriptor(msg, 'type');
+        if (!typeField || !('value' in typeField)) return;
+        if (typeField.value === 'STATE_STORAGE_REQUEST') {
+            if (this.persistenceSupport !== 'managed') return;
+            const worker = this.worker, response = this.persistenceHost.accept(msg);
+            if (response) void response.then(value => {
+                if (!worker || worker !== this.worker) return;
+                try { worker.postMessage(value); } catch { this.persistenceUnsafe = true;this.persistenceHost.markTransportUncertain();void this.persistenceHost.disconnect(); }
+            });
+            return;
+        }
+        // Routing reads only a data descriptor; terminal content is captured before validation.
+        const id = msg && typeof msg === 'object' ? Object.getOwnPropertyDescriptor(msg, 'requestId')?.value : undefined;
+        const refPending = typeof id === 'string' ? this.pendingRequests.get(id) : undefined;
+        if(refPending?.ref?.mode===CREATE_IF_ABSENT_V1_MODE){
+            const terminal=refPending.ref.worker===this.worker && refPending.ref.version===this.lifecycleContextVersion
+                ? captureCreateIfAbsentV1Terminal(msg,{requestId:id,appId:String(this.appId),instanceId:this.appInstanceId}) : null;
+            clearTimeout(refPending.timeout);this.pendingRequests.delete(id);
+            refPending.resolve(terminal ? {kind:'action',phase:terminal.phase,outcome:terminal.outcome} : this.unknownRef(true));return;
+        }
+        if (refPending?.ref) {
+            const terminal = refPending.ref.worker === this.worker && refPending.ref.version === this.lifecycleContextVersion
+                ? (refPending.ref.mode===REF_V2_MODE ? captureRefV2Terminal : refPending.ref.mode===ORDINARY_V2_MODE ? captureOrdinaryV2Terminal : refPending.ref.mode===ORDINARY_V1_MODE ? captureOrdinaryV1Terminal : captureRefV1Terminal)(msg, { requestId: id, appId: String(this.appId), instanceId: this.appInstanceId }) : null;
+            clearTimeout(refPending.timeout);
+            this.pendingRequests.delete(id);
+            refPending.resolve(refPending.ref.scoped ? terminal ? { kind: 'operation-result', phase: terminal.phase,
+                result: terminal.result as unknown as OperationResultData,
+                ...(terminal.phase === 'entered-returned' && terminal.failureEffects !== undefined ? { failureEffects: terminal.failureEffects } : {}) } : this.unknownRef(true) : terminal?.result ?? this.unknownRef(false));
+            return;
+        }
+        if (msg?.type === 'VIEW_TOOL_INVOKE_REF_V2_RESPONSE' || msg?.type === 'VIEW_TOOL_INVOKE_ORDINARY_V2_RESPONSE' || msg?.type === 'VIEW_TOOL_INVOKE_REF_V1_RESPONSE' || msg?.type === 'VIEW_TOOL_INVOKE_ORDINARY_V1_RESPONSE' || msg?.type==='VIEW_TOOL_INVOKE_CREATE_IF_ABSENT_V1_RESPONSE') return;
+
         // 处理响应消息
         if (isResponse(msg)) {
             const pending = this.pendingRequests.get(msg.requestId);
             if (pending) {
+                if (this.persistenceSupport === 'managed' && Object.getOwnPropertyDescriptor(msg, 'persistence')) {
+                    const report = captureManagedPersistenceReport(Object.getOwnPropertyDescriptor(msg, 'persistence')?.value, this.appInstanceId);
+                    if (report) this.lastPersistence = report;
+                    if (!report || msg.success === false) this.persistenceUnsafe = true;
+                }
+                if (pending.init) {
+                    if (msg.type !== 'INIT_RESPONSE') {
+                        this.appLifecycleSupport = 'rejected'; this.persistenceSupport = 'rejected'; this.persistenceUnsafe = true;
+                        clearTimeout(pending.timeout); this.pendingRequests.delete(msg.requestId);
+                        pending.reject(new Error('APP_INIT_ACK_INVALID')); return;
+                    }
+                    const field = Object.getOwnPropertyDescriptor(msg, 'appLifecycle');
+                    if (!field) this.appLifecycleSupport = msg.success ? 'legacy-unverified' : 'rejected';
+                    else if (!('value' in field) || !captureAppLifecycleAck(field.value, this.appInstanceId) || msg.type !== 'INIT_RESPONSE' || !msg.success) {
+                        this.appLifecycleSupport = 'rejected';
+                        clearTimeout(pending.timeout); this.pendingRequests.delete(msg.requestId);
+                        pending.reject(new Error('APP_LIFECYCLE_NEGOTIATION_FAILED')); return;
+                    } else this.appLifecycleSupport = 'managed';
+                    if (this.appStopRequested) this.beginApplicationStop();
+                    const ackField = Object.getOwnPropertyDescriptor(msg, 'persistence');
+                    if (!ackField) this.persistenceSupport = msg.success ? 'legacy-unverified' : 'rejected';
+                    else if (!('value' in ackField) || !capturePersistenceAck(ackField.value, this.appInstanceId) || msg.type !== 'INIT_RESPONSE' || !msg.success) {
+                        this.persistenceSupport = 'rejected';this.persistenceUnsafe = true;
+                        clearTimeout(pending.timeout);this.pendingRequests.delete(msg.requestId);
+                        pending.reject(new Error('PERSISTENCE_NEGOTIATION_FAILED: Invalid persistence acknowledgment'));return;
+                    } else this.persistenceSupport = 'managed';
+                    const init = pending.init;
+                    const capsField = Object.getOwnPropertyDescriptor(msg, 'acceptedCapabilities');
+                    const caps = capsField && !('value' in capsField) ? null : captureRefCapabilities(capsField?.value);
+                    const instance = Object.getOwnPropertyDescriptor(msg, 'appInstanceId')?.value;
+                    if (msg.type === 'INIT_RESPONSE' && msg.success === true &&
+                        !this.interactionsClosed &&
+                        init.worker === this.worker && init.version === this.lifecycleContextVersion &&
+                        this.status !== 'closing' && this.status !== 'closed' && !this.closePromise && !this.releasePromise &&
+                        instance === this.appInstanceId && caps !== null && caps.length <= 5 &&
+                        caps.every(c=>(c===CREATE_IF_ABSENT_V1_CAPABILITY || c===ORDINARY_V1_CAPABILITY || c===ORDINARY_V2_CAPABILITY || c===REF_V2_CAPABILITY || c===REF_V1_CAPABILITY) && init.requested.includes(c))) {
+                        this.snapshotValueParametersCapability = caps.includes(REF_V2_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
+                        this.refCapability = caps.includes(REF_V1_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
+                        this.createCapability=caps.includes(CREATE_IF_ABSENT_V1_CAPABILITY)?{worker:init.worker,version:init.version}:null;
+                        this.ordinaryParametersCapability = caps.includes(ORDINARY_V2_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
+                        this.ordinaryCapability = caps.includes(ORDINARY_V1_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
+                    }
+                }
+                if (pending.appCleanup) {
+                    const report = captureAppCleanupReport(Object.getOwnPropertyDescriptor(msg, 'appCleanup')?.value, this.appInstanceId);
+                    const validPhase = report && msg.type === 'LIFECYCLE_RESPONSE' && report.state !== 'active' &&
+                        (pending.appCleanup === 'APP_CLOSE' ? ['completed', 'failed'].includes(report.state) : ['stopped', 'failed'].includes(report.state));
+                    if (validPhase) this.lastAppCleanup = report;
+                    if (!validPhase || !msg.success || report.issues.length || pending.appCleanup === 'APP_CLOSE' && report.state !== 'completed') {
+                        clearTimeout(pending.timeout); this.pendingRequests.delete(msg.requestId);
+                        pending.reject(new Error('APP_CLEANUP_FAILED')); return;
+                    }
+                }
+                if (pending.persistence) {
+                    const report = captureManagedPersistenceReport(Object.getOwnPropertyDescriptor(msg, 'persistence')?.value, this.appInstanceId);
+                    if (report) this.lastPersistence = report;
+                    if (!report || (pending.persistence === 'APP_CLOSE' ? !report.ok : !report.flush?.ok) || !msg.success) {
+                        this.persistenceUnsafe = true;clearTimeout(pending.timeout);this.pendingRequests.delete(msg.requestId);
+                        pending.reject(new Error('PERSISTENCE_CLOSE_FAILED: Managed persistence did not complete'));return;
+                    }
+                }
                 clearTimeout(pending.timeout);
                 this.pendingRequests.delete(msg.requestId);
 
@@ -520,26 +1461,62 @@ export class AppWorkerHost {
             return;
         }
 
-        // [RFC-001] 处理 Snapshot Fragment 推送 (新协议)
+        // M2: Shadow is an optional, read-only side channel. Never emit a legacy
+        // update, dispatch a Tool, or replace the legacy Snapshot from these messages.
+        if (msg.type === 'SNAPSHOT_PREPARED') {
+            try {
+                this.shadowReceiver?.acceptPrepared(msg.draft);
+            } catch {
+                // Shadow diagnostic failures must not affect the existing App path.
+            }
+            return;
+        }
+        if (msg.type === 'SNAPSHOT_PREPARE_FAILED') {
+            try {
+                this.shadowReceiver?.acceptPrepareFailure({
+                    appId: msg.appId,
+                    instanceId: msg.instanceId,
+                    producerSeq: msg.producerSeq,
+                    sourceEpoch: msg.sourceEpoch,
+                    issue: {
+                        code: msg.error?.code === 'SNAPSHOT_SERIALIZATION_ERROR'
+                            ? 'SNAPSHOT_SERIALIZATION_ERROR' : 'SNAPSHOT_INVALID',
+                        message: typeof msg.error?.message === 'string'
+                            ? msg.error.message.slice(0, 160) : 'Shadow producer failed',
+                    },
+                });
+            } catch {
+                // Same isolation policy as SNAPSHOT_PREPARED.
+            }
+            return;
+        }
+
+        // [RFC-001] 处理 Snapshot Fragment 推送 (legacy execution path)
         if (isSnapshotFragment(msg)) {
             const fragment = msg as SnapshotFragmentPush;
             // console.log(`[AppWorkerHost] Received SNAPSHOT_FRAGMENT, markup length: ${fragment.markup?.length || 0}`);
-            if (fragment.timestamp > this.lastDomTimestamp) {
-                this.lastDomTimestamp = fragment.timestamp;
-                this.snapshotFragment = {
-                    markup: fragment.markup,
-                    indexMap: fragment.indexMap,
-                    views: fragment.views,
-                    viewTree: fragment.viewTree,  // [RFC-007]
-                    timestamp: fragment.timestamp,
-                };
-
-                // [RFC-012] 仅当不抑制信号时才触发 UpdateSignal
-                // suppressSignal 由 Worker 根据 signalPolicy 设置
-                if (!fragment.suppressSignal) {
-                    this.onUpdateRequest?.();
-                }
+            // The physical Worker message channel is ordered. A millisecond
+            // timestamp is NOT a generation ID: distinct updates may share it.
+            // Reject a different App/instance, never silently drop a valid frame.
+            if (fragment.appId !== this.appId ||
+                (fragment.appInstanceId && fragment.appInstanceId !== this.appInstanceId) ||
+                (fragment.shadowInstanceId && fragment.shadowInstanceId !== this.appInstanceId)) {
+                return;
             }
+            if (fragment.shadowCaptureSeq !== undefined) {
+                if (!Number.isSafeInteger(fragment.shadowCaptureSeq) ||
+                    fragment.shadowCaptureSeq <= this.lastLegacyCaptureSeq) return;
+                this.lastLegacyCaptureSeq = fragment.shadowCaptureSeq;
+            }
+            this.snapshotFragment = {
+                markup: fragment.markup,
+                indexMap: fragment.indexMap,
+                views: fragment.views,
+                viewTree: fragment.viewTree,
+                timestamp: fragment.timestamp,
+            };
+            this.shadowReceiver?.observeLegacy(fragment);
+            if (!fragment.suppressSignal) this.onUpdateRequest?.();
             return;
         }
 
@@ -547,17 +1524,35 @@ export class AppWorkerHost {
     }
 
     private handleError(error: Error): void {
-        console.error(`[AppWorkerHost] Worker ${this.appId} error:`, error);
+        this.beginInteractionClose();
+        if (this.persistenceSupport === 'managed') this.persistenceUnsafe = true;
+        this.lifecycleContextVersion++;
+        this.shadowReceiver?.close();
+        if (this.interactionModes.length > 0) console.error('[AppWorkerHost] Worker failed in Ref-capable execution');
+        else console.error(`[AppWorkerHost] Worker ${this.appId} error:`, error);
         this.status = 'error';
+        this.cleanupPendingRequests();
+    }
+
+    private detachWorkerListeners(worker = this.worker): void {
+        worker?.off('message', this.workerMessageListener);
+        worker?.off('error', this.workerErrorListener);
+        worker?.off('exit', this.workerExitListener);
     }
 
     private handleExit(code: number): void {
+        this.beginInteractionClose();
+        if (this.persistenceSupport === 'managed' && !this.lastPersistence?.ok) this.persistenceUnsafe = true;
+        this.lifecycleContextVersion++;
+        this.shadowReceiver?.close();
         if (code !== 0) {
             console.error(`[AppWorkerHost] Worker ${this.appId} exited with code ${code}`);
         }
+        this.detachWorkerListeners();
         this.worker = null;
         if (this.status !== 'closed') {
             this.status = 'error';
         }
+        this.cleanupPendingRequests();
     }
 }

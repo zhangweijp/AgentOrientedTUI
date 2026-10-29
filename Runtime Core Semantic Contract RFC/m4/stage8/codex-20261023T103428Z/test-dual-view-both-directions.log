@@ -1,0 +1,14 @@
+COMMAND: pnpm --dir runtime exec vitest run src/core/tool/versioned-file-integration.test.ts --reporter=dot
+START_UTC: 2026-10-23T11:06:48.129262+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+······
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  19:06:48
+   Duration  487ms (transform 140ms, setup 0ms, collect 169ms, tests 43ms, environment 0ms, prepare 56ms)
+
+
+EXIT_CODE: 0

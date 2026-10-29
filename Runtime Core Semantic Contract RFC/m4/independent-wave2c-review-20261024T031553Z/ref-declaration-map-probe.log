@@ -1,0 +1,181 @@
+[
+  {
+    "dependencyProperty": "ordinary",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "ordinary": {
+          "type": "boolean"
+        }
+      },
+      "dependencies": {
+        "ordinary": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string",
+              "x-aotui-ref": {
+                "version": 1,
+                "kind": "snapshot-value",
+                "owner": "tool-target"
+              }
+            }
+          }
+        }
+      }
+    },
+    "registration": "rejected",
+    "registrationError": "REF_DECLARATION_INVALID",
+    "handlerCalls": 0
+  },
+  {
+    "dependencyProperty": "default",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "default": {
+          "type": "boolean"
+        }
+      },
+      "dependencies": {
+        "default": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string",
+              "x-aotui-ref": {
+                "version": 1,
+                "kind": "snapshot-value",
+                "owner": "tool-target"
+              }
+            }
+          }
+        }
+      }
+    },
+    "registration": "accepted",
+    "snapshotValidation": "accepted",
+    "invocation": {
+      "success": true,
+      "data": "SYNTHETIC_HANDLER_RAN"
+    },
+    "handlerCalls": 1
+  },
+  {
+    "dependencyProperty": "const",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "const": {
+          "type": "boolean"
+        }
+      },
+      "dependencies": {
+        "const": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string",
+              "x-aotui-ref": {
+                "version": 1,
+                "kind": "snapshot-value",
+                "owner": "tool-target"
+              }
+            }
+          }
+        }
+      }
+    },
+    "registration": "accepted",
+    "snapshotValidation": "accepted",
+    "invocation": {
+      "success": true,
+      "data": "SYNTHETIC_HANDLER_RAN"
+    },
+    "handlerCalls": 1
+  },
+  {
+    "dependencyProperty": "enum",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "enum": {
+          "type": "boolean"
+        }
+      },
+      "dependencies": {
+        "enum": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string",
+              "x-aotui-ref": {
+                "version": 1,
+                "kind": "snapshot-value",
+                "owner": "tool-target"
+              }
+            }
+          }
+        }
+      }
+    },
+    "registration": "accepted",
+    "snapshotValidation": "accepted",
+    "invocation": {
+      "success": true,
+      "data": "SYNTHETIC_HANDLER_RAN"
+    },
+    "handlerCalls": 1
+  },
+  {
+    "dependencyProperty": "examples",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "examples": {
+          "type": "boolean"
+        }
+      },
+      "dependencies": {
+        "examples": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string",
+              "x-aotui-ref": {
+                "version": 1,
+                "kind": "snapshot-value",
+                "owner": "tool-target"
+              }
+            }
+          }
+        }
+      }
+    },
+    "registration": "accepted",
+    "snapshotValidation": "accepted",
+    "invocation": {
+      "success": true,
+      "data": "SYNTHETIC_HANDLER_RAN"
+    },
+    "handlerCalls": 1
+  }
+]
+INVALID_PLACEMENT_HANDLER_EXECUTIONS=4/5
+
+EXIT_CODE: 1

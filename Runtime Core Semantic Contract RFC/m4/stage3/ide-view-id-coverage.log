@@ -1,0 +1,18 @@
+PASS src/__tests__/file-view-ids.test.ts
+  P0: stable public FileDetail viewId
+    ✓ keeps View IDs when preceding files close or activeFiles reorder (1 ms)
+    ✓ never assigns a closed file viewId to another file or a reopened file (1 ms)
+    ✓ refuses duplicate file paths rather than giving two Views the same public ID (3 ms)
+    ✓ restored persisted activeFiles obtain fresh IDs scoped to this App lifetime
+
+------------------|---------|----------|---------|---------|-------------------
+File              | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s 
+------------------|---------|----------|---------|---------|-------------------
+All files         |     100 |      100 |     100 |     100 |                   
+ file-view-ids.ts |     100 |      100 |     100 |     100 |                   
+------------------|---------|----------|---------|---------|-------------------
+Test Suites: 1 passed, 1 total
+Tests:       4 passed, 4 total
+Snapshots:   0 total
+Time:        1.225 s
+Ran all test suites matching /src\/__tests__\/file-view-ids.test.ts/i.

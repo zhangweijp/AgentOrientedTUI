@@ -1,0 +1,4 @@
+src/engine/app/worker-host.ts(563,24): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type 'readonly JsonValue[] | Readonly<{ [key: string]: JsonValue; }>'.
+  No index signature with a parameter of type 'string' was found on type 'readonly JsonValue[] | Readonly<{ [key: string]: JsonValue; }>'.
+src/engine/app/worker-host.ts(564,46): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type 'readonly JsonValue[] | Readonly<{ [key: string]: JsonValue; }>'.
+  No index signature with a parameter of type 'string' was found on type 'readonly JsonValue[] | Readonly<{ [key: string]: JsonValue; }>'.

@@ -3,17 +3,15 @@ import { Kernel } from './index.js';
 import { DesktopManager } from '../engine/core/manager.js'; // Use real Manager
 import { DesktopState, createDesktopId } from '../spi/index.js';
 
-// Mock only registry, transformer, dispatcher
+// Mock registry and dispatcher
 // Desktop and DesktopManager are REAL to test actual lifecycle logic
 vi.mock('../registry/index.js');
-vi.mock('../transformer/index.js');
 vi.mock('../dispatcher/index.js');
 
 describe('Kernel Lifecycle Management', () => {
     let kernel: Kernel;
     let desktopManager: DesktopManager;
     let mockRegistry: any;
-    let mockTransformer: any;
     let mockDispatcher: any;
 
     beforeEach(() => {
@@ -33,9 +31,6 @@ describe('Kernel Lifecycle Management', () => {
             resolve: vi.fn(),
             shutdown: vi.fn()
         };
-        mockTransformer = {
-            transform: vi.fn().mockReturnValue({ markup: '# Test', indexMap: {} })
-        };
         mockDispatcher = {
             dispatch: vi.fn().mockResolvedValue(undefined)
         };
@@ -53,7 +48,6 @@ describe('Kernel Lifecycle Management', () => {
         kernel = new Kernel(
             desktopManager,
             mockRegistry,
-            mockTransformer,
             mockDispatcher,
             mockSystemOps
         );

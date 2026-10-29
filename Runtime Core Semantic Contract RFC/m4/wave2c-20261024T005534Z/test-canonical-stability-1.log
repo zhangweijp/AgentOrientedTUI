@@ -1,0 +1,94 @@
+COMMAND: pnpm --dir runtime exec vitest run src/core/tool/ref-declarations.wave2c.test.ts src/core/tool/source-binding.test.ts src/core/tool/source-binding.wave2a.test.ts src/core/snapshot/ref-contract.wave2b.test.ts src/engine/app/worker-host.wave2c-declarations.test.ts src/engine/app/worker-host.wave2a-readonly.test.ts src/engine/app/worker-host.wave2a-request.test.ts src/engine/app/worker-host.r1-terminal-race.test.ts src/engine/app/worker-host.m4-lifecycle.test.ts src/engine/app/worker-host.m4-readonly.test.ts src/engine/app/worker-host.m4-versioned-file.test.ts src/engine/app/worker-host.m4-producer-race.test.ts --reporter=dot
+START_UTC: 2026-10-24T01:35:18.728372+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+·····················································································[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Shutdown listener initialized
+··[createTUIApp] initializeComponent { appId: 'race_app', desktopId: 'race_desktop' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+·[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[PersistenceShutdown] Shutdown listener initialized
+··················[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+·········································[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+·[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+·[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+·[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+stdout | src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > refuses an expired pinned source instead of laundering it through a caller replacement snapshot
+WAVE2A_TTL_RECHECK={"success":false,"code":"SNAPSHOT_EXPIRED","calls":{"A":0,"B":0,"query":0}}
+
+[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+·[PersistenceShutdown] Shutdown listener initialized
+stdout | src/engine/app/worker-host.m4-readonly.test.ts > M4 Stage 3: explicitly authorized source-bound READ-ONLY Worker Tool > rejects unavailable, stale, mutating, unauthorized Tools and preserves the Handler result
+M4_READONLY_WORKER_DIAGNOSTIC={"count":25,"p50_ms":0.184,"p95_ms":0.531,"max_ms":0.635,"note":"host policy + V2 leases + Worker IPC + SDK Handler; no IDE/LSP or model"}
+
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+·[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+·[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+·[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+·[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+··[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[Worker] APP_SHUTDOWN flush timeout fallback
+·[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+·[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+·
+
+ Test Files  12 passed (12)
+      Tests  174 passed (174)
+   Start at  09:35:19
+   Duration  4.36s (transform 1.23s, setup 0ms, collect 3.34s, tests 10.51s, environment 2ms, prepare 963ms)
+
+
+EXIT_CODE: 0

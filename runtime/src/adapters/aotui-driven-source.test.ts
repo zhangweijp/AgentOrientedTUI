@@ -524,3 +524,43 @@ describe('AOTUIDrivenSource type tool routing', () => {
         expect(rootViewSource).toContain('Tool Preconditions');
     });
 });
+
+
+describe('P0: Agent-facing ToolResult does not hide SDK Handler errors', () => {
+    it('turns a business OperationResult failure into an Agent Tool error, not success', async () => {
+        const kernel = {
+            acquireSnapshot: vi.fn().mockResolvedValue({
+                id: 'desktop_snapshot_1',
+                indexMap: {
+                    'tool:system_ide-FileDetail-lsp_hover': {
+                        description: 'Inspect file', params: [],
+                        appId: 'app_7', appName: 'system_ide',
+                        viewType: 'FileDetail', toolName: 'lsp_hover',
+                    },
+                },
+            }),
+            releaseSnapshot: vi.fn(),
+            acquireLock: vi.fn(),
+            releaseLock: vi.fn(),
+            execute: vi.fn().mockResolvedValue({
+                success: false,
+                error: { code: 'LSP_ERROR', message: 'Server unavailable' },
+            }),
+            getSystemToolDefinitions: vi.fn().mockReturnValue([]),
+        } as any;
+        const desktop = { id: 'desktop_1',
+            output: { subscribe: vi.fn(), unsubscribe: vi.fn() },
+        } as any;
+        const result = await new AOTUIDrivenSource(desktop, kernel).executeTool(
+            'system_ide-FileDetail-lsp_hover', {}, 'call_fail',
+        );
+        expect(result).toMatchObject({
+            toolCallId: 'call_fail',
+            error: { code: 'LSP_ERROR', message: 'Server unavailable' },
+        });
+        expect(result?.result).toBeUndefined();
+        expect(kernel.execute).toHaveBeenCalledTimes(1);
+        expect(kernel.releaseSnapshot).toHaveBeenCalledWith('desktop_snapshot_1');
+        expect(kernel.releaseLock).toHaveBeenCalled();
+    });
+});

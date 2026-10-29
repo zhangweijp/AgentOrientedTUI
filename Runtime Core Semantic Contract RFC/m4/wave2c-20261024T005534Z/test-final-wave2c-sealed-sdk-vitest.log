@@ -1,0 +1,131 @@
+COMMAND: pnpm --dir sdk exec vitest run --reporter=dot
+START_UTC: 2026-10-24T01:18:50.029818+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/sdk
+
+··································································stdout | src/projection-coordinator.test.ts > M3 SDK semantic projection commit > exposes View, single Ref, ArrayRef and ViewTypeTool on the initial committed frame
+[PersistenceShutdown] Shutdown listener initialized
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > aggregates two FileDetails into one Tool while their independently bound handlers target the correct file
+[PersistenceShutdown] Shutdown listener initialized
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > preserves the one declaration-only support marker, Schema metadata and lifecycle cleanup
+[PersistenceShutdown] Shutdown listener initialized
+
+stdout | src/projection-coordinator.test.ts > M3 SDK semantic projection commit > exposes View, single Ref, ArrayRef and ViewTypeTool on the initial committed frame
+[createTUIApp] initializeComponent { appId: 'm3_app_0', desktopId: 'desktop_0' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > preserves the one declaration-only support marker, Schema metadata and lifecycle cleanup
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > aggregates two FileDetails into one Tool while their independently bound handlers target the correct file
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+stdout | src/projection-coordinator.test.ts > M3 SDK semantic projection commit > publishes Ref-only epoch changes even when the DOM and Tool descriptor remain unchanged
+[createTUIApp] initializeComponent { appId: 'm3_app_0', desktopId: 'desktop_0' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > refuses a port with missing declaration support before registration
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > refuses a port with unknown declaration support before registration
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > old ports keep unannotated reference declarations usable
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > rejects mutating/default-mutating new declarations: true
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > rejects mutating/default-mutating new declarations: undefined
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > closing A never unregisters B; reopening fd_0 gives a new ViewInstanceId
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > rejects Legacy five-argument opt-in before the legacy registration effect
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > the direct View-local port validates new declarations without relying on the SDK Hook
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > new validation works in production without defineParams dev checks
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > equivalent declaration key order does not re-register the Tool
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > a getter in an opt-in field is rejected without execution
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > rejects an outer options.params getter before reading declaration data
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+stdout | src/ref-declarations.wave2c.test.ts > Wave 2C: real Preact, SDK and AppKernel declaration registration > the direct port rejects a definition.params getter before reading declaration data
+[createTUIApp] initializeComponent { appId: 'wave2c_sdk', desktopId: 'test' }
+
+··············stdout | src/projection-coordinator.test.ts > M3 SDK semantic projection commit > unregisters disabled ViewTypeTool in the same commit as availability changes
+[createTUIApp] initializeComponent { appId: 'm3_app_0', desktopId: 'desktop_0' }
+
+····stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > per-View enabled flags operate independently even during rapid re-render
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+stdout | src/projection-coordinator.test.ts > M3 SDK semantic projection commit > changes View generation after unmount/remount with identical View ID
+[createTUIApp] initializeComponent { appId: 'm3_app_0', desktopId: 'desktop_0' }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > old five-argument Root useViewTypeTool stays in the legacy Registry, not the new instance Registry
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > APP_CLOSE fully unmounts Tool-owning Views, and APP_OPEN gets fresh IDs
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > APP_CLOSE fully unmounts Tool-owning Views, and APP_OPEN gets fresh IDs
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > a real parameter schema change invalidates only its own Tool registration
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+···stdout | src/view-owned-tools.test.ts > M4 Stage 1: committed lifecycle and Tool metadata updates > View-local Tool preserves a failed business outcome in a real SDK/AppKernel environment
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: deterministic multi-View lifecycle stress > 60 rapid commits preserve exclusive owners and never resurrect removed Tools
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+········stdout | src/projection-coordinator.test.ts > M3 observable commit-phase consistency > never notifies a mixed pair of Ref bindings or a stale Tool after one SDK state commit
+[createTUIApp] initializeComponent { appId: 'm3_app_0', desktopId: 'desktop_0' }
+
+··stdout | src/projection-coordinator.test.ts > M3 typed ArrayRef marker and registry parity > resolves every emitted typed Ref marker, preserves bare aliases and cleans up stale items
+[createTUIApp] initializeComponent { appId: 'm3_app_0', desktopId: 'desktop_0' }
+
+···stdout | src/projection-coordinator.test.ts > M3 rapid lifecycle and asynchronous projection resilience > never exposes dangling Ref/Tool at notification boundaries through repeated mount/reorder/unmount
+[createTUIApp] initializeComponent { appId: 'm3_app_0', desktopId: 'desktop_0' }
+
+··stdout | src/view-owned-tools.test.ts > M4 Stage 1: stable canonical Tool schema > a merely reordered parameter object does not recreate the Tool binding
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: stable canonical Tool schema > a malicious accessor in parameter metadata is rejected without executing its getter
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: concurrent legacy and new local APIs > Root legacy and FileDetail local declarations of the same name remain isolated
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+·stdout | src/projection-coordinator.test.ts > M3 batched semantic updates > coalesces rapid component state changes and observes only the final coherent Ref/Tool state
+[createTUIApp] initializeComponent { appId: 'm3_app_0', desktopId: 'desktop_0' }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: failed mount is not a partially published Tool > rejects incompatible same-type definitions without exposing a conflicting group
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 5: SDK explicit versioned entity Ref > registers a stable entity Ref and invalidates it on version-only changes without DOM updates
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+····stdout | src/view-owned-tools.test.ts > M4 Stage 5: SDK explicit versioned entity Ref > rejects a missing entityVersion rather than registering an unversioned mutation Ref
+[createTUIApp] initializeComponent { appId: 'app_owned', desktopId: 'desktop_test' }
+
+···
+
+ Test Files  11 passed (11)
+      Tests  110 passed (110)
+   Start at  09:18:50
+   Duration  2.30s (transform 794ms, setup 0ms, collect 2.05s, tests 1.84s, environment 7.06s, prepare 779ms)
+
+
+EXIT_CODE: 0

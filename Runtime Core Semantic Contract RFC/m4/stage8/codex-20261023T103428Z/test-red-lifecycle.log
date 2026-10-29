@@ -1,0 +1,93 @@
+COMMAND: pnpm --dir runtime exec vitest run src/engine/app/worker-host.m4-lifecycle.test.ts --reporter=verbose
+START_UTC: 2026-10-23T10:39:18.544060+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 7: graceful lifecycle waits for an in-flight disk CAS > APP_CLOSE refuses new Tool calls and does not shutdown until the replacement settles 3ms
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 7: graceful lifecycle waits for an in-flight disk CAS > WorkerPool RESET waits for the replacement, then severs listeners and closes old Host 1ms
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 7: graceful lifecycle waits for an in-flight disk CAS > forced terminate defers physical Worker teardown while a disk operation is in progress 53ms
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 7: lifecycle failure safety > cannot reopen or resume while close is waiting for a versioned disk write 1ms
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 7: lifecycle failure safety > a failed shutdown kills the Worker instead of leaving it stranded in closing 0ms
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 7: resource version cannot prove an identical-content write was not replayed > fails closed after a successful same-hash write, even if unrelated UI publishes another V2 snapshot 5ms
+ × src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > close waits for an already pending WorkerPool RESET instead of reporting completion early 5ms
+   → expected true to be false // Object.is equality
+ × src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > can RESET and return a physically live Worker after graceful APP_CLOSE 1ms
+   → expected null to be { postMessage: [Function spy], …(2) } // Object.is equality
+ × src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > drains an in-flight open before shutdown and never revives the closing Host 0ms
+   → expected "sendRequest" to be called 1 times, but got 3 times
+ × src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > drains an in-flight pause before shutdown and never revives the closing Host 0ms
+   → expected "sendRequest" to be called 1 times, but got 3 times
+ × src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > drains an in-flight resume before shutdown and never revives the closing Host 0ms
+   → expected "sendRequest" to be called 1 times, but got 3 times
+ × src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > drains an in-flight reinitialize before shutdown and never revives the closing Host 0ms
+   → expected "sendRequest" to be called 1 times, but got 3 times
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > two simultaneous close() requests share one Promise and send exactly one shutdown/close pair 0ms
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > pause and reinitialize cannot send IPC after close starts 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > close waits for an already pending WorkerPool RESET instead of reporting completion early
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ src/engine/app/worker-host.m4-lifecycle.test.ts:165:28
+    163|             await Promise.resolve();
+    164|             await Promise.resolve();
+    165|             expect(closed).toBe(false);
+       |                            ^
+    166|             finishDiskOperation();
+    167|             await Promise.resolve();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > can RESET and return a physically live Worker after graceful APP_CLOSE
+AssertionError: expected null to be { postMessage: [Function spy], …(2) } // Object.is equality
+
+- Expected: 
+{
+  "postMessage": [Function spy],
+  "removeAllListeners": [Function spy],
+  "terminate": [Function spy],
+}
+
++ Received: 
+null
+
+ ❯ src/engine/app/worker-host.m4-lifecycle.test.ts:184:44
+    182|         finishDiskOperation();
+    183|         await host.close();
+    184|         expect(await host.releaseWorker()).toBe(worker);
+       |                                            ^
+    185|         expect(request.mock.calls.map(([message]) => message.type))
+    186|             .toEqual(['APP_SHUTDOWN', 'APP_CLOSE', 'RESET']);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > drains an in-flight open before shutdown and never revives the closing Host
+ FAIL  src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > drains an in-flight pause before shutdown and never revives the closing Host
+ FAIL  src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > drains an in-flight resume before shutdown and never revives the closing Host
+ FAIL  src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 8: lifecycle operations are single-flight > drains an in-flight reinitialize before shutdown and never revives the closing Host
+AssertionError: expected "sendRequest" to be called 1 times, but got 3 times
+ ❯ src/engine/app/worker-host.m4-lifecycle.test.ts:204:33
+    202|                 await Promise.resolve();
+    203|                 await Promise.resolve();
+    204|                 expect(request).toHaveBeenCalledTimes(1);
+       |                                 ^
+    205|                 expect(host.getStatus()).toBe('closing');
+    206|             } finally {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed | 8 passed (14)
+   Start at  18:39:19
+   Duration  502ms (transform 156ms, setup 0ms, collect 183ms, tests 72ms, environment 0ms, prepare 53ms)
+
+
+EXIT_CODE: 1

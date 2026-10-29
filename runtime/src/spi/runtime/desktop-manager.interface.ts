@@ -18,6 +18,7 @@ import type { IDesktopStateAccessor } from './desktop-state-accessor.interface.j
 import type { IDesktopLifecycleController } from './desktop-lifecycle.interface.js';
 import type { DesktopID } from '../core/index.js';
 import type { IRuntimeContext } from './context.interface.js'; // New
+import type { DesktopCloseOptions, DesktopCloseOperation, RuntimeCloseOperation } from './close.interface.js';
 
 // ...
 
@@ -27,6 +28,8 @@ export interface IDesktopManager extends
     IAppInstaller,
     IDesktopStateAccessor,
     IDesktopLifecycleController {
+    beginShutdown?(): RuntimeCloseOperation;
+    beginDesktopShutdown?(id: DesktopID, options?: DesktopCloseOptions): DesktopCloseOperation;
     // Override create to include context
     create(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID>;
 

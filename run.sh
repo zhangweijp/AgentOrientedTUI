@@ -6,6 +6,7 @@
 set -e  # Exit on error
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$REPO_ROOT"
 DEMO_APP_DIRS=(
     "demo-apps/aotui-ide"
     "demo-apps/terminal-app"
@@ -101,7 +102,7 @@ apps=("${DEMO_APP_DIRS[@]}")
 for app in "${apps[@]}"; do
     if [ -d "$app" ]; then
         echo "📦 Building $app..."
-        pnpm -C "$app" build 2>/dev/null || echo "   (no build or already built)"
+        pnpm -C "$app" build
     fi
 done
 

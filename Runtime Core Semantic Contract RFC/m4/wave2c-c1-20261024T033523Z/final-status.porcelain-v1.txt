@@ -1,0 +1,799 @@
+A  .agents/skills/aotui-app-builder/SKILL.md
+A  .agents/skills/aotui-app-builder/references/AOTUI_APP_LLM_FRIENDLY_GUIDELINES.md
+A  .agents/skills/aotui-app-builder/references/sdk_api.md
+AD .agents/skills/business-plan/SKILL.md
+A  .agents/skills/feature-migration/SKILL.md
+A  .agents/skills/feature-migration/assets/migration-template/01-feature-overview.md
+A  .agents/skills/feature-migration/assets/migration-template/02-user-journeys.md
+A  .agents/skills/feature-migration/assets/migration-template/03-module-map.md
+A  .agents/skills/feature-migration/assets/migration-template/04-data-flow.md
+A  .agents/skills/feature-migration/assets/migration-template/05-migration-plan.md
+A  .agents/skills/feature-migration/assets/migration-template/06-risks-and-verification.md
+A  .agents/skills/feature-migration/assets/migration-template/code/_bundle-template/index.md
+A  .agents/skills/feature-migration/assets/migration-template/code/index.md
+A  .agents/skills/feature-migration/assets/migration-template/index.md
+A  .agents/skills/feature-migration/references/migration-directory-blueprint.md
+A  .agents/skills/feature-migration/references/migration-writing-rules.md
+A  .agents/skills/feature-migration/scripts/init_migration_dir.py
+AD .agents/skills/pdf/LICENSE.txt
+AD .agents/skills/pdf/SKILL.md
+AD .agents/skills/pdf/forms.md
+AD .agents/skills/pdf/reference.md
+AD .agents/skills/pdf/scripts/check_bounding_boxes.py
+AD .agents/skills/pdf/scripts/check_fillable_fields.py
+AD .agents/skills/pdf/scripts/convert_pdf_to_images.py
+AD .agents/skills/pdf/scripts/create_validation_image.py
+AD .agents/skills/pdf/scripts/extract_form_field_info.py
+AD .agents/skills/pdf/scripts/extract_form_structure.py
+AD .agents/skills/pdf/scripts/fill_fillable_fields.py
+AD .agents/skills/pdf/scripts/fill_pdf_form_with_annotations.py
+AD .agents/skills/skill-creator/LICENSE.txt
+AD .agents/skills/skill-creator/SKILL.md
+AD .agents/skills/skill-creator/scripts/init_skill.py
+AD .agents/skills/skill-creator/scripts/package_skill.py
+AD .agents/skills/skill-creator/scripts/quick_validate.py
+AD .agents/skills/ui-ux-pro-max/SKILL.md
+AD .agents/skills/ui-ux-pro-max/scripts/core.py
+AD .agents/skills/ui-ux-pro-max/scripts/design_system.py
+AD .agents/skills/ui-ux-pro-max/scripts/search.py
+A  CODE_CLEANUP_COMPATIBILITY.zh-CN.md
+A  CODE_CLEANUP_PLAN.zh-CN.md
+A  PROJECT_ASSESSMENT.zh-CN.md
+M  agent-driver-v2/package.json
+M  agent-driver-v2/src/core/provider-factory.ts
+ M demo-apps/aotui-ide/src/__tests__/create-file-workflow.test.ts
+ M demo-apps/aotui-ide/src/core/file-system-service.ts
+ M demo-apps/aotui-ide/src/tui/RootView.tsx
+ M demo-apps/aotui-ide/src/tui/SystemIDEApp.tsx
+ M demo-apps/aotui-ide/src/tui/create-file-workflow.ts
+A  experiments/semantic-kernel/.nvmrc
+A  experiments/semantic-kernel/README.md
+A  experiments/semantic-kernel/VERIFICATION.md
+A  experiments/semantic-kernel/package.json
+A  experiments/semantic-kernel/pnpm-lock.yaml
+A  experiments/semantic-kernel/src/adapters.ts
+A  experiments/semantic-kernel/src/contracts.ts
+A  experiments/semantic-kernel/src/demo.ts
+A  experiments/semantic-kernel/src/index.ts
+A  experiments/semantic-kernel/src/kernel.ts
+A  experiments/semantic-kernel/src/task-app.ts
+A  experiments/semantic-kernel/test/adapters.test.ts
+A  experiments/semantic-kernel/test/kernel.test.ts
+A  experiments/semantic-kernel/tsconfig.build.json
+A  experiments/semantic-kernel/tsconfig.json
+A  experiments/semantic-kernel/vitest.config.ts
+A  rfcs/0001-semantic-runtime-technology.zh-CN.md
+M  runtime/package.json
+ M runtime/src/adapters/aotui-driven-source.test.ts
+M  runtime/src/adapters/aotui-driven-source.ts
+M  runtime/src/engine/app/manager.ts
+M  runtime/src/engine/app/registry.ts
+MM runtime/src/engine/app/worker-host.ts
+M  runtime/src/engine/app/worker-pool.ts
+ M runtime/src/engine/app/worker-sandbox.ts
+M  runtime/src/engine/core/desktop.ts
+M  runtime/src/engine/core/operation-log-formatter.ts
+M  runtime/src/engine/system/registry.ts
+M  runtime/src/engine/view/snapshot/builder.ts
+M  runtime/src/engine/view/transformer/pure.ts
+M  runtime/src/engine/view/transformer/visitors/view-link.visitor.ts
+M  runtime/src/facades/index.ts
+M  runtime/src/kernel/index.ts
+ M runtime/src/spi/app/public-types.ts
+M  runtime/src/spi/app/view-context-ext.interface.ts
+ M runtime/src/spi/component-factory.interface.ts
+M  runtime/src/spi/core/errors.ts
+ M runtime/src/spi/runtime/index.ts
+M  runtime/src/spi/runtime/kernel.interface.ts
+ M runtime/src/spi/runtime/worker-message.interface.ts
+ M runtime/src/spi/worker-protocol/messages.ts
+MM runtime/src/worker-runtime/app-kernel/AppKernel.ts
+M  runtime/src/worker-runtime/app-kernel/view-registry.ts
+M  runtime/src/worker-runtime/app-kernel/view-tree.ts
+MM runtime/src/worker-runtime/index.ts
+M  sdk/package.json
+M  sdk/src/adapter/createInlineView.ts
+D  sdk/src/app-base/AOTUIApp.d.ts.map
+D  sdk/src/app-base/ViewBasedApp.d.ts.map
+D  sdk/src/app-base/index.d.ts.map
+MM sdk/src/app-factory/createTUIApp.ts
+D  sdk/src/components/Operation.d.ts.map
+D  sdk/src/components/View.d.ts.map
+MM sdk/src/components/View.tsx
+D  sdk/src/components/index.d.ts.map
+ M sdk/src/context/AppRuntimeContext.tsx
+M  sdk/src/contexts/index.ts
+ M sdk/src/contexts/view-runtime-context.ts
+D  sdk/src/hooks/context.d.ts.map
+D  sdk/src/hooks/index.d.ts.map
+ M sdk/src/hooks/index.ts
+ M sdk/src/hooks/preact-hooks.ts
+MM sdk/src/hooks/useArrayRef.ts
+MM sdk/src/hooks/useRef.ts
+D  sdk/src/hooks/useSignalStore.d.ts.map
+D  sdk/src/hooks/useViewContext.d.ts.map
+M  sdk/src/hooks/useViewContext.ts
+MM sdk/src/hooks/useViewTypeTool.ts
+D  sdk/src/index.d.ts.map
+MM sdk/src/index.ts
+ M sdk/src/operation/types.ts
+D  sdk/src/ref-registry.ts
+D  sdk/src/utils/index.d.ts.map
+D  sdk/src/utils/validateArgs.d.ts.map
+M  sdk/src/utils/validateArgs.ts
+D  sdk/src/utils/validation.d.ts.map
+M  sdk/vitest.config.ts
+A  skills-lock.json
+?? .agents/skills/minimalist/SKILL.md
+?? AOTUI_VALUE_ANALYSIS.zh-CN.md
+?? "Runtime Core Semantic Contract RFC/00-charter.md"
+?? "Runtime Core Semantic Contract RFC/01-feasibility.md"
+?? "Runtime Core Semantic Contract RFC/02-impact.md"
+?? "Runtime Core Semantic Contract RFC/03-design.md"
+?? "Runtime Core Semantic Contract RFC/04-plan.md"
+?? "Runtime Core Semantic Contract RFC/05-tests.md"
+?? "Runtime Core Semantic Contract RFC/06-review.md"
+?? "Runtime Core Semantic Contract RFC/07-view-owned-tool-identity-proposal.md"
+?? "Runtime Core Semantic Contract RFC/08-codex-execution-handoff.md"
+?? "Runtime Core Semantic Contract RFC/m0/RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m0/baseline-tests.log"
+?? "Runtime Core Semantic Contract RFC/m0/full-suite-baseline.log"
+?? "Runtime Core Semantic Contract RFC/m0/ide-tests-baseline.log"
+?? "Runtime Core Semantic Contract RFC/m0/m1-core-tests-fifth.log"
+?? "Runtime Core Semantic Contract RFC/m0/m1-core-tests-first.log"
+?? "Runtime Core Semantic Contract RFC/m0/m1-core-tests-fourth.log"
+?? "Runtime Core Semantic Contract RFC/m0/m1-core-tests-second.log"
+?? "Runtime Core Semantic Contract RFC/m0/m1-core-tests-sixth.log"
+?? "Runtime Core Semantic Contract RFC/m0/m1-core-tests-third.log"
+?? "Runtime Core Semantic Contract RFC/m0/m1-core-tests-workspace.log"
+?? "Runtime Core Semantic Contract RFC/m0/m1-first-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m0/m1-second-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m0/m1-typecheck-sixth.log"
+?? "Runtime Core Semantic Contract RFC/m0/m1-typecheck-third.log"
+?? "Runtime Core Semantic Contract RFC/m0/m2-first-tests.log"
+?? "Runtime Core Semantic Contract RFC/m0/m2-real-worker-tests.log"
+?? "Runtime Core Semantic Contract RFC/m0/m2-second-tests.log"
+?? "Runtime Core Semantic Contract RFC/m0/m2-typecheck-first.log"
+?? "Runtime Core Semantic Contract RFC/m0/m2-typecheck-second.log"
+?? "Runtime Core Semantic Contract RFC/m0/probes/capture-fingerprints.py"
+?? "Runtime Core Semantic Contract RFC/m0/probes/coordinator-poc.test.ts"
+?? "Runtime Core Semantic Contract RFC/m0/probes/formatter-benchmark.test.ts"
+?? "Runtime Core Semantic Contract RFC/m0/probes/ref-wire-compat.cjs"
+?? "Runtime Core Semantic Contract RFC/m0/probes/runtime-observation.test.ts"
+?? "Runtime Core Semantic Contract RFC/m0/probes/sdk-appkernel.test.ts"
+?? "Runtime Core Semantic Contract RFC/m0/probes/sdk-projection.test.ts"
+?? "Runtime Core Semantic Contract RFC/m0/probes/source-inventory.cjs"
+?? "Runtime Core Semantic Contract RFC/m0/ref-wire-compat.json"
+?? "Runtime Core Semantic Contract RFC/m0/run-probes.sh"
+?? "Runtime Core Semantic Contract RFC/m0/runtime-probes-rerun.log"
+?? "Runtime Core Semantic Contract RFC/m0/sdk-probes-rerun.log"
+?? "Runtime Core Semantic Contract RFC/m0/source-fingerprints.json"
+?? "Runtime Core Semantic Contract RFC/m0/source-inventory.json"
+?? "Runtime Core Semantic Contract RFC/m0/sp01-sdk-appkernel.log"
+?? "Runtime Core Semantic Contract RFC/m0/sp01-sdk-timing.log"
+?? "Runtime Core Semantic Contract RFC/m0/sp02-coordinator-poc.log"
+?? "Runtime Core Semantic Contract RFC/m0/sp03-04-05-runtime.log"
+?? "Runtime Core Semantic Contract RFC/m0/sp07-projection-performance.log"
+?? "Runtime Core Semantic Contract RFC/m1/RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m1/benchmark.ts"
+?? "Runtime Core Semantic Contract RFC/m1/coverage-final.log"
+?? "Runtime Core Semantic Contract RFC/m1/coverage.log"
+?? "Runtime Core Semantic Contract RFC/m1/final-regression.log"
+?? "Runtime Core Semantic Contract RFC/m1/performance-baseline.log"
+?? "Runtime Core Semantic Contract RFC/m1/source-fingerprints.json"
+?? "Runtime Core Semantic Contract RFC/m2/RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m2/correlated-tests.log"
+?? "Runtime Core Semantic Contract RFC/m2/pairing-tests.log"
+?? "Runtime Core Semantic Contract RFC/m2/regression-final.log"
+?? "Runtime Core Semantic Contract RFC/m2/regression.log"
+?? "Runtime Core Semantic Contract RFC/m2/reuse-worker-e2e.log"
+?? "Runtime Core Semantic Contract RFC/m2/typecheck-paired.log"
+?? "Runtime Core Semantic Contract RFC/m3/RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m3/batch-sdk-tests.log"
+?? "Runtime Core Semantic Contract RFC/m3/final-regression.log"
+?? "Runtime Core Semantic Contract RFC/m3/m4-preflight-first-tests.log"
+?? "Runtime Core Semantic Contract RFC/m3/m4-preflight-first-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m3/m4-preflight-second-tests.log"
+?? "Runtime Core Semantic Contract RFC/m3/m4-preflight-third-tests.log"
+?? "Runtime Core Semantic Contract RFC/m3/m4-preflight-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m3/owner-tests.log"
+?? "Runtime Core Semantic Contract RFC/m3/regression-final.log"
+?? "Runtime Core Semantic Contract RFC/m3/regression.log"
+?? "Runtime Core Semantic Contract RFC/m3/source-fingerprints.json"
+?? "Runtime Core Semantic Contract RFC/m3/source-ref-worker-e2e.log"
+?? "Runtime Core Semantic Contract RFC/m3/stability-reruns.log"
+?? "Runtime Core Semantic Contract RFC/m3/stress-sdk.log"
+?? "Runtime Core Semantic Contract RFC/m3/typed-ref-tests.log"
+?? "Runtime Core Semantic Contract RFC/m3/typed-worker-e2e.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/STAGE1_RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/STAGE2_RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/core-coverage.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/final-regression.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/source-fingerprints.json"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-benchmark.ts"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-conflict-initial.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-conflict-recovered.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-conflict-recovered2.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-conflict-second.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-core-coverage.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-core-rerun.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-final-regression.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-performance.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-render-check-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-render-sdk-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-render-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-runtime-mixed-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-runtime-smoke.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-runtime-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-sdk-baseline.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-sdk-coverage.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-sdk-first-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-sdk-mixed-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-sdk-schema-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-sdk-second-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-sdk-stress-rerun.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-sdk-stress.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-sdk-tests-canonical.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-sdk-third-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-sdk-typecheck-strong.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-sdk-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-stability-reruns.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-typecheck-strong.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-worker-e2e-first.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage1-worker-reuse.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-binding-final-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-binding-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-final-regression.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-full-regression.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-source-binding-first.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-source-fingerprints.json"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-stability-reruns.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-v2-adversarial-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-v2-benchmark.ts"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-v2-coverage.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-v2-final-coverage.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-v2-first-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-v2-first-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-v2-performance.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-v2-real-worker-final.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-v2-real-worker-first.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-v2-real-worker-second.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage2-worker-first-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage3-focused-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage3-ide-stable-view-first.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage3-ide-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage3-p0-real-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage3-p0-tool-ref-first.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage3-read-only-first-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage3-read-only-sdk-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage3-readonly-e2e-first.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage3-readonly-e2e-reuse.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage3-readonly-negative-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage3-readonly-second-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage3-runtime-build.log"
+?? "Runtime Core Semantic Contract RFC/m4-preflight/stage3-sdk-build-check.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/CHATGPT_WAVE2A_ACCEPTANCE.md"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/INDEPENDENT_WAVE2A_GATE.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/differential-review.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/independent-reruns.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/integrity-after.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/integrity-before.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/r1-original-controlled.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/r1-original-real-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/review-start-file-hashes.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/stability-1.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/stability-2.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/stability-3.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/ttl-source-differential.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/ttl-source-differential.mjs"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/CHATGPT_WAVE2B_DESIGN_ACCEPTANCE.md"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/CODEX_WAVE2C_DECLARATION_PROMPT.md"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/INDEPENDENT_WAVE2B_GATE.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/compatibility.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/independent-ref-probe.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/independent-reruns.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/integrity-after.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/integrity-before.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/pre-review-inventory.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/r1-original-controlled.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/r1-original-real-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/ref-projection-observation.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/ref-projection-observation.mjs"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2b-review-20261023-01/sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/CHATGPT_WAVE2C_REVIEW.md"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/INDEPENDENT_WAVE2C_GATE.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/independent-regressions.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/integrity-after.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ordinary-schema-baseline-comparison.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ordinary-schema-baseline-comparison.mjs"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/pre-review-inventory.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/probe-authoring-note.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/r1-controlled.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/r1-real-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ref-declaration-map-probe-v2.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ref-declaration-map-probe-v2.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ref-declaration-map-probe-v2.mjs"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ref-declaration-map-probe-v3.json"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ref-declaration-map-probe-v3.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ref-declaration-map-probe-v3.mjs"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ref-declaration-map-probe.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/ref-declaration-map-probe.mjs"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/independent-wave2c-review-20261024T031553Z/toolchain.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage3/RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m4/stage3/final-regression.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage3/ide-view-id-coverage.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage3/readonly-policy-args.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage3/readonly-worker-stability.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage3/worker-stability-final.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/benchmark-after.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/benchmark-reruns.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/core-coverage.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/final-regression.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/ide-coverage.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/ide-focused-coverage.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/ide-regression-final.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/ide-regression.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/ide-typecheck-final.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/ide-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/initial-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/initial-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/legacy-ipc-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/legacy-ipc-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage4/source-fingerprints.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/benchmark.ts"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/core-coverage.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/core-initial-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/core-initial-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/coverage.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/cross-project-first-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/final-regression.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/first-real-fs-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/first-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/performance.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/real-worker-entity-final.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/real-worker-entity-first.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/real-worker-entity-second.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/real-worker-file-source-first.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/sdk-coverage.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/sdk-entity-runtime-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/sdk-entity-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/sdk-entity-sdk-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/sdk-entity-sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage5/stability-reruns.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/concurrent-worker-mutations.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/core-smoke.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/final-regression.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/first-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/ide-cleanup-smoke.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/ide-file-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/ide-typecheck-aftercleanup.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/ide-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/outcome-unknown-e2e.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/postcommit-cleanup-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/postwrite-barrier-first.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/postwrite-refresh-first.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/postwrite-refresh-second.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/runtime-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/stability-reruns.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/typecheck-second.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/typecheck-third.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/worker-async-reset.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage6/worker-first-tests.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/close-while-writing-real-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/final-regression.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/lifecycle-first.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/lifecycle-second.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/noop-fence-first.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/noop-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/producer-epoch-race-first.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/semantics-second.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/source-consumption-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/stability-reruns.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/targeted-final-races.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/typecheck-final-targeted.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/typecheck-first.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/typecheck-second.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage7/wrong-operation-verified.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/CODEX_ACCEPTANCE_CHECKLIST.md"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/CODEX_MASTER_PROMPT.md"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/CODEX_RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/CODEX_SESSION.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/GATE_STATUS.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/NEXT_WAVE_RECOMMENDATION.md"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/AUDIT_PLAN.md"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/audit-integrity.py"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/baseline-status.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/baseline.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/build-packet.py"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/commands.jsonl"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/final-integrity.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/final-status.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/incremental-changes.patch"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/run-check.py"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-baseline-sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-dual-view-both-directions.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-delivery-sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-recheck-ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-recheck-ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-recheck-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-recheck-runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-recheck-sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-recheck-sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-final-sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-authorization-boundary.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-exception-accessor.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-exit-observer.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-lifecycle-first.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-lifecycle-second.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-outcome.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-shutdown-output.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-green-worker-exit.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-host-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-integrity-delivery.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-integrity.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-lifecycle-typecheck.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-real-worker-first.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-real-worker-second.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-authorization-boundary.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-exception-accessor.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-exit-observer.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-lifecycle.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-outcome.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-shutdown-output.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-termination.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-red-worker-exit.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-regression-audit.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-1.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-1.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-2.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-delivery-3.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-final-1.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-final-2.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-final-3.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-round-1.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-round-2.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-20261023T103428Z/test-stability-round-3.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/AUDIT_PLAN.md"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/CODEX_R1_RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/R1_GATE_STATUS.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/audit-integrity.py"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/baseline-readonly/runtime/src/engine/app/worker-host.ts"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/baseline-status.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/baseline.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/build-packet.py"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/commands.jsonl"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/final-integrity.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/final-status.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/incremental-changes.patch"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/run-check.py"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/source-fingerprints.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-baseline-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-final-r1-ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-final-r1-ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-final-r1-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-final-r1-runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-final-r1-sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-final-r1-sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-green-independent-controlled.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-green-independent-real-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-green-r1-regression.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-integrity-r1.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-red-independent-controlled.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-red-independent-real-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-red-r1-regression.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-stability-r1-1.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-stability-r1-2.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/codex-r1-20261023T121303Z/test-stability-r1-3.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/focused-worker-lifecycle.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/CHATGPT_STAGE8_R1_ACCEPTANCE.md"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/INDEPENDENT_R1_GATE.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/independent-reruns.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/integrity-after.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/integrity-before.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/original-controlled-repro.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/original-real-worker-repro.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/review-start-file-hashes.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/stability-1.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/stability-2.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-r1-review-20261023-01/stability-3.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/independent-regression.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/independent-stability.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/integrity-before.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/integrity-verified.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race-real-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race-real-worker.mjs"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race.mjs"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/review-start-file-hashes.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/stability-review-1.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/stability-review-2.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/stability-review-3.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/preflight-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/source-fingerprints.json"
+?? "Runtime Core Semantic Contract RFC/m4/stage8/tsc-targeted.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/AUDIT_PLAN.md"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/CODEX_WAVE2A_RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/CONTRACT.md"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/GATE_STATUS.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/audit-integrity.py"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/baseline-readonly/runtime/src/core/tool/source-binding.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/baseline-readonly/runtime/src/core/tool/view-owned-tools.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/baseline-readonly/runtime/src/engine/app/worker-host.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/baseline-readonly/runtime/src/worker-runtime/app-kernel/AppKernel.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/baseline-readonly/runtime/src/worker-runtime/index.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/baseline-readonly/sdk/src/hooks/useViewTypeTool.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/baseline-status.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/baseline.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/build-packet.py"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/commands.jsonl"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/final-integrity.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/final-status.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/incremental-changes.patch"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/run-check.py"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/source-fingerprints.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-final-wave2a-sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-green-wave2a-first.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-integrity-wave2a.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-r1-independent-controlled.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-r1-independent-real-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-red-real-sdk-worker-confirmed.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-red-real-sdk-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-red-request-and-core.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-stability-wave2a-1.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-stability-wave2a-2.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2a-20261023T124740Z/test-stability-wave2a-3.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/CODE_FACTS.md"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/GATE_STATUS.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/NEXT_MINIMAL_SLICE.md"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/REF_CONTRACT_PROPOSAL.md"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/VALIDATION_RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/audit-integrity.py"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/baseline-readonly/head.txt"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/baseline-readonly/index.patch"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/baseline-readonly/inventory.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/baseline-readonly/status-porcelain-v1.txt"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/baseline-readonly/worktree.patch"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/build-packet.py"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/commands.jsonl"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/incremental-changes.patch"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/integrity-final.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/run-check.py"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/source-fingerprints.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-byte-count-independent.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-compatibility-core-worker-r1.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-current-runtime-contract-corrected.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-current-runtime-contract.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-current-sdk-contract-corrected.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-current-sdk-contract.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-final-wave2b-ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-final-wave2b-ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-final-wave2b-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-final-wave2b-runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-final-wave2b-sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-final-wave2b-sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-protection-final.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-r1-original-controlled.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2b-20261023T144207Z/test-r1-original-real-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/APPROVED_SCOPE.md"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/CODEX_WAVE2C_RESULTS.md"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/CONTRACT.md"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/GATE_STATUS.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/NEXT_MINIMAL_SLICE.md"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/audit-integrity.py"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/head.txt"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/index.patch"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/inventory.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/core/snapshot/types.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/core/snapshot/v2-validator.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/core/snapshot/validator.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/core/tool/view-owned-tools.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/engine/app/worker-host.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/spi/runtime/view-owned-tools.interface.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/worker-runtime/app-kernel/AppKernel.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/runtime/src/worker-runtime/dom-snapshot-producer.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/sdk/src/components/View.tsx"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/sdk/src/contexts/view-runtime-context.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/sdk/src/hooks/useViewTypeTool.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/sources/sdk/src/operation/types.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/status-porcelain-v1.txt"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/baseline-readonly/worktree.patch"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/build-packet.py"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/commands.jsonl"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/incremental-changes.patch"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/integrity-after-order.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/integrity-final.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/run-check.py"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/run-stability.py"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/source-fingerprints.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-canonical-r1-original-controlled.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-canonical-r1-original-real-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-canonical-stability-1.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-canonical-stability-2.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-canonical-stability-3.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-canonical-ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-canonical-ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-canonical-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-canonical-runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-canonical-sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-canonical-sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sealed-ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sealed-ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sealed-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sealed-runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sealed-sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-sealed-sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-verified-ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-verified-ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-verified-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-verified-runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-verified-sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-final-wave2c-verified-sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-green-core-first.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-green-outer-metadata-getters.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-green-sdk-first.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-green-worker-first.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-implementation-runtime-tsc-corrected.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-implementation-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-patch-check-after-order.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-patch-check.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-protection-after-order.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-protection-final.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-r1-original-controlled.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-r1-original-real-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-red-core.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-red-outer-metadata-getters.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-red-required-order.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-red-sdk.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-red-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-sdk-compatibility-message.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-stability-1.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-stability-2.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/test-stability-3.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-20261024T005534Z/verify-patch.py"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/audit-integrity.py"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/baseline-source/runtime/src/core/tool/ref-declarations.ts"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/baseline-staged.diff"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/baseline-status.porcelain-v1.txt"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/baseline-unstaged.diff"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/baseline.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/commands.jsonl"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/incremental-changes.patch"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/integrity-final.json"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/run-check.py"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/run-stability.py"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-r1-original-controlled.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-r1-original-real-worker.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-stability-1.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-stability-2.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-c1-stability-3.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-ide-jest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-ide-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-runtime-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-sdk-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-final-c1-sdk-vitest.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-green-core-contract.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-green-ordinary-baseline-comparison.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-green-original-independent-v3.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-patch-check.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-protection-final.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-red-c1-contract.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-red-initial-runtime-tsc.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/test-red-original-independent-v3.log"
+?? "Runtime Core Semantic Contract RFC/m4/wave2c-c1-20261024T033523Z/verify-patch.py"
+?? demo-apps/aotui-ide/src/__tests__/exclusive-file-create.test.ts
+?? demo-apps/aotui-ide/src/__tests__/file-view-ids.test.ts
+?? demo-apps/aotui-ide/src/__tests__/versioned-file-write.test.ts
+?? demo-apps/aotui-ide/src/core/versioned-file-write.ts
+?? demo-apps/aotui-ide/src/tui/file-view-ids.ts
+?? runtime/src/adapters/snapshot/shadow-receiver.test.ts
+?? runtime/src/adapters/snapshot/shadow-receiver.ts
+?? runtime/src/core/projection/coordinator.test.ts
+?? runtime/src/core/projection/coordinator.ts
+?? runtime/src/core/snapshot/index.ts
+?? runtime/src/core/snapshot/json.ts
+?? runtime/src/core/snapshot/memory-app.test.ts
+?? runtime/src/core/snapshot/ref-contract.wave2b.test.ts
+?? runtime/src/core/snapshot/snapshot.test.ts
+?? runtime/src/core/snapshot/store.ts
+?? runtime/src/core/snapshot/types.ts
+?? runtime/src/core/snapshot/v2-validator.ts
+?? runtime/src/core/snapshot/v2.test.ts
+?? runtime/src/core/snapshot/validator.ts
+?? runtime/src/core/snapshot/workspace.test.ts
+?? runtime/src/core/snapshot/workspace.ts
+?? runtime/src/core/tool/ref-declarations.ts
+?? runtime/src/core/tool/ref-declarations.wave2c-c1.test.ts
+?? runtime/src/core/tool/ref-declarations.wave2c.test.ts
+?? runtime/src/core/tool/source-binding.test.ts
+?? runtime/src/core/tool/source-binding.ts
+?? runtime/src/core/tool/source-binding.wave2a.test.ts
+?? runtime/src/core/tool/versioned-file-integration.test.ts
+?? runtime/src/core/tool/view-owned-tools.test.ts
+?? runtime/src/core/tool/view-owned-tools.ts
+?? runtime/src/engine/app/worker-host.m3-sdk-e2e.test.ts
+?? runtime/src/engine/app/worker-host.m4-lifecycle.test.ts
+?? runtime/src/engine/app/worker-host.m4-producer-race.test.ts
+?? runtime/src/engine/app/worker-host.m4-readonly.test.ts
+?? runtime/src/engine/app/worker-host.m4-stage8-outcome.test.ts
+?? runtime/src/engine/app/worker-host.m4-v2-shadow.test.ts
+?? runtime/src/engine/app/worker-host.m4-versioned-file.test.ts
+?? runtime/src/engine/app/worker-host.m4-view-owned-e2e.test.ts
+?? runtime/src/engine/app/worker-host.p0-tool-result.test.ts
+?? runtime/src/engine/app/worker-host.r1-terminal-race.test.ts
+?? runtime/src/engine/app/worker-host.shadow-e2e.test.ts
+?? runtime/src/engine/app/worker-host.snapshot-shadow.test.ts
+?? runtime/src/engine/app/worker-host.wave2a-readonly.test.ts
+?? runtime/src/engine/app/worker-host.wave2a-request.test.ts
+?? runtime/src/engine/app/worker-host.wave2c-declarations.test.ts
+?? runtime/src/spi/runtime/projection.interface.ts
+?? runtime/src/spi/runtime/view-owned-tools.interface.ts
+?? runtime/src/worker-runtime/app-kernel/AppKernel.type-tool-contract.test.ts
+?? runtime/src/worker-runtime/dom-snapshot-producer.test.ts
+?? runtime/src/worker-runtime/dom-snapshot-producer.ts
+?? sdk/src/projection-coordinator.test.ts
+?? sdk/src/ref-contract.wave2b.test.ts
+?? sdk/src/ref-declarations.wave2c.test.ts
+?? sdk/src/view-owned-tools.test.ts

@@ -1,0 +1,40 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+stdout | src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows SnapshotRegistry retains a mutable payload and generates a new ID for unchanged content
+M0_SNAPSHOT_STORE={"firstId":"snap_0cc749ac","duplicateId":"snap_3d761d02","sameId":false,"contentAfterExternalMutation":{"title":"after","nested":{"flag":"mutated"}}}
+
+stdout | src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows WorkerHost drops different valid fragments with equal millisecond timestamps
+M0_WORKER_TIMESTAMP={"observed":"first","updateCount":1,"sameMsSecondDropped":true}
+
+stdout | src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows AppKernel can fall back to an unrelated same-named Ref in another view
+M0_REF_FALLBACK={"foreign":{"id":"A"},"refKeys":["view_a:selected","view_b:selected"]}
+
+stdout | src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows Type Tool business rejection is wrapped as top-level success
+M0_TOOL_RESULT={"success":true,"data":{"success":false,"error":{"code":"BUSINESS_DENIED","message":"Rejected"}}}
+
+stdout | src/__m0_runtime_probe.test.ts > M0 SP-04/05/06 boundary checks > source Snapshot ref and live AppKernel RefRegistry disagree after list reindex
+M0_SP05_SPLIT_REF={"fromOldSnapshot":{"id":"A"},"fromCurrentWorker":{"id":"B"},"tool":{"success":true,"data":{"success":true,"data":{"selectedId":"B"}}}}
+
+stdout | src/__m0_runtime_probe.test.ts > M0 SP-04/05/06 boundary checks > uses real worker_threads IPC to show equal-ms loss and absent appId source validation
+M0_SP04_REAL_IPC={"hostAppId":"app_0","updates":2,"currentMarkup":"wrong-app-accepted"}
+
+stderr | src/__m0_runtime_probe.test.ts > M0 SP-04/05/06 boundary checks > uses real worker_threads IPC to show equal-ms loss and absent appId source validation
+[AppWorkerHost] Worker app_0 exited with code 1
+
+stdout | src/__m0_runtime_probe.test.ts > M0 SP-04/05/06 boundary checks > shows Workspace formatter projects two app fragments without an app revision vector
+M0_SP06_WORKSPACE_COMPOSITE={"structuredKeys":["systemInstruction","desktopState","desktopTimestamp","applicationInstructions","appStates","viewStates"],"viewCount":2,"refs":["app_0:workspace:selected","app_1:workspace:selected"],"vector":null}
+
+ ✓ src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows SnapshotRegistry retains a mutable payload and generates a new ID for unchanged content 2ms
+ ✓ src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows WorkerHost drops different valid fragments with equal millisecond timestamps 0ms
+ ✓ src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows AppKernel can fall back to an unrelated same-named Ref in another view 0ms
+ ✓ src/__m0_runtime_probe.test.ts > M0 runtime behavioral baseline > shows Type Tool business rejection is wrapped as top-level success 0ms
+ ✓ src/__m0_runtime_probe.test.ts > M0 SP-04/05/06 boundary checks > source Snapshot ref and live AppKernel RefRegistry disagree after list reindex 0ms
+ ✓ src/__m0_runtime_probe.test.ts > M0 SP-04/05/06 boundary checks > uses real worker_threads IPC to show equal-ms loss and absent appId source validation 25ms
+ ✓ src/__m0_runtime_probe.test.ts > M0 SP-04/05/06 boundary checks > shows Workspace formatter projects two app fragments without an app revision vector 15ms
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  22:35:31
+   Duration  391ms (transform 130ms, setup 0ms, collect 137ms, tests 43ms, environment 0ms, prepare 57ms)
+

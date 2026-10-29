@@ -15,14 +15,22 @@
  * - AppManager 持有 Desktop 引用用于日志和信号
  */
 
-import type { DesktopID, AppID, AppState, IDesktop, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
+import type { AppID, AppState, IDesktop, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
 import { createAppId } from '../../spi/index.js';
-import { WorkerSandbox, type SandboxStatus } from './worker-sandbox.js';
+import type { SandboxCloseReport } from './worker-sandbox.js';
+import type { AppManagerCloseReport, AppManagerCloseOperation } from '../../spi/runtime/close.interface.js';
+import { closeError, closeVoid, createCloseOperation, newCloseState, mergeCloseReport, sandboxCloseReport, addCloseFailure, snapshotClose, freezeClose, type CloseState } from '../core/close-operation.js';
+import { WorkerSandbox } from './worker-sandbox.js';
+import { WorkerPool, type WorkerPoolReport } from './worker-pool.js';
+import { RUNTIME_DEFAULTS } from '../../spi/config/index.js';
+import type { AppInteractionOptions, AppScopeResult } from '../../spi/runtime/app-interaction.interface.js';
+import type { ScopePolicy } from '../../core/invocation/scoped-interaction.js';
+import { captureInteractionModes } from './interaction-config.js';
 
 /**
  * 已安装的 App 信息
  */
-export interface InstalledApp {
+export interface InstalledApp extends AppInteractionOptions {
     appId: AppID;
     name?: string;
     /** [RFC-013] App 描述 - 告诉 Agent 什么时候使用此 App */
@@ -59,6 +67,8 @@ export interface InstalledApp {
 }
 
 export interface AppManagerOptions {
+    runtimeConfig?: import('../../spi/config/index.js').RuntimeConfig;
+    workerPool?: WorkerPool;
     /** App 安装回调 */
     onAppInstalled?: (appId: AppID) => void;
     /** App 移除回调 */
@@ -79,67 +89,7 @@ interface IDesktopInternal extends IDesktop {
     getDocument?(): Document; // Optional/Deprecated
 }
 
-export class AppManager {
-    // ════════════════════════════════════════════════════════════════
-    //  Private State
-    // ════════════════════════════════════════════════════════════════
-
-    /** [Worker-Only] WorkerSandbox 集合 - 核心隔离机制 */
-    private workers = new Map<AppID, WorkerSandbox>();
-
-    /** 已安装 App 元数据 (用于序列化和状态查询) */
-    private installedApps = new Map<AppID, InstalledApp>();
-
-    /** App ID 计数器 */
-    private appIdCounter = 0;
-
-    /** 配置选项 */
-    private options: AppManagerOptions;
-
-
-    /** Desktop 引用 (用于日志和信号) */
-    private readonly desktop: IDesktopInternal;
-
-    // ════════════════════════════════════════════════════════════════
-    //  Constructor
-    // ════════════════════════════════════════════════════════════════
-
-    constructor(desktop: IDesktop, options?: AppManagerOptions) {
-        this.desktop = desktop as unknown as IDesktopInternal;
-        this.options = options || {};
-    }
-
-    private withLifecycleMetadata(
-        config: import('../../spi/app/app-config.interface.js').AppLaunchConfig | undefined,
-        lifecycle?: {
-            startupKind: 'normal' | 'reinitialize';
-            reason?: string;
-        }
-    ): import('../../spi/app/app-config.interface.js').AppLaunchConfig | undefined {
-        const effectiveLifecycle = lifecycle ?? { startupKind: 'normal' as const };
-        return {
-            ...(config ?? {}),
-            __aotuiLifecycle: {
-                startupKind: effectiveLifecycle.startupKind,
-                reason: effectiveLifecycle.reason,
-            },
-        };
-    }
-
-    // ════════════════════════════════════════════════════════════════
-    //  安装方法
-    // ════════════════════════════════════════════════════════════════
-
-    /**
-     * [Worker-Only] 安装 App
-     * 
-     * App 运行在独立的 Worker Thread 中，通过 IPC 通信
-     * 
-     * [C1 Fix] workerScriptPath 现在是可选的，默认使用 Runtime 内置的 worker-runtime
-     */
-    async install(
-        appModulePath: string,
-        options?: {
+type InstallOptions = AppInteractionOptions & {
             workerScriptPath?: string;
             appId?: AppID;
             name?: string;
@@ -166,72 +116,8 @@ export class AppManager {
                 startupKind: 'normal' | 'reinitialize';
                 reason?: string;
             };
-        }
-    ): Promise<AppID> {
-        // 分配 ID
-        const appId = options?.appId ?? createAppId(this.appIdCounter++);
-        const workerLaunchConfig = this.withLifecycleMetadata(options?.config, options?.lifecycle);
-
-        // 创建 WorkerSandbox
-        const workerSandbox = new WorkerSandbox({
-            appId,
-            desktopId: this.desktop.id,
-            name: options?.name,
-            appModulePath,
-            workerScriptPath: options?.workerScriptPath,
-            config: workerLaunchConfig, // ✨ 传递配置
-            runtimeConfig: options?.runtimeConfig, // [RFC-005] Pass configuration
-        });
-
-        // 设置更新回调
-        workerSandbox.onUpdateRequest = () => {
-            this.desktop.emitSignal('manual_refresh');
         };
-
-        // 启动 Worker 并打开 App
-        await workerSandbox.installDynamic();
-
-        // [RFC-001 Phase 2] Removed Mirror DOM initialization and initial HTML push
-        // Worker now uses Snapshot Fragment protocol exclusively.
-
-        // 注册
-        this.workers.set(appId, workerSandbox);
-
-        // 记录元数据
-        this.installedApps.set(appId, {
-            appId,
-            name: options?.name,
-            description: options?.description,  // [RFC-013]
-            whatItIs: options?.whatItIs,
-            whenToUse: options?.whenToUse,
-            html: '',  // 初始为空，之后通过 mirrorDOM 同步
-            status: 'running',
-            installedAt: Date.now(),
-            modulePath: appModulePath,
-            workerScript: options?.workerScriptPath,
-            config: options?.config,
-            runtimeConfig: options?.runtimeConfig,
-            promptRole: options?.promptRole,
-        });
-
-        this.desktop.logSystem(options?.lifecycleMessage ?? `Installed Worker app: ${appId}`);
-        if (options?.emitLifecycleSignal ?? true) {
-            this.desktop.emitSignal('app_opened');
-        }
-        if (options?.notifyAppInstalled ?? true) {
-            this.options.onAppInstalled?.(appId);
-        }
-
-        return appId;
-    }
-
-    /**
-     * [RFC-014] 注册待启动 App (懒加载)
-     * 
-     * App 信息写入 installedApps，但不启动 Worker。
-     * Agent 可以在 Snapshot 中看到这些 App，并通过 open_app 启动。
-     */
-    registerPendingApp(options: {
+type PendingOptions = AppInteractionOptions & {
         appId?: AppID;
         name?: string;
         description?: string;
@@ -239,416 +125,297 @@ export class AppManager {
         whenToUse?: string;
         modulePath: string;
         workerScriptPath?: string;
+        config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
+        runtimeConfig?: import('../../spi/config/index.js').RuntimeConfig;
         promptRole?: 'user' | 'assistant';
-    }): AppID {
-        const appId = options.appId ?? createAppId(this.appIdCounter++);
+    };
+type AppCode = AppManagerCloseReport['failures'][number]['codes'][number];
+interface OwnedSandbox { id: AppID; worker: WorkerSandbox; meta?: InstalledApp; codes: Set<AppCode>; stopReopen: boolean; cleanup?: Promise<SandboxCloseReport>; }
+export class AppManager {
+    private workers = new Map<AppID, WorkerSandbox>();
+    private installedApps = new Map<AppID, InstalledApp>();
+    private appIdCounter = 0;
+    private idsExhausted = false;
+    private readonly options: AppManagerOptions;
+    private readonly desktop: IDesktopInternal;
+    private readonly workerPool: WorkerPool;
+    private readonly ownsWorkerPool: boolean;
+    private readonly details = new WeakMap<WorkerSandbox, OwnedSandbox>();
+    private readonly inFlight = new Set<Promise<unknown>>();
+    private readonly appOperations = new Map<AppID, { kind: string; promise: Promise<unknown> }>();
+    private closing?: AppManagerCloseOperation;
+    private voidClose?: Promise<void>;
+    private cleanupPromise?: Promise<AppManagerCloseReport>;
+    private phase: 'active' | 'closing' | 'settled' = 'active';
+    private intent: 'close' | 'delete' | null = null;
+    private targets?: OwnedSandbox[];
+    private folded?: CloseState;
 
-        this.installedApps.set(appId, {
-            appId,
-            name: options.name,
-            description: options.description,
-            whatItIs: options.whatItIs,
-            whenToUse: options.whenToUse,
-            html: '',
-            status: 'pending',
-            installedAt: Date.now(),
-            modulePath: options.modulePath,
-            workerScript: options.workerScriptPath,
-            config: undefined,
-            runtimeConfig: undefined,
-            promptRole: options.promptRole,
-        });
-
-        this.desktop.logSystem(`Registered pending app: ${appId} (${options.name ?? 'unnamed'})`);
-        return appId;
+    constructor(desktop: IDesktop, options?: AppManagerOptions) {
+        this.desktop = desktop as IDesktopInternal;this.options = options ?? {};
+        this.ownsWorkerPool = !options?.workerPool;
+        this.workerPool = options?.workerPool ?? new WorkerPool({ ...(options?.runtimeConfig ?? RUNTIME_DEFAULTS).worker.pool });
     }
-
-    /**
-     * [RFC-014] 启动待启动 App
-     * 
-     * 将 pending 状态的 App 真正安装并启动 Worker
-     */
-    async startPendingApp(
-        appId: AppID,
-        options?: {
-            notifyAppInstalled?: boolean;
-            emitLifecycleSignal?: boolean;
-            lifecycleMessage?: string;
-            lifecycle?: {
-                startupKind: 'normal' | 'reinitialize';
-                reason?: string;
-            };
+    closeWorkerPool(): Promise<WorkerPoolReport | null> { return this.ownsWorkerPool ? this.workerPool.destroy() : Promise.resolve(null); }
+    getWorkerPoolReport(): WorkerPoolReport | null { return this.ownsWorkerPool ? this.workerPool.getReport() : null; }
+    private assertActive(): void { if (this.phase !== 'active') throw closeError('APP_MANAGER_CLOSED'); }
+    private capacity(): void { this.assertActive();if (this.inFlight.size >= 128) throw closeError('LIFECYCLE_CAPACITY_EXCEEDED'); }
+    private allocateId(): AppID {
+        while (!this.idsExhausted) {
+            const id = createAppId(this.appIdCounter);
+            if (this.appIdCounter === Number.MAX_SAFE_INTEGER) this.idsExhausted = true;else this.appIdCounter++;
+            if (!this.installedApps.has(id) && !this.workers.has(id) && !this.appOperations.has(id)) return id;
         }
-    ): Promise<boolean> {
-        const app = this.installedApps.get(appId);
-
-        if (!app) {
-            console.warn(`[AppManager] Cannot start ${appId}: not found`);
-            return false;
-        }
-
-        if (app.status !== 'pending' && app.status !== 'closed') {
-            console.warn(`[AppManager] App ${appId} is not startable (status: ${app.status})`);
-            return false;
-        }
-
-        if (!app.modulePath) {
-            console.error(`[AppManager] Cannot start ${appId}: missing modulePath`);
-            return false;
-        }
-
-        // 真正安装 Worker
-        await this.install(app.modulePath, {
-            appId,
-            name: app.name,
-            description: app.description,
-            whatItIs: app.whatItIs,
-            whenToUse: app.whenToUse,
-            workerScriptPath: app.workerScript,
-            config: app.config,
-            runtimeConfig: app.runtimeConfig,
-            promptRole: app.promptRole,
-            notifyAppInstalled: options?.notifyAppInstalled,
-            emitLifecycleSignal: options?.emitLifecycleSignal,
-            lifecycleMessage: options?.lifecycleMessage,
-            lifecycle: options?.lifecycle,
-        });
-
-        if (!options?.lifecycleMessage) {
-            this.desktop.logSystem(`Started staged app: ${appId}`);
-        }
-        return true;
+        throw closeError('LIFECYCLE_CAPACITY_EXCEEDED');
     }
-
-    async reinitializeAll(
-        options?: ReinitializeDesktopAppsOptions
-    ): Promise<Omit<ReinitializeDesktopAppsResult, 'desktopId'>> {
-        const result: Omit<ReinitializeDesktopAppsResult, 'desktopId'> = {
-            reinitializedAppIds: [],
-            skippedAppIds: [],
-            failedAppIds: [],
+    private owned(id: AppID, worker: WorkerSandbox): OwnedSandbox {
+        let record = this.details.get(worker);
+        if (!record) { record = { id, worker, meta: this.installedApps.get(id), codes: new Set(), stopReopen: false };this.details.set(worker, record); }
+        return record;
+    }
+    private track<T>(id: AppID, kind: string, run: () => Promise<T>): Promise<T> {
+        try {
+            this.assertActive();const previous = this.appOperations.get(id);
+            if (previous) return previous.kind === kind && kind !== 'install' ? previous.promise as Promise<T> : Promise.reject(closeError('APP_ALREADY_EXISTS'));
+            this.capacity();
+        } catch (error) { return Promise.reject(error); }
+        let resolve!: (value: T) => void, reject!: (reason: unknown) => void;
+        const promise = new Promise<T>((yes, no) => { resolve = yes;reject = no; });
+        const token = { kind, promise };this.appOperations.set(id, token);this.inFlight.add(promise);
+        const release = () => { this.inFlight.delete(promise);if (this.appOperations.get(id) === token) this.appOperations.delete(id); };
+        try { void run().then(value => { release();resolve(value); }, error => { release();reject(error); }); }
+        catch (error) { release();reject(error); }
+        void promise.catch(() => {});return promise;
+    }
+    private current(meta: InstalledApp, worker?: WorkerSandbox): void {
+        this.assertActive();
+        if (this.installedApps.get(meta.appId) !== meta || worker && this.workers.get(meta.appId) !== worker) throw closeError('LIFECYCLE_CONFLICT');
+    }
+    private withLifecycleMetadata(
+        config: import('../../spi/app/app-config.interface.js').AppLaunchConfig | undefined,
+        lifecycle?: {
+            startupKind: 'normal' | 'reinitialize';
+            reason?: string;
+        }
+    ): import('../../spi/app/app-config.interface.js').AppLaunchConfig | undefined {
+        const effectiveLifecycle = lifecycle ?? { startupKind: 'normal' as const };
+        return {
+            ...(config ?? {}),
+            __aotuiLifecycle: {
+                startupKind: effectiveLifecycle.startupKind,
+                reason: effectiveLifecycle.reason,
+            },
         };
+    }
 
-        for (const appId of Array.from(this.installedApps.keys())) {
-            const app = this.installedApps.get(appId);
-            if (!app) continue;
-
-            if (app.status === 'closed' || app.status === 'pending') {
-                result.skippedAppIds.push(appId);
-                continue;
-            }
-
-            try {
-                await this.reinitializeApp(appId, options);
-                result.reinitializedAppIds.push(appId);
-            } catch (error) {
-                const worker = this.workers.get(appId);
-                if (worker) {
-                    worker.dispose();
-                    this.workers.delete(appId);
+    install(appModulePath: string, options?: InstallOptions): Promise<AppID> {
+        let id: AppID;
+        try {
+            const experimentalInteractionModes = captureInteractionModes(options);
+            options = { ...options, experimentalInteractionModes };
+            this.capacity();id = options?.appId ?? this.allocateId();
+            if (this.installedApps.has(id) || this.workers.has(id) || this.appOperations.has(id)) throw closeError('APP_ALREADY_EXISTS');
+        } catch (error) { return Promise.reject(error); }
+        return this.track(id, 'install', async () => {
+            const meta: InstalledApp = { appId: id, name: options?.name, description: options?.description, whatItIs: options?.whatItIs,
+                whenToUse: options?.whenToUse, html: '', status: 'pending', installedAt: Date.now(), modulePath: appModulePath,
+                workerScript: options?.workerScriptPath, config: options?.config, runtimeConfig: options?.runtimeConfig, promptRole: options?.promptRole,
+                experimentalInteractionModes: options?.experimentalInteractionModes };
+            this.installedApps.set(id, meta);await this.installMeta(meta, options);return id;
+        });
+    }
+    private async installMeta(meta: InstalledApp, options?: InstallOptions): Promise<void> {
+        this.current(meta);let record: OwnedSandbox | undefined;
+        try {
+            const worker = new WorkerSandbox({ appId: meta.appId, desktopId: this.desktop.id, name: meta.name, appModulePath: meta.modulePath!,
+                workerScriptPath: meta.workerScript, config: this.withLifecycleMetadata(meta.config, options?.lifecycle),
+                runtimeConfig: meta.runtimeConfig ?? this.options.runtimeConfig, workerPool: this.workerPool,
+                experimentalInteractionModes: meta.experimentalInteractionModes });
+            record = this.owned(meta.appId, worker);record.meta = meta;this.workers.set(meta.appId, worker);
+            worker.onUpdateRequest = () => { if (this.phase === 'active' && this.workers.get(meta.appId) === worker) this.desktop.emitSignal('manual_refresh'); };
+            await worker.installDynamic();this.current(meta, worker);if (record.stopReopen) throw closeError('APP_MANAGER_CLOSED');
+            if (options?.notifyAppInstalled !== false) await this.options.onAppInstalled?.(meta.appId);
+            this.current(meta, worker);if (record.stopReopen) throw closeError('APP_MANAGER_CLOSED');meta.status = 'running';
+            this.desktop.logSystem(options?.lifecycleMessage ?? `Installed app: ${meta.appId}`);
+            if (options?.emitLifecycleSignal !== false) this.desktop.emitSignal('app_installed');
+        } catch {
+            if (record) {
+                record.codes.add('INSTALL_FAILED');const report = await this.clean(record, 'close', false);
+                if (this.phase === 'active' && report.resourcesReleased) {
+                    this.releaseRecord(record, true);
+                    if (this.installedApps.get(meta.appId) === meta && !this.workers.has(meta.appId)) meta.status = 'closed';
                 }
-                app.status = 'closed';
-                result.failedAppIds.push(appId);
-                this.desktop.logSystem(
-                    `Failed to reinitialize app ${appId}: ${error instanceof Error ? error.message : String(error)}`,
-                    'error'
-                );
-            }
+            } else if (this.installedApps.get(meta.appId) === meta) this.installedApps.delete(meta.appId);
+            throw closeError('INSTALL_FAILED');
         }
-
+    }
+    registerPendingApp(options: PendingOptions): AppID {
+        const experimentalInteractionModes = captureInteractionModes(options);
+        this.assertActive();const id = options.appId ?? this.allocateId();
+        if (this.installedApps.has(id) || this.workers.has(id) || this.appOperations.has(id)) throw closeError('APP_ALREADY_EXISTS');
+        this.installedApps.set(id, { appId: id, name: options.name, description: options.description, whatItIs: options.whatItIs, whenToUse: options.whenToUse,
+            html: '', status: 'pending', installedAt: Date.now(), modulePath: options.modulePath, workerScript: options.workerScriptPath, promptRole: options.promptRole,
+            config: options.config, runtimeConfig: options.runtimeConfig,
+            experimentalInteractionModes });
+        this.desktop.logSystem(`Registered pending app: ${id} (${options.name ?? 'unnamed'})`);return id;
+    }
+    startPendingApp(id: AppID, options?: Pick<InstallOptions, 'notifyAppInstalled' | 'emitLifecycleSignal' | 'lifecycleMessage' | 'lifecycle'>): Promise<boolean> {
+        try { this.assertActive(); } catch (error) { return Promise.reject(error); }
+        const meta = this.installedApps.get(id);if (!meta || !meta.modulePath || meta.status !== 'pending' && meta.status !== 'closed') return Promise.resolve(false);
+        return this.track(id, 'open', async () => { this.current(meta);if (this.workers.has(id)) throw closeError('APP_ALREADY_EXISTS');await this.installMeta(meta, options);return true; });
+    }
+    reinitializeApp(id: AppID, options?: ReinitializeDesktopAppsOptions): Promise<void> {
+        try { this.assertActive(); } catch (error) { return Promise.reject(error); }
+        const meta = this.installedApps.get(id);if (!meta) return Promise.reject(closeError('APP_CLOSE_FAILED'));
+        if (meta.status === 'closed' || meta.status === 'pending') return Promise.resolve();
+        const worker = this.workers.get(id);if (!worker) return Promise.reject(closeError('APP_CLOSE_FAILED'));const record = this.owned(id, worker);
+        return this.track(id, 'reinitialize', async () => {
+            try {
+                this.current(meta, worker);await worker.reinitialize(options?.reason);this.current(meta, worker);
+                const report = await this.clean(record, 'close', false);this.releaseRecord(record, this.phase === 'active');
+                if (!report.resourcesReleased || report.issues.length || record.codes.size) throw closeError('APP_CLOSE_FAILED');
+                this.current(meta);if (record.stopReopen || this.workers.has(id)) throw closeError('LIFECYCLE_CONFLICT');
+                await this.installMeta(meta, { notifyAppInstalled: false, emitLifecycleSignal: false,
+                    lifecycleMessage: `Reinitialized app: ${id}${options?.reason ? ` (${options.reason})` : ''}`,
+                    lifecycle: { startupKind: 'reinitialize', reason: options?.reason } });
+            } catch {
+                record.codes.add('APP_CLOSE_FAILED');await this.clean(record, 'close', false);this.releaseRecord(record, this.phase === 'active');throw closeError('APP_CLOSE_FAILED');
+            }
+        });
+    }
+    async reinitializeAll(options?: ReinitializeDesktopAppsOptions): Promise<Omit<ReinitializeDesktopAppsResult, 'desktopId'>> {
+        this.assertActive();const entries = [...this.installedApps.entries()];
+        const results = await Promise.all(entries.map(async ([id, meta]) => {
+            if (meta.status === 'closed' || meta.status === 'pending') return { id, state: 'skipped' };
+            try { await this.reinitializeApp(id, options);return { id, state: 'done' }; } catch { return { id, state: 'failed' }; }
+        }));
+        return { reinitializedAppIds: results.filter(x => x.state === 'done').map(x => x.id),
+            skippedAppIds: results.filter(x => x.state === 'skipped').map(x => x.id), failedAppIds: results.filter(x => x.state === 'failed').map(x => x.id) };
+    }
+    private clean(record: OwnedSandbox, intent: 'close' | 'delete', notify: boolean): Promise<SandboxCloseReport> {
+        if (record.cleanup) return record.cleanup;
+        let actual: Promise<SandboxCloseReport>;
+        try {
+            if (intent === 'delete') { const deleting = record.worker.delete();void deleting.catch(() => {}); }
+            actual = record.worker.disposeAsync();
+        } catch (error) { actual = Promise.reject(error); }
+        record.cleanup = actual.then(async report => {
+            if (notify && report.resourcesReleased) {
+                try { await this.options.onAppRemoved?.(record.id); } catch { record.codes.add('APP_CLOSE_FAILED'); }
+            }
+            return report;
+        }, error => { record.codes.add('APP_CLOSE_FAILED');throw error; });
+        void record.cleanup.catch(() => {});return record.cleanup;
+    }
+    private releaseRecord(record: OwnedSandbox, markClosed: boolean): void {
+        const report = record.worker.getCloseReport();
+        if (!report.resourcesReleased) return;
+        if (this.workers.get(record.id) === record.worker) this.workers.delete(record.id);
+        if (markClosed && this.installedApps.get(record.id) === record.meta && !this.workers.has(record.id)) record.meta!.status = 'closed';
+    }
+    private contribution(record: OwnedSandbox): AppManagerCloseReport {
+        const mapped = sandboxCloseReport(record.worker.getCloseReport(), String(this.desktop.id), String(record.id));
+        const state = structuredClone(mapped) as CloseState;
+        const present = new Set(mapped.failures.filter(x => x.stage === 'apps').flatMap(x => [...x.codes]));
+        addCloseFailure(state, 'apps', [...record.codes].filter(code => !present.has(code)), { desktopId: String(this.desktop.id), appId: String(record.id) });
+        return freezeClose({ ...snapshotClose(state), scope: 'app-manager' as const });
+    }
+    private report(): AppManagerCloseReport {
+        const state = this.folded ? structuredClone(this.folded) : newCloseState('app-manager', this.intent);
+        state.state = this.phase;state.intent = this.intent;state.pendingOperations = this.inFlight.size;
+        for (const record of this.targets ?? (this.folded ? [] : [...this.workers].map(([id, worker]) => this.owned(id, worker)))) mergeCloseReport(state, this.contribution(record));
+        if (this.inFlight.size) state.resourcesReleased = false;
+        if (this.ownsWorkerPool) {
+            const pool = this.workerPool.getReport();state.pool = { ownership: 'owned', report: { ...pool, issues: [...pool.issues] } };
+            if (pool.state !== 'closed') state.resourcesReleased = false;
+            addCloseFailure(state, 'pool', pool.issues, { desktopId: String(this.desktop.id) });
+        }
+        return freezeClose({ ...snapshotClose(state), scope: 'app-manager' as const });
+    }
+    getCloseReport(): AppManagerCloseReport { return this.closing ? this.closing.inspect() : this.report(); }
+    beginClose(intent: 'close' | 'delete' = 'close'): AppManagerCloseOperation {
+        if (this.closing) { if (this.intent === 'close' && intent === 'delete') throw closeError('LIFECYCLE_CONFLICT');return this.closing; }
+        this.phase = 'closing';this.intent = intent;this.targets = [...this.workers].map(([id, worker]) => this.owned(id, worker));
+        for (const record of this.targets) record.stopReopen = true;
+        let complete!: (report: AppManagerCloseReport) => void;
+        const completion = new Promise<AppManagerCloseReport>(resolve => { complete = resolve; });
+        this.closing = createCloseOperation(() => this.report(), completion);
+        const ownedPool = this.ownsWorkerPool ? this.workerPool.destroy() : undefined;
+        const tasks = this.targets.map(record => this.clean(record, intent, true));
+        void Promise.resolve().then(async () => {
+            await Promise.allSettled([...tasks, ...this.inFlight]);
+            if (ownedPool) await ownedPool;
+            this.folded = newCloseState('app-manager', intent);
+            for (const record of this.targets!) { mergeCloseReport(this.folded, this.contribution(record));this.releaseRecord(record, false); }
+            this.targets = undefined;this.phase = 'settled';return this.report();
+        }).then(complete, () => {
+            const state = this.folded ?? newCloseState('app-manager', intent);
+            state.state = 'settled';state.resourcesReleased = false;state.verification = this.ownsWorkerPool ? 'mixed' : 'unverified';
+            state.unverifiedParticipants++;addCloseFailure(state, 'apps', ['MANAGER_CLEANUP_FAILED'], { desktopId: String(this.desktop.id) });
+            this.folded = state;this.targets = undefined;this.phase = 'settled';
+            complete(freezeClose({ ...snapshotClose(state), scope: 'app-manager' as const }));
+        });
+        return this.closing;
+    }
+    closeAll(): Promise<void> { return this.voidClose ??= closeVoid(this.beginClose().completion, 'APP_CLOSE_FAILED'); }
+    deleteAll(): Promise<void> {
+        try { const operation = this.beginClose('delete');return this.voidClose ??= closeVoid(operation.completion, 'APP_CLOSE_FAILED'); }
+        catch (error) { return Promise.reject(error); }
+    }
+    cleanupAsync(): Promise<AppManagerCloseReport> {
+        return this.cleanupPromise ??= this.beginClose().completion.then(report => {
+            for (const [id] of this.installedApps) if (!this.workers.has(id)) this.installedApps.delete(id);
+            return report;
+        });
+    }
+    cleanup(): void {
+        const cleaning = this.cleanupAsync();void cleaning.catch(() => {});
+        if (!this.workers.size && !this.inFlight.size) this.installedApps.clear();
+    }
+    async openApp(id: AppID): Promise<void> {
+        this.assertActive();const meta = this.installedApps.get(id);
+        if (meta && (meta.status === 'pending' || meta.status === 'closed')) { await this.startPendingApp(id);return; }
+        if (!this.workers.has(id)) { console.warn(`App ${id} not found.`);return; }
+        if (meta) meta.status = 'running';this.desktop.logSystem(`Opened application: ${id}`);this.desktop.logAppOperation(id, 'Application opened.');this.desktop.emitSignal('app_opened');
+    }
+    async closeApp(id: AppID): Promise<void> {
+        this.assertActive();const worker = this.workers.get(id);if (!worker) return;const record = this.owned(id, worker);record.stopReopen = true;
+        const accepted = this.appOperations.get(id)?.promise;const report = await this.clean(record, 'close', true);
+        if (accepted) await accepted.catch(() => {});this.releaseRecord(record, true);
+        const mapped = this.contribution(record);if (mapped.hasFailures || !report.resourcesReleased) throw closeError('APP_CLOSE_FAILED', mapped);
+        this.desktop.logSystem(`Closed application: ${id}`);this.desktop.logAppOperation(id, 'Application closed.');this.desktop.emitSignal('dom_mutation');
+    }
+    async pauseAll(): Promise<void> {
+        this.assertActive();for (const [id, worker] of this.workers) if (worker.status === 'running') {
+            const meta = this.installedApps.get(id);await worker.pause();this.assertActive();if (this.workers.get(id) === worker && this.installedApps.get(id) === meta && meta) meta.status = 'paused';
+        }
+    }
+    async resumeAll(): Promise<void> {
+        this.assertActive();for (const [id, worker] of this.workers) if (worker.status === 'paused') {
+            const meta = this.installedApps.get(id);await worker.resume();this.assertActive();if (this.workers.get(id) === worker && this.installedApps.get(id) === meta && meta) meta.status = 'running';
+        }
+    }
+    async collapseApp(id: AppID): Promise<void> { this.assertActive();if (!this.workers.has(id)) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'collapsed';this.desktop.logAppOperation(id, 'Application collapsed.');this.desktop.emitSignal('dom_mutation'); }
+    async showApp(id: AppID): Promise<void> { this.assertActive();if (!this.workers.has(id)) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'running';this.desktop.logAppOperation(id, 'Application shown.');this.desktop.emitSignal('dom_mutation'); }
+    getAllWorkers(): Map<AppID, WorkerSandbox> { return new Map(this.workers); }
+    getInstalledApps(): InstalledApp[] { return [...this.installedApps.values()].map(app => ({ ...app })); }
+    getDynamicAppIds(): AppID[] { return [...this.workers.keys()]; }
+    getAppStates(): AppState[] { return [...this.installedApps].map(([appId, app]) => ({ appId, name: app.name, html: app.html, status: app.status, installedAt: app.installedAt })); }
+    getWorkerSandbox(id: AppID): WorkerSandbox | undefined { return this.workers.get(id); }
+    experimentalCreateAppScope(appId: string, policy: ScopePolicy): AppScopeResult {
+        const id = appId as AppID, meta = this.installedApps.get(id), worker = this.workers.get(id);
+        const unavailable = (): AppScopeResult => Object.freeze({ status: 'rejected', issue: Object.freeze({ code: 'SCOPE_UNAVAILABLE', message: 'App scope is unavailable' }) });
+        const current = () => this.phase === 'active' && !!meta && !!worker && this.installedApps.get(id) === meta && this.workers.get(id) === worker &&
+            (meta.status === 'running' || meta.status === 'collapsed') && worker.status === 'running' && !worker.disposed && !this.details.get(worker)?.stopReopen;
+        if (!current()) return unavailable();
+        const create = worker!.experimentalCreateAppScope;
+        if (typeof create !== 'function' || !current()) return unavailable();
+        const result = create.call(worker, policy);
+        if (!current()) { if (result.status === 'opened') result.client.close();return unavailable(); }
         return result;
     }
-
-    async reinitializeApp(appId: AppID, options?: ReinitializeDesktopAppsOptions): Promise<void> {
-        const app = this.installedApps.get(appId);
-        if (!app) {
-            throw new Error(`App ${appId} not found`);
-        }
-
-        if (app.status === 'closed' || app.status === 'pending') {
-            return;
-        }
-
-        const worker = this.workers.get(appId);
-        if (!worker) {
-            throw new Error(`Worker for ${appId} not found`);
-        }
-
-        await worker.reinitialize(options?.reason);
-        await worker.close();
-        worker.dispose();
-        this.workers.delete(appId);
-
-        app.status = 'closed';
-
-        const restarted = await this.startPendingApp(appId, {
-            notifyAppInstalled: false,
-            emitLifecycleSignal: false,
-            lifecycleMessage: `Reinitialized app: ${appId}${options?.reason ? ` (${options.reason})` : ''}`,
-            lifecycle: {
-                startupKind: 'reinitialize',
-                reason: options?.reason,
-            },
-        });
-
-        if (!restarted) {
-            throw new Error(`Failed to restart ${appId} after reinitialize`);
-        }
-    }
-
-
-    // ════════════════════════════════════════════════════════════════
-    //  生命周期方法
-    // ════════════════════════════════════════════════════════════════
-
-    /**
-     * 暂停所有 App
-     */
-    async pauseAll(): Promise<void> {
-        for (const [appId, worker] of this.workers) {
-            if (worker.status === 'running') {
-                await worker.pause();
-                const app = this.installedApps.get(appId);
-                if (app) app.status = 'paused';
-            }
-        }
-    }
-
-    /**
-     * 恢复所有 App
-     */
-    async resumeAll(): Promise<void> {
-        for (const [appId, worker] of this.workers) {
-            if (worker.status === 'paused') {
-                await worker.resume();
-                const app = this.installedApps.get(appId);
-                if (app) app.status = 'running';
-            }
-        }
-    }
-
-    /**
-     * 关闭所有 App
-     */
-    async closeAll(): Promise<void> {
-        for (const [appId, worker] of this.workers) {
-            await worker.close();
-            worker.dispose();
-            this.options.onAppRemoved?.(appId);
-        }
-        this.workers.clear();
-    }
-
-    /**
-     * [RFC-015] 删除所有 App
-     * 
-     * 1. 触发每个 App 的 onDelete (数据清理)
-     * 2. 关闭并销毁 Worker
-     */
-    async deleteAll(): Promise<void> {
-        for (const [appId, worker] of this.workers) {
-            await worker.delete();
-            worker.dispose();
-            this.options.onAppRemoved?.(appId);
-        }
-        this.workers.clear();
-    }
-
-    /**
-     * 打开指定 App (显示已关闭/折叠的 App)
-     */
-    async openApp(appId: AppID): Promise<void> {
-        // [RFC-014] Check if app is staged (pending/closed) and start it
-        const app = this.installedApps.get(appId);
-        if (app && (app.status === 'pending' || app.status === 'closed')) {
-            const started = await this.startPendingApp(appId);
-            if (!started) {
-                console.warn(`Failed to start staged app ${appId}`);
-                return;
-            }
-            return;
-        }
-
-        const worker = this.workers.get(appId);
-        if (!worker) {
-            console.warn(`App ${appId} not found.`);
-            return;
-        }
-
-        // [RFC-001 Phase 2] UI logic should be handled by Frontend/Product layer based on app status
-
-        if (app) app.status = 'running';
-
-        this.desktop.logSystem(`Opened application: ${appId}`);
-        this.desktop.logAppOperation(appId, 'Application opened.');
-        this.desktop.emitSignal('app_opened');
-    }
-
-    /**
-     * 关闭指定 App
-     *
-     * 关闭后会真正释放 Worker，并把 App 从活动 Snapshot/Tool 集合中移除。
-     * 安装元数据会保留，因此后续仍可通过 open_app 重新启动。
-     */
-    async closeApp(appId: AppID): Promise<void> {
-        const worker = this.workers.get(appId);
-        if (!worker) return;
-
-        await worker.close();
-        worker.dispose();
-        this.workers.delete(appId);
-
-        const app = this.installedApps.get(appId);
-        if (app) app.status = 'closed';
-
-        this.desktop.logSystem(`Closed application: ${appId}`);
-        this.desktop.logAppOperation(appId, 'Application closed.');
-        this.desktop.emitSignal('dom_mutation');
-    }
-
-    /**
-     * 折叠指定 App
-     */
-    async collapseApp(appId: AppID): Promise<void> {
-        const worker = this.workers.get(appId);
-        if (!worker) return;
-
-
-
-        // [RFC-001 Phase 2] UI logic should be handled by Frontend/Product layer based on app status
-
-        const app = this.installedApps.get(appId);
-        if (app) app.status = 'collapsed';
-
-        this.desktop.logAppOperation(appId, 'Application collapsed.');
-        this.desktop.emitSignal('dom_mutation');
-    }
-
-    /**
-     * 显示指定 App (从折叠状态恢复)
-     */
-    async showApp(appId: AppID): Promise<void> {
-        const worker = this.workers.get(appId);
-        if (!worker) return;
-
-
-
-        // [RFC-001 Phase 2] UI logic should be handled by Frontend/Product layer based on app status
-
-        const app = this.installedApps.get(appId);
-        if (app) app.status = 'running';
-
-        this.desktop.logAppOperation(appId, 'Application shown.');
-        this.desktop.emitSignal('dom_mutation');
-    }
-
-    // ════════════════════════════════════════════════════════════════
-    //  查询方法
-    // ════════════════════════════════════════════════════════════════
-
-
-
-
-
-    /**
-     * 获取所有 Workers
-     */
-    getAllWorkers(): Map<AppID, WorkerSandbox> {
-        return this.workers;
-    }
-
-
-
-    /**
-     * 获取所有已安装 App
-     */
-    getInstalledApps(): InstalledApp[] {
-        return Array.from(this.installedApps.values());
-    }
-
-    /**
-     * 获取动态 App ID 列表
-     */
-    getDynamicAppIds(): AppID[] {
-        return Array.from(this.workers.keys());
-    }
-
-    /**
-     * 获取 App 状态列表
-     */
-    getAppStates(): AppState[] {
-        // [RFC-001 Phase 2] HTML is no longer available in AppManager (Headless)
-        // Clients should subscribe to Snapshots.
-
-        return Array.from(this.installedApps.entries()).map(([appId, app]) => ({
-            appId,
-            name: app.name,
-            html: app.html,
-            status: app.status,
-            installedAt: app.installedAt
-        }));
-    }
-
-    /**
-     * 获取 WorkerSandbox
-     */
-    getWorkerSandbox(appId: AppID): WorkerSandbox | undefined {
-        return this.workers.get(appId);
-    }
-
-    /**
-     * 检查 App 是否运行在 Worker 模式
-     * 
-     * 在 Worker-Only 架构下，始终返回 true
-     */
-    isWorkerMode(appId: AppID): boolean {
-        return this.workers.has(appId);
-    }
-
-    // ════════════════════════════════════════════════════════════════
-    //  [RFC-011] LLM Output Channel
-    // ════════════════════════════════════════════════════════════════
-
-    /**
-     * [RFC-011] Broadcast LLM text to all Workers
-     * [RFC-020] Now accepts structured payload { reasoning?, content? }
-     * 
-     * Called by Desktop when LLMOutputChannelService receives new text.
-     */
-    broadcastLLMOutput(
-        payload: { reasoning?: string; content?: string },
-        type: 'complete',
-        meta?: {
-            model?: string;
-            providerId?: string;
-            modelId?: string;
-            usage?: {
-                promptTokens: number;
-                completionTokens: number;
-                totalTokens: number;
-            };
-        }
-    ): void {
-        console.log(`[AppManager] Broadcasting LLM text to ${this.workers.size} workers`);
-        for (const [appId, worker] of this.workers) {
-            worker.pushLLMOutput(payload, type, meta);
-        }
-    }
-
-    // ════════════════════════════════════════════════════════════════
-    //  清理
-    // ════════════════════════════════════════════════════════════════
-
-    /**
-     * 清理所有 Worker
-     */
-    cleanup(): void {
-        for (const worker of this.workers.values()) {
-            worker.dispose();
-        }
-        this.workers.clear();
-
-        this.installedApps.clear();
-        this.appIdCounter = 0;
+    isWorkerMode(id: AppID): boolean { return this.workers.has(id); }
+    broadcastLLMOutput(payload: { reasoning?: string; content?: string }, type: 'complete', meta?: Parameters<WorkerSandbox['pushLLMOutput']>[2]): void {
+        if (this.phase !== 'active') return;for (const worker of this.workers.values()) worker.pushLLMOutput(payload, type, meta);
     }
 }

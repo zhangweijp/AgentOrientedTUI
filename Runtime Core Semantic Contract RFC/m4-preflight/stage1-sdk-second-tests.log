@@ -1,0 +1,28 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/sdk
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > aggregates two FileDetails into one Tool while their independently bound handlers target the correct file
+[PersistenceShutdown] Shutdown listener initialized
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > aggregates two FileDetails into one Tool while their independently bound handlers target the correct file
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > closing A never unregisters B; reopening fd_0 gives a new ViewInstanceId
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > per-View enabled flags operate independently even during rapid re-render
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+ ✓ src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > aggregates two FileDetails into one Tool while their independently bound handlers target the correct file 17ms
+ ✓ src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > closing A never unregisters B; reopening fd_0 gives a new ViewInstanceId 75ms
+stdout | src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > old five-argument Root useViewTypeTool stays in the legacy Registry, not the new instance Registry
+[createTUIApp] initializeComponent { appId: [32m'app_owned'[39m, desktopId: [32m'desktop_test'[39m }
+
+ ✓ src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > per-View enabled flags operate independently even during rapid re-render 74ms
+ ✓ src/view-owned-tools.test.ts > M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel > old five-argument Root useViewTypeTool stays in the legacy Registry, not the new instance Registry 2ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  19:23:57
+   Duration  903ms (transform 130ms, setup 0ms, collect 174ms, tests 169ms, environment 332ms, prepare 41ms)
+

@@ -6,7 +6,6 @@
  * [重要] 应用开发者必须从 SDK 导入这些 hooks，而不是直接从 preact/hooks 导入。
  * 这确保所有 hooks 使用同一个 Preact 实例，避免多实例冲突。
  *
- * [C2 Architecture] useSignalStore 用于响应式数据管理
  * [RFC-002] useDataRef, useArrayRef 用于资源引用系统
  */
 
@@ -22,7 +21,6 @@ export {
 
 export {
   type IViewMeta,
-  type IMountableViewRegistry,
   type IRefRegistry,
   type IAppConfig,
 } from "../contexts/index.js";
@@ -37,24 +35,16 @@ export { useViewSelector, useViewRuntimeContext } from "./use-view-selector.js";
 // AOTUI Hooks
 export {
   useViewContext,
-  useMountableViewRegistry,
   useRefRegistry,
-  useDynamicViewRegistry,
 } from "./useViewContext.js";
-
-// [C2] Reactive Store Hook
-export { useSignalStore, type SignalStore } from "./useSignalStore.js";
 
 // [Configuration Injection] App Config Hooks
 export { useAppConfig, useAppEnv } from "./useAppConfig.js";
 
 // [Persistence] App state persistence
 export { usePersistentState } from "./usePersistentState.js";
-export { persistenceManager } from "./persistence-manager.js";
 
-// Primary data-ref hook (preferred): useDataRef
-// Backward-compatible alias: useResourceRef
-export { useDataRef, useRef as useResourceRef, type RefHandle } from "./useRef.js";
+export { useDataRef, useEntityRef, type RefHandle } from "./useRef.js";
 export {
   useArrayRef,
   type ArrayRefHandle,
@@ -84,3 +74,14 @@ export {
   type TypeToolUIProps,
   type UseViewTypeToolResult,
 } from "./useViewTypeTool.js";
+
+export {experimental_useCreateIfAbsentTool,type RequiredStringParams,type RequiredStringArgs,type CreateIfAbsentHandler,type CreateIfAbsentToolOptions,type CreateIfAbsentOutcome,type CreateIfAbsentTerminal} from './useCreateIfAbsentTool.js';
+export { experimental_useReadOnlyTool } from './useReadOnlyTool.js';
+export type { OrdinaryParamDef, OrdinaryParams, ReadOnlyParams, SnapshotValueRefParamDef, ReadOnlyToolArgs, ReadOnlyToolOptions, ReadOnlyToolHandler } from './useReadOnlyTool.js';
+
+export type { AppStatePersistence, StateBindingStatus, StateFlushReport, StateValue, StateIssue } from '@aotui/runtime/spi';
+export type { PersistOptions, PersistStatus, PersistMeta } from './usePersistentState.js';
+
+
+export { experimental_useAppLifecycle } from './useAppLifecycle.js';
+export type { AppLifecycleCallbacks } from './useAppLifecycle.js';

@@ -1,7 +1,6 @@
 import type { SnapshotID, CachedSnapshot, IndexMap, DataPayload, IRegistry, StructuredSnapshot } from '../../spi/index.js';
 import { createSnapshotId } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
-import { randomUUID } from 'crypto';
 
 interface RegistryConfig {
     ttl: number; // Time to live in ms

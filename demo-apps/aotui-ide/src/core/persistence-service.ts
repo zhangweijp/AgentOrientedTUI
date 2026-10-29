@@ -35,11 +35,11 @@ export const persistenceService = {
     /**
      * 初始化数据库
      */
-    async initDatabase(): Promise<void> {
+    async initDatabase(explicitPath?: string): Promise<void> {
         if (db) return;
 
-        const dbDir = path.join(os.homedir(), '.aotui');
-        const dbPath = path.join(dbDir, 'aotui-ide-db.json');
+        const dbPath = explicitPath ?? path.join(os.homedir(), '.aotui', 'aotui-ide-db.json');
+        const dbDir = path.dirname(dbPath);
         await fs.mkdir(dbDir, { recursive: true });
         const adapter = new JSONFile<PersistenceSchema>(dbPath);
         db = new Low(adapter, { workspaceFolders: [], workspaces: {} });

@@ -1,0 +1,34 @@
+{
+  "name": "@aotui/semantic-kernel-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.22.0 <25" },
+  "packageManager": "pnpm@10.15.1",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./adapters": { "types": "./dist/adapters.d.ts", "import": "./dist/adapters.js" }
+  },
+  "files": ["dist", "src", "README.md"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run --maxWorkers=2",
+    "demo": "node dist/demo.js"
+  },
+  "dependencies": {
+    "@standard-schema/spec": "1.1.0",
+    "effect": "4.0.5",
+    "zod": "4.6.7",
+    "ai": "7.0.143",
+    "@modelcontextprotocol/server": "2.3.1",
+    "@modelcontextprotocol/core": "2.3.1"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
+    "@types/node": "24.10.2",
+    "fast-check": "4.10.2",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}

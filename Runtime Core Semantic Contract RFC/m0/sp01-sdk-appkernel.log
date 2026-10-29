@@ -1,0 +1,26 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/sdk
+
+stdout | src/__m0_appkernel_probe.test.ts > M0 SP-01 live SDK factory + AppKernel > initial component View exists before passive Ref + ViewTypeTool registration
+[PersistenceShutdown] Shutdown listener initialized
+
+stdout | src/__m0_appkernel_probe.test.ts > M0 SP-01 live SDK factory + AppKernel > initial component View exists before passive Ref + ViewTypeTool registration
+[createTUIApp] initializeComponent { appId: [32m'app_0'[39m, desktopId: [32m'desktop_0'[39m }
+
+stdout | src/__m0_appkernel_probe.test.ts > M0 SP-01 live SDK factory + AppKernel > initial component View exists before passive Ref + ViewTypeTool registration
+M0_REAL_APPKERNEL_START={"before":{"viewCount":1,"refs":[],"tools":[],"domContainsRef":true,"dirtyCount":0},"after":{"viewCount":1,"refs":["workspace:current"],"tools":["Workspace"],"domContainsRef":true,"dirtyCount":1}}
+
+stdout | src/__m0_appkernel_probe.test.ts > M0 SP-01 live SDK factory + AppKernel > ref-only state change updates live RefRegistry without a dirty signal or DOM change
+[createTUIApp] initializeComponent { appId: [32m'app_0'[39m, desktopId: [32m'desktop_0'[39m }
+
+ ✓ src/__m0_appkernel_probe.test.ts > M0 SP-01 live SDK factory + AppKernel > initial component View exists before passive Ref + ViewTypeTool registration 155ms
+stdout | src/__m0_appkernel_probe.test.ts > M0 SP-01 live SDK factory + AppKernel > ref-only state change updates live RefRegistry without a dirty signal or DOM change
+M0_REAL_APPKERNEL_REF_ONLY={"before":{"refs":{"id":"a"},"dirtyCount":0,"html":"<div data-view-tree=\"\">- workspace (workspace)</div><div data-views=\"\"><div data-app-root=\"\"><div id=\"workspace\" data-view-id=\"workspace\" data-view-type=\"Workspace\" data-view-name=\"workspace\" view=\"workspace\"><p>[Stable](current)</p></div></div></div>"},"after":{"refs":{"id":"b"},"dirtyCount":0,"html":"<div data-view-tree=\"\">- workspace (workspace)</div><div data-views=\"\"><div data-app-root=\"\"><div id=\"workspace\" data-view-id=\"workspace\" data-view-type=\"Workspace\" data-view-name=\"workspace\" view=\"workspace\"><p>[Stable](current)</p></div></div></div>","domMutations":0}}
+
+ ✓ src/__m0_appkernel_probe.test.ts > M0 SP-01 live SDK factory + AppKernel > ref-only state change updates live RefRegistry without a dirty signal or DOM change 312ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  22:30:03
+   Duration  1.29s (transform 141ms, setup 0ms, collect 189ms, tests 469ms, environment 356ms, prepare 48ms)
+

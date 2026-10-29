@@ -28,7 +28,7 @@
  * }
  * ```
  */
-import { useEffect, useMemo, useLayoutEffect, useRef as usePreactRef } from 'preact/hooks';
+import { useLayoutEffect, useRef as usePreactRef } from 'preact/hooks';
 // [P1 ISP] Use specialized hook instead of useInternalViewContext
 import { useRefRegistry } from "./useViewContext.js";
 
@@ -85,52 +85,37 @@ export function useArrayRef<T extends object>(
   // 使用 Preact ref 跟踪已注册的项
   const registeredItemsRef = usePreactRef<Set<string>>(new Set());
 
-  // 注册所有列表项到 RefRegistry
-  // Use useLayoutEffect to ensure refs are registered synchronously after DOM updates
-  // but BEFORE the browser paint and BEFORE the next Snapshot is taken by the Worker.
-  // This prevents "Ghost References" where Markup exists but IndexMap entries are missing.
+  // M3: Every emitted list/item link MUST resolve to a registered Ref.
+  // Keep legacy bare IDs as aliases so existing Tool handlers need no changes.
+  // Typed aliases match the itemType-prefixed IDs exposed by listRef/itemRef.
+  // Lists are genuine Ref targets; oversized lists are rejected by Core's
+  // Snapshot limits rather than silently publishing a ghost reference.
   useLayoutEffect(() => {
-    const newIds = new Set<string>();
+    const registered = new Set<string>();
+    const add = (id: string, value: object) => {
+      registerRef(id, value);
+      registered.add(id);
+    };
 
-    // 注册每个元素
+    add(refId, data);
+    if (itemType) add(`${itemType}[]:${refId}`, data);
+
     data.forEach((item, idx) => {
-      // 只用 refId 注册，不带类型前缀
-      // Runtime 会用 appId:viewId 作为 namespace
-      const itemRefId = `${refId}[${idx}]`;
-
-      // if (process.env.NODE_ENV !== "production") {
-      //   console.log(`[useArrayRef] Registering item: ${itemRefId}`);
-      // }
-      registerRef(itemRefId, item);
-      newIds.add(itemRefId);
+      const itemId = `${refId}[${idx}]`;
+      add(itemId, item);
+      if (itemType) add(`${itemType}:${itemId}`, item);
     });
 
-    // 清理旧的、不再存在的项
+    // Remove stale aliases after the new projection is registered.
     for (const oldId of registeredItemsRef.current) {
-      if (!newIds.has(oldId)) {
-        if (process.env.NODE_ENV !== "production") {
-          // console.log(`[useArrayRef] Unregistering stale item: ${oldId}`);
-        }
-        unregisterRef(oldId);
-      }
+      if (!registered.has(oldId)) unregisterRef(oldId);
     }
-
-    registeredItemsRef.current = newIds;
-
+    registeredItemsRef.current = registered;
     return () => {
-      // Cleanup all on unmount
-      if (process.env.NODE_ENV !== "production") {
-
-        // console.log(
-        //   `[useArrayRef] Unmounting list: ${refId}, cleaning up ${registeredItemsRef.current.size} items`,
-        // );
-      }
-      for (const id of registeredItemsRef.current) {
-        unregisterRef(id);
-      }
+      for (const id of registeredItemsRef.current) unregisterRef(id);
       registeredItemsRef.current = new Set();
     };
-  }, [refId, data, registerRef, unregisterRef]);
+  }, [refId, data, itemType, registerRef, unregisterRef]);
 
   // 列表标题格式化函数
   const listRef: ListRefFormatter = (content: string): string => {

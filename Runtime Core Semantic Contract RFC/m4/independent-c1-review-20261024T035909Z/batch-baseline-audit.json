@@ -1,0 +1,28 @@
+{
+  "batchStartPathRecords": 1368,
+  "batchStartMissing": 22,
+  "unplannedDifferences": [],
+  "plannedDifferences": [
+    "runtime/src/core/tool/ref-declarations.ts"
+  ],
+  "priorRFCPathRecords": 586,
+  "priorRFCChanged": [],
+  "sourceAndTestFingerprintChecks": [
+    {
+      "path": "runtime/src/core/tool/ref-declarations.ts",
+      "actual": "447e327d8e5268b082e0080ebd78ed1bcb5725a03694770f81748a6bac07014e",
+      "matchesDeliveredFinal": true
+    },
+    {
+      "path": "runtime/src/core/tool/ref-declarations.wave2c-c1.test.ts",
+      "actual": "5dea210ecf54f3596f208ea80e5713090a5019137ccc4cf0f8490a6354276ea7",
+      "matchesDeliveredFinal": true
+    }
+  ],
+  "headSame": true,
+  "stagedDiffSame": true,
+  "gitIndexFileSame": true,
+  "head": "789ef07cb18084d97b0476c1ffc234ae0b9319f0",
+  "stagedDiffSha256": "258d9b26c2ac0c01d9156553bd3bd775de08ba16330546d65b5bb53b896dcf54",
+  "gitIndexFileSha256": "8ed3a27a94f2a4f13caa9afb06e52923139484f882e83999ce836c6834a34162"
+}

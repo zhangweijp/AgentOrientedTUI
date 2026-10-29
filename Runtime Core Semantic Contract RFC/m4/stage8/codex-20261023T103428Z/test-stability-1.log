@@ -1,0 +1,30 @@
+COMMAND: pnpm --dir runtime exec vitest run src/engine/app/worker-host.m4-versioned-file.test.ts src/engine/app/worker-host.m4-producer-race.test.ts src/engine/app/worker-host.m4-v2-shadow.test.ts src/engine/app/worker-host.m4-lifecycle.test.ts src/engine/app/worker-host.m4-stage8-outcome.test.ts src/engine/app/worker-host.p0-tool-result.test.ts src/engine/app/worker-host.m4-view-tools.test.ts src/core/tool/versioned-file-integration.test.ts --reporter=dot
+START_UTC: 2026-10-23T10:55:49.263606+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+·······································[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'result_app', desktopId: 'result_desktop' }
+[createTUIApp] initializeComponent { appId: 'race_app', desktopId: 'race_desktop' }
+·[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+·[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+·[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+·
+
+ Test Files  7 passed (7)
+      Tests  43 passed (43)
+   Start at  18:55:49
+   Duration  3.93s (transform 466ms, setup 0ms, collect 1.31s, tests 4.93s, environment 1ms, prepare 363ms)
+
+
+EXIT_CODE: 0

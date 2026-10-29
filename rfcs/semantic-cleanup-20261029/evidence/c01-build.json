@@ -1,0 +1,72 @@
+[
+  {
+    "package": "agent-driver-v2",
+    "command": [
+      "pnpm",
+      "run",
+      "build"
+    ],
+    "exitCode": 0,
+    "seconds": 0.971
+  },
+  {
+    "package": "runtime",
+    "command": [
+      "pnpm",
+      "run",
+      "build"
+    ],
+    "exitCode": 0,
+    "seconds": 2.186
+  },
+  {
+    "package": "sdk",
+    "command": [
+      "pnpm",
+      "run",
+      "build"
+    ],
+    "exitCode": 0,
+    "seconds": 0.963
+  },
+  {
+    "package": "demo-apps/aotui-ide",
+    "command": [
+      "pnpm",
+      "run",
+      "build"
+    ],
+    "exitCode": 0,
+    "seconds": 1.54
+  },
+  {
+    "package": "demo-apps/terminal-app",
+    "command": [
+      "pnpm",
+      "run",
+      "build"
+    ],
+    "exitCode": 0,
+    "seconds": 0.852
+  },
+  {
+    "package": "demo-apps/lite-browser-app",
+    "command": [
+      "pnpm",
+      "run",
+      "build"
+    ],
+    "exitCode": 0,
+    "seconds": 0.869
+  },
+  {
+    "package": "demo-apps/token-monitor-app",
+    "command": [
+      "pnpm",
+      "run",
+      "build"
+    ],
+    "exitCode": 0,
+    "seconds": 0.759
+  }
+]

@@ -49,6 +49,12 @@ export interface IViewMeta {
      */
     readonly viewType?: string;
 
+    /** SDK View mount identity; distinct from the stable viewId. */
+    readonly viewGeneration?: string;
+
+    /** Runtime-owned current mount identity; never a developer-assigned viewId. */
+    readonly viewInstanceId?: string;
+
     /** 父 App 的唯一标识符 */
     readonly appId: string;
 
@@ -103,6 +109,13 @@ export interface IRefRegistry {
  * 例如: FileDetail 类型的所有 View 共享同一组 LSP tools。
  */
 export interface TypeToolDefinition {
+    /** M3: SDK View that declared this Tool; NOT the target ViewType. */
+    declaredByViewId?: string;
+    declaredByViewGeneration?: string;
+
+    /** Optional View-local Tool classification; default is mutating (fail safe). */
+    isMutating?: boolean;
+
     /** 工具描述,发送给 LLM */
     description: string;
 
@@ -287,15 +300,6 @@ export interface IViewLinkRegistry {
 }
 
 // ============================================================================
-// Backward Compatibility Aliases
-// ============================================================================
-
-/**
- * @deprecated 使用 IViewLinkRegistry 替代
- */
-export type IMountableViewRegistry = IViewLinkRegistry;
-
-// ============================================================================
 // IOperationRegistry - Operation 注册表 (App 开发者可见)
 // ============================================================================
 
@@ -335,34 +339,6 @@ export interface IOperationRegistry {
      * @param name - 要注销的操作名称
      */
     unregisterOperation(name: string): void;
-}
-
-// ============================================================================
-// IDynamicViewRegistry - 动态子视图注册表 (App 开发者可见)
-// ============================================================================
-
-/**
- * 动态子视图注册表接口
- *
- * 用于动态创建和销毁子 View。
- *
- * @internal 主要供 SDK 内部使用
- */
-export interface IDynamicViewRegistry {
-    /**
-     * 注册动态子视图
-     *
-     * @param view - IView 实例
-     * @returns 分配的 ViewID
-     */
-    registerChildView(view: IView): string;
-
-    /**
-     * 注销动态子视图
-     *
-     * @param viewId - 要注销的 ViewID
-     */
-    unregisterChildView(viewId: string): void;
 }
 
 // ============================================================================

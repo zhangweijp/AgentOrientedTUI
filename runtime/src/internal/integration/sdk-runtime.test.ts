@@ -10,18 +10,16 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { parseHTML } from 'linkedom';
-import { Transformer } from '../../engine/view/transformer/index.js';
+import { transformDOM } from '../../engine/view/transformer/pure.js';
 
 describe('SDK → Runtime Integration', () => {
     let window: any;
     let document: any;
-    let transformer: Transformer;
 
     beforeEach(() => {
         const parsed = parseHTML('<!DOCTYPE html><html><body></body></html>');
         window = parsed.window;
         document = parsed.document;
-        transformer = new Transformer();
     });
 
     describe('ViewLink Component Integration', () => {
@@ -35,7 +33,7 @@ describe('SDK → Runtime Integration', () => {
                 </div>
             `;
 
-            const { markup } = transformer.transform(window.document);
+            const { markup } = transformDOM(window.document);
 
             // View should use the provided id attribute
             expect(markup).toContain('<view id="view_0" name="Conversations">');
@@ -55,7 +53,7 @@ describe('SDK → Runtime Integration', () => {
                 </div>
             `;
 
-            const { markup } = transformer.transform(window.document);
+            const { markup } = transformDOM(window.document);
 
             expect(markup).toContain('[Settings](view:Settings)');
             expect(markup).not.toContain('Description:');
@@ -74,7 +72,7 @@ describe('SDK → Runtime Integration', () => {
                 </div>
             `;
 
-            const { markup } = transformer.transform(window.document);
+            const { markup } = transformDOM(window.document);
 
             // Operation should have desc and multi-line params
             expect(markup).toContain('[Send Message](tool:send_message)');
@@ -95,7 +93,7 @@ describe('SDK → Runtime Integration', () => {
                 </div>
             `;
 
-            const { markup } = transformer.transform(window.document);
+            const { markup } = transformDOM(window.document);
 
             expect(markup).toContain('- Desc: Submit the contact form');
             expect(markup).toContain('- name: string (required)');
@@ -142,7 +140,7 @@ describe('SDK → Runtime Integration', () => {
                 </div>
             `;
 
-            const { markup } = transformer.transform(window.document);
+            const { markup } = transformDOM(window.document);
 
             // Structure checks - SDK provides id, Transformer uses it
             expect(markup).toContain('<view id="view_0" name="Conversations">');
@@ -195,7 +193,7 @@ describe('SDK → Runtime Integration', () => {
                 </div>
             `;
 
-            const { markup, indexMap } = transformer.transform(window.document);
+            const { markup, indexMap } = transformDOM(window.document);
 
             // View structure - SDK provides id, Transformer uses it
             expect(markup).toContain('<view id="view_0" name="Chat with Alice">');
@@ -245,7 +243,7 @@ describe('SDK → Runtime Integration', () => {
                 </div>
             `;
 
-            const { markup } = transformer.transform(window.document);
+            const { markup } = transformDOM(window.document);
 
             // Empty view-target should be handled gracefully
             // The text should still appear but not as a view link
@@ -257,7 +255,7 @@ describe('SDK → Runtime Integration', () => {
                 <button operation="simple_action">Do Something</button>
             `;
 
-            const { markup } = transformer.transform(window.document);
+            const { markup } = transformDOM(window.document);
 
             expect(markup).toContain('[Do Something](tool:simple_action)');
             expect(markup).not.toContain('Desc:');
@@ -271,7 +269,7 @@ describe('SDK → Runtime Integration', () => {
                 </div>
             `;
 
-            const { markup } = transformer.transform(window.document);
+            const { markup } = transformDOM(window.document);
 
             // ViewLink should be converted
             expect(markup).toContain('[Internal Link](view:Internal)');

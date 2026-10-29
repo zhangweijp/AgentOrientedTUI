@@ -1,0 +1,15 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 7: graceful lifecycle waits for an in-flight disk CAS > APP_CLOSE refuses new Tool calls and does not shutdown until the replacement settles 2ms
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 7: graceful lifecycle waits for an in-flight disk CAS > WorkerPool RESET waits for the replacement, then severs listeners and closes old Host 1ms
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 7: graceful lifecycle waits for an in-flight disk CAS > forced terminate defers physical Worker teardown while a disk operation is in progress 51ms
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 7: lifecycle failure safety > cannot reopen or resume while close is waiting for a versioned disk write 1ms
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 7: lifecycle failure safety > a failed shutdown kills the Worker instead of leaving it stranded in closing 0ms
+ ✓ src/engine/app/worker-host.m4-lifecycle.test.ts > M4 Stage 7: resource version cannot prove an identical-content write was not replayed > fails closed after a successful same-hash write, even if unrelated UI publishes another V2 snapshot 5ms
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  17:12:50
+   Duration  328ms (transform 83ms, setup 0ms, collect 102ms, tests 60ms, environment 0ms, prepare 47ms)
+

@@ -19,6 +19,7 @@ export {
     type LoadedApp,
     type AppRegistryEntry,
     type AppRegistryOptions,
+    type AppRegistryInstallOptions,
     validateManifest,
     isValidAppName
 } from './registry.js';

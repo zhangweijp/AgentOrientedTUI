@@ -1,0 +1,12 @@
+COMMAND: node 'Runtime Core Semantic Contract RFC/m4/independent-wave2a-review-20261023-01/ttl-source-differential.mjs'
+START_UTC: 2026-10-23T13:45:54.461721+00:00
+NODE: v24.15.0
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'audit_app', desktopId: 'audit_desktop' }
+INDEPENDENT_REAL_SDK_TTL_DIFFERENTIAL={"version":"before","hostSha256":"3326f6b0f84caae9d189e8856dcc71a1ed16cea61784df0bd140572820b3087e","success":true,"error":null,"result":{"who":"A"},"handlerCalls":{"A":1,"B":0},"activeLeases":0}
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'audit_app', desktopId: 'audit_desktop' }
+INDEPENDENT_REAL_SDK_TTL_DIFFERENTIAL={"version":"after","hostSha256":"28ede7ca387b143e45cbb9df2da8c779ac9a82d5a22f75931d298a2cdfbbfeee","success":false,"error":"SNAPSHOT_EXPIRED","result":null,"handlerCalls":{"A":0,"B":0},"activeLeases":0}
+DIFFERENTIAL_PASS={"baselineFailureReproduced":true,"currentContractPass":true,"productionSourcesEdited":false,"testsExecuted":2}
+
+EXIT_CODE: 0

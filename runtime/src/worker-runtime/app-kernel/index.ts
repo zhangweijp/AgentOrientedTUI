@@ -5,7 +5,7 @@
  *
  * 负责：
  * - App 生命周期管理
- * - ViewTree 状态管理
+ * - 组件 View 注册
  * - 系统事件处理
  * - Operation 路由
  *
@@ -13,7 +13,6 @@
  */
 
 export { AppKernel, type TypeToolDefinition, type TypeTool } from './AppKernel.js';
-export { ViewTree, createViewTree } from './view-tree.js';
 
 /**
  * [RFC-B2] ViewRegistry - Lightweight View Management
@@ -22,4 +21,3 @@ export { ViewTree, createViewTree } from './view-tree.js';
  * Provides simple register/unregister/get API without tree management.
  */
 export { ViewRegistry, createViewRegistry } from './view-registry.js';
-export type { MountableViewEntry, ViewContextFactory } from './view-tree.js';

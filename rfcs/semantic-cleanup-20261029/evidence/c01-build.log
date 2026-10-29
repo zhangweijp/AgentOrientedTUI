@@ -1,0 +1,46 @@
+
+COMMAND agent-driver-v2
+
+> @aotui/agent-driver-v2@0.2.2 build /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/agent-driver-v2
+> node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })" && tsc
+
+
+COMMAND runtime
+
+> @aotui/runtime@2.0.0 build /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/runtime
+> node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })" && tsc && chmod +x dist/cli.js
+
+
+COMMAND sdk
+
+> @aotui/sdk@0.2.0 build /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/sdk
+> node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })" && tsc
+
+
+COMMAND demo-apps/aotui-ide
+
+> @agentina/aotui-ide@0.1.2 build /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/aotui-ide
+> tsc && node ../../scripts/generate-aoapp.mjs .
+
+[generate-aoapp] Wrote /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/aotui-ide/aoapp.json
+
+COMMAND demo-apps/terminal-app
+
+> @agentina/aotui-terminal@1.0.2 build /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/terminal-app
+> tsc && node ../../scripts/generate-aoapp.mjs .
+
+[generate-aoapp] Wrote /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/terminal-app/aoapp.json
+
+COMMAND demo-apps/lite-browser-app
+
+> @aotui/system-lite-browser@0.1.0 build /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/lite-browser-app
+> tsc && node ../../scripts/generate-aoapp.mjs .
+
+[generate-aoapp] Wrote /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/lite-browser-app/aoapp.json
+
+COMMAND demo-apps/token-monitor-app
+
+> @aotui/system-token-monitor@0.1.0 build /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/token-monitor-app
+> tsc && node ../../scripts/generate-aoapp.mjs .
+
+[generate-aoapp] Wrote /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/token-monitor-app/aoapp.json

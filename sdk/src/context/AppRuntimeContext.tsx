@@ -10,8 +10,10 @@
  * - 传递App/Desktop元数据 (appId, desktopId)
  */
 
+import type { AppLifecyclePort } from '@aotui/runtime/spi';
+import type { AppStatePersistence } from '@aotui/runtime/spi';
 import { createContext, useContext } from 'preact/compat';
-import type { AppID, DesktopID, ViewID, IView, IRefExporter, ITypeToolRegistry, AppLaunchConfig } from '@aotui/runtime/spi';
+import type { AppID, DesktopID, ViewID, IView, IRefExporter, ITypeToolRegistry, IProjectionPort, IViewOwnedToolPort, AppLaunchConfig } from '@aotui/runtime/spi';
 
 // ═══════════════════════════════════════════════════════════════
 //  Types
@@ -23,6 +25,8 @@ import type { AppID, DesktopID, ViewID, IView, IRefExporter, ITypeToolRegistry, 
  * 由AppKernel在initializeFromComponent时创建并提供
  */
 export interface AppRuntimeContextValue {
+    persistence?: AppStatePersistence;
+    appLifecycle?: AppLifecyclePort;
     /** App ID */
     appId: AppID;
 
@@ -77,6 +81,12 @@ export interface AppRuntimeContextValue {
      * 标记App为脏状态 (触发重新渲染)
      */
     markDirty: () => void;
+
+    /** Internal M3 commit-phase coordination, optional for legacy Runtime. */
+    projection?: IProjectionPort;
+
+    /** M4 Stage 1: optional View-instance-owned Tool port. */
+    viewTools?: IViewOwnedToolPort;
 }
 
 // ═══════════════════════════════════════════════════════════════

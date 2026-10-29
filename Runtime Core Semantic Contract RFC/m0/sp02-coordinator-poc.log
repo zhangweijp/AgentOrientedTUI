@@ -1,0 +1,13 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/sdk
+
+stdout | src/__m0_coordinator_poc.test.ts > M0 SP-02 candidate ProjectionCoordinator > coalesces layout registration and semantic-only changes into coherent snapshots
+M0_SP02_COORDINATOR_POC={"committed":[{"epoch":3,"html":"<section><span>[Stable](selected)</span></section>","views":["workspace"],"refs":{"workspace:selected":"A"},"tools":["Workspace.complete"]},{"epoch":5,"html":"<section><span>[Stable](selected)</span></section>","views":["workspace"],"refs":{"workspace:selected":"B"},"tools":["Workspace.complete"]},{"epoch":7,"html":"<section><span>[Stable](selected)</span></section>","views":["workspace"],"refs":{"workspace:selected":"B"},"tools":[]},{"epoch":9,"html":"","views":[],"refs":{},"tools":[]}],"domMutationsForRefOnly":0,"limitation":"Uses custom layout-effect hooks; does not establish current SDK flush-ready guarantee or cross-async atomicity."}
+
+ ✓ src/__m0_coordinator_poc.test.ts > M0 SP-02 candidate ProjectionCoordinator > coalesces layout registration and semantic-only changes into coherent snapshots 5ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  22:38:10
+   Duration  581ms (transform 25ms, setup 0ms, collect 19ms, tests 5ms, environment 349ms, prepare 50ms)
+

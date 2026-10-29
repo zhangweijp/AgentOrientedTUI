@@ -12,7 +12,7 @@
 import type { IDesktop } from '@aotui/runtime';
 import type { AgentDriverV2 } from '@aotui/agent-driver-v2';
 import type { SystemPromptDrivenSource } from '../adapters/system-prompt-source.js';
-import type { AOTUIDrivenSource } from '@aotui/runtime/adapters';
+import type { SemanticAOTUIDrivenSource } from '@aotui/runtime/adapters';
 import type { HostDrivenSourceV2 } from '../adapters/host-driven-source.js';
 import type { SkillDrivenSource } from '../skills/skill-driven-source.js';
 import type { McpDrivenSource } from '../mcp/source.js';
@@ -45,7 +45,7 @@ export interface Session {
     /** DrivenSources */
     sources: {
         systemPrompt: SystemPromptDrivenSource;
-        aotui: AOTUIDrivenSource;
+        aotui: SemanticAOTUIDrivenSource;
         host: HostDrivenSourceV2;
         skill: SkillDrivenSource;
         mcp: McpDrivenSource;

@@ -1,0 +1,268 @@
+{
+  "consumer": "/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-c01-consumer-kfz_5_aa",
+  "startedAt": "2026-10-28T17:01:13.523Z",
+  "cases": [
+    {
+      "name": "pure Core exact documentation and generic Tool types compile with ES2022 only; removed entity transport exports are absent",
+      "argv": [
+        "/Users/zhangwei/.local/share/fnm/node-versions/v24.15.0/installation/bin/node",
+        "/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-c01-consumer-kfz_5_aa/node_modules/typescript/bin/tsc",
+        "-p",
+        "/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-c01-consumer-kfz_5_aa/public-checks-c01-package-consumer-final/core-tsconfig.json"
+      ],
+      "stdout": "",
+      "stderr": "",
+      "passed": true
+    },
+    {
+      "name": "pure Core exact package documentation executes",
+      "argv": [
+        "/Users/zhangwei/.local/share/fnm/node-versions/v24.15.0/installation/bin/node",
+        "/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-c01-consumer-kfz_5_aa/public-checks-c01-package-consumer-final/core-out/core-example.js"
+      ],
+      "stdout": "",
+      "stderr": "",
+      "passed": true
+    },
+    {
+      "name": "strict Runtime root SPI SDK IDE package entries and hook inference",
+      "argv": [
+        "/Users/zhangwei/.local/share/fnm/node-versions/v24.15.0/installation/bin/node",
+        "/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-c01-consumer-kfz_5_aa/node_modules/typescript/bin/tsc",
+        "-p",
+        "/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-c01-consumer-kfz_5_aa/public-checks-c01-package-consumer-final/sdk-tsconfig.json"
+      ],
+      "stdout": "",
+      "stderr": "",
+      "passed": true
+    },
+    {
+      "name": "legacy adapter public declaration graph compiles with skipLibCheck false",
+      "argv": [
+        "/Users/zhangwei/.local/share/fnm/node-versions/v24.15.0/installation/bin/node",
+        "/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-c01-consumer-kfz_5_aa/node_modules/typescript/bin/tsc",
+        "-p",
+        "/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-c01-consumer-kfz_5_aa/public-checks-c01-package-consumer-final/adapter-tsconfig.json"
+      ],
+      "stdout": "",
+      "stderr": "",
+      "passed": true
+    },
+    {
+      "name": "public default Runtime Worker installs full scoped IDE and executes ordinary mutation plus actual LSP",
+      "argv": [
+        "/Users/zhangwei/.local/share/fnm/node-versions/v24.15.0/installation/bin/node",
+        "/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-c01-consumer-kfz_5_aa/public-checks-c01-package-consumer-final/public-ide.mjs"
+      ],
+      "stdout": "[createTUIApp] initializeComponent { appId: 'publicide', desktopId: 'external' }\nPUBLIC_IDE {\"base\":\"/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-public-package-zVSNyC\",\"outcomes\":[{\"kind\":\"receipt\",\"receipt\":{\"invocationId\":\"public-0\",\"observationId\":\"host:5fed32bc-b4d1-4462-b5bf-c51016cb31e9:observation:6\",\"bindingId\":\"host:5fed32bc-b4d1-4462-b5bf-c51016cb31e9:binding:12\",\"source\":{\"appId\":\"publicide\",\"instanceId\":\"5fed32bc-b4d1-4462-b5bf-c51016cb31e9\",\"snapshotId\":\"aotui-app-snapshot:v2:[\\\"publicide\\\",\\\"5fed32bc-b4d1-4462-b5bf-c51016cb31e9\\\",2]\",\"revision\":2},\"completedAt\":1793206879027,\"expiresAt\":1793206939027,\"executionPhase\":\"entered-returned\",\"outcome\":{\"status\":\"succeeded\",\"value\":{\"success\":true,\"data\":{\"opened\":1,\"reloaded\":0,\"duplicateInputs\":0,\"warnings\":[]}}}}},{\"kind\":\"receipt\",\"receipt\":{\"invocationId\":\"public-1\",\"observationId\":\"host:5fed32bc-b4d1-4462-b5bf-c51016cb31e9:observation:41\",\"bindingId\":\"host:5fed32bc-b4d1-4462-b5bf-c51016cb31e9:binding:53\",\"source\":{\"appId\":\"publicide\",\"instanceId\":\"5fed32bc-b4d1-4462-b5bf-c51016cb31e9\",\"snapshotId\":\"aotui-app-snapshot:v2:[\\\"publicide\\\",\\\"5fed32bc-b4d1-4462-b5bf-c51016cb31e9\\\",3]\",\"revision\":3},\"completedAt\":1793206879120,\"expiresAt\":1793206939120,\"executionPhase\":\"entered-returned\",\"outcome\":{\"status\":\"succeeded\",\"value\":{\"success\":true,\"data\":{\"action\":\"write\",\"filePath\":\"/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-public-package-zVSNyC/project/example.ts\",\"diskCommitted\":true,\"warnings\":[]}}}}},{\"kind\":\"receipt\",\"receipt\":{\"invocationId\":\"public-2\",\"observationId\":\"host:5fed32bc-b4d1-4462-b5bf-c51016cb31e9:observation:54\",\"bindingId\":\"host:5fed32bc-b4d1-4462-b5bf-c51016cb31e9:binding:62\",\"source\":{\"appId\":\"publicide\",\"instanceId\":\"5fed32bc-b4d1-4462-b5bf-c51016cb31e9\",\"snapshotId\":\"aotui-app-snapshot:v2:[\\\"publicide\\\",\\\"5fed32bc-b4d1-4462-b5bf-c51016cb31e9\\\",4]\",\"revision\":4},\"completedAt\":1793206879721,\"expiresAt\":1793206939721,\"executionPhase\":\"entered-returned\",\"outcome\":{\"status\":\"succeeded\",\"value\":{\"success\":true,\"data\":{\"documentVersion\":1,\"value\":{\"contents\":{\"kind\":\"markdown\",\"value\":\"\\n```typescript\\nconst answer: 2\\n```\\n\"},\"range\":{\"start\":{\"line\":1,\"character\":14},\"end\":{\"line\":1,\"character\":20}}}}}}}}],\"report\":{\"scope\":\"runtime\",\"state\":\"settled\",\"intent\":\"close\",\"ok\":true,\"hasFailures\":false,\"resourcesReleased\":true,\"verification\":\"managed\",\"apps\":{\"accepted\":1,\"settled\":1,\"pending\":0,\"notVerifiedReleased\":0},\"desktops\":{\"accepted\":1,\"settled\":1,\"pending\":0,\"notVerifiedReleased\":0},\"pendingOperations\":0,\"unverifiedParticipants\":0,\"appCleanup\":{\"managedApps\":1,\"legacyUnverifiedApps\":0,\"completedApps\":1,\"failedApps\":0},\"persistence\":{\"managedApps\":1,\"legacyUnverifiedApps\":0,\"unnegotiatedApps\":0,\"notUsedApps\":0,\"closeReceipts\":1,\"missingCloseReceipts\":0,\"confirmedFlushes\":1,\"failedFlushes\":0,\"absentFlushes\":0,\"unknownApps\":0,\"unsavedKeys\":0},\"resources\":{\"activeFileReplacements\":0,\"retainedStorageOwners\":0,\"storageActualIO\":0,\"openingStorageOwners\":0},\"interactions\":{\"verified\":true,\"retainedScopes\":0,\"retainedBytes\":0},\"pool\":{\"ownership\":\"owned\",\"report\":{\"state\":\"closed\",\"limit\":1,\"total\":0,\"reserved\":0,\"idle\":0,\"leased\":0,\"retiring\":0,\"issues\":[]}},\"beforeClose\":\"not-provided\",\"cleanup\":{\"signalBus\":\"not-owned\",\"signalService\":\"not-owned\",\"llmOutput\":\"not-owned\",\"logger\":\"not-owned\",\"registry\":\"done\",\"locks\":\"done\"},\"failures\":[],\"failureCount\":0,\"samplesTruncated\":false},\"defaultWorkerResolution\":true,\"ordinaryMutation\":true,\"actualLspHover\":{\"documentVersion\":1,\"value\":{\"contents\":{\"kind\":\"markdown\",\"value\":\"\\n```typescript\\nconst answer: 2\\n```\\n\"},\"range\":{\"start\":{\"line\":1,\"character\":14},\"end\":{\"line\":1,\"character\":20}}}}}\n",
+      "stderr": "",
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "publicIDE": {
+    "base": "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-public-package-zVSNyC",
+    "outcomes": [
+      {
+        "kind": "receipt",
+        "receipt": {
+          "invocationId": "public-0",
+          "observationId": "host:5fed32bc-b4d1-4462-b5bf-c51016cb31e9:observation:6",
+          "bindingId": "host:5fed32bc-b4d1-4462-b5bf-c51016cb31e9:binding:12",
+          "source": {
+            "appId": "publicide",
+            "instanceId": "5fed32bc-b4d1-4462-b5bf-c51016cb31e9",
+            "snapshotId": "aotui-app-snapshot:v2:[\"publicide\",\"5fed32bc-b4d1-4462-b5bf-c51016cb31e9\",2]",
+            "revision": 2
+          },
+          "completedAt": 1793206879027,
+          "expiresAt": 1793206939027,
+          "executionPhase": "entered-returned",
+          "outcome": {
+            "status": "succeeded",
+            "value": {
+              "success": true,
+              "data": {
+                "opened": 1,
+                "reloaded": 0,
+                "duplicateInputs": 0,
+                "warnings": []
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "receipt",
+        "receipt": {
+          "invocationId": "public-1",
+          "observationId": "host:5fed32bc-b4d1-4462-b5bf-c51016cb31e9:observation:41",
+          "bindingId": "host:5fed32bc-b4d1-4462-b5bf-c51016cb31e9:binding:53",
+          "source": {
+            "appId": "publicide",
+            "instanceId": "5fed32bc-b4d1-4462-b5bf-c51016cb31e9",
+            "snapshotId": "aotui-app-snapshot:v2:[\"publicide\",\"5fed32bc-b4d1-4462-b5bf-c51016cb31e9\",3]",
+            "revision": 3
+          },
+          "completedAt": 1793206879120,
+          "expiresAt": 1793206939120,
+          "executionPhase": "entered-returned",
+          "outcome": {
+            "status": "succeeded",
+            "value": {
+              "success": true,
+              "data": {
+                "action": "write",
+                "filePath": "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-public-package-zVSNyC/project/example.ts",
+                "diskCommitted": true,
+                "warnings": []
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "receipt",
+        "receipt": {
+          "invocationId": "public-2",
+          "observationId": "host:5fed32bc-b4d1-4462-b5bf-c51016cb31e9:observation:54",
+          "bindingId": "host:5fed32bc-b4d1-4462-b5bf-c51016cb31e9:binding:62",
+          "source": {
+            "appId": "publicide",
+            "instanceId": "5fed32bc-b4d1-4462-b5bf-c51016cb31e9",
+            "snapshotId": "aotui-app-snapshot:v2:[\"publicide\",\"5fed32bc-b4d1-4462-b5bf-c51016cb31e9\",4]",
+            "revision": 4
+          },
+          "completedAt": 1793206879721,
+          "expiresAt": 1793206939721,
+          "executionPhase": "entered-returned",
+          "outcome": {
+            "status": "succeeded",
+            "value": {
+              "success": true,
+              "data": {
+                "documentVersion": 1,
+                "value": {
+                  "contents": {
+                    "kind": "markdown",
+                    "value": "\n```typescript\nconst answer: 2\n```\n"
+                  },
+                  "range": {
+                    "start": {
+                      "line": 1,
+                      "character": 14
+                    },
+                    "end": {
+                      "line": 1,
+                      "character": 20
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "report": {
+      "scope": "runtime",
+      "state": "settled",
+      "intent": "close",
+      "ok": true,
+      "hasFailures": false,
+      "resourcesReleased": true,
+      "verification": "managed",
+      "apps": {
+        "accepted": 1,
+        "settled": 1,
+        "pending": 0,
+        "notVerifiedReleased": 0
+      },
+      "desktops": {
+        "accepted": 1,
+        "settled": 1,
+        "pending": 0,
+        "notVerifiedReleased": 0
+      },
+      "pendingOperations": 0,
+      "unverifiedParticipants": 0,
+      "appCleanup": {
+        "managedApps": 1,
+        "legacyUnverifiedApps": 0,
+        "completedApps": 1,
+        "failedApps": 0
+      },
+      "persistence": {
+        "managedApps": 1,
+        "legacyUnverifiedApps": 0,
+        "unnegotiatedApps": 0,
+        "notUsedApps": 0,
+        "closeReceipts": 1,
+        "missingCloseReceipts": 0,
+        "confirmedFlushes": 1,
+        "failedFlushes": 0,
+        "absentFlushes": 0,
+        "unknownApps": 0,
+        "unsavedKeys": 0
+      },
+      "resources": {
+        "activeFileReplacements": 0,
+        "retainedStorageOwners": 0,
+        "storageActualIO": 0,
+        "openingStorageOwners": 0
+      },
+      "interactions": {
+        "verified": true,
+        "retainedScopes": 0,
+        "retainedBytes": 0
+      },
+      "pool": {
+        "ownership": "owned",
+        "report": {
+          "state": "closed",
+          "limit": 1,
+          "total": 0,
+          "reserved": 0,
+          "idle": 0,
+          "leased": 0,
+          "retiring": 0,
+          "issues": []
+        }
+      },
+      "beforeClose": "not-provided",
+      "cleanup": {
+        "signalBus": "not-owned",
+        "signalService": "not-owned",
+        "llmOutput": "not-owned",
+        "logger": "not-owned",
+        "registry": "done",
+        "locks": "done"
+      },
+      "failures": [],
+      "failureCount": 0,
+      "samplesTruncated": false
+    },
+    "defaultWorkerResolution": true,
+    "ordinaryMutation": true,
+    "actualLspHover": {
+      "documentVersion": 1,
+      "value": {
+        "contents": {
+          "kind": "markdown",
+          "value": "\n```typescript\nconst answer: 2\n```\n"
+        },
+        "range": {
+          "start": {
+            "line": 1,
+            "character": 14
+          },
+          "end": {
+            "line": 1,
+            "character": 20
+          }
+        }
+      }
+    }
+  },
+  "finishedAt": "2026-10-28T17:01:19.790Z"
+}

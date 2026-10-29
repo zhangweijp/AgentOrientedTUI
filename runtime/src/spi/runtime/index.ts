@@ -13,12 +13,20 @@
 // ============================================================================
 export type {
     IDesktop,
+    AppDiscoveryInfo,
     IRegistry,
     IKernel,
     ShutdownOptions,
     ReinitializeDesktopAppsOptions,
     ReinitializeDesktopAppsResult,
 } from './kernel.interface.js';
+export type {
+    CloseReport, AppManagerCloseReport, DesktopCloseReport, RuntimeCloseReport,
+    CloseOperation, AppManagerCloseOperation, DesktopCloseOperation, RuntimeCloseOperation,
+    RuntimeCloseReporting, DesktopCloseOptions, InteractionCloseReport,
+} from './close.interface.js';
+export { SEMANTIC_INTERACTION_MODES } from './app-interaction.interface.js';
+export type { InteractionMode, AppInteractionOptions, AppScopeResult, RuntimeInteractionAccess, DesktopInteractionAccess } from './app-interaction.interface.js';
 
 // ============================================================================
 // Desktop Manager Interface
@@ -78,11 +86,6 @@ export {
 } from './worker-message.interface.js';
 
 // ============================================================================
-// Transformer Interface (DIP Support)
-// ============================================================================
-export type { ITransformer, TransformResult } from './transformer.interface.js';
-
-// ============================================================================
 // Dispatcher Interface (DIP Support)
 // ============================================================================
 export type { IDispatcher } from './dispatcher.interface.js';
@@ -131,3 +134,9 @@ export type {
 // LLM Output Channel Service Interface (RFC-011)
 // ============================================================================
 export type { ILLMOutputChannelService } from './llm-output-channel.interface.js';
+
+// M3: renderer-neutral semantic projection commit port.
+export type { IProjectionPort, ProjectionChange, ProjectionToken } from './projection.interface.js';
+export type { IViewOwnedToolPort, ViewToolRegistrationOptions, CreateIfAbsentRegistrationOptions, SafeCreateIfAbsentInvoker, RefRegistrationOptions, OrdinaryRegistrationOptions, SafeOrdinaryInvoker, SafeRefInvoker } from './view-owned-tools.interface.js';
+
+export type { AppLifecyclePort, AppLifecycleCallbacks, AppCleanupReport } from './app-lifecycle.interface.js';

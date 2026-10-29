@@ -1,0 +1,192 @@
+COMMAND: pnpm --dir runtime exec vitest run src/core/tool/ref-declarations.wave2c-c1.test.ts --reporter=verbose
+START_UTC: 2026-10-24T03:38:45.424664+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > rejects a misplaced declaration under dependencies member ordinary 3ms
+ × src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > rejects a misplaced declaration under dependencies member default 6ms
+   → expected { semantic: false, …(5) } to match object { …(4) }
+(7 matching properties omitted from actual)
+ × src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > rejects a misplaced declaration under dependencies member const 1ms
+   → expected { semantic: false, …(5) } to match object { …(4) }
+(7 matching properties omitted from actual)
+ × src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > rejects a misplaced declaration under dependencies member enum 1ms
+   → expected { semantic: false, …(5) } to match object { …(4) }
+(7 matching properties omitted from actual)
+ × src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > rejects a misplaced declaration under dependencies member examples 1ms
+   → expected { semantic: false, …(5) } to match object { …(4) }
+(7 matching properties omitted from actual)
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > continues to traverse properties members whose names resemble keywords or the annotation 2ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > continues to traverse $defs members whose names resemble keywords or the annotation 1ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > continues to traverse definitions members whose names resemble keywords or the annotation 1ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > continues to traverse patternProperties members whose names resemble keywords or the annotation 1ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > continues to traverse dependentSchemas members whose names resemble keywords or the annotation 1ms
+ × src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > keeps ordinary property dependency names in dependencies as data 1ms
+   → expected { …(6) } to match object { semantic: false, …(4) }
+(1 matching property omitted from actual)
+ × src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > keeps ordinary property dependency names in dependentRequired as data 1ms
+   → expected { …(6) } to match object { semantic: false, …(4) }
+(1 matching property omitted from actual)
+ × src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > keeps a plain Schema dependency named x-aotui-ref as a Schema, not annotation metadata 0ms
+   → expected { …(6) } to match object { semantic: false, …(4) }
+(1 matching property omitted from actual)
+ × src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > keeps the boolean dependency Schema true 0ms
+   → expected { …(6) } to match object { semantic: false, …(3) }
+(2 matching properties omitted from actual)
+ × src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > keeps the boolean dependency Schema false 0ms
+   → expected { …(6) } to match object { semantic: false, …(3) }
+(2 matching properties omitted from actual)
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > does not inspect real default literal data for Ref declarations 0ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > does not inspect real const literal data for Ref declarations 0ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > does not inspect real enum literal data for Ref declarations 0ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > does not inspect real examples literal data for Ref declarations 0ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > retains the legal top-level declaration for parameter file and still refuses execution 0ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > retains the legal top-level declaration for parameter default and still refuses execution 0ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > retains the legal top-level declaration for parameter const and still refuses execution 0ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > retains the legal top-level declaration for parameter enum and still refuses execution 0ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > retains the legal top-level declaration for parameter examples and still refuses execution 0ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > retains the legal top-level declaration for parameter x-aotui-ref and still refuses execution 0ms
+ ✓ src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > keeps an ordinary parameter named x-aotui-ref unannotated 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 9 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > rejects a misplaced declaration under dependencies member default
+ FAIL  src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > rejects a misplaced declaration under dependencies member const
+ FAIL  src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > rejects a misplaced declaration under dependencies member enum
+ FAIL  src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > rejects a misplaced declaration under dependencies member examples
+AssertionError: expected { semantic: false, …(5) } to match object { …(4) }
+(7 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "handlerCalls": 0,
+-   "registration": "REF_DECLARATION_INVALID",
+-   "semantic": "REF_DECLARATION_INVALID",
+-   "snapshot": "REF_DECLARATION_INVALID",
++   "handlerCalls": 1,
++   "registration": "accepted",
++   "semantic": false,
++   "snapshot": "accepted",
+  }
+
+ ❯ src/core/tool/ref-declarations.wave2c-c1.test.ts:56:24
+     54|             [name]: { type: 'object', properties: { file: declared } },
+     55|         } }, { file: 'file', [name]: true });
+     56|         expect(result).toMatchObject({
+       |                        ^
+     57|             semantic: 'REF_DECLARATION_INVALID', snapshot: 'REF_DECLAR…
+     58|             registration: 'REF_DECLARATION_INVALID', handlerCalls: 0,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/9]⎯
+
+ FAIL  src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > keeps ordinary property dependency names in dependencies as data
+ FAIL  src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > keeps ordinary property dependency names in dependentRequired as data
+AssertionError: expected { …(6) } to match object { semantic: false, …(4) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "handlerCalls": 1,
+-   "invocation": {
+-     "data": {
+-       "args": {
+-         "file": "file",
+-         "x-aotui-ref": true,
+-       },
+-       "identity": "fd_A",
+-     },
+-     "success": true,
+-   },
+-   "registration": "accepted",
+-   "semantic": false,
+-   "snapshot": "accepted",
++   "handlerCalls": 0,
++   "invocation": undefined,
++   "registration": "REF_DECLARATION_INVALID",
++   "semantic": "REF_DECLARATION_INVALID",
++   "snapshot": "REF_DECLARATION_INVALID",
+  }
+
+ ❯ src/core/tool/ref-declarations.wave2c-c1.test.ts:80:24
+     78|             'x-aotui-ref': { type: 'boolean' }, file: { type: 'string'…
+     79|         }, [keyword]: { 'x-aotui-ref': ['file'] } }, args);
+     80|         expect(result).toMatchObject({
+       |                        ^
+     81|             semantic: false, snapshot: 'accepted', registration: 'acce…
+     82|             invocation: { success: true, data: { identity: 'fd_A', arg…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/9]⎯
+
+ FAIL  src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > keeps a plain Schema dependency named x-aotui-ref as a Schema, not annotation metadata
+AssertionError: expected { …(6) } to match object { semantic: false, …(4) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "handlerCalls": 1,
+-   "invocation": {
+-     "success": true,
+-   },
+-   "registration": "accepted",
+-   "semantic": false,
+-   "snapshot": "accepted",
++   "handlerCalls": 0,
++   "invocation": undefined,
++   "registration": "REF_DECLARATION_INVALID",
++   "semantic": "REF_DECLARATION_INVALID",
++   "snapshot": "REF_DECLARATION_INVALID",
+  }
+
+ ❯ src/core/tool/ref-declarations.wave2c-c1.test.ts:89:15
+     87|         expect(await inspect({ type: 'object', dependencies: {
+     88|             'x-aotui-ref': { type: 'object', properties: { file: { typ…
+     89|         } })).toMatchObject({ semantic: false, snapshot: 'accepted', r…
+       |               ^
+     90|             invocation: { success: true } });
+     91|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/9]⎯
+
+ FAIL  src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > keeps the boolean dependency Schema true
+ FAIL  src/core/tool/ref-declarations.wave2c-c1.test.ts > Wave 2C C1: Schema nodes, member-name maps and literal data > keeps the boolean dependency Schema false
+AssertionError: expected { …(6) } to match object { semantic: false, …(3) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "handlerCalls": 1,
+-   "registration": "accepted",
+-   "semantic": false,
+-   "snapshot": "accepted",
++   "handlerCalls": 0,
++   "registration": "REF_DECLARATION_INVALID",
++   "semantic": "REF_DECLARATION_INVALID",
++   "snapshot": "REF_DECLARATION_INVALID",
+  }
+
+ ❯ src/core/tool/ref-declarations.wave2c-c1.test.ts:95:14
+     93|     it.each([true, false])('keeps the boolean dependency Schema %s', a…
+     94|         expect(await inspect({ type: 'object', dependencies: { 'x-aotu…
+     95|             .toMatchObject({ semantic: false, snapshot: 'accepted', re…
+       |              ^
+     96|     });
+     97| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/9]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  9 failed | 17 passed (26)
+   Start at  11:38:45
+   Duration  389ms (transform 114ms, setup 0ms, collect 127ms, tests 26ms, environment 0ms, prepare 52ms)
+
+
+EXIT_CODE: 1

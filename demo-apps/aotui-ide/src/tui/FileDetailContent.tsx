@@ -1,4 +1,7 @@
-import { useState, useEffect, View } from '@aotui/sdk';
+import { useState, useEffect, useRef, View } from '@aotui/sdk';
+import { DiagnosticsReadTool } from './DiagnosticsReadTool.js';
+export { DiagnosticsReadTool } from './DiagnosticsReadTool.js';
+import { initialLoadedDiagnostics, transitionLoadedDiagnostics, type LoadedDiagnosticsState } from './loaded-diagnostics.js';
 import type Emittery from 'emittery';
 import { lspService, fileSystemService } from '../core/index.js';
 import type { Diagnostic, AppEvents, HoverResult, LocationResult, DocumentSymbol, CallHierarchyItem, LspEventSource } from '../types.js';
@@ -34,12 +37,14 @@ export function FileDetailView({
     viewId,
     filePath,
     eventBus,
-    onClose
+    onClose,
+    enableDiagnosticsRead = false
 }: {
     viewId: string;
     filePath: string;
     eventBus: Emittery<AppEvents>;
     onClose: () => void;
+    enableDiagnosticsRead?: boolean;
 }) {
     const fileName = filePath.split('/').pop() || filePath;
 
@@ -50,30 +55,34 @@ export function FileDetailView({
             name={`File: ${fileName}`}
             onClose={onClose}
         >
-            <FileDetailContent initialFilePath={filePath} eventBus={eventBus} />
+            <FileDetailContent initialFilePath={filePath} eventBus={eventBus} enableDiagnosticsRead={enableDiagnosticsRead} />
         </View>
     );
 }
 
 export function FileDetailContent({
     initialFilePath,
-    eventBus
+    eventBus,
+    enableDiagnosticsRead = false
 }: {
     initialFilePath: string;
+    enableDiagnosticsRead?: boolean;
     eventBus: Emittery<AppEvents>;
 }) {
     // ==================== State 管理 ====================
 
     const [currentFile, setCurrentFile] = useState<{ path: string }>({ path: initialFilePath });
     const [fileContent, setFileContent] = useState<string>('Loading file...');
-    const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([]);
+
     const [hoverState, setHoverState] = useState<LspState<HoverResult>>({ status: 'idle' });
     const [definitionState, setDefinitionState] = useState<LspState<LocationResult[]>>({ status: 'idle' });
     const [referencesState, setReferencesState] = useState<LspState<LocationResult[]>>({ status: 'idle' });
     const [symbolsState, setSymbolsState] = useState<LspState<DocumentSymbol[]>>({ status: 'idle' });
     const [incomingCallsState, setIncomingCallsState] = useState<LspState<CallHierarchyItem[]>>({ status: 'idle' });
     const [outgoingCallsState, setOutgoingCallsState] = useState<LspState<CallHierarchyItem[]>>({ status: 'idle' });
-    const [diagnosticsState, setDiagnosticsState] = useState<LspState<Diagnostic[]>>({ status: 'idle' });
+    const [diagnosticsState, setDiagnosticsState] = useState<LoadedDiagnosticsState>(()=>initialLoadedDiagnostics(initialFilePath));
+    const diagnostics = diagnosticsState.diagnostics;
+    const lifetime = useRef({alive:true,path:initialFilePath,generation:0});
     const [lastOperation, setLastOperation] = useState<LspOperationRecord | null>(null);
     const [operationLog, setOperationLog] = useState<LspOperationRecord[]>([]);
     const maxLogSize = 8;
@@ -109,61 +118,38 @@ export function FileDetailContent({
         setLastOperation(record);
         setOperationLog(prev => [record, ...prev].slice(0, maxLogSize));
     };
-    // ==================== 自动加载文件 ====================
-
-    useEffect(() => {
-        async function loadFile() {
-            try {
-                const content = await fileSystemService.readFile(currentFile.path);
-                setFileContent(content);
-
-                // 自动获取诊断信息
-                const diags = await lspService.getDiagnostics(currentFile.path);
-                setDiagnostics(diags);
-                const updatedAt = Date.now();
-                setDiagnosticsState({
-                    status: 'success',
-                    data: diags,
-                    updatedAt,
-                    operationName: 'lsp_get_diagnostics',
-                    resultCount: diags.length,
-                    source: 'auto'
-                });
-                pushOperationRecord({
-                    operationName: 'lsp_get_diagnostics',
-                    status: 'success',
-                    filePath: currentFile.path,
-                    updatedAt,
-                    resultCount: diags.length,
-                    source: 'auto'
-                });
-            } catch (error) {
-                console.error('[FileDetailContent] Load error:', error);
-                setFileContent(`Error loading file: ${(error as Error).message}`);
-                const updatedAt = Date.now();
-                const message = (error as Error).message;
-                setDiagnosticsState({
-                    status: 'error',
-                    error: message,
-                    updatedAt,
-                    operationName: 'lsp_get_diagnostics',
-                    resultCount: 0,
-                    source: 'auto'
-                });
-                pushOperationRecord({
-                    operationName: 'lsp_get_diagnostics',
-                    status: 'error',
-                    filePath: currentFile.path,
-                    updatedAt,
-                    resultCount: 0,
-                    error: message,
-                    source: 'auto'
-                });
-            }
+    // One accepted state path serves rendering and the optional read Tool.
+    const acceptDiagnostics = (path:string,status:LoadedDiagnosticsState['status'],data:readonly Diagnostic[]=[],updatedAt=Date.now(),error:string|null=null) => {
+        if (!lifetime.current.alive || lifetime.current.path!==path) return;
+        setDiagnosticsState(previous=>transitionLoadedDiagnostics(previous,path,status,data,updatedAt,error));
+    };
+    const loadFile = async (path:string, initialLoad = true) => {
+        const token=++lifetime.current.generation;
+        const current=()=>lifetime.current.alive && lifetime.current.path===path && lifetime.current.generation===token;
+        acceptDiagnostics(path,'loading');
+        try {
+            const content=await fileSystemService.readFile(path);
+            if (!current()) return;
+            setFileContent(content);
+            const data=await lspService.getDiagnostics(path);
+            if (!current()) return;
+            const updatedAt=Date.now();
+            acceptDiagnostics(path,'success',data,updatedAt);
+            pushOperationRecord({operationName:'lsp_get_diagnostics',status:'success',filePath:path,updatedAt,resultCount:data.length,source:'auto'});
+        } catch (error) {
+            if (!current()) return;
+            const message=error instanceof Error?error.message:'Diagnostics load failed';
+            if (initialLoad) setFileContent(`Error loading file: ${message}`);
+            const updatedAt=Date.now();
+            acceptDiagnostics(path,'error',[],updatedAt,message);
+            pushOperationRecord({operationName:'lsp_get_diagnostics',status:'error',filePath:path,updatedAt,resultCount:0,error:message,source:'auto'});
         }
-
-        loadFile();
-    }, [currentFile.path]);
+    };
+    useEffect(()=>{
+        lifetime.current.alive=true;
+        return ()=>{lifetime.current.alive=false;++lifetime.current.generation;};
+    },[]);
+    useEffect(()=>{void loadFile(currentFile.path);},[currentFile.path]);
 
     useEffect(() => {
         setHoverState({ status: 'idle' });
@@ -189,70 +175,18 @@ export function FileDetailContent({
 
     // ==================== EventBus 监听 ====================
 
-    // 监听文件变更事件
-    useEffect(() => {
-        const handleFileChanged = async (e: { filePath: string }) => {
-            if (e.filePath === currentFile.path) {
-                console.log(`[FileDetailContent] File changed: ${e.filePath}, reloading...`);
-                try {
-                    const content = await fileSystemService.readFile(currentFile.path);
-                    setFileContent(content);
-
-                    // 同时刷新诊断信息
-                    const diags = await lspService.getDiagnostics(currentFile.path);
-                    setDiagnostics(diags);
-                    const updatedAt = Date.now();
-                    setDiagnosticsState({
-                        status: 'success',
-                        data: diags,
-                        updatedAt,
-                        operationName: 'lsp_get_diagnostics',
-                        resultCount: diags.length,
-                        source: 'auto'
-                    });
-                    pushOperationRecord({
-                        operationName: 'lsp_get_diagnostics',
-                        status: 'success',
-                        filePath: currentFile.path,
-                        updatedAt,
-                        resultCount: diags.length,
-                        source: 'auto'
-                    });
-                } catch (error) {
-                    console.error('[FileDetailContent] Reload error:', error);
-                    const updatedAt = Date.now();
-                    const message = (error as Error).message;
-                    setDiagnosticsState({
-                        status: 'error',
-                        error: message,
-                        updatedAt,
-                        operationName: 'lsp_get_diagnostics',
-                        resultCount: 0,
-                        source: 'auto'
-                    });
-                    pushOperationRecord({
-                        operationName: 'lsp_get_diagnostics',
-                        status: 'error',
-                        filePath: currentFile.path,
-                        updatedAt,
-                        resultCount: 0,
-                        error: message,
-                        source: 'auto'
-                    });
-                }
-            }
-        };
-
-        eventBus.on('file_changed', handleFileChanged);
-        return () => {
-            eventBus.off('file_changed', handleFileChanged);
-        };
-    }, [currentFile.path, eventBus]);
+    useEffect(()=>{
+        const changed=(e:AppEvents['file_changed'])=>{if(e.filePath===lifetime.current.path) void loadFile(e.filePath,false);};
+        return eventBus.on('file_changed',changed);
+    },[eventBus]);
 
     // 监听文件重命名事件
     useEffect(() => {
         const handleFileRenamed = (e: { oldPath: string; newPath: string }) => {
-            if (e.oldPath === currentFile.path) {
+            if (e.oldPath === lifetime.current.path && lifetime.current.alive) {
+                ++lifetime.current.generation;
+                lifetime.current.path=e.newPath;
+                acceptDiagnostics(e.newPath,'idle');
                 console.log(`[FileDetailContent] File renamed: ${e.oldPath} -> ${e.newPath}`);
                 setCurrentFile({ path: e.newPath });
             }
@@ -308,11 +242,9 @@ export function FileDetailContent({
         };
 
         const handleDiagnostics = (e: AppEvents['lsp_diagnostics_result']) => {
-            if (e.filePath === currentFile.path) {
-                setDiagnosticsState(e);
-                if (e.status === 'success' && e.data) {
-                    setDiagnostics(e.data);
-                }
+            if (e.filePath === lifetime.current.path && lifetime.current.alive) {
+                acceptDiagnostics(e.filePath,e.status,e.data??[],e.updatedAt??Date.now(),e.error??null);
+                ++lifetime.current.generation;
                 pushOperationRecord(buildOperationRecord(e));
             }
         };
@@ -410,6 +342,7 @@ export function FileDetailContent({
 
     return (
         <>
+            {enableDiagnosticsRead && diagnosticsState.filePath===currentFile.path && <DiagnosticsReadTool key={currentFile.path} state={diagnosticsState} />}
             {/* View Content */}
             <div data-role="view-content">
                 {/* 文件路径 */}

@@ -1,0 +1,178 @@
+COMMAND: pnpm --dir runtime exec vitest run --reporter=dot
+START_UTC: 2026-10-24T01:11:14.060533+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'result_app', desktopId: 'result_desktop' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+[createTUIApp] initializeComponent { appId: 'race_app', desktopId: 'race_desktop' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'm3_app', desktopId: 'desktop_m3' }
+·[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+··[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+·[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+··[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+··························[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+·[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'm3_app', desktopId: 'desktop_m3' }
+·····[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+stdout | src/engine/app/worker-host.wave2a-readonly.test.ts > Wave 2A: real SDK + Worker + View-owned read-only contract > refuses an expired pinned source instead of laundering it through a caller replacement snapshot
+WAVE2A_TTL_RECHECK={"success":false,"code":"SNAPSHOT_EXPIRED","calls":{"A":0,"B":0,"query":0}}
+
+·[PersistenceShutdown] Shutdown listener initialized
+·[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+·[PersistenceShutdown] Shutdown listener initialized
+·············[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+·[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+stdout | src/engine/app/worker-host.m4-readonly.test.ts > M4 Stage 3: explicitly authorized source-bound READ-ONLY Worker Tool > rejects unavailable, stale, mutating, unauthorized Tools and preserves the Handler result
+M4_READONLY_WORKER_DIAGNOSTIC={"count":25,"p50_ms":0.167,"p95_ms":0.455,"max_ms":0.53,"note":"host policy + V2 leases + Worker IPC + SDK Handler; no IDE/LSP or model"}
+
+[createTUIApp] initializeComponent { appId: 'm4_readonly_app', desktopId: 'desktop_m4' }
+·········[PersistenceShutdown] Shutdown listener initialized
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+·······························[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+[createTUIApp] initializeComponent { appId: 'm4_app', desktopId: 'desktop_m4' }
+··[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+····················································[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+··················[Worker] APP_SHUTDOWN flush timeout fallback
+·[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2c_real', desktopId: 'wave2c' }
+··············[PersistenceShutdown] Shutdown listener initialized
+·······················[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+···stdout | src/engine/app/registry.test.ts > AppRegistry > App Management > should use canonical app_name from kernel metadata when manifest identity is missing
+[AppRegistry] Added app: system_ide from local:/tmp/cache/node_modules/@agentina/aotui-ide
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > App Management > should delete managed npm install artifacts on remove
+[AppRegistry] Removed app: aotui-ide
+
+stderr | src/engine/app/registry.test.ts > AppRegistry > App Management > should not delete npm artifacts outside managed root on remove
+[AppRegistry] Skip deleting npm cache outside managed root: /var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/tui-test-idHZFY/external-cache/latest
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > App Management > should not delete npm artifacts outside managed root on remove
+[AppRegistry] Removed app: aotui-ide
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should install autoStart=true apps immediately
+[AppRegistry] Installed "worker-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should inject only canonical AOTUI_APP_NAME into launch config
+[AppRegistry] Installed "worker-app" to Desktop dt_test (Worker mode)
+
+stdout | src/e2e-test/config-injection-e2e.test.ts > E2E: Configuration Injection > should inject config into real worker and echo it back
+[Performance] App Start + Config Echo took 31ms
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should register autoStart=false apps as pending
+[AppRegistry] Registered "pending-app" to Desktop dt_test (Pending mode)
+
+·stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should install only selected explicit entries without consulting config apps
+[AppRegistry] Loaded app: explicit-app
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should install only selected explicit entries without consulting config apps
+[AppRegistry] Installed "explicit-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should keep non-selected explicit entries out of installation
+[AppRegistry] Loaded app: alpha-app
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should keep non-selected explicit entries out of installation
+[AppRegistry] Loaded app: beta-app
+
+stdout | src/engine/app/registry.test.ts > AppRegistry > Installation (AppRegistry) > should keep non-selected explicit entries out of installation
+[AppRegistry] Installed "beta-app" to Desktop dt_test (Worker mode)
+
+···················[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+··································stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should propagate promptRole from manifest
+[AppRegistry] Installed "assistant-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should propagate promptRole from kernelConfig
+[AppRegistry] Installed "kernel-assistant-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should allow config override of promptRole
+[AppRegistry] Installed "override-app" to Desktop dt_test (Worker mode)
+
+stdout | src/engine/app/registry-role.test.ts > AppRegistry Role Propagation > should propagate promptRole to registerPendingApp (lazy load)
+[AppRegistry] Registered "lazy-assistant" to Desktop dt_test (Pending mode)
+
+····[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+stderr | src/engine/app/manager.test.ts > AppManager > Lazily Loaded Apps > startPendingApp 对非 staged App 应返回 false
+[AppManager] Cannot start nonexistent: not found
+
+··························-------·······································[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+·························stderr | src/engine/core/llm-text-channel.test.ts > LLMOutputChannelService > error handling > should continue notifying other subscribers if one throws
+[LLMOutputChannel] Error in listener: Error: Test error
+    at /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/src/engine/core/llm-text-channel.test.ts:162:56
+    at LLMOutputChannelService.push (/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/src/engine/core/llm-output-channel.ts:114:17)
+    at /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/src/engine/core/llm-text-channel.test.ts:168:25
+    at Proxy.assertThrows (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/chai@5.3.3/node_modules/chai/index.js:2767:5)
+    at Proxy.methodWrapper (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/chai@5.3.3/node_modules/chai/index.js:1686:25)
+    at Proxy.<anonymous> (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/@vitest+expect@3.2.4/node_modules/@vitest/expect/dist/index.js:1088:12)
+    at Proxy.overwritingMethodWrapper (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/chai@5.3.3/node_modules/chai/index.js:1735:33)
+    at Proxy.<anonymous> (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/@vitest+expect@3.2.4/node_modules/@vitest/expect/dist/index.js:1420:16)
+    at Proxy.<anonymous> (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/@vitest+expect@3.2.4/node_modules/@vitest/expect/dist/index.js:1029:14)
+    at Proxy.methodWrapper (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime/node_modules/.pnpm/chai@5.3.3/node_modules/chai/index.js:1686:25)
+
+······························[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+·············[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[PersistenceShutdown] Received shutdown signal, flushing all states...
+[PersistenceManager] Flushing 0 state(s) to disk...
+[PersistenceManager] Flush complete
+[PersistenceShutdown] All states flushed successfully
+·······································································································································································[Worker] APP_SHUTDOWN flush timeout fallback
+[createTUIApp] initializeComponent { appId: 'versioned_app', desktopId: 'versioned_desktop' }
+·································[Worker] APP_SHUTDOWN flush timeout fallback
+······················[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+··········································[PersistenceShutdown] Shutdown listener initialized
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+[createTUIApp] initializeComponent { appId: 'wave2a_real', desktopId: 'wave2a' }
+···························---·····
+
+ Test Files  73 passed (73)
+      Tests  696 passed | 3 skipped | 7 todo (706)
+   Start at  09:11:14
+   Duration  5.08s (transform 2.34s, setup 0ms, collect 8.32s, tests 17.06s, environment 11ms, prepare 5.52s)
+
+
+EXIT_CODE: 0

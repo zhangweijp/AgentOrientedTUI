@@ -1,0 +1,5 @@
+COMMAND: pnpm --dir runtime exec tsc --pretty false
+START_UTC: 2026-10-23T10:40:46.982204+00:00
+src/engine/app/worker-host.ts(827,17): error TS2367: This comparison appears to be unintentional because the types '"running" | "paused" | "closed" | "error" | "ready" | "starting"' and '"closing"' have no overlap.
+
+EXIT_CODE: 2

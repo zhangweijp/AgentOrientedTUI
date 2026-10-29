@@ -1,0 +1,16 @@
+COMMAND: pnpm --dir demo-apps/aotui-ide exec jest --runInBand
+START_UTC: 2026-10-23T11:07:50.610912+00:00
+PASS src/__tests__/versioned-file-write.test.ts
+PASS src/__tests__/exclusive-file-create.test.ts
+PASS src/__tests__/create-file-workflow.test.ts
+PASS src/__tests__/workspace-folders.test.ts
+PASS src/__tests__/file-view-ids.test.ts
+PASS src/__tests__/persistence-schema.test.ts
+
+Test Suites: 6 passed, 6 total
+Tests:       27 passed, 27 total
+Snapshots:   0 total
+Time:        1.205 s, estimated 2 s
+Ran all test suites.
+
+EXIT_CODE: 0

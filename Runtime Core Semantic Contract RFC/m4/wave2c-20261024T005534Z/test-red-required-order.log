@@ -1,0 +1,85 @@
+COMMAND: pnpm --dir runtime exec vitest run src/core/tool/ref-declarations.wave2c.test.ts --reporter=verbose
+START_UTC: 2026-10-24T01:32:46.598333+00:00
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/runtime
+
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > preserves opt-in and optional refType undefined 3ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > preserves opt-in and optional refType File 1ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > preserves opt-in and optional refType Todo 1ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > rejects parameter declaration future 1ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > rejects parameter declaration non-string version 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > rejects parameter declaration wrong type 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > rejects parameter declaration required 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > rejects parameter declaration description 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > rejects parameter declaration empty refType 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > rejects parameter declaration non-string refType 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > rejects parameter declaration constraints 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > rejects parameter declaration default 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > rejects parameter declaration array itemType 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > rejects parameter declaration options 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > rejects parameter declaration unknown field 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > does not execute accessors before validating a new declaration 1ms
+ × src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > equivalent opt-in parameter key order keeps required and aggregation canonical 8ms
+   → expected { type: 'object', …(2) } to deeply equal { type: 'object', …(2) }
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects malformed reserved declaration version at both boundaries 1ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects malformed reserved declaration version type at both boundaries 1ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects malformed reserved declaration kind at both boundaries 1ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects malformed reserved declaration owner at both boundaries 1ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects malformed reserved declaration refType at both boundaries 1ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects malformed reserved declaration extra at both boundaries 1ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects unsupported location/combination root 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects unsupported location/combination nested 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects unsupported location/combination items 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects unsupported location/combination $defs 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects unsupported location/combination allOf 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects unsupported location/combination combined root 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects unsupported location/combination property sibling 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects unsupported location/combination wrong property type 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects mutating declarations and V1 declarations without a View-owned target 1ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > preserves unannotated schemas and literal data with a reserved-looking key 1ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > canonical conflicts are atomic; equivalent key order aggregates without a partial registration 2ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > rejects a public metadata getter before Registry or Snapshot evaluation 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > all annotated invocations are refused before Handler, including omitted optional values 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > current binding and canonical checks reject stripped annotations and obsolete registrations 0ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > old plain source does not acquire new declaration semantics after re-registration 2ms
+ ✓ src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: pure Registry/Snapshot semantic boundary > new metadata consumes existing Schema/Registry budgets without truncation 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/core/tool/ref-declarations.wave2c.test.ts > Wave 2C: authoritative declaration projection > equivalent opt-in parameter key order keeps required and aggregation canonical
+AssertionError: expected { type: 'object', …(2) } to deeply equal { type: 'object', …(2) }
+
+- Expected
++ Received
+
+@@ -11,10 +11,10 @@
+      "question": {
+        "type": "string",
+      },
+    },
+    "required": [
+-     "file",
+      "question",
++     "file",
+    ],
+    "type": "object",
+  }
+
+ ❯ src/core/tool/ref-declarations.wave2c.test.ts:74:27
+     72|         const first = paramsToJsonSchema({ file, question });
+     73|         const reordered = paramsToJsonSchema({ question, file });
+     74|         expect(reordered).toEqual(first);
+       |                           ^
+     75|         const { registry, a, b } = setup();
+     76|         registry.registerTool(a.viewInstanceId, spec(first), async () …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 38 passed (39)
+   Start at  09:32:47
+   Duration  466ms (transform 142ms, setup 0ms, collect 160ms, tests 32ms, environment 0ms, prepare 63ms)
+
+
+EXIT_CODE: 1
