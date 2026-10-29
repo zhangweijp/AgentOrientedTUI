@@ -16,9 +16,10 @@ interface ApplicationBlockProps {
 }
 
 export function ApplicationBlock({ app }: ApplicationBlockProps) {
-    const [activeViewIdx, setActiveViewIdx] = useState(0);
-    const activeView = app.views[activeViewIdx] || null;
+    const [activeViewId, setActiveViewId] = useState<string | null>(null);
+    const activeView = app.views.find(view => view.id === activeViewId) ?? app.views[0] ?? null;
     const appIcon = getAppIcon(app.name);
+    const status = app.status ?? 'running';
 
     return (
         <div className="tui-app-card">
@@ -32,8 +33,8 @@ export function ApplicationBlock({ app }: ApplicationBlockProps) {
                     </div>
                 </div>
                 <div className="tui-app-card-status">
-                    <span className="breathing-dot" />
-                    <span className="status-badge status-badge--running">RUNNING</span>
+                    {status === 'running' && <span className="breathing-dot" />}
+                    <span className={`status-badge status-badge--${status}`}>{status.toUpperCase()}</span>
                 </div>
             </div>
 
@@ -41,11 +42,11 @@ export function ApplicationBlock({ app }: ApplicationBlockProps) {
             {app.views.length > 1 && (
                 <div className="tui-view-tabs">
                     <div className="tui-view-tabs-list">
-                        {app.views.map((view, idx) => (
+                        {app.views.map(view => (
                             <button
                                 key={view.id}
-                                className={`tui-view-tab ${idx === activeViewIdx ? 'active' : ''}`}
-                                onClick={() => setActiveViewIdx(idx)}
+                                className={`tui-view-tab ${view.id === activeView?.id ? 'active' : ''}`}
+                                onClick={() => setActiveViewId(view.id)}
                             >
                                 <span className="tui-view-tab-name">{view.name}</span>
                             </button>

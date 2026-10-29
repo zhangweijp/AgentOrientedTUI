@@ -306,7 +306,7 @@ export function useViewTypeTool<T extends ParamSchema = ParamSchema>(
     // 创建 UI 渲染器组件
     const TypeToolUIComponent = useMemo(() => {
         const UIComponent: TypeToolUI = ({ children }: TypeToolUIProps): VNode | null => {
-            if (!isLegacy && !ordinaryV2) return null;
+            if (!enabled) return null;
             // 渲染为 <tool-ref> 元素
             return h(
                 "tool-ref",
@@ -320,7 +320,7 @@ export function useViewTypeTool<T extends ParamSchema = ParamSchema>(
         };
         (UIComponent as any).displayName = `TypeToolUI(${viewType}.${toolName})`;
         return UIComponent;
-    }, [isLegacy, ordinaryV2, viewType, toolName, description]);
+    }, [enabled, viewType, toolName, description]);
 
     return [TypeToolUIComponent];
 }

@@ -389,29 +389,32 @@ describe('M3 batched semantic updates', () => {
             return h(View, { id: 'workspace', type: 'Workspace' }, h(Content, {}));
         }
         const x = setup(App);
-        const events: Array<{ epoch: number; id: string; tool: boolean }> = [];
+        const events: Array<{ epoch: number; id: string; tool: boolean; visible: boolean }> = [];
         const unsub = x.kernel.getProjectionCoordinator().subscribe(token => {
             events.push({
                 epoch: token.epoch,
                 id: (x.kernel.exportRefsToIndexMap()['workspace:selected'] as any)?.id,
                 tool: !!x.kernel.getAllTypeTools().get('Workspace')?.length,
+                visible: !!x.container.querySelector('tool-ref'),
             });
         });
         try {
             await x.open();
             await sleep(20);
             events.length = 0;
-            const oldHtml = x.container.innerHTML;
+            const oldContent = x.container.querySelector('p')?.textContent;
+            expect(x.container.querySelector('tool-ref')?.textContent).toBe('Inspect');
             for (let i = 0; i < 20; i++) {
                 setState({ id: 'batch-' + i, enabled: i % 2 === 0 });
             }
             await sleep(50);
-            expect(x.container.innerHTML).toBe(oldHtml);
+            expect(x.container.querySelector('p')?.textContent).toBe(oldContent);
+            expect(x.container.querySelector('tool-ref')).toBeNull();
             expect((x.kernel.exportRefsToIndexMap()['workspace:selected'] as any).id).toBe('batch-19');
             expect(x.kernel.getAllTypeTools().get('Workspace')).toBeUndefined();
             expect(events.length).toBeGreaterThan(0);
             // No observer should ever receive the intermediate A/B mixed state.
-            expect(events.every(x => x.id === 'batch-19' && !x.tool)).toBe(true);
+            expect(events.every(x => x.id === 'batch-19' && !x.tool && !x.visible)).toBe(true);
             expect(events.every((x,i) => i === 0 || x.epoch >= events[i-1].epoch)).toBe(true);
         } finally {
             unsub();

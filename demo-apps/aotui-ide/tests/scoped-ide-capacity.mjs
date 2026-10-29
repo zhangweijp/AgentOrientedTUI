@@ -59,20 +59,20 @@ try {
         const directories = []; for (let i = 0; i < 497; i++) { const dir = path.join(directory, 'd' + i); await fs.mkdir(dir); directories.push(dir); }
         for (let i = 0; i < 495; i += 64) succeeds(await x.call('multi_open_dirs', { dirPaths: directories.slice(i, Math.min(i + 64, 495)) }));
         assert.equal(x.owner.expanded.length, 511); succeeds(await x.call('multi_open_dirs', { dirPaths: [directories[495]] })); assert.equal(x.owner.expanded.length, 512);
-        const before = x.owner.tree; version = x.owner.workspaceVersion;
-        fails(await x.call('multi_open_dirs', { dirPaths: [directories[496]] }), 'IDE_DIRECTORY_CAPACITY'); assert.equal(x.owner.tree, before); assert.equal(x.owner.workspaceVersion, version);
+        const before = x.owner.trees; version = x.owner.workspaceVersion;
+        fails(await x.call('multi_open_dirs', { dirPaths: [directories[496]] }), 'IDE_DIRECTORY_CAPACITY'); assert.equal(x.owner.trees, before); assert.equal(x.owner.workspaceVersion, version);
         assert.equal((await x.close()).ok, true);
     });
     await run('actual tree entry and byte limits reject before replacing the published tree', async () => {
         const directory = await root('tree-entries'); await makeFiles(directory, 0, 9998); const x = await session(directory);
-        assert.equal(x.owner.tree.split('\n').length, 9999); await makeFiles(directory, 9998, 9999); succeeds(await x.call('refresh_workspace', {})); assert.equal(x.owner.tree.split('\n').length, 10000);
-        const before = x.owner.tree, version = x.owner.workspaceVersion; await makeFiles(directory, 9999, 10000); fails(await x.call('refresh_workspace', {}), 'IDE_TREE_CAPACITY'); assert.equal(x.owner.tree, before); assert.equal(x.owner.workspaceVersion, version); await x.close();
-        const sized = await root('tree-bytes'), limit = 200 * 1024, rootBytes = Buffer.byteLength(sized + '/') + 1;
-        let count = Math.floor((limit - 1 - rootBytes) / 203), rest = limit - 1 - rootBytes - count * 203; if (rest < 10) { count--; rest += 203; }
+        assert.equal(x.owner.trees.get(directory).split('\n').length, 9999); await makeFiles(directory, 9998, 9999); succeeds(await x.call('refresh_workspace', {})); assert.equal(x.owner.trees.get(directory).split('\n').length, 10000);
+        const before = x.owner.trees, version = x.owner.workspaceVersion; await makeFiles(directory, 9999, 10000); fails(await x.call('refresh_workspace', {}), 'IDE_TREE_CAPACITY'); assert.equal(x.owner.trees, before); assert.equal(x.owner.workspaceVersion, version); await x.close();
+        const sized = await root('tree-bytes'), limit = 200 * 1024, rootBytes = Buffer.byteLength(sized) + Buffer.byteLength('.\n'), entryOverhead = Buffer.byteLength('├── \n');
+        let count = Math.floor((limit - 1 - rootBytes) / (200 + entryOverhead)), rest = limit - 1 - rootBytes - count * (200 + entryOverhead); if (rest < entryOverhead + 4) { count--; rest += 200 + entryOverhead; }
         for (let offset = 0; offset < count; offset += 64) await Promise.all(Array.from({ length: Math.min(64, count - offset) }, (_, i) => { const prefix = 'f' + String(offset + i).padStart(5, '0'); return fs.writeFile(path.join(sized, prefix + 'x'.repeat(200 - prefix.length)), ''); }));
-        let tail = path.join(sized, 'tail' + 'x'.repeat(rest - 7)); await fs.writeFile(tail, ''); const y = await session(sized); assert.equal(Buffer.byteLength(y.owner.tree) + 1, limit - 1);
-        await fs.rename(tail, tail + 'x'); tail += 'x'; succeeds(await y.call('refresh_workspace', {})); assert.equal(Buffer.byteLength(y.owner.tree) + 1, limit);
-        const prior = y.owner.tree; await fs.rename(tail, tail + 'x'); fails(await y.call('refresh_workspace', {}), 'IDE_TREE_CAPACITY'); assert.equal(y.owner.tree, prior); await y.close();
+        let tail = path.join(sized, 'tail' + 'x'.repeat(rest - entryOverhead - 4)); await fs.writeFile(tail, ''); const y = await session(sized); assert.equal(Buffer.byteLength(sized) + Buffer.byteLength(y.owner.trees.get(sized)) + 1, limit - 1);
+        await fs.rename(tail, tail + 'x'); tail += 'x'; succeeds(await y.call('refresh_workspace', {})); assert.equal(Buffer.byteLength(sized) + Buffer.byteLength(y.owner.trees.get(sized)) + 1, limit);
+        const prior = y.owner.trees; await fs.rename(tail, tail + 'x'); fails(await y.call('refresh_workspace', {}), 'IDE_TREE_CAPACITY'); assert.equal(y.owner.trees, prior); await y.close();
         return { entryCountIncludesRoot: true, entries: [9999, 10000, 10001], bytesIncludingFinalLineAccounting: [limit - 1, limit, limit + 1] };
     });
     await run('parent depth 31/32/33 and history LRU/roots/256KiB source limits preserve disk facts', async () => {

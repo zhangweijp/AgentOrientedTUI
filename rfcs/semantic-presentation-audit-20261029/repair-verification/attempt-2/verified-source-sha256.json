@@ -1,0 +1,18 @@
+{
+  "demo-apps/aotui-ide/src/core/ide-session.ts": "9c4742e2e2e36492be4d33f578a06688df67e54f7e59e0dde9b9f643174a9810",
+  "demo-apps/aotui-ide/src/tui/ScopedIDEApp.tsx": "a35273dab7e9f438009008a423c8c2ca7f720ce6e5c74d19bfe13d0bfacf5e0e",
+  "demo-apps/aotui-ide/tests/scoped-ide-capacity.mjs": "aa7f782eccc03c638e93dd1c1eba10a6b90dece909281c112f5c9bb065acddb2",
+  "demo-apps/lite-browser-app/src/tui/RootView.tsx": "2d545a7eac33654d0558ce86f421955ef332cafb4139884028ea0074ba370448",
+  "demo-apps/terminal-app/src/tui/RootView.tsx": "3393d763f599ece9ff5a866c9460395b12fb1bc59ee0fb88fd7e3728da49fe2e",
+  "demo-apps/terminal-app/src/tui/TerminalTools.tsx": "549484f3a0d0e905ee00f0acdde1f75ce4b0253d975d03218808abcb170330d3",
+  "host/test/semantic-host.e2e.ts": "5e78f1e6d301399e49848312c0aaccfab374345ef1dbd7ba554eaba43ab170d4",
+  "runtime/src/adapters/aotui-driven-source.ts": "d277edd24f67ff4236af0c9e8ac01d76f6c84c4e20d67ba084aa8e9c7855b22e",
+  "runtime/src/adapters/semantic-aotui-driven-source.test.ts": "e9c714e0e2a93db21be0a63e342c7535874cfd4a87f9147171dd9640cf98cfb8",
+  "runtime/src/adapters/semantic-aotui-driven-source.ts": "5a9aed0722f4d521686cf8e05935ab3c0063d0f6711e9313175695202abb5c82",
+  "runtime/src/adapters/system-instruction.ts": "a2ac407d375574a670638370390e498c2811ea29c78f0095e3f0541a48746875",
+  "runtime/src/spi/runtime/kernel.interface.ts": "65dfaf12105bda95415facae73879b0e4d13b0f9b22e3e9fb7045af09a845543",
+  "sdk/src/hooks/useViewTypeTool.ts": "7048f44a64ec828f11ca8b0592a943e5f1397224aa433f8d5464221d3df60352",
+  "sdk/src/projection-coordinator.test.ts": "d3d845bc1a97e8cdf093ccb6af7f71432390d5cdf3bddc71cf256e30673ce0cd",
+  "sdk/src/view-local-tools.test.ts": "d7724acf33aa902a4708a8649cbcf30f77b9547ef4414716324cb79445563492",
+  "runtime/src/adapters/view-message.ts": "580a1418e2523d35e8b8e1cab4a8caf7a867cd5937834c6a1e5069280a8eb0d8"
+}

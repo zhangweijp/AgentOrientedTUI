@@ -65,6 +65,8 @@ export interface IDesktop {
 
     /** App discovery is independent of snapshot serialization and tool execution. */
     getInstalledApps(): readonly AppDiscoveryInfo[];
+    /** Optional, bounded by the adapter when projecting recent Desktop activity. */
+    getSystemLogs?(): readonly { timestamp: number; message: string }[];
 
     /**
      * [Worker-Only] 安装 App

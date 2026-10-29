@@ -1,0 +1,24 @@
+[
+  {
+    "label": "ide-edges-e2e",
+    "cwd": "demo-apps/aotui-ide",
+    "command": [
+      "node",
+      "tests/scoped-ide-edges.mjs",
+      "/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/rfcs/semantic-presentation-audit-20261029/repair-verification/attempt-2/ide-edges-e2e-facts.json"
+    ],
+    "exit": 0,
+    "seconds": 6.59
+  },
+  {
+    "label": "ide-capacity-e2e",
+    "cwd": "demo-apps/aotui-ide",
+    "command": [
+      "node",
+      "tests/scoped-ide-capacity.mjs",
+      "/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/rfcs/semantic-presentation-audit-20261029/repair-verification/attempt-2/ide-capacity-e2e-facts.json"
+    ],
+    "exit": 0,
+    "seconds": 3.05
+  }
+]

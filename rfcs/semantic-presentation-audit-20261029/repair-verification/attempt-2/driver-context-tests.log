@@ -1,0 +1,322 @@
+
+ RUN  v3.2.4 /private/tmp/aotui-presentation-repair-gmbb88cz/agent-driver-v2
+
+ ✓ tests/core/context-regions.test.ts (2 tests) 1ms
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > uses the captured messages, tools and executor even if another consumer observes again
+[LLMClient] LLMClient initialized {
+  model: 'openai:gpt-4',
+  hasCustomConfig: false,
+  providerId: undefined,
+  baseURL: undefined,
+  hasApiKey: false
+}
+[AgentDriverV2] Listening to 1 driven sources
+[AgentDriverV2] AgentDriver started
+[AgentDriverV2] State transition: idle → thinking
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > uses the captured messages, tools and executor even if another consumer observes again
+[AgentDriverV2] Total messages collected: 1
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > uses the captured messages, tools and executor even if another consumer observes again
+[AgentDriverV2] Run iteration: { messagesCount: 1, toolsCount: 1 }
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > uses the captured messages, tools and executor even if another consumer observes again
+[AgentDriverV2] LLM response: { textLength: 0, toolCallsCount: 1, finishReason: 'tool-calls' }
+
+⚠️  onAssistantMessage NOT called!
+assistantMessage: undefined
+callback exists: false
+
+
+[AgentDriverV2] State transition: thinking → executing
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > uses the captured messages, tools and executor even if another consumer observes again
+[AgentDriverV2] Executing 1 tool calls...
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > uses the captured messages, tools and executor even if another consumer observes again
+[AgentDriverV2] Tool execution completed: {
+  resultsCount: 1,
+  successCount: 1,
+  errorCount: 0,
+  rejectedCount: 0,
+  failedCount: 0,
+  acceptedCount: 0,
+  unknownCount: 0
+}
+[AgentDriverV2] Tool execution finished. Returning to idle, waiting for source signals...
+[AgentDriverV2] State transition: executing → idle
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > uses the captured messages, tools and executor even if another consumer observes again
+[AgentDriverV2] AgentDriver stopped
+[AgentDriverV2] AgentDriver V2 disposed
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the captured turn on model-failure
+[LLMClient] LLMClient initialized {
+  model: 'openai:gpt-4',
+  hasCustomConfig: false,
+  providerId: undefined,
+  baseURL: undefined,
+  hasApiKey: false
+}
+[AgentDriverV2] Listening to 1 driven sources
+[AgentDriverV2] AgentDriver started
+[AgentDriverV2] State transition: idle → thinking
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the captured turn on model-failure
+[AgentDriverV2] Total messages collected: 1
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the captured turn on model-failure
+[AgentDriverV2] Run iteration: { messagesCount: 1, toolsCount: 0 }
+
+stderr | tests/core/semantic-context.test.ts > atomic source contexts > releases the captured turn on model-failure
+[AgentDriverV2] Error in run loop: Error: model unavailable
+    at /private/tmp/aotui-presentation-repair-gmbb88cz/agent-driver-v2/tests/core/semantic-context.test.ts:81:41
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:863:59
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:752:26
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)
+    at runTest (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1574:12)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at runSuite (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the captured turn on model-failure
+[AgentDriverV2] State transition: thinking → idle
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the captured turn on model-failure
+[AgentDriverV2] AgentDriver stopped
+[AgentDriverV2] AgentDriver V2 disposed
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the captured turn on unchanged-input
+[LLMClient] LLMClient initialized {
+  model: 'openai:gpt-4',
+  hasCustomConfig: false,
+  providerId: undefined,
+  baseURL: undefined,
+  hasApiKey: false
+}
+[AgentDriverV2] Listening to 1 driven sources
+[AgentDriverV2] AgentDriver started
+[AgentDriverV2] State transition: idle → thinking
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the captured turn on unchanged-input
+[AgentDriverV2] Total messages collected: 1
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the captured turn on unchanged-input
+[AgentDriverV2] Run iteration: { messagesCount: 1, toolsCount: 0 }
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the captured turn on unchanged-input
+[AgentDriverV2] LLM response: { textLength: 0, toolCallsCount: 0, finishReason: 'stop' }
+
+⚠️  onAssistantMessage NOT called!
+assistantMessage: undefined
+callback exists: false
+
+
+[AgentDriverV2] No tool calls. LLM finished thinking.
+[AgentDriverV2] State transition: thinking → idle
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the captured turn on unchanged-input
+[AgentDriverV2] State transition: idle → thinking
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the captured turn on unchanged-input
+[AgentDriverV2] Total messages collected: 1
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the captured turn on unchanged-input
+[AgentDriverV2] Skipping LLM call: inputs unchanged
+[AgentDriverV2] State transition: thinking → idle
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the captured turn on unchanged-input
+[AgentDriverV2] AgentDriver stopped
+[AgentDriverV2] AgentDriver V2 disposed
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > fails the turn and releases earlier contexts when atomic capture fails
+[LLMClient] LLMClient initialized {
+  model: 'openai:gpt-4',
+  hasCustomConfig: false,
+  providerId: undefined,
+  baseURL: undefined,
+  hasApiKey: false
+}
+[AgentDriverV2] Listening to 2 driven sources
+[AgentDriverV2] AgentDriver started
+[AgentDriverV2] State transition: idle → thinking
+
+stderr | tests/core/semantic-context.test.ts > atomic source contexts > fails the turn and releases earlier contexts when atomic capture fails
+[AgentDriverV2] Failed to capture context from semantic: Error: scope unavailable
+    at /private/tmp/aotui-presentation-repair-gmbb88cz/agent-driver-v2/tests/core/semantic-context.test.ts:98:25
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:752:26
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)
+    at runTest (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1574:12)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at runSuite (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)
+    at runSuite (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > fails the turn and releases earlier contexts when atomic capture fails
+[AgentDriverV2] State transition: thinking → idle
+
+stderr | tests/core/semantic-context.test.ts > atomic source contexts > fails the turn and releases earlier contexts when atomic capture fails
+[AgentDriverV2] Error in run loop: Error: scope unavailable
+    at /private/tmp/aotui-presentation-repair-gmbb88cz/agent-driver-v2/tests/core/semantic-context.test.ts:98:25
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:752:26
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)
+    at runTest (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1574:12)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at runSuite (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)
+    at runSuite (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > fails the turn and releases earlier contexts when atomic capture fails
+[AgentDriverV2] AgentDriver stopped
+[AgentDriverV2] AgentDriver V2 disposed
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the context and rejects late model work after stop
+[LLMClient] LLMClient initialized {
+  model: 'openai:gpt-4',
+  hasCustomConfig: false,
+  providerId: undefined,
+  baseURL: undefined,
+  hasApiKey: false
+}
+[AgentDriverV2] Listening to 1 driven sources
+[AgentDriverV2] AgentDriver started
+[AgentDriverV2] State transition: idle → thinking
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the context and rejects late model work after stop
+[AgentDriverV2] Total messages collected: 1
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the context and rejects late model work after stop
+[AgentDriverV2] Run iteration: { messagesCount: 1, toolsCount: 1 }
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the context and rejects late model work after stop
+[AgentDriverV2] AgentDriver stopped
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the context and rejects late model work after stop
+[AgentDriverV2] State transition: thinking → idle
+
+stdout | tests/core/semantic-context.test.ts > atomic source contexts > releases the context and rejects late model work after stop
+[AgentDriverV2] AgentDriver stopped
+[AgentDriverV2] AgentDriver V2 disposed
+
+stdout | tests/core/semantic-context.test.ts > explicit tool outcomes > classifies all five outcomes and preserves receipts, including rejected results without error
+[LLMClient] LLMClient initialized {
+  model: 'openai:gpt-4',
+  hasCustomConfig: false,
+  providerId: undefined,
+  baseURL: undefined,
+  hasApiKey: false
+}
+[AgentDriverV2] Listening to 1 driven sources
+[AgentDriverV2] AgentDriver started
+[AgentDriverV2] State transition: idle → thinking
+
+stdout | tests/core/semantic-context.test.ts > explicit tool outcomes > classifies all five outcomes and preserves receipts, including rejected results without error
+[AgentDriverV2] Total messages collected: 1
+
+stdout | tests/core/semantic-context.test.ts > explicit tool outcomes > classifies all five outcomes and preserves receipts, including rejected results without error
+[AgentDriverV2] Run iteration: { messagesCount: 1, toolsCount: 5 }
+
+stdout | tests/core/semantic-context.test.ts > explicit tool outcomes > classifies all five outcomes and preserves receipts, including rejected results without error
+[AgentDriverV2] LLM response: { textLength: 0, toolCallsCount: 5, finishReason: 'tool-calls' }
+
+⚠️  onAssistantMessage NOT called!
+assistantMessage: undefined
+callback exists: false
+
+
+[AgentDriverV2] State transition: thinking → executing
+
+stdout | tests/core/semantic-context.test.ts > explicit tool outcomes > classifies all five outcomes and preserves receipts, including rejected results without error
+[AgentDriverV2] Executing 5 tool calls...
+
+stdout | tests/core/semantic-context.test.ts > explicit tool outcomes > classifies all five outcomes and preserves receipts, including rejected results without error
+[AgentDriverV2] Tool execution completed: {
+  resultsCount: 5,
+  successCount: 1,
+  errorCount: 2,
+  rejectedCount: 1,
+  failedCount: 1,
+  acceptedCount: 1,
+  unknownCount: 1
+}
+[AgentDriverV2] Tool execution finished. Returning to idle, waiting for source signals...
+[AgentDriverV2] State transition: executing → idle
+
+stdout | tests/core/semantic-context.test.ts > explicit tool outcomes > classifies all five outcomes and preserves receipts, including rejected results without error
+[AgentDriverV2] AgentDriver stopped
+[AgentDriverV2] AgentDriver V2 disposed
+
+stdout | tests/core/semantic-context.test.ts > explicit tool outcomes > treats a thrown invocation as unknown without scheduling an automatic retry
+[LLMClient] LLMClient initialized {
+  model: 'openai:gpt-4',
+  hasCustomConfig: false,
+  providerId: undefined,
+  baseURL: undefined,
+  hasApiKey: false
+}
+[AgentDriverV2] Listening to 1 driven sources
+[AgentDriverV2] AgentDriver started
+[AgentDriverV2] State transition: idle → thinking
+
+stdout | tests/core/semantic-context.test.ts > explicit tool outcomes > treats a thrown invocation as unknown without scheduling an automatic retry
+[AgentDriverV2] Total messages collected: 1
+
+stdout | tests/core/semantic-context.test.ts > explicit tool outcomes > treats a thrown invocation as unknown without scheduling an automatic retry
+[AgentDriverV2] Run iteration: { messagesCount: 1, toolsCount: 1 }
+
+stdout | tests/core/semantic-context.test.ts > explicit tool outcomes > treats a thrown invocation as unknown without scheduling an automatic retry
+[AgentDriverV2] LLM response: { textLength: 0, toolCallsCount: 1, finishReason: 'tool-calls' }
+
+⚠️  onAssistantMessage NOT called!
+assistantMessage: undefined
+callback exists: false
+
+
+[AgentDriverV2] State transition: thinking → executing
+
+stdout | tests/core/semantic-context.test.ts > explicit tool outcomes > treats a thrown invocation as unknown without scheduling an automatic retry
+[AgentDriverV2] Executing 1 tool calls...
+
+stderr | tests/core/semantic-context.test.ts > explicit tool outcomes > treats a thrown invocation as unknown without scheduling an automatic retry
+[AgentDriverV2] Error executing tool write: Error: reply lost after dispatch
+    at /private/tmp/aotui-presentation-repair-gmbb88cz/agent-driver-v2/tests/core/semantic-context.test.ts:167:55
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:752:26
+    at file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)
+    at runTest (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1574:12)
+    at runSuite (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)
+    at runSuite (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)
+    at runFiles (file:///Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/agent-driver-v2/node_modules/.pnpm/@vitest+runner@3.2.4/node_modules/@vitest/runner/dist/chunk-hooks.js:1787:3)
+
+stdout | tests/core/semantic-context.test.ts > explicit tool outcomes > treats a thrown invocation as unknown without scheduling an automatic retry
+[AgentDriverV2] Tool execution completed: {
+  resultsCount: 1,
+  successCount: 0,
+  errorCount: 0,
+  rejectedCount: 0,
+  failedCount: 0,
+  acceptedCount: 0,
+  unknownCount: 1
+}
+[AgentDriverV2] Tool execution finished. Returning to idle, waiting for source signals...
+[AgentDriverV2] State transition: executing → idle
+
+stdout | tests/core/semantic-context.test.ts > explicit tool outcomes > treats a thrown invocation as unknown without scheduling an automatic retry
+[AgentDriverV2] AgentDriver stopped
+[AgentDriverV2] AgentDriver V2 disposed
+
+ ✓ tests/core/semantic-context.test.ts (7 tests) 62ms
+
+ Test Files  2 passed (2)
+      Tests  9 passed (9)
+   Start at  11:11:42
+   Duration  418ms (transform 83ms, setup 0ms, collect 217ms, tests 63ms, environment 0ms, prepare 94ms)
+

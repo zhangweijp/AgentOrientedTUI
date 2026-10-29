@@ -1,0 +1,26 @@
+
+> @agentina/aotui-ide@0.1.2 test
+> jest --passWithNoTests --runInBand
+
+PASS src/__tests__/conditional-file-create.test.ts
+  ● Console
+
+    console.log
+      W06_NATIVE_ERROR_PROBE {"environment":"Jest VM","node":"v24.15.0","instanceofError":false,"sameErrorPrototype":false,"nativeBrand":true,"code":"EEXIST","syscall":"open","pathMatches":true,"errnoIsInteger":true}
+
+      at Object.<anonymous> (src/__tests__/conditional-file-create.test.ts:271:13)
+
+PASS src/__tests__/versioned-file-write.test.ts
+PASS src/__tests__/create-file-workflow.test.ts
+PASS src/__tests__/file-view-ids.test.ts
+PASS src/__tests__/loaded-diagnostics.test.ts
+PASS src/__tests__/exclusive-file-create.test.ts
+PASS src/__tests__/app-options.test.ts
+PASS src/__tests__/persistence-schema.test.ts
+PASS src/__tests__/workspace-folders.test.ts
+
+Test Suites: 9 passed, 9 total
+Tests:       68 passed, 68 total
+Snapshots:   0 total
+Time:        2.324 s
+Ran all test suites.

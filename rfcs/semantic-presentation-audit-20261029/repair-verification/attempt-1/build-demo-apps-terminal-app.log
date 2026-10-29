@@ -1,0 +1,5 @@
+
+> @agentina/aotui-terminal@1.0.2 build
+> tsc && node ../../scripts/generate-aoapp.mjs .
+
+[generate-aoapp] Wrote /private/tmp/aotui-presentation-repair-tb1f7afz/demo-apps/terminal-app/aoapp.json

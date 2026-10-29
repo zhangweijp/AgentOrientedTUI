@@ -47,7 +47,8 @@ export function TuiDesktopViewer({ snapshot, agentThinking }: TuiDesktopViewerPr
         );
     }
 
-    const activeApp = applications.find(app => app.id === activeAppId) ?? null;
+    const activeApp = applications.find(app => app.id === activeAppId)
+        ?? applications.find(app => app.id === 'app_0') ?? applications[0] ?? null;
 
     return (
         /* Mirrors ChatArea layout: absolute inset-0 + pt-[78px] so first content clears
@@ -70,7 +71,7 @@ export function TuiDesktopViewer({ snapshot, agentThinking }: TuiDesktopViewerPr
                                 h-8 px-3.5 rounded-full text-[13px] font-medium
                                 transition-all duration-200 select-none
                                 active:scale-[0.97]
-                                ${app.id === activeAppId
+                                ${app.id === activeApp?.id
                                     ? 'text-[var(--color-accent)] bg-[var(--color-accent)]/10'
                                     : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-white/5'}
                             `}

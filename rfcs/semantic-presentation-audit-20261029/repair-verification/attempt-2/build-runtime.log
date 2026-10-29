@@ -1,0 +1,4 @@
+
+> @aotui/runtime@2.0.0 build
+> node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })" && tsc && chmod +x dist/cli.js
+

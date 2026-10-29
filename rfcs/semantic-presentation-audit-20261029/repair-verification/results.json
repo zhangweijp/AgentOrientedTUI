@@ -1,0 +1,29 @@
+{
+  "isolation": "/private/tmp/aotui-presentation-repair-i277efkb",
+  "shared_dist_files": 1717,
+  "checks": [
+    {
+      "label": "build-agent-driver-v2",
+      "cwd": "agent-driver-v2",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "exit": 0,
+      "seconds": 1.14
+    },
+    {
+      "label": "build-runtime",
+      "cwd": "runtime",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "exit": 2,
+      "seconds": 1.99
+    }
+  ],
+  "shared_dist_unchanged": true
+}

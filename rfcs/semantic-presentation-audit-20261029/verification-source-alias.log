@@ -1,0 +1,27 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI
+
+ ✓ runtime/src/adapters/semantic-aotui-driven-source.test.ts (16 tests) 26ms
+stdout | rfcs/semantic-presentation-audit-20261029/probe.test.ts > reproduces a disabled Tool label remaining in DOM while the actual registry is empty
+[createTUIApp] initializeComponent { appId: 'app_0', desktopId: 'audit' }
+
+stdout | rfcs/semantic-presentation-audit-20261029/probe.test.ts > reproduces an enabled zero-parameter read-only Tool being registered without its requested UI label
+[createTUIApp] initializeComponent { appId: 'app_0', desktopId: 'audit' }
+
+stdout | rfcs/semantic-presentation-audit-20261029/probe.test.ts > reproduces double View wrapping using actual SDK DOM, extractor and Producer; the old formatter wraps once
+[createTUIApp] initializeComponent { appId: 'app_0', desktopId: 'audit' }
+
+stdout | rfcs/semantic-presentation-audit-20261029/probe.test.ts > reproduces the logged hashed name; two contexts retain different private bindings despite the same public name
+[createTUIApp] initializeComponent { appId: 'app_0', desktopId: 'audit' }
+
+stdout | rfcs/semantic-presentation-audit-20261029/probe.test.ts > reproduces instruction Views becoming dynamic and unchanged View text changing with the App revision
+[createTUIApp] initializeComponent { appId: 'app_0', desktopId: 'audit' }
+
+ ✓ rfcs/semantic-presentation-audit-20261029/probe.test.ts (5 tests) 27ms
+
+ Test Files  2 passed (2)
+      Tests  21 passed (21)
+   Start at  10:01:32
+   Duration  1.45s (transform 228ms, setup 0ms, collect 551ms, tests 53ms, environment 591ms, prepare 70ms)
+
+

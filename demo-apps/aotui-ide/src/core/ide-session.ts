@@ -50,7 +50,7 @@ export class IDESession {
     unavailableRoots: string[] = [];
     files = new Map<string, IDEFile>();
     expanded: string[] = [];
-    tree = '';
+    trees = new Map<string, string>();
     search: { incarnation: number; query: string; paths: string[] } | null = null;
     lastBatch: unknown = null;
     warnings: string[] = [];
@@ -117,25 +117,37 @@ export class IDESession {
         return { viewId: previous?.viewId ?? 'fd_' + (this.sequence = nextVersion(this.sequence)),
             observed, offset, limit, page, diagnostics: previous ? transitionLoadedDiagnostics(previous.diagnostics, observed.path, 'idle') : initialLoadedDiagnostics(observed.path), panels: {} };
     }
-    private async readTree(roots: readonly Root[], expanded: readonly string[], guard: () => void): Promise<string> {
-        const lines: string[] = []; let count = 0, bytes = 0;
-        const add = (line: string) => { requireIDE(++count <= 10000 && (bytes += Buffer.byteLength(line) + 1) <= 200 * 1024, 'IDE_TREE_CAPACITY'); lines.push(line); };
-        const walk = async (root: Root, directory: string, depth: number): Promise<void> => {
+    private async readTree(roots: readonly Root[], expanded: readonly string[], guard: () => void): Promise<Map<string, string>> {
+        const trees = new Map<string, string>(); let count = 0, bytes = 0, buffered = 0;
+        const add = (lines: string[], line: string) => { requireIDE(++count <= 10000 && (bytes += Buffer.byteLength(line) + 1) <= 200 * 1024, 'IDE_TREE_CAPACITY'); lines.push(line); };
+        const walk = async (root: Root, directory: string, prefix: string, lines: string[]): Promise<void> => {
             requireIDE(await directoryIdentity(root.path) === root.identity, 'WORKSPACE_ROOT_CHANGED'); guard();
             if (directory !== root.path) await checkedPath(root.path, path.join(directory, '__tree_probe__'));
             const handle = await fs.opendir(directory);
+            const entries = [];
             try {
                 guard();
                 for (let entry; (entry = await handle.read()) !== null;) {
-                    guard(); const full = path.join(directory, entry.name);
-                    if (['node_modules', '.git', 'dist', 'build', 'coverage'].includes(entry.name)) continue;
-                    add(`${'  '.repeat(depth)}${entry.name}${entry.isDirectory() ? '/' : entry.isSymbolicLink() ? ' [symlink]' : ''}`);
-                    if (entry.isDirectory() && expanded.includes(full)) await walk(root, full, depth + 1);
+                    guard();
+                    if (['node_modules', '.git', 'dist', 'build', '.next', '.turbo', 'coverage'].includes(entry.name)) continue;
+                    requireIDE(count + ++buffered <= 10000, 'IDE_TREE_CAPACITY'); entries.push(entry);
                 }
             } finally { await closeDirectory(handle); }
+            entries.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
+            for (const [index, entry] of entries.entries()) {
+                guard(); buffered--; const last = index === entries.length - 1;
+                add(lines, `${prefix}${last ? '└── ' : '├── '}${entry.name}${entry.isDirectory() ? '/' : entry.isSymbolicLink() ? ' [symlink]' : ''}`);
+                const full = path.join(directory, entry.name);
+                if (entry.isDirectory() && expanded.includes(full)) await walk(root, full, prefix + (last ? '    ' : '│   '), lines);
+            }
         };
-        for (const root of roots) { requireIDE(await directoryIdentity(root.path) === root.identity, 'WORKSPACE_ROOT_CHANGED'); guard(); add(root.path + '/'); if (expanded.includes(root.path)) await walk(root, root.path, 1); }
-        guard(); return lines.join('\n');
+        for (const root of roots) {
+            requireIDE(await directoryIdentity(root.path) === root.identity, 'WORKSPACE_ROOT_CHANGED'); guard();
+            const lines: string[] = []; bytes += Buffer.byteLength(root.path); add(lines, '.');
+            if (expanded.includes(root.path)) await walk(root, root.path, '', lines);
+            trees.set(root.path, lines.join('\n'));
+        }
+        guard(); return trees;
     }
     start(): Promise<void> {
         if (this.startup) return this.startup;
@@ -187,7 +199,7 @@ export class IDESession {
                 try { const observed = await this.observe(file, () => this.current()); this.files.set(file, this.record(observed, 0, 2000)); }
                 catch (error: any) { this.current(); if (/CLEANUP|CLOSE_UNCERTAIN/.test(error?.code ?? '')) throw error; this.warn('RESTORED_FILE_UNAVAILABLE'); }
             }
-            this.tree = await this.readTree(this.roots, this.expanded, () => this.current()); this.current();
+            this.trees = await this.readTree(this.roots, this.expanded, () => this.current()); this.current();
             const initial = { workspaceFolders: this.workspaceFolders(), activeFiles: [...this.files.keys()], expandedDirs: this.expanded };
             recovered.forEach((recovery, index) => {
                 const key = sessionKeys[index]!, binding = this.bindings.get(key)!;
@@ -346,7 +358,7 @@ export class IDESession {
             const expanded = existing ? this.expanded : [...new Set([...this.expanded, root.path])];
             requireIDE(expanded.length <= 512, 'IDE_DIRECTORY_CAPACITY');
             const tree = await this.readTree(roots, expanded, guard); guard();
-            this.roots = roots; this.setUnavailableRoots(unavailable); this.expanded = expanded; this.tree = tree;
+            this.roots = roots; this.setUnavailableRoots(unavailable); this.expanded = expanded; this.trees = tree;
             this.lsp.setRoots(roots); this.commitWorkspace(); return success({ added: existing ? 0 : 1, ...(restored ? { restored } : {}) });
         }
         if (name === 'remove_folder_from_workspace') {
@@ -363,7 +375,7 @@ export class IDESession {
             if (!this.live) return success({ removed: 1, closedFiles: closed.length, warnings: ['IDE_STOPPED_AFTER_COMMIT'] });
             try {
                 const version = this.workspaceVersion, tree = await this.readTree(this.roots, this.expanded, () => { this.current(); requireIDE(this.workspaceVersion === version, 'IDE_WORKSPACE_STALE'); });
-                this.tree = tree; this.publish();
+                this.trees = tree; this.publish();
             } catch (error: any) { if (/CLEANUP|CLOSE_UNCERTAIN/.test(error?.code ?? '')) this.cleanupFailed = true; this.warn('WORKSPACE_TREE_REFRESH_FAILED'); }
             return success({ removed: 1, closedFiles: closed.length, warnings: [...this.warnings] });
         }
@@ -377,7 +389,7 @@ export class IDESession {
             requireIDE(expanded.length <= 512, 'IDE_DIRECTORY_CAPACITY');
             const tree = await this.readTree(this.roots, expanded, guard); guard();
             const changed = new Set([...this.expanded.filter(value => !expanded.includes(value)), ...expanded.filter(value => !this.expanded.includes(value))]).size;
-            this.expanded = expanded; this.tree = tree; this.commitWorkspace(); return success({ changed, unchanged: Math.max(0, directories.length - changed) });
+            this.expanded = expanded; this.trees = tree; this.commitWorkspace(); return success({ changed, unchanged: Math.max(0, directories.length - changed) });
         }
         throw new IDEError('IDE_TOOL_UNKNOWN');
     }

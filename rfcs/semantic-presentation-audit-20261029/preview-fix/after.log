@@ -1,0 +1,10 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/host
+
+ ✓ test/gui/semantic-desktop-preview.test.tsx (9 tests) 78ms
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  12:09:46
+   Duration  971ms (transform 100ms, setup 70ms, collect 405ms, tests 78ms, environment 205ms, prepare 50ms)
+

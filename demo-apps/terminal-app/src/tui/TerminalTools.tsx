@@ -52,5 +52,5 @@ export function TerminalTools({ terminal, onSendCommand, onCloseTerminal, onLoad
     }, async () => onCloseTerminal(terminal.id)
         ? { success: true, data: { message: 'Terminal closed; its current View and tools are removed.' } }
         : { success: false, error: { code: 'TERMINAL_NOT_FOUND', message: 'Terminal is already closed.' } });
-    return <section><h3>Terminal tools</h3><ul><li><Send /></li><li><More /></li><li><Close /></li></ul></section>;
+    return <section><h3>Terminal tools</h3><ul>{terminal.status !== 'running' && <li><Send /></li>}<li><More /></li><li><Close /></li></ul></section>;
 }

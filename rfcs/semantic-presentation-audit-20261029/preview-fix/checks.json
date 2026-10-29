@@ -1,0 +1,41 @@
+[
+  {
+    "label": "host-build-all",
+    "command": [
+      "npm",
+      "run",
+      "build:all"
+    ],
+    "cwd": "host",
+    "exit": 0,
+    "seconds": 8.96
+  },
+  {
+    "label": "preview-and-session-tests",
+    "command": [
+      "./node_modules/.bin/vitest",
+      "run",
+      "--config",
+      "vitest.gui.config.ts",
+      "test/gui/semantic-desktop-preview.test.tsx",
+      "test/gui/AppAgentSessionFlow.test.tsx"
+    ],
+    "cwd": "host",
+    "exit": 0,
+    "seconds": 1.27
+  },
+  {
+    "label": "host-worker-e2e",
+    "cwd": "host",
+    "command": [
+      "node",
+      "--import",
+      "tsx",
+      "test/semantic-host.e2e.ts",
+      "/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/rfcs/semantic-presentation-audit-20261029/preview-fix/host-worker-facts.json"
+    ],
+    "exit": 0,
+    "seconds": 32.43,
+    "fixture": "127.0.0.1 ephemeral port; temporary workspace and app data"
+  }
+]

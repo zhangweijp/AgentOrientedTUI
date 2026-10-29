@@ -5,13 +5,18 @@ import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { parseTuiSnapshot } from '../src/gui/components/TuiParser.js';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'aotui-semantic-host-')));
 const project = path.join(work, 'project');
 await fs.mkdir(project);
 const file = path.join(project, 'demo.ts');
+const otherFile = path.join(project, 'other.ts');
 await fs.writeFile(file, 'export const answer = 42;\n');
+await fs.writeFile(otherFile, 'export const other = 100;\n');
+await fs.mkdir(path.join(project, 'src'));
+await fs.writeFile(path.join(project, 'src', 'nested.ts'), 'export const nested = true;\n');
 process.env.AOTUI_DATA_DIR = path.join(work, 'data');
 delete process.env.AOTUI_HOST_SEMANTIC_DEV;
 delete process.env.AOTUI_HOST_SEMANTIC_PROJECT;
@@ -23,7 +28,7 @@ const { DesktopManager } = await import('../src/core/desktop-manager.js');
 const runtime = createRuntime();
 const registry = new AppRegistry({ configPath: path.join(work, 'registry.json') });
 const manager = new DesktopManager({ kernel: runtime, appRegistry: registry });
-const facts: { passed: boolean; cases: string[]; calls: Array<Record<string, unknown>> } = { passed: false, cases: [], calls: [] };
+const facts: { passed: boolean; cases: string[]; calls: Array<Record<string, unknown>>; initialProjection?: unknown; initialPreview?: unknown } = { passed: false, cases: [], calls: [] };
 let source: InstanceType<typeof SemanticAOTUIDrivenSource> | undefined;
 let sequence = 0;
 const contexts = new Set<any>();
@@ -89,19 +94,54 @@ try {
     runtime.execute = forbidden;
     desktop.getSnapshotFragments = forbidden;
     source = new SemanticAOTUIDrivenSource(desktop, runtime, { includeInstruction: true });
+    const preview = async () => {
+        const markup = await manager.getSnapshot(info.desktopId);
+        assert.ok(markup, 'Host returns preview markup');
+        const parsed = parseTuiSnapshot(markup);
+        assert.deepEqual(parsed.parseErrors, []);
+        assert.ok(parsed.desktop);
+        return parsed.desktop.applications;
+    };
 
     const initial = await eventually(context => Object.keys(context.tools).some(key => key.includes('multi_open_file')), 'IDE ready');
     assert.ok(!Object.keys(initial.tools).some(key => key.includes('edit_file')), 'No file edit tool before a FileDetail exists');
     assert.ok(Object.keys(initial.tools).some(key => key.includes('new_terminal_and_send_command')));
     assert.ok(!Object.keys(initial.tools).some(key => key.includes('send_command_to_exist_terminal')));
+    for (const name of ['system_ide-Workspace-multi_open_file', 'terminal-TerminalConsole-new_terminal_and_send_command', 'system-open_app', 'system-close_app'])
+        assert.ok(initial.tools[name], `Public name: ${name}`);
+    for (const message of initial.messages.filter((message: any) => String(message.content).startsWith('<view '))) {
+        assert.equal(String(message.content).match(/<view\b/g)?.length, 1, 'One View envelope');
+        assert.ok(!/ instance=| revision=/.test(String(message.content)), 'Internal identity stays out of presentation');
+        if (String(message.content).includes('id="root"')) assert.equal(message.region, 'static');
+    }
+    const workspace = String(initial.messages.find((message: any) => String(message.content).startsWith('<view id="workspace"'))?.content);
+    assert.ok(workspace.includes('📁') && workspace.includes('project') && workspace.includes('Path: ' + project));
+    assert.ok(workspace.includes('├── src/') && workspace.includes('└── other.ts'), 'Directory tree has hierarchy');
+    assert.ok(workspace.includes('No files open.'));
+    assert.ok(!workspace.includes('batch_edit'), 'Disabled batch edit is absent from View affordances');
+    assert.ok(content(initial).includes('## System Logs'));
+    facts.initialProjection = { messages: initial.messages, tools: Object.keys(initial.tools) };
+    const initialPreview = await preview();
+    assert.deepEqual(initialPreview.map(app => app.name), ['system_ide', 'terminal', 'lite_browser']);
+    assert.ok(initialPreview[0].views.some(view => view.id === 'workspace'));
+    assert.ok(initialPreview[1].views.some(view => view.id === 'term_console'));
+    assert.equal(initialPreview[2].status, 'pending');
+    assert.equal(initialPreview[2].views.length, 0);
+    facts.initialPreview = initialPreview;
     release(initial);
     pass('normal AppRegistry installation exposes multiple semantic apps without a dev flag');
+
+    await call('multi_open_dirs', { dirPaths: [path.join(project, 'src')] });
+    const expanded = await observe();
+    assert.ok(content(expanded).includes('│   └── nested.ts'), 'Expanded directories retain tree guides');
+    release(expanded);
 
     await call('multi_open_file', { filePaths: [file] });
     const opened = await observe();
     assert.ok(content(opened).includes('export const answer = 42;'), 'The next context sees the completed open');
     tool(opened, 'edit_file');
     tool(opened, 'read_loaded_diagnostics');
+    assert.equal((await preview())[0].views.filter(view => view.content.includes('export const answer = 42;')).length, 1);
     pass('opening a file publishes its View and enables its local tools before the next observation');
 
     // Exercise the real default clock beyond the previous fixed 30-second expiry.
@@ -116,12 +156,32 @@ try {
     assert.ok(content(edited).includes('export const answer = 43;'));
     assert.ok(!content(edited).includes('export const answer = 42;'));
     assert.equal(edited.messages.filter((message: any) => JSON.stringify(message.content).includes('export const answer = 43;')).length, 1);
+    const editedPreview = (await preview())[0].views;
+    assert.equal(editedPreview.filter(view => view.content.includes('export const answer = 43;')).length, 1);
+    assert.ok(!editedPreview.some(view => view.content.includes('export const answer = 42;')));
     pass('editing replaces the current file projection with exactly one latest View');
+
+    await call('multi_open_file', { filePaths: [otherFile] });
+    const twoFiles = await observe();
+    assert.ok(twoFiles.tools['system_ide-FileDetail-edit_file']);
+    assert.equal(Object.keys(twoFiles.tools).filter(name => name.endsWith('-edit_file')).length, 1);
+    const otherView = twoFiles.messages.find((message: any) => String(message.content).includes('export const other = 100;'));
+    const otherViewId = /^<view id="([^"]+)"/.exec(String(otherView?.content))?.[1];
+    assert.ok(otherViewId);
+    await invoke(twoFiles, 'edit_file', { aotui_view_id: otherViewId, oldString: 'other = 100', newString: 'other = 200' });
+    assert.equal(await fs.readFile(file, 'utf8'), 'export const answer = 43;\n', 'First file is untouched');
+    assert.equal(await fs.readFile(otherFile, 'utf8'), 'export const other = 200;\n');
+    await invoke(edited, 'read_loaded_diagnostics', {});
+    await call('multi_close_file', { filePaths: [otherFile] });
+    await invoke(twoFiles, 'edit_file', { aotui_view_id: otherViewId, oldString: 'other = 200', newString: 'other = 300' }, 'rejected');
+    release(twoFiles);
+    pass('one readable Tool routes two FileDetails correctly and rejects a closed target without retargeting');
 
     await call('multi_close_file', { filePaths: [file] });
     const closed = await observe();
     assert.ok(!content(closed).includes('export const answer = 43;'));
     assert.ok(!Object.keys(closed.tools).some(key => key.includes('edit_file')));
+    assert.ok(!(await preview())[0].views.some(view => view.content.includes('export const answer = 43;')));
     release(closed);
     await invoke(edited, 'read_loaded_diagnostics', {}, 'rejected');
     await call('multi_open_file', { filePaths: [file] });
@@ -144,11 +204,17 @@ try {
     const browser = await eventually(context => Object.keys(context.tools).some(key => key.includes('fetch_url')), 'lazy browser ready');
     assert.ok(!Object.keys(browser.tools).some(key => key.includes('close_page')));
     release(browser);
-    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', resolve);
+    });
     const address = server.address() as { port: number };
     await call('fetch_url', { url: `http://127.0.0.1:${address.port}/fixture`, format: 'text' });
     const page = await observe();
     assert.ok(content(page).includes('SEMANTIC_BROWSER_OK'));
+    const browserPreview = (await preview()).find(app => app.name === 'lite_browser');
+    assert.equal(browserPreview?.status, 'running');
+    assert.ok(browserPreview?.views.some(view => view.content.includes('SEMANTIC_BROWSER_OK')));
     await invoke(page, 'close_page', {});
     await invoke(page, 'close_page', {}, 'rejected');
     release(page);

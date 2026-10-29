@@ -13,6 +13,7 @@
 
 import type { IDrivenSource, MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2';
 import { jsonSchema } from 'ai';
+import { buildViewMessageMarkup } from './view-message.js';
 import type { IDesktop, IKernel, Operation, OperationID, CachedSnapshot } from '../spi/index.js';
 
 // ============================================================================
@@ -64,32 +65,11 @@ interface ResolvedToolContext {
 // AOTUI System Instruction（Runtime 默认内置，可通过 options/env/path 覆盖）
 // ============================================================================
 
-import { readFileSync } from 'fs';
-import { DEFAULT_AOTUI_SYSTEM_INSTRUCTION } from './system-instruction.js';
+import { DEFAULT_AOTUI_SYSTEM_INSTRUCTION, loadAOTUIInstruction } from './system-instruction.js';
 
-const AOTUI_SYSTEM_INSTRUCTION_PATH_ENV = 'AOTUI_SYSTEM_INSTRUCTION_PATH';
 type LayeredMessageWithTimestamp = MessageWithTimestamp & {
     region?: 'static' | 'session' | 'dynamic';
 };
-
-/**
- * 懒加载 AOTUI System Instruction
- */
-function loadSystemInstruction(instructionPath?: string): string {
-    if (!instructionPath) {
-        return DEFAULT_AOTUI_SYSTEM_INSTRUCTION;
-    }
-
-    try {
-        return readFileSync(instructionPath, 'utf-8');
-    } catch (error) {
-        console.error(
-            `[AOTUIDrivenSource] Failed to load system instruction from path: ${instructionPath}`,
-            error
-        );
-        return DEFAULT_AOTUI_SYSTEM_INSTRUCTION;
-    }
-}
 
 // ============================================================================
 // Implementation
@@ -137,39 +117,6 @@ export class AOTUIDrivenSource implements IDrivenSource {
     private disabledApps = new Set<string>();
     private listeners = new Set<() => void>();
 
-    private escapeAttr(value: string): string {
-        return value
-            .replace(/&/g, '&amp;')
-            .replace(/"/g, '&quot;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-    }
-
-    private buildViewMessageMarkup(view: {
-        appId?: string;
-        appName?: string;
-        viewId?: string;
-        viewType?: string;
-        viewName?: string;
-        markup: string;
-    }): string {
-        const viewId = view.viewId || 'unknown';
-        const viewType = view.viewType || 'Unknown';
-        const viewName = view.viewName || view.viewType || view.viewId || 'Unknown';
-        const appId = view.appId || 'unknown';
-        const appName = view.appName || 'unknown';
-
-        const attrs = `id="${this.escapeAttr(viewId)}" type="${this.escapeAttr(viewType)}" name="${this.escapeAttr(viewName)}" app_id="${this.escapeAttr(appId)}" app_name="${this.escapeAttr(appName)}"`;
-        const rawMarkup = String(view.markup || '').trim();
-
-        if (/^<view\b/i.test(rawMarkup)) {
-            const normalizedOpen = `<view ${attrs}>`;
-            return rawMarkup.replace(/^<view\b[^>]*>/i, normalizedOpen);
-        }
-
-        return `<view ${attrs}>\n${rawMarkup}\n</view>`;
-    }
-
     constructor(
         private desktop: IDesktop,
         private kernel: IKernel,
@@ -177,13 +124,7 @@ export class AOTUIDrivenSource implements IDrivenSource {
     ) {
         this.includeInstruction = options?.includeInstruction ?? true;
 
-        const instructionFromOptions = options?.instruction?.trim();
-        const instructionFromPath = options?.instructionPath;
-        const instructionFromEnv = process.env[AOTUI_SYSTEM_INSTRUCTION_PATH_ENV];
-
-        this.systemInstruction = instructionFromOptions && instructionFromOptions.length > 0
-            ? instructionFromOptions
-            : loadSystemInstruction(instructionFromPath ?? instructionFromEnv);
+        this.systemInstruction = loadAOTUIInstruction(options ?? {}, DEFAULT_AOTUI_SYSTEM_INSTRUCTION);
     }
 
     setEnabled(enabled: boolean): void {
@@ -337,7 +278,7 @@ export class AOTUIDrivenSource implements IDrivenSource {
                             continue;
                         }
 
-                        const wrappedView = this.buildViewMessageMarkup({
+                        const wrappedView = buildViewMessageMarkup({
                             appId: view.appId || viewAppId || 'unknown',
                             appName: view.appName || viewAppName || viewAppId || 'unknown',
                             viewId: view.viewId,

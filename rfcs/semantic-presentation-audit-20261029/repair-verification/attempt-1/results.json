@@ -1,0 +1,94 @@
+{
+  "isolation": "/private/tmp/aotui-presentation-repair-tb1f7afz",
+  "shared_dist_files": 1717,
+  "checks": [
+    {
+      "label": "build-agent-driver-v2",
+      "cwd": "agent-driver-v2",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "exit": 0,
+      "seconds": 0.93
+    },
+    {
+      "label": "build-runtime",
+      "cwd": "runtime",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "exit": 0,
+      "seconds": 1.99
+    },
+    {
+      "label": "build-sdk",
+      "cwd": "sdk",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "exit": 0,
+      "seconds": 0.85
+    },
+    {
+      "label": "build-demo-apps-aotui-ide",
+      "cwd": "demo-apps/aotui-ide",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "exit": 0,
+      "seconds": 1.44
+    },
+    {
+      "label": "build-demo-apps-terminal-app",
+      "cwd": "demo-apps/terminal-app",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "exit": 0,
+      "seconds": 0.8
+    },
+    {
+      "label": "build-demo-apps-lite-browser-app",
+      "cwd": "demo-apps/lite-browser-app",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "exit": 0,
+      "seconds": 0.8
+    },
+    {
+      "label": "build-host",
+      "cwd": "host",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "exit": 0,
+      "seconds": 5.96
+    },
+    {
+      "label": "runtime-tests",
+      "cwd": "runtime",
+      "command": [
+        "./node_modules/.bin/vitest",
+        "run"
+      ],
+      "exit": 1,
+      "seconds": 12.85
+    }
+  ],
+  "shared_dist_unchanged": true
+}

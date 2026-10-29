@@ -1,0 +1,295 @@
+
+ RUN  v3.2.4 /Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/host
+
+ ❯ test/gui/semantic-desktop-preview.test.tsx (9 tests | 7 failed) 43ms
+   × Semantic Desktop preview → GUI > groups Semantic messages into the GUI application contract and releases observations 7ms
+     → expected [] to deeply equal [ 'system_ide', 'terminal', …(1) ]
+   × Semantic Desktop preview → GUI > renders the application switcher and each application’s own Root View 12ms
+     → expected <div …(1)></div> to be null
+   × Semantic Desktop preview → GUI > shows the latest file body and selects an existing View when the active file closes 8ms
+     → Unable to find an accessible element with the role "button" and name "demo.ts"
+
+There are no accessible roles. But there might be some inaccessible roles. If you wish to access them, then set the `hidden` option to `true`. Learn more about this here: https://testing-library.com/docs/dom-testing-library/api-queries#byrole
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"absolute inset-0 overflow-y-auto pt-[78px] px-6 pb-6
+                        custom-scrollbar space-y-4"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"text-[13px] text-[var(--color-text-tertiary)] py-4"[39m
+      [36m>[39m
+        [0mNo applications found.[0m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+   × Semantic Desktop preview → GUI > preserves the selected View by identity when a sibling disappears 5ms
+     → Unable to find an accessible element with the role "button" and name "demo.ts"
+
+There are no accessible roles. But there might be some inaccessible roles. If you wish to access them, then set the `hidden` option to `true`. Learn more about this here: https://testing-library.com/docs/dom-testing-library/api-queries#byrole
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"absolute inset-0 overflow-y-auto pt-[78px] px-6 pb-6
+                        custom-scrollbar space-y-4"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"text-[13px] text-[var(--color-text-tertiary)] py-4"[39m
+      [36m>[39m
+        [0mNo applications found.[0m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+   × Semantic Desktop preview → GUI > represents pending and closed apps without claiming they are running 4ms
+     → Unable to find an accessible element with the role "button" and name "lite_browser"
+
+There are no accessible roles. But there might be some inaccessible roles. If you wish to access them, then set the `hidden` option to `true`. Learn more about this here: https://testing-library.com/docs/dom-testing-library/api-queries#byrole
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"absolute inset-0 overflow-y-auto pt-[78px] px-6 pb-6
+                        custom-scrollbar space-y-4"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"text-[13px] text-[var(--color-text-tertiary)] py-4"[39m
+      [36m>[39m
+        [0mNo applications found.[0m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+   × Semantic Desktop preview → GUI > keeps an installed app discoverable when it has no Views 4ms
+     → Unable to find an accessible element with the role "button" and name "system_ide"
+
+There are no accessible roles. But there might be some inaccessible roles. If you wish to access them, then set the `hidden` option to `true`. Learn more about this here: https://testing-library.com/docs/dom-testing-library/api-queries#byrole
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"absolute inset-0 overflow-y-auto pt-[78px] px-6 pb-6
+                        custom-scrollbar space-y-4"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"text-[13px] text-[var(--color-text-tertiary)] py-4"[39m
+      [36m>[39m
+        [0mNo applications found.[0m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+   × Semantic Desktop preview → GUI > round trips escaped application and View names 0ms
+     → Cannot read properties of undefined (reading 'name')
+   ✓ Semantic Desktop preview → GUI > shows the empty state for an actually empty Desktop 1ms
+   ✓ Semantic Desktop preview → GUI > retains support for the existing grouped snapshot format 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/gui/semantic-desktop-preview.test.tsx > Semantic Desktop preview → GUI > groups Semantic messages into the GUI application contract and releases observations
+AssertionError: expected [] to deeply equal [ 'system_ide', 'terminal', …(1) ]
+
+- Expected
++ Received
+
+- [
+-   "system_ide",
+-   "terminal",
+-   "lite_browser",
+- ]
++ []
+
+ ❯ test/gui/semantic-desktop-preview.test.tsx:44:67
+     42|         const f = fixture(), markup = await f.preview(), parsed = pars…
+     43|         expect(parsed.parseErrors).toEqual([]);
+     44|         expect(parsed.desktop?.applications.map(app => app.name)).toEq…
+       |                                                                   ^
+     45|         expect(parsed.desktop?.applications.map(app => app.views.map(v…
+     46|         expect(parsed.desktop?.applications[0].views[0].content).toBe(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+ FAIL  test/gui/semantic-desktop-preview.test.tsx > Semantic Desktop preview → GUI > renders the application switcher and each application’s own Root View
+AssertionError: expected <div …(1)></div> to be null
+
+- Expected: 
+null
+
++ Received: 
+<div
+  class="text-[13px] text-[var(--color-text-tertiary)] py-4"
+>
+  No applications found.
+</div>
+
+ ❯ test/gui/semantic-desktop-preview.test.tsx:56:62
+     54|     it('renders the application switcher and each application’s own Ro…
+     55|         const f = fixture(); render(<TuiDesktopViewer snapshot={await …
+     56|         expect(screen.queryByText('No applications found.')).toBeNull(…
+       |                                                              ^
+     57|         expect(screen.getByText('IDE instructions')).toBeInTheDocument…
+     58|         fireEvent.click(screen.getByRole('button', { name: 'terminal',…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/7]⎯
+
+ FAIL  test/gui/semantic-desktop-preview.test.tsx > Semantic Desktop preview → GUI > shows the latest file body and selects an existing View when the active file closes
+TestingLibraryElementError: Unable to find an accessible element with the role "button" and name "demo.ts"
+
+There are no accessible roles. But there might be some inaccessible roles. If you wish to access them, then set the `hidden` option to `true`. Learn more about this here: https://testing-library.com/docs/dom-testing-library/api-queries#byrole
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"absolute inset-0 overflow-y-auto pt-[78px] px-6 pb-6
+                        custom-scrollbar space-y-4"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"text-[13px] text-[var(--color-text-tertiary)] py-4"[39m
+      [36m>[39m
+        [0mNo applications found.[0m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ test/gui/semantic-desktop-preview.test.tsx:67:32
+     65|         const f = fixture(); f.views.get('app_0')!.push(f.view('fd_1',…
+     66|         const ui = render(<TuiDesktopViewer snapshot={await f.preview(…
+     67|         fireEvent.click(screen.getByRole('button', { name: 'demo.ts', …
+       |                                ^
+     68|         expect(screen.getByText('file version one')).toBeInTheDocument…
+     69|         f.views.get('app_0')![2] = f.view('fd_1', 'demo.ts', 'file ver…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/7]⎯
+
+ FAIL  test/gui/semantic-desktop-preview.test.tsx > Semantic Desktop preview → GUI > preserves the selected View by identity when a sibling disappears
+TestingLibraryElementError: Unable to find an accessible element with the role "button" and name "demo.ts"
+
+There are no accessible roles. But there might be some inaccessible roles. If you wish to access them, then set the `hidden` option to `true`. Learn more about this here: https://testing-library.com/docs/dom-testing-library/api-queries#byrole
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"absolute inset-0 overflow-y-auto pt-[78px] px-6 pb-6
+                        custom-scrollbar space-y-4"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"text-[13px] text-[var(--color-text-tertiary)] py-4"[39m
+      [36m>[39m
+        [0mNo applications found.[0m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ test/gui/semantic-desktop-preview.test.tsx:78:32
+     76|         const f = fixture(); f.views.get('app_0')!.push(f.view('fd_1',…
+     77|         const ui = render(<TuiDesktopViewer snapshot={await f.preview(…
+     78|         fireEvent.click(screen.getByRole('button', { name: 'demo.ts', …
+       |                                ^
+     79|         f.views.get('app_0')!.splice(1, 1); ui.rerender(<TuiDesktopVie…
+     80|         expect(screen.getByText('selected file')).toBeInTheDocument();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/7]⎯
+
+ FAIL  test/gui/semantic-desktop-preview.test.tsx > Semantic Desktop preview → GUI > represents pending and closed apps without claiming they are running
+TestingLibraryElementError: Unable to find an accessible element with the role "button" and name "lite_browser"
+
+There are no accessible roles. But there might be some inaccessible roles. If you wish to access them, then set the `hidden` option to `true`. Learn more about this here: https://testing-library.com/docs/dom-testing-library/api-queries#byrole
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"absolute inset-0 overflow-y-auto pt-[78px] px-6 pb-6
+                        custom-scrollbar space-y-4"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"text-[13px] text-[var(--color-text-tertiary)] py-4"[39m
+      [36m>[39m
+        [0mNo applications found.[0m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ test/gui/semantic-desktop-preview.test.tsx:84:32
+     82|     it('represents pending and closed apps without claiming they are r…
+     83|         const f = fixture(), ui = render(<TuiDesktopViewer snapshot={a…
+     84|         fireEvent.click(screen.getByRole('button', { name: 'lite_brows…
+       |                                ^
+     85|         expect(screen.getByText('PENDING')).toBeInTheDocument(); expec…
+     86|         f.apps[2].status = 'running'; ui.rerender(<TuiDesktopViewer sn…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/7]⎯
+
+ FAIL  test/gui/semantic-desktop-preview.test.tsx > Semantic Desktop preview → GUI > keeps an installed app discoverable when it has no Views
+TestingLibraryElementError: Unable to find an accessible element with the role "button" and name "system_ide"
+
+There are no accessible roles. But there might be some inaccessible roles. If you wish to access them, then set the `hidden` option to `true`. Learn more about this here: https://testing-library.com/docs/dom-testing-library/api-queries#byrole
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"absolute inset-0 overflow-y-auto pt-[78px] px-6 pb-6
+                        custom-scrollbar space-y-4"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"text-[13px] text-[var(--color-text-tertiary)] py-4"[39m
+      [36m>[39m
+        [0mNo applications found.[0m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ test/gui/semantic-desktop-preview.test.tsx:93:23
+     91|     it('keeps an installed app discoverable when it has no Views', asy…
+     92|         const f = fixture(); f.views.set('app_0', []); render(<TuiDesk…
+     93|         expect(screen.getByRole('button', { name: 'system_ide', exact:…
+       |                       ^
+     94|         expect(screen.getByText('No views available')).toBeInTheDocume…
+     95|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/7]⎯
+
+ FAIL  test/gui/semantic-desktop-preview.test.tsx > Semantic Desktop preview → GUI > round trips escaped application and View names
+TypeError: Cannot read properties of undefined (reading 'name')
+ ❯ test/gui/semantic-desktop-preview.test.tsx:99:20
+     97|         const f = fixture(); f.apps[0].name = 'IDE & "Notes"'; f.views…
+     98|         const app = parseTuiSnapshot(await f.preview()).desktop!.appli…
+     99|         expect(app.name).toBe('IDE & "Notes"'); expect(app.views[0].na…
+       |                    ^
+    100|     });
+    101|     it('shows the empty state for an actually empty Desktop', async ()…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/7]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  7 failed | 2 passed (9)
+   Start at  12:06:20
+   Duration  822ms (transform 103ms, setup 55ms, collect 367ms, tests 43ms, environment 176ms, prepare 40ms)
+

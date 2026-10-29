@@ -1,0 +1,27 @@
+PASS file/page/DTO boundaries reject whole values without truncation
+IDE_CLOSE_FAILURE {"priorCleanupFailure":true,"resources":[{"resource":"lsp","status":"fulfilled"},{"resource":"search","status":"fulfilled"},{"resource":"history","status":"fulfilled"}]}
+IDE_CLOSE_FAILURE {"priorCleanupFailure":true,"resources":[{"resource":"lsp","status":"fulfilled"},{"resource":"search","status":"fulfilled"},{"resource":"history","status":"fulfilled"}]}
+PASS staging close rejection cannot certify App or history resource release
+PASS parent/root identity, aliases, hardlinks and no-overwrite checks precede disk effects
+PASS auto-parent partial and native wx unknown retain exact disk facts
+PASS batch prevalidation, partial stop and concurrent workspace commit are exact
+IDE_CLOSE_FAILURE {"priorCleanupFailure":true,"resources":[{"resource":"lsp","status":"fulfilled"},{"resource":"search","status":"fulfilled"},{"resource":"history","status":"fulfilled"}]}
+PASS conditional slice close failure stays unknown and prevents clean App release
+PASS independent language panels coexist while a replaced file rejects a late response
+PASS invalid diagnostic DTO never changes the loaded file or panels
+PASS queued history cancellation has no disk effect and is a healthy close
+PASS multi-open prepares every file before one business commit
+PASS history concurrent CAS, corruption and unknown never overwrite or retry
+PASS missing restored roots remain saved across restarts while valid files and expansions recover
+PASS ENOENT and ENOTDIR restored entries can be explicitly removed without creating folders
+PASS the 16 saved-root limit includes missing roots and permits reconnection or canonical deduplication
+IDE_CLOSE_FAILURE {"priorCleanupFailure":true,"resources":[{"resource":"lsp","status":"fulfilled"},{"resource":"search","status":"fulfilled"},{"resource":"history","status":"fulfilled"}]}
+PASS explicit missing roots, permission failures and uncertain root cleanup remain startup failures
+PASS invalid saved paths and corrupt JSON are not replaced with unavailable-root defaults
+PASS actual Workspace keeps add/remove available when only unavailable roots remain
+PASS legacy import phases are reentrant, existing target wins and source bytes stay unchanged
+PASS partial binding failure and stop during initialization cannot deadlock managed flush
+PASS search zero/error/root identity/result capacity and actual regex Worker deadline
+PASS search cleanup error survives message-stop-exit and rejected termination after actual exit
+PASS LSP unsupported starts release slots and same-path root replacement cannot start new config
+EDGE_FACTS {"passed":true,"cases":22,"working":"/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-ide-edges-7yoYUY"}

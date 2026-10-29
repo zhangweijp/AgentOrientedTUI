@@ -17,6 +17,7 @@ export interface TuiDesktop {
 export interface TuiApplication {
     id: string;
     name: string;
+    status?: 'pending' | 'running' | 'paused' | 'closed' | 'collapsed';
     infoContent: string;      // <application_info> 内容
     views: TuiView[];
     rawContent: string;       // 原始内容（不含 views）
@@ -34,6 +35,11 @@ export interface ParsedTuiSnapshot {
 }
 
 // ============ Parser Functions ============
+
+function decodeAttribute(value: string): string {
+    const entities: Record<string, string> = { amp: '&', quot: '"', lt: '<', gt: '>', apos: "'" };
+    return value.replace(/&(amp|quot|lt|gt|apos);/g, (_match, name: string) => entities[name]);
+}
 
 /**
  * Parse a TUI snapshot string into structured data
@@ -59,7 +65,7 @@ export function parseTuiSnapshot(snapshot: string): ParsedTuiSnapshot {
  */
 function parseDesktop(snapshot: string): TuiDesktop | null {
     // Match <desktop> ... </desktop>
-    const desktopMatch = snapshot.match(/<desktop>([\s\S]*?)<\/desktop>/);
+    const desktopMatch = snapshot.match(/<desktop\b[^>]*>([\s\S]*?)<\/desktop>/);
 
     if (!desktopMatch) {
         // No desktop block, treat entire content as desktop
@@ -94,8 +100,9 @@ function parseApplications(content: string): TuiApplication[] {
         const [, attrText, appContent] = match;
         const idMatch = attrText.match(/\bid="([^"]+)"/);
         const nameMatch = attrText.match(/\bname="([^"]*)"/);
-        const id = idMatch?.[1];
-        const name = nameMatch?.[1] ?? id ?? '';
+        const id = idMatch && decodeAttribute(idMatch[1]);
+        const name = decodeAttribute(nameMatch?.[1] ?? idMatch?.[1] ?? '');
+        const status = attrText.match(/\bstatus="(pending|running|paused|closed|collapsed)"/)?.[1] as TuiApplication['status'];
         if (!id) continue;
 
         const infoMatch = appContent.match(/<application_info>([\s\S]*?)<\/application_info>/);
@@ -112,6 +119,7 @@ function parseApplications(content: string): TuiApplication[] {
         applications.push({
             id,
             name,
+            status,
             infoContent,
             views,
             rawContent
@@ -134,8 +142,8 @@ function parseViews(content: string): TuiView[] {
         const [, attrText, viewContent] = match;
         const idMatch = attrText.match(/\bid="([^"]+)"/);
         const nameMatch = attrText.match(/\bname="([^"]*)"/);
-        const id = idMatch?.[1];
-        const name = nameMatch?.[1] ?? id ?? '';
+        const id = idMatch && decodeAttribute(idMatch[1]);
+        const name = decodeAttribute(nameMatch?.[1] ?? idMatch?.[1] ?? '');
         if (!id) continue;
 
         views.push({

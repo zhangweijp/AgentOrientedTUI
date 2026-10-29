@@ -1,0 +1,237 @@
+
+ RUN  v3.2.4 /private/tmp/aotui-presentation-baseline-w_7uo1an/repo/runtime
+
+stderr | src/engine/app/worker-host.ref-v2.test.ts > R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'ref' 'error' fences all seven View Tool entries and cannot pool
+[AppWorkerHost] Worker failed in Ref-capable execution
+
+stderr | src/engine/app/worker-host.ref-v2.test.ts > R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'ref' 'exit' fences all seven View Tool entries and cannot pool
+[AppWorkerHost] Worker app exited with code 1
+
+stderr | src/engine/app/worker-host.ref-v2.test.ts > R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'generic' 'error' fences all seven View Tool entries and cannot pool
+[AppWorkerHost] Worker failed in Ref-capable execution
+
+stderr | src/engine/app/worker-host.ref-v2.test.ts > R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'generic' 'exit' fences all seven View Tool entries and cannot pool
+[AppWorkerHost] Worker app exited with code 1
+
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/engine/app/worker-host.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/tool/create-if-absent-contract.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/snapshot/json.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/adapters/create-if-absent-invocation-v1.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/invocation/invocation-outcome.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/adapters/view-tool-invocation-v1.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/tool/view-owned-tools.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/tool/ordinary-parameter-profile.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/tool/ordinary-parameter-contract.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/tool/ref-declarations.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/adapters/ordinary-invocation-v1.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/adapters/ordinary-invocation-v2.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/adapters/snapshot/shadow-receiver.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/snapshot/index.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/snapshot/store.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/snapshot/validator.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/snapshot/v2-validator.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/snapshot/workspace.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/invocation/scoped-interaction.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/tool/source-binding.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/tool/snapshot-value-arguments.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/invocation/observation-registry.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/core/invocation/invocation-ledger.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/adapters/ref-invocation-v1.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/spi/config/index.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/spi/config/domains/worker.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/spi/config/domains/bridge.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/spi/config/domains/lock.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/spi/config/domains/snapshot.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/spi/config/domains/transform.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/spi/config/domains/logger.config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/spi/config/define-config.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/spi/config/validate.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/spi/core/errors.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/spi/worker-protocol/index.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/spi/worker-protocol/types.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/spi/runtime/worker-message.interface.js" points to missing source files
+Sourcemap for "/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-w07-b3c-xEfyzP/old-runtime/dist/spi/worker-protocol/messages.js" points to missing source files
+stderr | src/engine/app/worker-host.ide-read-e2e.test.ts > W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > normal real Worker release is reusable only by a fresh Host and fresh instance
+[AppWorkerHost] Worker ide_slice exited with code 1
+
+ ❯ src/engine/app/worker-host.ide-read-e2e.test.ts (18 tests | 1 failed) 6521ms
+   × W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > A/B ownership, old observation new state, duplicate original receipt, reads cause no LSP/FS/update 320ms
+     → expected 6 to be 5 // Object.is equality
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > loading/error transitions and newer event invalidates late auto/refresh responses 269ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > same public id remount C rejects A, B old observation survives, including authorization race 225ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > Worker final validation rejects an unpublished remount and late unmounted load cannot overwrite C 192ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > rename invalidates pending A immediately and rebinds without changing schema 248ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > Tool-only enabled/disabled and real Ref-only updates publish despite unchanged View content 290ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > internal failed render commits explicit fallback, revokes failed target and never enters bad closure 226ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > default actual FileDetail has no query and failed initial render yields no ready tools  341ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > invalid oversized actual diagnostic output is never truncated into success  955ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > after ordinary unknown, posted Ref still settles; new Ref is blocked and business false stays usable 217ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > actual archived old SDK on new Runtime never gains ordinary callable qualification 199ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > actual new SDK on archived old Runtime/Worker receives no implicit ordinary capability 192ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > normal real Worker release is reusable only by a fresh Host and fresh instance 285ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > closing during an entered ordinary handler revokes scopes; late result cannot revive old source 210ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > default FileDetail refresh read failure preserves file contents (current) 231ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > default FileDetail refresh lsp failure preserves file contents (current) 220ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > default FileDetail refresh read failure preserves file contents (C-baseline) 231ms
+   ✓ W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > default FileDetail refresh lsp failure preserves file contents (C-baseline) 226ms
+ ❯ src/engine/app/worker-host.create-if-absent-e2e.test.ts (29 tests | 1 failed) 6656ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > create-only without readonly flag supports real empty/Unicode files, exact dedup and normal result display 136ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > two workspaces share schema but retain resource permission, Scope ID and new-ID conflict semantics 133ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > real independent Workers and different invocation IDs compete on wx with one complete winner 249ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > changing creator during authorization rejects original binding (published) 141ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > changing creator during authorization rejects original binding (unpublished) 150ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > already entered A remains A after B commits, while old binding new IDs are revoked 149ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > unpublished unmount and same public ID remount cannot redirect the old request; companion remains usable 150ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > native zero-write returns honest effects and keeps valid business transport healthy 165ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > native partial-write returns honest effects and keeps valid business transport healthy 143ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > native close-fail returns honest effects and keeps valid business transport healthy 134ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > native unknown-open returns honest effects and keeps valid business transport healthy 166ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > native forged-open-error returns honest effects and keeps valid business transport healthy 183ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > observes an actual open empty file before failure/close rather than inferring no effects 176ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > successful disk output with lost terminal is unknown and never retried; a fresh instance sees EEXIST  960ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual unknown then posted companion settlement in direction create-first, pending authorization cannot post 136ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual unknown then posted companion settlement in direction read-first, pending authorization cannot post 127ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > post-create result render failure preserves original success and receipt while revoking only failed View 134ms
+   × W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual archived compatibility old-sdk never implicitly creates 132ms
+     → expected undefined to be defined
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual archived compatibility old-worker never implicitly creates 124ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual archived compatibility w05-worker never implicitly creates 124ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual archived compatibility new-hook-old-runtime never implicitly creates 121ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > closing during actual authorization prevents dispatch and keeps local responsibility until policy settles 126ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > a create already posted but held before Worker entry is refused after shutdown revokes negotiation 143ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > closed Scope after native write and close has unavailable receipt and preserves completed file 135ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > parent removed after preflight gives native open none and is never recreated 130ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > static symlink escape, dangling leaf, root inode replacement and POSIX access denial preserve external facts 141ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > correlated old-protocol terminal after actual disk success is transport unknown 136ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > correlated accepted terminal after actual disk success is transport unknown 128ms
+   ✓ W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > correlated oversize terminal after actual disk success is transport unknown 130ms
+stderr | src/engine/app/worker-host.ref-v2.test.ts > R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 a Worker exit while the handler is held is unknown with no automatic retry
+[AppWorkerHost] Worker app exited with code 1
+
+ ❯ src/engine/app/worker-host.ref-v2.test.ts (76 tests | 1 failed) 14282ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > requires explicit new capability and refuses the old compatibility entry before policy, releasing its lease 16ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > does not infer Ref V2 from ACK undefined 6ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > does not infer Ref V2 from ACK %j 1ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > does not infer Ref V2 from ACK "view-tool-ref-invoke/v1" 1ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > does not infer Ref V2 from ACK "unknown" 2ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > does not infer Ref V2 from ACK "view-tool-ref-invoke/v2" 1ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > a lost 'inspect' terminal stops new dispatch for every mode 167ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > a lost 'old_read' terminal stops new dispatch for every mode 159ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > a lost 'plain' terminal stops new dispatch for every mode 155ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > a lost 'zero' terminal stops new dispatch for every mode 157ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > a lost 'create' terminal stops new dispatch for every mode 158ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > R18 uncertainty fences the pre-Scope Ref V1 compatibility entry before policy 155ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > R18 legacy-first timeout must fence a following Ref V2 Scope 156ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > R18 legacy-first invalid-terminal must fence a following Ref V2 Scope 4ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > R18 a held legacy authorization cannot post after another mode becomes uncertain and releases its prepared lease 155ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 ref compatibility held authorization cannot cross later uncertainty 155ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 generic compatibility held authorization cannot cross later uncertainty 155ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'ref' 'timeout' fences all seven View Tool entries and cannot pool 155ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'ref' 'post' fences all seven View Tool entries and cannot pool 4ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'ref' 'error' fences all seven View Tool entries and cannot pool 2ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'ref' 'exit' fences all seven View Tool entries and cannot pool 2ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'generic' 'timeout' fences all seven View Tool entries and cannot pool 155ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'generic' 'post' fences all seven View Tool entries and cannot pool 4ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'generic' 'error' fences all seven View Tool entries and cannot pool 3ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 first 'generic' 'exit' fences all seven View Tool entries and cannot pool 2ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 trustworthy ref business failure preserves transport and subsequent dispatch 9ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 trustworthy generic business failure preserves transport and subsequent dispatch 3ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 lifecycle/control request post failure does not mark a View Tool uncertain 2ms
+   ✓ R03/R18/R19 exact negotiation and shared pending across five Wire modes > F01 an unfinished generic View Tool cannot return the Worker to the pool 2ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R09/R12 really enters only the original target with one substituted slot and no default fill 161ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R21 invalid enum never authorizes/posts/enters 117ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R21 invalid array never authorizes/posts/enters 113ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R21 invalid range never authorizes/posts/enters 116ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R21 invalid required never authorizes/posts/enters 111ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R21 invalid extra never authorizes/posts/enters 112ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R21 invalid null never authorizes/posts/enters 109ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R08/R21 invalid getter never authorizes/posts/enters 106ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R09/R13 uses historical A while the current committed handler observes revision2 without rebind 155ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R21 preserves open ordinary literals and whitespace without treating data as Schema markers 121ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R21 preserves special own Ref parameter names through real Core/codec/SDK execution 146ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R10 refuses foreign Ref before policy 107ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R10 refuses type Ref before policy 108ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R11 revokes default during awaited policy before dispatch 159ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R11 revokes ref-metadata during awaited policy before dispatch 159ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R11 revokes unmount during awaited policy before dispatch 151ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R11 revokes scope during awaited policy before dispatch 139ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R20 full effective 5001-node real Worker boundary 194ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R20 full effective 10000-node real Worker boundary 236ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R20 full effective 10001-node real Worker boundary 157ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R20 oversized raw input is refused before policy and Worker dispatch 114ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R14 unmount/re-mount revokes old target and disabled Tools never enter 238ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R10 actual Worker rejects a foreign App instance before entering its callable 119ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R15 Worker refuses the old binding after a queued request is disable 147ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R15 Worker refuses the old binding after a queued request is replace 150ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R16 keeps business failure details and healthy transport 109ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R16 keeps throw failure details and healthy transport 109ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 drop terminal cannot be trusted or recycled  715ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 type terminal cannot be trusted or recycled 140ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 mode terminal cannot be trusted or recycled 110ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 instance terminal cannot be trusted or recycled 110ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 request terminal cannot be trusted or recycled  712ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 huge terminal cannot be trusted or recycled  742ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R17 a Worker exit while the handler is held is unknown with no automatic retry 137ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R18 actual inspect response loss closes new dispatch across five modes  719ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R18 actual old_read response loss closes new dispatch across five modes  741ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R18 actual plain response loss closes new dispatch across five modes  747ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R18 actual zero response loss closes new dispatch across five modes  737ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R18 actual create response loss closes new dispatch across five modes  732ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R18 healthy RESET reuses the actual Worker under a new App identity 158ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R19 old generic View-owned compatibility keeps its healthy boundary 100ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R19 old generic View-owned compatibility keeps its uncertain boundary  710ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R23 same new Worker keeps saved old SDK Ref helper and new SDK Hook rules distinct 148ms
+   × R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R22 uses actual saved product combination off 101ms
+     → expected undefined to be defined
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R22 uses actual saved product combination old-worker 87ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R22 uses actual saved product combination old-sdk 86ms
+   ✓ R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R22 uses actual saved product combination old-host 94ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/engine/app/worker-host.create-if-absent-e2e.test.ts > W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual archived compatibility old-sdk never implicitly creates
+AssertionError: expected undefined to be defined
+ ❯ Object.request src/engine/app/worker-host.create-if-absent-e2e.test.ts:180:20
+    178|     ) => {
+    179|       const tool = o.tools.find((t: any) => t.name === name);
+    180|       expect(tool).toBeDefined();
+       |                    ^
+    181|       const binding = o.bindings.find((b: any) => b.toolId === tool.id…
+    182|       expect(binding).toBeDefined();
+ ❯ src/engine/app/worker-host.create-if-absent-e2e.test.ts:809:43
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/engine/app/worker-host.ide-read-e2e.test.ts > W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > A/B ownership, old observation new state, duplicate original receipt, reads cause no LSP/FS/update
+AssertionError: expected 6 to be 5 // Object.is equality
+
+- Expected
++ Received
+
+- 5
++ 6
+
+ ❯ src/engine/app/worker-host.ide-read-e2e.test.ts:386:82
+    384|     const after = await control(x, 'counts');
+    385|     expect(after.counts).toEqual(before.counts);
+    386|     expect(x.messages.filter((m: any) => m.type === 'SNAPSHOT_PREPARED…
+       |                                                                                  ^
+    387|     const updateFrom = x.messages.length,
+    388|       updateBegan = performance.now();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  src/engine/app/worker-host.ref-v2.test.ts > R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R22 uses actual saved product combination off
+AssertionError: expected undefined to be defined
+ ❯ Object.request src/engine/app/worker-host.ref-v2.test.ts:38:171
+
+ ❯ src/engine/app/worker-host.ref-v2.test.ts:351:118
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  3 failed (3)
+      Tests  3 failed | 120 passed (123)
+   Start at  11:02:51
+   Duration  15.70s (transform 1.62s, setup 0ms, collect 1.48s, tests 27.46s, environment 0ms, prepare 221ms)
+

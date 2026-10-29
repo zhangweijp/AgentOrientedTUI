@@ -17,10 +17,10 @@ async function setup(Content: () => any, onRegister?: (definition: any) => void)
     return initialize(container, { ...context, viewTools: { ...port,
       registerTool(id: string, name: string, definition: any, options: any) {
         definitions.push(definition); onRegister?.(definition);
-        return port.registerTool(id, name, definition, { ...options,
+        return port.registerTool(id, name, definition, { ...options, ...(options.createSafeOrdinaryParametersInvoker ? {
           createSafeOrdinaryParametersInvoker(contract: any) {
             captures.push(contract); return options.createSafeOrdinaryParametersInvoker(contract);
-          },
+          }, } : {}),
         });
       },
     } });
@@ -38,6 +38,28 @@ afterEach(async () => { for (const close of cleanups.splice(0)) await close(); }
 const params = () => ({ value: { type: 'number' as const, required: true as const } });
 
 describe('ordinary View-local tools without entity preconditions', () => {
+  it.each([
+    ['ordinary-v2', { params: params() }],
+    ['ordinary-v1', { params: {}, isMutating: false }],
+    ['snapshot-value-v1', { params: { file: { type: 'reference', required: true, refSource: 'snapshot-value-v1' } }, isMutating: false }],
+  ])('keeps %s UI and callable availability in sync when enabled changes', async (_mode, options) => {
+    let setEnabled!: (value: boolean) => void;
+    function Content() {
+      const [enabled, set] = useState(false); setEnabled = set;
+      const [Tool] = useViewTypeTool('inspect', { description: 'Inspect', ...options } as any,
+        async () => ({ success: true }), { enabled });
+      return h(Tool, {}, 'Inspect current object');
+    }
+    const app = await setup(Content);
+    expect(app.container.querySelector('tool-ref')).toBeNull();
+    expect(app.kernel.getViewOwnedToolDefinitions()).toHaveLength(0);
+    await act(() => setEnabled(true));
+    expect(app.container.querySelector('tool-ref')?.textContent).toBe('Inspect current object');
+    expect(app.kernel.getViewOwnedToolDefinitions()).toHaveLength(1);
+    await act(() => setEnabled(false));
+    expect(app.container.querySelector('tool-ref')).toBeNull();
+    expect(app.kernel.getViewOwnedToolDefinitions()).toHaveLength(0);
+  });
   it('awaits the application handler and keeps real mutation metadata', async () => {
     let finish!: () => void, value = 0, settled = false;
     const operation = new Promise<void>(resolve => { finish = resolve; });

@@ -1,0 +1,41 @@
+[AppRegistry] Loaded app: system_ide
+[AppRegistry] Loaded app: terminal
+[AppRegistry] Loaded app: lite_browser
+[DesktopManager] Initialized with 3 third-party apps
+[AppRegistry] Loaded app: system_ide
+[AppRegistry] Loaded app: terminal
+[AppRegistry] Loaded app: lite_browser
+[DesktopManager] Initialized with 3 third-party apps
+[createTUIApp] initializeComponent { appId: 'app_0', desktopId: 'semantic-default-e2e' }
+[AppRegistry] Installed "system_ide" to Desktop semantic-default-e2e (Worker mode)
+[createTUIApp] initializeComponent { appId: 'app_1', desktopId: 'semantic-default-e2e' }
+[AppRegistry] Installed "terminal" to Desktop semantic-default-e2e (Worker mode)
+[AppRegistry] Registered "lite_browser" to Desktop semantic-default-e2e (Pending mode)
+[DesktopManager] Created Desktop semantic-default-e2e with 3 third-party apps (Semantic)
+PASS normal AppRegistry installation exposes multiple semantic apps without a dev flag
+PASS opening a file publishes its View and enables its local tools before the next observation
+PASS a held observation remains callable after 31 seconds; ordinary-v1 diagnostics execute
+PASS editing replaces the current file projection with exactly one latest View
+PASS one readable Tool routes two FileDetails correctly and rejects a closed target without retargeting
+PASS closing/reopening a file revokes its old binding without rebinding it to the new View
+PASS Terminal runs through View-local tools and rejects a closed terminal binding
+[createTUIApp] initializeComponent { appId: 'app_2', desktopId: 'semantic-default-e2e' }
+node:events:487
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EPERM: operation not permitted 127.0.0.1
+    at Server.setupListenHandle [as _listen2] (node:net:1986:21)
+    at listenInCluster (node:net:2065:12)
+    at node:net:2274:7
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:2044:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EPERM',
+  errno: -1,
+  syscall: 'listen',
+  address: '127.0.0.1'
+}
+
+Node.js v24.15.0

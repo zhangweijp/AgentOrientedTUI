@@ -1,0 +1,32 @@
+{
+  "head": "194daa53e82b792aa460243e454c1d58caf57e5a",
+  "verified_changed_files": 16,
+  "shared_dist_files": 1717,
+  "shared_dist_unchanged": true,
+  "runtime_existing_failures_match_head": true,
+  "runtime_existing_failures": [
+    "src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode ordinary-v1 keeps other execution modes unavailable without handler fallback",
+    "src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode ordinary-v2 keeps other execution modes unavailable without handler fallback",
+    "src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode snapshot-value-v1 keeps other execution modes unavailable without handler fallback",
+    "src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode snapshot-value-v2 keeps other execution modes unavailable without handler fallback",
+    "src/kernel/interaction-e2e.test.ts > B2 C09 public single-mode create-if-absent-v1 keeps other execution modes unavailable without handler fallback",
+    "src/adapters/snapshot/shadow-receiver.test.ts > C receiver interaction lifetime > uses one injected clock for current leases, retired history and observation/Scope deadlines",
+    "src/engine/app/worker-host.create-if-absent-e2e.test.ts > W06 actual WorkspaceCreateView / SDK / Core / Worker / native disk > actual archived compatibility old-sdk never implicitly creates",
+    "src/engine/app/worker-host.ide-read-e2e.test.ts > W05 emitted actual IDE FileDetail / SDK / Host / Worker / Core > A/B ownership, old observation new state, duplicate original receipt, reads cause no LSP/FS/update",
+    "src/engine/app/worker-host.ref-v2.test.ts > R07–R24 actual SDK / emitted Host / Node Worker Ref V2 > R22 uses actual saved product combination off"
+  ],
+  "host_cases": 8,
+  "host_calls": 21,
+  "host_passed": true,
+  "sdk_tests": 419,
+  "ide_tests": 68,
+  "driver_context_tests": 9,
+  "ide-edges-e2e": {
+    "passed": true,
+    "cases": 22
+  },
+  "ide-capacity-e2e": {
+    "passed": true,
+    "cases": 6
+  }
+}
