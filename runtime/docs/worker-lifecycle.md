@@ -7,7 +7,7 @@
 | 对象 | 持有的资源 | 何时算完成 |
 | --- | --- | --- |
 | DesktopManager | 本 Runtime 的一个 WorkerPool | 池停止接收借用，全部物理 Worker 实际退出，预留槽归零 |
-| AppManager | 借来的池；独立构造时可自有一个冷池 | 借来的池交由父级关闭；自有池通过内部 closeWorkerPool 等待 |
+| AppManager | 借来的池；独立构造时可自有一个冷池 | `cleanupAsync()` 等待自有池关闭并返回资源报告；借来的池交由父级关闭 |
 | WorkerSandbox | 一次安装、一个逻辑 Host、一张本次 lease | 安装终态、独立清理步骤、Host 资源、lease 归还均有结论；自有池还须关闭 |
 | AppWorkerHost | 本逻辑实例的监听器、请求、文件替换与存储访问 | 自己的 Worker 已退出或安全转移，文件替换为零，真实后端 release 已确认 |
 | WorkerPool | 有限的实际 Worker 与创建预留槽 | 只根据真实 exit 释放物理额度 |
@@ -48,8 +48,6 @@ await closing;
 直接构造和 defineRuntimeConfig 都验证上述范围。每个 idle Worker 只有一个 unref 定时器，借出、退出、替换、销毁时取消；旧回调不能作用于新 lease。
 
 通过 `defineRuntimeConfig` 提供部分配置时，根对象及 `worker`、`worker.pool`、`logger` 等配置段须为普通对象或 null-prototype 对象；字段须是自有、可枚举的数据属性。Getter/setter 与非枚举字段会以 `CONFIG_INVALID` 拒绝，校验和合并不会读取 getter。未知字段、对象段形状错误及数值范围错误也以 `CONFIG_INVALID` 报告；message 会包含字段路径，例如 `[worker.pool.maxSize]`。省略的字段及显式设为 `undefined` 的字段都沿用默认值。合并不会改写调用方传入的对象。
-
-公开的 `validateRuntimeConfig` 接受完整配置；它用同一描述符读取方式检查配置字段，访问器会在对应路径以 `CONFIG_INVALID` 拒绝。
 
 ## 三种完成不要混为一谈
 

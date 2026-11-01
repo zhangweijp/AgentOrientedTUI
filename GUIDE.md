@@ -86,7 +86,7 @@ Think in five layers:
 ### Key Entry Points
 
 - Agent driver: `agent-driver-v2/src/core/agent-driver-v2.ts`, `agent-driver-v2/src/core/llm-client.ts`
-- Runtime: `runtime/src/factory/createKernel.ts`, `runtime/src/kernel/index.ts`, `runtime/src/cli.ts`
+- Runtime: `runtime/src/facades/facades.ts`, `runtime/src/kernel/index.ts`, `runtime/src/cli.ts`
 - SDK: `sdk/src/app-factory/createTUIApp.ts`, `sdk/src/components/View.tsx`
 - Host: `host/src/`
 - App manifests: `scripts/generate-aoapp.mjs`
@@ -214,7 +214,7 @@ agentina --version
 ### I want to change runtime state, views, or app execution
 
 - `runtime/src/adapters/semantic-aotui-driven-source.ts`
-- `runtime/src/factory/createKernel.ts`
+- `runtime/src/facades/facades.ts`
 - `runtime/src/kernel/`
 - `runtime/src/worker-runtime/`
 

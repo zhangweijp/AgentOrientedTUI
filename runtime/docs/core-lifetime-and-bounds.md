@@ -1,6 +1,6 @@
 # Core 的身份域、保留额度与永久关闭
 
-本合同适用于一个 Snapshot Core、一个 View-owned Registry 及其实际 owner。它约束受管理集合和指定逻辑字节，不代表整个进程的 RSS 恒定，也不限制调用者或业务 handler 自己持有的对象。本阶段使用现有内部模块；公共子路径和 Producer 接入由后续工单定义。
+本合同适用于一个 Snapshot Core、一个 View-owned Registry 及其实际 owner。它约束受管理集合和指定逻辑字节，不代表整个进程的 RSS 恒定，也不限制调用者或业务 handler 自己持有的对象。Producer/Host 通过 `@aotui/runtime/core` 使用正式低层合同；可消费的入口与完整装配示例见 [Core 公共入口](core-public-entry.md)。
 
 ## Snapshot 额度
 

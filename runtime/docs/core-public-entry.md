@@ -1,6 +1,6 @@
 # 从正式包入口使用纯 Core
 
-`@aotui/runtime/core` 公开明确的快照、View-owned 工具、参数合同、Scoped interaction 和 StateSession API；`@aotui/runtime/adapters/memory-state-storage` 单独提供内存存储。它们复用 Runtime 中的同一实现。根包、SPI 大入口和其他 adapter 保持原环境要求，不因这两个子路径可纯消费而全部成为无 DOM 模块。
+`@aotui/runtime/core` 公开明确的快照、View-owned 工具、参数合同、Scoped interaction 和 StateSession API；`@aotui/runtime/adapters/memory-state-storage` 单独提供内存存储。已提交快照使用唯一类型名 `AppSnapshotV2`；工具注册表和 StateSession 的返回类型由工厂推断，失败 envelope 与 Snapshot Health 保持 Core 内部。它们复用 Runtime 中的同一实现。根包、SPI 大入口和其他 adapter 保持原环境要求，不因这两个子路径可纯消费而全部成为无 DOM 模块。
 
 这是可信 Producer/Host 的低层装配 API：装配者管理 AppInstance、View 注册、稳定 execution binding、policy、存储 owner 和关闭顺序。它不是应用代码自行伪造来源或跳过授权的通道。Core `registerTool` 的签名为 `(viewInstanceId, spec, handler, options?, safeInvoker?)`；旧的 `enabled` 参数和 `setEnabled` 方法已移除。条件能力通过调用注册返回的 release 函数后重新注册表达；新 binding 使用新版本，旧观察不能转而调用它。实际 Runtime/App 的公共 Scope 桥接、父级关闭等待和资源报告已接入，见 [Runtime/App 公共交互](runtime-app-interaction.md)。
 

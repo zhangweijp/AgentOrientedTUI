@@ -12,6 +12,8 @@ INIT 独立提供协议版本、实例和有限预算，Worker 检查实际 fact
 
 STATE_STORAGE_REQUEST/RESPONSE 使用 version=1、instanceId、单调 sequence、operation。read/replace/remove 接受精确 address，replace 另含 text，release 不带正文/地址。自有数据属性、精确字段、预算、实例、Desktop 和高水位在 I/O 前验证；release 有独立监督资格，不占普通请求槽。回复匹配实例/序号/operation；畸形修改回执不能 applied。明确发送前拒绝是 failed/effects:none；已发送但结果不能确认的修改为 unknown，迟到回执不会升级成成功。既有风险阻止新请求时，新请求仍属于已知未进入，而非假装其已写过。
 
+记录正文只接受精确的 `{ version: 1, updatedAt: <finite number>, value: <JSON> }` 外壳。裸 JSON、未知版本、缺项或额外字段在恢复时报告 `UNSUPPORTED_FORMAT` 并保持原文本；不会自动迁移、覆盖或删除旧记录。确认不再需要旧内容后，应用可显式 clear。解包只进行一层，因此业务对象自己的 `value` 字段保持原样。
+
 Host 在首次合法访问时才 open，同一实例共享一次 opening Promise。接纳与正文计数同步登记，再 await open/实际 I/O；release/失联先关准入，等待已接纳访问与 late owner 实际结束后释放。未使用持久化的 managed 应用启动/关闭均为零存储 I/O。open 失败时未进入目标的修改是 failed/none。IPC 超时不移除真实 I/O；不确定 namespace 和 Node adapter 资源保留规则继续生效。
 
 | 默认会话拒绝上限 | 数值 |

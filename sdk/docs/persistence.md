@@ -86,7 +86,7 @@ export function Dates() {
 }
 ```
 
-恢复只由 Core 解码一次，兼容合法裸 JSON 与精确的 v1 外壳；业务对象自身的 value 字段不会递归解包。Hook 对恢复值执行 deserialize→serialize 正规化，包括同一会话中卸载重绑的待保存值。初始化期间已有 setter 时，迟到恢复不能覆盖新 UI 或 Core 修订。正常启动默认 hydrate；startupKind=reinitialize 默认保留新的初始状态，`rehydrateOnReinitialize: true` 才恢复。完整 Manager 重初始化仍属于后续生命周期工作。
+恢复只由 Core 解码一次，只接受精确的 v1 外壳 `{ version: 1, updatedAt, value }`；裸 JSON、未知版本或形状不匹配的记录会以 `UNSUPPORTED_FORMAT` 阻止恢复，原文件不自动覆盖或删除。确认不再需要旧内容后，应用可显式 clear。解包仅一层，业务对象自身的 `value` 字段保持原样。Hook 对恢复值执行 deserialize→serialize 正规化，包括同一会话中卸载重绑的待保存值。初始化期间已有 setter 时，迟到恢复不能覆盖新 UI 或 Core 修订。正常启动默认 hydrate；startupKind=reinitialize 默认保留新的初始状态，`rehydrateOnReinitialize: true` 才恢复。
 
 serializer 或 deserialize 失败不会保留原异常正文/cause。有效 UI 更新可留在界面，但 Core 会记录本次捕获失败，flush 不会将旧值当作最新保存成功。无法捕获的任意 T 不会保留进 Core；重绑恢复上一份可捕获 JSON 和已有失败事实。修复 serializer 并显式 setter，再主动 flush 检查结果；关闭不会暗中重试已失败的手工保存整批。初始快照无法登记、重复活跃 key 或非法端口则明确失败。
 

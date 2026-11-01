@@ -2,7 +2,7 @@
 
 普通读写、只读参数与单对象 Ref 都使用 `useViewTypeTool(name, options, handler, config?)`；只读工具显式设置 `isMutating: false`。实体 File 条件写入由应用自行维护。`createTUIApp` 默认协商正式 app-lifecycle-v2；需要清理外部资源的应用在长寿命组件中调用 `useAppLifecycle`，stop/close 回调各自可选。需要匹配产物；旧 wrapper 不自动升级。完整合同与 IDE 迁移见 [普通 Tool 与应用清理](tool-lifecycle.md) 和 IDE 的 SCOPED_IDE.md。
 
-以下完整应用对照历史 D5 SDK 的参数路径与新合同。迁移前示例描述旧 SDK 产物的三参 View-local `useViewTypeTool` 行为；当前 SDK 在支持 ordinary-v2 的 Runtime 上运行同一普通参数示例时，会进入 B1 合同，不能再用它重现下表的 legacy 规则。旧 ViewType+ToolName 的 type-wide Hook 签名和 `typeTools` Context 已退出，不存在兼容重载。
+以下完整应用对照历史 D5 SDK 的参数路径与新合同。迁移前示例只用于展示旧产物；旧 `defineParams` 不属于当前 SDK 根入口。迁移后的代码直接把参数对象传给 `useViewTypeTool`。旧 ViewType+ToolName 的 type-wide Hook 签名和 `typeTools` Context 已退出，不存在兼容重载。
 
 ## 迁移前：历史 D5 SDK 参数路径
 
@@ -96,7 +96,7 @@ export default createTUIApp({ app_name: 'summary_contract', component: AppRoot }
 | 附加 extra | 保留额外字段 | 默认闭合，拒绝；开放需要声明 additionalProperties |
 | 缺席 limit，声明 default=2 | 不自动填充 | 不自动填充 |
 
-TypeScript 会提前阻止一部分错误 JS 输入，运行时仍需验证模型/JSON 调用。旧宽 `ParamDef`/`defineParams` 不是新合同的所有能力承诺。新普通规则只来自 Runtime B1，Ref 组合来自 B3B，SDK 不复制规则。
+TypeScript 会提前阻止一部分错误 JS 输入，运行时仍需验证模型/JSON 调用。旧宽 `ParamDef`/`defineParams` 属于历史 API，当前 SDK 已移除该 helper。新普通规则只来自 Runtime B1，Ref 组合来自 B3B，SDK 不复制规则。
 
 ## Ref V2 的条件
 

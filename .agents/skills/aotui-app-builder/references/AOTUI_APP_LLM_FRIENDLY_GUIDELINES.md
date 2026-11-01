@@ -209,10 +209,10 @@ EXAMPLE:
 User: "Create a new project plan"
 You call: create_plan({ title: "Project X", description: "..." })
 System returns: { plan_id: "plan_123", message: "Plan created. Use open_plan to start." }`,
-        params: defineParams({
+        params: {
             param1: { type: 'string', required: true, desc: 'Detailed parameter description' },
             param2: { type: 'number', required: false, desc: 'Optional parameter with default behavior' }
-        })
+        }
     },
     async (args) => {
         // Implementation...

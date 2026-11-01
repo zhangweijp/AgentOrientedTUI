@@ -12,7 +12,7 @@
 
 ```tsx
 import { h } from 'preact';
-import { createTUIApp, View, defineParams, useViewTypeTool } from '@aotui/sdk';
+import { createTUIApp, View, useViewTypeTool } from '@aotui/sdk';
 
 const symbols = ['AlphaSymbol', 'BetaSymbol', 'GammaValue'];
 function Content() {
@@ -21,10 +21,10 @@ function Content() {
   const [Find] = useViewTypeTool('find_symbols', {
     description: '查找当前 View 中的符号',
     isMutating: false,
-    params: defineParams({
+    params: {
       query: { type: 'string', required: true, constraints: { minLength: 1 } },
       limit: { type: 'number', default: 20, constraints: { min: 1, max: 100 } },
-    }),
+    },
   }, async ({ query, limit }) => ({
     success: true,
     data: { matches: findSymbolsInCurrentView(query, limit ?? 20) },

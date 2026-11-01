@@ -59,7 +59,7 @@ How to use:
 Example:
 
 ```tsx
-import { defineParams, useViewTypeTool } from '@aotui/sdk'
+import { useViewTypeTool } from '@aotui/sdk'
 
 type WorkspaceToolsProps = {
   searchFilesByPattern: (pattern: string) => Promise<readonly string[]>
@@ -71,9 +71,9 @@ function WorkspaceTools({ searchFilesByPattern, setSearchResults }: WorkspaceToo
   useViewTypeTool('search_files_by_pattern', {
     description: `When to use: Locate files by pattern.
 How to use: Provide a glob pattern, then read the SearchResult View.`,
-    params: defineParams({
+    params: {
       pattern: { type: 'string', required: true, desc: 'Glob pattern' }
-    }),
+    },
     isMutating: true,
   }, async ({ pattern }) => {
     const results = await searchFilesByPattern(pattern)
@@ -87,25 +87,11 @@ How to use: Provide a glob pattern, then read the SearchResult View.`,
 }
 ```
 
-### defineParams
+### Tool parameter schemas
 
-When to use:
-- Define a tool parameter schema for validation and metadata.
-
-How to use:
-- Provide type, required, and description for each field.
-- Use array/object types for structured inputs.
-
-Example:
-
-```tsx
-import { defineParams } from '@aotui/sdk'
-
-const params = defineParams({
-  file_path: { type: 'string', required: true, desc: 'Absolute path' },
-  line: { type: 'number', required: true, desc: '1-based line' }
-})
-```
+Pass a parameter object directly in the `params` field of `useViewTypeTool`.
+TypeScript infers argument types from that object; Runtime compiles and validates
+the execution contract when the Tool is registered.
 
 ### useState / useEffect / useMemo / useCallback
 

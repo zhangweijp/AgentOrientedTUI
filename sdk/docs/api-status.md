@@ -7,23 +7,24 @@
 | API | 用途与限制 |
 |---|---|
 | `createTUIApp`, `View` | 用 Preact 组件声明应用和 View。应用模块的 `default` 必须是 `createTUIApp(...)` 返回的托管组件工厂。 |
-| Preact hooks | `useState`, `useCallback`, `useEffect`, `useMemo`, `useReducer`, `useRef` 从 SDK 重导出，保证组件与 SDK 使用同一个 Preact 实例。 |
+| Preact hooks | `useState`, `useCallback`, `useEffect`, `useMemo`, `useReducer`, `useRef` 从 SDK 根入口导出；SDK 内部直接使用 `preact/hooks`，应用应解析 SDK 声明的 Preact peer。 |
 | `useViewContext` | 在挂载的 View 内读取公开 View 元数据。 |
-| `useAppConfig`, `useAppEnv` | 读取当前应用启动配置和按键访问的环境值。 |
+| `useAppEnv` | 按键读取当前应用启动配置。读取完整公开上下文时使用 `useAppRuntimeContext().launchConfig`。 |
 | `useAppRuntimeContext` | 读取 App/desktop 元数据、启动配置和当前实例的 `AppStatePersistence` 客户端口。高级应用可显式绑定、恢复、更新、清理并 flush 自己的实例状态；这里不暴露 Host 的文件系统/storage adapter，也不含 SDK Ref/Tool、投影或生命周期端口。 |
-| `useDataRef`, `useArrayRef` | 在 View 中声明当前业务数据的 Ref。发布 Ref 不授予修改或执行权限。 |
+| `useDataRef`, `useArrayRef` | 在 View 中声明当前业务数据的 Ref。每个输出标记对应一个注册 ID；发布 Ref 不授予修改或执行权限。 |
 | `useViewTypeTool` | 唯一 Tool 声明 Hook；普通参数（包括空参数和只读工具）使用 ordinary-v2。恰好一个必填顶层同 View Ref 时使用只读 snapshot-value-v2。只读声明必须显式写 `isMutating: false`。 |
 | `useAppLifecycle` | 可选的应用清理回调 Hook。`createTUIApp` 总是声明 `app-lifecycle-v2`；`stop` 与 `close` 回调各自可选，无需 opt-in 配置。 |
 | `usePersistentState` | 声明应用实例状态。setter 更新当前实例会话；Runtime 在关闭时负责 managed flush，Hook 提供恢复状态和显式 `clear()`。 |
 | `useLLMOutputChannel`, `useLLMOutputHistory` | 仅使用真实 Provider 或现有 DOM 事件桥；无可用来源时报告固定错误，不伪造历史。 |
-| `defineParams` | 兼容型参数声明帮助函数，可保留类型推断；不是 ordinary-v2 或 snapshot-value-v2 的执行授权。 |
-| `AOTUIError`, `escapeHtml`, `escapeJsonForAttr` | 公开错误类和静态格式化 helpers。 |
+| `AOTUIError` | Runtime 提供的结构化错误类型。 |
 
 SDK 不导出 Runtime 私有 App/View Context、View registry、Ref registry、Tool registry 或 factory assembler。应用应使用上述 Hooks 和组件；Runtime/Host 集成方直接依赖相应 Runtime 合同。
 
 ## View 内容边界
 
 `<View>` 必须作为独立页面声明，不能出现在另一个 `<View>` 的子树内；经普通包装组件返回的嵌套也会被拒绝。SDK 在创建子实例或运行其 Ref/Tool Hook 前抛出 `NESTED_VIEW_UNSUPPORTED`，错误包含 `parentViewId`、`childViewId`，并提示将两个 View 声明为非 View 布局组件下的独立兄弟。普通组件仍可在 View 内任意组合，多个兄弟 View 也合法；需要同时呈现多个 View 时，从应用根组件或 View 外的布局组件返回它们。
+
+应用通过自己的状态和 View-local Tool 管理动态 View 的挂载与关闭；`View` 不提供 system-close callback。
 
 ## Tool 能力与 Scope
 
@@ -40,8 +41,7 @@ Ref V2 的 `refSource: 'snapshot-value-v1'` 只标识声明的来源语义；实
 以下名称均为 `@aotui/sdk` 的根 JavaScript 导出：
 
 ```text
-AOTUIError, View, createTUIApp, defineParams, escapeHtml, escapeJsonForAttr,
-useAppConfig, useAppEnv, useAppLifecycle, useAppRuntimeContext, useArrayRef,
+AOTUIError, View, createTUIApp, useAppEnv, useAppLifecycle, useAppRuntimeContext, useArrayRef,
 useCallback, useDataRef,
 useEffect, useLLMOutputChannel, useLLMOutputHistory, useMemo,
 usePersistentState, useReducer, useRef, useState, useViewContext,
