@@ -1,4 +1,0 @@
-COMMAND: pnpm --dir demo-apps/aotui-ide exec tsc --noEmit --pretty false
-START_UTC: 2026-10-23T10:35:03.608627+00:00
-
-EXIT_CODE: 0

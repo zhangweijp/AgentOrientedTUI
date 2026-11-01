@@ -22,7 +22,7 @@
 
 ```tsx
 export default createTUIApp({
-    name: 'App Name',
+    app_name: 'my_app',
     
     // WHAT IT IS - 一句话说明App的本质和核心价值
     whatItIs: 'A detailed description explaining what this app does, its architecture (e.g., hierarchical/workflow-based), key features, and technical characteristics (e.g., LSP support, real-time monitoring, SQLite persistence).',
@@ -85,9 +85,9 @@ export function RootView({...props}) {
     const totalItems = items.length;
     const completedItems = items.filter(i => i.status === 'completed').length;
     
-    // 2. 定义所有useViewTypeTool
-    const [Tool1UI] = useViewTypeTool('ViewType', 'operation_name', {...});
-    const [Tool2UI] = useViewTypeTool('ViewType', 'operation_name', {...});
+    // 2. 在目标 <View> 下的组件内声明 View-local Tools
+    useViewTypeTool('operation_name', { description: '...', params: {...} }, handler);
+    useViewTypeTool('another_operation', { description: '...', params: {...} }, handler);
     // ...
     
     // 3. 返回结构化的说明和工具
@@ -186,7 +186,6 @@ export function RootView({...props}) {
 
 ```tsx
 const [ToolUI] = useViewTypeTool(
-    'ViewType',
     'operation_name',
     {
         description: `WHAT: One-line summary of what this operation does.
@@ -267,7 +266,7 @@ IMPORTANT: Plans are created empty. You must open them to add phases and todos.`
 #### Before ❌
 ```tsx
 export default createTUIApp({
-    name: 'AOTUI IDE',
+    app_name: 'aotui_ide',
     whatItIs: 'Text-based IDE for exploring, searching, and editing code with LSP support.',
     whenToUse: 'Use when you need to navigate the repo, search files, or inspect/edit code.',
     component: SystemIDEApp
@@ -277,7 +276,7 @@ export default createTUIApp({
 #### After ✅
 ```tsx
 export default createTUIApp({
-    name: 'AOTUI IDE',
+    app_name: 'aotui_ide',
     whatItIs: 'A text-based Integrated Development Environment designed for LLM Agents to explore codebases, search files by pattern or content, edit code with precise string replacement, and analyze code structure using Language Server Protocol (LSP) features like type inspection, definitions, references, and call hierarchies.',
     whenToUse: 'Use AOTUI IDE when you need to: (1) Navigate and understand a repository structure, (2) Search for files by glob pattern or grep content, (3) Read, edit, create, delete, or rename files with precision, (4) Analyze code using LSP features (hover types, go to definition, find references, diagnostics, symbols, call graphs), (5) Work with multiple files simultaneously through dynamic FileDetail views.',
     component: SystemIDEApp

@@ -1,4 +1,0 @@
-COMMAND ["pnpm", "--dir", "sdk", "exec", "tsc", "--noEmit", "--pretty", "false"]
-START 2026-10-24T03:59:11.319927+00:00
-
-EXIT_CODE 0

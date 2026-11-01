@@ -9,6 +9,8 @@
 
 If you want a deeper source-level walkthrough after this file, read [docs/runtime-sdk-driven-source-analysis.md](./docs/runtime-sdk-driven-source-analysis.md).
 
+For the current Runtime Host, Core, and Semantic Source entry points, start with the [Runtime package guide](./runtime/README.md).
+
 ## Repository At A Glance
 
 The main stack is:
@@ -211,7 +213,7 @@ agentina --version
 
 ### I want to change runtime state, views, or app execution
 
-- `runtime/src/adapters/aotui-driven-source.ts`
+- `runtime/src/adapters/semantic-aotui-driven-source.ts`
 - `runtime/src/factory/createKernel.ts`
 - `runtime/src/kernel/`
 - `runtime/src/worker-runtime/`

@@ -1,7 +1,0 @@
-PASS DTO nodes/depth, page limit and UTF8 path boundaries are exact
-PASS actual roots 15/16/17, input arrays 63/64/65, files 63/64/65 and expanded directories 511/512/513
-PASS actual tree entry and byte limits reject before replacing the published tree
-PASS parent depth 31/32/33 and history LRU/roots/256KiB source limits preserve disk facts
-PASS complete FileDetail composition and batch unknown remain bounded and atomic
-PASS search pattern limits, single actual Worker, 10000 scans and 64MiB actual bytes
-CAPACITY_FACTS {"passed":true,"cases":6,"working":"/private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-capacity-thTTYG"}

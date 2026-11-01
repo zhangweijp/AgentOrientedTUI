@@ -1,6 +1,0 @@
-src/adapters/snapshot/shadow-receiver.ts(88,41): error TS2339: Property 'issue' does not exist on type 'CommitResult'.
-  Property 'issue' does not exist on type 'Readonly<{ status: "published" | "unchanged"; snapshot: AppSnapshot; }>'.
-src/adapters/snapshot/shadow-receiver.ts(89,41): error TS2339: Property 'issue' does not exist on type 'CommitResult'.
-  Property 'issue' does not exist on type 'Readonly<{ status: "published" | "unchanged"; snapshot: AppSnapshot; }>'.
-src/worker-runtime/dom-snapshot-producer.ts(53,28): error TS2488: Type 'NodeListOf<Element>' must have a '[Symbol.iterator]()' method that returns an iterator.
-src/worker-runtime/dom-snapshot-producer.ts(59,55): error TS18048: 'existing' is possibly 'undefined'.

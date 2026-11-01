@@ -1,6 +1,0 @@
-src/core/snapshot/store.ts(286,13): error TS2322: Type 'Readonly<{ status: "ready" | "unready" | "stopped"; }>' is not assignable to type 'SnapshotRead'.
-  Type 'Readonly<{ status: "ready" | "unready" | "stopped"; }>' is not assignable to type 'Readonly<{ status: "ready"; snapshot: AppSnapshot; }> | Readonly<{ status: "unready"; }> | Readonly<{ status: "stopped"; }>'.
-    Type 'Readonly<{ status: "ready" | "unready" | "stopped"; }>' is not assignable to type 'Readonly<{ status: "stopped"; }>'.
-      Types of property 'status' are incompatible.
-        Type '"ready" | "unready" | "stopped"' is not assignable to type '"stopped"'.
-          Type '"ready"' is not assignable to type '"stopped"'.

@@ -1,4 +1,0 @@
-{
-  "exitCode": 0,
-  "dependencySetup": "isolated links to already installed compiler/Preact/@types and newly built local @aotui packages; original token-monitor has no node_modules; no installation or product source change"
-}

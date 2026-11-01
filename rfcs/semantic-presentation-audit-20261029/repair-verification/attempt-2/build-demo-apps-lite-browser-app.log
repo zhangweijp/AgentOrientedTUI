@@ -1,5 +1,0 @@
-
-> @aotui/system-lite-browser@0.1.0 build
-> tsc && node ../../scripts/generate-aoapp.mjs .
-
-[generate-aoapp] Wrote /private/tmp/aotui-presentation-repair-gmbb88cz/demo-apps/lite-browser-app/aoapp.json

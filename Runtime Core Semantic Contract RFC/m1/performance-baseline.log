@@ -1,4 +1,0 @@
-M1_CORE_MICRO_BENCH={"views":1,"iterations":20,"p50_ms":0.183,"p95_ms":0.372,"max_ms":0.383,"note":"Pure in-process Core only; no Preact, DOM, Worker, IPC or IDE I/O."}
-M1_CORE_MICRO_BENCH={"views":10,"iterations":20,"p50_ms":0.622,"p95_ms":0.764,"max_ms":0.814,"note":"Pure in-process Core only; no Preact, DOM, Worker, IPC or IDE I/O."}
-M1_CORE_MICRO_BENCH={"views":50,"iterations":20,"p50_ms":2.547,"p95_ms":2.894,"max_ms":2.979,"note":"Pure in-process Core only; no Preact, DOM, Worker, IPC or IDE I/O."}
-M1_CORE_MICRO_BENCH={"views":100,"iterations":20,"p50_ms":5.367,"p95_ms":5.76,"max_ms":6.612,"note":"Pure in-process Core only; no Preact, DOM, Worker, IPC or IDE I/O."}

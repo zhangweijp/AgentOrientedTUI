@@ -1,4 +1,0 @@
-src/engine/app/worker-host.ts(541,27): error TS2339: Property 'resource' does not exist on type 'Readonly<{ status: "found"; tool: ToolDescriptorV2; target: ToolTargetV2; snapshotId: string; release(): void; }>'.
-src/engine/app/worker-host.ts(542,57): error TS2339: Property 'resource' does not exist on type 'Readonly<{ status: "found"; tool: ToolDescriptorV2; target: ToolTargetV2; snapshotId: string; release(): void; }>'.
-src/engine/app/worker-host.ts(549,37): error TS2339: Property 'resource' does not exist on type 'Readonly<{ status: "found"; tool: ToolDescriptorV2; target: ToolTargetV2; snapshotId: string; release(): void; }>'.
-src/engine/app/worker-host.ts(550,44): error TS2339: Property 'resource' does not exist on type 'Readonly<{ status: "found"; tool: ToolDescriptorV2; target: ToolTargetV2; snapshotId: string; release(): void; }>'.

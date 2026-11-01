@@ -1,6 +1,0 @@
-PASS pure Core exact documentation and generic Tool types compile with ES2022 only; removed entity transport exports are absent
-PASS pure Core exact package documentation executes
-PASS strict Runtime root SPI SDK IDE package entries and hook inference
-PASS legacy adapter public declaration graph compiles with skipLibCheck false
-PASS public default Runtime Worker installs full scoped IDE and executes ordinary mutation plus actual LSP
-PUBLIC_PACKAGE_FACTS {"passed":true,"factsPath":"/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/rfcs/semantic-cleanup-20261029/evidence/c01-package-consumer-final.json"}

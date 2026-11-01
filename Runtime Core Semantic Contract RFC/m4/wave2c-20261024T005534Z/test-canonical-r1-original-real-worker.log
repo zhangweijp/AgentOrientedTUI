@@ -1,9 +1,0 @@
-COMMAND: node 'Runtime Core Semantic Contract RFC/m4/stage8/independent-review-20261023-01/lifecycle-terminal-race-real-worker.mjs'
-START_UTC: 2026-10-24T01:35:33.649531+00:00
-{"method":"start","realWorker":true,"atTermination":"closed","afterContinuation":"closed","workerIsNull":true,"result":"rejected: App lifecycle request was invalidated by a Worker or execution context change","violated":false}
-{"method":"open","realWorker":true,"atTermination":"closed","afterContinuation":"closed","workerIsNull":true,"result":"rejected: App lifecycle request was invalidated by a Worker or execution context change","violated":false}
-{"method":"pause","realWorker":true,"atTermination":"closed","afterContinuation":"closed","workerIsNull":true,"result":"rejected: App lifecycle request was invalidated by a Worker or execution context change","violated":false}
-{"method":"resume","realWorker":true,"atTermination":"closed","afterContinuation":"closed","workerIsNull":true,"result":"rejected: App lifecycle request was invalidated by a Worker or execution context change","violated":false}
-REAL_WORKER_VIOLATIONS=0/4
-
-EXIT_CODE: 0

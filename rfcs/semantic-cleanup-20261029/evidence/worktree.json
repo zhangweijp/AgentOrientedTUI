@@ -1,8 +1,0 @@
-{
-  "source": "/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source",
-  "origin": "/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI",
-  "baselineArchiveSha256": "a713eb603b8bb35ec254cbe823dad8b9a23e782dfaffea668f16ccfc192dc8da",
-  "sourceFilesVerified": 935,
-  "dependencies": "Existing local dependency trees reused by links; @aotui/runtime, sdk and agent-driver-v2 resolve to this isolated source tree. This is not clean external installation evidence.",
-  "historicalFixtures": "Read via link for baseline legacy tests only."
-}

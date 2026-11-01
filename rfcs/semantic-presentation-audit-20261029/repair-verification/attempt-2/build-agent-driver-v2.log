@@ -1,4 +1,0 @@
-
-> @aotui/agent-driver-v2@0.2.2 build
-> node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })" && tsc
-

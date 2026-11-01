@@ -1,4 +1,0 @@
-COMMAND=["pnpm", "--dir", "sdk", "exec", "tsc", "--noEmit", "--pretty", "false"]
-NODE=v24.15.0
-
-REVIEW_EXIT_CODE=0

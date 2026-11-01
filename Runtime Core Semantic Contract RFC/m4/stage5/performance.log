@@ -1,3 +1,0 @@
-STAGE5_VERSIONED_FILE_BENCH={"bytes":1024,"samples":20,"read_p50_ms":0.159,"read_p95_ms":0.261,"replace_p50_ms":3.764,"replace_p95_ms":4.383,"note":"Local temp filesystem, SHA256 + cooperative wx lock + staged fsync + rename; no Worker, LSP or model"}
-STAGE5_VERSIONED_FILE_BENCH={"bytes":65536,"samples":20,"read_p50_ms":0.226,"read_p95_ms":0.293,"replace_p50_ms":3.87,"replace_p95_ms":4.626,"note":"Local temp filesystem, SHA256 + cooperative wx lock + staged fsync + rename; no Worker, LSP or model"}
-STAGE5_VERSIONED_FILE_BENCH={"bytes":1048576,"samples":20,"read_p50_ms":0.952,"read_p95_ms":1.219,"replace_p50_ms":7.989,"replace_p95_ms":9.212,"note":"Local temp filesystem, SHA256 + cooperative wx lock + staged fsync + rename; no Worker, LSP or model"}

@@ -1,5 +1,0 @@
-COMMAND: node --input-type=module -e 'const data={first:{text:"small"},second:{text:"small"}}; const encoded=JSON.stringify(data); const bytes=Buffer.byteLength(encoded,"utf8"); console.log(JSON.stringify({encoded,utf8Bytes:bytes})); if(bytes!==52) process.exitCode=1;'
-START_UTC: 2026-10-23T15:15:21.516259+00:00
-{"encoded":"{\"first\":{\"text\":\"small\"},\"second\":{\"text\":\"small\"}}","utf8Bytes":52}
-
-EXIT_CODE: 0

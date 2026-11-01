@@ -6,10 +6,10 @@ Use this reference only when explicit API usage is required. Keep responses conc
 
 When to use:
 - Create the entry factory for any AOTUI app.
-- Bind the app name, root component, and launch configuration.
+- Bind the canonical app name, root component, and launch configuration.
 
 How to use:
-- Pass name and component at minimum.
+- Pass `app_name` and `component` at minimum.
 - Add launchConfig to expose environment values to the app.
 
 Example:
@@ -18,7 +18,7 @@ Example:
 import { createTUIApp } from '@aotui/sdk'
 
 export default createTUIApp({
-  name: 'My App',
+  app_name: 'my_app',
   component: AppRoot,
   launchConfig: {
     workspace_dir_path: process.env.WORKSPACE_DIR || process.cwd()
@@ -49,30 +49,42 @@ import { View } from '@aotui/sdk'
 ### useViewTypeTool
 
 When to use:
-- Define a tool bound to a View type.
-- Expose tool usage to Root View without duplicating descriptions.
+- Define a Tool for the currently mounted View instance.
+- Call the Hook inside a component rendered under its owning `<View>`.
 
 How to use:
 - Put “When to use” and “How to use” inside description.
-- Return minimal success info and point to the View for results.
+- Return a concise receipt and put current business data in the View.
 
 Example:
 
 ```tsx
-import { useViewTypeTool, defineParams } from '@aotui/sdk'
+import { defineParams, useViewTypeTool } from '@aotui/sdk'
 
-useViewTypeTool('Workspace', 'search_files_by_pattern', {
-  description: `When to use: Locate files by pattern.
-How to use: Provide a glob pattern and check Search Result view.`,
-  params: defineParams({
-    pattern: { type: 'string', required: true, desc: 'Glob pattern' }
+type WorkspaceToolsProps = {
+  searchFilesByPattern: (pattern: string) => Promise<readonly string[]>
+  setSearchResults: (results: readonly string[]) => void
+}
+
+// Render WorkspaceTools inside the component tree of the Workspace <View>.
+function WorkspaceTools({ searchFilesByPattern, setSearchResults }: WorkspaceToolsProps) {
+  useViewTypeTool('search_files_by_pattern', {
+    description: `When to use: Locate files by pattern.
+How to use: Provide a glob pattern, then read the SearchResult View.`,
+    params: defineParams({
+      pattern: { type: 'string', required: true, desc: 'Glob pattern' }
+    }),
+    isMutating: true,
+  }, async ({ pattern }) => {
+    const results = await searchFilesByPattern(pattern)
+    setSearchResults(results)
+    return {
+      success: true,
+      data: { message: 'Search results are available in the SearchResult View.' }
+    }
   })
-}, async (args) => {
-  return {
-    success: true,
-    data: { message: 'Search results written to SearchResult view' }
-  }
-})
+  return null
+}
 ```
 
 ### defineParams
@@ -181,7 +193,7 @@ function AppRoot() {
 }
 
 export default createTUIApp({
-  name: 'AOTUI IDE',
+  app_name: 'aotui_ide',
   component: AppRoot
 })
 ```

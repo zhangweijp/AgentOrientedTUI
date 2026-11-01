@@ -1,4 +1,0 @@
-{
-  "initialProbeNote": "First probe omitted required copyJson limits for its extra semantic-validator precheck; the independent Registry and V2 validator calls did execute and already reproduced the four missed declarations. v2 fixes the precheck and adds plain-schema controls. Original script and log preserved.",
-  "productionChanges": false
-}

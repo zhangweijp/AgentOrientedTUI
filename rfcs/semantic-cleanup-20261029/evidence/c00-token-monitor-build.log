@@ -1,5 +1,0 @@
-
-> @aotui/system-token-monitor@0.1.0 build /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/token-monitor-app
-> tsc && node ../../scripts/generate-aoapp.mjs .
-
-[generate-aoapp] Wrote /private/var/folders/hp/stypzkys30gdsjlhc9kfsqhr0000gn/T/aotui-semantic-cleanup-20261029-qm0_g97o/source/demo-apps/token-monitor-app/aoapp.json

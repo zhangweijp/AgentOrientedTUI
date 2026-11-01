@@ -1,4 +1,0 @@
-COMMAND: pnpm --dir sdk exec tsc --noEmit --pretty false
-START_UTC: 2026-10-23T12:21:01.819936+00:00
-
-EXIT_CODE: 0

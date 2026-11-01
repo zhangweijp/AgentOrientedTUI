@@ -1,8 +1,0 @@
-
-> @aotui/runtime@2.0.0 build
-> node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })" && tsc && chmod +x dist/cli.js
-
-src/adapters/semantic-aotui-driven-source.ts(238,21): error TS2322: Type 'Schema<unknown>' is not assignable to type 'FlexibleSchema<any>'.
-  Property '[schemaSymbol]' is missing in type 'Schema<unknown>' but required in type 'Schema<any>'.
-src/adapters/semantic-aotui-driven-source.ts(297,42): error TS2322: Type 'Schema<unknown>' is not assignable to type 'FlexibleSchema<any>'.
-  Property '[schemaSymbol]' is missing in type 'Schema<unknown>' but required in type 'Schema<any>'.

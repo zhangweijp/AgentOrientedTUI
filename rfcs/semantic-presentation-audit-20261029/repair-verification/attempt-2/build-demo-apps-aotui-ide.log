@@ -1,5 +1,0 @@
-
-> @agentina/aotui-ide@0.1.2 build
-> tsc && node ../../scripts/generate-aoapp.mjs .
-
-[generate-aoapp] Wrote /private/tmp/aotui-presentation-repair-gmbb88cz/demo-apps/aotui-ide/aoapp.json

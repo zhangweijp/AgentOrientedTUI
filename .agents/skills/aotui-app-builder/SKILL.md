@@ -1,38 +1,41 @@
 ---
 name: aotui-app-builder
-description: This skill should be used when designing or implementing an AOTUI TUI application with @aotui/sdk, especially when defining Root View instructions, View Type tools, and progressive disclosure behavior for LLM-facing markdown UI.
+description: This skill should be used when designing or implementing an AOTUI TUI application with @aotui/sdk, especially when defining Root View instructions, View-local Tools, and progressive disclosure behavior for LLM-facing markdown UI.
 ---
 
 # AOTUI App Builder
 
 ## Overview
 
-Design and implement an AOTUI TUI application using @aotui/sdk with a Root View that aggregates instructions and View Type tools, while Views render data and tool results as markdown-friendly HTML.
+Design and implement an AOTUI TUI application using `@aotui/sdk`. View-local Tools describe and perform app operations; Views present the current business state and useful outcomes.
 
 ## When To Use
 
-Apply this skill when building, redesigning, or extending an AOTUI TUI app, or when defining Root View instructions, View Type tool contracts, or progressive disclosure by active Views.
+Apply this skill when building, redesigning, or extending an AOTUI TUI app, or when defining Root View instructions, View-local Tool contracts, or progressive disclosure by active Views.
 
 ## Workflow
 
-1. Identify data models first
-   - Locate runtime SPI interfaces and SDK View/Operation contracts.
-   - Map domain entities to View types and Operation inputs/outputs.
+1. Identify data models and ownership first
+   - Locate SDK View and View-local Tool contracts.
+   - Keep domain validation, file identity, concurrency, and resource effects in the app or its resource adapter.
+   - Map user-visible state to Views and action inputs/results to Tool contracts.
 2. Define the View system
    - List all View types and decide which are fixed vs dynamic.
    - Define each View’s responsibility as result presentation, not tool execution.
 3. Design Root View instruction structure
    - Define App Instruction and per-View Instruction sections.
    - Add Available Tools only for View types that are currently mounted.
-4. Define tool contracts
-   - Use View Type tools for domain actions.
-   - Put “When to use” and “How to use” inside the tool description.
+4. Define Tool contracts
+   - Call `useViewTypeTool(name, options, handler, config?)` inside a component rendered under the owning `<View>`. It binds to that mounted View instance; it is not a type-wide registration.
+   - Ordinary parameters, including empty and read-only parameters, use the negotiated `ordinary-v2` contract and can support reads or mutations.
+   - A snapshot Ref parameter must be required and read-only, set `refSource: 'snapshot-value-v1'`, and use `isMutating: false`. This is provenance metadata; the trusted Host enables execution through `snapshot-value-v2`.
+   - Put actionable “When to use” and “How to use” guidance in the Tool description.
 5. Implement Views and tool handlers
    - Render only markdown-friendly HTML tags.
-   - Return concise tool results that point to the View where details appear.
+   - Return an `OperationResult` with concise receipt data; put the current business state in its View.
 6. Verify progressive disclosure
    - Ensure Root View only shows sections for mounted View types.
-   - Ensure tool invocations mutate View data or View count.
+   - Ensure reads and mutations present business data through the current View; Tool results remain concise receipts.
 
 ## Root View Specification
 
@@ -81,26 +84,30 @@ Root View template:
 
 View and tool skeleton:
 
-```
-<View id="<view_id>" type="<View Type>" name="<Display Name>">
-  <ViewContent ... />
-</View>
-
-useViewTypeTool('<View Type>', '<tool_name>', {
-  description: `<When to use: ...>
+```tsx
+function ViewTools() {
+  useViewTypeTool('<tool_name>', {
+    description: `<When to use: ...>
 <How to use: ...>`,
-  params: defineParams({
-    ...
-  })
-}, async (args) => {
-  return {
+    params: {
+      ...
+    },
+    isMutating: true,
+  }, async (args) => ({
     success: true,
-    data: {
-      message: 'Result written to <View Type> view',
-      view_id: '<view_id>'
-    }
-  }
-})
+    data: { message: 'Operation completed' },
+  }))
+  return null
+}
+
+function WorkspaceView() {
+  return (
+    <View id="<view_id>" type="<View Type>" name="<Display Name>">
+      <ViewContent />
+      <ViewTools />
+    </View>
+  )
+}
 ```
 
 ## Root View Generator Example
@@ -136,9 +143,9 @@ Show query results and navigation links.
 
 ## Tool And View Principles
 
-1. Treat tools as query commands and Views as query results
-   - Return success or failure plus where to read the result.
-   - Show the data change in the View content or by mounting/dismounting Views.
+1. Keep operation receipts separate from current business state
+   - Return success or failure plus concise recovery information.
+   - Show changed business data through the current View; do not duplicate its full content in Tool results.
 2. Put operational guidance in tool descriptions
    - Include “When to use” and “How to use” inside the tool description.
    - Avoid repeating tool descriptions in the Root View; list tool names only.
@@ -161,22 +168,22 @@ Reveal SDK guidance in layers based on task scope, and only load deeper details 
 1. Core layer
    - createTUIApp, View, Root View instruction layout.
 2. View layer
-   - View id/type rules, ViewRuntimeContext usage, view-level state.
+   - View id/type rules, `useViewContext`, and view-local state.
 3. Tool layer
-   - useViewTypeTool, params schema, success/error payload shape.
+   - the View-local `useViewTypeTool` Hook, parameter schema, and receipt result shape.
 4. Data layer
    - View data rendering and change propagation patterns.
 5. Advanced layer
    - multiple dynamic views, cross-view eventing, performance controls.
 
-Load detailed API notes from references/sdk_api.md only when the task requires explicit API usage.
+For exact exported names or migration details, consult the SDK's [API status](../../../sdk/docs/api-status.md) and [migration guide](../../../sdk/docs/migration.md) when the task requires them.
 
 ## SDK Implementation Outline
 
 1. Create the app factory with createTUIApp.
 2. Render a Root View and domain Views.
-3. Use View Type tools for domain actions.
-4. Update View data after tool execution and trigger re-render.
+3. Declare each domain Tool inside the component rendered by its owning View.
+4. Update the app's business state after a successful mutation so the current View presents the result.
 
 Example outline:
 
@@ -198,20 +205,20 @@ function AppRoot() {
 }
 
 export default createTUIApp({
-  name: 'My AOTUI App',
+  app_name: 'my_aotui_app',
   component: AppRoot
 })
 ```
 
+`createTUIApp` returns the managed `app-lifecycle-v2` factory by default. A component that owns resources can register `useAppLifecycle({ stop?, close? })`; apps without owned cleanup do not need the hook or a lifecycle config flag.
+
 ## App Template Reference
 
-Use the SystemIDEApp view layout as a template for multi-view apps.
-
-Reference: /Users/zhangwei/JSWorkSpace/learning_code/aotui_v6/aotui-ide/src/tui/SystemIDEApp.tsx#L174-237
+Use this repository's [ScopedIDEApp](../../../demo-apps/aotui-ide/src/tui/ScopedIDEApp.tsx) as a current multi-view example. It shows the managed package default, Root View instructions, progressive disclosure, FileDetail target selectors, View-local Tools, and the formal app lifecycle hook.
 
 ## Output Checklist
 
 - Provide Root View instruction structure in English.
 - Ensure tools return concise status plus the target View for details.
-- Ensure every tool modifies View data or View count.
+- For each mutating Tool, ensure the resulting business state is reflected in the current View.
 - Ensure only markdown-friendly HTML tags are used.

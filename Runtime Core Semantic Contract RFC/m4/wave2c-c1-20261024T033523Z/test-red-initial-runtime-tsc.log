@@ -1,4 +1,0 @@
-COMMAND: pnpm --dir runtime exec tsc --pretty false
-START_UTC: 2026-10-24T03:38:43.500955+00:00
-
-EXIT_CODE: 0
