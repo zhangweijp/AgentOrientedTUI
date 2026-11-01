@@ -44,16 +44,9 @@ export const viewVisitor: IElementVisitor = {
             return childMarkup.join('\n');
         }
 
-        // Manage Context
-        const prevViewId = ctx.currentViewId;
-        ctx.currentViewId = viewId;
-
         // Recursively process children
         const childMarkup = children(el, ctx);
         const childrenContent = childMarkup.join('\n');
-
-        // Restore Context
-        ctx.currentViewId = prevViewId;
 
         return `\n<view id="${viewId}" name="${viewName}">\n${childrenContent}\n</view>\n`;
     }

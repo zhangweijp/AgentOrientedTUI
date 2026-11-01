@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { compileOrdinaryParams } from '../core/tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profile.js';
 import { captureOrdinaryV2Request, captureOrdinaryV2Terminal, ordinaryV2Response, validOrdinaryV2Arguments } from './ordinary-invocation-v2.js';
-import { captureOrdinaryV1Terminal } from './ordinary-invocation-v1.js';
 const header = { requestId: 'r', appId: 'a', instanceId: 'i' };
 const fixture = () => {
   const c = compileOrdinaryParams({ q: { type: 'string', required: true, constraints: { maxLength: 1 } } }, { additionalProperties: false });
@@ -12,14 +11,13 @@ const fixture = () => {
     tool: { id: 'tool', name: 'find', viewType: 'File', description: 'Find', isMutating: false, inputSchema: ordinaryParameterProfile(c.contract), targets: [target] }, target };
 };
 describe('R10 precise ordinary-v2 message grammar', () => {
-  it('captures immutable request and terminal, never treating V2 as V1', () => {
+  it('captures the canonical immutable request and terminal', () => {
     const input = fixture(), message = captureOrdinaryV2Request(input);
     expect(message).toEqual(input); expect(message).not.toBe(input); expect(Object.isFrozen(message.args)).toBe(true);
     expect(validOrdinaryV2Arguments(message)).toBe(true);
     const terminal = { phase: 'entered-returned' as const, result: { success: false, error: { code: 'BUSINESS', message: '', context: { value: 1 } } } };
     const response = ordinaryV2Response(header, terminal);
     expect(captureOrdinaryV2Terminal(response, header)).toEqual(terminal);
-    expect(captureOrdinaryV1Terminal(response, header)).toBeNull();
   });
   it.each(['type', 'mode', 'extra', 'missing', 'target', 'nonjson', 'argument-bytes', 'whole-bytes'])('rejects request %s', kind => {
     const message: any = fixture();

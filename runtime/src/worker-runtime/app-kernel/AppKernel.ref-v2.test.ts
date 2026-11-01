@@ -20,7 +20,7 @@ describe('R01/R02/R13 Runtime committed Ref V2 parameter capture', () => {
             expect(source.inputSchema).toEqual(captured.schema);params.n.default = 99;expect((source.inputSchema as any).properties.n.default).toBe(2);
             expect(x.kernel.validateBoundSnapshotValueParametersViewTool(source, source.targets[0]!).success).toBe(true);
             expect((await x.kernel.invokeBoundSnapshotValueParametersViewTool(source, source.targets[0]!, { file: {} })).phase).toBe('entered-returned');
-            expect(x.kernel.validateBoundRefViewTool(source, source.targets[0]!).success).toBe(false);
+            expect(x.kernel.validateBoundOrdinaryParametersViewTool(source, source.targets[0]!).success).toBe(false);
         } finally { await x.kernel.onClose(); }
     });
     it.each(['missing', 'wrong', 'promise', 'extra', 'getter', 'mutating'])('refuses %s metadata without publishing a binding', async kind => {

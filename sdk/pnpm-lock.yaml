@@ -23,9 +23,6 @@ importers:
       '@aotui/runtime':
         specifier: ^2.0.0
         version: 2.0.0
-      linkedom:
-        specifier: ^0.18.9
-        version: 0.18.12
     devDependencies:
       '@testing-library/preact':
         specifier: ^3.2.4

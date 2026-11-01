@@ -18,19 +18,19 @@ describe('ERROR_CODES', () => {
         // Desktop
         expect(ERROR_CODES.DESKTOP_NOT_FOUND).toBe('DESKTOP_NOT_FOUND');
         expect(ERROR_CODES.DESKTOP_DISPOSED).toBe('DESKTOP_DISPOSED');
-        expect(ERROR_CODES.DESKTOP_LOCKED).toBe('DESKTOP_LOCKED');
+        expect(ERROR_CODES).not.toHaveProperty('DESKTOP_LOCKED');
 
         // App
         expect(ERROR_CODES.APP_NOT_FOUND).toBe('APP_NOT_FOUND');
         expect(ERROR_CODES.APP_LOAD_FAILED).toBe('APP_LOAD_FAILED');
+        expect(ERROR_CODES.APP_INVALID_EXPORT).toBe('APP_INVALID_EXPORT');
 
         // View
-        expect(ERROR_CODES.VIEW_NOT_FOUND).toBe('VIEW_NOT_FOUND');
         expect(ERROR_CODES.VIEW_DUPLICATE).toBe('VIEW_DUPLICATE');
 
         // Operation
-        expect(ERROR_CODES.OPERATION_NOT_FOUND).toBe('OPERATION_NOT_FOUND');
-        expect(ERROR_CODES.OPERATION_NO_HANDLER).toBe('OPERATION_NO_HANDLER');
+        expect(ERROR_CODES.OPERATION_INVALID_ARGS).toBe('OPERATION_INVALID_ARGS');
+        expect(ERROR_CODES.OPERATION_DUPLICATE).toBe('OPERATION_DUPLICATE');
 
         // Worker
         expect(ERROR_CODES.WORKER_TIMEOUT).toBe('WORKER_TIMEOUT');
@@ -54,6 +54,23 @@ describe('ERROR_CODES', () => {
 
         // Verify specific codes haven't changed
         expect(ERROR_CODES.DESKTOP_NOT_FOUND).toBe('DESKTOP_NOT_FOUND');
+    });
+
+    it('does not publish retired ViewFactory, ViewLink, or operation dispatcher codes', () => {
+        for (const code of [
+            'VIEW_NOT_FOUND',
+            'VIEW_PARENT_NOT_FOUND',
+            'VIEW_ROOT_EXISTS',
+            'VIEW_MOUNTABLE_NOT_FOUND',
+            'VIEW_INVALID_FACTORY',
+            'LINK_DUPLICATE',
+            'LINK_NOT_FOUND',
+            'OPERATION_NOT_FOUND',
+            'OPERATION_NO_HANDLER',
+            'OPERATION_REQUIRES_CONTEXT',
+        ]) {
+            expect(ERROR_CODES).not.toHaveProperty(code);
+        }
     });
 });
 
@@ -84,16 +101,6 @@ describe('AOTUIError', () => {
             expect(err.timestamp).toBeLessThanOrEqual(after);
         });
 
-        it('should format message with context values', () => {
-            const err = new AOTUIError('DESKTOP_LOCKED', {
-                desktopId: 'desk_123',
-                ownerId: 'agent_456',
-            });
-
-            expect(err.message).toContain('desk_123');
-            expect(err.message).toContain('agent_456');
-        });
-
         it('should handle missing context values gracefully', () => {
             const err = new AOTUIError('DESKTOP_NOT_FOUND', {});
             expect(err.message).toContain('unknown');
@@ -102,12 +109,22 @@ describe('AOTUIError', () => {
 
     describe('toOperationError', () => {
         it('should convert to OperationError format', () => {
-            const err = new AOTUIError('VIEW_NOT_FOUND', { viewId: 'v1' });
+            const err = new AOTUIError('OPERATION_INVALID_ARGS', {
+                operationName: 'write_file',
+                reason: 'file path is required',
+            });
             const opErr = err.toOperationError();
 
-            expect(opErr.code).toBe('VIEW_NOT_FOUND');
-            expect(opErr.message).toContain('v1');
-            expect(opErr.context).toEqual({ viewId: 'v1' });
+            expect(opErr.code).toBe('OPERATION_INVALID_ARGS');
+            expect(opErr.message).toContain('write_file');
+            expect(opErr.context).toEqual({ operationName: 'write_file', reason: 'file path is required' });
+        });
+    });
+
+    describe('app factory export contract', () => {
+        it('describes the sole managed default-export contract', () => {
+            const err = new AOTUIError('APP_INVALID_EXPORT', { modulePath: './app.js' });
+            expect(err.message).toBe("App module './app.js' must default-export a managed TUIAppFactory component factory");
         });
     });
 
@@ -175,13 +192,14 @@ describe('AOTUIError', () => {
 
 describe('createOperationError', () => {
     it('should create OperationError directly', () => {
-        const err = createOperationError('OPERATION_NOT_FOUND', {
-            operationName: 'send_message',
+        const err = createOperationError('OPERATION_INVALID_ARGS', {
+            operationName: 'write_file',
+            reason: 'file path is required',
         });
 
-        expect(err.code).toBe('OPERATION_NOT_FOUND');
-        expect(err.message).toContain('send_message');
-        expect(err.context?.operationName).toBe('send_message');
+        expect(err.code).toBe('OPERATION_INVALID_ARGS');
+        expect(err.message).toContain('write_file');
+        expect(err.context?.operationName).toBe('write_file');
     });
 });
 

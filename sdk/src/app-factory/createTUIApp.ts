@@ -8,19 +8,16 @@
 
 import type {
     AppContext,
-    IAOTUIApp,
     AppKernelConfig,
     AppReinitializeContext,
-    AppOperationHandler,
     SignalPolicy,
     RuntimeContext,
     ComponentRenderer,
+    TUIAppFactory,
 } from '@aotui/runtime/spi';
 
-import { TUI_FACTORY, type Factory } from '../factory/index.js';
 import type { ComponentType } from 'preact';
 import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
-import { AppConfigContext } from '../contexts/index.js';
 
 // ═══════════════════════════════════════════════════════════════
 //  Types
@@ -30,7 +27,6 @@ import { AppConfigContext } from '../contexts/index.js';
  * TUI App Configuration (Component Based)
  */
 export interface TUIAppConfig {
-    experimentalAppLifecycle?: boolean;
     /**
      * App 唯一名称（用于展示、Tool 前缀、配置键、持久化命名空间）
      *
@@ -50,9 +46,6 @@ export interface TUIAppConfig {
     /** 根React组件 */
     component: ComponentType;
 
-    /** App级别的Operation处理器 (可选) */
-    onOperation?: AppOperationHandler;
-
     /** App删除时的清理回调 (可选) */
     onDelete?: (context: AppContext) => Promise<void>;
 
@@ -64,31 +57,6 @@ export interface TUIAppConfig {
 
     /** [RFC-012] 信号策略 */
     signalPolicy?: SignalPolicy;
-}
-
-/**
- * TUI Component App Factory
- * 
- * 实现ComponentFactory接口,提供initializeComponent方法
- */
-export interface TUIComponentAppFactory extends Factory<IAOTUIApp> {
-    readonly [TUI_FACTORY]: 'app';
-
-    /** App显示名称 */
-    displayName: string;
-
-    /** 传递给Runtime的Kernel配置 */
-    kernelConfig: AppKernelConfig;
-    readonly persistenceSupport: 'state-session-v1';
-    readonly appLifecycleSupport?: 'app-lifecycle-v2';
-
-    /** @deprecated Legacy app-instance creation is unsupported in component mode. */
-    create: () => IAOTUIApp;
-
-    // ComponentFactory核心方法 (手动实现)
-    initializeComponent(container: HTMLElement, context: RuntimeContext): Promise<ComponentRenderer>;
-    onOperation?: AppOperationHandler;
-    onDelete?: () => Promise<void>;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -116,7 +84,7 @@ export interface TUIComponentAppFactory extends Factory<IAOTUIApp> {
  * });
  * ```
  */
-export function createTUIApp(config: TUIAppConfig): TUIComponentAppFactory {
+export function createTUIApp(config: TUIAppConfig): TUIAppFactory {
     if (typeof config.app_name !== 'string') {
         throw new Error('[AOTUI SDK] app_name must be a string matching /^[a-z0-9_]+$/; name is not a substitute.');
     }
@@ -139,19 +107,17 @@ export function createTUIApp(config: TUIAppConfig): TUIComponentAppFactory {
         whenToUse: config.whenToUse,
         // [重要] 传递Factory本身而非Component
         component: undefined as any, // 将在下面的返回对象中被覆盖
-        onOperation: config.onOperation,
         onDelete: config.onDelete,
         onReinitialize: config.onReinitialize,
         launchConfig: config.launchConfig,
         signalPolicy: config.signalPolicy,
     };
 
-    const factory: TUIComponentAppFactory = {
-        [TUI_FACTORY]: 'app',
+    const factory: TUIAppFactory = {
         displayName: config.app_name,
         kernelConfig,
         persistenceSupport: 'state-session-v1',
-        ...(config.experimentalAppLifecycle ? { appLifecycleSupport: 'app-lifecycle-v2' as const } : {}),
+        appLifecycleSupport: 'app-lifecycle-v2',
 
         /**
          * [RFC-027-C] Factory Injection Pattern
@@ -173,11 +139,7 @@ export function createTUIApp(config: TUIAppConfig): TUIComponentAppFactory {
                 appId: context.appId,
                 desktopId: context.desktopId,
                 launchConfig: (context as { launchConfig?: Record<string, unknown> }).launchConfig,
-                allocateViewId: context.allocateViewId,
-                registerView: context.registerView,
-                unregisterView: context.unregisterView,
                 refExporter: context.refExporter,
-                typeTools: (context as { typeTools: any }).typeTools, // [RFC-020] Pass Type Tool Registry
                 markDirty: context.markDirty,
                 projection: context.projection,
                 persistence: context.persistence,
@@ -185,22 +147,18 @@ export function createTUIApp(config: TUIAppConfig): TUIComponentAppFactory {
                 viewTools: context.viewTools,
             };
 
-            if (config.experimentalAppLifecycle && context.appLifecycle?.protocol !== 'app-lifecycle-v2')
+            if (context.appLifecycle?.protocol !== 'app-lifecycle-v2')
                 throw new Error('APP_LIFECYCLE_UNSUPPORTED');
 
             // 创建根VNode
             const rootVNode = h(
                 AppRuntimeContext.Provider,
                 { value: appContextValue },
-                h(
-                    AppConfigContext.Provider,
-                    { value: (appContextValue.launchConfig ?? {}) as any },
-                    h(RootComponent, {})
-                )
+                h(RootComponent, {})
             );
 
             // M3: bracket explicit SDK render commits. Preact's synchronous
-            // layout effects register View/Ref/ViewTypeTool inside this boundary.
+            // layout effects register View/Ref/Tool bindings inside this boundary.
             // Internal component setState commits are tracked by registry mutations
             // and DOM invalidations; these explicit brackets are not their only gate.
             const renderCommitted = (node: typeof rootVNode | null) => {
@@ -228,15 +186,6 @@ export function createTUIApp(config: TUIAppConfig): TUIComponentAppFactory {
             };
         },
 
-        onOperation: config.onOperation,
-        onDelete: config.onDelete as any,
-
-        create: () => {
-            throw new Error(
-                '[SDK] createTUIApp().create() is deprecated. ' +
-                'Runtime should call initializeComponent() instead.'
-            );
-        },
     };
 
     // 将factory自己设置为component (Runtime会调用factory.initializeComponent)

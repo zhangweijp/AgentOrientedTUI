@@ -1,7 +1,55 @@
 import { describe, expect, it } from 'vitest';
-import { mapExecutionFact } from './invocation-outcome.js';
+import { captureBoundedJson, mapExecutionFact } from './invocation-outcome.js';
+import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
 const limits = { maxDepth: 52, maxNodes: 32032, maxApproxBytes: 520 * 1024, maxCanonicalBytes: 520 * 1024 };
 const error = { code: 'E_INVALID_ARGS', message: 'Business failure', context: { synthetic: true } };
+describe('B2 bounded JSON byte measurement', () => {
+    it('matches canonical UTF-8 bytes for escaped, Unicode, numeric and unusual object keys', () => {
+        const record = Object.create(null) as Record<string, unknown>;
+        record['10'] = 'line\u2028 paragraph\u2029 quote " slash \\ nul \u0000 lone \uD800';
+        record['2'] = -0;
+        record.__proto__ = { nested: [null, true, false, 1e21, 1e-7, '漢字😀'] };
+        record.toJSON = 'ordinary JSON data';
+        record.constructor = { empty: [] };
+        const input = { record, tuple: [null, true, false, -0, 1e21, 1e-7, '\uDFFF'] };
+        const copied = copyJson(input, limits);
+        const canonicalBytes = utf8Size(canonicalJson(copied));
+        const nativeBytes = utf8Size(JSON.stringify(copied)!);
+
+        expect(nativeBytes).toBe(canonicalBytes);
+        expect(captureBoundedJson(input, { ...limits, maxCanonicalBytes: canonicalBytes }).bytes).toBe(canonicalBytes);
+        expect(() => captureBoundedJson(input, { ...limits, maxCanonicalBytes: canonicalBytes - 1 }))
+            .toThrow(new RangeError('Bounded JSON capacity exceeded'));
+        expect(Object.isFrozen(copied)).toBe(true);
+        expect(Object.isFrozen((copied as { record: object }).record)).toBe(true);
+        expect(Object.isFrozen((copied as { tuple: readonly unknown[] }).tuple)).toBe(true);
+        expect(Object.getPrototypeOf((copied as { record: object }).record)).toBeNull();
+        expect(Object.getPrototypeOf((copied as { tuple: readonly unknown[] }).tuple)).toBe(Array.prototype);
+    });
+
+    it.each(['array', 'object'] as const)('does not invoke inherited %s toJSON while capturing detached JSON', prototype => {
+        const input = { nested: [{ value: '漢字😀\uD800' }, 1e21, -0] };
+        const expected = utf8Size(canonicalJson(copyJson(input, limits)));
+        const target = prototype === 'array' ? Array.prototype : Object.prototype;
+        const previous = Object.getOwnPropertyDescriptor(target, 'toJSON');
+        let getterReads = 0, functionCalls = 0;
+        const descriptor: PropertyDescriptor = prototype === 'array'
+            ? { configurable: true, get() { getterReads++; return () => { functionCalls++; return 'changed'; }; } }
+            : { configurable: true, writable: true, value() { functionCalls++; return 'changed'; } };
+        let result: ReturnType<typeof captureBoundedJson> | undefined;
+        try {
+            Object.defineProperty(target, 'toJSON', descriptor);
+            result = captureBoundedJson(input, { ...limits, maxCanonicalBytes: expected });
+        } finally {
+            if (previous) Object.defineProperty(target, 'toJSON', previous);
+            else Reflect.deleteProperty(target, 'toJSON');
+        }
+        expect(getterReads).toBe(0);
+        expect(functionCalls).toBe(0);
+        expect(result?.bytes).toBe(expected);
+    });
+});
+
 describe('B2 neutral fact mapping', () => {
     it.each([
         [{ kind: 'operation-result', phase: 'not-entered', result: { success: false, error } }, 'rejected', 'not-entered'],

@@ -9,6 +9,8 @@ export { jsonSchema } from 'ai';
 export type { Tool } from 'ai';
 export type {
     IDrivenSource,
+    ContextDrivenSource,
+    DrivenSource,
     DrivenSourceContext,
     MessageWithTimestamp,
     ToolResult,

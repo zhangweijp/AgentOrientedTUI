@@ -26,14 +26,8 @@ export { DesktopLogger, type DesktopLoggerOptions, type LogLevel } from './deskt
 // ============================================================================
 export {
     SignalBus,
-    createSignalOutputStream,
     type SignalListener,
     type SignalBusOptions,
     type SignalOutputStream
 } from './signal-bus.js';
-
-// ============================================================================
-// SignalService - ISignalService 实现 (Option B)
-// ============================================================================
-export { SignalServiceImpl } from './signal-service.js';
 

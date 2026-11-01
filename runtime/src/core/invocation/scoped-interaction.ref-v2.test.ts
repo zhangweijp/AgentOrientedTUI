@@ -17,7 +17,7 @@ function fixture() {
         expect(r.status).toBe('published');if (r.status !== 'published') throw Error('publication');return r.snapshot;
     }
     const original = publish();
-    const binding = { identity: {}, mode: 'snapshot-value-v1' as const, isLive: () => ({ ok: true }), validateInput: (_s: unknown, input: any) => {
+    const binding = { identity: {}, mode: 'snapshot-value-v2' as const, isLive: () => ({ ok: true }), validateInput: (_s: unknown, input: any) => {
         calls.validate++;if (!contract.ok) throw Error('fixture');const r = contract.contract.validateEffective(input);return r.ok ? { ok: true, value: r.value } : { ok: false };
     }, execute: (ctx: any) => { calls.execute++;seen.push(ctx);return { kind: 'operation-result' as const, phase: 'entered-returned' as const, result: { success: true, data: { label: ctx.effectiveInput.file.label } } }; } };
     const authority = createScopedInteraction(core.store, { namespace: 'ref-v2', now: () => 0 });

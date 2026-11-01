@@ -15,7 +15,7 @@
  * - AppManager 持有 Desktop 引用用于日志和信号
  */
 
-import type { AppID, AppState, IDesktop, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
+import type { AppID, AppState, DesktopID, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
 import { createAppId } from '../../spi/index.js';
 import type { SandboxCloseReport } from './worker-sandbox.js';
 import type { AppManagerCloseReport, AppManagerCloseOperation } from '../../spi/runtime/close.interface.js';
@@ -82,11 +82,11 @@ export interface AppManagerOptions {
  * 
  * [Worker-Only] 使用 WorkerSandbox 实现 App 隔离
  */
-interface IDesktopInternal extends IDesktop {
+interface IDesktopInternal {
+    readonly id: DesktopID;
     emitSignal(reason: string): void;
     logSystem(message: string, level?: 'info' | 'warn' | 'error'): void;
     logAppOperation(appId: AppID, message: string, level?: 'info' | 'warn' | 'error'): void;
-    getDocument?(): Document; // Optional/Deprecated
 }
 
 type InstallOptions = AppInteractionOptions & {
@@ -151,14 +151,18 @@ export class AppManager {
     private targets?: OwnedSandbox[];
     private folded?: CloseState;
 
-    constructor(desktop: IDesktop, options?: AppManagerOptions) {
-        this.desktop = desktop as IDesktopInternal;this.options = options ?? {};
+    constructor(desktop: IDesktopInternal, options?: AppManagerOptions) {
+        this.desktop = desktop;this.options = options ?? {};
         this.ownsWorkerPool = !options?.workerPool;
         this.workerPool = options?.workerPool ?? new WorkerPool({ ...(options?.runtimeConfig ?? RUNTIME_DEFAULTS).worker.pool });
     }
     closeWorkerPool(): Promise<WorkerPoolReport | null> { return this.ownsWorkerPool ? this.workerPool.destroy() : Promise.resolve(null); }
     getWorkerPoolReport(): WorkerPoolReport | null { return this.ownsWorkerPool ? this.workerPool.getReport() : null; }
     private assertActive(): void { if (this.phase !== 'active') throw closeError('APP_MANAGER_CLOSED'); }
+    private assertExpectedInstance(worker: WorkerSandbox | undefined, expectedInstanceId?: string): void {
+        if (expectedInstanceId !== undefined && (!worker?.appInstanceId || worker.appInstanceId !== expectedInstanceId))
+            throw closeError('APP_INSTANCE_CHANGED');
+    }
     private capacity(): void { this.assertActive();if (this.inFlight.size >= 128) throw closeError('LIFECYCLE_CAPACITY_EXCEEDED'); }
     private allocateId(): AppID {
         while (!this.idsExhausted) {
@@ -211,8 +215,8 @@ export class AppManager {
     install(appModulePath: string, options?: InstallOptions): Promise<AppID> {
         let id: AppID;
         try {
-            const experimentalInteractionModes = captureInteractionModes(options);
-            options = { ...options, experimentalInteractionModes };
+            const interactionModes = captureInteractionModes(options);
+            options = { ...options, interactionModes };
             this.capacity();id = options?.appId ?? this.allocateId();
             if (this.installedApps.has(id) || this.workers.has(id) || this.appOperations.has(id)) throw closeError('APP_ALREADY_EXISTS');
         } catch (error) { return Promise.reject(error); }
@@ -220,7 +224,7 @@ export class AppManager {
             const meta: InstalledApp = { appId: id, name: options?.name, description: options?.description, whatItIs: options?.whatItIs,
                 whenToUse: options?.whenToUse, html: '', status: 'pending', installedAt: Date.now(), modulePath: appModulePath,
                 workerScript: options?.workerScriptPath, config: options?.config, runtimeConfig: options?.runtimeConfig, promptRole: options?.promptRole,
-                experimentalInteractionModes: options?.experimentalInteractionModes };
+                interactionModes: options?.interactionModes };
             this.installedApps.set(id, meta);await this.installMeta(meta, options);return id;
         });
     }
@@ -230,7 +234,7 @@ export class AppManager {
             const worker = new WorkerSandbox({ appId: meta.appId, desktopId: this.desktop.id, name: meta.name, appModulePath: meta.modulePath!,
                 workerScriptPath: meta.workerScript, config: this.withLifecycleMetadata(meta.config, options?.lifecycle),
                 runtimeConfig: meta.runtimeConfig ?? this.options.runtimeConfig, workerPool: this.workerPool,
-                experimentalInteractionModes: meta.experimentalInteractionModes });
+                interactionModes: meta.interactionModes });
             record = this.owned(meta.appId, worker);record.meta = meta;this.workers.set(meta.appId, worker);
             worker.onUpdateRequest = () => { if (this.phase === 'active' && this.workers.get(meta.appId) === worker) this.desktop.emitSignal('manual_refresh'); };
             await worker.installDynamic();this.current(meta, worker);if (record.stopReopen) throw closeError('APP_MANAGER_CLOSED');
@@ -250,13 +254,13 @@ export class AppManager {
         }
     }
     registerPendingApp(options: PendingOptions): AppID {
-        const experimentalInteractionModes = captureInteractionModes(options);
+        const interactionModes = captureInteractionModes(options);
         this.assertActive();const id = options.appId ?? this.allocateId();
         if (this.installedApps.has(id) || this.workers.has(id) || this.appOperations.has(id)) throw closeError('APP_ALREADY_EXISTS');
         this.installedApps.set(id, { appId: id, name: options.name, description: options.description, whatItIs: options.whatItIs, whenToUse: options.whenToUse,
             html: '', status: 'pending', installedAt: Date.now(), modulePath: options.modulePath, workerScript: options.workerScriptPath, promptRole: options.promptRole,
             config: options.config, runtimeConfig: options.runtimeConfig,
-            experimentalInteractionModes });
+            interactionModes });
         this.desktop.logSystem(`Registered pending app: ${id} (${options.name ?? 'unnamed'})`);return id;
     }
     startPendingApp(id: AppID, options?: Pick<InstallOptions, 'notifyAppInstalled' | 'emitLifecycleSignal' | 'lifecycleMessage' | 'lifecycle'>): Promise<boolean> {
@@ -378,8 +382,8 @@ export class AppManager {
         if (!this.workers.has(id)) { console.warn(`App ${id} not found.`);return; }
         if (meta) meta.status = 'running';this.desktop.logSystem(`Opened application: ${id}`);this.desktop.logAppOperation(id, 'Application opened.');this.desktop.emitSignal('app_opened');
     }
-    async closeApp(id: AppID): Promise<void> {
-        this.assertActive();const worker = this.workers.get(id);if (!worker) return;const record = this.owned(id, worker);record.stopReopen = true;
+    async closeApp(id: AppID, expectedInstanceId?: string): Promise<void> {
+        this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const record = this.owned(id, worker);record.stopReopen = true;
         const accepted = this.appOperations.get(id)?.promise;const report = await this.clean(record, 'close', true);
         if (accepted) await accepted.catch(() => {});this.releaseRecord(record, true);
         const mapped = this.contribution(record);if (mapped.hasFailures || !report.resourcesReleased) throw closeError('APP_CLOSE_FAILED', mapped);
@@ -395,21 +399,26 @@ export class AppManager {
             const meta = this.installedApps.get(id);await worker.resume();this.assertActive();if (this.workers.get(id) === worker && this.installedApps.get(id) === meta && meta) meta.status = 'running';
         }
     }
-    async collapseApp(id: AppID): Promise<void> { this.assertActive();if (!this.workers.has(id)) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'collapsed';this.desktop.logAppOperation(id, 'Application collapsed.');this.desktop.emitSignal('dom_mutation'); }
-    async showApp(id: AppID): Promise<void> { this.assertActive();if (!this.workers.has(id)) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'running';this.desktop.logAppOperation(id, 'Application shown.');this.desktop.emitSignal('dom_mutation'); }
+    async collapseApp(id: AppID, expectedInstanceId?: string): Promise<void> { this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'collapsed';this.desktop.logAppOperation(id, 'Application collapsed.');this.desktop.emitSignal('dom_mutation'); }
+    async showApp(id: AppID, expectedInstanceId?: string): Promise<void> { this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'running';this.desktop.logAppOperation(id, 'Application shown.');this.desktop.emitSignal('dom_mutation'); }
     getAllWorkers(): Map<AppID, WorkerSandbox> { return new Map(this.workers); }
-    getInstalledApps(): InstalledApp[] { return [...this.installedApps.values()].map(app => ({ ...app })); }
+    getInstalledApps(): Array<InstalledApp & { readonly appInstanceId?: string }> {
+        return [...this.installedApps.values()].map(app => {
+            const appInstanceId = this.workers.get(app.appId)?.appInstanceId;
+            return { ...app, ...(appInstanceId ? { appInstanceId } : {}) };
+        });
+    }
     getDynamicAppIds(): AppID[] { return [...this.workers.keys()]; }
     getAppStates(): AppState[] { return [...this.installedApps].map(([appId, app]) => ({ appId, name: app.name, html: app.html, status: app.status, installedAt: app.installedAt })); }
     getWorkerSandbox(id: AppID): WorkerSandbox | undefined { return this.workers.get(id); }
-    experimentalCreateAppScope(appId: string, policy: ScopePolicy): AppScopeResult {
+    createAppScope(appId: string, policy: ScopePolicy): AppScopeResult {
         const id = appId as AppID, meta = this.installedApps.get(id), worker = this.workers.get(id);
         const unavailable = (): AppScopeResult => Object.freeze({ status: 'rejected', issue: Object.freeze({ code: 'SCOPE_UNAVAILABLE', message: 'App scope is unavailable' }) });
         const current = () => this.phase === 'active' && !!meta && !!worker && this.installedApps.get(id) === meta && this.workers.get(id) === worker &&
             (meta.status === 'running' || meta.status === 'collapsed') && worker.status === 'running' && !worker.disposed && !this.details.get(worker)?.stopReopen;
         if (!current()) return unavailable();
-        const create = worker!.experimentalCreateAppScope;
-        if (typeof create !== 'function' || !current()) return unavailable();
+        const create = worker!.createAppScope;
+        if (!current()) return unavailable();
         const result = create.call(worker, policy);
         if (!current()) { if (result.status === 'opened') result.client.close();return unavailable(); }
         return result;

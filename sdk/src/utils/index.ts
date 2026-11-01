@@ -23,10 +23,3 @@ export function escapeJsonForAttr(obj: unknown): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
-
-// Argument validation
-export {
-  validateArgs,
-  formatValidationErrors,
-  type ValidationError,
-} from "./validateArgs.js";

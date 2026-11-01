@@ -1,17 +1,12 @@
-import { isCreateIfAbsentSchema, matchesCreateIfAbsentInput, type CreateIfAbsentTerminal } from './create-if-absent-contract.js';
-import { compileOrdinaryProfile, ORDINARY_PARAMETER_MARKER } from './ordinary-parameter-profile.js';
+import { compileOrdinaryProfile } from './ordinary-parameter-profile.js';
 import { compileSnapshotValueProfile } from './snapshot-value-parameter-contract.js';
 import { validateVersionedToolRefDeclarations } from './versioned-ref-declarations.js';
 import type { OperationResult } from '../../spi/core/operations.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
 import type { JsonValue } from '../snapshot/types.js';
-import { validateToolRefDeclarations } from './ref-declarations.js';
-import type { SafeRefInvoker, SafeCreateIfAbsentInvoker, RefV1Terminal } from './invocation-terminal.js';
-
-export function isClosedEmptyOrdinarySchema(value: unknown): boolean {
-    try { return canonicalJson(copyJson(value, {maxDepth:2,maxNodes:5,maxApproxBytes:256})) ===
-        '{"additionalProperties":false,"properties":{},"required":[],"type":"object"}'; } catch { return false; }
-}
+import { validTargetSelector } from './target-selector.js';
+import type { ToolTargetV2, ToolTargetSelector } from '../snapshot/types.js';
+import type { SafeRefInvoker, ViewToolInvocationTerminal } from './invocation-terminal.js';
 
 export interface ViewInstance {
     readonly viewId: string;
@@ -20,21 +15,17 @@ export interface ViewInstance {
 }
 
 export interface ViewToolSpec {
+    readonly target?: ToolTargetSelector;
     readonly name: string;
     readonly description: string;
     readonly inputSchema: JsonValue;
     readonly isMutating: boolean;
 }
 
-export interface ToolTarget {
-    readonly viewId: string;
-    readonly viewInstanceId: string;
-    /** Changes when this View's Tool is re-registered or its availability changes. */
-    readonly bindingVersion: number;
-}
+export interface ToolTarget extends ToolTargetV2 {}
 
 /** An observation for a future AppSnapshot producer, NOT an execution permit. */
-export interface AggregatedViewTool extends ViewToolSpec {
+export interface AggregatedViewTool extends Omit<ViewToolSpec, 'target'> {
     readonly id: string;
     readonly appId: string;
     readonly appInstanceId: string;
@@ -59,11 +50,11 @@ type ToolRegistration = {
     readonly token: object;
     readonly spec: Readonly<ViewToolSpec>;
     readonly canonical: string;
+    readonly bytes: number;
+    readonly target?: ToolTargetSelector;
     readonly handler: Handler;
-    enabled: boolean;
     bindingVersion: number;
-    readonly safeCreate?:Readonly<{handler:Handler;invoke:SafeCreateIfAbsentInvoker;viewInstanceId:string;bindingVersion:number}>;
-    readonly safeInvocation?: Readonly<{ mode: 'snapshot-value-v1' | 'snapshot-value-v2' | 'ordinary-v1' | 'ordinary-v2'; handler: Handler;
+    readonly safeInvocation?: Readonly<{ mode: 'snapshot-value-v2' | 'ordinary-v2'; handler: Handler;
         invoke: SafeRefInvoker; viewInstanceId: string; bindingVersion: number }>;
 };
 
@@ -134,7 +125,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             released = true;
             const tools = bindings.get(viewInstanceId), registration = tools?.get(name);
             if (registration?.token !== token) return;
-            retainedBytes -= utf8Size(registration.canonical);
+            retainedBytes -= registration.bytes;
             bindingCount--;
             tools!.delete(name);
         };
@@ -181,10 +172,11 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             return failure('VIEW_INSTANCE_REVOKED', 'Original target View instance is no longer mounted');
         }
         const registered = bindings.get(view.viewInstanceId)?.get(observedTool.name);
-        if (!registered || !registered.enabled) {
-            return failure('TOOL_UNAVAILABLE', 'Tool is no longer enabled in the target View');
+        if (!registered) {
+            return failure('TOOL_UNAVAILABLE', 'Tool is no longer registered in the target View');
         }
         if (registered.bindingVersion !== observedTarget.bindingVersion ||
+            canonicalJson(registered.target ? { ...registered.target } : null) !== canonicalJson(observedTarget.selector ? { ...observedTarget.selector } : null) ||
             registered.canonical !== canonicalJson({
                 name: observedTool.name, description: observedTool.description,
                 inputSchema: observedTool.inputSchema, isMutating: observedTool.isMutating,
@@ -194,33 +186,12 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         return { success: true };
     }
 
-    function validateRefBinding(observedTool: AggregatedViewTool, observedTarget: ToolTarget): OperationResult {
-        const live = validate(observedTool, observedTarget);
-        if (!live.success) return live;
-        const registered = bindings.get(observedTarget.viewInstanceId)!.get(observedTool.name)!;
-        const safe = registered.safeInvocation;
-        return !Object.hasOwn(observedTool.inputSchema as object, ORDINARY_PARAMETER_MARKER) && safe?.mode === 'snapshot-value-v1' && typeof safe.invoke === 'function' && safe.handler === registered.handler &&
-            safe.viewInstanceId === observedTarget.viewInstanceId && safe.bindingVersion === registered.bindingVersion
+    function validateTargetInput(target: ToolTarget, args: Readonly<Record<string, unknown>>): OperationResult {
+        if (!target.selector) return { success: true };
+        const field = args && typeof args === 'object' && Object.getOwnPropertyDescriptor(args, target.selector.param);
+        return field && 'value' in field && field.value === target.selector.value
             ? { success: true }
-            : failure('REF_EXECUTION_UNAVAILABLE', 'Current Tool binding has no safe Ref wrapper');
-    }
-
-    function validateOrdinaryBinding(tool: AggregatedViewTool, target: ToolTarget): OperationResult {
-        const live = validate(tool,target);
-        if (!live.success) return live;
-        const registered = bindings.get(target.viewInstanceId)!.get(tool.name)!;
-        const safe = registered.safeInvocation;
-        return !tool.isMutating && isClosedEmptyOrdinarySchema(tool.inputSchema) && safe?.mode === 'ordinary-v1' &&
-            typeof safe.invoke === 'function' && safe.handler === registered.handler && safe.viewInstanceId === target.viewInstanceId &&
-            safe.bindingVersion === registered.bindingVersion ? {success:true} : failure('TOOL_EXECUTION_UNAVAILABLE','Current Tool has no safe ordinary wrapper');
-    }
-
-    function validateCreateIfAbsentBinding(tool:AggregatedViewTool,target:ToolTarget):OperationResult {
-        const live=validate(tool,target);if(!live.success)return live;
-        const registered=bindings.get(target.viewInstanceId)!.get(tool.name)!,safe=registered.safeCreate;
-        return tool.isMutating && isCreateIfAbsentSchema(tool.inputSchema) && safe && typeof safe.invoke==='function' &&
-            safe.handler===registered.handler && safe.viewInstanceId===target.viewInstanceId && safe.bindingVersion===registered.bindingVersion
-            ? {success:true} : failure('TOOL_EXECUTION_UNAVAILABLE','Current Tool has no safe creation callable');
+            : failure('INVALID_VIEW_TARGET', 'Target parameter does not match the observed View binding');
     }
 
     function validateOrdinaryParametersBinding(tool: AggregatedViewTool, target: ToolTarget): OperationResult {
@@ -260,48 +231,23 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                 bindings: bindingCount, retainedBytes });
         },
         validate,
-        validateRefBinding,
-        validateOrdinaryBinding,
         validateOrdinaryParametersBinding,
         validateSnapshotValueParametersBinding,
-        invokeSnapshotValueParameters(tool: AggregatedViewTool, target: ToolTarget, args: Readonly<Record<string, unknown>>): RefV1Terminal | Promise<RefV1Terminal> {
+        invokeSnapshotValueParameters(tool: AggregatedViewTool, target: ToolTarget, args: Readonly<Record<string, unknown>>): ViewToolInvocationTerminal | Promise<ViewToolInvocationTerminal> {
             const live = validateSnapshotValueParametersBinding(tool, target);
             if (!live.success) return { phase: 'not-entered', result: live };
+            const selected = validateTargetInput(target, args);
+            if (!selected.success) return { phase: 'not-entered', result: selected };
             return bindings.get(target.viewInstanceId)!.get(tool.name)!.safeInvocation!.invoke(args);
         },
-        invokeOrdinaryParameters(tool: AggregatedViewTool, target: ToolTarget, args: Readonly<Record<string, unknown>>): RefV1Terminal | Promise<RefV1Terminal> {
+        invokeOrdinaryParameters(tool: AggregatedViewTool, target: ToolTarget, args: Readonly<Record<string, unknown>>): ViewToolInvocationTerminal | Promise<ViewToolInvocationTerminal> {
             const live = validateOrdinaryParametersBinding(tool, target);
             if (!live.success) return { phase: 'not-entered', result: live };
+            const selected = validateTargetInput(target, args);
+            if (!selected.success) return { phase: 'not-entered', result: selected };
             // No yield between the final identity check and the private SDK helper entry.
             return bindings.get(target.viewInstanceId)!.get(tool.name)!.safeInvocation!.invoke(args);
         },
-        validateCreateIfAbsentBinding,
-        invokeCreateIfAbsent(tool:AggregatedViewTool,target:ToolTarget,args:Readonly<Record<string,unknown>>):CreateIfAbsentTerminal|Promise<CreateIfAbsentTerminal> {
-            const live=validateCreateIfAbsentBinding(tool,target);
-            if(!live.success)return {phase:'not-entered',outcome:{status:'rejected',code:live.error!.code,message:live.error!.message}};
-            if(!matchesCreateIfAbsentInput(tool.inputSchema,args))return {phase:'not-entered',outcome:{status:'rejected',code:'E_INVALID_ARGS',message:'Expected exact required string arguments'}};
-            return bindings.get(target.viewInstanceId)!.get(tool.name)!.safeCreate!.invoke(args);
-        },
-        invokeOrdinary(tool: AggregatedViewTool, target: ToolTarget, args: Readonly<Record<string, unknown>>): RefV1Terminal | Promise<RefV1Terminal> {
-            const live = validateOrdinaryBinding(tool,target);
-            if (!live.success) return {phase:'not-entered',result:live};
-            try {
-                const captured=copyJson(args,{maxDepth:1,maxNodes:1,maxApproxBytes:16});
-                if (!captured || typeof captured!=='object' || Array.isArray(captured) || Reflect.ownKeys(captured).length) throw new Error();
-            } catch { return {phase:'not-entered',result:failure('E_INVALID_ARGS','Expected empty Tool arguments')}; }
-            return bindings.get(target.viewInstanceId)!.get(tool.name)!.safeInvocation!.invoke(args);
-        },
-
-        invokeRef(observedTool: AggregatedViewTool, observedTarget: ToolTarget,
-            args: Readonly<Record<string, unknown>>): RefV1Terminal | Promise<RefV1Terminal> {
-            const live = validateRefBinding(observedTool, observedTarget);
-            if (!live.success) return { phase: 'not-entered', result: live };
-            if (observedTool.isMutating) return { phase: 'not-entered',
-                result: failure('TOOL_PERMISSION_DENIED', 'Ref protocol only supports read-only Tools') };
-            // No yield between live validation, binding lookup and actual safe invocation.
-            return bindings.get(observedTarget.viewInstanceId)!.get(observedTool.name)!.safeInvocation!.invoke(args);
-        },
-
         mount(viewId: string, viewType: string): ViewInstance {
             assertActive();
             nonEmpty(viewId, 'viewId');
@@ -335,7 +281,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             if (!view) return;
             retainedBytes -= viewBytes(view);
             for (const registration of bindings.get(viewInstanceId)!.values()) {
-                retainedBytes -= utf8Size(registration.canonical);
+                retainedBytes -= registration.bytes;
                 bindingCount--;
             }
             byInstanceId.delete(viewInstanceId);
@@ -347,20 +293,22 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             viewInstanceId: string,
             spec: ViewToolSpec,
             handler: Handler,
-            enabled = true,
-            options?: Readonly<{ safeRefInvocationMode: 'snapshot-value-v1' } | { safeSnapshotValueParametersInvocationMode: 'snapshot-value-v2' } | { safeOrdinaryInvocationMode: 'ordinary-v1' } | { safeOrdinaryParametersInvocationMode: 'ordinary-v2' } | {safeCreateIfAbsentInvocationMode:'create-if-absent-v1'}>,
-            safeInvoker?: SafeRefInvoker | SafeCreateIfAbsentInvoker,
+            options?: Readonly<{ safeSnapshotValueParametersInvocationMode: 'snapshot-value-v2' } | { safeOrdinaryParametersInvocationMode: 'ordinary-v2' }>,
+            safeInvoker?: SafeRefInvoker,
         ): () => void {
             assertActive();
             const view = current(viewInstanceId);
             // Inspect descriptors before reading fields; copying developer-owned
             // data must not execute getters or keep mutable aliases.
-            const copied = copyJson(spec, {
+            const declaration = copyJson(spec, {
                 maxDepth: 48, maxNodes: 10_000, maxApproxBytes: 128 * 1024,
             }) as unknown as Readonly<ViewToolSpec>;
+            const { target, ...copied } = declaration;
+            if (Object.hasOwn(declaration, 'target') && !validTargetSelector(target, copied.inputSchema))
+                throw new ViewToolContractError('TOOL_TARGET_INVALID', 'target must bind an existing required string parameter');
             nonEmpty(copied.name, 'tool name');
             nonEmpty(copied.description, 'tool description');
-            if (typeof handler !== 'function' || typeof enabled !== 'boolean' ||
+            if (typeof handler !== 'function' ||
                 typeof copied.isMutating !== 'boolean' ||
                 !copied.inputSchema || typeof copied.inputSchema !== 'object' ||
                 Array.isArray(copied.inputSchema) ||
@@ -377,7 +325,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             if (options !== undefined) {
                 const metadata = copyJson(options, { maxDepth: 1, maxNodes: 2, maxApproxBytes: 128 });
                 if (!metadata || Array.isArray(metadata) || typeof metadata !== 'object' ||
-                    Object.keys(metadata).length !== 1 || !((metadata as Readonly<Record<string, JsonValue>>).safeRefInvocationMode === 'snapshot-value-v1' || (metadata as Readonly<Record<string, JsonValue>>).safeSnapshotValueParametersInvocationMode === 'snapshot-value-v2' || (metadata as Readonly<Record<string, JsonValue>>).safeOrdinaryInvocationMode === 'ordinary-v1' || (metadata as Readonly<Record<string, JsonValue>>).safeOrdinaryParametersInvocationMode === 'ordinary-v2' || (metadata as Readonly<Record<string, JsonValue>>).safeCreateIfAbsentInvocationMode === 'create-if-absent-v1')) {
+                    Object.keys(metadata).length !== 1 || !((metadata as Readonly<Record<string, JsonValue>>).safeSnapshotValueParametersInvocationMode === 'snapshot-value-v2' || (metadata as Readonly<Record<string, JsonValue>>).safeOrdinaryParametersInvocationMode === 'ordinary-v2')) {
                     throw new ViewToolContractError('TOOL_INVALID', 'Invalid Ref registration metadata');
                 }
             }
@@ -385,7 +333,6 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                 throw new ViewToolContractError('TOOL_INVALID', 'Invalid safe Ref callable');
             }
 
-            const creation=options!==undefined && 'safeCreateIfAbsentInvocationMode' in options;
             const parameters = options !== undefined && 'safeOrdinaryParametersInvocationMode' in options;
             const snapshotParameters = options !== undefined && 'safeSnapshotValueParametersInvocationMode' in options;
             const snapshotProfile = compileSnapshotValueProfile(copied.inputSchema);
@@ -394,10 +341,6 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                 throw new ViewToolContractError('TOOL_INVALID', 'Ref V2 requires an exact profile, mode and safe callable');
             if (parameters && (typeof safeInvoker !== 'function' || !compileOrdinaryProfile(copied.inputSchema)))
                 throw new ViewToolContractError('TOOL_INVALID', 'ordinary-v2 requires a safe callable and normalized ordinary profile');
-            if(creation && (typeof safeInvoker!=='function' || !copied.isMutating || !isCreateIfAbsentSchema(copied.inputSchema))) {
-                throw new ViewToolContractError('TOOL_INVALID','Creation requires a safe callable and closed string parameters');
-            }
-
             // All same-type declarations must expose one identical public contract.
             // Do not pick the first registered handler or silently suffix Tool names.
             for (const [otherId, otherTools] of bindings) {
@@ -410,34 +353,26 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                         'Different public Tool contract for ' + view.viewType + '.' + copied.name,
                     );
                 }
+                if (other && other.target?.param !== target?.param)
+                    throw new ViewToolContractError('TOOL_TARGET_CONFLICT', 'Same-type Tools must declare the same target parameter');
+                if (other && target && other.target?.value === target.value)
+                    throw new ViewToolContractError('TOOL_TARGET_CONFLICT', 'Target parameter values must identify exactly one View');
             }
-            const bytes = utf8Size(canonical);
+            const bytes = utf8Size(canonicalJson(declaration as unknown as JsonValue));
             if (bindingCount >= captured.maxBindings || bytes > captured.maxRetainedBytes - retainedBytes) {
                 throw new ViewToolContractError('TOOL_CAPACITY', 'Tool retention limit reached');
             }
             const bindingVersion = issueBindingVersion();
             const registration: ToolRegistration = {
-                token: {}, spec: copied, canonical, handler, enabled,
+                token: {}, spec: Object.freeze(copied), canonical, bytes, target, handler,
                 bindingVersion,
-                ...(creation ? {safeCreate:Object.freeze({handler,invoke:safeInvoker as SafeCreateIfAbsentInvoker,viewInstanceId,bindingVersion})} : {}),
-                ...(options === undefined || safeInvoker === undefined || creation ? {} : { safeInvocation: Object.freeze({ mode: snapshotParameters ? 'snapshot-value-v2' as const : parameters ? 'ordinary-v2' as const : 'safeOrdinaryInvocationMode' in options ? 'ordinary-v1' as const : 'snapshot-value-v1' as const,
+                ...(options === undefined || safeInvoker === undefined ? {} : { safeInvocation: Object.freeze({ mode: snapshotParameters ? 'snapshot-value-v2' as const : 'ordinary-v2' as const,
                     handler, invoke: safeInvoker as SafeRefInvoker, viewInstanceId, bindingVersion }) }),
             };
             currentTools.set(copied.name, registration);
             bindingCount++;
             retainedBytes += bytes;
             return cleanup(viewInstanceId, copied.name, registration.token);
-        },
-
-        setEnabled(viewInstanceId: string, name: string, enabled: boolean): void {
-            assertActive();
-            const viewTools = bindings.get(current(viewInstanceId).viewInstanceId)!;
-            const registration = viewTools.get(name);
-            if (!registration) throw new ViewToolContractError('TOOL_NOT_FOUND', 'Tool not registered');
-            if (typeof enabled !== 'boolean') throw new ViewToolContractError('TOOL_INVALID', 'enabled must be boolean');
-            if (registration.enabled === enabled) return;
-            registration.bindingVersion = issueBindingVersion();
-            registration.enabled = enabled;
         },
 
         /** Internal V2 Producer inventory; no Handler or live view object escapes. */
@@ -455,7 +390,6 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             }>();
             for (const [instanceId, view] of byInstanceId) {
                 for (const registration of bindings.get(instanceId)!.values()) {
-                    if (!registration.enabled) continue;
                     const id = toolId(view.viewType, registration.spec.name);
                     let group = grouped.get(id);
                     if (!group) {
@@ -466,6 +400,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                         viewId: view.viewId,
                         viewInstanceId: instanceId,
                         bindingVersion: registration.bindingVersion,
+                        ...(registration.target ? { selector: registration.target } : {}),
                     }));
                 }
             }
@@ -481,37 +416,5 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             ));
         },
 
-        /**
-         * Expects a source Tool and target supplied by the future trusted M4 adapter.
-         * Never re-resolves the public viewId to "whatever is mounted now".
-         * Snapshot validation, user permissions and business CAS remain M4 duties.
-         */
-        async invoke(
-            observedTool: AggregatedViewTool,
-            observedTarget: ToolTarget,
-            args: Readonly<Record<string, unknown>>,
-        ): Promise<OperationResult> {
-            const verified = validate(observedTool, observedTarget);
-            if (!verified.success) return verified;
-            const registered = bindings.get(observedTarget.viewInstanceId)!.get(observedTool.name)!;
-            if (Object.hasOwn(registered.spec.inputSchema as object, ORDINARY_PARAMETER_MARKER))
-                return failure('TOOL_EXECUTION_UNAVAILABLE', 'ordinary-v2 requires its negotiated safe channel');
-            if (validateToolRefDeclarations(registered.spec.inputSchema, registered.spec.isMutating)) {
-                return failure('REF_CONTRACT_UNSUPPORTED', 'Snapshot-value Ref execution is not implemented');
-            }
-            if (!args || typeof args !== 'object' || Array.isArray(args)) {
-                return failure('TOOL_INVALID_ARGS', 'Tool arguments must be an object');
-            }
-            try {
-                const result = await registered.handler(args);
-                if (!result || typeof result.success !== 'boolean') {
-                    return failure('TOOL_RESULT_INVALID', 'Tool handler returned an invalid result');
-                }
-                return result; // Do not turn a business { success:false } into success.
-            } catch (error) {
-                return failure('TOOL_HANDLER_EXCEPTION',
-                    error instanceof Error ? error.message : 'Tool execution failed');
-            }
-        },
     });
 }

@@ -28,11 +28,11 @@ async function start(existing?: Worker) {
     const post = worker.postMessage.bind(worker); worker.postMessage = (m: any) => { sent.push(m); post(m); };
     worker.stdout!.on('data', b => logs.push(String(b))); worker.stderr!.on('data', b => logs.push(String(b)));
     const host = new Host({ appId: 'scoped_sdk' as any, desktopId: 'd' as any, appModulePath: appFile, existingWorker: worker,
-        timeout: 1500, snapshotShadow: true, experimentalReadOnlyViewTools: true, experimentalSnapshotValueRefExecution: true });
+        timeout: 1500, interactionModes: ['ordinary-v2', 'snapshot-value-v2'] });
     worker.on('message', m => messages.push(m));
     const x = { host, worker, messages, sent, logs,
-        snapshot: () => (host as any).shadowReceiver.core.store.readLatest('scoped_sdk').snapshot,
-        refs: () => sent.filter(m => m.type === 'VIEW_TOOL_INVOKE_REF_V1') };
+        snapshot: () => (host as any).snapshotReceiver.core.store.readLatest('scoped_sdk').snapshot,
+        refs: () => sent.filter(m => m.type === 'VIEW_TOOL_INVOKE_REF_V2') };
     running.push(x); await host.start(); await host.open(); return x;
 }
 function scope(x: Awaited<ReturnType<typeof start>>) {
@@ -55,9 +55,10 @@ async function configure(x: Awaited<ReturnType<typeof start>>, data: any) {
     const changed = wait(x, m => m.type === 'SNAPSHOT_PREPARED' && m.draft.producerSeq > seq);
     await x.host.sendExternalEvent('aa' as any, 'configure', data); await changed;
 }
-async function counts(x: Awaited<ReturnType<typeof start>>, authorize = () => true) {
-    const snapshot = x.snapshot(), tool: any = Object.values(snapshot.tools).find((t: any) => t.name === 'stats');
-    return x.host.executeReadOnlyViewTool({ snapshotId: snapshot.id, toolId: tool.id, viewId: 'aa', args: {} }, authorize);
+async function counts(x: Awaited<ReturnType<typeof start>>) {
+    const tag = Math.random().toString(36).slice(2), result = wait(x, m => m.type === 'TEST_COUNTS' && m.tag === tag);
+    x.worker.postMessage({ type: 'TEST_INSPECT', tag });
+    return result;
 }
 
 describe('C actual emitted Host / accepted SDK / safe Worker Scope chain', () => {
@@ -66,13 +67,11 @@ describe('C actual emitted Host / accepted SDK / safe Worker Scope chain', () =>
         Host = (await import(pathToFileURL(join(runtime, 'dist/engine/app/worker-host.js')).href)).AppWorkerHost;
         const modules = join(temporary, 'node_modules'); await mkdir(join(modules, '@aotui'), { recursive: true });
         for (const pkg of ['preact', 'linkedom']) await symlink(join(runtime, 'node_modules', pkg), join(modules, pkg), 'dir');
-        await mkdir(join(modules, '@preact'), { recursive: true }); await symlink(join(runtime, 'node_modules/@preact/signals'), join(modules, '@preact/signals'), 'dir');
         await symlink(runtime, join(modules, '@aotui/runtime'), 'dir');
         appFile = join(temporary, 'app.mjs'); workerFile = join(runtime, 'dist/worker-runtime/index.js');
-        const b0 = process.env.AOTUI_REF_COMPAT_BASELINE ?? resolve(runtime, '../rfcs/sdk-runtime-delivery/w00-20261024T090930Z');
         await build({ stdin: { contents: await readFile(join(runtime, 'src/e2e-test/fixtures/snapshot-value-sdk.mjs'), 'utf8'), resolveDir: runtime,
             sourcefile: 'snapshot-value-sdk.mjs', loader: 'js' }, outfile: appFile,
-            alias: { '@fixture/sdk': join(runtime, '../sdk/dist'), '@fixture/old-sdk': join(b0, 'artifacts/rebuilt/sdk/dist') },
+            alias: { '@fixture/sdk': join(runtime, '../sdk/dist') },
             bundle: true, platform: 'node', format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent' });
     });
     afterEach(async () => {
@@ -130,38 +129,36 @@ describe('C actual emitted Host / accepted SDK / safe Worker Scope chain', () =>
         try {
             await configure(x, { enabled: false }); gate.resolve(true); const r = receipt(await running);
             expect(r.outcome.status).toBe('rejected'); expect(r.executionPhase).toBe(visibility === 'published' ? 'not-dispatched' : 'not-entered');
-            expect(x.refs()).toHaveLength(visibility === 'published' ? 0 : 1); expect((await counts(x)).data?.calls).toBe(0);
+            expect(x.refs()).toHaveLength(visibility === 'published' ? 0 : 1); expect((await counts(x)).calls).toBe(0);
             facts.push({ id: 'C07', visibility, phase: r.executionPhase, handlerCalls: 0, wire: x.refs().length });
         } finally { if (visibility === 'unpublished') { x.worker.off('message', relay); x.worker.on('message', deliver); } s.client.close(); }
     });
-    it('preserves the same E_INVALID_ARGS code at both trusted phases and allows later work after completed false', async () => {
+    it('rejects invalid parameters before dispatch and keeps a completed false result separate from transport loss', async () => {
         const x = await start(), s = scope(x), o = await s.observe();
         const before = receipt(await s.client.invoke(s.request(o, 'bad-param', { file: 'file', choice: 'disallowed' })));
         const entered = receipt(await s.client.invoke(s.request(o, 'business', { file: 'file', mode: 'false' })));
-        expect(before).toMatchObject({ executionPhase: 'not-entered', outcome: { status: 'rejected', details: { result: { error: { code: 'E_INVALID_ARGS' } } } } });
+        expect(before).toMatchObject({ executionPhase: 'not-dispatched', outcome: { status: 'rejected', code: 'ACTION_INPUT_INVALID' } });
         expect(entered).toMatchObject({ executionPhase: 'entered-returned', outcome: { status: 'unknown', details: { result: { error: { code: 'E_INVALID_ARGS' }, data: { calls: 1 } } } } });
         expect(x.host.getInteractionReport()?.transportUncertain).toBe(false);
-        expect(receipt(await s.client.invoke(s.request(o, 'next'))).outcome.status).toBe('succeeded'); expect(x.refs()).toHaveLength(3);
-        facts.push({ id: 'C08/C09', before: before.executionPhase, entered: entered.executionPhase, completedFalseNotTransportLoss: true, wire: 3 }); s.client.close();
+        expect(receipt(await s.client.invoke(s.request(o, 'next'))).outcome.status).toBe('succeeded'); expect(x.refs()).toHaveLength(2);
+        facts.push({ id: 'C08/C09', before: before.executionPhase, entered: entered.executionPhase, completedFalseNotTransportLoss: true, wire: 2 }); s.client.close();
     });
-    it('keeps hidden/foreign/entity/ordinary and old unsafe SDK qualifications out of C execution', async () => {
+    it('keeps hidden and foreign Refs out of execution while ordinary and Ref modes use their own bindings', async () => {
         const x = await start(), s = scope(x), o = await s.observe(), other = scope(x);
         expect(receipt(await other.client.invoke(s.request(o, 'moved'))).outcome.status).toBe('rejected');
-        expect(o.tools.some(tool => tool.name === 'stats')).toBe(false);
+        expect(x.host.getInteractionReport()?.negotiatedModes).toEqual(['ordinary-v2', 'snapshot-value-v2']);
+        expect(o.tools.some(tool => tool.name === 'read')).toBe(true);
+        expect(o.tools.some(tool => ['optional', 'multi'].includes(tool.name))).toBe(false);
         expect(receipt(await s.client.invoke({ invocationId: 'plain', observationId: o.observationId,
             bindingId: 'unobserved-ordinary-binding', input: { file: 'file' } }))).toMatchObject({
             executionPhase: 'not-dispatched', outcome: { status: 'rejected' },
         });
-        for (const [id, name, file] of [['entity', 'read', 'entity'], ['foreign', 'read', 'bb_only'], ['optional', 'optional', 'file']]) {
+        for (const [id, name, file] of [['unknown-ref', 'read', 'entity'], ['foreign-ref', 'read', 'bb_only']]) {
             expect(receipt(await s.client.invoke(s.request(o, id, { file }, name))).outcome.status).toBe('rejected');
         }
         expect(x.refs()).toHaveLength(0);
-        const legacy = await s.observe('legacy');
-        const unsafe = receipt(await s.client.invoke(s.request(legacy, 'unsafe', { file: 'file' }, 'read', 'legacy')));
-        expect(unsafe).toMatchObject({ executionPhase: 'not-entered', outcome: { status: 'rejected' } });
-        const snap = x.snapshot(), plain: any = Object.values(snap.tools).find((t: any) => t.name === 'plain');
-        expect(await x.host.executeReadOnlyViewTool({ snapshotId: snap.id, toolId: plain.id, viewId: 'legacy', args: {} }, () => true)).toMatchObject({ success: true, data: { oldCalls: 0 } });
-        expect(x.refs()).toHaveLength(1); facts.push({ id: 'C05/C16', unsafePhase: unsafe.executionPhase, oldOrdinarySucceeded: true, handlerCalls: 0 });
+        expect((await counts(x)).calls).toBe(0);
+        facts.push({ id: 'C05/C16', unknownAndForeignRefsRejected: true, noHandlerEntered: true });
         s.client.close(); other.client.close();
     });
     it('cancels only the closed Scope while actual remote work remains in flight', async () => {
@@ -179,11 +176,11 @@ describe('C actual emitted Host / accepted SDK / safe Worker Scope chain', () =>
         const request = s.request(o, 'blocked', { file: 'file', mode: 'barrier' }), pending = s.client.invoke(request);
         const handler = await wait(x, m => m.type === 'TEST_HANDLER_ENTERED'); const original = receipt(await pending), wire = x.refs()[0];
         expect(handler.calls).toBe(1); expect(original).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown' } });
-        expect(x.messages.some(m => m.type === 'VIEW_TOOL_INVOKE_REF_V1_RESPONSE' && m.requestId === wire.requestId)).toBe(false);
+        expect(x.messages.some(m => m.type === 'VIEW_TOOL_INVOKE_REF_V2_RESPONSE' && m.requestId === wire.requestId)).toBe(false);
         expect((x.host as any).pendingRequests.size).toBe(0); expect(x.host.getInteractionReport()).toMatchObject({ transportUncertain: true, core: { activeInvocations: 0 } });
         expect(receipt(await s.client.invoke(request))).toEqual(original); expect(receipt(await s.client.invoke(s.request(o, 'new'))).outcome.status).toBe('rejected');
         expect(x.host.createInteractionScope(s.policy).status).toBe('rejected'); expect(x.refs()).toHaveLength(1);
-        const late = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_REF_V1_RESPONSE' && m.requestId === wire.requestId);
+        const late = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_REF_V2_RESPONSE' && m.requestId === wire.requestId);
         await x.host.sendExternalEvent('aa' as any, 'release-handler', {}); const terminal = await late;
         expect(terminal.terminal.phase).toBe('entered-returned'); expect(receipt(await s.client.readReceipt('blocked'))).toEqual(original);
         await x.host.pause(); await x.host.resume(); expect(x.host.getInteractionReport()?.transportUncertain).toBe(true);
@@ -224,11 +221,14 @@ describe('C actual emitted Host / accepted SDK / safe Worker Scope chain', () =>
         const x = await start(), s = scope(x), o = await s.observe(); (x.host as any).timeout = 100;
         const request = s.request(o, mode, { file: 'file', mode }), r = receipt(await s.client.invoke(request));
         expect(r).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown' } });
-        expect(x.messages.filter(m => m.type === 'VIEW_TOOL_INVOKE_REF_V1_RESPONSE')).toHaveLength(0);
+        expect(x.messages.filter(m => m.type === 'VIEW_TOOL_INVOKE_REF_V2_RESPONSE')).toHaveLength(0);
         await wait(x, m => m.type === 'TEST_READ_HANDLER_ENTERED');
         expect(x.messages.filter(m => m.type === 'TEST_READ_HANDLER_ENTERED')).toEqual([{ type: 'TEST_READ_HANDLER_ENTERED', owner: 'aa', calls: 1 }]);
-        const authorize = vi.fn(() => true);expect((await counts(x, authorize)).success).toBe(false);
-        expect(authorize).not.toHaveBeenCalled();expect(x.sent.filter(m => m.type === 'VIEW_TOOL_INVOKE')).toHaveLength(0);
+        const authorize = vi.fn(() => true);s.controls.authorize = authorize;
+        expect(await s.client.invoke(s.request(o, 'after-loss'))).toMatchObject({ kind: 'receipt', receipt: {
+            executionPhase: 'not-dispatched', outcome: { status: 'rejected', code: 'TOOL_EXECUTION_UNAVAILABLE' },
+        } });
+        expect(authorize).not.toHaveBeenCalled();expect(x.refs()).toHaveLength(1);
         expect(receipt(await s.client.invoke(request))).toEqual(r);
         expect(x.host.getInteractionReport()?.transportUncertain).toBe(true); expect(x.host.createInteractionScope(s.policy).status).toBe('rejected');
         expect(x.refs()).toHaveLength(1); facts.push({ id: 'C09/C10', mode, noTrustedTerminal: true, handlerCalls: 1, wire: 1, transportUncertain: true }); s.client.close();

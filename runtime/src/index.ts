@@ -12,7 +12,7 @@
  * 
  * ### For Types (SPI Layer)
  * ```typescript
- * import type { IView, IViewContext, IKernel, OperationResult } from '@aotui/runtime';
+ * import type { IKernel, OperationResult } from '@aotui/runtime';
  * ```
  * 
  * ### For Integration (Adapters Layer)
@@ -28,21 +28,69 @@
  */
 
 // ============================================================================
-// 🟢 Public: Facades Layer (Product Layer Integration)
+// Public runtime and host contracts.
+// Keep this list explicit so internal SPI/Engine additions do not become public
+// accidentally.
 // ============================================================================
-// [P1 FIX] Renamed from "sdk" to "facades" to avoid confusion with @aotui/sdk package
-// This provides factory functions for Product Layer (Server) to create Runtime instances
-export * from './facades/index.js';
+export { createRuntime, type RuntimeConfig, type RuntimeConfigInput, defineRuntimeConfig } from './facades/index.js';
+export { Kernel } from './kernel/index.js';
 
-// ============================================================================
-// 🟢 Public: SPI Layer (Types & Interfaces - Stable Contract)
-// ============================================================================
-export * from './spi/index.js';
-
-// ============================================================================
-// 🟢 Public: Kernel (Orchestrator - Stable API)
-// ============================================================================
-export * from './kernel/index.js';
+export {
+    AOTUIError,
+    ERROR_CODES,
+    createOperationError,
+    failedResult,
+    createDesktopId,
+    createAppId,
+    createViewId,
+    isDesktopId,
+    isAppId,
+    isViewId,
+    SEMANTIC_INTERACTION_MODES,
+} from './spi/index.js';
+export type {
+    AppConfig,
+    AppContext,
+    AppDiscoveryInfo,
+    AppInteractionOptions,
+    AppID,
+    AppLaunchConfig,
+    AppScopeResult,
+    AppState,
+    AppStatePersistence,
+    AOAppEntry,
+    AOAppManifest,
+    AOAppRuntime,
+    AOAppView,
+    CloseOperation,
+    CloseReport,
+    DesktopCloseOperation,
+    DesktopCloseOptions,
+    DesktopCloseReport,
+    DesktopID,
+    DesktopState,
+    DesktopStatus,
+    ErrorCode,
+    IDesktop,
+    IDesktopManager,
+    IKernel,
+    InteractionMode,
+    InteractionCloseReport,
+    LLMOutputEvent,
+    LLMOutputEventMeta,
+    LLMOutputListener,
+    OperationError,
+    OperationResult,
+    ReinitializeDesktopAppsOptions,
+    ReinitializeDesktopAppsResult,
+    RuntimeCloseOperation,
+    RuntimeCloseReport,
+    RuntimeCloseReporting,
+    RuntimeInteractionAccess,
+    ShutdownOptions,
+    UpdateSignal,
+    ViewID,
+} from './spi/index.js';
 
 // ============================================================================
 // 🟢 Public: App Registry (Third-Party App Management)
@@ -75,7 +123,7 @@ export {
 // 🔴 REMOVED: Engine Layer Exports
 //
 // [方案 B] Engine internals are no longer exported to external consumers.
-// ViewTree implementation is internal to Worker Runtime (AppKernel).
+// Component View implementation is internal to Worker Runtime (AppKernel).
 //
 // For Runtime internal use (tests), import directly via relative paths:
 //   import { ViewTree } from './engine/view/tree.js';

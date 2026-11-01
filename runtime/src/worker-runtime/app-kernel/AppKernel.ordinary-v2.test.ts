@@ -14,6 +14,17 @@ const setup = async () => {
   return { kernel, port, identity };
 };
 describe('R03/R07 AppKernel Runtime-owned ordinary capture', () => {
+  it.each(['x'.repeat(51), 'has space'])('rejects invalid public Tool name at registration: %s', async name => {
+    const x = await setup();
+    try {
+      const definition = { description: 'Inspect', params: {}, handler: vi.fn(async () => ({ success: true })) };
+      expect(() => x.port.registerTool(x.identity, name, definition, undefined as any)).toThrow('AOTUI_TOOL_NAME_INVALID');
+      expect(x.kernel.getViewOwnedToolDefinitions()).toHaveLength(0);
+      expect((x.kernel as any).registerTypeTool).toBeUndefined();
+      expect(definition.handler).not.toHaveBeenCalled();
+    } finally { await x.kernel.onClose(); }
+  });
+
   it('delivers the one captured contract to factory and generates its matching public profile', async () => {
     const x = await setup(); let captured!: OrdinaryParameterContract;
     const params = { q: { type: 'string', required: true, constraints: { minLength: 1 } } };
@@ -48,6 +59,17 @@ describe('R03/R07 AppKernel Runtime-owned ordinary capture', () => {
         phase: 'entered-returned', result: { success: true, data: { changed: true } },
       });
       expect(safe).toHaveBeenCalledOnce(); expect(generic).not.toHaveBeenCalled();
+    } finally { await x.kernel.onClose(); }
+  });
+  it('does not publish a Tool that lacks a canonical V2 registration contract', async () => {
+    const x = await setup();
+    const generic = vi.fn(async () => ({ success: true }));
+    try {
+      expect(() => x.port.registerTool(x.identity, 'uncontracted', {
+        description: 'Uncontracted', params: {}, handler: generic, isMutating: false,
+      }, undefined as any)).toThrow();
+      expect(x.kernel.getViewOwnedToolDefinitions()).toHaveLength(0);
+      expect(generic).not.toHaveBeenCalled();
     } finally { await x.kernel.onClose(); }
   });
   it.each(['missing', 'wrong', 'throw', 'promise', 'non-boolean', 'extra'])('fails %s factory metadata without leaving a usable registration', async kind => {

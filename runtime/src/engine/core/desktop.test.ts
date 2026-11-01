@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Desktop } from './index.js';
 import { parseHTML } from 'linkedom';
+import { createCloseOperation, freezeClose, newCloseState, snapshotClose } from './close-operation.js';
 
 describe('Desktop', () => {
     let desktop: Desktop;
@@ -18,18 +19,29 @@ describe('Desktop', () => {
         expect(desktop.id).toContain('dt_');
     });
 
+    it('does not expose the retired snapshot-fragment or dispatcher entry points', () => {
+        expect(desktop).toHaveProperty('createAppScope');
+        for (const name of ['getSnapshotFragments', 'dispatchOperation', 'dismountView', 'hideView', 'showView', 'mountViewByLink', 'experimentalCreateAppScope']) {
+            expect(desktop).not.toHaveProperty(name);
+        }
+    });
+
     it('reinitializeApps delegates to AppManager and emits one coherent refresh signal', async () => {
         const appManager = {
+            beginClose: vi.fn(() => {
+                const state = newCloseState('app-manager');state.state = 'settled';
+                const report = () => freezeClose({ ...snapshotClose(state), scope: 'app-manager' as const });
+                return createCloseOperation(report, Promise.resolve(report()));
+            }),
+            cleanupAsync: vi.fn(async () => undefined),
             reinitializeAll: vi.fn().mockResolvedValue({
                 reinitializedAppIds: ['app_0'],
                 skippedAppIds: ['app_1'],
                 failedAppIds: [],
             }),
-            closeAll: vi.fn().mockResolvedValue(undefined),
             getInstalledApps: vi.fn().mockReturnValue([]),
             getAppStates: vi.fn().mockReturnValue([]),
             getDynamicAppIds: vi.fn().mockReturnValue([]),
-            getAllWorkers: vi.fn().mockReturnValue(new Map()),
             broadcastLLMOutput: vi.fn(),
         };
         const delegatedDesktop = new Desktop('dt_phase1' as any, {
@@ -52,7 +64,7 @@ describe('Desktop', () => {
         });
         expect(emitSignalSpy).toHaveBeenCalledWith('dt_phase1', 'manual_refresh');
 
-        delegatedDesktop.dispose();
+        await delegatedDesktop.dispose();
         emitSignalSpy.mockRestore();
     });
 

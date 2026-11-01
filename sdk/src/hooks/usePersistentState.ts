@@ -1,13 +1,11 @@
 import type { Dispatch, StateUpdater } from 'preact/hooks';
 import { useLayoutEffect, useMemo, useState } from './preact-hooks.js';
 import { useAppEnv } from './useAppConfig.js';
-import { useAppRuntimeContext } from '../context/AppRuntimeContext.js';
+import { useInternalAppRuntimeContext } from '../context/AppRuntimeContext.js';
 import type { AppStatePersistence, StateBindingStatus, StateValue, StateIssue } from '@aotui/runtime/spi';
 import type { StateBinding } from '@aotui/runtime/spi';
 
 export type PersistOptions<T> = {
-  /** @deprecated Saving is explicit or managed at close; no debounce timer is installed. */
-  debounceMs?: number;
   storageKey?: string;
   serialize?: (value: T) => unknown;
   deserialize?: (value: unknown) => T;
@@ -52,7 +50,7 @@ type Candidate<T> = {
 };
 
 export function usePersistentState<T>(key: string, initial: T, options: PersistOptions<T> = {}): [T, Dispatch<StateUpdater<T>>, PersistMeta] {
-  const { persistence } = useAppRuntimeContext();
+  const { persistence } = useInternalAppRuntimeContext();
   const lifecycle = useAppEnv<AOTUILifecycleMetadata>('__aotuiLifecycle');
   const hydrate = shouldHydratePersistentState(lifecycle, options);
   const [, refresh] = useState(0);

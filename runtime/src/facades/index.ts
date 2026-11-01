@@ -11,5 +11,5 @@
  */
 
 // Facade 函数
-export { createRuntime, LegacyRuntimeConfig, RuntimeConfig } from './facades.js';
+export { createRuntime, type RuntimeConfig } from './facades.js';
 export { defineRuntimeConfig, RuntimeConfigInput } from '../spi/config/index.js';

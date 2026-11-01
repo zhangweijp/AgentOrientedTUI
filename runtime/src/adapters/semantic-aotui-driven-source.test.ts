@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SemanticAOTUIDrivenSource, semanticToolResult } from './semantic-aotui-driven-source.js';
+import { DEFAULT_AOTUI_SYSTEM_INSTRUCTION } from './system-instruction.js';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +9,9 @@ import type { IDesktop, IKernel, AppDiscoveryInfo } from '../spi/runtime/kernel.
 import type { Observation } from '../core/invocation/observation-types.js';
 import type { InvocationOutcome, InvocationReceipt, ScopedInvocation, ScopeClient } from '../core/invocation/scoped-interaction-types.js';
 
-const app = (id: string, status: AppDiscoveryInfo['status'] = 'running'): AppDiscoveryInfo => ({ appId: id as any, name: id, status });
+const app = (id: string, status: AppDiscoveryInfo['status'] = 'running', appInstanceId: string | null =
+    status === 'pending' || status === 'closed' ? null : `${id}-instance`): AppDiscoveryInfo => ({ appId: id as any, name: id, status,
+        ...(appInstanceId === null ? {} : { appInstanceId }) });
 function observation(appId: string, revision = 1, name = 'multi_open_file'): Observation {
     const target = { viewId: 'workspace', viewInstanceId: `${appId}-view`, bindingVersion: revision };
     return {
@@ -40,7 +43,7 @@ function harness(installed = [app('one')], options: SemanticAOTUIDrivenSourceOpt
     const kernel = {
         acquireSnapshot: vi.fn(() => { throw new Error('legacy snapshot forbidden'); }),
         execute: vi.fn(() => { throw new Error('legacy execute forbidden'); }),
-        experimentalCreateAppScope: vi.fn((_desktopId: string, appId: string) => {
+        createAppScope: vi.fn((_desktopId: string, appId: string) => {
             let closed = false;
             const results = new Map<string, InvocationReceipt>();
             const client = {
@@ -96,6 +99,56 @@ describe('SemanticAOTUIDrivenSource', () => {
         await next.release!(); h.source.dispose();
     });
 
+    it('binds close/collapse/show controls to the observed App instance and hides active controls without its identity', async () => {
+        const h = harness(), originalId = h.installed[0].appInstanceId!;
+        const running = await h.source.getContext();
+        h.installed[0] = app('one', 'collapsed', originalId);
+        const collapsed = await h.source.getContext();
+
+        h.installed[0] = app('one', 'running', 'successor-instance');
+        for (const [name, callId] of [['system-close_app', 'old-close'], ['system-collapse_app', 'old-collapse']] as const) {
+            const result = await running.executeTool!(name, { app_id: 'one' }, callId);
+            expect(result?.error?.code).toBe('APP_INSTANCE_CHANGED');
+        }
+        expect(h.desktop.closeApp).not.toHaveBeenCalled();
+        expect(h.desktop.collapseApp).not.toHaveBeenCalled();
+
+        h.installed[0] = app('one', 'collapsed', 'successor-instance');
+        const staleShow = await collapsed.executeTool!('system-show_app', { app_id: 'one' }, 'old-show');
+        expect(staleShow?.error?.code).toBe('APP_INSTANCE_CHANGED');
+        expect(h.desktop.showApp).not.toHaveBeenCalled();
+
+        const latest = await h.source.getContext();
+        expect((await latest.executeTool!('system-show_app', { app_id: 'one' }, 'fresh-show'))?.outcomeStatus).toBe('succeeded');
+        expect(h.desktop.showApp).toHaveBeenCalledWith('one', 'successor-instance');
+        h.installed[0] = app('one', 'running', 'successor-instance');
+        const freshRunning = await h.source.getContext();
+        expect((await freshRunning.executeTool!('system-collapse_app', { app_id: 'one' }, 'fresh-collapse'))?.outcomeStatus).toBe('succeeded');
+        expect((await freshRunning.executeTool!('system-close_app', { app_id: 'one' }, 'fresh-close'))?.outcomeStatus).toBe('succeeded');
+        expect(h.desktop.collapseApp).toHaveBeenCalledWith('one', 'successor-instance');
+        expect(h.desktop.closeApp).toHaveBeenCalledWith('one', 'successor-instance');
+
+        h.installed[0] = app('one', 'running', null);
+        const withoutIdentity = await h.source.getContext();
+        expect(withoutIdentity.tools['system-close_app']).toBeUndefined();
+        expect(withoutIdentity.tools['system-collapse_app']).toBeUndefined();
+        for (const context of [running, collapsed, latest, freshRunning, withoutIdentity]) await context.release!();
+        h.source.dispose();
+    });
+
+    it('maps the manager admission mismatch as rejected while real lifecycle failures remain unknown', async () => {
+        const h = harness(), context = await h.source.getContext();
+        h.desktop.closeApp.mockRejectedValueOnce(Object.assign(new Error('stale'), { code: 'APP_INSTANCE_CHANGED' }));
+        expect(await context.executeTool!('system-close_app', { app_id: 'one' }, 'admission-race')).toMatchObject({
+            outcomeStatus: 'rejected', error: { code: 'APP_INSTANCE_CHANGED' },
+        });
+        h.desktop.closeApp.mockRejectedValueOnce(new Error('cleanup failed'));
+        expect(await context.executeTool!('system-close_app', { app_id: 'one' }, 'cleanup-failed')).toMatchObject({
+            outcomeStatus: 'unknown', error: { code: 'APP_LIFECYCLE_UNKNOWN' },
+        });
+        await context.release!();h.source.dispose();
+    });
+
     it('pins each call to its observed binding and closes scopes only after the last context releases', async () => {
         const h = harness();
         const first = await h.source.getContext(), tool = findTool(first, '-multi_open_file');
@@ -123,13 +176,17 @@ describe('SemanticAOTUIDrivenSource', () => {
         await context.release!(); h.source.dispose();
     });
 
-    it('shares one capture for compatibility message and tool reads started together', async () => {
+    it('exposes one atomic Context interface only', async () => {
         const h = harness();
-        const [messages, tools] = await Promise.all([h.source.getMessages(), h.source.getTools()]);
-        expect(messages.some(message => String(message.content).includes('current one revision 1'))).toBe(true);
-        expect(Object.keys(tools).some(name => name.includes('-multi_open_file'))).toBe(true);
+        expect('getMessages' in h.source).toBe(false);
+        expect('getTools' in h.source).toBe(false);
+        expect('executeTool' in h.source).toBe(false);
+        const context = await h.source.getContext();
+        expect(context.messages.some(message => String(message.content).includes('current one revision 1'))).toBe(true);
+        expect(Object.keys(context.tools).some(name => name.includes('-multi_open_file'))).toBe(true);
         expect(h.clients).toHaveLength(1);
         expect(h.clients[0].client.observe).toHaveBeenCalledTimes(1);
+        await context.release!();
         h.source.dispose();
     });
 
@@ -148,8 +205,8 @@ describe('SemanticAOTUIDrivenSource', () => {
 
     it('releases a partially captured context if a later app fails', async () => {
         const h = harness([app('one'), app('two')]);
-        const create = h.kernel.experimentalCreateAppScope.getMockImplementation()!;
-        h.kernel.experimentalCreateAppScope.mockImplementation((id, appId) => {
+        const create = h.kernel.createAppScope.getMockImplementation()!;
+        h.kernel.createAppScope.mockImplementation((id, appId) => {
             if (appId === 'two') throw new Error('cannot observe');
             return create(id, appId);
         });
@@ -192,29 +249,42 @@ describe('SemanticAOTUIDrivenSource', () => {
         expect(h.clients[0].client.close).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps a long readable tool name within the provider name length limit', async () => {
+    it('rejects an oversized public name with an actionable diagnostic instead of renaming it', async () => {
         const h = harness([app('long-application-name')]);
         h.observations.set('long-application-name', observation('long-application-name', 1, 'send_command_to_exist_terminal_with_an_extremely_long_suffix'));
-        const context = await h.source.getContext();
-        const name = findTool(context, 'send_command');
-        expect(name.length).toBeLessThanOrEqual(64);
-        expect(name).toMatch(/^[A-Za-z0-9_-]+$/);
-        await context.release!(); h.source.dispose();
+        await expect(h.source.getContext()).rejects.toThrow('AOTUI_TOOL_NAME_INVALID');
+        expect(h.clients[0].client.releaseObservation).toHaveBeenCalledOnce();
+        expect(h.clients[0].client.close).toHaveBeenCalledOnce();
+        expect(h.clients[0].client.invoke).not.toHaveBeenCalled();
+        h.source.dispose();
     });
 });
 
 describe('semantic receipt mapping', () => {
+    it('unwraps ordinary completion and preserves the business error and recovery details', () => {
+        const request = { invocationId: 'c', observationId: 'o', bindingId: 'b', input: {} };
+        const completed = semanticToolResult('tool', 'c', { kind: 'receipt', receipt: receipt(request,
+            { status: 'succeeded', value: { success: true, data: { message: 'Edited.', view_id: 'file' } } }) });
+        expect(completed.result).toEqual({ message: 'Edited.', view_id: 'file' });
+        const failed = semanticToolResult('tool', 'c', { kind: 'receipt', receipt: receipt(request, {
+            status: 'unknown', code: 'TOOL_OUTCOME_UNKNOWN', message: 'uncertain', details: { kind: 'operation-result', phase: 'entered-returned',
+                result: { success: false, error: { code: 'EDIT_NOT_MATCHED', message: 'Original text was not found.' }, data: { checked: 1 } } },
+        }) });
+        expect(failed).toMatchObject({ outcomeStatus: 'unknown', error: { code: 'EDIT_NOT_MATCHED', message: 'Original text was not found.' }, result: { checked: 1 } });
+        expect(JSON.stringify([completed, failed])).not.toContain('receipt');
+    });
     const outcomes: InvocationOutcome[] = [
         { status: 'succeeded', value: null }, { status: 'rejected', code: 'NO', message: 'rejected' },
         { status: 'failed', code: 'FAILED', message: 'failed', effects: 'partial' },
         { status: 'accepted', operationId: 'job' }, { status: 'unknown', code: 'UNKNOWN', message: 'uncertain' },
     ];
-    it.each(outcomes)('preserves the $status receipt and exposes its actual status', outcome => {
+    it.each(outcomes)('keeps $status internal without leaking a receipt', outcome => {
         const value = receipt({ invocationId: 'call', observationId: 'obs', bindingId: 'binding', input: {} }, outcome);
         const result = semanticToolResult('tool', 'call', { kind: 'receipt', receipt: value });
         expect(result.outcomeStatus).toBe(outcome.status);
-        expect(result.result).toEqual({ receipt: value });
-        expect(Boolean(result.error)).toBe(['rejected', 'failed', 'unknown'].includes(outcome.status));
+        expect(JSON.stringify(result)).not.toContain('observationId');
+        expect(JSON.stringify(result)).not.toContain('receipt');
+        expect(Boolean(result.error)).toBe(['rejected', 'failed', 'unknown', 'accepted'].includes(outcome.status));
     });
     it('distinguishes a known refusal from an unavailable execution result', () => {
         expect(semanticToolResult('tool', 'call', { kind: 'refused', code: 'FULL', message: 'full' }).outcomeStatus).toBe('rejected');
@@ -223,6 +293,19 @@ describe('semantic receipt mapping', () => {
 });
 
 describe('model-visible presentation contract', () => {
+    it('keeps tools with the same operation name distinct across different View types', async () => {
+        const h = harness(), source = observation('one', 1, 'inspect');
+        const target = { viewId: 'other', viewInstanceId: 'other-instance', bindingVersion: 1 };
+        h.observations.set('one', { ...source,
+            views: [...source.views, { ...source.views[0], id: target.viewId, viewInstanceId: target.viewInstanceId, type: 'OtherType' }],
+            tools: [...source.tools, { ...source.tools[0], id: 'other-tool', viewType: 'OtherType', targets: [target] }],
+            bindings: [...source.bindings, { bindingId: 'other-binding', toolId: 'other-tool', target }],
+        });
+        const context = await h.source.getContext();
+        expect(Object.keys(context.tools).filter(name => name.endsWith('-inspect'))).toEqual(['one-AnyView-inspect', 'one-OtherType-inspect']);
+        await context.release!(); h.source.dispose();
+    });
+
     it('normalizes DOM and plain bodies once, preserves content and keeps instruction Views static', async () => {
         const h = harness(), source = observation('one');
         const body = '# Content\n\n```xml\n<record id="business">keep</record>\n```';
@@ -281,7 +364,19 @@ describe('model-visible presentation contract', () => {
         h.source.setAppEnabled('one', false);
         const hidden = await h.source.getContext();
         expect(JSON.stringify(hidden.messages)).not.toContain('activity-');
+        expect(JSON.stringify(hidden.messages)).toContain('No applications enabled for this context.');
+        expect(JSON.stringify(hidden.messages)).not.toContain('No applications installed.');
+        expect(JSON.stringify(hidden.messages)).toContain('logs are hidden');
+        expect(hidden.messages.filter(message => String(message.content).startsWith('<view '))).toHaveLength(0);
+        expect(Object.keys(hidden.tools)).toHaveLength(0);
         await hidden.release!(); h.source.dispose();
+    });
+
+    it('reports an uninstalled Desktop separately from a filtered Desktop', async () => {
+        const h = harness([]), context = await h.source.getContext();
+        expect(JSON.stringify(context.messages)).toContain('No applications installed.');
+        expect(JSON.stringify(context.messages)).not.toContain('No applications enabled');
+        await context.release!(); h.source.dispose();
     });
 
     it('honors instruction text, path, environment, fallback and opt-out', async () => {
@@ -302,73 +397,96 @@ describe('model-visible presentation contract', () => {
             }
             vi.spyOn(console, 'error').mockImplementation(() => {});
             const h = harness([], { instructionPath: join(directory, 'missing') }), context = await h.source.getContext();
-            expect(context.messages[0].content).toContain('# AOTUI Desktop System Instruction');
-            expect(context.messages[0].content).toContain('Operation Receipts and Updated Views');
+            expect(context.messages[0].content).toBe(DEFAULT_AOTUI_SYSTEM_INSTRUCTION);
             await context.release!(); h.source.dispose();
         } finally { rmSync(directory, {recursive: true, force: true}); }
     });
 
-    it('groups a Tool across Views and routes only to its original observed target', async () => {
+    it('keeps the declared schema stable for one or multiple Views and pins business targets', async () => {
         const h = harness(), source = observation('one');
-        const other = { ...source.bindings[0].target, viewId: 'second', viewInstanceId: 'second-instance' };
-        h.observations.set('one', { ...source,
+        const schema = { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'], additionalProperties: false };
+        const first = { ...source.bindings[0].target, selector: { param: 'filePath', value: '/a.txt' } };
+        const other = { ...first, viewId: 'second', viewInstanceId: 'second-instance', selector: { param: 'filePath', value: '/b.txt' } };
+        const single = { ...source, tools: [{ ...source.tools[0], inputSchema: schema, targets: [first] }],
+            bindings: [{ ...source.bindings[0], target: first }] };
+        h.observations.set('one', single);
+        const one = await h.source.getContext(), name = 'one-AnyView-multi_open_file';
+        h.observations.set('one', { ...single, observationId: 'two-views',
             views: [...source.views, { ...source.views[0], id: 'second', viewInstanceId: other.viewInstanceId }],
-            tools: [{ ...source.tools[0], targets: [source.bindings[0].target, other] }],
-            bindings: [...source.bindings, {bindingId: 'second-binding', toolId: 'tool', target: other}],
+            tools: [{ ...single.tools[0], targets: [first, other] }],
+            bindings: [...single.bindings, { bindingId: 'second-binding', toolId: 'tool', target: other }],
         });
-        const context = await h.source.getContext(), name = 'one-AnyView-multi_open_file';
-        expect(Object.keys(context.tools).filter(name => name.endsWith('-multi_open_file'))).toEqual([name]);
-        expect((context.tools[name].inputSchema as any).jsonSchema).toMatchObject({
-            required: ['aotui_view_id'], additionalProperties: false,
-            properties: { aotui_view_id: { enum: ['workspace', 'second'] } },
-        });
-        for (const input of [{}, {aotui_view_id: 'invented'}, {aotui_view_id: 1}])
-            expect((await context.executeTool!(name, input, 'invalid'))?.error?.code).toBe('INVALID_VIEW_TARGET');
+        const two = await h.source.getContext();
+        expect(Object.keys(two.tools).filter(key => key.endsWith('-multi_open_file'))).toEqual([name]);
+        expect((one.tools[name].inputSchema as any).jsonSchema).toEqual(schema);
+        expect((two.tools[name].inputSchema as any).jsonSchema).toEqual(schema);
+        for (const input of [{}, { filePath: '/unseen.txt' }, { filePath: 1 }])
+            expect((await two.executeTool!(name, input, 'invalid'))?.error?.code).toBe('INVALID_VIEW_TARGET');
+        expect((await one.executeTool!(name, { filePath: '/b.txt' }, 'unseen'))?.error?.code).toBe('INVALID_VIEW_TARGET');
         expect(h.clients[0].client.invoke).not.toHaveBeenCalled();
-        h.observations.set('one', observation('one', 2));
-        const next = await h.source.getContext();
-        expect((next.tools[name].inputSchema as any).jsonSchema).toEqual(source.tools[0].inputSchema);
-        await context.executeTool!(name, { aotui_view_id: 'second' }, 'original-second');
-        await context.executeTool!(name, { aotui_view_id: 'workspace' }, 'original-first');
-        await next.executeTool!(name, {}, 'new-first');
-        expect(h.clients[0].client.invoke.mock.calls.map(([request]) => [request.observationId, request.bindingId, request.input])).toEqual([
-            ['one-observation-1', 'second-binding', {}], ['one-observation-1', 'one-binding-1', {}], ['one-observation-2', 'one-binding-2', {}],
+        // A later observation cannot rewrite either old route.
+        h.observations.set('one', single);
+        const later = await h.source.getContext();
+        await two.executeTool!(name, { filePath: '/b.txt' }, 'original-second');
+        await one.executeTool!(name, { filePath: '/a.txt' }, 'original-first');
+        expect(h.clients[0].client.invoke.mock.calls.map(([r]) => [r.observationId, r.bindingId, r.input])).toEqual([
+            ['two-views', 'second-binding', { filePath: '/b.txt' }], ['one-observation-1', 'one-binding-1', { filePath: '/a.txt' }],
         ]);
-        await context.release!(); await next.release!(); h.source.dispose();
+        await one.release!(); await two.release!(); await later.release!(); h.source.dispose();
     });
 
-    it('does not overwrite application parameters when injecting a multi-View selector', async () => {
+    it('rejects ambiguous targets instead of injecting a parameter or choosing the first View', async () => {
         const h = harness(), source = observation('one');
         const other = { ...source.bindings[0].target, viewId: 'second', viewInstanceId: 'second-instance' };
         h.observations.set('one', { ...source,
-            tools: [{ ...source.tools[0], inputSchema: { type: 'object', properties: {
-                aotui_view_id: {type: 'string'}, _aotui_view_id: {type: 'string'}, view_id: {type: 'string'},
-            }, required: ['view_id'], additionalProperties: false }, targets: [source.bindings[0].target, other] }],
+            tools: [{ ...source.tools[0], targets: [source.bindings[0].target, other] }],
             bindings: [...source.bindings, { bindingId: 'second-binding', toolId: 'tool', target: other }],
         });
-        const context = await h.source.getContext(), name = 'one-AnyView-multi_open_file';
-        expect((context.tools[name].inputSchema as any).jsonSchema.required).toEqual(['view_id', '__aotui_view_id']);
-        const business = {aotui_view_id: 'business', _aotui_view_id: 'also business', view_id: 'owned by application'};
-        await context.executeTool!(name, { ...business, __aotui_view_id: 'second' }, 'selected');
-        expect(h.clients[0].client.invoke).toHaveBeenCalledWith(expect.objectContaining({ bindingId: 'second-binding', input: business }));
-        await context.release!(); h.source.dispose();
+        await expect(h.source.getContext()).rejects.toThrow('TOOL_TARGET_REQUIRED');
+        expect(h.clients[0].client.invoke).not.toHaveBeenCalled();
+        expect(h.clients[0].client.close).toHaveBeenCalledOnce(); h.source.dispose();
     });
 
-    it('disambiguates duplicate App names, ambiguous logical names and illegal provider names', async () => {
-        const h = harness([{ ...app('one'), name: 'same' }, { ...app('two'), name: 'same' }, { ...app('three'), name: '名字 / app' }]);
+    it('rejects duplicate public names across applications without appending App IDs', async () => {
+        const h = harness([{ ...app('one'), name: 'same' }, { ...app('two'), name: 'same' }]);
+        await expect(h.source.getContext()).rejects.toThrow('AOTUI_TOOL_NAME_COLLISION: "same-AnyView-multi_open_file"');
+        for (const { client } of h.clients) expect(client.close).toHaveBeenCalledOnce();
+        h.source.dispose();
+    });
+
+    it('rejects ambiguous composite names instead of hashing them', async () => {
+        const h = harness();
         const source = observation('one');
         h.observations.set('one', { ...source, tools: [
             {...source.tools[0], id: 'a', viewType: 'A-B', name: 'C'},
             {...source.tools[0], id: 'b', viewType: 'A', name: 'B-C'},
         ], bindings: [ {...source.bindings[0], toolId: 'a'}, {...source.bindings[0], toolId: 'b', bindingId: 'other'} ] });
-        const context = await h.source.getContext(), names = Object.keys(context.tools);
-        expect(names).toContain('same_two-AnyView-multi_open_file');
-        expect(names.filter(name => name.startsWith('same_one-A-B-C_'))).toHaveLength(2);
-        for (const name of names) expect(name).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
-        expect(names.filter(name => name.includes('multi_open_file'))).toHaveLength(2);
-        await context.release!();
-        const again = await h.source.getContext();
-        expect(Object.keys(again.tools)).toEqual(names);
-        await again.release!(); h.source.dispose();
+        await expect(h.source.getContext()).rejects.toThrow('AOTUI_TOOL_NAME_COLLISION: "one-A-B-C"');
+        h.source.dispose();
+    });
+
+    it.each(['has space', '名字', 'has/slash'])('rejects invalid name %s without sanitizing it', async name => {
+        const h = harness([{ ...app('one'), name }]);
+        await expect(h.source.getContext()).rejects.toThrow('AOTUI_TOOL_NAME_INVALID');
+        h.source.dispose();
+    });
+
+    it.each([63, 64, 65])('validates the full composite length at %i characters', async length => {
+        const h = harness(), name = 'x'.repeat(length - 'one-AnyView-'.length);
+        h.observations.set('one', observation('one', 1, name));
+        if (length > 64) await expect(h.source.getContext()).rejects.toThrow('65 characters');
+        else {
+            const context = await h.source.getContext();
+            expect(context.tools[`one-AnyView-${name}`]).toBeDefined();
+            await context.release!();
+        }
+        h.source.dispose();
+    });
+
+    it('uses the Legacy Desktop instruction verbatim by default', async () => {
+        vi.stubEnv('AOTUI_SYSTEM_INSTRUCTION_PATH', undefined);
+        const h = harness(), context = await h.source.getContext();
+        expect(context.messages[0].content).toBe(DEFAULT_AOTUI_SYSTEM_INSTRUCTION);
+        await context.release!(); h.source.dispose();
     });
 });

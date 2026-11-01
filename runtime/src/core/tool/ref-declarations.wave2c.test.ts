@@ -1,14 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createViewOwnedTools } from './view-owned-tools.js';
-import { paramsToJsonSchema } from '../../worker-runtime/dom-snapshot-producer.js';
-import { validatePreparedDraft, validatePreparedV2Draft, createSnapshotCore } from '../snapshot/index.js';
+import { compileSnapshotValueParams } from './snapshot-value-parameter-contract.js';
+import { ORDINARY_PARAMETER_MARKER } from './ordinary-parameter-profile.js';
+import { validatePreparedV2Draft, createSnapshotCore } from '../snapshot/index.js';
 import { acquireToolSource } from './source-binding.js';
 
 const metadata = (refType?: string) => ({ version: 1, kind: 'snapshot-value', owner: 'tool-target',
     ...(refType === undefined ? {} : { refType }) });
 const schema = (refType?: string): any => ({ type: 'object', properties: {
     file: { type: 'string', 'x-aotui-ref': metadata(refType) },
-}, required: ['file'] });
+}, required: ['file'], additionalProperties: true,
+    [ORDINARY_PARAMETER_MARKER]: 'snapshot-value-params-v1' });
+function compileRefSchema(params: unknown): any {
+    const compiled = compileSnapshotValueParams(params);
+    if (!compiled.ok) throw Object.assign(new Error(compiled.issue.message), { code: compiled.issue.code });
+    return compiled.contract.schema;
+}
 const spec = (inputSchema = schema(), isMutating = false) => ({
     name: 'inspect', description: 'Inspect', inputSchema, isMutating,
 });
@@ -37,40 +44,40 @@ describe('Wave 2C: authoritative declaration projection', () => {
     it.each([undefined, 'File', 'Todo'])('preserves opt-in and optional refType %s', refType => {
         const params = { file: { type: 'reference', required: true, refSource: 'snapshot-value-v1',
             ...(refType === undefined ? {} : { refType }) } };
-        expect(paramsToJsonSchema(params)).toEqual(schema(refType));
-        expect(validatePreparedV2Draft(draft(paramsToJsonSchema(params))).ok).toBe(true);
+        expect(compileRefSchema(params)).toEqual(schema(refType));
+        expect(validatePreparedV2Draft(draft(compileRefSchema(params))).ok).toBe(true);
     });
 
     it.each([
-        ['future', { refSource: 'snapshot-value-v2' }, 'REF_CONTRACT_UNSUPPORTED'],
-        ['non-string version', { refSource: 1 }, 'REF_DECLARATION_INVALID'],
-        ['wrong type', { type: 'string' }, 'REF_DECLARATION_INVALID'],
-        ['required', { required: 'yes' }, 'REF_DECLARATION_INVALID'],
-        ['description', { desc: 12 }, 'REF_DECLARATION_INVALID'],
-        ['empty refType', { refType: ' ' }, 'REF_DECLARATION_INVALID'],
-        ['non-string refType', { refType: 2 }, 'REF_DECLARATION_INVALID'],
-        ['constraints', { constraints: {} }, 'REF_DECLARATION_INVALID'],
-        ['default', { default: {} }, 'REF_DECLARATION_INVALID'],
-        ['array itemType', { itemType: 'reference' }, 'REF_DECLARATION_INVALID'],
-        ['options', { options: ['x'] }, 'REF_DECLARATION_INVALID'],
-        ['unknown field', { extra: true }, 'REF_DECLARATION_INVALID'],
+        ['future', { refSource: 'snapshot-value-v2' }, 'PARAMETER_DECLARATION_UNSUPPORTED'],
+        ['non-string version', { refSource: 1 }, 'PARAMETER_DECLARATION_INVALID'],
+        ['wrong type', { type: 'string' }, 'PARAMETER_DECLARATION_INVALID'],
+        ['required', { required: 'yes' }, 'PARAMETER_DECLARATION_INVALID'],
+        ['description', { desc: 12 }, 'PARAMETER_DECLARATION_INVALID'],
+        ['empty refType', { refType: ' ' }, 'PARAMETER_DECLARATION_INVALID'],
+        ['non-string refType', { refType: 2 }, 'PARAMETER_DECLARATION_INVALID'],
+        ['constraints', { constraints: {} }, 'PARAMETER_DECLARATION_INVALID'],
+        ['default', { default: {} }, 'PARAMETER_DECLARATION_INVALID'],
+        ['array itemType', { itemType: 'reference' }, 'PARAMETER_DECLARATION_INVALID'],
+        ['options', { options: ['x'] }, 'PARAMETER_DECLARATION_INVALID'],
+        ['unknown field', { extra: true }, 'PARAMETER_DECLARATION_INVALID'],
     ])('rejects parameter declaration %s', (_name, change, code) => {
-        expectCode(() => paramsToJsonSchema({ file: { type: 'reference', refSource: 'snapshot-value-v1', ...change } }), code);
+        expectCode(() => compileRefSchema({ file: { type: 'reference', refSource: 'snapshot-value-v1', ...change } }), code);
     });
 
     it('does not execute accessors before validating a new declaration', () => {
         const getter = vi.fn(() => 'snapshot-value-v1');
         const field = { type: 'reference' };
         Object.defineProperty(field, 'refSource', { get: getter, enumerable: true });
-        expectCode(() => paramsToJsonSchema({ file: field }), 'SNAPSHOT_SERIALIZATION_ERROR');
+        expectCode(() => compileRefSchema({ file: field }), 'PARAMETER_DECLARATION_INVALID');
         expect(getter).not.toHaveBeenCalled();
     });
 
     it('equivalent opt-in parameter key order keeps required and aggregation canonical', () => {
         const file = { type: 'reference', required: true, refSource: 'snapshot-value-v1' };
         const question = { type: 'string', required: true };
-        const first = paramsToJsonSchema({ file, question });
-        const reordered = paramsToJsonSchema({ question, file });
+        const first = compileRefSchema({ file, question });
+        const reordered = compileRefSchema({ question, file });
         expect(reordered).toEqual(first);
         const { registry, a, b } = setup();
         registry.registerTool(a.viewInstanceId, spec(first), async () => ({ success: true }));
@@ -97,28 +104,26 @@ describe('Wave 2C: pure Registry/Snapshot semantic boundary', () => {
     });
 
     it.each([
-        ['root', { type: 'object', 'x-aotui-ref': metadata() }],
-        ['nested', { type: 'object', properties: { wrapper: { type: 'object', properties: schema().properties } } }],
-        ['items', { type: 'object', properties: { files: { type: 'array', items: schema().properties.file } } }],
-        ['$defs', { type: 'object', $defs: { file: schema().properties.file } }],
-        ['allOf', { type: 'object', allOf: [schema()] }],
-        ['combined root', { ...schema(), allOf: [] }],
-        ['property sibling', { type: 'object', properties: { file: { ...schema().properties.file, default: 'file' } } }],
-        ['wrong property type', { type: 'object', properties: { file: { ...schema().properties.file, type: 'object' } } }],
-    ])('rejects unsupported location/combination %s', (_name, s) => {
+        ['root', { type: 'object', 'x-aotui-ref': metadata() }, 'REF_DECLARATION_INVALID'],
+        ['nested', { type: 'object', properties: { wrapper: { type: 'object', properties: schema().properties } } }, 'REF_DECLARATION_INVALID'],
+        ['items', { type: 'object', properties: { files: { type: 'array', items: schema().properties.file } } }, 'REF_DECLARATION_INVALID'],
+        ['$defs', { type: 'object', $defs: { file: schema().properties.file } }, 'REF_DECLARATION_INVALID'],
+        ['allOf', { type: 'object', allOf: [schema()] }, 'REF_DECLARATION_INVALID'],
+        ['combined root', { ...schema(), allOf: [] }, 'REF_CONTRACT_UNSUPPORTED'],
+        ['property sibling', { type: 'object', properties: { file: { ...schema().properties.file, default: 'file' } } }, 'REF_DECLARATION_INVALID'],
+        ['wrong property type', { type: 'object', properties: { file: { ...schema().properties.file, type: 'object' } } }, 'REF_DECLARATION_INVALID'],
+    ])('rejects unsupported location/combination %s', (_name, s, code) => {
         const { registry, a } = setup();
-        expectCode(() => registry.registerTool(a.viewInstanceId, spec(s), async () => ({ success: true })), 'REF_DECLARATION_INVALID');
-        expect(validatePreparedV2Draft(draft(s))).toMatchObject({ ok: false, issue: { code: 'REF_DECLARATION_INVALID' } });
+        expectCode(() => registry.registerTool(a.viewInstanceId, spec(s), async () => ({ success: true })), code);
+        expect(validatePreparedV2Draft(draft(s))).toMatchObject({ ok: false, issue: { code } });
     });
 
-    it('rejects mutating declarations and V1 declarations without a View-owned target', () => {
+    it('rejects mutating declarations and Snapshot V1 descriptors', () => {
         const { registry, a } = setup();
         expectCode(() => registry.registerTool(a.viewInstanceId, spec(schema(), true), async () => ({ success: true })), 'REF_DECLARATION_INVALID');
         expect(validatePreparedV2Draft(draft(schema(), true))).toMatchObject({ ok: false, issue: { code: 'REF_DECLARATION_INVALID' } });
-        const v2 = draft(); const id = Object.keys(v2.tools)[0];
-        const v1 = { ...v2, schemaVersion: 1, views: v2.views.map(({ viewInstanceId, ...view }: any) => ({ ...view, generation: viewInstanceId })),
-            tools: { [id]: { ...spec(), id, name: 'inspect', viewType: 'FileDetail', visible: true } } };
-        expect(validatePreparedDraft(v1)).toMatchObject({ ok: false, issue: { code: 'REF_CONTRACT_UNSUPPORTED' } });
+        const v1 = { ...draft(), schemaVersion: 1 };
+        expect(validatePreparedV2Draft(v1)).toMatchObject({ ok: false, issue: { code: 'SNAPSHOT_INVALID', path: '$.schemaVersion' } });
     });
 
     it('preserves unannotated schemas and literal data with a reserved-looking key', async () => {
@@ -129,9 +134,10 @@ describe('Wave 2C: pure Registry/Snapshot semantic boundary', () => {
         } };
         registry.registerTool(a.viewInstanceId, spec(s), handler);
         const tool = registry.listTools()[0];
-        expect(await registry.invoke(tool, tool.targets[0], { ordinary: { 'x-aotui-ref': 'caller JSON' } }))
-            .toMatchObject({ success: false, error: { code: 'BUSINESS' } });
-        expect(handler).toHaveBeenCalledTimes(1);
+        expect(tool.inputSchema).toEqual(s);
+        expect((await registry.invokeOrdinaryParameters(tool, tool.targets[0], { ordinary: { 'x-aotui-ref': 'caller JSON' } })))
+            .toMatchObject({ phase: 'not-entered', result: { success: false, error: { code: 'TOOL_EXECUTION_UNAVAILABLE' } } });
+        expect(handler).not.toHaveBeenCalled();
     });
 
     it('canonical conflicts are atomic; equivalent key order aggregates without a partial registration', () => {
@@ -158,14 +164,13 @@ describe('Wave 2C: pure Registry/Snapshot semantic boundary', () => {
         expect(registry.listTools()).toEqual([]);
     });
 
-    it('all annotated invocations are refused before Handler, including omitted optional values', async () => {
+    it('a valid Ref profile stays non-executable without a safe V2 callable', async () => {
         const { registry, a } = setup(); const handler = vi.fn(async () => ({ success: true }));
-        const optional = schema(); optional.required = [];
-        registry.registerTool(a.viewInstanceId, spec(optional), handler);
+        registry.registerTool(a.viewInstanceId, spec(schema()), handler);
         const tool = registry.listTools()[0];
         for (const args of [{}, { file: 'file' }, { file: '[File](file)' }, { file: { value: 'caller' } }]) {
-            expect(await registry.invoke(tool, tool.targets[0], args)).toMatchObject({
-                success: false, error: { code: 'REF_CONTRACT_UNSUPPORTED' },
+            expect(await registry.invokeSnapshotValueParameters(tool, tool.targets[0], args)).toMatchObject({
+                phase: 'not-entered', result: { success: false, error: { code: 'REF_EXECUTION_UNAVAILABLE' } },
             });
         }
         expect(handler).not.toHaveBeenCalled();
@@ -176,11 +181,11 @@ describe('Wave 2C: pure Registry/Snapshot semantic boundary', () => {
         const release = registry.registerTool(a.viewInstanceId, spec(schema('File')), handler);
         const old = registry.listTools()[0];
         const stripped = { ...old, inputSchema: { type: 'object', properties: { file: { type: 'string' } }, required: ['file'] } };
-        expect(await registry.invoke(stripped, old.targets[0], {})).toMatchObject({ success: false, error: { code: 'TOOL_SOURCE_STALE' } });
+        expect(await registry.invokeSnapshotValueParameters(stripped, old.targets[0], {})).toMatchObject({ phase: 'not-entered', result: { success: false, error: { code: 'TOOL_SOURCE_STALE' } } });
         release(); registry.registerTool(a.viewInstanceId, spec(schema('Todo')), handler);
         const current = registry.listTools()[0];
         expect(current.targets[0].bindingVersion).not.toBe(old.targets[0].bindingVersion);
-        expect(await registry.invoke(old, old.targets[0], {})).toMatchObject({ success: false, error: { code: 'TOOL_SOURCE_STALE' } });
+        expect(await registry.invokeSnapshotValueParameters(old, old.targets[0], {})).toMatchObject({ phase: 'not-entered', result: { success: false, error: { code: 'TOOL_SOURCE_STALE' } } });
         expect(handler).not.toHaveBeenCalled();
     });
 
@@ -202,7 +207,7 @@ describe('Wave 2C: pure Registry/Snapshot semantic boundary', () => {
         expect(validatePreparedV2Draft(draft(s))).toMatchObject({ ok: false, issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } });
         const { registry, a } = setup();
         expectCode(() => registry.registerTool(a.viewInstanceId, spec(schema('x'.repeat(140 * 1024))), async () => ({ success: true })), 'SNAPSHOT_SERIALIZATION_ERROR');
-        expectCode(() => paramsToJsonSchema({ file: { type: 'reference', refSource: 'snapshot-value-v1', refType: 'x'.repeat(70 * 1024) } }), 'SNAPSHOT_SERIALIZATION_ERROR');
+        expectCode(() => compileRefSchema({ file: { type: 'reference', refSource: 'snapshot-value-v1', refType: 'x'.repeat(70 * 1024) } }), 'PARAMETER_DECLARATION_INVALID');
         expect(registry.listTools()).toEqual([]);
     });
 });

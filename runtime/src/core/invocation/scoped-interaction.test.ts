@@ -6,6 +6,9 @@ import { createViewOwnedTools } from '../tool/view-owned-tools.js';
 import { createScopedInteraction, DEFAULT_INTERACTION_LIMITS as HARD } from './scoped-interaction.js';
 import type { CancellationSignal, ExecutionBinding, ExecutionFact, InteractionLimitOverrides, InvocationContext, OperationProvider, ReceiptMetadata, ScopeClient, ScopedInvocation } from './scoped-interaction-types.js';
 import type { Observation, ObservationGrant, ObservationRegistryLimitOverrides } from './observation-types.js';
+import { compileOrdinaryParams } from '../tool/ordinary-parameter-contract.js';
+import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
+import { compileSnapshotValueParams } from '../tool/snapshot-value-parameter-contract.js';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -160,17 +163,24 @@ function fixture(options: { mode?: ExecutionBinding['mode']; isMutating?: boolea
     const now = () => { if (clockThrows) throw { get message() { clockMessageReads++; return 'secret-clock'; } }; return time; };
     const core = createSnapshotCore({ now, ...options.store }); core.lifecycle.startApp('app', 'run');
     const tools = createViewOwnedTools('app', 'run'), owners = [tools.mount('v0', 'File'), tools.mount('v1', 'File')];
-    const mode = options.mode ?? 'ordinary';
-    const schema: JsonValue = options.schema ?? (mode === 'snapshot-value-v1' ? { type: 'object', properties: {
-        file: { type: 'string', 'x-aotui-ref': { version: 1, kind: 'snapshot-value', owner: 'tool-target', refType: 'File' } },
-        line: { type: 'string' } }, required: ['file'] } : { type: 'object', properties: {} });
-    for (const owner of owners) tools.registerTool(owner.viewInstanceId, { name: 'run', description: 'Synthetic tool', inputSchema: schema,
-        isMutating: options.isMutating ?? mode === 'versioned-entity' }, async () => { throw new Error('Registry must not dispatch'); });
+    const mode = options.mode ?? 'ordinary-v2';
+    const ordinary = compileOrdinaryParams({});
+    const snapshotValue = compileSnapshotValueParams({ file: { type: 'reference', required: true,
+        refSource: 'snapshot-value-v1', refType: 'File' }, line: { type: 'string' } });
+    if (!ordinary.ok || !snapshotValue.ok) throw new Error('Invalid interaction fixture');
+    const schema: JsonValue = options.schema ?? (mode === 'snapshot-value-v2'
+        ? snapshotValue.contract.schema : ordinaryParameterProfile(ordinary.contract));
+    const declaration = { name: 'run', description: 'Synthetic tool', inputSchema: schema, isMutating: options.isMutating ?? false };
+    const handler = async () => { throw new Error('Registry must not dispatch'); };
+    const releases = owners.map(owner => tools.registerTool(owner.viewInstanceId, declaration, handler));
+    function rebindTool(index = 0) {
+        releases[index]!();
+        releases[index] = tools.registerTool(owners[index]!.viewInstanceId, declaration, handler);
+    }
     function refs(value: JsonValue = options.payload ?? { version: 'S1' }) {
         return Object.fromEntries(owners.flatMap(owner => ['visible', 'hidden'].map(id => [refKey(owner.viewId, owner.viewInstanceId, id), {
             id, ownerViewId: owner.viewId, ownerViewInstanceId: owner.viewInstanceId, refType: options.refType ?? 'File',
-            target: mode === 'versioned-entity' ? { kind: 'entity' as const, entityType: 'File', entityId: 'entity-' + owner.viewId, entityVersion: '1' }
-                : { kind: 'snapshot-value' as const, payload: value },
+            target: { kind: 'snapshot-value' as const, payload: value },
         }])));
     }
     function publish(patch: Partial<PreparedAppSnapshotDraftV2> = {}): AppSnapshotV2 {
@@ -183,7 +193,7 @@ function fixture(options: { mode?: ExecutionBinding['mode']; isMutating?: boolea
         if (result.status === 'rejected' || result.snapshot.schemaVersion !== 2) throw new Error('Expected V2 fixture'); return result.snapshot;
     }
     const source = publish();
-    const calls = { project: 0, validate: 0, authorize: 0, handler: 0, read: 0, live: 0, resolve: 0, resolveRef: 0, writes: 0, query: 0 };
+    const calls = { project: 0, validate: 0, authorize: 0, handler: 0, read: 0, live: 0, resolve: 0, resolveRef: 0, query: 0 };
     const seen: { validateInput?: Readonly<Record<string, JsonValue>>; authorize?: InvocationContext; execute?: InvocationContext; metadata?: ReceiptMetadata; validateSignal?: CancellationSignal; readSignal?: CancellationSignal } = {};
     function grant(snapshot = source, visible = ['v0', 'v1'], refIds = ['visible']): ObservationGrant {
         return { views: snapshot.views.filter(v => visible.includes(v.id)).map(v => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
@@ -215,9 +225,8 @@ function fixture(options: { mode?: ExecutionBinding['mode']; isMutating?: boolea
         const viewed = await client.observe({ viewIds: ['v0', 'v1'] }); expect(viewed.status).toBe('observed');
         if (viewed.status !== 'observed') throw new Error(viewed.issue.code); return viewed.observation;
     }
-    function request(viewed: Observation, id = 'invocation', input: Readonly<Record<string, JsonValue>> = mode === 'snapshot-value-v1' ? { file: 'visible', line: '7' } : {}): ScopedInvocation {
-        return { invocationId: id, observationId: viewed.observationId, bindingId: viewed.bindings[0]!.bindingId, input,
-            ...(mode === 'versioned-entity' ? { refId: 'visible' } : {}) };
+    function request(viewed: Observation, id = 'invocation', input: Readonly<Record<string, JsonValue>> = mode === 'snapshot-value-v2' ? { file: 'visible', line: '7' } : {}): ScopedInvocation {
+        return { invocationId: id, observationId: viewed.observationId, bindingId: viewed.bindings[0]!.bindingId, input };
     }
     function zero() {
         authority.close(); expect(authority.inspect()).toMatchObject({ scopes: 0, receiptEntries: 0, receiptContents: 0,
@@ -226,7 +235,7 @@ function fixture(options: { mode?: ExecutionBinding['mode']; isMutating?: boolea
     }
     return { authority, core, tools, owners, source, refs, publish, calls, seen, controls, store, input, open, observe, request, grant, now,
         setTime: (value: number) => { time = value; }, setClockError: (value: boolean) => { clockThrows = value; }, get clockMessageReads() { return clockMessageReads; },
-        get binding() { return current; }, set binding(value: ExecutionBinding | null) { current = value; }, zero };
+        get binding() { return current; }, set binding(value: ExecutionBinding | null) { current = value; }, rebindTool, zero };
 }
 
 describe('B2-T01/T02: real scoped publication and trusted assembly', () => {
@@ -234,11 +243,10 @@ describe('B2-T01/T02: real scoped publication and trusted assembly', () => {
         const f = fixture({ isMutating: true }), client = f.open(), observed = await f.observe(client);
         let value = 0;
         f.controls.execute = ctx => {
-            expect(ctx.source.tool.isMutating).toBe(true); expect(ctx.source.resource).toBeUndefined();
+            expect(ctx.source.tool.isMutating).toBe(true); expect(ctx.source).not.toHaveProperty('resource');
             value++; return success({ value });
         };
         const request = f.request(observed, 'mutate');
-        expect(request.refId).toBeUndefined();
         expect(receipt(await client.invoke(request)).outcome).toMatchObject({ status: 'succeeded', value: { value: 1 } });
         expect(receipt(await client.invoke(request)).outcome).toMatchObject({ status: 'succeeded', value: { value: 1 } });
         expect(value).toBe(1); expect(f.calls.handler).toBe(1); f.zero();
@@ -248,7 +256,7 @@ describe('B2-T01/T02: real scoped publication and trusted assembly', () => {
         const gate = deferred<unknown>(), started = deferred<void>();
         f.controls.authorize = () => { started.resolve(); return gate.promise; };
         const pending = client.invoke(f.request(observed, 'stopped-mutation'));
-        await started.promise; f.tools.setEnabled(f.owners[0]!.viewInstanceId, 'run', false); f.publish(); gate.resolve(true);
+        await started.promise; f.rebindTool(); f.publish(); gate.resolve(true);
         expect(receipt(await pending).outcome.status).toBe('rejected'); expect(f.calls.handler).toBe(0); f.zero();
     });
     it('runs the ordinary closed loop and isolates observations across Clients', async () => {
@@ -462,7 +470,7 @@ describe('B2-T03/T04/T05: deduplication and three parameter paths', () => {
         expect(f.seen.authorize!.effectiveInput).toBe(f.seen.execute!.effectiveInput); expect(Object.isFrozen(f.seen.execute!.effectiveInput)).toBe(true); f.zero();
     });
     it('prepares a legal 6000+ node Ref without the old M5 whole-request cap or ordinary conversion', async () => {
-        const f = fixture({ mode: 'snapshot-value-v1' }), client = f.open(), observed = await f.observe(client);
+        const f = fixture({ mode: 'snapshot-value-v2' }), client = f.open(), observed = await f.observe(client);
         const raw = { file: 'visible', line: '7', surplus: true, nodes: Array(6000).fill(null) };
         const result = receipt(await client.invoke(f.request(observed, 'ref', raw)));
         expect(result.outcome.status).toBe('succeeded'); expect(f.seen.execute!.effectiveInput).toMatchObject({ file: { version: 'S1' }, line: '7', surplus: true });
@@ -470,38 +478,27 @@ describe('B2-T03/T04/T05: deduplication and three parameter paths', () => {
         expect(f.seen.execute!.refSources[0]).toMatchObject({ snapshotId: f.source.id, viewId: 'v0', refId: 'visible' }); f.zero();
     });
     it('rejects Ref validators that transform values and never calls authorize/execute', async () => {
-        const f = fixture({ mode: 'snapshot-value-v1' }), client = f.open(), observation = await f.observe(client);
+        const f = fixture({ mode: 'snapshot-value-v2' }), client = f.open(), observation = await f.observe(client);
         f.controls.validate = (_, input) => ({ ok: true, value: { ...input, line: 7 } });
         expect(receipt(await client.invoke(f.request(observation))).outcome).toMatchObject({ status: 'rejected', code: 'REF_ARGUMENT_CHANGED' });
         expect(f.calls.authorize).toBe(0); expect(f.calls.handler).toBe(0); f.zero();
     });
     it('rejects invisible same-owner Ref before any Store.resolveRef/validation/authorization', async () => {
-        const f = fixture({ mode: 'snapshot-value-v1' }), client = f.open(), observation = await f.observe(client);
+        const f = fixture({ mode: 'snapshot-value-v2' }), client = f.open(), observation = await f.observe(client);
         expect(receipt(await client.invoke(f.request(observation, 'hidden', { file: 'hidden' }))).outcome).toMatchObject({ code: 'REF_NOT_VISIBLE' });
         expect(f.calls.resolveRef).toBe(0); expect(f.calls.validate).toBe(0); expect(f.calls.authorize).toBe(0); expect(f.calls.handler).toBe(0); f.zero();
     });
     it('keeps Ref type and mixed root selector restrictions', async () => {
-        const f = fixture({ mode: 'snapshot-value-v1', refType: 'Other' }), client = f.open(), observation = await f.observe(client);
+        const f = fixture({ mode: 'snapshot-value-v2', refType: 'Other' }), client = f.open(), observation = await f.observe(client);
         expect(receipt(await client.invoke(f.request(observation))).outcome).toMatchObject({ code: 'REF_TYPE_MISMATCH' });
-        expect(receipt(await client.invoke({ ...f.request(observation, 'mixed'), refId: 'visible' })).outcome).toMatchObject({ code: 'REF_CONTRACT_UNSUPPORTED' });
+        expect(await client.invoke({ ...f.request(observation, 'mixed'), refId: 'visible' } as any)).toMatchObject({ kind: 'refused', code: 'INVOCATION_INVALID' });
         expect(f.calls.handler).toBe(0); f.zero();
-    });
-    it('passes original Entity version to an actual in-memory conditional write', async () => {
-        const f = fixture({ mode: 'versioned-entity' }), client = f.open(), observation = await f.observe(client), row = { version: '1', value: 0 };
-        f.controls.execute = ctx => {
-            expect(ctx.source.resource).toMatchObject({ entityId: 'entity-v0', entityVersion: '1' });
-            if (row.version !== ctx.source.resource!.entityVersion) return { kind: 'action', phase: 'not-entered', outcome: { status: 'rejected', code: 'CAS_STALE', message: 'Version changed' } };
-            row.version = '2'; row.value++; f.calls.writes++; return success({ written: true });
-        };
-        expect(receipt(await client.invoke(f.request(observation, 'write-1'))).outcome.status).toBe('succeeded');
-        expect(receipt(await client.invoke(f.request(observation, 'write-2'))).outcome).toMatchObject({ status: 'rejected', code: 'CAS_STALE' });
-        expect(f.calls.handler).toBe(2); expect(f.calls.writes).toBe(1); expect(row.value).toBe(1); f.zero();
     });
 });
 
 describe('B2-T06: post-await original source and callable revalidation', () => {
     it('invokes the same observed Binding after a long model turn while reading the exact original Ref', async () => {
-        const f = fixture({ mode: 'snapshot-value-v1', store: { historyTtlMs: 10, leaseTtlMs: 10 } }), client = f.open();
+        const f = fixture({ mode: 'snapshot-value-v2', store: { historyTtlMs: 10, leaseTtlMs: 10 } }), client = f.open();
         const observed = await client.observe({ all: true });
         expect(observed.status).toBe('observed'); if (observed.status !== 'observed') return;
         expect(observed.observation.expiresAt).toBeNull();
@@ -511,12 +508,12 @@ describe('B2-T06: post-await original source and callable revalidation', () => {
         expect(f.seen.execute!.effectiveInput.file).toEqual({ version: 'S1' });
         expect(f.calls.authorize).toBe(1); expect(f.calls.handler).toBe(1);
         expect(receipt(await client.invoke(request))).toEqual(result); expect(f.calls.handler).toBe(1);
-        f.tools.setEnabled(f.owners[0]!.viewInstanceId, 'run', false); f.publish();
+        f.rebindTool(); f.publish();
         expect(receipt(await client.invoke(f.request(observed.observation, 'disabled'))).outcome.status).toBe('rejected');
         expect(f.calls.handler).toBe(1); f.zero();
     });
     it('keeps an original source through long authorization without expiring ownership or bypassing current permission', async () => {
-        const f = fixture({ mode: 'snapshot-value-v1', store: { historyTtlMs: 10, leaseTtlMs: 10 } });
+        const f = fixture({ mode: 'snapshot-value-v2', store: { historyTtlMs: 10, leaseTtlMs: 10 } });
         const client = f.open(), observation = await f.observe(client), gate = deferred<boolean>(), started = deferred<void>();
         f.controls.authorize = () => { started.resolve(); return gate.promise; };
         const pending = client.invoke(f.request(observation)); await started.promise;
@@ -536,7 +533,7 @@ describe('B2-T06: post-await original source and callable revalidation', () => {
         expect(f.calls.project).toBe(1); expect(f.calls.handler).toBe(0); f.zero();
     });
     it.each(['validate', 'authorize'] as const)('uses the original Ref snapshot after %s is suspended', async stage => {
-        const f = fixture({ mode: 'snapshot-value-v1' }), client = f.open(), observation = await f.observe(client), gate = deferred<unknown>(), started = deferred<void>();
+        const f = fixture({ mode: 'snapshot-value-v2' }), client = f.open(), observation = await f.observe(client), gate = deferred<unknown>(), started = deferred<void>();
         if (stage === 'validate') f.controls.validate = (_, input) => { started.resolve(); return gate.promise.then(() => ({ ok: true, value: input })); };
         else f.controls.authorize = () => { started.resolve(); return gate.promise; };
         const pending = client.invoke(f.request(observation)); await started.promise; f.publish({ refs: f.refs({ version: 'S2' }) }); gate.resolve(true);
@@ -547,10 +544,12 @@ describe('B2-T06: post-await original source and callable revalidation', () => {
         f.controls.validate = (_, input) => { started.resolve(); return gate.promise.then(() => ({ ok: true, value: input })); };
         const pending = client.invoke(f.request(observation)); await started.promise;
         if (change === 'release') client.releaseObservation(observation.observationId);
-        else if (change === 'disable') { f.tools.setEnabled(f.owners[0]!.viewInstanceId, 'run', false); f.publish(); }
+        else if (change === 'disable') { f.rebindTool(); f.publish(); }
         else if (change === 'remount') {
             f.tools.unmount(f.owners[0]!.viewInstanceId); f.owners[0] = f.tools.mount('v0', 'File');
-            f.tools.registerTool(f.owners[0]!.viewInstanceId, { name: 'run', description: 'Synthetic tool', inputSchema: { type: 'object', properties: {} }, isMutating: false }, async () => ({ success: true })); f.publish();
+            const ordinary = compileOrdinaryParams({}); if (!ordinary.ok) throw new Error('fixture');
+            f.tools.registerTool(f.owners[0]!.viewInstanceId, { name: 'run', description: 'Synthetic tool',
+                inputSchema: ordinaryParameterProfile(ordinary.contract), isMutating: false }, async () => ({ success: true })); f.publish();
         } else if (change === 'schema') {
             const tool = Object.values(f.source.tools)[0]!; f.publish({ tools: { [tool.id]: { ...tool, inputSchema: { type: 'object', properties: { x: { type: 'string' } } } } } });
         } else if (change === 'identity') f.binding = { ...f.binding!, identity: {} };

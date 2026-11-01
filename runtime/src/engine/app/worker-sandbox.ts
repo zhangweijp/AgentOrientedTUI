@@ -15,8 +15,9 @@
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 
-import type { AppID, DesktopID, DataPayload, ViewID, OperationID, SnapshotID } from '../../spi/index.js';
+import type { AppID, DesktopID, ViewID } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
+import type { LLMOutputEventMeta } from '../../spi/core/llm-output.js';
 import { AppWorkerHost, type WorkerStatus, type HostResourceReport } from './worker-host.js';
 import { WorkerPool, type WorkerPoolReport, type WorkerLease, type WorkerLeaseReleaseReport } from './worker-pool.js';
 import { RUNTIME_DEFAULTS } from '../../spi/config/index.js';
@@ -62,8 +63,6 @@ export interface WorkerSandboxConfig extends AppInteractionOptions {
     config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
     /** [RFC-005] Runtime Config */
     runtimeConfig?: import('../../spi/config/index.js').RuntimeConfig;
-    /** M2 diagnostic-only, optional; default off unless AOTUI_SNAPSHOT_SHADOW=1. */
-    snapshotShadow?: boolean;
 }
 
 /**
@@ -108,8 +107,8 @@ export class WorkerSandbox {
     onUpdateRequest?: () => void;
 
     constructor(private readonly config: WorkerSandboxConfig) {
-        const experimentalInteractionModes = captureInteractionModes(config);
-        this.config = { ...config, experimentalInteractionModes };
+        const interactionModes = captureInteractionModes(config);
+        this.config = { ...config, interactionModes };
         this.appId = config.appId;
         this.desktopId = config.desktopId;
         this.name = config.name;
@@ -137,7 +136,11 @@ export class WorkerSandbox {
         return this.workerHost?.getStatus() ?? null;
     }
 
-    experimentalCreateAppScope(policy: ScopePolicy): AppScopeResult {
+    get appInstanceId(): string | undefined {
+        return this.workerHost?.appInstanceId;
+    }
+
+    createAppScope(policy: ScopePolicy): AppScopeResult {
         const host = this.workerHost;
         const unavailable = (): AppScopeResult => Object.freeze({ status: 'rejected', issue: Object.freeze({ code: 'SCOPE_UNAVAILABLE', message: 'App scope is unavailable' }) });
         const current = () => !this.intent && !this._disposed && this._status === 'running' && !!host && this.workerHost === host && host.getStatus() === 'running';
@@ -147,37 +150,10 @@ export class WorkerSandbox {
         return result;
     }
 
-    /** M2 optional diagnostic only; never affects the legacy Snapshot result. */
-    getSnapshotShadowReport(): import('../../adapters/snapshot/shadow-receiver.js').SnapshotShadowReport | null {
-        return this.workerHost?.getSnapshotShadowReport() ?? null;
+    /** Optional publication diagnostics; they do not change Scope authorization or receipts. */
+    getSemanticSnapshotReport(): import('../../adapters/snapshot/receiver.js').SemanticSnapshotReport | null {
+        return this.workerHost?.getSemanticSnapshotReport() ?? null;
     }
-
-
-    /**
-     * [RFC-001] 获取 Snapshot Fragment
-     * 
-     * 返回 Worker 最新推送的 Markdown + IndexMap + ViewTree。
-     * 当 USE_WORKER_TRANSFORM 启用时，Worker 直接执行 Transformer，
-     * 此方法返回缓存的结果。
-     * 
-     * [RFC-007] Added viewTree for Application View Tree section
-     */
-    getSnapshotFragment(): {
-        markup: string;
-        indexMap: Record<string, DataPayload>;
-        views?: Array<{
-            viewId: ViewID;
-            viewType: string;
-            viewName?: string;
-            markup: string;
-            timestamp: number;
-        }>;
-        viewTree?: string;
-        timestamp?: number;
-    } | null {
-        return this.intent ? null : this.workerHost?.getSnapshotFragment() ?? null;
-    }
-
 
 
     // ════════════════════════════════════════════════════════════════
@@ -199,8 +175,7 @@ export class WorkerSandbox {
             current();this.lease = await this.pool.acquireLease(scriptPath);current();
             const host = this.workerHost = new AppWorkerHost({ ...this.config, workerScriptPath: scriptPath,
                 existingWorker: this.lease.worker, runtimeConfig: this.config.runtimeConfig,
-                snapshotShadow: !!this.config.experimentalInteractionModes?.length || (this.config.snapshotShadow ?? process.env.AOTUI_SNAPSHOT_SHADOW === '1'),
-                experimentalReadOnlyViewTools: this.config.experimentalInteractionModes?.some(mode => mode !== 'create-if-absent-v1') });
+            });
             host.onUpdateRequest = () => { if (!this.intent && this.workerHost === host) this.onUpdateRequest?.(); };
             await host.start();current();await host.open();current();this._status = 'running';
         }).then(() => { this.installSettled = true; }, () => {
@@ -276,11 +251,16 @@ export class WorkerSandbox {
             if (intent === 'delete' && host) { try { await host.delete(); } catch { this.closeIssues.add('DELETE_FAILED'); } }
             if (host) { try { await host.close(); } catch { this.closeIssues.add('APP_CLOSE_FAILED'); } }
             let returned: import('node:worker_threads').Worker | null = null;
+            let leaseRelease: Promise<WorkerLeaseReleaseReport> | undefined;
+            const retireLease = this.lease ? () => {
+                leaseRelease ??= this.lease!.release(false);
+                return leaseRelease;
+            } : undefined;
             if (host) {
-                try { returned = await host.releaseWorker(); } catch { this.closeIssues.add('RESET_FAILED'); }
+                try { returned = await host.releaseWorker(retireLease); } catch { this.closeIssues.add('RESET_FAILED'); }
                 if (!returned) {
-                    this.closeIssues.add('RESET_FAILED');
-                    try { host.terminate(); } catch { this.closeIssues.add('RESOURCE_RELEASE_FAILED'); }
+                    if (host.getResourceReport().issues.includes('RESET_FAILED')) this.closeIssues.add('RESET_FAILED');
+                    if (!leaseRelease) { try { host.terminate(); } catch { this.closeIssues.add('RESOURCE_RELEASE_FAILED'); } }
                 }
             }
             let resource: HostResourceReport | undefined;
@@ -291,7 +271,7 @@ export class WorkerSandbox {
             if (this.lease) {
                 const healthy = returned === this.lease.worker && !!resource?.resourcesReleased && this.closeIssues.size === 0;
                 try {
-                    this.leaseResult = await this.lease.release(healthy);
+                    this.leaseResult = await (leaseRelease ?? this.lease.release(healthy));
                     if (this.leaseResult.issue) this.closeIssues.add('RESOURCE_RELEASE_FAILED');
                 } catch { this.closeIssues.add('RESOURCE_RELEASE_FAILED'); }
             }
@@ -324,26 +304,6 @@ export class WorkerSandbox {
     disposeAsync(): Promise<SandboxCloseReport> { this._disposed = true;return this.beginCleanup(this.intent ?? 'close'); }
     dispose(): void { void this.disposeAsync().catch(() => {}); }
 
-    // ════════════════════════════════════════════════════════════════
-    //  Operations (通过 IPC)
-    // ════════════════════════════════════════════════════════════════
-
-    /**
-     * 执行 Operation
-     */
-    async executeOperation(
-        operation: OperationID,
-        args: Record<string, unknown>,
-        snapshotId: SnapshotID,
-        viewId?: ViewID
-    ) {
-        this.ensureNotDisposed();
-        if (!this.workerHost) {
-            throw new AOTUIError('WORKER_NOT_STARTED', { appId: this.appId });
-        }
-        return this.workerHost.executeOperation(operation, args, snapshotId, viewId);
-    }
-
     /**
      * 发送外部事件
      */
@@ -360,34 +320,6 @@ export class WorkerSandbox {
     }
 
     // ════════════════════════════════════════════════════════════════
-    //  View Lifecycle (通过 IPC)
-    // ════════════════════════════════════════════════════════════════
-
-
-
-    /**
-     * 卸载 View (通过 IPC 发送到 Worker)
-     */
-    async dismountView(viewId: ViewID): Promise<void> {
-        this.ensureNotDisposed();
-        if (!this.workerHost) {
-            throw new AOTUIError('WORKER_NOT_STARTED', { appId: this.appId });
-        }
-        await this.workerHost.dismountView(viewId);
-    }
-
-    /**
-     * [RFC-006] 通过 ViewLink 挂载 View (通过 IPC 发送到 Worker)
-     */
-    async mountViewByLink(parentViewId: ViewID, linkId: string): Promise<void> {
-        this.ensureNotDisposed();
-        if (!this.workerHost) {
-            throw new AOTUIError('WORKER_NOT_STARTED', { appId: this.appId });
-        }
-        await this.workerHost.mountViewByLink(parentViewId, linkId);
-    }
-
-    // ════════════════════════════════════════════════════════════════
     //  [RFC-011] LLM Output Channel
     // ════════════════════════════════════════════════════════════════
 
@@ -398,14 +330,7 @@ export class WorkerSandbox {
     pushLLMOutput(
         payload: { reasoning?: string; content?: string },
         type: 'complete',
-        meta?: {
-            model?: string;
-            usage?: {
-                promptTokens: number;
-                completionTokens: number;
-                totalTokens: number;
-            };
-        }
+        meta?: Pick<LLMOutputEventMeta, 'model' | 'providerId' | 'modelId' | 'usage'>
     ): void {
         if (this.intent || this._disposed) return;
         if (!this.workerHost) {

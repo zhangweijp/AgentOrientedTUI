@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { h, Component, type ComponentChildren } from 'preact';
 import { act } from 'preact/test-utils';
-import { createTUIApp, View, experimental_useReadOnlyTool as useRead, useState } from './index.js';
+import { createTUIApp, View, useViewTypeTool, useState } from './index.js';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -36,6 +36,16 @@ async function setup(Content: () => any, root?: () => any, control: {
 }
 afterEach(async () => { for (const close of cleanups.splice(0)) await close(); vi.restoreAllMocks(); });
 const params = () => ({ q: { type: 'string' as const, required: true as const, constraints: { minLength: 1 } }, limit: { type: 'number' as const, default: 7 } });
+it('routes a read-only declaration through its explicit target parameter', async () => {
+  const handler = vi.fn(async () => ({ success: true }));
+  function Content() { useViewTypeTool('inspect', { description: 'Inspect selected document', params: { document: { type: 'string', required: true } }, isMutating: false,
+    target: { param: 'document', value: 'A' } }, handler); return null; }
+  const app = await setup(Content);
+  expect(app.tool().targets[0].selector).toEqual({ param: 'document', value: 'A' });
+  expect(await app.invoke({ document: 'B' })).toMatchObject({ phase: 'not-entered', result: { error: { code: 'INVALID_VIEW_TARGET' } } });
+  expect(handler).not.toHaveBeenCalled();
+  expect(await app.invoke({ document: 'A' })).toMatchObject({ result: { success: true } });
+});
 class Boundary extends Component<{ children?: ComponentChildren }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
@@ -49,14 +59,13 @@ describe('R02–R08 real SDK/Preact/View/AppKernel ordinary-v2 capture', () => {
       expect(Object.isFrozen(args)).toBe(true); expect(Object.hasOwn(args, 'limit')).toBe(false);
       return { success: true, data: { q: args.q } };
     });
-    function Content() { const [Tool] = useRead('find', { description: 'Find', params: params() }, handler); return h(Tool, {}, 'Find symbols'); }
+    function Content() { const [Tool] = useViewTypeTool('find', { description: 'Find', params: params(), isMutating: false }, handler); return h(Tool, {}, 'Find symbols'); }
     const x = await setup(Content), source = x.tool();
     expect(x.captures).toHaveLength(1);
     expect(source.inputSchema).toEqual({ ...x.captures[0].schema, 'x-aotui-parameter-contract': 'ordinary-params-v1' });
     expect((source.inputSchema as any).additionalProperties).toBe(false);
     expect(x.container.querySelector('tool-ref')?.textContent).toBe('Find symbols');
     expect(await x.definitions[0].handler({ q: 'x' })).toMatchObject({ error: { code: 'TOOL_EXECUTION_UNAVAILABLE' } });
-    expect(await x.kernel.invokeBoundReadOnlyTool(source, source.targets[0], { q: 'x' })).toMatchObject({ success: false });
     expect(handler).not.toHaveBeenCalled();
     expect(await x.invoke({ q: 'x' })).toMatchObject({ phase: 'entered-returned', result: { success: true, data: { q: 'x' } } });
     expect(await x.invoke({ q: 'x', extra: true })).toMatchObject({ phase: 'not-entered' });
@@ -66,7 +75,7 @@ describe('R02–R08 real SDK/Preact/View/AppKernel ordinary-v2 capture', () => {
     let update!: () => void;
     const p = { e: { type: 'enum' as const, options: ['a'] }, q: { type: 'string' as const, constraints: { minLength: 1 } }, o: { type: 'object' as const, default: { values: ['initial'] } } };
     function Content() { const [n, set] = useState(0); update = () => set(n + 1);
-      useRead('find', { description: 'Find', params: p }, async () => ({ success: true })); return h('p', {}, String(n)); }
+      useViewTypeTool('find', { description: 'Find', params: p, isMutating: false }, async () => ({ success: true })); return h('p', {}, String(n)); }
     const x = await setup(Content), old = x.tool(), schema = JSON.stringify(old.inputSchema);
     p.e.options.push('b'); p.q.constraints.minLength = 2; p.o.default.values[0] = 'changed';
     expect(JSON.stringify(x.tool().inputSchema)).toBe(schema);
@@ -81,7 +90,7 @@ describe('R02–R08 real SDK/Preact/View/AppKernel ordinary-v2 capture', () => {
   it('uses actual layout capture after render-time mutation and avoids a redundant next binding', async () => {
     const p = params(); let once = true, update!: () => void;
     function Content() { const [n, set] = useState(0); update = () => set(n + 1);
-      useRead('find', { description: 'Find', params: p }, async () => ({ success: true })); return h('p', {}, String(n)); }
+      useViewTypeTool('find', { description: 'Find', params: p, isMutating: false }, async () => ({ success: true })); return h('p', {}, String(n)); }
     const x = await setup(Content, undefined, { onRegister() { if (once) { once = false; p.q.constraints.minLength = 2; } } });
     const old = x.tool();
     expect((old.inputSchema as any).properties.q.minLength).toBe(2);
@@ -96,7 +105,7 @@ describe('R02–R08 real SDK/Preact/View/AppKernel ordinary-v2 capture', () => {
     function Content() { const [next, set] = useState(false); update = set;
       const p = params(); if (next && kind === 'rule') p.q.constraints.minLength = 2;
       if (next && kind === 'default') p.limit.default = 8;
-      useRead('find', { description: next && kind === 'description' ? 'New' : 'Find', params: p, additionalProperties: next && kind === 'open' }, async () => ({ success: true }));
+      useViewTypeTool('find', { description: next && kind === 'description' ? 'New' : 'Find', params: p, additionalProperties: next && kind === 'open', isMutating: false }, async () => ({ success: true }));
       return h('p', {}, 'Stable'); }
     const x = await setup(Content), old = x.tool();
     await act(() => update(true));
@@ -109,7 +118,7 @@ describe('R02–R08 real SDK/Preact/View/AppKernel ordinary-v2 capture', () => {
     const entries: string[] = [];
     function Content() { const [next, set] = useState(false); update = set;
       const p = params(), ordered = next ? { limit: p.limit, q: p.q } : p;
-      useRead('find', { description: 'Find', params: ordered }, async () => { entries.push(next ? 'new' : 'old'); return { success: true }; });
+      useViewTypeTool('find', { description: 'Find', params: ordered, isMutating: false }, async () => { entries.push(next ? 'new' : 'old'); return { success: true }; });
       return h('p', {}, 'Stable'); }
     const x = await setup(Content), old = x.tool();
     update(true); const pending = x.invoke({ q: 'x' }, old);
@@ -123,7 +132,7 @@ describe('R02–R08 real SDK/Preact/View/AppKernel ordinary-v2 capture', () => {
     let update!: (v: number) => void;
     const entries: string[] = [];
     function Detail({ id, enabled }: { id: string; enabled: boolean }) {
-      const [Tool] = useRead('find', { description: 'Find', params: params(), enabled }, async () => { entries.push(id); return { success: true }; });
+      const [Tool] = useViewTypeTool('find', { description: 'Find', params: params(), isMutating: false }, async () => { entries.push(id); return { success: true }; }, { enabled });
       return h(Tool, {});
     }
     function Root() { const [state, set] = useState(0); update = set; return h('main', {}, [
@@ -147,7 +156,7 @@ describe('R02–R08 real SDK/Preact/View/AppKernel ordinary-v2 capture', () => {
     let update!: (v: boolean) => void;
     const a = vi.fn(async () => ({ success: true })), b = vi.fn(async () => ({ success: true }));
     function Content() { const [bad, set] = useState(false); update = set;
-      useRead('find', { description: 'Find', params: params() }, bad ? b : a);
+      useViewTypeTool('find', { description: 'Find', params: params(), isMutating: false }, bad ? b : a);
       if (bad) throw Error('Controlled candidate failure'); return h('p', {}, 'Stable'); }
     const x = await setup(Content, () => h(Boundary, {}, h(View, { id: 'aa', type: 'File' }, h(Content, {})))), old = x.tool();
     await act(() => update(true));
@@ -158,7 +167,7 @@ describe('R02–R08 real SDK/Preact/View/AppKernel ordinary-v2 capture', () => {
   it('failed registration after render releases the previous binding', async () => {
     let update!: (v: boolean) => void, fail = false;
     function Content() { const [next, set] = useState(false); update = set;
-      useRead('find', { description: next ? 'New' : 'Find', params: params() }, async () => ({ success: true })); return h('p', {}, 'Stable'); }
+      useViewTypeTool('find', { description: next ? 'New' : 'Find', params: params(), isMutating: false }, async () => ({ success: true })); return h('p', {}, 'Stable'); }
     const x = await setup(Content, () => h(Boundary, {}, h(View, { id: 'aa', type: 'File' }, h(Content, {}))), {
       onRegister(definition) { if (fail) definition.params.limit.default = 'Invalid default'; },
     }), old = x.tool();
@@ -167,15 +176,15 @@ describe('R02–R08 real SDK/Preact/View/AppKernel ordinary-v2 capture', () => {
     expect(await x.invoke({ q: 'x' }, old)).toMatchObject({ phase: 'not-entered' });
   });
   it.each([undefined, 'ordinary-v1', 'future', false])('explicitly rejects unsupported port %s even while disabled', async support => {
-    function Content() { useRead('find', { description: 'Find', params: params(), enabled: false }, async () => ({ success: true })); return null; }
+    function Content() { useViewTypeTool('find', { description: 'Find', params: params(), isMutating: false }, async () => ({ success: true }), { enabled: false }); return null; }
     await expect(setup(Content, undefined, { support })).rejects.toThrow('ORDINARY_PARAMETERS_UNSUPPORTED');
   });
   it('rejects missing fingerprint and invalid disabled declaration in all environments', async () => {
-    function Missing() { useRead('find', { description: 'Find', params: params(), enabled: false }, async () => ({ success: true })); return null; }
+    function Missing() { useViewTypeTool('find', { description: 'Find', params: params(), isMutating: false }, async () => ({ success: true }), { enabled: false }); return null; }
     await expect(setup(Missing, undefined, { removeFingerprint: true })).rejects.toThrow('ORDINARY_PARAMETERS_UNSUPPORTED');
     for (const env of ['development', 'production']) {
       vi.stubEnv('NODE_ENV', env);
-      function Invalid() { useRead('find', { description: 'Find', params: { q: { type: 'string', constraints: { pattern: '[' } } }, enabled: false }, async () => ({ success: true })); return null; }
+      function Invalid() { useViewTypeTool('find', { description: 'Find', params: { q: { type: 'string', constraints: { pattern: '[' } } }, isMutating: false }, async () => ({ success: true }), { enabled: false }); return null; }
       await expect(setup(Invalid)).rejects.toThrow('PARAMETER_DECLARATION_INVALID');
     }
     vi.unstubAllEnvs();

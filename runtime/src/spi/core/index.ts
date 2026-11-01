@@ -11,11 +11,9 @@
 // ID Types
 // ============================================================================
 export type {
-    SnapshotID,
     DesktopID,
     AppID,
     ViewID,
-    OperationID,
 } from './types.js';
 
 // ============================================================================
@@ -26,13 +24,10 @@ export {
     createDesktopId,
     createAppId,
     createViewId,
-    createSnapshotId,
-    createOperationId,
     // Type Guards
     isDesktopId,
     isAppId,
     isViewId,
-    isSnapshotId,
     // Unsafe Casts (backward compatibility)
 
     // Constants
@@ -45,7 +40,6 @@ export {
 // ============================================================================
 export type {
     DataPayload,
-    IndexMap,
 } from './types.js';
 
 // ============================================================================
@@ -62,45 +56,14 @@ export type {
 // Operation Types
 // ============================================================================
 export type {
-    OperationContext,
-    OperationScope,
-    Operation,
     OperationError,
     OperationResult,
-    OperationPayload,
-    SystemOperationContext,
-    ISystemOperation,
-    IDesktopForOperation,
-    ISystemOperationRegistry,
 } from './operations.js';
 
 // ============================================================================
 // Signals
 // ============================================================================
 export type { UpdateSignal } from './signals.js';
-
-// ============================================================================
-// Snapshot
-// ============================================================================
-export type {
-    CachedSnapshot,
-    StructuredSnapshot,
-    AppStateFragment,
-    ApplicationInstructionFragment,
-    ViewStateFragment,
-} from './snapshot.js';
-export { isSnapshotExpired } from './snapshot.js';
-
-// ============================================================================
-// Tool Call Types (LLM Function Calling)
-// ============================================================================
-export type {
-    Tool,
-    ToolCall,
-    ToolCallResult,
-    OperationParamDef,
-    OperationDef,
-} from './tool-call.js';
 
 // ============================================================================
 // Error System
@@ -113,15 +76,6 @@ export {
 } from './errors.js';
 
 export type { ErrorCode } from './errors.js';
-
-// ============================================================================
-// Operation Log Types (RFC-008)
-// ============================================================================
-export type {
-    OperationLogScope,
-    OperationLogEntry,
-    OperationLogParams,
-} from './operation-log.js';
 
 // ============================================================================
 // LLM Output Types (RFC-011)

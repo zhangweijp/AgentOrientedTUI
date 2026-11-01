@@ -1,6 +1,5 @@
 import { applicationVisitor } from '../../visitors/application.visitor';
 import { createTransformContext } from '../../types';
-import { parseHTML } from 'linkedom';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createMockElement } from './test-utils';
@@ -19,23 +18,15 @@ describe('ApplicationVisitor', () => {
         expect(applicationVisitor.matches(el, ctx)).toBe(false);
     });
 
-    it('updates context.currentAppId during traversal', () => {
+    it('wraps traversed content in an Application element', () => {
         const el = createMockElement('<div data-app-id="app1"><child></child></div>');
         const ctx = createTransformContext();
-
-        const childrenTraverser = vi.fn().mockImplementation((el, context) => {
-            // Verify context inside children
-            expect(context.currentAppId).toBe('app1');
-            return ['child content'];
-        });
+        const childrenTraverser = vi.fn().mockReturnValue(['child content']);
 
         const result = applicationVisitor.transform(el, ctx, childrenTraverser);
 
-        // Verify restoration after return
-        expect(ctx.currentAppId).toBeNull();
-        expect(childrenTraverser).toHaveBeenCalled();
-        expect(result).toContain('<application id="app1" name="">');
-        expect(result).toContain('child content');
+        expect(childrenTraverser).toHaveBeenCalledWith(el, ctx);
+        expect(result).toBe('\n<application id="app1" name="">\nchild content\n</application>\n');
     });
 
     it('handles collapsed state', () => {
@@ -49,23 +40,19 @@ describe('ApplicationVisitor', () => {
         expect(childrenTraverser).not.toHaveBeenCalled();
     });
 
-    it('handles nested applications (restores context)', () => {
-        const el = createMockElement('<div data-app-id="outer"></div>');
+    it('renders nested Applications without index bookkeeping', () => {
+        const outer = createMockElement('<div data-app-id="outer" name="Outer"></div>');
+        const inner = createMockElement('<div data-app-id="inner" name="Inner"></div>');
         const ctx = createTransformContext();
+        const childrenTraverser = vi.fn().mockImplementation((element, context) => element === outer
+            ? [applicationVisitor.transform(inner, context, childrenTraverser)]
+            : ['inner content']);
 
-        // Simulate inner transform logic manually for test clarity
-        // In reality, this would be handled by recursive traverse
-        const childrenTraverser = vi.fn().mockImplementation((el, context) => {
-            // Simulate nested app causing context change
-            const prev = context.currentAppId;
-            context.currentAppId = 'inner';
-            // ... process 
-            context.currentAppId = prev; // Restore
-            return ['inner content'];
-        });
+        const result = applicationVisitor.transform(outer, ctx, childrenTraverser);
 
-        applicationVisitor.transform(el, ctx, childrenTraverser);
-
-        expect(ctx.currentAppId).toBeNull();
+        expect(result).toContain('<application id="outer" name="Outer">');
+        expect(result).toContain('<application id="inner" name="Inner">\ninner content\n</application>');
+        expect(result).toContain('</application>');
+        expect(childrenTraverser).toHaveBeenCalledTimes(2);
     });
 });

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentDriverV2 } from '../../src/core/agent-driver-v2.js';
 import type {
-    DrivenSourceContext, IDrivenSource, ToolOutcomeStatus, ToolResult,
+    ContextDrivenSource, DrivenSource, DrivenSourceContext, ToolOutcomeStatus, ToolResult,
 } from '../../src/core/interfaces.js';
 
 const drivers: AgentDriverV2[] = [];
@@ -10,17 +10,14 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
-function makeSource(getContext: () => Promise<DrivenSourceContext>): IDrivenSource {
+function makeSource(getContext: () => Promise<DrivenSourceContext>): ContextDrivenSource {
     return {
         name: 'semantic', getContext,
-        getMessages: vi.fn().mockRejectedValue(new Error('split message read is forbidden')),
-        getTools: vi.fn().mockRejectedValue(new Error('split tool read is forbidden')),
-        executeTool: vi.fn().mockRejectedValue(new Error('mutable execution route is forbidden')),
         onUpdate: () => () => {},
     };
 }
 
-function makeDriver(source: IDrivenSource | IDrivenSource[], call: ReturnType<typeof vi.fn>, onToolResult = vi.fn(), onRunError = vi.fn()) {
+function makeDriver(source: DrivenSource | DrivenSource[], call: ReturnType<typeof vi.fn>, onToolResult = vi.fn(), onRunError = vi.fn()) {
     const driver = new AgentDriverV2({ sources: Array.isArray(source) ? source : [source], llm: { model: 'gpt-4' }, onToolResult, onRunError });
     (driver as any).llmClient = { call };
     drivers.push(driver);
@@ -40,7 +37,7 @@ describe('atomic source contexts', () => {
             const context: DrivenSourceContext = {
                 messages: [{ role: 'user', content: `view-${revision}`, timestamp: revision }],
                 tools: { edit: { description: `edit-${revision}` } as any },
-                executeTool: vi.fn(async (toolName, _args, toolCallId) => ({
+                executeTool: vi.fn(async (toolName: string, _args: unknown, toolCallId: string): Promise<ToolResult> => ({
                     toolName, toolCallId, outcomeStatus: 'succeeded', result: { revision },
                 })),
                 release: vi.fn(),
@@ -62,21 +59,21 @@ describe('atomic source contexts', () => {
 
         await driver['run']();
 
-        expect(source.getMessages).not.toHaveBeenCalled();
-        expect(source.getTools).not.toHaveBeenCalled();
-        expect(source.executeTool).not.toHaveBeenCalled();
+        expect('getMessages' in source).toBe(false);
+        expect('getTools' in source).toBe(false);
+        expect('executeTool' in source).toBe(false);
         expect(contexts[0].executeTool).toHaveBeenCalledTimes(1);
         expect(contexts[1].executeTool).not.toHaveBeenCalled();
         expect(contexts[0].release).toHaveBeenCalledTimes(1);
         expect(contexts[1].release).toHaveBeenCalledTimes(1);
-        expect(result.mock.calls[0][0].content[0].output.value.result).toEqual({ revision: 1 });
+        expect(result.mock.calls[0][0].content[0].output.value).toEqual({ revision: 1 });
     });
 
     it.each(['model-failure', 'unchanged-input'] as const)('releases the captured turn on %s', async mode => {
         const release = vi.fn();
-        const source = makeSource(vi.fn(async () => ({
+        const source = makeSource(async () => ({
             messages: [{ role: 'user', content: 'same', timestamp: 1 }], tools: {}, release,
-        })));
+        }));
         const call = mode === 'model-failure'
             ? vi.fn().mockRejectedValue(new Error('model unavailable'))
             : vi.fn().mockResolvedValue(response());
@@ -101,8 +98,8 @@ describe('atomic source contexts', () => {
         const onRunError = vi.fn();
         const driver = makeDriver([captured, source], call, vi.fn(), onRunError);
         await driver['run']();
-        expect(source.getMessages).not.toHaveBeenCalled();
-        expect(source.getTools).not.toHaveBeenCalled();
+        expect('getMessages' in source).toBe(false);
+        expect('getTools' in source).toBe(false);
         expect(call).not.toHaveBeenCalled();
         expect(onRunError).toHaveBeenCalledWith(failure);
         expect(release).toHaveBeenCalledTimes(1);
@@ -129,7 +126,7 @@ describe('atomic source contexts', () => {
 });
 
 describe('explicit tool outcomes', () => {
-    it('classifies all five outcomes and preserves receipts, including rejected results without error', async () => {
+    it('classifies all five outcomes internally and publishes Legacy-shaped success or actionable failure', async () => {
         const statuses: ToolOutcomeStatus[] = ['succeeded', 'rejected', 'failed', 'accepted', 'unknown'];
         const release = vi.fn();
         const source = makeSource(async () => ({
@@ -137,8 +134,7 @@ describe('explicit tool outcomes', () => {
             tools: Object.fromEntries(statuses.map(status => [status, {} as any])),
             executeTool: async (toolName, _args, toolCallId): Promise<ToolResult> => ({
                 toolName, toolCallId, outcomeStatus: toolName as ToolOutcomeStatus,
-                result: { receipt: { executionPhase: toolName === 'rejected' ? 'not-dispatched' : 'entered-returned',
-                    outcome: { status: toolName } } },
+                result: { message: 'Inspect the current View.', view_id: 'current' },
                 // Deliberately omit error: explicit rejected must still be an error.
             }),
             release,
@@ -154,10 +150,13 @@ describe('explicit tool outcomes', () => {
             rejectedCount: 1, failedCount: 1, acceptedCount: 1, unknownCount: 1,
         });
         const outputs = onToolResult.mock.calls[0][0].content.map((part: any) => part.output);
-        expect(outputs.map((output: any) => output.type)).toEqual(['json', 'error-json', 'error-json', 'json', 'error-json']);
-        expect(outputs[1].value.result.receipt.executionPhase).toBe('not-dispatched');
-        expect(outputs[3].value.outcomeStatus).toBe('accepted');
-        expect(outputs[4].value.result.receipt.outcome.status).toBe('unknown');
+        expect(outputs.map((output: any) => output.type)).toEqual(['json', 'error-json', 'error-json', 'error-json', 'error-json']);
+        expect(outputs[0].value).toEqual({ message: 'Inspect the current View.', view_id: 'current' });
+        expect(outputs[1].value.code).toBe('TOOL_EXECUTION_FAILED');
+        expect(outputs[3].value.code).toBe('TOOL_RESULT_UNCONFIRMED');
+        expect(outputs[3].value.retryable).toBe(false);
+        expect(JSON.stringify(outputs)).not.toContain('outcomeStatus');
+        expect(JSON.stringify(outputs)).not.toContain('receipt');
         expect(outputs[4].value.retryable).toBe(false);
         expect(driver.hasPendingUpdate()).toBe(false);
         expect(release).toHaveBeenCalledTimes(1);
@@ -175,7 +174,8 @@ describe('explicit tool outcomes', () => {
         await driver['run']();
         const output = onToolResult.mock.calls[0][0].content[0].output;
         expect(output.type).toBe('error-json');
-        expect(output.value.outcomeStatus).toBe('unknown');
+        expect(output.value.outcomeStatus).toBeUndefined();
+        expect(output.value.code).toBe('E_EXECUTION_ERROR');
         expect(output.value.retryable).toBe(false);
         expect(executeTool).toHaveBeenCalledTimes(1);
         expect(driver.hasPendingUpdate()).toBe(false);

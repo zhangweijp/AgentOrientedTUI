@@ -28,20 +28,15 @@ describe('ViewVisitor', () => {
         expect(viewVisitor.matches(el, ctx)).toBe(false);
     });
 
-    it('updates context.currentViewId during traversal', () => {
+    it('wraps traversed content in the named View element', () => {
         const el = createMockElement('<div view="chat" id="v1"></div>');
         const ctx = createTransformContext();
-
-        const childrenTraverser = vi.fn().mockImplementation((el, context) => {
-            expect(context.currentViewId).toBe('v1');
-            return ['child content'];
-        });
+        const childrenTraverser = vi.fn().mockReturnValue(['child content', '<p>more content</p>']);
 
         const result = viewVisitor.transform(el, ctx, childrenTraverser);
 
-        expect(ctx.currentViewId).toBeNull();
-        expect(result).toContain('<view id="v1" name="chat">');
-        expect(result).toContain('child content');
+        expect(childrenTraverser).toHaveBeenCalledWith(el, ctx);
+        expect(result).toBe('\n<view id="v1" name="chat">\nchild content\n<p>more content</p>\n</view>\n');
     });
 
     it('logs error and skips wrapper if id is missing', () => {

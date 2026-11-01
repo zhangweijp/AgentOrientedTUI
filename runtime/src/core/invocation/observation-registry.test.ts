@@ -9,6 +9,19 @@ import type { Observation, ObservationGrant, ObservationRegistryLimitOverrides, 
 afterEach(() => vi.restoreAllMocks());
 const context = { appId: 'app', instanceId: 'run' };
 const emptyGrant = (): ObservationGrant => ({ views: [], refs: [], targets: [], content: [] });
+it('captures business target selectors and refuses a policy that rewrites their value', () => {
+    const f = fixture({ views: 1, tools: 0, refs: 0, ready: false });
+    f.tools.registerTool(f.owners[0].viewInstanceId, { name: 'edit', description: 'Edit selected document', isMutating: true,
+        inputSchema: { type: 'object', properties: { document: { type: 'string' } }, required: ['document'] },
+        target: { param: 'document', value: 'document-A' } }, f.handler);
+    const published = f.publish();
+    const scope = f.scope(), prepared = f.begin(scope), grant = f.grant(published);
+    const forged = { ...grant, targets: grant.targets.map(t => ({ ...t, target: { ...t.target, selector: { param: 'document', value: 'document-B' } } })) };
+    expect(f.registry.complete(scope, prepared.reservation, forged)).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_PROJECTION_INVALID' } });
+    const observation = f.observe(scope, grant);
+    expect(observation.bindings[0].target.selector).toEqual({ param: 'document', value: 'document-A' });
+    f.registry.close(); f.core.lifecycle.dispose();
+});
 function fixture(options: { views?: number; refs?: number; tools?: number; content?: JsonValue;
     payload?: JsonValue; store?: SnapshotStoreOptions; limits?: ObservationRegistryLimitOverrides; ready?: boolean;
     lifetime?: 'scope' | 'ttl' } = {}) {
@@ -19,9 +32,14 @@ function fixture(options: { views?: number; refs?: number; tools?: number; conte
     const tools = createViewOwnedTools(context.appId, context.instanceId);
     const handler = vi.fn(async () => ({ success: true }));
     const owners = Array.from({ length: options.views ?? 2 }, (_, i) => tools.mount('v' + i, 'File'));
-    for (const owner of owners) for (let i = 0; i < (options.tools ?? 1); i++) tools.registerTool(owner.viewInstanceId, {
+    const declarations = Array.from({ length: options.tools ?? 1 }, (_, i) => ({
         name: 'tool' + i, description: 'Synthetic tool', inputSchema: { type: 'object', properties: {} }, isMutating: i % 2 === 1,
-    }, handler);
+    }));
+    const releases = owners.map(owner => declarations.map(declaration => tools.registerTool(owner.viewInstanceId, declaration, handler)));
+    function rebindTool(viewIndex = 0, toolIndex = 0) {
+        releases[viewIndex]![toolIndex]!();
+        releases[viewIndex]![toolIndex] = tools.registerTool(owners[viewIndex]!.viewInstanceId, declarations[toolIndex]!, handler);
+    }
     function draft(patch: Partial<PreparedAppSnapshotDraftV2> = {}): PreparedAppSnapshotDraftV2 {
         const seq = ++sequence;
         return { schemaVersion: 2, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
@@ -66,7 +84,7 @@ function fixture(options: { views?: number; refs?: number; tools?: number; conte
         expect(result.status).toBe('observed'); if (result.status !== 'observed') throw new Error('Expected observation');
         return result.observation;
     }
-    return { core, registry, tools, handler, owners, source: source!, now, setTime: (n: number) => { time = n; }, draft, publish, scope, begin, grant, observe };
+    return { core, registry, tools, handler, owners, source: source!, now, setTime: (n: number) => { time = n; }, draft, publish, scope, begin, grant, observe, rebindTool };
 }
 type Fixture = ReturnType<typeof fixture>;
 function key(observation: Observation, i = 0) { return { observationId: observation.observationId, bindingId: observation.bindings[i]!.bindingId }; }
@@ -271,12 +289,12 @@ describe('B1 original source, lifecycle and deadlines', () => {
         expect(f.core.store.readLatest('app').status).toBe('degraded');
         expect(code(f.registry.begin(scope, { viewIds: ['v0'] }))).toBe('SNAPSHOT_UNREADY'); zero(f);
     });
-    it('refuses a ready V1 snapshot instead of manufacturing V2 identities', () => {
+    it('rejects Snapshot V1 before an observation can be manufactured', () => {
         const f = fixture({ ready: false }), scope = f.scope();
         expect(f.core.committer.accept({ schemaVersion: 1, ...context, producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
             views: [{ id: 'v0', generation: 'g', type: 'File', name: 'v0', kind: 'state', content: { format: 'markdown-v1', value: 'x' } }],
-            refs: {}, tools: {} }).status).toBe('published');
-        expect(code(f.registry.begin(scope, { viewIds: ['v0'] }))).toBe('SNAPSHOT_INVALID'); zero(f);
+            refs: {}, tools: {} }).status).toBe('rejected');
+        expect(code(f.registry.begin(scope, { viewIds: ['v0'] }))).toBe('SNAPSHOT_UNREADY'); zero(f);
     });
     it('completes and resolves the exact historical source after a Ref-only update', () => {
         const f = fixture(), scope = f.scope(), preparation = f.begin(scope);
@@ -293,7 +311,7 @@ describe('B1 original source, lifecycle and deadlines', () => {
     it.each(['disable', 'remount', 'schema', 'version', 'remove', 'degraded'] as const)('refuses %s when resolving the original Binding', mode => {
         const f = fixture(), scope = f.scope(), observation = f.observe(scope), first = Object.values(f.source.tools)[0]!;
         if (mode === 'degraded') f.core.committer.accept(f.draft({ refs: { bad: null as never } }));
-        else if (mode === 'disable') { f.tools.setEnabled(f.owners[0]!.viewInstanceId, 'tool0', false); f.publish(); }
+        else if (mode === 'disable') { f.rebindTool(); f.publish(); }
         else if (mode === 'remove') f.publish({ views: f.source.views.slice(1), refs: Object.fromEntries(Object.entries(f.source.refs).filter(([, r]) => r.ownerViewId !== 'v0')),
             tools: { [first.id]: { ...first, targets: first.targets.slice(1) } } });
         else if (mode === 'remount') {
@@ -301,7 +319,7 @@ describe('B1 original source, lifecycle and deadlines', () => {
             f.tools.registerTool(f.owners[0]!.viewInstanceId, { name: 'tool0', description: 'Synthetic tool', inputSchema: { type: 'object', properties: {} }, isMutating: false }, f.handler); f.publish();
         } else f.publish({ tools: { [first.id]: { ...first, ...(mode === 'schema' ? { inputSchema: { type: 'object', properties: { x: { type: 'number' } } } } : {}),
             targets: first.targets.map((t, i) => i === 0 && mode === 'version' ? { ...t, bindingVersion: t.bindingVersion + 1 } : t) } } });
-        expect(code(f.registry.resolveBinding(scope, key(observation)))).toBe(mode === 'disable' ? 'TOOL_UNAVAILABLE'
+        expect(code(f.registry.resolveBinding(scope, key(observation)))).toBe(mode === 'disable' ? 'TOOL_SOURCE_STALE'
             : mode === 'remove' || mode === 'remount' ? 'VIEW_INSTANCE_REVOKED' : mode === 'degraded' ? 'SNAPSHOT_UNREADY' : 'TOOL_SOURCE_STALE'); zero(f);
     });
     it.each(['stop', 'restart'] as const)('revokes %s Scopes without rebinding the instance', mode => {
@@ -455,6 +473,35 @@ describe('B1 independently bounded JSON and total budgets', () => {
         return low;
     }
     const bytes = (value: unknown) => utf8Size(canonicalJson(copyJson(value, { maxDepth: 100, maxNodes: 200_000, maxApproxBytes: 16 * 1024 * 1024 })));
+    it.each(['array', 'object'] as const)('keeps source byte limits exact with inherited %s toJSON', prototype => {
+        const probe = fixture({ views: 1, refs: 1, payload: { nested: ['漢字', -0, 1e21] } });
+        const expected = bytes(probe.source); zero(probe);
+        for (const delta of [-1, 0]) {
+            const f = fixture({ views: 1, refs: 1, payload: { nested: ['漢字', -0, 1e21] },
+                limits: { source: { maxCanonicalBytes: expected + delta } } });
+            const scope = f.scope(), target = prototype === 'array' ? Array.prototype : Object.prototype;
+            const previous = Object.getOwnPropertyDescriptor(target, 'toJSON');
+            let getterReads = 0, functionCalls = 0;
+            const descriptor: PropertyDescriptor = prototype === 'array'
+                ? { configurable: true, get() { getterReads++; return () => { functionCalls++; return 'changed'; }; } }
+                : { configurable: true, writable: true, value() { functionCalls++; return 'changed'; } };
+            let result: ReturnType<typeof f.registry.begin> | undefined;
+            try {
+                Object.defineProperty(target, 'toJSON', descriptor);
+                result = f.registry.begin(scope, { viewIds: ['v0'] });
+            } finally {
+                if (previous) Object.defineProperty(target, 'toJSON', previous);
+                else Reflect.deleteProperty(target, 'toJSON');
+            }
+            expect(getterReads).toBe(0); expect(functionCalls).toBe(0);
+            expect(result?.status).toBe(delta < 0 ? 'rejected' : 'reserved');
+            if (result?.status === 'reserved') {
+                expect(f.registry.inspect().sourceBytes).toBe(expected);
+                f.registry.abandon(scope, result.reservation);
+            } else expect(code(result)).toBe('OBSERVATION_CAPACITY');
+            zero(f);
+        }
+    });
     it.each(['maxSourceBytes', 'maxObservationBytes', 'maxMetadataBytes', 'maxTotalBytes'] as const)('checks %s reservation at exact bytes and refunds failed attempts', limit => {
         const baseline = fixture(), owner = baseline.scope(), p = baseline.begin(owner), amount = baseline.registry.inspect()[limit === 'maxSourceBytes' ? 'sourceBytes'
             : limit === 'maxObservationBytes' ? 'observationBytes' : limit === 'maxMetadataBytes' ? 'metadataBytes' : 'totalBytes'];

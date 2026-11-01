@@ -1,62 +1,101 @@
 /**
- * SPI Layer - Public API
- * 
- * AOTUI 框架的契约层。
- * 
- * ## 分层结构
- * 
- * - **core**: 基础类型 (AppID, ViewID, OperationResult, etc.)
- * - **app**: App 开发者接口 (IView, IViewContext, IAOTUIApp, etc.)
- * - **runtime**: Runtime 内部接口 (IKernel, IDesktop, etc.) - 不对外公开
- * 
- * ## 使用方式
- * 
- * App 开发者应通过 `@aotui/sdk` 导入，而非直接使用此模块。
- * 
- * ```typescript
- * // ✅ 正确：通过 SDK 导入
- * import { View, Operation, type OperationResult } from '@aotui/sdk';
- * 
- * // ❌ 错误：直接导入 SPI
- * import type { IView } from '@aotui/runtime/spi';
- * ```
- * 
+ * Supported contracts shared by Runtime, SDK, and the product Host.
+ *
+ * Worker IPC and manager implementation fragments stay behind their source
+ * modules; the Host-facing manager contract remains available here.
  * @module @aotui/runtime/spi
  */
 
-// ============================================================================
-// Core Layer - Foundation Types (Public)
-// ============================================================================
-export * from './core/index.js';
+// Core identifiers, state values, results, errors, and notifications.
+export type {
+    AppConfig,
+    AppID,
+    AppState,
+    DataPayload,
+    DesktopID,
+    DesktopState,
+    DesktopStatus,
+    ViewID,
+} from './core/types.js';
+export {
+    createAppId,
+    createDesktopId,
+    createViewId,
+    isAppId,
+    isDesktopId,
+    isViewId,
+} from './core/id-factory.js';
+export type { OperationError, OperationResult } from './core/operations.js';
+export { AOTUIError, ERROR_CODES, createOperationError, failedResult } from './core/errors.js';
+export type { ErrorCode } from './core/errors.js';
+export type { UpdateSignal } from './core/signals.js';
+export type { LLMOutputEvent, LLMOutputEventMeta, LLMOutputListener } from './core/llm-output.js';
 
-// ============================================================================
-// App Layer - App Developer Interfaces (Public)
-// ============================================================================
-export * from './app/index.js';
+// App factory, configuration, lifecycle, and semantic View integration.
+export type { IAOTUIApp } from './app/app.interface.js';
+export type { AppKernelConfig, AppReinitializeContext, SignalPolicy } from './app/app-kernel.interface.js';
+export type { AppContext } from './app/store.interface.js';
+export type { AppLaunchConfig } from './app/app-config.interface.js';
+export type { TUIAppFactory } from './app/app-factory.interface.js';
+export { isTUIAppFactory, validateManifest, isValidAppName } from './app/index.js';
+export type { AOAppEntry, AOAppManifest, AOAppRuntime, AOAppView } from './app/aoapp.js';
+export type { IRefExporter } from './app/ref-exporter.interface.js';
+export type { IRefRegistry, IViewMeta } from './app/public-types.js';
 
-// ============================================================================
-// Runtime Layer - Internal Interfaces (Public for Product Layer)
-// ============================================================================
-// Note: These are intentionally exported for Product Layer (Server) usage.
-// SDK developers should NOT use these directly.
-export * from './runtime/index.js';
+// SDK component factory and its managed Runtime context.
+export type {
+    AppStatePersistence,
+    ComponentFactory,
+    ComponentRenderer,
+    RuntimeContext,
+    StateBinding,
+    StateBindingStatus,
+    StateFlushReport,
+    StateIssue,
+    StateValue,
+} from './component-factory.interface.js';
 
-// ============================================================================
-// Bridge Layer - Agent I/O Boundary (Public for AgentDriver)
-// ============================================================================
-// IBridge is the only interface Agents should interact with.
-// Product Layer provides an IBridge implementation and passes it to AgentDriver.
-export * from './bridge/index.js';
+// Product Host contracts and lifecycle/reporting semantics.
+export type {
+    AppDiscoveryInfo,
+    IDesktop,
+    IKernel,
+    ReinitializeDesktopAppsOptions,
+    ReinitializeDesktopAppsResult,
+} from './runtime/kernel.interface.js';
+export type {
+    AppManagerCloseOperation,
+    AppManagerCloseReport,
+    CloseOperation,
+    CloseReport,
+    DesktopCloseOperation,
+    DesktopCloseOptions,
+    DesktopCloseReport,
+    InteractionCloseReport,
+    RuntimeCloseOperation,
+    RuntimeCloseReport,
+    RuntimeCloseReporting,
+    ShutdownOptions,
+} from './runtime/close.interface.js';
+export { SEMANTIC_INTERACTION_MODES } from './runtime/app-interaction.interface.js';
+export type {
+    AppInteractionOptions,
+    AppScopeResult,
+    DesktopInteractionAccess,
+    InteractionMode,
+    RuntimeInteractionAccess,
+} from './runtime/app-interaction.interface.js';
+export type { IDesktopManager } from './runtime/desktop-manager.interface.js';
+export type { IRuntimeContext } from './runtime/context.interface.js';
+export type { ILLMOutputChannelService } from './runtime/llm-output-channel.interface.js';
 
-// ============================================================================
-// Worker Protocol - IPC Message Contract
-// ============================================================================
-// Contract between AppWorkerHost (main thread) and Worker Runtime (worker thread).
-// Used by both Runtime and SDK Worker.
-export * from './worker-protocol/index.js';
-
-// ============================================================================
-// Component Factory - SDK-Runtime Contract (RFC-027-C)
-// ============================================================================
-// Factory Injection Pattern for complete decoupling
-export * from './component-factory.interface.js';
+// SDK-facing Runtime ports. These are typed capabilities, not Worker IPC.
+export type { IProjectionPort, ProjectionChange, ProjectionToken } from './runtime/projection.interface.js';
+export type {
+    IViewOwnedToolPort,
+    SafeOrdinaryInvoker,
+    SafeRefInvoker,
+    ViewToolDefinition,
+    ViewToolRegistrationOptions,
+} from './runtime/view-owned-tools.interface.js';
+export type { AppCleanupReport, AppLifecycleCallbacks, AppLifecyclePort } from './runtime/app-lifecycle.interface.js';

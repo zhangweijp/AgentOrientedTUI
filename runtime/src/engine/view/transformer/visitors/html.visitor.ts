@@ -13,8 +13,7 @@ import type { TransformContext } from '../types.js';
 /**
  * Single element traverser type (for recursive calls)
  * 
- * This enables semantic elements (Operation, ViewLink) inside list items
- * to be properly recognized and transformed by their respective Visitors.
+ * This enables nested HTML elements inside list items to use the same rendering rules.
  * 
  * @deprecated Use ElementTraverser from interface.ts instead
  */
@@ -51,7 +50,7 @@ function transformNestedList(
  * Transform list item with proper indentation for nested lists
  * 
  * [RFC-FIX] Use recursive Visitor Pattern for all child elements,
- * ensuring Operation/ViewLink inside <li> are properly transformed.
+ * ensuring nested markup inside <li> keeps its normal HTML presentation.
  */
 function transformListItem(
     li: Element,
@@ -78,9 +77,7 @@ function transformListItem(
                 const nestedItems = transformNestedList(el, ctx, traverse);
                 parts.push(...nestedItems);
             } else {
-                // [RFC-FIX] Use recursive traversal for ALL other elements
-                // This allows Operation, ViewLink, and other semantic elements
-                // to be properly recognized by their respective Visitors
+                // Use recursive traversal for all nested elements.
                 const childOutput = traverse(el, ctx);
                 mainContent += childOutput;
             }
@@ -175,9 +172,7 @@ export const htmlVisitor: IElementVisitor = {
             const items: string[] = [];
             const listChildren = el.children;
 
-            // [RFC-FIX] Use ElementTraverser for proper Visitor Pattern
-            // This enables semantic elements (Operation, ViewLink) inside lists
-            // to be properly recognized by their respective Visitors
+            // Use ElementTraverser for nested list elements.
             const singleTraverse: SingleElementTraverser = traverseElement
                 ? traverseElement
                 : (childEl, childCtx) => children(childEl, childCtx).join(' '); // Fallback
@@ -193,8 +188,7 @@ export const htmlVisitor: IElementVisitor = {
                     const liContent = transformListItem(child, prefix, ctx, singleTraverse);
                     items.push(liContent);
                 } else {
-                    // [RFC-FIX] Non-<li> children inside <ol>/<ul> (e.g., <button operation="...">)
-                    // Use ElementTraverser to apply full Visitor Chain
+                    // Use ElementTraverser for non-list children.
                     const childOutput = singleTraverse(child, ctx);
                     if (childOutput.trim()) {
                         items.push(childOutput.trim());

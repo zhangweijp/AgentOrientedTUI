@@ -39,10 +39,9 @@ async function inspect(inputSchema: JsonValue, args: Readonly<Record<string, unk
         registration = (error as { code: string }).code;
     }
     const tool = registry.listTools()[0];
-    const invocation = tool ? await registry.invoke(tool, tool.targets[0], args) : undefined;
     return {
         semantic, snapshot: validation.ok ? 'accepted' : validation.issue.code,
-        registration, handlerCalls: handler.mock.calls.length, invocation, registeredSchema: tool?.inputSchema,
+        registration, handlerCalls: handler.mock.calls.length, registeredSchema: tool?.inputSchema,
     };
 }
 
@@ -78,21 +77,19 @@ describe('Wave 2C C1: Schema nodes, member-name maps and literal data', () => {
             'x-aotui-ref': { type: 'boolean' }, file: { type: 'string' },
         }, [keyword]: { 'x-aotui-ref': ['file'] } }, args);
         expect(result).toMatchObject({
-            semantic: false, snapshot: 'accepted', registration: 'accepted', handlerCalls: 1,
-            invocation: { success: true, data: { identity: 'fd_A', args } },
+            semantic: false, snapshot: 'accepted', registration: 'accepted', handlerCalls: 0,
         });
     });
 
     it('keeps a plain Schema dependency named x-aotui-ref as a Schema, not annotation metadata', async () => {
         expect(await inspect({ type: 'object', dependencies: {
             'x-aotui-ref': { type: 'object', properties: { file: { type: 'string' } } },
-        } })).toMatchObject({ semantic: false, snapshot: 'accepted', registration: 'accepted', handlerCalls: 1,
-            invocation: { success: true } });
+        } })).toMatchObject({ semantic: false, snapshot: 'accepted', registration: 'accepted', handlerCalls: 0 });
     });
 
     it.each([true, false])('keeps the boolean dependency Schema %s', async dependency => {
         expect(await inspect({ type: 'object', dependencies: { 'x-aotui-ref': dependency } }))
-            .toMatchObject({ semantic: false, snapshot: 'accepted', registration: 'accepted', handlerCalls: 1 });
+            .toMatchObject({ semantic: false, snapshot: 'accepted', registration: 'accepted', handlerCalls: 0 });
     });
 
     it.each(literalNames)('does not inspect real %s literal data for Ref declarations', async keyword => {
@@ -101,8 +98,7 @@ describe('Wave 2C C1: Schema nodes, member-name maps and literal data', () => {
         expect(await inspect({ type: 'object', properties: { file: {
             type: 'object', [keyword]: keyword === 'enum' || keyword === 'examples' ? [payload] : payload,
         } } }, args)).toMatchObject({
-            semantic: false, snapshot: 'accepted', registration: 'accepted', handlerCalls: 1,
-            invocation: { success: true, data: { args } },
+            semantic: false, snapshot: 'accepted', registration: 'accepted', handlerCalls: 0,
         });
     });
 
@@ -111,7 +107,7 @@ describe('Wave 2C C1: Schema nodes, member-name maps and literal data', () => {
             const inputSchema = { type: 'object', properties: { [name]: declared } };
             expect(await inspect(inputSchema)).toMatchObject({
                 semantic: true, snapshot: 'accepted', registration: 'accepted', registeredSchema: inputSchema,
-                handlerCalls: 0, invocation: { success: false, error: { code: 'REF_CONTRACT_UNSUPPORTED' } },
+                handlerCalls: 0,
             });
         },
     );
@@ -119,8 +115,7 @@ describe('Wave 2C C1: Schema nodes, member-name maps and literal data', () => {
     it('keeps an ordinary parameter named x-aotui-ref unannotated', async () => {
         expect(await inspect({ type: 'object', properties: { 'x-aotui-ref': { type: 'string' } } },
             { 'x-aotui-ref': '[File](file)' })).toMatchObject({
-            semantic: false, snapshot: 'accepted', registration: 'accepted', handlerCalls: 1,
-            invocation: { success: true, data: { args: { 'x-aotui-ref': '[File](file)' } } },
+            semantic: false, snapshot: 'accepted', registration: 'accepted', handlerCalls: 0,
         });
     });
 });

@@ -34,28 +34,28 @@ class MemoryTaskApp {
         for (const [index, id] of this.order.entries()) {
             const task = this.items.get(id)!;
             const refId = 'pending[' + index + ']';
-            refs[refKey('task_list', 'generation_1', refId)] = {
-                id: refId, ownerViewId: 'task_list', ownerViewGeneration: 'generation_1',
+            refs[refKey('task_list', 'mount_1', refId)] = {
+                id: refId, ownerViewId: 'task_list', ownerViewInstanceId: 'mount_1',
                 refType: 'Task',
                 target: { kind: 'entity', entityType: 'Task', entityId: task.id, entityVersion: String(task.revision) },
             };
             labels.push('[' + task.title + '](' + refId + ')');
         }
         return {
-            schemaVersion: 1, appId: this.appId, instanceId: this.instanceId,
+            schemaVersion: 2, appId: this.appId, instanceId: this.instanceId,
             producerSeq: ++this.producerSeq, sourceEpoch: this.sourceEpoch, capturedAt: this.producerSeq,
             views: [{
-                id: 'task_list', generation: 'generation_1', type: 'TaskList',
+                id: 'task_list', viewInstanceId: 'mount_1', type: 'TaskList',
                 name: 'Tasks', kind: 'state',
                 content: { format: 'markdown-v1', value: labels.join('\n') },
             }],
             refs,
             tools: {
-                complete_task: {
-                    id: 'complete_task', name: 'complete_task', viewType: 'TaskList',
+                [JSON.stringify([this.appId, 'TaskList', 'complete_task'])]: {
+                    id: JSON.stringify([this.appId, 'TaskList', 'complete_task']), name: 'complete_task', viewType: 'TaskList',
                     description: 'Complete a task only after business CAS verification',
                     inputSchema: { type: 'object', properties: { target: { type: 'string' } } },
-                    visible: true, isMutating: true,
+                    isMutating: true, targets: [{ viewId: 'task_list', viewInstanceId: 'mount_1', bindingVersion: 1 }],
                 },
             },
         };
@@ -73,14 +73,14 @@ describe('M1 isolated in-memory App → Snapshot → Ref → Tool descriptor →
         const originalId = original.snapshot.id;
         const old = core.store.resolveRef({
             snapshotId: originalId, appId: app.appId, instanceId: app.instanceId,
-            viewId: 'task_list', viewGeneration: 'generation_1', refId: 'pending[0]',
+            viewId: 'task_list', viewInstanceId: 'mount_1', refId: 'pending[0]',
         });
         expect(old.status).toBe('resolved');
         if (old.status !== 'resolved' || old.target.kind !== 'entity') return;
         const observedTarget = old.target;
         const publishedTool = core.store.getTool({
             snapshotId: originalId, appId: app.appId,
-            instanceId: app.instanceId, toolId: 'complete_task',
+            instanceId: app.instanceId, toolId: JSON.stringify([app.appId, 'TaskList', 'complete_task']),
         });
         expect(publishedTool.status).toBe('found');
 
@@ -93,7 +93,7 @@ describe('M1 isolated in-memory App → Snapshot → Ref → Tool descriptor →
 
         const stillOld = core.store.resolveRef({
             snapshotId: originalId, appId: app.appId, instanceId: app.instanceId,
-            viewId: 'task_list', viewGeneration: 'generation_1', refId: 'pending[0]',
+            viewId: 'task_list', viewInstanceId: 'mount_1', refId: 'pending[0]',
         });
         expect(stillOld.status).toBe('resolved');
         if (stillOld.status === 'resolved' && stillOld.target.kind === 'entity') {

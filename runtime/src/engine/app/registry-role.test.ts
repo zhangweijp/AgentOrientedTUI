@@ -4,33 +4,24 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AppRegistry } from './index.js';
-import type { TUIAppFactory } from '../../spi/app-factory.interface.js';
+import type { TUIAppFactory } from '../../spi/app/app-factory.interface.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 
-// Mock factory helper
+// Mock the sole supported component factory.
 function createMockFactory(name: string, role?: 'user' | 'assistant'): TUIAppFactory {
     return {
-        manifest: {
-            name,
-            displayName: `${name} App`,
-            version: '1.0.0',
-            entry: { main: './index.js' },
-            promptRole: role
-        } as any,
-        create: vi.fn() as any
-    };
-}
-
-// Mock KernelConfig factory helper
-function createKernelConfigFactory(name: string, role?: 'user' | 'assistant'): TUIAppFactory {
-    return {
+        persistenceSupport: 'state-session-v1',
+        appLifecycleSupport: 'app-lifecycle-v2',
+        displayName: name,
         kernelConfig: {
+            appName: name,
             name,
-            root: vi.fn() as any,
-            promptRole: role
-        } as any
+            component: {},
+            promptRole: role,
+        },
+        initializeComponent: vi.fn(async () => ({ render: vi.fn(), unmount: vi.fn() })),
     };
 }
 
@@ -65,15 +56,14 @@ describe('AppRegistry Role Propagation', () => {
         await fs.rm(tempDir, { recursive: true, force: true });
     });
 
-    it('should propagate promptRole from manifest', async () => {
-        // Setup app with manifest role
+    it('should propagate promptRole from the component Kernel config', async () => {
+        // Setup app with Kernel config role
         const factory = createMockFactory('assistant-app', 'assistant');
         // @ts-ignore
         registry['apps'].set('assistant-app', {
             name: 'assistant-app',
             source: 'local:/mock',
             factory,
-            manifest: factory.manifest
         });
         registry['config'].apps['assistant-app'] = {
             source: 'local:/mock',
@@ -92,33 +82,6 @@ describe('AppRegistry Role Propagation', () => {
         );
     });
 
-    it('should propagate promptRole from kernelConfig', async () => {
-        // Setup app with kernelConfig role
-        const factory = createKernelConfigFactory('kernel-assistant-app', 'assistant');
-        // @ts-ignore
-        registry['apps'].set('kernel-assistant-app', {
-            name: 'kernel-assistant-app',
-            source: 'local:/mock',
-            factory,
-            manifest: undefined
-        });
-        registry['config'].apps['kernel-assistant-app'] = {
-            source: 'local:/mock',
-            enabled: true,
-            autoStart: true
-        };
-
-        await registry.installAll(mockDesktop);
-
-        expect(mockDesktop.installDynamicWorkerApp).toHaveBeenCalledWith(
-            '/mock/module/path',
-            expect.objectContaining({
-                name: 'kernel-assistant-app',
-                promptRole: 'assistant'
-            })
-        );
-    });
-
     it('should allow config override of promptRole', async () => {
         // Setup app with default user role
         const factory = createMockFactory('override-app', 'user');
@@ -127,7 +90,6 @@ describe('AppRegistry Role Propagation', () => {
             name: 'override-app',
             source: 'local:/mock',
             factory,
-            manifest: factory.manifest
         });
         // Override in config
         registry['config'].apps['override-app'] = {
@@ -156,7 +118,6 @@ describe('AppRegistry Role Propagation', () => {
             name: 'lazy-assistant',
             source: 'local:/mock',
             factory,
-            manifest: factory.manifest
         });
         registry['config'].apps['lazy-assistant'] = {
             source: 'local:/mock',

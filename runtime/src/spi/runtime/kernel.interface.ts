@@ -1,23 +1,16 @@
 /**
  * SPI Layer - Kernel Interfaces
  * 
- * 定义 Kernel、Desktop、Registry 的契约。
+ * Defines the Kernel and Desktop runtime contracts.
  */
 
 import type {
-    SnapshotID,
     DesktopID,
     AppID,
-    ViewID,
-    DataPayload,
-    IndexMap,
     DesktopState
 } from '../core/types.js';
-import type { Tool } from '../core/tool-call.js';
 // [C1 FIX] Command type removed - unified to Operation
-import type { Operation, OperationResult, OperationPayload } from '../core/operations.js';
 import type { UpdateSignal } from '../core/signals.js';
-import type { CachedSnapshot } from '../core/snapshot.js';
 import type { IRuntimeContext } from './context.interface.js'; // New
 import type { ShutdownOptions, DesktopCloseOptions, DesktopCloseOperation, RuntimeCloseOperation } from './close.interface.js';
 export type { ShutdownOptions } from './close.interface.js';
@@ -51,6 +44,8 @@ export interface ReinitializeDesktopAppsResult {
  */
 export interface AppDiscoveryInfo {
     readonly appId: AppID;
+    /** Runtime-owned identity of the current Worker execution, absent when no execution is active. */
+    readonly appInstanceId?: string;
     readonly name?: string;
     readonly status: 'pending' | 'running' | 'paused' | 'closed' | 'collapsed';
     readonly description?: string;
@@ -59,11 +54,11 @@ export interface AppDiscoveryInfo {
 }
 
 export interface IDesktop {
-    experimentalCreateAppScope?: DesktopInteractionAccess['experimentalCreateAppScope'];
-    beginClose?(options?: DesktopCloseOptions): DesktopCloseOperation;
+    createAppScope: DesktopInteractionAccess['createAppScope'];
+    beginClose(options?: DesktopCloseOptions): DesktopCloseOperation;
     id: DesktopID;
 
-    /** App discovery is independent of snapshot serialization and tool execution. */
+    /** Installed application catalog used by Semantic context and lifecycle controls. */
     getInstalledApps(): readonly AppDiscoveryInfo[];
     /** Optional, bounded by the adapter when projecting recent Desktop activity. */
     getSystemLogs?(): readonly { timestamp: number; message: string }[];
@@ -94,7 +89,7 @@ export interface IDesktop {
      * [RFC-014] 注册待启动 App (懒加载)
      * 
      * App 信息写入 installedApps，但不启动 Worker。
-     * Agent 可以在 Snapshot 中看到这些 App，并通过 open_app 启动。
+     * Semantic context can present these apps and expose the corresponding open control.
      */
     registerPendingApp(options: AppInteractionOptions & {
         appId?: string;
@@ -110,61 +105,15 @@ export interface IDesktop {
 
     // System Commands (App)
     openApp(appId: AppID): Promise<void>;
-    closeApp(appId: AppID): Promise<void>;
-    collapseApp(appId: AppID): Promise<void>;
-    showApp(appId: AppID): Promise<void>;
-
-    // System Commands (View)
-
-    dismountView(appId: AppID, viewId: ViewID): Promise<void>;
-    hideView(appId: AppID, viewId: ViewID): Promise<void>;
-    showView(appId: AppID, viewId: ViewID): Promise<void>;
-
-    // [RFC-006] ViewLink Mount
-    mountViewByLink(appId: AppID, parentViewId: ViewID, linkId: string): Promise<void>;
-
-    /**
-     * 分发操作到应用容器
-     * 
-     * [C2 Refactor] 替代 Dispatcher 直接操作 DOM
-     * Desktop 负责将操作载荷转换为 DOM 事件并发送给 App。
-     * 
-     * @param appId - 目标 App ID
-     * @param payload - 操作载荷
-     * @returns 操作执行结果
-     */
-    dispatchOperation(appId: AppID, payload: OperationPayload): Promise<OperationResult>;
-
-
+    /** If supplied, a mismatch rejects with APP_INSTANCE_CHANGED before side effects; omitting it preserves trusted Host behavior. */
+    closeApp(appId: AppID, expectedInstanceId?: string): Promise<void>;
+    collapseApp(appId: AppID, expectedInstanceId?: string): Promise<void>;
+    showApp(appId: AppID, expectedInstanceId?: string): Promise<void>;
 
     output: {
         subscribe(listener: (signal: UpdateSignal) => void): void;
         unsubscribe(listener: (signal: UpdateSignal) => void): void;
     };
-
-    /**
-     * [RFC-001] 获取所有 App 的 Snapshot Fragments
-     * 
-     * 当 Worker-Side Transformation 启用时，Worker 直接执行 Transformer，
-     * 此方法返回所有 App 的缓存 Markdown + IndexMap + ViewTree。
-     * 
-     * [RFC-007] Added viewTree for Application View Tree section
-     * 
-     * @returns 所有 App 的 Snapshot Fragments
-     */
-    getSnapshotFragments(): {
-        appId: AppID;
-        markup: string;
-        indexMap: Record<string, unknown>;
-        views?: Array<{
-            viewId: ViewID;
-            viewType: string;
-            viewName?: string;
-            markup: string;
-            timestamp: number;
-        }>;
-        viewTree?: string;
-    }[];
 
     /**
      * 获取 App 信息
@@ -196,31 +145,6 @@ export interface IDesktop {
 }
 
 // ============================================================================
-// Registry Interface
-// ============================================================================
-
-/**
-     * Registry 接口
-     * 
-     * 管理 Snapshot 的存储和生命周期。
-     */
-export interface IRegistry {
-    /**
-     * 创建并注册新快照
-     * 
-     * @param indexMap - 索引映射
-     * @param markup - 完整的 Markdown 内容 (向后兼容)
-     * @param ttl - 可选的生存时间
-     * @param structured - [RFC-014] 可选的结构化快照
-     */
-    create(indexMap: IndexMap, markup: string, ttl?: number, structured?: import('../core/snapshot.js').StructuredSnapshot): CachedSnapshot;
-    retain(id: SnapshotID): void;
-    release(id: SnapshotID): void;
-    resolve(id: SnapshotID, path: string): DataPayload | undefined;
-    shutdown?(): void;
-}
-
-// ============================================================================
 // Kernel Interface
 // ============================================================================
 
@@ -230,9 +154,9 @@ export interface IRegistry {
  * Runtime 的核心编排器。
  */
 export interface IKernel {
-    experimentalCreateAppScope?: RuntimeInteractionAccess['experimentalCreateAppScope'];
-    beginShutdown?(reason?: string): RuntimeCloseOperation;
-    beginDesktopShutdown?(id: DesktopID, options?: ShutdownOptions): DesktopCloseOperation;
+    createAppScope: RuntimeInteractionAccess['createAppScope'];
+    beginShutdown(reason?: string): RuntimeCloseOperation;
+    beginDesktopShutdown(id: DesktopID, options?: ShutdownOptions): DesktopCloseOperation;
     createDesktop(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID>;
     // [M1 FIX] Changed from void to Promise<void> to match implementation
     destroyDesktop(desktopId: DesktopID): Promise<void>;
@@ -269,14 +193,6 @@ export interface IKernel {
      */
     getDesktop(desktopId: DesktopID): IDesktop;
 
-    // Locking
-    acquireLock(desktopId: DesktopID, ownerId: string): void;
-    releaseLock(desktopId: DesktopID, ownerId: string): void;
-
-    // Snapshot
-    acquireSnapshot(desktopId: DesktopID, ttl?: number): Promise<CachedSnapshot>;
-    releaseSnapshot(snapshotId: SnapshotID): void;
-
     /**
      * 重新初始化 Desktop 上的所有 App，同时保持 Desktop 身份稳定。
      */
@@ -284,21 +200,6 @@ export interface IKernel {
         desktopId: DesktopID,
         options?: ReinitializeDesktopAppsOptions
     ): Promise<ReinitializeDesktopAppsResult>;
-
-    // Execution
-    /**
-     * 执行操作
-     * 
-     * @param desktopId - 目标 Desktop
-     * @param operation - 操作对象
-     * @param ownerId - 锁持有者 ID
-     */
-    execute(desktopId: DesktopID, operation: Operation, ownerId: string): Promise<OperationResult>;
-
-    /**
-     * 获取系统工具定义
-     */
-    getSystemToolDefinitions(): Tool[];
 
     // [H3 FIX] Changed from void to Promise<void> - Desktop methods are async
     suspend(desktopId: DesktopID): Promise<void>;

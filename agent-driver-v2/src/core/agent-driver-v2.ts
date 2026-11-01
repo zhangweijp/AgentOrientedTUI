@@ -15,7 +15,7 @@
 
 import type { ModelMessage, Tool } from 'ai';
 import type {
-    IDrivenSource,
+    DrivenSource,
     DrivenSourceContext,
     MessageWithTimestamp,
     ToolResult,
@@ -29,13 +29,13 @@ import { LLMClient } from './llm-client.js';
 import { assembleContextRegions } from './context-regions.js';
 
 interface CapturedSourceContext {
-    source: IDrivenSource;
+    source: DrivenSource;
     context: DrivenSourceContext;
 }
 
 interface ToolExecutionRoute {
-    source: IDrivenSource;
-    executeTool: IDrivenSource['executeTool'];
+    source: DrivenSource;
+    executeTool?: DrivenSourceContext['executeTool'];
 }
 
 /**
@@ -45,7 +45,7 @@ export class AgentDriverV2 {
     private static nextId = 1;
 
     private readonly driverId: number;
-    private sources: IDrivenSource[];
+    private sources: DrivenSource[];
     private unsubscribers: (() => void)[] = [];
     private updateDebounced: () => void;
     private logger: Logger;
@@ -60,7 +60,7 @@ export class AgentDriverV2 {
     private lastInputSignature: string | null = null;
 
     // Tool → Source 映射
-    private toolToSourceMap = new Map<string, IDrivenSource>();
+    private toolToSourceMap = new Map<string, DrivenSource>();
 
     private running = false;
     private paused = false;
@@ -110,7 +110,7 @@ export class AgentDriverV2 {
     /**
      * 获取 Tool 对应的 Source (用于测试)
      */
-    getToolSource(toolName: string): IDrivenSource | undefined {
+    getToolSource(toolName: string): DrivenSource | undefined {
         return this.toolToSourceMap.get(toolName);
     }
 
@@ -119,7 +119,7 @@ export class AgentDriverV2 {
         this.updateDebounced();
     }
 
-    private getActiveSources(): IDrivenSource[] {
+    private getActiveSources(): DrivenSource[] {
         return this.sources.filter((source) => this.sourceEnabledMap.get(source.name) !== false);
     }
 
@@ -153,6 +153,7 @@ export class AgentDriverV2 {
         if (captured) {
             for (const { context } of captured) allMessages.push(...context.messages);
         } else for (const source of this.getActiveSources()) {
+            if (typeof source.getMessages !== 'function') continue;
             try {
                 const messages = await source.getMessages();
                 allMessages.push(...messages);
@@ -337,6 +338,7 @@ export class AgentDriverV2 {
         const allTools: Record<string, Tool> = {};
 
         for (const source of this.getActiveSources()) {
+            if (typeof source.getTools !== 'function') continue;
             try {
                 const tools = await source.getTools();
                 Object.assign(allTools, tools);
@@ -360,15 +362,20 @@ export class AgentDriverV2 {
     private async captureContexts(retained: CapturedSourceContext[]): Promise<void> {
         for (const source of this.getActiveSources()) {
             try {
-                const context = source.getContext
-                    ? await source.getContext()
-                    : { messages: await source.getMessages(), tools: await source.getTools() };
+                let context: DrivenSourceContext;
+                if (typeof source.getContext === 'function') {
+                    context = await source.getContext();
+                } else if (typeof source.getMessages === 'function' && typeof source.getTools === 'function') {
+                    context = { messages: await source.getMessages(), tools: await source.getTools() };
+                } else {
+                    throw new Error('DRIVEN_SOURCE_CONTEXT_UNAVAILABLE');
+                }
                 retained.push({ source, context });
             } catch (error) {
                 this.logger.error(`Failed to capture context from ${source.name}:`, error);
                 // An atomic source is part of the current working state. A failed
                 // capture must fail the turn, not silently omit that state.
-                if (source.getContext) throw error;
+                if (typeof source.getContext === 'function') throw error;
             }
         }
     }
@@ -408,8 +415,18 @@ export class AgentDriverV2 {
             }
 
             if (source) {
+                const execute = route?.executeTool ?? (typeof source.executeTool === 'function'
+                    ? source.executeTool.bind(source) : undefined);
+                if (!execute) {
+                    results.push({
+                        toolCallId: toolCall.toolCallId,
+                        toolName: toolCall.toolName,
+                        outcomeStatus: 'rejected',
+                        error: { code: 'E_SOURCE_UNAVAILABLE', message: 'The captured context has no executor for this tool.' },
+                    });
+                    continue;
+                }
                 try {
-                    const execute = route?.executeTool ?? source.executeTool.bind(source);
                     const result = await execute(
                         toolCall.toolName,
                         toolCall.args,
@@ -481,6 +498,7 @@ export class AgentDriverV2 {
         this.toolToSourceMap.clear();
 
         for (const source of this.getActiveSources()) {
+            if (typeof source.getTools !== 'function') continue;
             try {
                 const tools = await source.getTools();
                 for (const toolName of Object.keys(tools)) {
@@ -630,7 +648,7 @@ export class AgentDriverV2 {
             for (const { source, context } of retained) {
                 const executeTool = context.executeTool
                     ? context.executeTool.bind(context)
-                    : source.executeTool.bind(source);
+                    : typeof source.executeTool === 'function' ? source.executeTool.bind(source) : undefined;
                 for (const [name, tool] of Object.entries(context.tools)) {
                     tools[name] = tool;
                     routes.set(name, { source, executeTool });
@@ -772,26 +790,17 @@ export class AgentDriverV2 {
     }
 
     private toolOutput(result: ToolResult): unknown {
-        if (!result.outcomeStatus) {
-            return result.error
-                ? { type: 'error-json', value: result.result === undefined
-                    ? result.error : { ...result.error, result: result.result } }
-                : { type: 'json', value: result.result ?? { success: true } };
-        }
         const status = result.outcomeStatus;
-        const value = {
-            outcomeStatus: status,
-            ...(result.result === undefined ? {} : { result: result.result }),
-            ...(result.error ? { error: result.error } : {}),
-            ...(status === 'unknown' ? {
-                retryable: false,
-                message: 'Execution may have had effects. Check the receipt or application state before considering another invocation.',
-            } : {}),
-        };
-        return {
-            type: status === 'rejected' || status === 'failed' || status === 'unknown' ? 'error-json' : 'json',
-            value,
-        };
+        const uncertain = status === 'unknown' || status === 'accepted';
+        const error = result.error ?? (status && status !== 'succeeded' ? {
+            code: uncertain ? 'TOOL_RESULT_UNCONFIRMED' : 'TOOL_EXECUTION_FAILED',
+            message: uncertain ? 'Tool completion could not be confirmed.' : 'Tool execution failed.',
+        } : undefined);
+        return error ? { type: 'error-json', value: {
+            ...error, ...(result.result === undefined ? {} : { result: result.result }),
+            ...(uncertain ? { retryable: false,
+                message: error.message + ' The operation may have had effects. Check the application View before retrying.' } : {}),
+        } } : { type: 'json', value: result.result ?? { success: true } };
     }
 
     /**

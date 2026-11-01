@@ -8,15 +8,33 @@ import { AppWorkerHost, type WorkerStatus } from './worker-host.js';
 
 const methods = ['start', 'open', 'pause', 'resume', 'reinitialize'] as const;
 type Request = { type: string; requestId?: string };
+const managedInstances = new WeakMap<EventEmitter, string>();
 const settle = (operation: Promise<void>) => operation.then(
     () => ({ status: 'fulfilled' as const }),
     (error: Error) => ({ status: 'rejected' as const, message: error.message }),
 );
 
 function respond(worker: EventEmitter, request: Request) {
+    const init = request.type === 'INIT' ? request : undefined;
+    const instanceId = init ? (init as any).appInstanceId : managedInstances.get(worker);
+    if (init && typeof instanceId === 'string') managedInstances.set(worker, instanceId);
+    const closesApp = ['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE'].includes(request.type);
+    const closesPersistence = ['APP_SHUTDOWN', 'APP_CLOSE'].includes(request.type);
+    const fullyClosed = request.type === 'APP_CLOSE';
     worker.emit('message', {
-        type: request.type === 'INIT' ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
+        type: init ? 'INIT_RESPONSE' : request.type === 'RESET' ? 'RESET_RESPONSE' : 'LIFECYCLE_RESPONSE',
         requestId: request.requestId, success: true,
+        ...(init ? {
+            appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId },
+            persistence: { protocol: 'state-session-v1', version: 1, instanceId },
+            acceptedCapabilities: (init as any).requestedCapabilities,
+            appInstanceId: instanceId,
+        } : {}),
+        ...(!init && closesApp ? { appCleanup: { protocol: 'app-lifecycle-v2', instanceId,
+            state: fullyClosed ? 'completed' : 'stopped', issues: [] } } : {}),
+        ...(!init && closesPersistence ? { persistence: { protocol: 'state-session-v1', instanceId,
+            ok: fullyClosed, unmount: fullyClosed ? 'completed' : 'pending', flush: { status: 'completed', ok: true, entries: [] },
+            ...(fullyClosed ? { dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } : {}) } } : {}),
     });
 }
 
@@ -36,11 +54,28 @@ function controlledHost(status: WorkerStatus = 'running') {
 
 const workerSource = `
     const { parentPort } = require('node:worker_threads');
+    let appInstanceId;
     parentPort.on('message', message => {
         if (message.type === 'TERMINATE') return process.exit(0);
+        const init = message.type === 'INIT';
+        if (init) appInstanceId = message.appInstanceId;
+        const closesApp = ['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type);
+        const closesPersistence = ['APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type);
+        const fullyClosed = message.type === 'APP_CLOSE';
         parentPort.postMessage({
-            type: message.type === 'INIT' ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
+            type: init ? 'INIT_RESPONSE' : message.type === 'RESET' ? 'RESET_RESPONSE' : 'LIFECYCLE_RESPONSE',
             requestId: message.requestId, success: true,
+            ...(init ? {
+                appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: message.appInstanceId },
+                persistence: { protocol: 'state-session-v1', version: 1, instanceId: message.appInstanceId },
+                acceptedCapabilities: message.requestedCapabilities,
+                appInstanceId: message.appInstanceId,
+            } : {}),
+            ...(!init && closesApp ? { appCleanup: { protocol: 'app-lifecycle-v2', instanceId: appInstanceId,
+                state: fullyClosed ? 'completed' : 'stopped', issues: [] } } : {}),
+            ...(!init && closesPersistence ? { persistence: { protocol: 'state-session-v1', instanceId: appInstanceId,
+                ok: fullyClosed, unmount: fullyClosed ? 'completed' : 'pending', flush: { status: 'completed', ok: true, entries: [] },
+                ...(fullyClosed ? { dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } : {}) } } : {}),
         });
     });
 `;
@@ -116,28 +151,31 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
         }
     });
 
-    it('allows a fresh INIT after a prior error when no new failure invalidates it', async () => {
+    it('rejects another INIT after an error on the same Host', async () => {
         const { host, worker, sent } = controlledHost();
         vi.spyOn(console, 'error').mockImplementation(() => {});
         worker.emit('error', new Error('Prior failure'));
-        const fresh = settle(host.start());
-        try {
-            respond(worker, sent[0]);
-            expect(await fresh).toMatchObject({ status: 'fulfilled' });
-            expect(host.getStatus()).toBe('ready');
-        } finally { host.terminate(); }
+        await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
+        expect(sent).toHaveLength(0);expect(host.getStatus()).toBe('error');host.terminate();
     });
 
-    it('keeps active legacy-ACK transitions and requires RESET/new Host after close', async () => {
+    it('keeps managed-ACK transitions and requires RESET/new Host after close', async () => {
         const { host, worker, sent } = controlledHost();
+        let waitingForRelease: Request | undefined;
         worker.postMessage = message => {
             sent.push(message);
-            if (message.type !== 'TERMINATE') queueMicrotask(() => respond(worker, message));
+            if (message.type === 'APP_CLOSE') {
+                waitingForRelease = message;
+                queueMicrotask(() => worker.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1,
+                    instanceId: managedInstances.get(worker), sequence: 1, operation: 'release' }));
+            } else if (message.type === 'STATE_STORAGE_RESPONSE' && waitingForRelease) {
+                const request = waitingForRelease;waitingForRelease = undefined;queueMicrotask(() => respond(worker, request));
+            } else if (message.type !== 'TERMINATE') queueMicrotask(() => respond(worker, message));
         };
         let next: AppWorkerHost | undefined;
         try {
             await host.start();
-            expect(host.getPersistenceReport().support).toBe('legacy-unverified');
+            expect(host.getPersistenceReport().support).toBe('managed');
             await host.open();
             expect(host.getStatus()).toBe('running');
             await host.pause();
@@ -227,7 +265,7 @@ describe('Stage 8 R1: real node:worker_threads response ordering', () => {
             expect(host.getStatus()).toBe('closed');
             expect(nextHost!.getStatus()).toBe('ready');
             expect(nextHost!.appInstanceId).not.toBe(host.appInstanceId);
-            expect(nextHost!.getPersistenceReport().support).toBe('legacy-unverified');
+            expect(nextHost!.getPersistenceReport().support).toBe('managed');
             expect((nextHost as any).worker).toBe(replacement);
         } finally {
             host?.terminate();

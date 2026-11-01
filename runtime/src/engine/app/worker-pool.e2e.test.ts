@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { mkdtemp, writeFile, mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, readFile, rm, symlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -7,8 +7,13 @@ import { pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { WorkerPool } from './worker-pool.js';
 import { createRuntime } from '../../facades/facades.js';
+import { invokeObservedTool } from '../../../tests/fixtures/semantic-worker-tools.js';
 
 const repo = resolve(process.cwd(), '..'), url = (p: string) => pathToFileURL(p).href;
+async function linkSDKPeers(dir: string) {
+    await mkdir(join(dir, 'node_modules'), { recursive: true });
+    await symlink(join(repo, 'sdk/node_modules/preact'), join(dir, 'node_modules/preact'), 'dir');
+}
 async function capture(file: string, body: string) {
     await writeFile(file, body);const folder = process.env.AOTUI_W08_C1_FACTS_DIR ?? process.env.AOTUI_W08_B2_FACTS_DIR;
     if (folder) {
@@ -42,18 +47,38 @@ it('C1-02/03/04 real Node capacity, script identity, actual replacement exit, an
 
 it('C1-08 two actual createRuntime instances execute their own A/B scripts; same Runtime Desktops share one bound', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-runtimes-')), app = join(dir, 'app.mjs');
-    await capture(app, `import {createTUIApp,useAppRuntimeContext} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let launch;
-function Root(){launch=useAppRuntimeContext().launchConfig;return null;}
-export default createTUIApp({app_name:'c1',component:Root,onOperation:async()=>({success:true,data:{script:globalThis.__c1Script,launch}})});`);
+    await linkSDKPeers(dir);
+    await capture(app, `import {h} from 'preact';import {createTUIApp,useAppRuntimeContext,View,useViewTypeTool} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let launch;
+function Tools(){const [Inspect]=useViewTypeTool('inspect',{description:'Inspect launch facts',isMutating:false,params:{}},async()=>{const script=globalThis.__c1Script,forwarded=launch?.C1_LAUNCH;return {success:true,data:{script:typeof script==='string'?script:'<script:'+typeof script+'>',launch:{C1_LAUNCH:typeof forwarded==='string'?forwarded:'<C1_LAUNCH:'+typeof forwarded+'>'}}};});return h(Inspect);}
+function Root(){launch=useAppRuntimeContext().launchConfig;return h(View,{id:'root',type:'Root'},h(Tools));}
+export default createTUIApp({app_name:'c1',component:Root});`);
     const runtimes = [createRuntime({ worker: { timeoutMs: 2345, pool: { initialSize: 0, maxSize: 1 } } }), createRuntime({ worker: { pool: { initialSize: 0, maxSize: 1 } } })] as any[];
-    const sandboxes: any[] = [];
+    const sandboxes: any[] = [], workers: any[] = [];
     try {
         for (const [index, runtime] of runtimes.entries()) {
             const script = join(dir, index + '.mjs');await capture(script, `globalThis.__c1Script=${JSON.stringify(index ? 'B' : 'A')};await import(${JSON.stringify(url(join(repo, 'runtime/dist/worker-runtime/index.js')))});`);
             const d = await runtime.createDesktop();const id = await runtime.installDynamicWorkerApp(d, url(app), { workerScriptPath: script, config: { C1_LAUNCH: 'forwarded' } });
-            const manager = runtime.desktopManager.get(d).appManager, sandbox = manager.workers.get(id);sandboxes.push(sandbox);
-            expect((await sandbox.executeOperation('inspect', {}, 'snapshot')).data.script).toBe(index ? 'B' : 'A');
-            expect(sandbox.pool).toBe(runtime.desktopManager.workerPool);expect((await sandbox.executeOperation('inspect', {}, 'snapshot')).data.launch.C1_LAUNCH).toBe('forwarded');
+            const manager = runtime.desktopManager.get(d).appManager, sandbox = manager.workers.get(id);sandboxes.push(sandbox);workers.push(sandbox.lease.worker);
+            let inspectAttempt = 0;
+            const inspect = async () => {
+                const attempt = ++inspectAttempt;
+                const result = await invokeObservedTool((sandbox as any).workerHost, 'inspect', {}, 'root');
+                const outcome = result?.receipt?.outcome, data = outcome?.value?.data;
+                if (result?.kind !== 'receipt' || outcome?.status !== 'succeeded') {
+                    const dataSummary = data && typeof data === 'object' ? {
+                        keys: Object.keys(data),
+                        script: { present: Object.hasOwn(data, 'script'), value: data.script ?? null },
+                        launch: { present: Object.hasOwn(data, 'launch'), keys: data.launch && typeof data.launch === 'object' ? Object.keys(data.launch) : [],
+                            C1_LAUNCH: data.launch?.C1_LAUNCH ?? null },
+                    } : null;
+                    throw new Error(`Tool invocation failed at inspect ${attempt}: ${JSON.stringify({ kind: result?.kind ?? null,
+                        outcome: outcome ?? null, code: result?.issue?.code ?? outcome?.error?.code ?? outcome?.code ?? null,
+                        details: result?.issue?.details ?? outcome?.error?.details ?? outcome?.details ?? null, data: dataSummary })}`);
+                }
+                return result.receipt.outcome.value.data;
+            };
+            expect((await inspect()).script).toBe(index ? 'B' : 'A');
+            expect(sandbox.pool).toBe(runtime.desktopManager.workerPool);expect((await inspect()).launch.C1_LAUNCH).toBe('forwarded');
             if (!index) {
                 expect(sandbox.workerHost.timeout).toBe(2345);
                 const other = await runtime.createDesktop();expect(runtime.desktopManager.get(other).appManager.workerPool).toBe(manager.workerPool);
@@ -61,13 +86,17 @@ export default createTUIApp({app_name:'c1',component:Root,onOperation:async()=>(
                 expect(runtime.desktopManager.getWorkerPoolReport()).toMatchObject({ total: 1, leased: 1 });
             }
         }
-        await sandboxes[0].disposeAsync();await runtimes[0].desktopManager.closeWorkerPool();
-        expect((await sandboxes[1].executeOperation('inspect', {}, 'snapshot')).data.script).toBe('B');
-        await sandboxes[1].disposeAsync();await runtimes[1].desktopManager.closeWorkerPool();
+        const firstRuntimeClose = await runtimes[0].beginShutdown().completion;
+        expect(firstRuntimeClose.ok).toBe(true);expect(firstRuntimeClose.pool).toMatchObject({ ownership: 'owned', report: { state: 'closed', total: 0 } });
+        expect(workers[0].threadId).toBe(-1);
+        const result = await invokeObservedTool((sandboxes[1] as any).workerHost, 'inspect', {}, 'root');
+        expect((result as any).receipt.outcome.value.data.script).toBe('B');
+        const secondRuntimeClose = await runtimes[1].beginShutdown().completion;
+        expect(secondRuntimeClose.ok).toBe(true);expect(secondRuntimeClose.pool).toMatchObject({ ownership: 'owned', report: { state: 'closed', total: 0 } });
+        expect(workers[1].threadId).toBe(-1);
         await fact('runtime-scripts', { scripts: ['A', 'B'], independentOwners: true, sameRuntimeDesktopCap: 1, reports: runtimes.map(r => r.desktopManager.getWorkerPoolReport()) });
     } finally {
-        for (const sandbox of sandboxes) await sandbox.disposeAsync();
-        for (const runtime of runtimes) { await runtime.desktopManager.closeWorkerPool();await runtime.shutdown(); }
+        await Promise.all(runtimes.map(runtime => runtime.beginShutdown().completion));
         await rm(dir, { recursive: true, force: true });
     }
 }, 20000);

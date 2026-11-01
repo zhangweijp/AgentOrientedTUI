@@ -12,9 +12,7 @@
  * @packageDocumentation
  */
 
-import type { IView } from './app/index.js';
-import type { IRefExporter, ITypeToolRegistry } from './app/index.js';
-import type { ViewID } from './core/index.js';
+import type { IRefExporter } from './app/index.js';
 import type { AppID } from './core/index.js';
 import type { DesktopID } from './core/index.js';
 import type { AppLaunchConfig } from './app/app-config.interface.js';
@@ -47,40 +45,11 @@ export interface RuntimeContext {
     launchConfig?: AppLaunchConfig;
 
     /**
-     * 分配ViewID
-     * 
-     * @param key - View的唯一标识 (name_uniqueId)
-     * @returns 分配的ViewID (view_0, view_1, ...)
-     */
-    allocateViewId: (key: string) => ViewID;
-
-    /**
-     * 注册View到Runtime
-     * 
-     * @param view - IView实例
-     */
-    registerView: (view: IView) => void;
-
-    /**
-     * 注销View
-     * 
-     * @param viewId - 要注销的ViewID
-     */
-    unregisterView: (viewId: ViewID) => void;
-
-    /**
      * Ref导出器
      * 
      * SDK通过此接口导出语义引用(useRef, useArrayRef)
      */
     refExporter: IRefExporter;
-
-    /**
-     * Type Tool注册表 [RFC-020]
-     * 
-     * SDK通过此接口注册/注销Type Tools
-     */
-    typeTools: ITypeToolRegistry;
 
     /**
      * 标记为脏
@@ -153,12 +122,9 @@ export interface ComponentFactory {
      * 
      * @example
      * ```tsx
-     * const renderer = factory.initializeComponent(appContainer, {
-     *     appId: 'app_0',
-     *     desktopId: 'desktop_0',
-     *     allocateViewId: (key) => this.allocateViewId(key),
-     *     registerView: (view) => this.registerView(view),
-     *     // ...
+     * const renderer = await factory.initializeComponent(appContainer, {
+     *     appId: 'app_0', desktopId: 'desktop_0',
+     *     refExporter, markDirty, projection, viewTools,
      * });
      * ```
      */
@@ -166,10 +132,6 @@ export interface ComponentFactory {
         container: HTMLElement,
         context: RuntimeContext
     ): Promise<ComponentRenderer>;
-
-    // [传统配置保留] 用于Operation路由等
-    onOperation?: (op: any, id: string, ctx: any) => Promise<any>;
-    onDelete?: () => Promise<void>;
 
     // [未来扩展]
     // getMetadata?: () => AppMetadata;

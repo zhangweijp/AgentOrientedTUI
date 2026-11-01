@@ -5,7 +5,6 @@ import { act } from 'preact/test-utils';
 import { usePersistentState } from './usePersistentState.js';
 import type { PersistOptions } from './usePersistentState.js';
 import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
-import { AppConfigContext } from '../contexts/index.js';
 import { createAppStatePersistence } from '../../../runtime/src/worker-runtime/state-persistence.js';
 import { createMemoryStateStorage } from '../../../runtime/src/adapters/storage/memory-state-storage.js';
 import type { StateStorage } from '../../../runtime/src/core/persistence/state-storage.js';
@@ -35,8 +34,7 @@ function setup(initialText?: string, overrides: Partial<StateStorage> = {}) {
   } };
   let child: (() => any) | undefined, usePort = true, config: object = {};
   function App() { tuple = usePersistentState(key, initial, options);return child ? h(child, {}) : null; }
-  const draw = () => render(h(AppRuntimeContext.Provider, { value: { appId: 'a', desktopId: 'd', persistence: usePort ? port : undefined } as any },
-    h(AppConfigContext.Provider, { value: config }, h(App, {}))), container);
+  const draw = () => render(h(AppRuntimeContext.Provider, { value: { appId: 'a', desktopId: 'd', persistence: usePort ? port : undefined, launchConfig: config } as any }, h(App, {})), container);
   return { managed, port, backend, storage, calls, address, container, get tuple() { return tuple; }, draw,
     async commit() { act(() => draw());await act(async () => { await initialized; }); },
     change(v: { key?: string; options?: PersistOptions<any>; initial?: any; child?: () => any; usePort?: boolean; config?: object }) {

@@ -1,4 +1,4 @@
-import { captureInvocationJson, exact, invocationObject } from './view-tool-invocation-v1.js';
+import { captureInvocationJson, exact, invocationObject } from './worker-message-capture.js';
 import type { AppCleanupReport } from '../spi/runtime/app-lifecycle.interface.js';
 export interface AppLifecycleAck { readonly protocol: 'app-lifecycle-v2'; readonly version: 2; readonly instanceId: string }
 export function captureAppLifecycleAck(input: unknown, instanceId: string): AppLifecycleAck | null {

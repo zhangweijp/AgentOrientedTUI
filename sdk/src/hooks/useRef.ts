@@ -19,7 +19,7 @@
  * }
  * ```
  */
-import { useLayoutEffect, useMemo, useRef as usePreactRef } from "./preact-hooks.js";
+import { useLayoutEffect, useRef as usePreactRef } from "./preact-hooks.js";
 // [P1 ISP] Use specialized hook instead of useInternalViewContext
 import { useRefRegistry } from "./useViewContext.js";
 
@@ -76,29 +76,4 @@ export function useDataRef<T extends object>(refId: string, data: T): RefHandle<
   (format as RefHandle<T>).id = refId;
 
   return format as RefHandle<T>;
-}
-
-/**
- * V2-only versioned entity Ref. The marker is JSON-compatible so legacy
- * Snapshot V1 can retain it as data; V2 Producer converts it to an entity
- * target. It does NOT authorize a mutation and doesn't read disk versions.
- */
-export function useEntityRef(
-  refId: string,
-  target: { entityType: string; entityId: string; entityVersion: string },
-): RefHandle<{ $aotuiEntityRefV1: {
-    entityType: string; entityId: string; entityVersion: string;
-  } }> {
-  const { entityType, entityId, entityVersion } = target;
-  const payload = useMemo(() => {
-    if (![entityType, entityId, entityVersion].every(
-      value => typeof value === 'string' && value.trim().length > 0
-    )) {
-      throw new Error('[AOTUI SDK] useEntityRef requires a nonempty entity identity and version');
-    }
-    return Object.freeze({
-      $aotuiEntityRefV1: Object.freeze({ entityType, entityId, entityVersion }),
-    });
-  }, [entityType, entityId, entityVersion]);
-  return useDataRef(refId, payload);
 }

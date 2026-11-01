@@ -40,8 +40,8 @@ export interface LLMOutputEvent {
 
     /** 
      * 事件类型
-     * - complete: 完整消息 (V1 only)
-     * - chunk: 流式片段 (future)
+     * - complete: 完整消息
+     * - chunk: 流式片段 (reserved for future use)
      */
     type: 'complete';
 

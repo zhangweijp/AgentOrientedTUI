@@ -1,7 +1,5 @@
-import { isCreateIfAbsentSchema, matchesCreateIfAbsentInput } from '../tool/create-if-absent-contract.js';
 import { canonicalJson, utf8Size } from '../snapshot/json.js';
 import type { AppIdentityReader, AppSnapshotV2, JsonValue, SnapshotStore } from '../snapshot/types.js';
-import { acquireVersionedEntitySource } from '../tool/source-binding.js';
 import { validateVersionedToolRefDeclarations } from '../tool/versioned-ref-declarations.js';
 import { prepareSnapshotValueArguments } from '../tool/snapshot-value-arguments.js';
 import { createObservationRegistry, DEFAULT_OBSERVATION_REGISTRY_LIMITS } from './observation-registry.js';
@@ -50,10 +48,9 @@ function binding(raw: unknown): Binding {
     try {
         const data = dataProperties(raw, ['identity', 'mode', 'validateInput', 'isLive', 'execute'], ['operations']);
         if (!data.identity || !['object', 'function'].includes(typeof data.identity) ||
-            !['ordinary', 'snapshot-value-v1', 'versioned-entity', 'create-if-absent'].includes(data.mode as string) ||
+            !['ordinary-v2', 'snapshot-value-v2'].includes(data.mode as string) ||
             ['validateInput', 'isLive', 'execute'].some(key => typeof data[key] !== 'function')) throw 0;
         let operations: Provider | undefined;
-        if (data.mode === 'create-if-absent' && data.operations !== undefined) throw 0;
         if (data.operations !== undefined) {
             const p = dataProperties(data.operations, ['owns', 'query']);
             if (typeof p.owns !== 'function' || typeof p.query !== 'function') throw 0;
@@ -270,22 +267,16 @@ export function createScopedInteraction(store: SnapshotStore & AppIdentityReader
             if (snapshot.schemaVersion !== 2) { acquired.lease.release(); fail('SNAPSHOT_INVALID'); }
             try { release = hold(snapshot, acquired.lease.release); } catch (error) { acquired.lease.release(); throw error; }
             setMetadata(entry, { source: { appId: snapshot.appId, instanceId: snapshot.instanceId, snapshotId: snapshot.id, revision: snapshot.revision } });
-            let source: InvocationSource = Object.freeze({ appId: state.appId, instanceId: state.instanceId,
+            const source: InvocationSource = Object.freeze({ appId: state.appId, instanceId: state.instanceId,
                 snapshotId: snapshot.id, tool: selected.tool, target: selected.target });
             let declared: boolean;
             try { declared = validateVersionedToolRefDeclarations(source.tool.inputSchema, source.tool.isMutating); }
             catch { return fail('REF_CONTRACT_UNSUPPORTED'); }
-            if (source.tool.isMutating && request.refId) {
-                if (!selected.visibleRefIds.includes(request.refId)) fail('REF_NOT_VISIBLE');
-                const entity = acquireVersionedEntitySource(store, { ...selected.sourceRequest, refId: request.refId });
-                if (entity.status === 'rejected') fail(entity.issue.code);
-                try { source = Object.freeze({ ...source, resource: entity.resource, resourceRefId: request.refId }); } finally { entity.release(); }
-            }
             const initial = resolve(state, source);
             let rawInput = request.input, effectiveInput = request.input;
             let refSources: InvocationContext['refSources'] = Object.freeze([]), firstRefCanonical: string | undefined;
-            if (initial.mode === 'snapshot-value-v1') {
-                if (source.tool.isMutating || request.refId !== undefined || !declared) fail('REF_CONTRACT_UNSUPPORTED');
+            if (initial.mode === 'snapshot-value-v2') {
+                if (source.tool.isMutating || !declared) fail('REF_CONTRACT_UNSUPPORTED');
                 const schema = source.tool.inputSchema;
                 const slots = jsonObject(schema) && jsonObject(schema.properties) ? Object.entries(schema.properties)
                     .filter(([, field]) => jsonObject(field) && Object.hasOwn(field, 'x-aotui-ref')) : [];
@@ -297,31 +288,19 @@ export function createScopedInteraction(store: SnapshotStore & AppIdentityReader
                 try { rawInput = prepared.rawArgs; effectiveInput = prepared.effectiveArgs; refSources = prepared.refSources;
                     firstRefCanonical = canonicalJson({ effectiveInput, refSources } as unknown as JsonValue); }
                 finally { prepared.release(); }
-            } else if (initial.mode === 'create-if-absent') {
-                if (!source.tool.isMutating || declared || request.refId!==undefined || source.resource || !isCreateIfAbsentSchema(source.tool.inputSchema)) fail('CREATE_CONTRACT_UNSUPPORTED');
-                rawInput=capture<InvocationContext['rawInput']>(request.input,limits.ordinaryInput,'ACTION_INPUT_INVALID').value;
-                if (!matchesCreateIfAbsentInput(source.tool.inputSchema,rawInput)) fail('ACTION_INPUT_INVALID');
-                effectiveInput=rawInput;
             } else {
-                if (initial.mode === 'versioned-entity' && !request.refId) fail('RESOURCE_VERSION_REQUIRED');
-                if (declared || initial.mode === 'ordinary' && request.refId !== undefined ||
-                    initial.mode === 'versioned-entity' && (!source.tool.isMutating || !request.refId || !source.resource)) fail('REF_CONTRACT_UNSUPPORTED');
+                if (declared) fail('REF_CONTRACT_UNSUPPORTED');
                 rawInput = capture<InvocationContext['rawInput']>(request.input, limits.ordinaryInput, 'ACTION_INPUT_INVALID').value;
                 effectiveInput = rawInput;
             }
             function recheck(): void {
                 const current = sourceFor(state, request);
-                if (initial.mode === 'snapshot-value-v1') {
+                if (initial.mode === 'snapshot-value-v2') {
                     if (!refSources.every(ref => current.visibleRefIds.includes(ref.refId))) fail('REF_NOT_VISIBLE');
                     const checked = prepareSnapshotValueArguments(store, state, { snapshotId: snapshot.id, toolId: source.tool.id, viewId: source.target.viewId, args: rawInput });
                     if (checked.status === 'rejected') fail(checked.issue.code);
                     try { if (canonicalJson({ effectiveInput: checked.effectiveArgs, refSources: checked.refSources } as unknown as JsonValue) !== firstRefCanonical) fail('REF_ARGUMENT_CHANGED'); }
                     finally { checked.release(); }
-                } else if (initial.mode === 'versioned-entity') {
-                    if (!current.visibleRefIds.includes(request.refId!)) fail('REF_NOT_VISIBLE');
-                    const checked = acquireVersionedEntitySource(store, { ...selected.sourceRequest, refId: request.refId! });
-                    if (checked.status === 'rejected') fail(checked.issue.code);
-                    checked.release();
                 }
                 const latest = resolve(state, source);
                 if (!sameBinding(initial, latest)) fail('TOOL_SOURCE_STALE');
@@ -335,8 +314,7 @@ export function createScopedInteraction(store: SnapshotStore & AppIdentityReader
             if (!jsonObject(validation) || typeof validation.ok !== 'boolean' || !exactFields(validation, validation.ok ? ['ok', 'value'] : ['ok'])) fail('INPUT_VALIDATOR_FAILED');
             if (!validation.ok) fail('ACTION_INPUT_INVALID');
             if (!jsonObject(validation.value)) fail('INPUT_VALIDATOR_FAILED');
-            if (initial.mode === 'create-if-absent' && canonicalJson(validation.value)!==canonicalJson(effectiveInput)) fail('CREATE_ARGUMENT_CHANGED');
-            if (initial.mode === 'snapshot-value-v1') {
+            if (initial.mode === 'snapshot-value-v2') {
                 if (canonicalJson(validation.value) !== canonicalJson(effectiveInput)) fail('REF_ARGUMENT_CHANGED');
             } else effectiveInput = capture<InvocationContext['effectiveInput']>(validation.value, limits.ordinaryInput, 'ACTION_INPUT_INVALID').value;
             const context: InvocationContext = Object.freeze({ scopeId: state.id, invocationId: request.invocationId,
@@ -354,7 +332,7 @@ export function createScopedInteraction(store: SnapshotStore & AppIdentityReader
                 let qualified = false;
                 try {
                     active(state);
-                    if (initial.mode !== 'create-if-absent' && initial.operations && nonEmpty(outcome.operationId) && utf8Size(outcome.operationId) <= 256 && entry.metadata.source &&
+                    if (initial.operations && nonEmpty(outcome.operationId) && utf8Size(outcome.operationId) <= 256 && entry.metadata.source &&
                         (!state.operations.has(outcome.operationId) || state.operations.get(outcome.operationId) === request.invocationId)) {
                         const candidate = capture<Metadata>({ ...entry.metadata, operationId: outcome.operationId }, limits.metadata, 'INVOCATION_CAPACITY').value;
                         const { operationId: _, ...receiptMetadata } = candidate;
@@ -474,9 +452,9 @@ export function createScopedInteraction(store: SnapshotStore & AppIdentityReader
             try { refresh(); } catch (error) { failedClock = true; clockError = error; }
             const state = states.get(id); if (!state || state.closing || closed) fail('SCOPE_UNAVAILABLE');
             const captured = capture<ScopedInvocation>(raw, limits.request, 'INVOCATION_INVALID'), request = captured.value;
-            if (!jsonObject(request) || !exactFields(request, ['invocationId', 'observationId', 'bindingId', 'input'], ['refId']) ||
+            if (!jsonObject(request) || !exactFields(request, ['invocationId', 'observationId', 'bindingId', 'input']) ||
                 [request.invocationId, request.observationId, request.bindingId].some(value => !nonEmpty(value) || utf8Size(value) > 256) ||
-                !jsonObject(request.input) || Object.hasOwn(request, 'refId') && !nonEmpty(request.refId)) fail('INVOCATION_INVALID');
+                !jsonObject(request.input)) fail('INVOCATION_INVALID');
             const fingerprint = canonicalJson(request as unknown as JsonValue), found = state.ledger.lookup(request.invocationId, fingerprint);
             if (failedClock) {
                 if (found.status === 'match' && found.value.unavailable) return Promise.resolve(unavailable('RESULT_UNAVAILABLE'));

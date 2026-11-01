@@ -4,7 +4,7 @@ import type {
     SnapshotStoreOptions, SnapshotStoreStats, ToolLookup, ToolSelector, AppIdentityRead,
 } from './types.js';
 import { utf8Size } from './json.js';
-import { refKey, validatePreparedDraft } from './validator.js';
+import { refKey } from './snapshot-support.js';
 import { validatePreparedV2Draft } from './v2-validator.js';
 
 interface SnapshotEntry {
@@ -67,8 +67,8 @@ function positiveInteger(value: number, label: string, allowZero = false): void 
 function nonEmpty(value: string, label: string): void {
     if (typeof value !== 'string' || !value.trim()) throw new TypeError(label + ' must be non-empty');
 }
-function snapshotId(version: 1 | 2, appId: string, instanceId: string, revision: number): string {
-    return 'aotui-app-snapshot:v' + version + ':' + JSON.stringify([appId, instanceId, revision]);
+function snapshotId(appId: string, instanceId: string, revision: number): string {
+    return 'aotui-app-snapshot:v2:' + JSON.stringify([appId, instanceId, revision]);
 }
 
 /**
@@ -261,20 +261,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
         accept(input: unknown): CommitResult {
             if (disposed) return rejected('APP_STOPPED', 'Snapshot Core is closed');
             const time = clock();
-            // SchemaVersion is a data property, not a freely supplied runtime
-            // hint. V1 validation still rejects every unexpected V2 field.
-            let version: unknown;
-            try {
-                if (input && typeof input === 'object' && !Array.isArray(input)) {
-                    const own = Object.getOwnPropertyDescriptor(input, 'schemaVersion');
-                    version = own && 'value' in own ? own.value : undefined;
-                }
-            } catch {
-                // Fall back to strict V1 validation (and reject malformed input).
-            }
-            const checked = version === 2
-                ? validatePreparedV2Draft(input, options.limits)
-                : validatePreparedDraft(input, options.limits);
+            const checked = validatePreparedV2Draft(input, options.limits);
             if (!checked.ok) {
                 const envelope = checked.envelope;
                 if (envelope) {
@@ -343,8 +330,8 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
             }
             const revision = app.revision + 1;
             const snapshot = Object.freeze({
-                schemaVersion: draft.schemaVersion,
-                id: snapshotId(draft.schemaVersion, draft.appId, draft.instanceId, revision),
+                schemaVersion: 2,
+                id: snapshotId(draft.appId, draft.instanceId, revision),
                 appId: draft.appId,
                 instanceId: draft.instanceId,
                 revision,
@@ -445,34 +432,18 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
                     status: 'rejected', issue: issue('APP_INSTANCE_MISMATCH', 'Ref source identity mismatch', { snapshotId: selector.snapshotId }),
                 });
             }
-            if (snapshot.schemaVersion === 1) {
-                if (typeof selector.viewGeneration !== 'string' ||
-                    !snapshot.views.some(view =>
-                        view.id === selector.viewId && view.generation === selector.viewGeneration)) {
-                    return Object.freeze({
-                        status: 'rejected', issue: issue('VIEW_INSTANCE_REVOKED',
-                            'V1 Ref View generation is not part of this source snapshot',
-                            { snapshotId: selector.snapshotId }),
-                    });
-                }
-                const ref = snapshot.refs[refKey(selector.viewId, selector.viewGeneration, selector.refId)];
-                if (!ref) return Object.freeze({ status: 'rejected', issue: issue('REF_NOT_FOUND',
-                    'Ref not present in V1 source snapshot', { snapshotId: selector.snapshotId }) });
-                return Object.freeze({ status: 'resolved', ref, target: ref.target });
-            }
-
             if (typeof selector.viewInstanceId !== 'string' ||
                 !snapshot.views.some(view =>
                     view.id === selector.viewId && view.viewInstanceId === selector.viewInstanceId)) {
                 return Object.freeze({
                     status: 'rejected', issue: issue('VIEW_INSTANCE_REVOKED',
-                        'V2 Ref View instance is not part of this source snapshot',
+                        'Ref View instance is not part of this source snapshot',
                         { snapshotId: selector.snapshotId }),
                 });
             }
             const ref = snapshot.refs[refKey(selector.viewId, selector.viewInstanceId, selector.refId)];
             if (!ref) return Object.freeze({ status: 'rejected', issue: issue('REF_NOT_FOUND',
-                'Ref not present in V2 source snapshot', { snapshotId: selector.snapshotId }) });
+                'Ref not present in source snapshot', { snapshotId: selector.snapshotId }) });
             return Object.freeze({ status: 'resolved', ref, target: ref.target });
         },
         getTool(selector: ToolSelector): ToolLookup {
@@ -485,13 +456,8 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
                     status: 'rejected', issue: issue('APP_INSTANCE_MISMATCH', 'Tool source identity mismatch', { snapshotId: selector.snapshotId }),
                 });
             }
-            if (snapshot.schemaVersion === 1) {
-                const tool = snapshot.tools[selector.toolId];
-                if (tool?.visible) return Object.freeze({ status: 'found', tool });
-            } else {
-                const tool = snapshot.tools[selector.toolId];
-                if (tool?.targets.length) return Object.freeze({ status: 'found', tool });
-            }
+            const tool = snapshot.tools[selector.toolId];
+            if (tool?.targets.length) return Object.freeze({ status: 'found', tool });
             return Object.freeze({ status: 'rejected', issue: issue('TOOL_UNAVAILABLE',
                 'Tool unavailable in source snapshot', { snapshotId: selector.snapshotId }) });
         },

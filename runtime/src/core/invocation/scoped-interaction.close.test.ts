@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { createSnapshotCore, createViewOwnedTools, createScopedInteraction } from '../index.js';
+import { compileOrdinaryParams, createSnapshotCore, createViewOwnedTools, createScopedInteraction, ordinaryParameterProfile } from '../index.js';
 import type { AppSnapshotV2, CancellationSignal, ExecutionBinding, ExecutionFact, InputValidation, InvocationContext,
     OperationQuery, ReceiptMetadata, ScopePolicy } from '../index.js';
 
@@ -14,7 +14,12 @@ function fixture(instanceId = 'run', namespace = 'close:run') {
     const now = () => { if (clockMode === 'throw') throw Error('clock'); return clockMode === 'back' ? 9 : 10; };
     const core = createSnapshotCore({ now }), registry = createViewOwnedTools('app', instanceId), view = registry.mount('v', 'Detail');
     core.lifecycle.startApp('app', instanceId);
-    registry.registerTool(view.viewInstanceId, { name: 'read', description: 'Read', inputSchema: { type: 'object', properties: {} }, isMutating: false }, () => ({ success: true }));
+    const contract = compileOrdinaryParams({}, { additionalProperties: false });
+    if (!contract.ok) throw Error('Fixture ordinary-v2 contract');
+    const handler = async () => ({ success: true });
+    const safe = async () => ({ phase: 'entered-returned' as const, result: await handler() });
+    registry.registerTool(view.viewInstanceId, { name: 'read', description: 'Read', inputSchema: ordinaryParameterProfile(contract.contract), isMutating: false },
+        handler, { safeOrdinaryParametersInvocationMode: 'ordinary-v2' }, safe);
     const tool = registry.listTools()[0];
     const committed = core.committer.accept({ schemaVersion: 2, appId: 'app', instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 10,
         views: [{ id: 'v', viewInstanceId: view.viewInstanceId, type: 'Detail', name: 'Detail', kind: 'state', content: { format: 'markdown-v1', value: 'value' } }], refs: {},
@@ -32,9 +37,9 @@ function fixture(instanceId = 'run', namespace = 'close:run') {
     };
     const calls = { handler: 0, authorize: 0, validate: 0, project: 0, read: 0, query: 0 };
     const operations = new Map<string, { scopeId: string; invocationId: string }>();
-    const binding: ExecutionBinding = { identity: {}, mode: 'ordinary',
+    const binding: ExecutionBinding = { identity: {}, mode: 'ordinary-v2',
         validateInput: (source, input, signal) => { calls.validate++; return controls.validate(source, input, signal); },
-        isLive: source => ({ ok: registry.validate(tool, source.target).success }),
+        isLive: source => ({ ok: registry.validateOrdinaryParametersBinding(tool, source.target).success }),
         execute: async context => { calls.handler++; const fact = await controls.execute(context);
             if (fact.kind === 'action' && fact.outcome.status === 'accepted') operations.set(fact.outcome.operationId, { scopeId: context.scopeId, invocationId: context.invocationId }); return fact; },
         operations: { owns: (metadata, id) => { const op = operations.get(id); return !!op && op.scopeId === metadata.scopeId && op.invocationId === metadata.invocationId; },

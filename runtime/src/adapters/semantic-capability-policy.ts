@@ -2,6 +2,7 @@ import type { ExecutionResolver, ScopePolicy } from '../core/invocation/scoped-i
 import type { ObservationGrant } from '../core/invocation/observation-types.js';
 import { DEFAULT_OBSERVATION_REGISTRY_LIMITS } from '../core/invocation/observation-registry.js';
 import { captureBoundedJson } from '../core/invocation/invocation-outcome.js';
+import { canonicalJson } from '../core/snapshot/json.js';
 
 function fields(value: unknown, names: readonly string[]): value is Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false;
@@ -33,14 +34,15 @@ export function withExecutableTools(policy: ScopePolicy, execution: ExecutionRes
             // valid by silently deleting their unsupported targets.
             const seen = new Set<string>();
             for (const entry of grant.targets) {
-                if (!fields(entry, ['toolId', 'target']) || !fields(entry.target, ['viewId', 'viewInstanceId', 'bindingVersion'])) return raw;
+                if (!fields(entry, ['toolId', 'target']) || !fields(entry.target, ['viewId', 'viewInstanceId', 'bindingVersion', ...(entry.target && Object.hasOwn(entry.target, 'selector') ? ['selector'] : [])])) return raw;
                 const target = entry.target;
                 if (typeof entry.toolId !== 'string' || typeof target.viewId !== 'string' || typeof target.viewInstanceId !== 'string' ||
                     !Number.isSafeInteger(target.bindingVersion) || !Object.hasOwn(context.source.tools, entry.toolId)) return raw;
                 const tool = context.source.tools[entry.toolId];
                 const identity = JSON.stringify([entry.toolId, target.viewId, target.viewInstanceId, target.bindingVersion]);
                 if (!tool || seen.has(identity) || !grant.views.some(view => view.viewId === target.viewId && view.viewInstanceId === target.viewInstanceId) ||
-                    !tool.targets.some(candidate => candidate.viewId === target.viewId && candidate.viewInstanceId === target.viewInstanceId && candidate.bindingVersion === target.bindingVersion)) return raw;
+                    !tool.targets.some(candidate => candidate.viewId === target.viewId && candidate.viewInstanceId === target.viewInstanceId && candidate.bindingVersion === target.bindingVersion &&
+                        canonicalJson(candidate.selector ? { ...candidate.selector } : null) === canonicalJson(target.selector ? { ...target.selector } : null))) return raw;
                 seen.add(identity);
             }
             return { ...grant, targets: grant.targets.filter(entry => execution.resolve({

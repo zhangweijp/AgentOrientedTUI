@@ -8,39 +8,19 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AppManager, type InstalledApp } from './index.js';
-import type { IDesktop, AppID } from '../../spi/index.js';
+import type { AppID } from '../../spi/index.js';
 import { WorkerSandbox } from './worker-sandbox.js';
 
 // ============================================================================
 // Mock Desktop
 // ============================================================================
-function createMockDesktop(): IDesktop & {
-    emitSignal: ReturnType<typeof vi.fn>;
-    logSystem: ReturnType<typeof vi.fn>;
-    logAppOperation: ReturnType<typeof vi.fn>;
-} {
+function createMockDesktop() {
     return {
         id: 'dt_test' as any,
-        status: 'running',
-        createdAt: Date.now(),
         emitSignal: vi.fn(),
         logSystem: vi.fn(),
         logAppOperation: vi.fn(),
-        getInstalledApps: vi.fn().mockReturnValue([]),
-        getSystemLogs: vi.fn().mockReturnValue([]),
-        getAppOperationLogs: vi.fn().mockReturnValue([]),
-        getAppStates: vi.fn().mockReturnValue([]),
-        suspend: vi.fn(),
-        resume: vi.fn(),
-        dispose: vi.fn(),
-        installDynamicWorkerApp: vi.fn(),
-        dispatchOperation: vi.fn(),
-        injectEvent: vi.fn(),
-
-        dismountView: vi.fn(),
-        acquireSnapshot: vi.fn(),
-        releaseSnapshot: vi.fn(),
-    } as any;
+    };
 }
 
 // These private fixture objects own no OS resources. Their C1 reports describe only

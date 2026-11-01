@@ -8,6 +8,10 @@ context-compact-migration
 multi-im-migration-report
 openclaw
 docs
+!runtime/docs/
+!runtime/docs/**
+!sdk/docs/
+!sdk/docs/**
 mobile-ai-native
 packages
 .DS_Store

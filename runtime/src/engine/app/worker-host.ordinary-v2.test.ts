@@ -1,21 +1,14 @@
-import { EventEmitter } from 'node:events';
 import { Worker } from 'node:worker_threads';
-import { mkdtemp, mkdir, readFile, writeFile, symlink, cp } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createHash } from 'node:crypto';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
 import { compileOrdinaryParams } from '../../core/tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../../core/tool/ordinary-parameter-profile.js';
-import { ORDINARY_V2_CAPABILITY } from '../../adapters/ordinary-invocation-v2.js';
-import { ORDINARY_V1_CAPABILITY } from '../../adapters/ordinary-invocation-v1.js';
-import { REF_V1_CAPABILITY } from '../../adapters/ref-invocation-v1.js';
-import { CREATE_IF_ABSENT_V1_CAPABILITY } from '../../adapters/create-if-absent-invocation-v1.js';
-const ALL = ['ordinary-v1', 'ordinary-v2', 'snapshot-value-v1', 'create-if-absent-v1'];
-const CAPS = [ORDINARY_V1_CAPABILITY, ORDINARY_V2_CAPABILITY, REF_V1_CAPABILITY, CREATE_IF_ABSENT_V1_CAPABILITY];
+const ALL = ['ordinary-v2', 'snapshot-value-v2'] as const;
 const closing: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const close of closing.splice(0)) await close(); vi.restoreAllMocks(); });
 function deferred<T = void>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => resolve = yes); return { promise, resolve }; }
@@ -48,99 +41,9 @@ function scope(x: any) {
 }
 function receipt(r: any) { expect(r.kind).toBe('receipt'); if (r.kind !== 'receipt') throw Error(r.code); return r.receipt; }
 function value(r: any) { const rcp = receipt(r); expect(rcp.outcome.status).toBe('succeeded'); return rcp.outcome.value; }
-const isInvoke = (m: any) => /^VIEW_TOOL_INVOKE_(ORDINARY_V[12]|REF_V1|CREATE_IF_ABSENT_V1)$/.test(m.type);
+const isInvoke = (m: any) => /^VIEW_TOOL_INVOKE_(ORDINARY_V2|REF_V2)$/.test(m.type);
 
-class Transport extends EventEmitter {
-  messages: any[] = []; hold = false; ack: any = CAPS;
-  postMessage = vi.fn((m: any) => { this.messages.push(m); if (isInvoke(m) && this.hold) return;
-    if (isInvoke(m)) this.answer(m);
-    else this.emit('message', { type: m.type === 'INIT' ? 'INIT_RESPONSE' : m.type === 'RESET' ? 'RESET_RESPONSE' : 'LIFECYCLE_RESPONSE', requestId: m.requestId, success: true,
-      ...(m.type === 'INIT' ? { acceptedCapabilities: this.ack, appInstanceId: m.appInstanceId } : {}) }); });
-  answer(m: any, extra: any = {}) { this.emit('message', { type: m.type + '_RESPONSE', requestId: m.requestId, appId: m.appId, instanceId: m.instanceId, argumentMode: m.argumentMode, success: true,
-    terminal: m.argumentMode === 'create-if-absent-v1' ? { phase: 'entered-returned', outcome: { status: 'succeeded', value: { recorded: true } } }
-      : { phase: 'entered-returned', result: { success: true, data: { args: m.args ?? m.effectiveArgs } } }, ...extra }); }
-  terminate = vi.fn(async () => 0);
-}
-async function controlled(modes: string[] = ALL, caps: any = CAPS) {
-  const worker = new Transport(); worker.ack = caps;
-  const host = new AppWorkerHost({ appId: 'app' as any, desktopId: 'd' as any, appModulePath: 'unused', existingWorker: worker as any,
-    timeout: 50, snapshotShadow: true, experimentalReadOnlyViewTools: true, experimentalInteractionModes: modes as any });
-  const received: any[] = []; let evidence: any;
-  worker.on('message', m => received.push(m));
-  closing.push(() => { facts.push({ kind: 'controlled transport', sent: worker.messages, received, scopes: evidence?.scopeFacts ?? [], report: host.getInteractionReport() }); host.terminate(); });
-  await host.start(); await host.open();
-  const compiled = compileOrdinaryParams({ q: { type: 'string', required: true } }, { additionalProperties: false }); if (!compiled.ok) throw Error('Fixture');
-  const target = { viewId: 'aa', viewInstanceId: 'vi-aa', bindingVersion: 1 };
-  const tool = (name: string, inputSchema: any, isMutating = false) => ({ id: JSON.stringify(['app', 'File', name]), name, description: name, viewType: 'File', inputSchema, isMutating, targets: [target] });
-  const find = tool('find', ordinaryParameterProfile(compiled.contract));
-  const zero = tool('zero', { type: 'object', properties: {}, required: [], additionalProperties: false });
-  const ref = tool('ref_read', { type: 'object', properties: { file: { type: 'string', 'x-aotui-ref': { version: 1, kind: 'snapshot-value', owner: 'tool-target' } } }, required: ['file'] });
-  const create = tool('create', { type: 'object', properties: { relativePath: { type: 'string' }, content: { type: 'string' } }, required: ['relativePath', 'content'], additionalProperties: false }, true);
-  let sequence = 0;
-  const publish = (tools = [find, zero, ref, create]) => worker.emit('message', { type: 'SNAPSHOT_PREPARED', draft: {
-    schemaVersion: 2, appId: 'app', instanceId: host.appInstanceId, producerSeq: ++sequence, sourceEpoch: sequence, capturedAt: sequence,
-    views: [{ id: 'aa', viewInstanceId: 'vi-aa', type: 'File', name: 'File', kind: 'state', content: { format: 'markdown-v1', value: 'File' } }],
-    refs: { '["aa","vi-aa","selected"]': { id: 'selected', ownerViewId: 'aa', ownerViewInstanceId: 'vi-aa', refType: 'unknown', target: { kind: 'snapshot-value', payload: { selected: true } } } },
-    tools: Object.fromEntries(tools.map(t => [t.id, t])),
-  } });
-  publish(); return evidence = { host, worker, find, zero, ref, create, publish, sent: () => worker.messages.filter(isInvoke) };
-}
-describe('R09/R19 controlled ACK and shared pending state', () => {
-  it('requires explicit V2, exact ACK and existing flags, preserving defaults', async () => {
-    const x = await controlled(['ordinary-v1'], [ORDINARY_V1_CAPABILITY]);
-    expect(x.host.hasOrdinaryParametersCapability()).toBe(false);
-    expect(x.worker.messages[0].requestedCapabilities).toEqual([ORDINARY_V1_CAPABILITY]);
-    const s = scope(x), o = await s.observe();
-    expect(o.tools.map((tool: any) => tool.name)).toEqual(['zero']);
-    expect(o.bindings.every((binding: any) => binding.toolId === x.zero.id)).toBe(true);
-    expect(receipt(await s.client.invoke({ invocationId: 'no-upgrade', observationId: o.observationId,
-      bindingId: 'unobserved-ordinary-v2-binding', input: { q: 'x' } }))).toMatchObject({
-      executionPhase: 'not-dispatched', outcome: { status: 'rejected' },
-    });
-    expect(s.authorized).toHaveLength(0); expect(x.sent()).toHaveLength(0);
-    const worker = new Transport();
-    expect(() => new AppWorkerHost({ appId: 'a' as any, desktopId: 'd' as any, appModulePath: 'unused', existingWorker: worker as any,
-      experimentalInteractionModes: ['ordinary-v2'] })).toThrow();
-    const plain = new AppWorkerHost({ appId: 'a' as any, desktopId: 'd' as any, appModulePath: 'unused', existingWorker: worker as any, snapshotShadow: true, experimentalReadOnlyViewTools: true });
-    closing.push(() => plain.terminate()); worker.ack = [];
-    await plain.start(); expect(worker.messages.at(-1).requestedCapabilities).toBeUndefined();
-  });
-  it.each([[], [ORDINARY_V1_CAPABILITY], ['future'], [ORDINARY_V2_CAPABILITY, ORDINARY_V2_CAPABILITY]])('does not infer capability from ACK %j', async caps => {
-    const x = await controlled(['ordinary-v2'], caps);
-    expect(x.host.hasOrdinaryParametersCapability()).toBe(false);
-    expect(x.host.createInteractionScope({ project, authorize: () => true, canReadReceipt: () => true }).status).toBe('rejected');
-  });
-  it.each(['instance', 'generation', 'worker'])('rejects stale %s ACK and duplicate Host initialization', async kind => {
-    const worker = new Transport(), held: any[] = []; worker.postMessage = vi.fn(m => { held.push(m); });
-    const host = new AppWorkerHost({ appId: 'app' as any, desktopId: 'd' as any, appModulePath: 'unused', existingWorker: worker as any,
-      timeout: 30, snapshotShadow: true, experimentalReadOnlyViewTools: true, experimentalInteractionModes: ['ordinary-v2'] });
-    closing.push(() => host.terminate()); const started = host.start().catch(() => {}), init = held[0];
-    if (kind === 'generation') (host as any).lifecycleContextVersion++;
-    if (kind === 'worker') (host as any).worker = new Transport();
-    worker.emit('message', { type: 'INIT_RESPONSE', requestId: init.requestId, success: true, appInstanceId: kind === 'instance' ? 'other' : init.appInstanceId, acceptedCapabilities: [ORDINARY_V2_CAPABILITY] });
-    await started; expect(host.hasOrdinaryParametersCapability()).toBe(false);
-    await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
-  });
-  it.each([
-    ['find', 'zero'], ['zero', 'find'], ['find', 'ref_read'], ['ref_read', 'find'], ['find', 'create'], ['create', 'find'],
-  ])('never matches %s pending with %s terminal, sharing the uncertainty flag', async (name, wrong) => {
-    const x = await controlled(); x.worker.hold = true;
-    const a = scope(x), b = scope(x), oa = await a.observe(), ob = await b.observe();
-    const input = name === 'find' ? { q: 'x' } : name === 'ref_read' ? { file: 'selected' } : name === 'create' ? { relativePath: 'x', content: '' } : {};
-    const gate = deferred<boolean>(), reached = deferred(); b.control.authorize = () => { reached.resolve(); return gate.promise; };
-    const waiting = b.client.invoke(b.request(ob, 'waiting', 'find', { q: 'later' })); await reached.promise;
-    const pending = a.client.invoke(a.request(oa, 'fault', name, input));
-    while (!x.sent().length) await Promise.resolve();
-    const sent = x.sent()[0], modes: any = { find: ['VIEW_TOOL_INVOKE_ORDINARY_V2_RESPONSE', 'ordinary-v2'], zero: ['VIEW_TOOL_INVOKE_ORDINARY_V1_RESPONSE', 'ordinary-v1'], ref_read: ['VIEW_TOOL_INVOKE_REF_V1_RESPONSE', 'snapshot-value-v1'], create: ['VIEW_TOOL_INVOKE_CREATE_IF_ABSENT_V1_RESPONSE', 'create-if-absent-v1'] };
-    x.worker.answer(sent, { type: modes[wrong][0], argumentMode: modes[wrong][1] });
-    expect(receipt(await pending).outcome.status).toBe('unknown');
-    gate.resolve(true); expect(receipt(await waiting).outcome.status).toBe('rejected');
-    expect(x.sent()).toHaveLength(1); expect(x.host.getInteractionReport()?.transportUncertain).toBe(true);
-    expect(await x.host.releaseWorker()).toBeNull();
-  });
-});
-
-let temporary: string, Host: any, OldHost: any, appFile: string, oldSdkApp: string, oldWorkerFile: string, workerFile: string;
+let temporary: string, Host: any, appFile: string, workerFile: string;
 const facts: any[] = []; let tag = 0;
 function wait(x: any, predicate: (m: any) => boolean, from = 0): Promise<any> {
   const existing = x.messages.slice(from).find(predicate); if (existing) return Promise.resolve(existing);
@@ -156,18 +59,18 @@ async function change(x: any, patch: any, predicate: (draft: any) => boolean) {
 }
 const good = { q: '😀', e: '1', items: ['a', 'b'] };
 async function start(options: any = {}) {
-  const worker = options.existing ?? new Worker(options.worker ?? workerFile, { stdout: true, stderr: true,
-    env: { ...process.env, AOTUI_W07_APP_KIND: options.kind ?? 'new', AOTUI_DATA_DIR: join(temporary, 'state-' + (++tag)) } });
+  const worker = options.existing ?? new Worker(workerFile, { stdout: true, stderr: true,
+    env: { ...process.env, AOTUI_DATA_DIR: join(temporary, 'state-' + (++tag)) } });
   const messages: any[] = [], sent: any[] = [], attempted: any[] = [], logs: string[] = [];
   const post = worker.postMessage.bind(worker); let hold: ((m: any) => boolean) | undefined;
   worker.postMessage = (m: any) => { attempted.push(m); if (!hold?.(m)) { sent.push(m); post(m); } };
   worker.stdout?.on('data', (b: any) => logs.push(String(b))); worker.stderr?.on('data', (b: any) => logs.push(String(b)));
-  const host = new (options.Host ?? Host)({ appId: 'app', desktopId: 'd', appModulePath: options.app ?? appFile, existingWorker: worker,
-    timeout: 700, snapshotShadow: true, experimentalReadOnlyViewTools: true, experimentalInteractionModes: options.modes ?? ALL });
+  const host = new Host({ appId: 'app', desktopId: 'd', appModulePath: appFile, existingWorker: worker,
+    timeout: 700, interactionModes: options.modes ?? ALL });
   worker.on('message', (m: any) => messages.push(m));
   const x = { host, worker, messages, sent, attempted, logs, hold(f: (m: any) => boolean) { hold = f; }, physical(m: any) { sent.push(m); post(m); },
     entries: () => messages.filter(m => m.type === 'TEST_HANDLER_ENTER'), posts: () => sent.filter(isInvoke),
-    snapshot: () => host.shadowReceiver.core.store.readLatest('app').snapshot };
+    snapshot: () => host.snapshotReceiver.core.store.readLatest('app').snapshot };
   closing.push(async () => { facts.push({ messages, sent, attempted, scopes: x.scopeFacts ?? [], logs, report: host.getInteractionReport?.() });
     const owned = host.worker === worker; host.terminate(); if (owned) await worker.terminate(); });
   await host.start(); await host.open(); await wait(x, m => m.type === 'SNAPSHOT_PREPARED'); return x;
@@ -180,21 +83,12 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     Host = (await import(pathToFileURL(join(runtime, 'dist/engine/app/worker-host.js')).href)).AppWorkerHost;
     workerFile = join(runtime, 'dist/worker-runtime/index.js');
     await mkdir(join(temporary, 'node_modules/@aotui'), { recursive: true }); await mkdir(join(temporary, 'node_modules/@preact'), { recursive: true });
-    for (const [name, base] of [['preact', runtime], ['linkedom', runtime], ['@preact/signals', runtime]]) await symlink(join(base, 'node_modules', name), join(temporary, 'node_modules', name), 'dir');
+    for (const name of ['preact', 'linkedom']) await symlink(join(runtime, 'node_modules', name), join(temporary, 'node_modules', name), 'dir');
     await symlink(runtime, join(temporary, 'node_modules/@aotui/runtime'), 'dir');
-    const baseline = process.env.AOTUI_W07_B1_BASELINE ?? resolve(process.env.AOTUI_REF_COMPAT_BASELINE ?? resolve(runtime, '../rfcs/sdk-runtime-delivery/w00-20261024T090930Z'), '../w07-b1-20261025T161713Z');
-    for (const [name, selected] of [['app', sdk], ['old-sdk-app', join(baseline, 'artifacts/sdk')]]) {
-      const outfile = join(temporary, name + '.mjs');
-      await build({ entryPoints: [join(runtime, 'tests/fixtures/ordinary-v2-slice.mjs')], outfile, alias: { '@aotui/sdk': join(selected, 'dist/index.js') },
-        bundle: true, platform: 'node', format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent' });
-      if (name === 'app') appFile = outfile; else oldSdkApp = outfile;
-    }
-    const old = join(temporary, 'old-runtime'); await mkdir(old);
-    await cp(join(baseline, 'artifacts/runtime/dist'), join(old, 'dist'), { recursive: true }); await writeFile(join(old, 'package.json'), await readFile(join(runtime, 'package.json')));
-    await symlink(join(runtime, 'node_modules'), join(old, 'node_modules'), 'dir');
-    oldWorkerFile = join(old, 'dist/worker-runtime/index.js'); OldHost = (await import(pathToFileURL(join(old, 'dist/engine/app/worker-host.js')).href)).AppWorkerHost;
-    facts.push({ kind: 'actual product inputs', baseline, runtime, sdk, node: process.version,
-      inputs: await Promise.all([appFile, oldSdkApp, workerFile, oldWorkerFile].map(async p => ({ path: p, sha256: createHash('sha256').update(await readFile(p)).digest('hex') }))) });
+    appFile = join(temporary, 'app.mjs');
+    await build({ entryPoints: [join(runtime, 'tests/fixtures/ordinary-v2-slice.mjs')], outfile: appFile,
+      alias: { '@aotui/sdk': join(sdk, 'dist/index.js') }, bundle: true, platform: 'node', format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent' });
+    facts.push({ kind: 'current emitted inputs', runtime, sdk, node: process.version, appFile, workerFile });
   });
   afterAll(async () => { if (process.env.AOTUI_W07_FACTS_FILE) await writeFile(process.env.AOTUI_W07_FACTS_FILE, JSON.stringify({ facts, afterAllReached: true }, null, 2)); });
 
@@ -298,20 +192,25 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     a.control.canRead = () => false;
     expect((await a.client.readReceipt('same-id')).kind).toBe('unavailable');
   });
-  it('R19 four modes share one real Worker and one uncertainty state while authorization waits', async () => {
+  it('R19 the current ordinary-v2 bindings share one Worker and one uncertainty state', async () => {
     const x = await start(); await control(x, 'mode', { mode: 'hold' }); const a = scope(x), b = scope(x), oa = await a.observe(), ob = await b.observe();
     const gate = deferred<boolean>(), reached = deferred(); b.control.authorize = () => { reached.resolve(); return gate.promise; };
-    const waiting = b.client.invoke(b.request(ob, 'waiting-mixed', 'find', good)); await reached.promise;
-    const requests = [['find', good], ['zero', {}], ['ref_read', { file: 'selected' }], ['create', { relativePath: 'recorded', content: '' }]] as const;
+    const waiting = b.client.invoke(b.request(ob, 'waiting', 'find', good)); await reached.promise;
+    const requests = [['find', good], ['zero', {}]] as const;
     const promises = requests.map(([name, input]) => a.client.invoke(a.request(oa, 'mix-' + name, name, input)));
-    await wait(x, m => m.type === 'TEST_HANDLER_ENTER' && x.entries().length === 4);
-    const first = x.entries().find((e: any) => e.name === 'find'), nativeEmit = x.worker.emit.bind(x.worker);
-    x.worker.emit = (event: string, ...args: any[]) => { if (event === 'message' && args[0]?.type === 'VIEW_TOOL_INVOKE_ORDINARY_V2_RESPONSE') args[0] = { ...args[0], argumentMode: 'ordinary-v1', type: 'VIEW_TOOL_INVOKE_ORDINARY_V1_RESPONSE' }; return nativeEmit(event, ...args); };
+    await wait(x, m => m.type === 'TEST_HANDLER_ENTER' && x.entries().length === 2);
+    const first = x.entries().find((entry: any) => entry.name === 'find'), nativeEmit = x.worker.emit.bind(x.worker);
+    x.worker.emit = (event: string, ...args: any[]) => {
+      if (event === 'message' && args[0]?.type === 'VIEW_TOOL_INVOKE_ORDINARY_V2_RESPONSE' && args[0]?.requestId === x.posts().find((message: any) => message.type === 'VIEW_TOOL_INVOKE_ORDINARY_V2')?.requestId) {
+        args[0] = { ...args[0], type: 'VIEW_TOOL_INVOKE_REF_V2_RESPONSE', argumentMode: 'snapshot-value-v2' };
+      }
+      return nativeEmit(event, ...args);
+    };
     await control(x, 'release', { id: first.id });
     expect(receipt(await promises[0]).outcome.status).toBe('unknown');
     gate.resolve(true); expect(receipt(await waiting).outcome.status).toBe('rejected');
-    for (const p of promises.slice(1)) expect(receipt(await p).outcome.status).toBe('unknown');
-    expect(x.posts()).toHaveLength(4); expect(x.entries()).toHaveLength(4); expect(x.host.getInteractionReport().transportUncertain).toBe(true);
+    expect(receipt(await promises[1]).outcome.status).toBe('unknown');
+    expect(x.posts()).toHaveLength(2); expect(x.entries()).toHaveLength(2); expect(x.host.getInteractionReport().transportUncertain).toBe(true);
     expect(await x.host.releaseWorker()).toBeNull();
   });
   it('R20 healthy business failure permits pool reuse with a new logical instance', async () => {
@@ -324,43 +223,21 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     expect(value(await other.client.invoke(other.request(observed, 'new-run', 'find', good))).data.view).toBe('aa');
     const oldRead = await s.client.invoke(s.request(o, 'old-run', 'find', good)); expect(oldRead.kind).not.toBe('receipt');
   });
-  it.each(['disabled', 'old-worker', 'old-sdk', 'old-host'])('R21 actual emitted compatibility combination %s', async kind => {
-    const x = await start({ modes: kind === 'old-host' ? ['ordinary-v1', 'snapshot-value-v1', 'create-if-absent-v1'] : kind === 'disabled' ? ['ordinary-v1'] : ALL,
-      ...(kind === 'old-worker' ? { worker: oldWorkerFile } : {}), ...(kind === 'old-sdk' ? { app: oldSdkApp } : {}), ...(kind === 'old-host' ? { Host: OldHost } : {}) });
-    const s = scope(x), o = await s.observe();
-    expect(value(await s.client.invoke(s.request(o, 'legacy-zero', 'zero', {}))).data.view).toBe('aa');
-    if (kind === 'old-sdk' || kind === 'old-worker') { expect(o.tools.some((t: any) => t.name === 'find')).toBe(false); expect(x.messages.some((m: any) => m.type === 'TEST_UNSUPPORTED')).toBe(true); }
-    else if (kind === 'disabled') {
-      expect(o.tools.some((t: any) => t.name === 'find')).toBe(false);
-      expect(o.tools.some((t: any) => t.name === 'legacy_arg')).toBe(false);
-      expect(receipt(await s.client.invoke({ invocationId: 'unsupported-new', observationId: o.observationId,
-        bindingId: 'unobserved-ordinary-v2-binding', input: good }))).toMatchObject({
-        executionPhase: 'not-dispatched', outcome: { status: 'rejected' },
-      });
-      expect(x.entries()).toHaveLength(1); // Only the negotiated zero-argument Tool entered.
-    } else expect(receipt(await s.client.invoke(s.request(o, 'unsupported-new', 'find', good))).outcome.status).toBe('rejected');
-    expect(x.posts().some((m: any) => m.type === 'VIEW_TOOL_INVOKE_ORDINARY_V2')).toBe(false);
-    if (kind === 'old-worker') expect(x.host.hasOrdinaryParametersCapability()).toBe(false);
-    if (kind === 'old-host') expect(() => new OldHost({ appId: 'bad', desktopId: 'd', appModulePath: appFile, experimentalInteractionModes: ['ordinary-v2'], snapshotShadow: true, experimentalReadOnlyViewTools: true })).toThrow();
-    if (kind === 'disabled') {
-      expect(receipt(await s.client.invoke({ invocationId: 'no-auto-upgrade', observationId: o.observationId,
-        bindingId: 'unobserved-legacy-argument-binding', input: { e: 1 } }))).toMatchObject({
-        executionPhase: 'not-dispatched', outcome: { status: 'rejected' },
-      });
-      expect(x.posts().map((message: any) => message.type)).toEqual(['VIEW_TOOL_INVOKE_ORDINARY_V1']);
-      expect(x.entries()).toHaveLength(1);
-    } else expect(receipt(await s.client.invoke(s.request(o, 'no-auto-upgrade', 'legacy_arg', { e: 1 }))).outcome.status).toBe('rejected');
+  it('R21 an explicit empty execution set still allows View observation without executable bindings', async () => {
+    const x = await start({ modes: [] }), s = scope(x), o = await s.observe();
+    expect(o.views).toHaveLength(1);
+    expect(o.tools).toEqual([]);
+    expect(o.bindings).toEqual([]);
+    expect(x.host.getInteractionReport().negotiatedModes).toEqual([]);
   });
-  it('R09/R22 retains all three V1 meanings and refuses duplicate Worker initialization', async () => {
+  it('R22 the two current modes include empty ordinary parameters and reject duplicate initialization', async () => {
     const x = await start(), s = scope(x), o = await s.observe();
-    expect(value(await s.client.invoke(s.request(o, 'zero-v1', 'zero', {}))).data.args).toEqual({});
-    expect(receipt(await s.client.invoke(s.request(o, 'zero-extra', 'zero', { extra: true }))).outcome.status).toBe('rejected');
-    const ref = value(await s.client.invoke(s.request(o, 'ref-v1', 'ref_read', { file: 'selected', e: 1 })));
-    expect(ref.data.args.file).toMatchObject({ view: 'aa' }); expect(ref.data.args.e).toBe(1); // Existing V1 enum behavior intentionally retained.
-    expect(receipt(await s.client.invoke(s.request(o, 'create-v1', 'create', { relativePath: 'recorded', content: '' }))).outcome.status).toBe('succeeded');
-    expect(receipt(await s.client.invoke(s.request(o, 'create-extra', 'create', { relativePath: 'recorded', content: '', extra: true }))).outcome.status).toBe('rejected');
-    const from = x.messages.length, init = x.sent.find((m: any) => m.type === 'INIT'); x.physical({ ...init, requestId: 'duplicate-init' });
-    const error = await wait(x, m => m.requestId === 'duplicate-init', from);
-    expect(error.error.code).toBe('APP_INSTANCE_REUSE_UNSUPPORTED'); expect(x.host.hasOrdinaryParametersCapability()).toBe(true);
+    expect(x.host.getInteractionReport().negotiatedModes).toEqual(ALL);
+    expect(value(await s.client.invoke(s.request(o, 'zero', 'zero', {}))).data.args).toEqual({});
+    const from = x.messages.length, init = x.sent.find((message: any) => message.type === 'INIT');
+    x.physical({ ...init, requestId: 'duplicate-init' });
+    const error = await wait(x, message => message.requestId === 'duplicate-init', from);
+    expect(error.error.code).toBe('APP_INSTANCE_REUSE_UNSUPPORTED');
+    expect(x.host.hasOrdinaryParametersCapability()).toBe(true);
   });
 });

@@ -182,27 +182,7 @@ export class SignalBus {
     }
 }
 
-/**
- * SignalOutputStream 兼容接口
- * 
- * 用于保持 Desktop.output 的 API 兼容
- */
 export interface SignalOutputStream {
     subscribe(listener: SignalListener): void;
     unsubscribe(listener: SignalListener): void;
-}
-
-/**
- * 创建 SignalOutputStream 适配器
- * 
- * 将 SignalBus 的 per-desktop subscribe 适配为原有 API
- */
-export function createSignalOutputStream(
-    bus: SignalBus,
-    desktopId: DesktopID
-): SignalOutputStream {
-    return {
-        subscribe: (listener) => { bus.subscribe(desktopId, listener); },
-        unsubscribe: (listener) => { bus.unsubscribe(desktopId, listener); }
-    };
 }

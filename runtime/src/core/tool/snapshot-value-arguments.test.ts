@@ -263,16 +263,12 @@ describe('W01: source invalidation and lease ownership', () => {
         denied(f, { ...f.request, viewId: 'not-a-view' }, 'TOOL_UNAVAILABLE');
         const full = fixture({ storeOptions: { maxActiveLeases: 0 } }); denied(full, full.request, 'SNAPSHOT_CAPACITY');
     });
-    it('refuses a historical V1 source instead of interpreting it as V2', () => {
-        const f = fixture(); const core = createSnapshotCore(); core.lifecycle.startApp('app', 'run');
+    it('rejects a Snapshot V1 publication before a source identity or lease can be created', () => {
+        const core = createSnapshotCore(); core.lifecycle.startApp('app', 'run');
         const old = core.committer.accept({ schemaVersion: 1, appId: 'app', instanceId: 'run', producerSeq: 1,
             sourceEpoch: 1, capturedAt: 1, views: [{ id: 'fd_A', generation: 'g', type: 'FileDetail', name: 'A',
                 kind: 'state', content: { format: 'markdown-v1', value: 'A' } }], refs: {}, tools: {} });
-        expect(old.status).toBe('published'); if (old.status !== 'published') throw new Error('Expected V1');
-        expect(core.committer.accept({ schemaVersion: 2, appId: 'app', instanceId: 'run', producerSeq: 2,
-            sourceEpoch: 2, capturedAt: 2, views: f.source.views, refs: f.source.refs, tools: f.source.tools }).status).toBe('published');
-        const result = prepareSnapshotValueArguments(core.store, f.context, { ...f.request, snapshotId: old.snapshot.id });
-        expect(result).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_INVALID' } });
+        expect(old).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_INVALID', path: '$.schemaVersion' } });
         expect(core.store.inspect().activeLeases).toBe(0);
     });
     it('success owns exactly one lease and releases idempotently even after caller mutation', () => {

@@ -12,12 +12,10 @@
  * Transformer转换为: <view id="fd_0" type="FileDetail" name="File: auth.ts">...</view>
  */
 import { ComponentChildren, h } from "preact";
-import { useMemo, useEffect, useLayoutEffect, useRef as usePreactRef, useContext } from "preact/compat";
+import { useMemo, useEffect, useRef as usePreactRef, useContext } from "preact/compat";
 import { AppRuntimeContext } from "../context/AppRuntimeContext.js";
-import { ViewRuntimeContext } from "../contexts/index.js";
-import { createInlineView } from "../adapter/createInlineView.js";
-import type { ViewID } from "@aotui/runtime/spi";
-import { createViewId } from "@aotui/runtime/spi";  // ✅ Import factory function
+import { ViewRuntimeContext } from "../contexts/view-runtime-context.js";
+import { createViewId, type ViewID } from "@aotui/runtime/spi";
 
 // M3: per-mount View identity, independent of list position and DOM node reuse.
 // AppInstance ID (owned by Runtime) namespaces this counter across Worker resets.
@@ -89,6 +87,23 @@ export function View({ id, type, name, children, onClose }: ViewProps) {
   }
 
   // 尝试获取AppRuntimeContext (组件模式)
+  const parentViewContext = useContext(ViewRuntimeContext);
+  if (parentViewContext) {
+    const parentViewId = parentViewContext.meta.viewId;
+    const childViewId = createViewId(id);
+    throw Object.assign(
+      new Error(
+        `[AOTUI SDK] NESTED_VIEW_UNSUPPORTED: View "${childViewId}" cannot be declared inside View "${parentViewId}". ` +
+        'Declare both Views as independent siblings under a non-View layout component.'
+      ),
+      {
+        code: 'NESTED_VIEW_UNSUPPORTED' as const,
+        parentViewId,
+        childViewId,
+      }
+    );
+  }
+
   const appContext = useContext(AppRuntimeContext);
 
   // 如果在组件模式下
@@ -114,7 +129,7 @@ function ComponentModeView({ id, type, name, children, onClose }: ViewProps) {
   // Use developer-specified ID directly (with type branding)
   const viewId = createViewId(id);  // ✅ 确保类型安全
 
-  // 容器ref (用于创建InlineView)
+  // The semantic View identity is allocated only when Preact attaches its DOM node.
   const containerRef = usePreactRef<HTMLDivElement>(null);
   const generationRef = usePreactRef<string | null>(null);
   if (generationRef.current === null) generationRef.current = 'sdk_mount_' + (++nextViewGeneration).toString(36);
@@ -136,9 +151,6 @@ function ComponentModeView({ id, type, name, children, onClose }: ViewProps) {
     }
   }, [viewId, viewType, viewToolsPort]);
 
-  // Operation注册表
-  const operationsRef = usePreactRef<Map<string, any>>(new Map());
-
   useEffect(() => {
     if (!onClose || !containerRef.current) {
       return;
@@ -159,55 +171,6 @@ function ComponentModeView({ id, type, name, children, onClose }: ViewProps) {
     };
   }, [onClose, viewId]);
 
-  // 注册/注销IView实例
-  // [CRITICAL] 使用useLayoutEffect而非useEffect
-  // 
-  // 时序要求：
-  // - Runtime在初次渲染后立即查询View
-  // - useEffect是异步的，会导致VIEW_NOT_FOUND错误
-  // - useLayoutEffect在DOM更新后、浏览器绘制前同步执行
-  // 
-  // 执行顺序：
-  // 1. ComponentModeView render → 创建<div ref={containerRef}>
-  // 2. React提交DOM更新 → containerRef.current指向div
-  // 3. useLayoutEffect同步执行 → registerView(view) ✅
-  // 4. 浏览器绘制
-  // 5. Runtime查询view_0 → 找到 ✅
-  useLayoutEffect(() => {
-    if (!containerRef.current) return;
-
-    // Check for ID conflicts BEFORE creating view
-    if (appContext.viewRegistry && appContext.viewRegistry.has(viewId)) {
-      throw new Error(
-        `[AOTUI SDK] View ID "${viewId}" already exists!\n` +
-        `Please ensure all View IDs are unique within the app.\n` +
-        `Tip: Use prefixes like fd_0, fd_1 for multiple instances of same type.`
-      );
-    }
-
-    // 创建轻量级IView实例
-    const view = createInlineView({
-      id: viewId,
-      name: displayName,
-      type: viewType,  // ✅ 传递type信息
-      container: containerRef.current,
-      operations: operationsRef.current,
-    });
-
-    // 注册到AppKernel
-    appContext.registerView(view);
-
-    // ✅ 立即调用onMount,设置组件模式View的mounted状态
-    // Inline View的onMount不需要参数,只设置mounted标志
-    view.onMount({} as any);
-
-    return () => {
-      // ✅ cleanup时调用onDismount
-      view.onDismount();
-      appContext.unregisterView(viewId);
-    };
-  }, [viewId, displayName, viewType]);
-
   // 构建ViewRuntimeContext (供子组件使用)
   const viewRuntimeContext = useMemo(() => ({
     meta: {
@@ -219,14 +182,6 @@ function ComponentModeView({ id, type, name, children, onClose }: ViewProps) {
       desktopId: appContext.desktopId,
       markDirty: appContext.markDirty,
     },
-    operations: {
-      registerOperation: (opName: string, handler: any) => {
-        operationsRef.current.set(opName, handler);
-      },
-      unregisterOperation: (opName: string) => {
-        operationsRef.current.delete(opName);
-      },
-    },
     refs: {
       registerRef: (refId: string, data: object) => {
         appContext.refExporter.registerRef(viewId, refId, data);
@@ -235,11 +190,9 @@ function ComponentModeView({ id, type, name, children, onClose }: ViewProps) {
         appContext.refExporter.unregisterRef(viewId, refId);
       },
     },
-    typeTools: appContext.typeTools, // Legacy API is unchanged.
     viewTools: viewToolsPort ? {
+      targetSelectorSupport: viewToolsPort.targetSelectorSupport,
       refDeclarationSupport: viewToolsPort.refDeclarationSupport,
-      safeRefInvocationSupport: viewToolsPort.safeRefInvocationSupport,
-      safeOrdinaryInvocationSupport: viewToolsPort.safeOrdinaryInvocationSupport,
       safeOrdinaryParametersInvocationSupport: viewToolsPort.safeOrdinaryParametersInvocationSupport,
       safeSnapshotValueParametersInvocationSupport: viewToolsPort.safeSnapshotValueParametersInvocationSupport,
       fingerprintReadOnlyParams: viewToolsPort.fingerprintReadOnlyParams
@@ -248,17 +201,14 @@ function ComponentModeView({ id, type, name, children, onClose }: ViewProps) {
       fingerprintOrdinaryParams: viewToolsPort.fingerprintOrdinaryParams
         ? (params: unknown, additionalProperties: boolean) => viewToolsPort.fingerprintOrdinaryParams!(params, additionalProperties)
         : undefined,
-      safeCreateIfAbsentInvocationSupport: viewToolsPort.safeCreateIfAbsentInvocationSupport,
-      fingerprintParams: (params: unknown) => viewToolsPort.fingerprintParams(params),
-      registerTool: (toolName: string, definition: import("@aotui/runtime/spi").TypeToolDefinition,
-        options?: import("@aotui/runtime/spi").ViewToolRegistrationOptions) => {
+      registerTool: (toolName: string, definition: import("@aotui/runtime/spi").ViewToolDefinition,
+        options: import("@aotui/runtime/spi").ViewToolRegistrationOptions) => {
         if (!instanceRef.current) {
           throw new Error('[AOTUI SDK] View-local Tool cannot register before View mount');
         }
         return viewToolsPort.registerTool(instanceRef.current, toolName, definition, options);
       },
     } : undefined,
-    config: appContext.launchConfig ?? {},
   }), [viewId, viewType, appContext.launchConfig, viewToolsPort]);
 
   // 渲染

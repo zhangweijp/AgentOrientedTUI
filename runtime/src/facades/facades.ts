@@ -9,8 +9,6 @@ import type { RuntimeInteractionAccess } from '../spi/runtime/app-interaction.in
  * [DIP] Uses createKernel factory for proper dependency injection.
  */
 
-import { SnapshotRegistry } from '../engine/system/index.js';
-import { createSystemOperationRegistry } from '../engine/system/index.js';
 import { DesktopManager } from '../engine/core/index.js';
 import { createKernel } from '../factory/createKernel.js';
 import type { IKernel } from '../spi/index.js';
@@ -24,16 +22,7 @@ import {
 export { RUNTIME_DEFAULTS, type RuntimeConfig, type RuntimeConfigInput, defineRuntimeConfig };
 
 // ============================================================================
-// Runtime 配置
-// ============================================================================
-
-export interface LegacyRuntimeConfig {
-    /** Snapshot TTL（毫秒），默认 10 分钟 */
-    snapshotTTL?: number;
-}
-
-// ============================================================================
-// 快捷工厂函数
+// Runtime factory
 // ============================================================================
 
 /**
@@ -60,35 +49,9 @@ export interface LegacyRuntimeConfig {
  * await runtime.installDynamicApp(desktopId, new MyChatApp());
  * ```
  */
-export function createRuntime(input: LegacyRuntimeConfig | RuntimeConfigInput = {}): IKernel & RuntimeCloseReporting & RuntimeInteractionAccess {
-    // [RFC-005] Normalize Configuration
-    let config: RuntimeConfig;
-
-    // Check if input has new config structure properties (or is empty/custom object)
-    // Simple heuristic: if it has 'worker', 'bridge', 'lock', etc. OR it is the result of defineRuntimeConfig (which is frozen)
-    // But since Legacy only has snapshotTTL, checking that is easier.
-
-    const legacy = input as LegacyRuntimeConfig;
-    if (legacy.snapshotTTL !== undefined) {
-        // Legacy Config
-        config = defineRuntimeConfig({
-            snapshot: { ttlMs: legacy.snapshotTTL }
-        });
-    } else {
-        // New Config Input (or empty)
-        config = defineRuntimeConfig(input as RuntimeConfigInput);
-    }
-
+export function createRuntime(input: RuntimeConfigInput = {}): IKernel & RuntimeCloseReporting & RuntimeInteractionAccess {
+    const config: RuntimeConfig = defineRuntimeConfig(input);
     const desktopManager = new DesktopManager(config);
-    const snapshotRegistry = new SnapshotRegistry({
-        ttl: config.snapshot.ttlMs
-    });
-    const systemOps = createSystemOperationRegistry();
-
-    return createKernel(
-        desktopManager,
-        snapshotRegistry,
-        systemOps
-    );
+    return createKernel(desktopManager);
 }
 

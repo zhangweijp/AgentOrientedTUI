@@ -18,7 +18,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import type { DesktopID, AppID, ViewID, SnapshotID, OperationID } from './types.js';
+import type { DesktopID, AppID, ViewID } from './types.js';
 
 // ============================================================================
 // ID Prefixes (Internal Convention)
@@ -33,10 +33,7 @@ export const ID_PREFIXES = {
     Desktop: 'dt_',
     App: 'app_',
     View: 'view_',
-    Snapshot: 'snap_',
-    Operation: 'op_'
 } as const;
-
 // ============================================================================
 // Factory Functions
 // ============================================================================
@@ -77,26 +74,6 @@ export function createViewId(indexOrId: number | string): ViewID {
     return indexOrId as ViewID;
 }
 
-/**
- * 创建 SnapshotID
- * 
- * @param id - 可选的现有 ID 字符串
- * @returns Branded SnapshotID
- */
-export function createSnapshotId(id?: string): SnapshotID {
-    return (id ?? `${ID_PREFIXES.Snapshot}${randomUUID().slice(0, 8)}`) as SnapshotID;
-}
-
-/**
- * 创建 OperationID
- * 
- * @param name - 操作名称
- * @returns Branded OperationID
- */
-export function createOperationId(name: string): OperationID {
-    return name as OperationID;
-}
-
 // ============================================================================
 // Type Guards (for runtime validation in future)
 // ============================================================================
@@ -123,11 +100,4 @@ export function isAppId(value: string): value is AppID {
  */
 export function isViewId(value: string): value is ViewID {
     return typeof value === 'string' && value.startsWith(ID_PREFIXES.View);
-}
-
-/**
- * 检查字符串是否为有效的 SnapshotID 格式
- */
-export function isSnapshotId(value: string): value is SnapshotID {
-    return typeof value === 'string' && value.startsWith(ID_PREFIXES.Snapshot);
 }

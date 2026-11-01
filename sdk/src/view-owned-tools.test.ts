@@ -4,7 +4,7 @@ import { useState } from 'preact/hooks';
 import { createTUIApp } from './app-factory/createTUIApp.js';
 import { View } from './components/View.js';
 import { useViewTypeTool } from './hooks/useViewTypeTool.js';
-import { useEntityRef } from './hooks/useRef.js';
+import { useDataRef } from './hooks/useRef.js';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -38,8 +38,28 @@ function setup(component: () => any, options?: { instanceId?: string; container?
         },
     };
 }
+const refMap = (kernel: AppKernel) => Object.fromEntries(kernel.getViewRefs().map(ref => [`${ref.viewId}:${ref.refId}`, ref.value]));
 
 describe('M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel', () => {
+    it('uses mounted Semantic View bindings without the retired View/type registries or tree', async () => {
+        function Root() { return h(View, { id: 'root', type: 'Root' }, h('p', {}, 'Ready')); }
+        const x = setup(Root);
+        try {
+            await x.open();
+            expect(x.kernel.getViewOwnedViewInstances()).toMatchObject([
+                { viewId: 'root', viewType: 'Root' },
+            ]);
+            expect((x.kernel as any).getAllTypeTools).toBeUndefined();
+            expect((x.kernel as any).callTypeTool).toBeUndefined();
+            expect((x.kernel as any).viewRegistry).toBeUndefined();
+            expect(x.container.querySelector('[data-view-tree]')).toBeNull();
+            expect(x.container.querySelector('[data-view-id="root"]')).not.toBeNull();
+        } finally {
+            await x.close();
+        }
+        expect(x.kernel.getViewOwnedViewInstances()).toEqual([]);
+    });
+
     it('aggregates two FileDetails into one Tool while their independently bound handlers target the correct file', async () => {
         const appHover = vi.fn(async () => ({ success: true, data: { file: 'App.tsx' } }));
         const pkgHover = vi.fn(async () => ({ success: true, data: { file: 'package.json' } }));
@@ -66,7 +86,6 @@ describe('M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel', ()
             });
             expect(listed[0].targets.map(t => t.viewId)).toEqual(['fd_0', 'fd_1']);
             expect(listed[0].targets[0].viewInstanceId).not.toBe(listed[0].targets[1].viewInstanceId);
-            expect(x.kernel.getAllTypeTools().size).toBe(0); // View-local tools stay outside the legacy type-wide Registry.
             expect(x.container.querySelectorAll('tool-ref')).toHaveLength(2); // One affordance for each bound View.
             const first = await x.invoke(listed[0], listed[0].targets[0], { line: 1 });
             const second = await x.invoke(listed[0], listed[0].targets[1], { line: 2 });
@@ -134,17 +153,19 @@ describe('M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel', ()
 
     it('per-View enabled flags operate independently even during rapid re-render', async () => {
         let setFlags!: (flags: { a: boolean; b: boolean }) => void;
-        function Detail({ enabled }: { enabled: boolean }) {
+        const handlerA = vi.fn(async () => ({ success: true, data: { owner: 'A' } }));
+        const handlerB = vi.fn(async () => ({ success: true, data: { owner: 'B' } }));
+        function Detail({ enabled, handler }: { enabled: boolean; handler: () => Promise<any> }) {
             useViewTypeTool('inspect', { description: 'Inspect', params: {} },
-                async () => ({ success: true }), { enabled });
+                handler, { enabled });
             return h('p', {}, 'Unchanging');
         }
         function Root() {
             const [flags, update] = useState({ a: true, b: false });
             setFlags = update;
             return h('main', {}, [
-                h(View, { id: 'fd_0', type: 'FileDetail', key: 'a' }, h(Detail, { enabled: flags.a })),
-                h(View, { id: 'fd_1', type: 'FileDetail', key: 'b' }, h(Detail, { enabled: flags.b })),
+                h(View, { id: 'fd_0', type: 'FileDetail', key: 'a' }, h(Detail, { enabled: flags.a, handler: handlerA })),
+                h(View, { id: 'fd_1', type: 'FileDetail', key: 'b' }, h(Detail, { enabled: flags.b, handler: handlerB })),
             ]);
         }
         const x = setup(Root);
@@ -152,36 +173,73 @@ describe('M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel', ()
             await x.open();
             const initial = x.kernel.getViewOwnedToolDefinitions()[0];
             expect(initial.targets.map(t => t.viewId)).toEqual(['fd_0']);
+            const oldA = initial.targets[0]!;
+            expect(await x.invoke(initial, oldA, {})).toMatchObject({ success: true, data: { owner: 'A' } });
             setFlags({ a: false, b: true });
             await sleep(35);
             const later = x.kernel.getViewOwnedToolDefinitions()[0];
             expect(later.targets.map(t => t.viewId)).toEqual(['fd_1']);
-            expect((await x.invoke(initial, initial.targets[0], {})).success).toBe(false);
+            expect((await x.invoke(initial, oldA, {})).success).toBe(false);
+            expect(handlerA).toHaveBeenCalledOnce(); expect(handlerB).not.toHaveBeenCalled();
             setFlags({ a: true, b: true });
             await sleep(35);
-            expect(x.kernel.getViewOwnedToolDefinitions()[0].targets).toHaveLength(2);
+            const restored = x.kernel.getViewOwnedToolDefinitions()[0];
+            expect(restored.targets).toHaveLength(2);
+            const freshA = restored.targets.find(t => t.viewId === 'fd_0')!;
+            expect(freshA.viewInstanceId).toBe(oldA.viewInstanceId);
+            expect(freshA.bindingVersion).not.toBe(oldA.bindingVersion);
+            expect(await x.invoke(restored, freshA, {})).toMatchObject({ success: true, data: { owner: 'A' } });
+            expect(await x.invoke(initial, oldA, {})).toMatchObject({ success: false, error: { code: 'TOOL_SOURCE_STALE' } });
+            expect(handlerA).toHaveBeenCalledTimes(2); expect(handlerB).not.toHaveBeenCalled();
         } finally {
             await x.close();
         }
     });
 
-    it('old five-argument Root useViewTypeTool stays in the legacy Registry, not the new instance Registry', async () => {
-        // Root Tool must run inside View context, not at root component level.
-        function LegacyContent() {
-            const [ToolUI] = useViewTypeTool('FileDetail', 'lsp_hover', OPTS,
+    it('onClose unmounts the exact View and releases its Ref and View-local Tool', async () => {
+        let setOpen!: (open: boolean) => void;
+        const onClose = vi.fn(() => setOpen(false));
+        function Content() {
+            const record = useDataRef('record', { id: 'A' });
+            useViewTypeTool('inspect', { description: 'Inspect', params: {} },
                 async () => ({ success: true }));
-            return h(ToolUI, {}, 'Hover');
+            return h('p', {}, record('Record'));
         }
-        const x = setup(() =>
-            h(View, { id: 'workspace', type: 'Workspace' }, h(LegacyContent, {})));
+        function Root() {
+            const [open, update] = useState(true);
+            setOpen = update;
+            return open
+                ? h(View, { id: 'fd_0', type: 'FileDetail', onClose }, h(Content, {}))
+                : null;
+        }
+        const x = setup(Root);
         try {
             await x.open();
-            expect(x.kernel.getAllTypeTools().get('FileDetail')).toHaveLength(1);
-            expect(x.kernel.getViewOwnedToolDefinitions()).toHaveLength(0);
+            const node = x.container.querySelector('[data-view-id="fd_0"]')!;
+            expect(refMap(x.kernel)['fd_0:record']).toEqual({ id: 'A' });
+            expect(x.kernel.getViewOwnedToolDefinitions()[0]?.targets).toHaveLength(1);
+
+            const CustomEventCtor = x.container.ownerDocument.defaultView!.CustomEvent;
+            node.dispatchEvent(new CustomEventCtor('aotui:view-close', {
+                bubbles: true, detail: { viewId: 'fd_1' },
+            }));
+            await sleep(20);
+            expect(onClose).not.toHaveBeenCalled();
+            expect(x.kernel.getViewOwnedViewInstances()).toHaveLength(1);
+
+            node.dispatchEvent(new CustomEventCtor('aotui:view-close', {
+                bubbles: true, detail: { viewId: 'fd_0' },
+            }));
+            await sleep(35);
+            expect(onClose).toHaveBeenCalledOnce();
+            expect(x.kernel.getViewOwnedViewInstances()).toHaveLength(0);
+            expect(refMap(x.kernel)).toEqual({});
+            expect(x.kernel.getViewOwnedToolDefinitions()).toEqual([]);
         } finally {
             await x.close();
         }
     });
+
 });
 
 describe('M4 Stage 1: committed lifecycle and Tool metadata updates', () => {
@@ -201,7 +259,7 @@ describe('M4 Stage 1: committed lifecycle and Tool metadata updates', () => {
             expect(old.targets).toHaveLength(1);
             await x.kernel.onClose();
             expect(x.kernel.getViewOwnedToolDefinitions()).toHaveLength(0);
-            expect((x.kernel as any).viewRegistry.getAll()).toHaveLength(0);
+            expect(x.kernel.getViewOwnedViewInstances()).toHaveLength(0);
             await expect(x.open()).rejects.toHaveProperty('code', 'APP_KERNEL_CLOSED');
             next = setup(Root, { instanceId: 'runtime-issued-execution-2', container: x.container });
             await next.open();
@@ -212,11 +270,7 @@ describe('M4 Stage 1: committed lifecycle and Tool metadata updates', () => {
             expect(again.targets[0].viewInstanceId).not.toBe(old.targets[0].viewInstanceId);
             expect((await x.invoke(old, old.targets[0], {})).error?.code)
                 .toBe('TOOL_UNAVAILABLE');
-            expect((await (x.kernel as any).viewOwnedTools.invoke(old, old.targets[0], {})).error?.code)
-                .toBe('VIEW_INSTANCE_REVOKED');
             expect((await next.invoke(old, old.targets[0], {})).error?.code).toBe('VIEW_INSTANCE_REVOKED');
-            expect((await (next.kernel as any).viewOwnedTools.invoke(old, old.targets[0], {})).error?.code)
-                .toBe('APP_INSTANCE_MISMATCH');
             expect(handler).not.toHaveBeenCalled();
             expect((await next.invoke(again, again.targets[0], {})).success).toBe(true);
             expect(handler).toHaveBeenCalledTimes(1);
@@ -384,44 +438,6 @@ describe('M4 Stage 1: stable canonical Tool schema', () => {
     });
 });
 
-describe('M4 Stage 1: concurrent legacy and new local APIs', () => {
-    it('Root legacy and FileDetail local declarations of the same name remain isolated', async () => {
-        let closeDetail!: (open: boolean) => void;
-        function RootTools() {
-            useViewTypeTool('FileDetail', 'inspect', {
-                description: 'Legacy inspect', params: {},
-            }, async () => ({ success: true, data: { legacy: true } }));
-            return h('p', {}, 'Legacy Root');
-        }
-        function LocalTools() {
-            useViewTypeTool('inspect', {
-                description: 'Local inspect', params: {},
-            }, async () => ({ success: true, data: { local: true } }));
-            return h('p', {}, 'Local FileDetail');
-        }
-        function App() {
-            const [open, setOpen] = useState(true);
-            closeDetail = setOpen;
-            return h('main', {}, [
-                h(View, { id: 'workspace', type: 'Workspace', key: 'root' }, h(RootTools, {})),
-                open ? h(View, { id: 'fd_0', type: 'FileDetail', key: 'detail' }, h(LocalTools, {})) : null,
-            ]);
-        }
-        const x = setup(App);
-        try {
-            await x.open();
-            expect(x.kernel.getAllTypeTools().get('FileDetail')).toHaveLength(1);
-            expect(x.kernel.getViewOwnedToolDefinitions()).toHaveLength(1);
-            closeDetail(false);
-            await sleep(35);
-            expect(x.kernel.getAllTypeTools().get('FileDetail')).toHaveLength(1);
-            expect(x.kernel.getViewOwnedToolDefinitions()).toHaveLength(0);
-        } finally {
-            await x.close();
-        }
-    });
-});
-
 describe('M4 Stage 1: failed mount is not a partially published Tool', () => {
     it('rejects incompatible same-type definitions without exposing a conflicting group', async () => {
         let conflict = true;
@@ -438,69 +454,7 @@ describe('M4 Stage 1: failed mount is not a partially published Tool', () => {
         ]));
         try {
             await expect(x.open()).rejects.toThrow(/TOOL_SCHEMA_CONFLICT/);
-            expect(x.kernel.getAllTypeTools().size).toBe(0);
             expect(x.kernel.getViewOwnedToolDefinitions()).toHaveLength(0);
-        } finally {
-            await x.close();
-        }
-    });
-});
-
-
-describe('M4 Stage 5: SDK explicit versioned entity Ref', () => {
-    it('registers a stable entity Ref and invalidates it on version-only changes without DOM updates', async () => {
-        let updateVersion!: (version: string) => void;
-        function Content() {
-            const [version, setVersion] = useState('sha256:' + 'a'.repeat(64));
-            updateVersion = setVersion;
-            const fileRef = useEntityRef('file', {
-                entityType: 'File', entityId: '/workspace/src/App.tsx', entityVersion: version,
-            });
-            useViewTypeTool('replace_file', {
-                description: 'Replace file if the version matches',
-                params: {},
-            }, async () => ({ success: true }));
-            return h('p', {}, fileRef('Stable file label'));
-        }
-        const x = setup(() => h(View, {
-            id: 'fd_0', type: 'FileDetail',
-        }, h(Content, {})));
-        try {
-            await x.open();
-            const expected = {
-                $aotuiEntityRefV1: {
-                    entityType: 'File', entityId: '/workspace/src/App.tsx',
-                    entityVersion: 'sha256:' + 'a'.repeat(64),
-                },
-            };
-            expect(x.kernel.exportRefsToIndexMap()['fd_0:file']).toEqual(expected);
-            expect(x.container.innerHTML).toContain('[Stable file label](file)');
-            const beforeMarkup = x.container.innerHTML;
-            const beforeEpoch = x.kernel.getProjectionCoordinator().token().epoch;
-            updateVersion('sha256:' + 'b'.repeat(64));
-            await sleep(35);
-            expect(x.container.innerHTML).toBe(beforeMarkup);
-            expect(x.kernel.exportRefsToIndexMap()['fd_0:file']).toMatchObject({
-                $aotuiEntityRefV1: { entityVersion: 'sha256:' + 'b'.repeat(64) },
-            });
-            expect(x.kernel.getProjectionCoordinator().token().epoch).toBeGreaterThan(beforeEpoch);
-        } finally {
-            await x.close();
-        }
-        expect(x.kernel.exportRefsToIndexMap()).toEqual({});
-    });
-
-    it('rejects a missing entityVersion rather than registering an unversioned mutation Ref', async () => {
-        function Content() {
-            useEntityRef('file', { entityType: 'File', entityId: '/workspace/a', entityVersion: '' });
-            return h('p', {}, 'Should not render');
-        }
-        const x = setup(() => h(View, {
-            id: 'fd_0', type: 'FileDetail',
-        }, h(Content, {})));
-        try {
-            await expect(x.open()).rejects.toThrow(/useEntityRef requires/);
-            expect(x.kernel.exportRefsToIndexMap()).toEqual({});
         } finally {
             await x.close();
         }

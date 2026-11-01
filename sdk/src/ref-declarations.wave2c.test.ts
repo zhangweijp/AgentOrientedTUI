@@ -7,10 +7,24 @@ import { View } from './components/View.js';
 import { useViewTypeTool } from './hooks/useViewTypeTool.js';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 
-const declaration = { type: 'reference', refSource: 'snapshot-value-v1', refType: 'File' };
+const declaration = { type: 'reference', required: true, refSource: 'snapshot-value-v1', refType: 'File' };
 const options = (change: Record<string, unknown> = {}) => ({
     description: 'Inspect', params: { file: declaration }, isMutating: false, ...change,
 }) as any;
+const snapshotInvocation = {
+    safeSnapshotValueParametersInvocationMode: 'snapshot-value-v2',
+    additionalProperties: false,
+    createSafeSnapshotValueParametersInvoker: () => async () => ({
+        phase: 'entered-returned' as const, result: { success: true },
+    }),
+};
+const ordinaryInvocation = {
+    safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+    additionalProperties: false,
+    createSafeOrdinaryParametersInvoker: () => async () => ({
+        phase: 'entered-returned' as const, result: { success: true },
+    }),
+};
 
 function setup(content: () => any, support: 'actual' | 'missing' | 'unknown' = 'actual') {
     const component = () => h(View, { id: 'fd_A', type: 'FileDetail' }, h(content, {}));
@@ -56,7 +70,7 @@ describe('Wave 2C: real Preact, SDK and AppKernel declaration registration', () 
             expect(env.kernel.getViewOwnedToolDefinitions()[0].inputSchema).toMatchObject({ properties: { file: {
                 type: 'string', 'x-aotui-ref': { version: 1, kind: 'snapshot-value', owner: 'tool-target', refType: 'File' },
             } } });
-            expect(env.kernel.getAllTypeTools().size).toBe(0);
+            expect(env.kernel.getViewOwnedToolDefinitions()).toHaveLength(1);
         } finally { await env.close(); }
         expect(env.kernel.getViewOwnedToolDefinitions()).toEqual([]);
     });
@@ -74,7 +88,7 @@ describe('Wave 2C: real Preact, SDK and AppKernel declaration registration', () 
         } finally { await env.close(); }
     });
 
-    it.each(['actual', 'missing', 'unknown'] as const)('ports with %s Ref declaration support keep unannotated references on the existing path', async support => {
+    it.each(['actual', 'missing', 'unknown'] as const)('rejects unannotated references when declaration support is %s', async support => {
         function Content() {
             useViewTypeTool('inspect', options({ params: { file: { type: 'reference', refType: 'File' } } }),
                 async args => ({ success: true, data: { args } }));
@@ -82,10 +96,9 @@ describe('Wave 2C: real Preact, SDK and AppKernel declaration registration', () 
         }
         const env = setup(Content, support);
         try {
-            await env.open(); const source = env.kernel.getViewOwnedToolDefinitions()[0];
-            expect(env.register.mock.calls[0][3]).toBeUndefined();
-            expect(await env.kernel.invokeBoundReadOnlyTool(source, source.targets[0], { file: '[File](file)' }))
-                .toMatchObject({ success: true, data: { args: { file: '[File](file)' } } });
+            await expect(env.open()).rejects.toThrow('REF_CONTRACT_UNSUPPORTED');
+            expect(env.register).not.toHaveBeenCalled();
+            expect(env.kernel.getViewOwnedToolDefinitions()).toEqual([]);
         } finally { await env.close(); }
     });
 
@@ -102,28 +115,6 @@ describe('Wave 2C: real Preact, SDK and AppKernel declaration registration', () 
         } finally { await env.close(); }
     });
 
-    it('rejects Legacy five-argument opt-in before the legacy registration effect', async () => {
-        function Content() {
-            useViewTypeTool('FileDetail', 'inspect', options(), async () => ({ success: true }));
-            return h('p', {}, 'A');
-        }
-        const env = setup(Content);
-        try {
-            await expect(env.open()).rejects.toThrow('REF_CONTRACT_UNSUPPORTED');
-            expect(env.kernel.getAllTypeTools().size).toBe(0);
-            expect(env.kernel.getViewOwnedToolDefinitions()).toEqual([]);
-        } finally { await env.close(); }
-    });
-
-    it('the direct Legacy Runtime registration boundary also refuses the new declaration atomically', () => {
-        const env = setup(() => h('p', {}, 'A'));
-        expect(() => env.kernel.registerTypeTool('FileDetail', 'inspect', {
-            description: 'Inspect', params: { file: declaration }, handler: async () => ({ success: true }),
-        })).toThrow('REF_CONTRACT_UNSUPPORTED');
-        expect(env.kernel.getAllTypeTools().size).toBe(0);
-        return env.close();
-    });
-
     it('the direct View-local port validates new declarations without relying on the SDK Hook', async () => {
         const env = setup(() => h('p', {}, 'A')); const handler = vi.fn(async () => ({ success: true }));
         let mount: string | undefined;
@@ -131,17 +122,19 @@ describe('Wave 2C: real Preact, SDK and AppKernel declaration registration', () 
             await env.open(); mount = env.port.mount('direct', 'Detail');
             expect(() => env.port.registerTool(mount, 'bad', { description: 'Bad', params: {
                 file: { ...declaration, refSource: 'future' },
-            }, isMutating: false, handler })).toThrow('REF_CONTRACT_UNSUPPORTED');
+            }, isMutating: false, handler }, snapshotInvocation)).toThrow('PARAMETER_DECLARATION_UNSUPPORTED');
             expect(() => env.port.registerTool(mount, 'bad', { description: 'Bad', params: {
                 file: declaration,
-            }, handler })).toThrow('REF_DECLARATION_INVALID');
+            }, handler }, snapshotInvocation)).toThrow('Invalid Ref V2 registration metadata');
             expect(env.kernel.getViewOwnedToolDefinitions()).toEqual([]);
             const release = env.port.registerTool(mount, 'inspect', {
                 description: 'Inspect', params: { file: declaration }, isMutating: false, handler,
-            });
+            }, snapshotInvocation);
             const current = env.kernel.getViewOwnedToolDefinitions()[0];
-            expect(await env.kernel.invokeBoundReadOnlyTool(current, current.targets[0], {}))
-                .toMatchObject({ success: false, error: { code: 'REF_CONTRACT_UNSUPPORTED' } });
+            expect(current.inputSchema).toMatchObject({ properties: { file: {
+                type: 'string', 'x-aotui-ref': { version: 1, kind: 'snapshot-value', owner: 'tool-target', refType: 'File' },
+            } } });
+            expect(current.isMutating).toBe(false);
             expect(handler).not.toHaveBeenCalled();
             release(); expect(env.kernel.getViewOwnedToolDefinitions()).toEqual([]);
         } finally { if (mount) env.port.unmount(mount); await env.close(); }
@@ -156,7 +149,7 @@ describe('Wave 2C: real Preact, SDK and AppKernel declaration registration', () 
         }
         const env = setup(Content);
         try {
-            await expect(env.open()).rejects.toThrow('REF_DECLARATION_INVALID');
+            await expect(env.open()).rejects.toThrow('PARAMETER_DECLARATION_INVALID');
             expect(env.register).not.toHaveBeenCalled();
             expect(env.kernel.getViewOwnedToolDefinitions()).toEqual([]);
         } finally { await env.close(); }
@@ -167,8 +160,8 @@ describe('Wave 2C: real Preact, SDK and AppKernel declaration registration', () 
         function Content() {
             const [reversed, set] = useState(false); update = set;
             const file = reversed
-                ? { refType: 'File', refSource: 'snapshot-value-v1', type: 'reference' }
-                : { type: 'reference', refSource: 'snapshot-value-v1', refType: 'File' };
+                ? { refType: 'File', refSource: 'snapshot-value-v1', required: true, type: 'reference' }
+                : { type: 'reference', required: true, refSource: 'snapshot-value-v1', refType: 'File' };
             useViewTypeTool('inspect', options({ params: { file } }), async () => ({ success: true }));
             return h('p', {}, 'A');
         }
@@ -217,7 +210,7 @@ describe('Wave 2C: real Preact, SDK and AppKernel declaration registration', () 
         const env = setup(() => h('p', {}, 'A')); let mount: string | undefined;
         try {
             await env.open(); mount = env.port.mount('direct', 'Detail');
-            expect(() => env.port.registerTool(mount, 'inspect', definition)).toThrow('Accessors/hidden properties');
+            expect(() => env.port.registerTool(mount, 'inspect', definition, ordinaryInvocation)).toThrow('Accessors/hidden properties');
             expect(getter).not.toHaveBeenCalled(); expect(env.kernel.getViewOwnedToolDefinitions()).toEqual([]);
         } finally { if (mount) env.port.unmount(mount); await env.close(); }
     });

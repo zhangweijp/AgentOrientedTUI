@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { jsonSchema, type Tool } from '@aotui/agent-driver-v2';
 import { buildViewMessageMarkup } from './view-message.js';
-import { loadAOTUIInstruction, SEMANTIC_AOTUI_SYSTEM_INSTRUCTION } from './system-instruction.js';
-import { formatAppStatus, formatTimestamp } from '../engine/view/snapshot/templates.js';
+import { buildPublicToolName } from './public-tool-name.js';
+import { loadAOTUIInstruction, DEFAULT_AOTUI_SYSTEM_INSTRUCTION } from './system-instruction.js';
+import { formatAppStatus, formatTimestamp } from '../core/presentation.js';
 import type { ToolDescriptorV2 } from '../core/snapshot/types.js';
-import type { DrivenSourceContext, IDrivenSource, MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2';
+import type { ContextDrivenSource, DrivenSourceContext, MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2';
 import type { AppID } from '../spi/core/types.js';
 import type { IDesktop, IKernel, AppDiscoveryInfo } from '../spi/runtime/kernel.interface.js';
 import type { Observation } from '../core/invocation/observation-types.js';
@@ -25,41 +26,44 @@ const object = (value: unknown): value is Record<string, unknown> => value !== n
 const unavailable = (toolName: string, toolCallId: string, code: string, message: string, outcomeStatus: 'rejected' | 'unknown' = 'rejected'): ToolResult =>
     ({ toolName, toolCallId, outcomeStatus, error: { code, message } });
 
-/** Preserve the actual business result even when a consumer also needs an error flag. */
+/** Keep Core receipts internal while returning operation data and actionable errors to the Driver. */
 export function semanticToolResult(toolName: string, toolCallId: string, result: InvokeResult | ReceiptAccess): ToolResult {
     if (result.kind !== 'receipt') return unavailable(toolName, toolCallId, result.code, result.message,
         result.kind === 'refused' ? 'rejected' : 'unknown');
     const outcome = result.receipt.outcome;
+    const base = { toolName, toolCallId, outcomeStatus: outcome.status };
+    if (outcome.status === 'succeeded') {
+        const value = outcome.value;
+        return { ...base, result: object(value) && value.success === true ? value.data ?? { success: true } : value ?? { success: true } };
+    }
+    if (outcome.status === 'accepted') return { ...base, error: { code: 'TOOL_RESULT_NOT_FINAL',
+        message: 'This Tool did not provide a completed result. Check its application View before another invocation; do not repeat the operation.' } };
+    const business = outcome.details?.kind === 'operation-result' ? outcome.details.result : undefined;
     return {
-        toolName, toolCallId, outcomeStatus: outcome.status,
-        result: { receipt: result.receipt },
-        ...('code' in outcome ? { error: { code: outcome.code, message: outcome.message } } : {}),
+        ...base,
+        ...(business?.data === undefined ? {} : { result: business.data }),
+        error: { code: business?.error?.code ?? outcome.code,
+            message: (business?.error?.message ?? outcome.message) + (outcome.status === 'failed' && outcome.effects === 'partial'
+                ? ' Some changes were applied. Inspect the current View before retrying.' : '') },
     };
 }
 
 interface AppScope { app: AppDiscoveryInfo; client: ScopeClient }
-interface Binding { app: AppDiscoveryInfo; client: ScopeClient; observationId: string; bindingId: string }
+interface Binding { app: AppDiscoveryInfo; client: ScopeClient; observationId: string; bindingId: string; viewId: string }
 interface ToolGroup { app: AppDiscoveryInfo; tool: ToolDescriptorV2; targets: Map<string, Binding>; selector?: string }
-
-function publicToolName(label: string, group: ToolGroup, ambiguous: boolean): string {
-    if (!ambiguous && /^[A-Za-z0-9_-]{1,64}$/.test(label)) return label;
-    const hash = createHash('sha256').update(JSON.stringify([group.app.appId, group.tool.id])).digest('hex').slice(0, 12);
-    return `${label.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 51)}_${hash}`;
-}
 
 interface ContextOwner { release(): void }
 
 /**
  * Generic Runtime → Agent adapter. No App-specific View names, tool allowlists,
- * legacy snapshots, legacy execution, or automatic rebinding of old calls.
+ * direct Worker execution, or automatic rebinding of old calls.
  * A getContext() result owns its Observations until release(), including while
  * the model thinks. A later context cannot overwrite an earlier call target.
  * Scopes are owned by the active Contexts, and close when their last owner
- * releases. Invocation receipts are returned in ToolResult. Accepted work's
- * cross-turn progress belongs in App Views; this adapter does not expose a
- * receipt lookup service or keep historical Scopes alive for that purpose.
+ * releases. Core receipts stay internal; public results carry operation data
+ * or actionable errors. Model-facing Tools are expected to await completion.
  */
-export class SemanticAOTUIDrivenSource implements IDrivenSource {
+export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
     readonly name = 'AOTUI';
     private enabled = true;
     private disposed = false;
@@ -70,8 +74,6 @@ export class SemanticAOTUIDrivenSource implements IDrivenSource {
     private readonly listeners = new Set<() => void>();
     private readonly update = () => { for (const listener of this.listeners) listener(); };
     private subscribed = false;
-    private compatibilityContext?: DrivenSourceContext;
-    private compatibilityPending?: Promise<DrivenSourceContext>;
     private readonly maxActiveContexts: number;
     private readonly maxApps: number;
     private readonly instruction: string;
@@ -81,11 +83,11 @@ export class SemanticAOTUIDrivenSource implements IDrivenSource {
         private readonly options: SemanticAOTUIDrivenSourceOptions = {}) {
         this.maxActiveContexts = options.maxActiveContexts ?? 8;
         this.maxApps = options.maxApps ?? 128;
-        this.instruction = loadAOTUIInstruction(options, SEMANTIC_AOTUI_SYSTEM_INSTRUCTION);
+        this.instruction = loadAOTUIInstruction(options, DEFAULT_AOTUI_SYSTEM_INSTRUCTION);
         for (const limit of [this.maxActiveContexts, this.maxApps]) {
             if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('SEMANTIC_SOURCE_LIMIT_INVALID');
         }
-        if (typeof desktop.getInstalledApps !== 'function' || typeof kernel.experimentalCreateAppScope !== 'function')
+        if (typeof desktop.getInstalledApps !== 'function' || typeof kernel.createAppScope !== 'function')
             throw new Error('SEMANTIC_RUNTIME_UNSUPPORTED');
     }
 
@@ -94,7 +96,8 @@ export class SemanticAOTUIDrivenSource implements IDrivenSource {
         const apps = this.desktop.getInstalledApps();
         if (apps.length > this.maxApps) throw new Error('SEMANTIC_APP_CAPACITY');
         // Do not expose launch configuration, paths, credentials, or mutable registry records.
-        return apps.map(app => ({ appId: app.appId, name: app.name, status: app.status,
+        return apps.map(app => ({ appId: app.appId, ...(app.appInstanceId ? { appInstanceId: app.appInstanceId } : {}),
+            name: app.name, status: app.status,
             description: app.description, whatItIs: app.whatItIs, whenToUse: app.whenToUse }));
     }
 
@@ -131,7 +134,7 @@ export class SemanticAOTUIDrivenSource implements IDrivenSource {
     private openScope(app: AppDiscoveryInfo): AppScope | { issue: string } {
         const existing = this.scopes.get(String(app.appId));
         if (existing) return existing;
-        const result = this.kernel.experimentalCreateAppScope!(this.desktop.id, String(app.appId), this.policy(app));
+        const result = this.kernel.createAppScope(this.desktop.id, String(app.appId), this.policy(app));
         if (result.status !== 'opened') return { issue: result.issue.code };
         const scope = { app, client: result.client };
         this.scopes.set(String(app.appId), scope);
@@ -158,7 +161,8 @@ export class SemanticAOTUIDrivenSource implements IDrivenSource {
         } };
         this.contexts.add(owner);
         try {
-            const apps = this.listApps().filter(app => this.allowed(app));
+            const installedApps = this.listApps();
+            const apps = installedApps.filter(app => this.allowed(app));
             const active = new Set(apps.filter(app => app.status === 'running').map(app => String(app.appId)));
             for (const appId of this.scopes.keys()) if (!active.has(appId)) this.retire(appId);
             const messages: MessageWithTimestamp[] = [];
@@ -192,11 +196,15 @@ export class SemanticAOTUIDrivenSource implements IDrivenSource {
                 const observation = observed.observation;
                 observations.push({ client: scope.client, observation });
                 if (released || this.generation !== generation) { scope.client.releaseObservation(observation.observationId); continue; }
-                const byId = new Map(observation.tools.map(tool => [tool.id, { app, tool, targets: new Map<string, Binding>() }]));
+                const byId = new Map<string, ToolGroup>(observation.tools.map(tool => [tool.id, { app, tool, targets: new Map<string, Binding>() }]));
                 for (const binding of observation.bindings) {
                     const group = byId.get(binding.toolId);
-                    if (!group || group.targets.has(binding.target.viewId)) throw new Error('SEMANTIC_BINDING_INVALID');
-                    group.targets.set(binding.target.viewId, { app, client: scope.client,
+                    const selector = binding.target.selector, value = selector?.value ?? binding.target.viewId;
+                    if (!group || group.targets.has(value)) throw new Error('TOOL_TARGET_CONFLICT: Each target parameter value must identify one observed View.');
+                    if (group.targets.size && group.selector !== selector?.param)
+                        throw new Error('TOOL_TARGET_CONFLICT: Same-type Tools must declare the same target parameter.');
+                    group.selector = selector?.param;
+                    group.targets.set(value, { app, client: scope.client, viewId: binding.target.viewId,
                         observationId: observation.observationId, bindingId: binding.bindingId });
                 }
                 groups.push(...[...byId.values()].filter(group => group.targets.size));
@@ -211,29 +219,15 @@ export class SemanticAOTUIDrivenSource implements IDrivenSource {
                         timestamp: timestamp(JSON.stringify([app.appId, view.viewInstanceId]), markup), content: markup });
                 }
             }
-            const appNames = new Map<string, number>();
-            for (const app of apps) appNames.set(app.name || String(app.appId), (appNames.get(app.name || String(app.appId)) ?? 0) + 1);
-            const labels = groups.map(group => {
-                const name = group.app.name || String(group.app.appId);
-                return `${appNames.get(name)! > 1 ? `${name}_${group.app.appId}` : name}-${group.tool.viewType}-${group.tool.name}`;
-            });
-            const counts = new Map<string, number>();
-            for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
-            groups.forEach((group, index) => {
-                const name = publicToolName(labels[index], group, counts.get(labels[index])! > 1);
-                if (bindings.has(name)) throw new Error('SEMANTIC_TOOL_NAME_COLLISION');
-                let schema = group.tool.inputSchema as Record<string, unknown>;
-                if (group.targets.size > 1) {
-                    const properties = object(schema.properties) ? schema.properties : {};
-                    let selector = 'aotui_view_id';
-                    while (Object.hasOwn(properties, selector)) selector = '_' + selector;
-                    group.selector = selector;
-                    schema = { ...schema, properties: { ...properties, [selector]: {
-                        type: 'string', enum: [...group.targets.keys()], description: 'Target View id from the current observation.',
-                    } }, required: [...(Array.isArray(schema.required) ? schema.required : []), selector] };
-                }
+            groups.forEach(group => {
+                const name = buildPublicToolName(group.app.name || String(group.app.appId), group.tool.viewType, group.tool.name);
+                if (bindings.has(name)) throw new Error(`AOTUI_TOOL_NAME_COLLISION: ${JSON.stringify(name)}. ` +
+                    'Use distinct application names and unambiguous ViewType/toolName declarations.');
+                const schema = group.tool.inputSchema as Record<string, unknown>;
+                if (group.targets.size > 1 && !group.selector)
+                    throw new Error(`TOOL_TARGET_REQUIRED: ${name} has multiple Views. Declare target: { param, value } using an existing required string parameter.`);
                 bindings.set(name, group);
-                tools[name] = { description: `${group.tool.description}\nApplication: ${group.app.name || group.app.appId}; Views: ${[...group.targets.keys()].join(', ')}.`,
+                tools[name] = { description: `${group.tool.description}\nApplication: ${group.app.name || group.app.appId}; Views: ${[...group.targets.values()].map(target => target.viewId).join(', ')}.`,
                     inputSchema: jsonSchema(schema) };
             });
             // Logs are Desktop-wide metadata, not application-projected content.
@@ -247,7 +241,7 @@ export class SemanticAOTUIDrivenSource implements IDrivenSource {
                 `    - Status: ${formatAppStatus(app.status)}`, `    - What it is: ${app.whatItIs || app.description || 'Not provided'}`,
                 `    - When to use: ${app.whenToUse || 'Not provided'}`,
                 ...(issues.has(String(app.appId)) ? [`    - Semantic status: ${issues.get(String(app.appId))}`] : []),
-            ].join('\n')).join('\n') : '- No applications installed.'}\n\n## System Logs\n${logs.length ? logs.map(log => `- [${formatTimestamp(log.timestamp)}] ${log.message}`).join('\n') : '- No recent activity.'}\n\n</desktop>`;
+            ].join('\n')).join('\n') : installedApps.length ? '- No applications enabled for this context.' : '- No applications installed.'}\n\n## System Logs\n${logs.length ? logs.map(log => `- [${formatTimestamp(log.timestamp)}] ${log.message}`).join('\n') : this.disabledApps.size ? '- Desktop-wide logs are hidden while application filtering is active.' : '- No recent activity.'}\n\n</desktop>`;
             messages.push({ role: 'user', region: 'dynamic', content: desktopMarkup,
                 timestamp: timestamp('desktop', desktopMarkup) });
             const control = this.controls(apps, tools);
@@ -262,7 +256,7 @@ export class SemanticAOTUIDrivenSource implements IDrivenSource {
                     if (!group) return undefined;
                     if (!this.allowed(group.app)) return unavailable(name, callId, 'APP_DISABLED', 'This application is disabled.');
                     if (!object(args)) return unavailable(name, callId, 'INVOCATION_INVALID', 'Tool input must be an object.');
-                    let binding: Binding | undefined, input = args;
+                    let binding: Binding;
                     if (group.selector) {
                         const fields = Object.getOwnPropertyDescriptors(args);
                         const target = fields[group.selector];
@@ -271,10 +265,9 @@ export class SemanticAOTUIDrivenSource implements IDrivenSource {
                         if (Reflect.ownKeys(fields).some(key => typeof key !== 'string' || !fields[key].enumerable || !('value' in fields[key])))
                             return unavailable(name, callId, 'INVOCATION_INVALID', 'Tool input must contain ordinary JSON properties.');
                         binding = group.targets.get(target.value)!;
-                        input = Object.fromEntries(Object.entries(fields).filter(([key]) => key !== group.selector).map(([key, field]) => [key, field.value]));
                     } else binding = group.targets.values().next().value!;
                     try { return semanticToolResult(name, callId, await binding.client.invoke({ invocationId: callId,
-                        observationId: binding.observationId, bindingId: binding.bindingId, input })); }
+                        observationId: binding.observationId, bindingId: binding.bindingId, input: args })); }
                     catch { return unavailable(name, callId, 'INVOCATION_RESULT_UNKNOWN', 'Execution could not be confirmed. Do not blindly retry.', 'unknown'); }
                 },
             };
@@ -283,16 +276,23 @@ export class SemanticAOTUIDrivenSource implements IDrivenSource {
 
     private controls(apps: readonly AppDiscoveryInfo[], tools: Record<string, Tool>): Map<string, (input: unknown, callId: string) => Promise<ToolResult>> {
         const handlers = new Map<string, (input: unknown, callId: string) => Promise<ToolResult>>();
-        const actions = [
-            ['open', ['pending', 'closed'], 'Start an installed application.', (id: AppID) => this.desktop.openApp(id)],
-            ['close', ['running', 'collapsed', 'paused'], 'Close an application and revoke its current tools.', (id: AppID) => this.desktop.closeApp(id)],
-            ['collapse', ['running'], 'Collapse an application.', (id: AppID) => this.desktop.collapseApp(id)],
-            ['show', ['collapsed'], 'Show a collapsed application.', (id: AppID) => this.desktop.showApp(id)],
-        ] as const;
-        for (const [action, statuses, description, execute] of actions) {
-            const available = apps.filter(app => (statuses as readonly string[]).includes(app.status));
+        const actions: Array<{ action: string; statuses: readonly AppDiscoveryInfo['status'][]; description: string;
+            instanceBound: boolean; execute: (id: AppID, expectedInstanceId?: string) => Promise<void> }> = [
+            { action: 'open', statuses: ['pending', 'closed'], description: 'Start an installed application.', instanceBound: false,
+                execute: id => this.desktop.openApp(id) },
+            { action: 'close', statuses: ['running', 'collapsed', 'paused'], description: 'Close an application and revoke its current tools.', instanceBound: true,
+                execute: (id, instanceId) => this.desktop.closeApp(id, instanceId) },
+            { action: 'collapse', statuses: ['running'], description: 'Collapse an application.', instanceBound: true,
+                execute: (id, instanceId) => this.desktop.collapseApp(id, instanceId) },
+            { action: 'show', statuses: ['collapsed'], description: 'Show a collapsed application.', instanceBound: true,
+                execute: (id, instanceId) => this.desktop.showApp(id, instanceId) },
+        ];
+        for (const { action, statuses, description, instanceBound, execute } of actions) {
+            const available = apps.filter(app => statuses.includes(app.status) && (!instanceBound ||
+                (typeof app.appInstanceId === 'string' && app.appInstanceId.length > 0)));
             if (!available.length) continue;
             const name = `system-${action}_app`, ids = new Set(available.map(app => String(app.appId)));
+            const instances = new Map(available.map(app => [String(app.appId), app.appInstanceId]));
             tools[name] = { description, inputSchema: jsonSchema({ type: 'object', properties: { app_id: { type: 'string', enum: [...ids] } }, required: ['app_id'], additionalProperties: false }) };
             handlers.set(name, async (input, callId) => {
                 if (!object(input) || Object.keys(input).length !== 1 || typeof input.app_id !== 'string' || !ids.has(input.app_id))
@@ -300,41 +300,24 @@ export class SemanticAOTUIDrivenSource implements IDrivenSource {
                 const app = this.listApps().find(item => String(item.appId) === input.app_id);
                 if (!app || !this.allowed(app) || !(statuses as readonly string[]).includes(app.status))
                     return unavailable(name, callId, 'APP_STATE_CHANGED', 'The application state changed; refresh the context.');
-                try { await execute(app.appId); this.update(); return { toolName: name, toolCallId: callId, outcomeStatus: 'succeeded', result: { status: 'succeeded', appId: app.appId, operation: action } }; }
-                catch { return unavailable(name, callId, 'APP_LIFECYCLE_UNKNOWN', 'Application lifecycle completion could not be confirmed.', 'unknown'); }
+                const expectedInstanceId = instanceBound ? instances.get(input.app_id) : undefined;
+                if (instanceBound && (!expectedInstanceId || app.appInstanceId !== expectedInstanceId))
+                    return unavailable(name, callId, 'APP_INSTANCE_CHANGED', 'The application instance changed; refresh the context.');
+                try { await execute(app.appId, expectedInstanceId); this.update(); return { toolName: name, toolCallId: callId, outcomeStatus: 'succeeded', result: { success: true } }; }
+                catch (error) {
+                    if (instanceBound && object(error) && error.code === 'APP_INSTANCE_CHANGED')
+                        return unavailable(name, callId, 'APP_INSTANCE_CHANGED', 'The application instance changed; refresh the context.');
+                    return unavailable(name, callId, 'APP_LIFECYCLE_UNKNOWN', 'Application lifecycle completion could not be confirmed.', 'unknown');
+                }
             });
         }
         return handlers;
-    }
-
-    /** Compatibility for non-Driver consumers; the Driver uses getContext(). */
-    async getMessages(): Promise<MessageWithTimestamp[]> {
-        if (!this.compatibilityPending) {
-            const previous = this.compatibilityContext;
-            this.compatibilityContext = undefined;
-            this.compatibilityPending = Promise.resolve(previous?.release?.()).then(() => this.getContext()).then(context => {
-                this.compatibilityContext = context; return context;
-            }).finally(() => { this.compatibilityPending = undefined; });
-        }
-        return (await this.compatibilityPending).messages;
-    }
-    private async compatibility(): Promise<DrivenSourceContext> {
-        if (this.compatibilityContext) return this.compatibilityContext;
-        if (!this.compatibilityPending) this.compatibilityPending = this.getContext().then(context => {
-            this.compatibilityContext = context; return context;
-        }).finally(() => { this.compatibilityPending = undefined; });
-        return this.compatibilityPending;
-    }
-    async getTools(): Promise<Record<string, Tool>> { return (await this.compatibility()).tools; }
-    async executeTool(name: string, input: unknown, callId: string): Promise<ToolResult | undefined> {
-        return (await this.compatibility()).executeTool?.(name, input, callId);
     }
 
     setEnabled(enabled: boolean): void {
         if (this.disposed || this.enabled === enabled) return;
         this.enabled = enabled; this.generation++; this.presentations.clear();
         if (!enabled) { for (const owner of this.contexts) owner.release(); for (const id of this.scopes.keys()) this.retire(id); }
-        this.compatibilityContext = undefined;
         this.update();
     }
     setAppEnabled(appName: string, enabled: boolean): void {
@@ -342,7 +325,6 @@ export class SemanticAOTUIDrivenSource implements IDrivenSource {
         if (enabled) this.disabledApps.delete(key(appName)); else this.disabledApps.add(key(appName));
         this.generation++; this.presentations.clear();
         for (const [id, scope] of this.scopes) if (!this.allowed(scope.app)) this.retire(id);
-        this.compatibilityContext?.release?.(); this.compatibilityContext = undefined;
         this.update();
     }
     onUpdate(callback: () => void): () => void {
@@ -360,6 +342,6 @@ export class SemanticAOTUIDrivenSource implements IDrivenSource {
         for (const owner of this.contexts) owner.release();
         for (const id of this.scopes.keys()) this.retire(id);
         if (this.subscribed) this.desktop.output.unsubscribe(this.update);
-        this.subscribed = false; this.listeners.clear(); this.compatibilityContext = undefined;
+        this.subscribed = false; this.listeners.clear();
     }
 }

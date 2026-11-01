@@ -1,6 +1,6 @@
 /**
  * M3 real SDK + Preact + AppKernel contract probes (NOT hand-authored HTML).
- * Assertions compare actual View/Ref/ViewTypeTool registries and the Core epoch.
+ * Assertions compare mounted View identities, Ref/Tool projections and the Core epoch.
  */
 import { describe, expect, it } from 'vitest';
 import { h, render } from 'preact';
@@ -14,6 +14,11 @@ import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const TOOL_PARAMS = {};
+const refsOf = (kernel: AppKernel) => Object.fromEntries(
+    kernel.getViewRefs().map(ref => [`${ref.viewId}:${ref.refId}`, ref.value]),
+);
+const workspaceTools = (kernel: AppKernel) =>
+    kernel.getViewOwnedToolDefinitions().filter(tool => tool.viewType === 'Workspace');
 
 function setup(component: () => any) {
     const factory = createTUIApp({ app_name: 'm3_app', component });
@@ -44,7 +49,7 @@ describe('M3 SDK semantic projection commit', () => {
             const [task] = useState({ id: 'A' });
             const ref = useDataRef('selected', task);
             const [listLabel, itemLabel] = useArrayRef('pending', [task], { itemType: 'Task' });
-            const [ToolUI] = useViewTypeTool('Workspace', 'complete', {
+            const [ToolUI] = useViewTypeTool('complete', {
                 description: 'Complete task', params: TOOL_PARAMS,
             }, async () => ({ success: true }));
             return h('section', {}, [
@@ -63,22 +68,23 @@ describe('M3 SDK semantic projection commit', () => {
             const view = x.container.querySelector('[data-view-id="workspace"]');
             expect(view).not.toBeNull();
             expect(view?.getAttribute('data-view-generation')).toMatch(/^sdk_mount_/);
-            expect(Object.keys(x.kernel.exportRefsToIndexMap()).sort()).toEqual([
+            expect(Object.keys(refsOf(x.kernel)).sort()).toEqual([
                 'workspace:Task:pending[0]',
                 'workspace:Task[]:pending',
                 'workspace:pending',
                 'workspace:pending[0]',
                 'workspace:selected',
             ].sort());
-            const allRefs = x.kernel.exportRefsToIndexMap() as Record<string, any>;
+            const allRefs = refsOf(x.kernel) as Record<string, any>;
             expect(allRefs['workspace:Task:pending[0]']).toMatchObject({ id: 'A' });
             expect(allRefs['workspace:Task[]:pending']).toHaveLength(1);
             expect(x.container.innerHTML).toContain('(Task:pending[0])');
             expect(x.container.innerHTML).toContain('(Task[]:pending)');
-            expect(x.kernel.getAllTypeTools().get('Workspace')).toHaveLength(1);
-            const registeredTool = x.kernel.getAllTypeTools().get('Workspace')![0];
-            expect(registeredTool.declaredByViewId).toBe('workspace');
-            expect(registeredTool.declaredByViewGeneration).toBe(view?.getAttribute('data-view-generation'));
+            const registeredTool = workspaceTools(x.kernel)[0];
+            expect(registeredTool.targets).toHaveLength(1);
+            expect(registeredTool.targets[0].viewId).toBe('workspace');
+            expect(registeredTool.targets[0].viewInstanceId)
+                .toBe(view?.getAttribute('data-view-instance-id'));
             const token = x.kernel.getProjectionCoordinator().token();
             expect(token.ready).toBe(true);
             expect(token.epoch).toBeGreaterThan(0);
@@ -114,7 +120,7 @@ describe('M3 SDK semantic projection commit', () => {
             const afterEpoch = x.kernel.getProjectionCoordinator().token().epoch;
             expect(x.container.innerHTML).toBe(html);
             expect(domChanges).toBe(0);
-            expect((x.kernel.exportRefsToIndexMap()['workspace:selected'] as any)?.id).toBe('B');
+            expect((refsOf(x.kernel)['workspace:selected'] as any)?.id).toBe('B');
             expect(afterEpoch).toBeGreaterThan(beforeEpoch);
             expect(epochs.some(epoch => epoch > beforeEpoch)).toBe(true);
             expect(x.markDirty.length).toBe(beforeDirty);
@@ -129,7 +135,7 @@ describe('M3 SDK semantic projection commit', () => {
         function Content() {
             const [on, setOn] = useState(true);
             enabled = setOn;
-            const [ToolUI] = useViewTypeTool('Workspace', 'complete', {
+            const [ToolUI] = useViewTypeTool('complete', {
                 description: 'Complete', params: TOOL_PARAMS,
             }, async () => ({ success: true }), { enabled: on });
             return h(ToolUI, {}, 'Complete');
@@ -138,15 +144,15 @@ describe('M3 SDK semantic projection commit', () => {
         const x = setup(App);
         try {
             await x.open();
-            expect(x.kernel.getAllTypeTools().get('Workspace')).toHaveLength(1);
+            expect(workspaceTools(x.kernel)).toHaveLength(1);
             const before = x.kernel.getProjectionCoordinator().token().epoch;
             enabled(false);
             await sleep(35);
-            expect(x.kernel.getAllTypeTools().get('Workspace')).toBeUndefined();
+            expect(workspaceTools(x.kernel)).toHaveLength(0);
             expect(x.kernel.getProjectionCoordinator().token().epoch).toBeGreaterThan(before);
             enabled(true);
             await sleep(35);
-            expect(x.kernel.getAllTypeTools().get('Workspace')).toHaveLength(1);
+            expect(workspaceTools(x.kernel)).toHaveLength(1);
         } finally {
             await x.close();
         }
@@ -188,7 +194,7 @@ describe('M3 observable commit-phase consistency', () => {
             update = setState;
             const left = useDataRef('left', state);
             const right = useDataRef('right', state);
-            const [ToolUI] = useViewTypeTool('Workspace', 'run', {
+            const [ToolUI] = useViewTypeTool('run', {
                 description: 'Run', params: PARAMS,
             }, async () => ({ success: true }), { enabled: state.enabled });
             return h('section', {}, [
@@ -201,11 +207,11 @@ describe('M3 observable commit-phase consistency', () => {
         const x = setup(App);
         const seen: Array<{ left?: string; right?: string; tool: boolean; ready: boolean }> = [];
         const unsubscribe = x.kernel.getProjectionCoordinator().subscribe(token => {
-            const refs = x.kernel.exportRefsToIndexMap() as Record<string, { id?: string }>;
+            const refs = refsOf(x.kernel) as Record<string, { id?: string }>;
             seen.push({
                 left: refs['workspace:left']?.id,
                 right: refs['workspace:right']?.id,
-                tool: !!x.kernel.getAllTypeTools().get('Workspace')?.length,
+                tool: workspaceTools(x.kernel).length > 0,
                 ready: token.ready,
             });
         });
@@ -248,7 +254,7 @@ describe('M3 typed ArrayRef marker and registry parity', () => {
         const key = (ref: string) => 'workspace:' + ref;
         try {
             await x.open();
-            const refs = () => x.kernel.exportRefsToIndexMap() as Record<string, any>;
+            const refs = () => refsOf(x.kernel) as Record<string, any>;
             expect(refs()[key('Task[]:pending')]).toEqual([{ id: 'A' }, { id: 'B' }]);
             expect(refs()[key('Task:pending[0]')]).toEqual({ id: 'A' });
             expect(refs()[key('pending[0]')]).toEqual({ id: 'A' });
@@ -293,7 +299,7 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
         let mutate!: (next: { show: boolean; data: Task[]; enabled: boolean }) => void;
         function Details({ data, enabled }: { data: Task[]; enabled: boolean }) {
             const [list, item] = useArrayRef('tasks', data, { itemType: 'Task' });
-            const [ToolUI] = useViewTypeTool('Workspace', 'inspect', {
+            const [ToolUI] = useViewTypeTool('inspect', {
                 description: 'Inspect', params: TOOL_PARAMS,
             }, async () => ({ success: true }), { enabled });
             return h('section', {}, [
@@ -316,10 +322,10 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
         const observed: string[] = [];
         let torn = 0;
         const unlisten = x.kernel.getProjectionCoordinator().subscribe(token => {
-            const views = (x.kernel as any).viewRegistry.getAll();
-            const refs = x.kernel.exportRefsToIndexMap() as Record<string, any>;
+            const views = x.kernel.getViewOwnedViewInstances();
+            const refs = refsOf(x.kernel) as Record<string, any>;
             const ids = Object.keys(refs);
-            const tools = x.kernel.getAllTypeTools().get('Workspace') ?? [];
+            const tools = workspaceTools(x.kernel);
             if (!token.ready) torn++;
             if (views.length === 0) {
                 if (ids.length || tools.length) torn++;
@@ -348,17 +354,16 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
                 const enabled = (seed & 1) === 1;
                 mutate({ show, data, enabled });
                 await sleep(8);
-                const currentViews = (x.kernel as any).viewRegistry.getAll();
-                const refs = x.kernel.exportRefsToIndexMap();
+                const currentViews = x.kernel.getViewOwnedViewInstances();
+                const refs = refsOf(x.kernel);
                 if (!show) {
                     expect(currentViews).toHaveLength(0);
                     expect(Object.keys(refs)).toHaveLength(0);
-                    expect(x.kernel.getAllTypeTools().get('Workspace')).toBeUndefined();
+                    expect(workspaceTools(x.kernel)).toHaveLength(0);
                 } else {
                     expect(currentViews).toHaveLength(1);
                     expect(Object.keys(refs).length).toBe(2 + data.length * 2);
-                    const tools = x.kernel.getAllTypeTools().get('Workspace');
-                    expect(tools?.length ?? 0).toBe(enabled ? 1 : 0);
+                    expect(workspaceTools(x.kernel).length).toBe(enabled ? 1 : 0);
                 }
             }
             expect(observed.length).toBeGreaterThan(10);
@@ -377,7 +382,7 @@ describe('M3 batched semantic updates', () => {
             const [state, setter] = useState({ id: 'first', enabled: true });
             setState = setter;
             const selected = useDataRef('selected', state);
-            const [ToolUI] = useViewTypeTool('Workspace', 'inspect', {
+            const [ToolUI] = useViewTypeTool('inspect', {
                 description: 'Inspect', params: TOOL_PARAMS,
             }, async () => ({ success: true }), { enabled: state.enabled });
             return h('section', {}, [
@@ -393,8 +398,8 @@ describe('M3 batched semantic updates', () => {
         const unsub = x.kernel.getProjectionCoordinator().subscribe(token => {
             events.push({
                 epoch: token.epoch,
-                id: (x.kernel.exportRefsToIndexMap()['workspace:selected'] as any)?.id,
-                tool: !!x.kernel.getAllTypeTools().get('Workspace')?.length,
+                id: (refsOf(x.kernel)['workspace:selected'] as any)?.id,
+                tool: workspaceTools(x.kernel).length > 0,
                 visible: !!x.container.querySelector('tool-ref'),
             });
         });
@@ -410,8 +415,8 @@ describe('M3 batched semantic updates', () => {
             await sleep(50);
             expect(x.container.querySelector('p')?.textContent).toBe(oldContent);
             expect(x.container.querySelector('tool-ref')).toBeNull();
-            expect((x.kernel.exportRefsToIndexMap()['workspace:selected'] as any).id).toBe('batch-19');
-            expect(x.kernel.getAllTypeTools().get('Workspace')).toBeUndefined();
+            expect((refsOf(x.kernel)['workspace:selected'] as any).id).toBe('batch-19');
+            expect(workspaceTools(x.kernel)).toHaveLength(0);
             expect(events.length).toBeGreaterThan(0);
             // No observer should ever receive the intermediate A/B mixed state.
             expect(events.every(x => x.id === 'batch-19' && !x.tool && !x.visible)).toBe(true);

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
+import { invokeObservedTool } from '../../../tests/fixtures/semantic-worker-tools.js';
 
 describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
     it('preserves business failure, succeeds on success and fails closed on an invalid Ref', async () => {
@@ -30,26 +31,26 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
                 import { useViewTypeTool } from './sdk/src/hooks/useViewTypeTool.ts';
 
                 function RootTools() {
-                    const [Fail] = useViewTypeTool('FileDetail', 'fail', {
-                        description: 'Fails as business result', params: {},
+                    const [Fail] = useViewTypeTool('fail', {
+                        description: 'Fails as business result', params: {}, isMutating: false,
                     }, async () => ({ success:false, error:{
                         code:'BUSINESS_FAILED', message:'The requested file is locked',
                     }}));
-                    const [OK] = useViewTypeTool('FileDetail', 'ok', {
-                        description: 'Successful operation', params: {},
+                    const [OK] = useViewTypeTool('ok', {
+                        description: 'Successful operation', params: {}, isMutating: false,
                     }, async () => ({success:true,data:{message:'completed'}}));
-                    const [InvalidRef] = useViewTypeTool('FileDetail', 'ref', {
-                        description: 'Resolve typed Ref',
-                        params: { target: {type:'reference',required:true} },
+                    const [Invalid] = useViewTypeTool('invalid', {
+                        description: 'Reject invalid Tool arguments',
+                        params: { target: {type:'string',required:true} }, isMutating: false,
                     }, async () => ({success:true,data:{unreachable:true}}));
                     return h('section',{},[
                         h(Fail,{key:'fail'},'Fail'),
                         h(OK,{key:'ok'},'OK'),
-                        h(InvalidRef,{key:'ref'},'Ref'),
+                        h(Invalid,{key:'invalid'},'Invalid'),
                     ]);
                 }
                 function App() {
-                    return h(View,{id:'root',type:'Root'},h(RootTools,{}));
+                    return h(View,{id:'root',type:'FileDetail'},h(RootTools,{}));
                 }
                 export default createTUIApp({app_name:'test_result',component:App});
             `;
@@ -64,28 +65,28 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
             host = new AppWorkerHost({
                 appId: 'result_app' as any, desktopId: 'result_desktop' as any,
                 appModulePath: appFile, workerScriptPath: workerFile,
-                snapshotShadow: false,
+                interactionModes: ['ordinary-v2'],
             });
             await host.start();
             await host.open();
 
-            const failed = await host.executeOperation(
-                'fail' as any, {}, 'legacy_snapshot' as any, 'FileDetail' as any,
-            );
-            expect(failed).toMatchObject({
-                success: false, error: { code: 'BUSINESS_FAILED', message: 'The requested file is locked' },
-            });
-            expect(failed.data).toBeUndefined();
+            const failed = await invokeObservedTool(host, 'fail', {}, 'root');
+            expect(failed).toMatchObject({ kind: 'receipt', receipt: {
+                executionPhase: 'entered-returned', outcome: { status: 'unknown', details: {
+                    kind: 'operation-result', result: { success: false, error: { code: 'BUSINESS_FAILED',
+                        message: 'The requested file is locked' } },
+                } },
+            } });
 
-            const ok = await host.executeOperation(
-                'ok' as any, {}, 'legacy_snapshot' as any, 'FileDetail' as any,
-            );
-            expect(ok).toMatchObject({ success: true, data: { message: 'completed' } });
+            const ok = await invokeObservedTool(host, 'ok', {}, 'root');
+            expect(ok).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded',
+                value: { success: true, data: { message: 'completed' } },
+            } } });
 
-            const invalid = await host.executeOperation(
-                'ref' as any, { target: 'selected' }, 'legacy_snapshot' as any, 'FileDetail' as any,
-            );
-            expect(invalid).toMatchObject({ success: false, error: { code: 'OPERATION_INVALID_ARGS' } });
+            const invalid = await invokeObservedTool(host, 'invalid', { target: 42 }, 'root');
+            expect(invalid).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'not-dispatched',
+                outcome: { status: 'rejected' },
+            } });
         } finally {
             host?.terminate();
             await rm(temporary, { recursive: true, force: true });

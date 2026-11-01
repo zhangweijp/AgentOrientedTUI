@@ -1,8 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { linkArchivedSdkDependencies } from '../../tests/fixtures/archived-sdk-dependencies.mjs';
-import { mkdtemp, mkdir, readFile, rm, writeFile, cp, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -11,22 +10,28 @@ import { createRuntime } from '../facades/facades.js';
 import { WorkerSandbox } from '../engine/app/worker-sandbox.js';
 import { createNodeStateStorage } from '../adapters/storage/node-state-storage.js';
 import { DEFAULT_NODE_STATE_LIMITS } from '../engine/app/state-storage-host.js';
-import { fileSystemService } from '../../../demo-apps/aotui-ide/src/core/file-system-service.js';
 
 const repo=resolve(process.cwd(),'..'),url=(file:string)=>pathToFileURL(file).href;
+const sdkDist=process.env.AOTUI_C03_SDK_DIST??join(repo,'sdk/dist/index.js');
+const runtimeDist=process.env.AOTUI_C03_RUNTIME_DIST??join(repo,'runtime/dist');
 const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(yes=>{resolve=yes;});return {promise,resolve};};
 async function capture(file:string,body:string){
     await writeFile(file,body);const root=process.env.AOTUI_W08_C1_FACTS_DIR;
     if(root){const hash=createHash('sha256').update(body).digest('hex'),folder=join(root,'c2-inputs');await mkdir(folder,{recursive:true});await writeFile(join(folder,hash),body);await writeFile(join(folder,hash+'.json'),JSON.stringify({path:file,sha256:hash,capturedBeforeExecution:true}));}
 }
 async function facts(name:string,value:object){const root=process.env.AOTUI_W08_C1_FACTS_DIR;if(root){await mkdir(root,{recursive:true});await writeFile(join(root,'c2-kernel-'+name+'.json'),JSON.stringify(value,null,2));}}
-async function fixture(scenario='normal',sdk=join(repo,'sdk/dist/index.js')){
+async function fixture(scenario='normal'){
     const dir=await mkdtemp(join(tmpdir(),'aotui-c2-kernel-')),app=join(dir,'app.mjs'),entered=join(dir,'entered'),release=join(dir,'release');
-    const ordinary=scenario==='ordinary';
+    await mkdir(join(dir,'node_modules'),{recursive:true});
+    await symlink(join(repo,'sdk/node_modules/preact'),join(dir,'node_modules/preact'),'dir');
     const body=`import {writeFile} from 'node:fs/promises';import {existsSync} from 'node:fs';
-import {createTUIApp${ordinary?'':',usePersistentState,useAppRuntimeContext'}} from ${JSON.stringify(url(sdk))};
-let setter,value,port;function Root(){${ordinary?'':"[value,setter]=usePersistentState('value',0);port=useAppRuntimeContext().persistence;"}return null;}
-const factory=createTUIApp({app_name:'close',component:Root,onOperation:async(op,args)=>{${ordinary?'':"if(op==='set')setter(args.value);if(op==='flush')return {success:true,data:await port.flush()};"}return {success:true,data:{value}};}});
+import {h} from 'preact';import {createTUIApp,View,useViewTypeTool,usePersistentState,useAppRuntimeContext} from ${JSON.stringify(url(sdkDist))};
+let setter,value,port;function Detail(){
+useViewTypeTool('set',{description:'Set persisted value',params:{value:{type:'number',required:true}}},async args=>{setter(args.value);return {success:true,data:{value:args.value}};});
+useViewTypeTool('flush',{description:'Flush persisted state',params:{}},async()=>({success:true,data:await port.flush()}));
+return h('p',{},String(value));}
+function Root(){[value,setter]=usePersistentState('value',0);port=useAppRuntimeContext().persistence;return h(View,{id:'detail',type:'Detail'},h(Detail,{}));}
+const factory=createTUIApp({app_name:'close',component:Root});
 ${scenario==='async-unmount'||scenario==='failed-unmount'?`const initialize=factory.initializeComponent.bind(factory);factory.initializeComponent=async(...args)=>{const renderer=await initialize(...args);return {...renderer,async unmount(){${scenario==='async-unmount'?`await writeFile(${JSON.stringify(entered)},'entered');while(!existsSync(${JSON.stringify(release)}))await new Promise(resolve=>setTimeout(resolve,5));`:''}renderer.unmount();${scenario==='failed-unmount'?"throw Error('private unmount detail');":''}}};};`:''}
 export default factory;`;
     await capture(app,body);return {dir,app,entered,release,data:join(dir,'data'),record:(desktop='d',name='close')=>join(dir,'data/app-state',desktop,name,'value.json')};
@@ -36,21 +41,36 @@ function sandbox(runtime:any,id='d',app='app'):any{return (runtime.getDesktop(id
 async function install(runtime:any,f:Awaited<ReturnType<typeof fixture>>,id='d',app='app',extra={}){
     if(!(runtime as any).desktopManager.has(id))await runtime.createDesktop(id);
     // Vitest loads the parent from src; the actual Node Worker must consume built JS.
-    return runtime.installDynamicWorkerApp(id,url(f.app),{appId:app,workerScriptPath:join(repo,'runtime/dist/worker-runtime/index.js'),config:{AOTUI_DATA_DIR:f.data,AOTUI_APP_NAME:'close'},...extra});
+    return runtime.installDynamicWorkerApp(id,url(f.app),{appId:app,workerScriptPath:join(runtimeDist,'worker-runtime/index.js'),config:{AOTUI_DATA_DIR:f.data,AOTUI_APP_NAME:'close'},...extra});
 }
-async function op(runtime:any,id='d',app='app',name='set',args={value:1}){runtime.acquireLock(id,'test');return runtime.execute(id,{name,context:{appId:app,snapshotId:'fixture'},args},'test');}
+async function invoke(runtime:any,id='d',app='app',name='set',input={value:1}){
+    const opened=runtime.createAppScope(id,app,{project({source,selection}:any){const views=source.views.filter((view:any)=>selection.viewIds.includes(view.id));return {
+        views:views.map((view:any)=>({viewId:view.id,viewInstanceId:view.viewInstanceId})),
+        refs:Object.values(source.refs).filter((ref:any)=>selection.viewIds.includes(ref.ownerViewId)).map((ref:any)=>({viewId:ref.ownerViewId,viewInstanceId:ref.ownerViewInstanceId,refId:ref.id})),
+        targets:Object.values(source.tools).flatMap((tool:any)=>tool.targets.filter((target:any)=>selection.viewIds.includes(target.viewId)).map((target:any)=>({toolId:tool.id,target}))),
+        content:views.map((view:any)=>({view:{viewId:view.id,viewInstanceId:view.viewInstanceId},decision:'retain'})),
+    };},authorize:()=>true,canReadReceipt:()=>true});
+    if(opened.status!=='opened')throw new Error(opened.issue.code);const client=opened.client;
+    try{
+        let observation:any;await vi.waitFor(async()=>{const result=await client.observe({all:true});expect(result.status).toBe('observed');if(result.status==='observed')observation=result.observation;},{timeout:6000});
+        const tool=observation.tools.find((item:any)=>item.name===name),binding=observation.bindings.find((item:any)=>item.toolId===tool?.id&&item.target.viewId==='detail');
+        if(!binding)throw new Error('Missing Semantic Tool binding '+name);
+        const result=await client.invoke({invocationId:randomUUID(),observationId:observation.observationId,bindingId:binding.bindingId,input});
+        if(result.kind!=='receipt'||result.receipt.outcome.status!=='succeeded')return {success:false};
+        return result.receipt.outcome.value as any;
+    }finally{client.close();}
+}
 function inject(extra:(box:any)=>object){const original=WorkerSandbox.prototype.installDynamic;vi.spyOn(WorkerSandbox.prototype,'installDynamic').mockImplementation(function(this:any){Object.assign(this.config,extra(this));return original.call(this);});}
 afterEach(()=>{vi.restoreAllMocks();});
 
-it('C2-26 actual default Kernel/SDK saves two Desktop values, closes all physical Workers and clears snapshot TTLs',async()=>{
+it('C2-26 actual default Kernel/SDK saves two Desktop values and closes all physical Workers',async()=>{
     const f=await fixture(),runtime=makeRuntime();
     try{
         await install(runtime,f,'a');await install(runtime,f,'b');const boxes=[sandbox(runtime,'a'),sandbox(runtime,'b')],workers=boxes.map(box=>box.lease.worker);
-        expect((await op(runtime,'a','app','set',{value:11})).success).toBe(true);expect((await op(runtime,'b','app','set',{value:22})).success).toBe(true);
-        await runtime.acquireSnapshot('a',300000);await runtime.acquireSnapshot('b',300000);
+        expect((await invoke(runtime,'a','app','set',{value:11})).success).toBe(true);expect((await invoke(runtime,'b','app','set',{value:22})).success).toBe(true);
         const closing=runtime.beginShutdown(),before=closing.inspect();const report=await closing.completion;await runtime.shutdown();
-        expect(report).toMatchObject({state:'settled',ok:true,verification:'managed',apps:{accepted:2,settled:2,pending:0,notVerifiedReleased:0},desktops:{accepted:2,settled:2,pending:0},persistence:{managedApps:2,confirmedFlushes:2,failedFlushes:0},resources:{storageActualIO:0,retainedStorageOwners:0,openingStorageOwners:0},pool:{ownership:'owned',report:{state:'closed',total:0}},cleanup:{registry:'done'}});
-        expect(workers.map(worker=>worker.threadId)).toEqual([-1,-1]);expect((runtime as any).snapshotRegistry.snapshots.size).toBe(0);expect((runtime as any).desktopManager.listDesktopIds()).toEqual([]);
+        expect(report).toMatchObject({state:'settled',ok:true,verification:'managed',apps:{accepted:2,settled:2,pending:0,notVerifiedReleased:0},desktops:{accepted:2,settled:2,pending:0},persistence:{managedApps:2,confirmedFlushes:2,failedFlushes:0},resources:{storageActualIO:0,retainedStorageOwners:0,openingStorageOwners:0},pool:{ownership:'owned',report:{state:'closed',total:0}}});
+        expect(workers.map(worker=>worker.threadId)).toEqual([-1,-1]);expect((runtime as any).desktopManager.listDesktopIds()).toEqual([]);
         expect(JSON.parse(await readFile(f.record('a'),'utf8')).value).toBe(11);expect(JSON.parse(await readFile(f.record('b'),'utf8')).value).toBe(22);expect(before.state).toBe('closing');await facts('normal',{before,report,physicalThreadIds:workers.map(worker=>worker.threadId)});
     }finally{await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
 },20000);
@@ -61,7 +81,7 @@ it('C2-25 Desktop close safely transfers a lease without claiming its borrowed R
         await install(runtime,f,'first');await install(runtime,f,'second');const first=sandbox(runtime,'first'),second=sandbox(runtime,'second'),workers=[first.lease.worker,second.lease.worker];
         const closed=await runtime.beginDesktopShutdown('first').completion;expect(closed).toMatchObject({ok:true,resourcesReleased:true,pool:{ownership:'not-owned',report:null},apps:{accepted:1,settled:1}});
         expect(first.getCloseReport()).toMatchObject({host:{worker:'transferred'},lease:{disposition:'pooled'}});expect(workers.every(worker=>worker.threadId>0)).toBe(true);
-        expect((runtime as any).desktopManager.getWorkerPoolReport()).toMatchObject({state:'open',total:2,idle:1,leased:1});expect((await op(runtime,'second')).success).toBe(true);
+        expect((runtime as any).desktopManager.getWorkerPoolReport()).toMatchObject({state:'open',total:2,idle:1,leased:1});expect((await invoke(runtime,'second')).success).toBe(true);
         const report=await runtime.beginShutdown().completion;expect(report).toMatchObject({ok:true,apps:{accepted:1,settled:1},desktops:{accepted:1,settled:1},pool:{report:{state:'closed',total:0}}});expect(workers.map(worker=>worker.threadId)).toEqual([-1,-1]);await facts('desktop-transfer',{closed,report,first:first.getCloseReport(),threadIds:workers.map(worker=>worker.threadId)});
     }finally{await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
 },15000);
@@ -69,7 +89,7 @@ it('C2-25 Desktop close safely transfers a lease without claiming its borrowed R
 it('C2-25/26 Q02 real SDK async unmount is progress, retaining successful flush and ownership until completion',async()=>{
     const f=await fixture('async-unmount'),runtime=makeRuntime();
     try{
-        await install(runtime,f);await op(runtime,'d','app','set',{value:31});const box=sandbox(runtime),worker=box.lease.worker,closing=runtime.beginShutdown();
+        await install(runtime,f);await invoke(runtime,'d','app','set',{value:31});const box=sandbox(runtime),worker=box.lease.worker,closing=runtime.beginShutdown();
         await vi.waitFor(()=>expect(existsSync(f.entered)).toBe(true),{timeout:3000});const before=closing.inspect();
         expect(before).toMatchObject({state:'closing',hasFailures:false,resourcesReleased:false,persistence:{closeReceipts:1,confirmedFlushes:1,failedFlushes:0}});
         expect((await closing.wait({timeoutMs:5})).status).toBe('deadline');expect(worker.threadId).toBeGreaterThan(0);expect(JSON.parse(await readFile(f.record(),'utf8')).value).toBe(31);
@@ -85,7 +105,7 @@ it.each(['open','replace'] as const)('C2-27 real Node storage %s crosses a calle
     let installing:Promise<unknown>|undefined;
     try{
         installing=install(runtime,f);const observedInstall=installing.catch(error=>error);
-        if(held==='replace'){await installing;await op(runtime,'d','app','set',{value:41});}
+        if(held==='replace'){await installing;await invoke(runtime,'d','app','set',{value:41});}
         else await entered.promise;
         const box=sandbox(runtime),worker=box.lease.worker,closing=runtime.beginShutdown();if(held==='replace')await entered.promise;
         const deadline=await closing.wait({timeoutMs:5}),before=deadline.report;expect(deadline.status).toBe('deadline');
@@ -103,29 +123,15 @@ it.each(['open','replace'] as const)('C2-27 real Node storage %s crosses a calle
     }finally{finish.resolve();await installing?.catch(()=>{});await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
 },20000);
 
-it('C2-27 actual versioned file CAS continues after a Kernel observer deadline and is supervised until disk completion',async()=>{
-    const f=await fixture(),file=join(f.dir,'file.txt');await writeFile(file,'before\n');const source=await fileSystemService.readVersionedFile(f.dir,file),entered=deferred(),finish=deferred(),runtime=makeRuntime();
-    await capture(f.app,`import {h} from ${JSON.stringify(url(join(repo,'runtime/node_modules/preact/dist/preact.module.js')))};import {createTUIApp,View,useEntityRef,useViewTypeTool} from ${JSON.stringify(url(join(repo,'sdk/dist/index.js')))};
-function Detail(){const ref=useEntityRef('file',{entityType:'File',entityId:${JSON.stringify(file)},entityVersion:${JSON.stringify(source.version)}});useViewTypeTool('replace_file',{description:'replace',params:{},isMutating:true},async()=>({success:false}));return h('p',{},ref('file'));}export default createTUIApp({app_name:'cas',component:()=>h(View,{id:'detail',type:'Detail'},h(Detail,{}))});`);
-    inject(()=>({snapshotShadow:true,experimentalVersionedMutations:true}));
-    try{
-        await install(runtime,f);const box=sandbox(runtime),host=box.workerHost,worker=box.lease.worker;await vi.waitFor(()=>expect(host.getSnapshotShadowReport()).toMatchObject({health:'ready',lastToolCount:1}));
-        const request={snapshotId:host.getSnapshotShadowReport().snapshotId,toolId:JSON.stringify(['app','Detail','replace_file']),viewId:'detail',refId:'file',newContent:'after\n'};
-        const writing=host.executeVersionedFileReplace(request,()=>true,async(input:any)=>{entered.resolve();await finish.promise;return fileSystemService.replaceFileIfVersion(f.dir,input.filePath,input.expectedVersion,input.newContent);});
-        await entered.promise;const closing=runtime.beginShutdown(),deadline=await closing.wait({timeoutMs:5});expect(deadline.status).toBe('deadline');expect(deadline.report.resources.activeFileReplacements).toBe(1);expect(worker.threadId).toBeGreaterThan(0);
-        finish.resolve();expect(await writing).toMatchObject({success:true,data:{filePath:file}});const report=await closing.completion;expect(report.ok).toBe(true);expect(worker.threadId).toBe(-1);expect(await readFile(file,'utf8')).toBe('after\n');expect(deadline.report.resources.activeFileReplacements).toBe(1);await facts('held-file-cas',{before:deadline.report,report,threadId:worker.threadId,realFileCAS:true});
-    }finally{finish.resolve();await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
-},20000);
-
-it.each([false,true])('C2-28 two Runtime pools / two Desktop IDs / two script paths are isolated, Shadow=%s',async snapshotShadow=>{
-    const f=await fixture(),alternate=join(f.dir,'alternate-worker.mjs');await capture(alternate,`import ${JSON.stringify(url(join(repo,'runtime/dist/worker-runtime/index.js')))};`);
-    inject(()=>({snapshotShadow}));const a=makeRuntime(),b=makeRuntime();
+it('C2-28 two Runtime pools / two Desktop IDs / two script paths are isolated',async()=>{
+    const f=await fixture(),alternate=join(f.dir,'alternate-worker.mjs');await capture(alternate,`import ${JSON.stringify(url(join(runtimeDist,'worker-runtime/index.js')))};`);
+    const a=makeRuntime(),b=makeRuntime();
     try{
         for(const runtime of [a,b]){await install(runtime,f,'one','app',{config:{AOTUI_DATA_DIR:join(f.dir,runtime===a?'a':'b'),AOTUI_APP_NAME:'close'}});await install(runtime,f,'two','app',{workerScriptPath:alternate,config:{AOTUI_DATA_DIR:join(f.dir,runtime===a?'a':'b'),AOTUI_APP_NAME:'close'}});}
         const aWorkers=['one','two'].map(id=>sandbox(a,id).lease.worker),bWorkers=['one','two'].map(id=>sandbox(b,id).lease.worker);expect(new Set([...aWorkers,...bWorkers]).size).toBe(4);
         const aReport=await a.beginShutdown().completion;expect(aReport.ok).toBe(true);expect(aWorkers.every(worker=>worker.threadId===-1)).toBe(true);expect(bWorkers.every(worker=>worker.threadId>0)).toBe(true);
-        for(const id of ['one','two'])expect((await op(b,id,'app','set',{value:52})).success).toBe(true);
-        const bReport=await b.beginShutdown().completion;expect(bReport.ok).toBe(true);expect(bWorkers.every(worker=>worker.threadId===-1)).toBe(true);await facts('isolation-'+snapshotShadow,{aReport,bReport,threadIds:[...aWorkers,...bWorkers].map(worker=>worker.threadId),snapshotShadow});
+        for(const id of ['one','two'])expect((await invoke(b,id,'app','set',{value:52})).success).toBe(true);
+        const bReport=await b.beginShutdown().completion;expect(bReport.ok).toBe(true);expect(bWorkers.every(worker=>worker.threadId===-1)).toBe(true);await facts('isolation',{aReport,bReport,threadIds:[...aWorkers,...bWorkers].map(worker=>worker.threadId)});
     }finally{await Promise.all([a.beginShutdown().completion,b.beginShutdown().completion]);await rm(f.dir,{recursive:true,force:true});}
 },30000);
 
@@ -133,7 +139,7 @@ it.each(['failed','unknown','unmount'] as const)('C2-25/27 actual Kernel preserv
     const f=await fixture(mode==='unmount'?'failed-unmount':'normal'),backend=createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS),runtime=makeRuntime();
     if(mode!=='unmount')inject(()=>({persistenceBackend:{async open(input:any){const result=await backend.open(input);return result.status!=='opened'?result:{status:'opened',storage:{...result.storage,async replace(address:any,text:string){if(mode==='unknown')await result.storage.replace(address,text);return {status:mode,issue:{code:mode==='unknown'?'OUTCOME_UNKNOWN':'IO_FAILED'}};}}};}}}));
     try{
-        await install(runtime,f);await op(runtime,'d','app','set',{value:63});const box=sandbox(runtime),worker=box.lease.worker,promise=runtime.shutdown();
+        await install(runtime,f);await invoke(runtime,'d','app','set',{value:63});const box=sandbox(runtime),worker=box.lease.worker,promise=runtime.shutdown();
         await expect(promise).rejects.toHaveProperty('code','RUNTIME_CLOSE_FAILED');expect(runtime.shutdown()).toBe(promise);await expect(runtime.shutdown()).rejects.toHaveProperty('code','RUNTIME_CLOSE_FAILED');
         const report=await runtime.beginShutdown().completion;expect(report).toMatchObject({state:'settled',hasFailures:true,resourcesReleased:true,persistence:{managedApps:1},pool:{report:{state:'closed',total:0}}});expect(worker.threadId).toBe(-1);
         if(mode==='unmount'){expect(report.persistence.confirmedFlushes).toBe(1);expect(report.persistence.failedFlushes).toBe(0);expect(report.failures.flatMap(item=>item.codes)).toContain('APP_UNMOUNT_FAILED');}
@@ -144,23 +150,33 @@ it.each(['failed','unknown','unmount'] as const)('C2-25/27 actual Kernel preserv
     }finally{await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
 },20000);
 
-it('C2-30 archived old SDK / archived old Worker remain legacy-unverified under the actual Kernel',async()=>{
-    const packet=process.env.AOTUI_W08_B2_BASELINE??join(repo,'rfcs/sdk-runtime-delivery/w08-b1-20261026T054703Z'),dir=await mkdtemp(join(tmpdir(),'aotui-c2-legacy-'));
-    for(const pkg of ['sdk','runtime']){await mkdir(join(dir,pkg));await cp(join(packet,'artifacts',pkg,'dist'),join(dir,pkg,'dist'),{recursive:true});await writeFile(join(dir,pkg,'package.json'),'{"type":"module"}');if(pkg==='sdk')await linkArchivedSdkDependencies(repo,join(dir,pkg));else await symlink(join(repo,pkg,'node_modules'),join(dir,pkg,'node_modules'));}
-    const old=await fixture('ordinary',join(dir,'sdk/dist/index.js')),ordinary=await fixture('ordinary'),runtime=makeRuntime();
-    try{
-        await install(runtime,old,'old-sdk');await install(runtime,ordinary,'old-worker','app',{workerScriptPath:join(dir,'runtime/dist/worker-runtime/index.js')});
-        const workers=['old-sdk','old-worker'].map(id=>sandbox(runtime,id).lease.worker),report=await runtime.beginShutdown().completion;
-        expect(report).toMatchObject({ok:false,hasFailures:false,resourcesReleased:true,verification:'mixed',unverifiedParticipants:0,persistence:{managedApps:0,legacyUnverifiedApps:2,missingCloseReceipts:0,absentFlushes:0},apps:{notVerifiedReleased:0}});await runtime.shutdown();expect(workers.every(worker=>worker.threadId===-1)).toBe(true);await facts('legacy',{report,packet,physicalThreadIds:workers.map(worker=>worker.threadId)});
-    }finally{await runtime.beginShutdown().completion;await Promise.all([old.dir,ordinary.dir,dir].map(path=>rm(path,{recursive:true,force:true})));}
-},20000);
-
-it('C2-29 emitted createRuntime + real SDK + outstanding snapshot TTL naturally exits a fresh Node child',async()=>{
+it('C2-29 emitted createRuntime + real SDK naturally exits a fresh Node child',async()=>{
     const f=await fixture(),driver=join(f.dir,'driver.mjs');
-    await capture(driver,`import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';import {createRuntime} from ${JSON.stringify(url(join(repo,'runtime/dist/index.js')))};
-const runtime=createRuntime({worker:{timeoutMs:4000,pool:{initialSize:0,maxSize:1}}});await runtime.createDesktop('d');await runtime.installDynamicWorkerApp('d',${JSON.stringify(url(f.app))},{appId:'app',config:{AOTUI_DATA_DIR:${JSON.stringify(f.data)},AOTUI_APP_NAME:'close'}});
-const desktop=runtime.getDesktop('d'),box=desktop.appManager.getWorkerSandbox('app'),worker=box.lease.worker;runtime.acquireLock('d','child');const result=await runtime.execute('d',{name:'set',context:{appId:'app',snapshotId:'s'},args:{value:74}},'child');assert.equal(result.success,true);await runtime.acquireSnapshot('d',300000);
-await runtime.shutdown();const report=await runtime.beginShutdown().completion;assert.equal(report.ok,true);assert.equal(report.pool.report.total,0);assert.equal(worker.threadId,-1);assert.equal(JSON.parse(await readFile(${JSON.stringify(f.record())},'utf8')).value,74);assert.equal(runtime.snapshotRegistry.snapshots.size,0);console.log('C2_NATURAL_END '+JSON.stringify({report,threadId:worker.threadId,value:74}));`);
+    const script = [
+        "import assert from 'node:assert/strict';",
+        "import {readFile} from 'node:fs/promises';",
+        `import {createRuntime} from ${JSON.stringify(url(join(runtimeDist,'index.js')))};`,
+        "const runtime=createRuntime({worker:{timeoutMs:4000,pool:{initialSize:0,maxSize:1}}});",
+        "await runtime.createDesktop('d');",
+        `await runtime.installDynamicWorkerApp('d',${JSON.stringify(url(f.app))},{appId:'app',workerScriptPath:${JSON.stringify(join(runtimeDist,'worker-runtime/index.js'))},config:{AOTUI_DATA_DIR:${JSON.stringify(f.data)},AOTUI_APP_NAME:'close'}});`,
+        "const desktop=runtime.getDesktop('d'),box=desktop.appManager.getWorkerSandbox('app'),worker=box.lease.worker;",
+        "const opened=runtime.createAppScope('d','app',{project({source,selection}){",
+        "const views=source.views.filter(view=>selection.viewIds.includes(view.id));",
+        "return {views:views.map(view=>({viewId:view.id,viewInstanceId:view.viewInstanceId})),refs:[],",
+        "targets:Object.values(source.tools).flatMap(tool=>tool.targets.filter(target=>selection.viewIds.includes(target.viewId)).map(target=>({toolId:tool.id,target}))),",
+        "content:views.map(view=>({view:{viewId:view.id,viewInstanceId:view.viewInstanceId},decision:'retain'}))};",
+        "},authorize(){return true;},canReadReceipt(){return true;}});",
+        "assert.equal(opened.status,'opened');",
+        "const observed=await opened.client.observe({all:true});assert.equal(observed.status,'observed');",
+        "const observation=observed.observation,tool=observation.tools.find(item=>item.name==='set'),binding=observation.bindings.find(item=>item.toolId===tool.id&&item.target.viewId==='detail');assert.ok(binding);",
+        "const result=await opened.client.invoke({invocationId:'child-call',observationId:observation.observationId,bindingId:binding.bindingId,input:{value:74}});",
+        "assert.equal(result.kind,'receipt');assert.equal(result.receipt.outcome.status,'succeeded');opened.client.close();",
+        "await runtime.shutdown();const report=await runtime.beginShutdown().completion;",
+        "assert.equal(report.ok,true);assert.equal(report.pool.report.total,0);assert.equal(worker.threadId,-1);",
+        `assert.equal(JSON.parse(await readFile(${JSON.stringify(f.record())},'utf8')).value,74);`,
+        "console.log('C2_NATURAL_END '+JSON.stringify({report,threadId:worker.threadId,value:74}));",
+    ].join('\n');
+    await capture(driver,script);
     let guardUsed=false;
     try{
         const result=await new Promise<{code:number|null;signal:string|null;stdout:string;stderr:string}>((resolve,reject)=>{

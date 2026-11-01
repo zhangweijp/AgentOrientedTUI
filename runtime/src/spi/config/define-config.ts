@@ -5,48 +5,41 @@
  */
 
 import { WORKER_DEFAULTS } from './domains/worker.config.js';
-import { BRIDGE_DEFAULTS } from './domains/bridge.config.js';
-import { LOCK_DEFAULTS } from './domains/lock.config.js';
-import { SNAPSHOT_DEFAULTS } from './domains/snapshot.config.js';
-import { TRANSFORM_DEFAULTS } from './domains/transform.config.js';
 import { LOGGER_DEFAULTS } from './domains/logger.config.js';
-import { validateRuntimeConfig } from './validate.js';
-import type { RuntimeConfig, RuntimeConfigInput, DeepPartial } from './types.js';
+import { invalidConfiguration, isConfigRecord, readOwnEnumerableConfigValue, validateRuntimeConfig } from './validate.js';
+import type { RuntimeConfig, RuntimeConfigInput } from './types.js';
 
 /**
  * 完整默认配置
  */
 export const RUNTIME_DEFAULTS: RuntimeConfig = {
     worker: WORKER_DEFAULTS,
-    bridge: BRIDGE_DEFAULTS,
-    lock: LOCK_DEFAULTS,
-    snapshot: SNAPSHOT_DEFAULTS,
-    transform: TRANSFORM_DEFAULTS,
     logger: LOGGER_DEFAULTS,
 } as const;
 
 /**
- * 深度合并配置
+ * 深度合并 plain own enumerable data properties，并在同一次遍历中校验形状和字段。
  */
-function deepMerge<T extends object>(target: T, source: DeepPartial<T>): T {
+function mergeConfig<T extends object>(target: T, source: unknown, path = ''): T {
+    if (!isConfigRecord(source)) invalidConfiguration(path, 'must be a plain object');
     const result = { ...target } as T;
+    const targetRecord = target as unknown as Record<string, unknown>;
 
-    for (const key in source) {
-        const sourceValue = source[key];
-        const targetValue = target[key];
+    for (const key of Reflect.ownKeys(source)) {
+        const keyText = String(key);
+        const keyPath = path ? `${path}.${keyText}` : keyText;
+        const sourceValue = readOwnEnumerableConfigValue(source, key, path);
+        if (typeof key !== 'string') invalidConfiguration(keyPath, 'configuration keys must be strings');
+        if (!Object.hasOwn(targetRecord, key)) invalidConfiguration(keyPath, 'unknown configuration key');
 
-        if (
-            sourceValue !== undefined &&
-            typeof sourceValue === 'object' &&
-            sourceValue !== null &&
-            !Array.isArray(sourceValue) &&
-            targetValue !== undefined &&
-            typeof targetValue === 'object' &&
-            targetValue !== null
-        ) {
-            (result as any)[key] = deepMerge(targetValue as object, sourceValue as object);
-        } else if (sourceValue !== undefined) {
-            (result as any)[key] = sourceValue;
+        if (sourceValue === undefined) continue;
+
+        const targetValue = targetRecord[key];
+        if (isConfigRecord(targetValue)) {
+            if (!isConfigRecord(sourceValue)) invalidConfiguration(keyPath, 'must be a plain object');
+            (result as Record<string, unknown>)[key] = mergeConfig(targetValue, sourceValue, keyPath);
+        } else {
+            (result as Record<string, unknown>)[key] = sourceValue;
         }
     }
 
@@ -74,7 +67,7 @@ function deepMerge<T extends object>(target: T, source: DeepPartial<T>): T {
  * ```
  */
 export function defineRuntimeConfig(input: RuntimeConfigInput = {}): RuntimeConfig {
-    const config = deepMerge(RUNTIME_DEFAULTS, input);
+    const config = mergeConfig(RUNTIME_DEFAULTS, input);
     validateRuntimeConfig(config);
     return Object.freeze(config) as RuntimeConfig;
 }

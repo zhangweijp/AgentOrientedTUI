@@ -54,9 +54,9 @@ export interface ToolResult {
     toolCallId: string;
     /** 工具名称 */
     toolName: string;
-    /** Explicit execution outcome; accepted and unknown are not completed success. */
+    /** Internal execution classification for metrics; never a model-facing result envelope. */
     outcomeStatus?: ToolOutcomeStatus;
-    /** 执行数据或收据；失败、已受理和未知结果也可保留原始收据。 */
+    /** Public operation data or recovery details. Core receipts belong to the source. */
     result?: unknown;
     /** 受控错误信息；配合 outcomeStatus 区分拒绝、失败和未知。 */
     error?: {
@@ -159,11 +159,27 @@ export interface IDrivenSource {
 }
 
 /**
+ * Atomic source contract. A model turn owns one captured set of messages, tools,
+ * and tool bindings, so callers do not need to implement split-read methods.
+ */
+export interface ContextDrivenSource {
+    readonly name: string;
+    getContext(): Promise<DrivenSourceContext>;
+    getMessages?: never;
+    getTools?: never;
+    executeTool?: never;
+    onUpdate(callback: () => void): () => void;
+}
+
+/** A Driver can combine atomic Context sources with existing split-read sources. */
+export type DrivenSource = IDrivenSource | ContextDrivenSource;
+
+/**
  * AgentDriverV2Config - 配置接口
  */
 export interface AgentDriverV2Config {
     /** Driven Sources 列表 */
-    sources: IDrivenSource[];
+    sources: DrivenSource[];
 
     /** 
      * LLM 配置

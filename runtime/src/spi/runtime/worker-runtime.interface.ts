@@ -12,7 +12,6 @@
  */
 
 import type { AppContext } from '../app/store.interface.js';
-import type { OperationContext, OperationResult } from '../core/operations.js';
 import type { AppID, DesktopID } from '../core/types.js';
 
 // ============================================================================
@@ -190,17 +189,6 @@ export interface AppAdapterMountResult {
         /** App 关闭 */
         onClose?: () => Promise<void>;
     };
-
-    /**
-     * 操作处理器
-     * 
-     * 当 Agent 或 Desktop 发起 Operation 时调用
-     */
-    onOperation: (
-        context: OperationContext,
-        operation: string,
-        args: Record<string, unknown>
-    ) => Promise<OperationResult>;
 
     /**
      * 渲染回调 (可选)

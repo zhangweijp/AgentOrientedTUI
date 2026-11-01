@@ -4,12 +4,12 @@ import { mergeCloseReport, newCloseState, sandboxCloseReport, snapshotClose } fr
 function host(...values: unknown[]) {
     const interactions = values.length ? values[0] : { closed: true, retainedScopes: 0, retainedBytes: 0 };
     return { state: 'settled', intent: 'close', resourcesReleased: true, issues: [],
-        host: { interactions, issues: [], activeFileReplacements: 0,
-            storage: { support: 'legacy-unverified', actualIO: 0, pending: 0, opening: false, ownerRetained: false, unsafe: false,
+        host: { interactions, issues: [],
+            storage: { support: 'rejected', actualIO: 0, pending: 0, opening: false, ownerRetained: false, unsafe: false,
                 release: { status: 'released' } } } } as any;
 }
 
-it('B2 C22/24 default reports include actual known-empty interactions even with legacy persistence', () => {
+it('B2 C22/24 default reports include known-empty interactions when negotiation is rejected', () => {
     expect(newCloseState('runtime').interactions).toEqual({ verified: true, retainedScopes: 0, retainedBytes: 0 });
     expect(sandboxCloseReport(host(), 'd', 'a')).toMatchObject({ verification: 'mixed', resourcesReleased: true, hasFailures: false,
         unverifiedParticipants: 0, interactions: { verified: true, retainedScopes: 0, retainedBytes: 0 } });

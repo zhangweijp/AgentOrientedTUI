@@ -1,5 +1,4 @@
-import { captureRefV2Request, refV2Response, validateRefV2Arguments } from '../adapters/ref-invocation-v2.js';
-import { refV1Failure } from '../adapters/ref-invocation-v1.js';
+import { captureRefV2Request, refV2Failure, refV2Response, validateRefV2Arguments } from '../adapters/ref-invocation-v2.js';
 import type { OperationResult } from '../spi/core/operations.js';
 import type { ToolDescriptorV2, ToolTargetV2 } from '../core/snapshot/types.js';
 import type { ViewToolInvocationTerminal } from '../spi/worker-protocol/messages.js';
@@ -15,12 +14,12 @@ export async function invokeRefInvocationV2(input: unknown, context: Readonly<{
     let result: OperationResult;
     try {
         message = captureRefV2Request(input);
-        if (!context.negotiated) result = refV1Failure('REF_EXECUTION_UNAVAILABLE', 'Current Worker has no negotiated Ref V2 capability');
+        if (!context.negotiated) result = refV2Failure('REF_EXECUTION_UNAVAILABLE', 'Current Worker has no negotiated Ref V2 capability');
         else if (message.appId !== context.appId || message.instanceId !== context.instanceId)
-            result = refV1Failure('APP_INSTANCE_MISMATCH', 'Ref request is from another App instance');
+            result = refV2Failure('APP_INSTANCE_MISMATCH', 'Ref request is from another App instance');
         else if (!context.validateBinding || !context.validateWrapper || !context.invokeBinding)
-            result = refV1Failure('REF_EXECUTION_UNAVAILABLE', 'Current App has no safe Ref V2 registry');
-        else if (message.tool.isMutating) result = refV1Failure('TOOL_PERMISSION_DENIED', 'Ref V2 requires a read-only Tool');
+            result = refV2Failure('REF_EXECUTION_UNAVAILABLE', 'Current App has no safe Ref V2 registry');
+        else if (message.tool.isMutating) result = refV2Failure('TOOL_PERMISSION_DENIED', 'Ref V2 requires a read-only Tool');
         else {
             result = context.validateBinding(message.tool, message.target);
             if (result.success) result = validateRefV2Arguments(message);
@@ -31,6 +30,6 @@ export async function invokeRefInvocationV2(input: unknown, context: Readonly<{
                 catch { return null; }
             }
         }
-    } catch { result = refV1Failure('OPERATION_INVALID_ARGS', 'Expected a bounded Ref V2 request'); }
+    } catch { result = refV2Failure('OPERATION_INVALID_ARGS', 'Expected a bounded Ref V2 request'); }
     return refV2Response(message ?? input, { phase: 'not-entered', result });
 }

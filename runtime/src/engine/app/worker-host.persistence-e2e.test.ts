@@ -1,6 +1,5 @@
 import { it, expect, vi } from 'vitest';
-import { linkArchivedSdkDependencies } from '../../../tests/fixtures/archived-sdk-dependencies.mjs';
-import { mkdtemp, writeFile, readFile, mkdir, cp, symlink, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, mkdir, rm } from 'node:fs/promises';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -10,27 +9,29 @@ import type { Worker } from 'node:worker_threads';
 import { AppWorkerHost } from './worker-host.js';
 import { createNodeStateStorage } from '../../adapters/storage/node-state-storage.js';
 import { DEFAULT_NODE_STATE_LIMITS } from './state-storage-host.js';
-import { DEFAULT_STATE_SESSION_LIMITS, DEFAULT_STATE_TRANSPORT_LIMITS } from '../../adapters/storage/state-storage-protocol.js';
+import { invokeObservedTool, linkPreactPeer } from '../../../tests/fixtures/semantic-worker-tools.js';
 const repo = path.resolve(process.cwd(), '..');
 const url = (p: string) => pathToFileURL(p).href;
-const oldPacket = path.resolve(process.env.AOTUI_W08_B2_BASELINE ?? path.join(repo, 'rfcs/sdk-runtime-delivery/w08-b1-20261026T054703Z'));
-async function fixture(sdk = path.join(repo, 'sdk/dist/index.js'), persistent = true) {
+async function fixture(persistent = true) {
     const root = await mkdtemp(path.join(tmpdir(), 'aotui-b2-worker-'));
+    await linkPreactPeer(root);
     const file = path.join(root, 'app.mjs');
-    const body = `import { createTUIApp, usePersistentState, useAppRuntimeContext } from ${JSON.stringify(url(sdk))};
+    const body = `import { h } from 'preact';import { createTUIApp, usePersistentState, useAppRuntimeContext, View, useViewTypeTool } from ${JSON.stringify(url(path.join(repo, 'sdk/dist/index.js')))};
 let setter, port, value; const generations = new Map();
 function Root() {
   ${persistent ? `const tuple = usePersistentState('state', 0); [value, setter] = tuple;
   port = useAppRuntimeContext().persistence;
   if (port && !generations.has(port.instanceId)) generations.set(port.instanceId, setter);` : ''}
-  return null;
+  return h(View,{id:'root',type:'Root'},h(Operations));
 }
-export default createTUIApp({ app_name: 'test', component: Root, onOperation: async (operation, args) => {
-  if (operation === 'set') setter(args.value);
-  if (operation === 'old') { const first = [...generations.values()][0];try { first(() => { throw Error('old updater ran'); }); } catch (e) { return { success: true, data: { code: e.code } }; } }
-  if (operation === 'flush') { const report = await port.flush();return { success: true, data: report }; }
-  return { success: true, data: { value } };
-} });
+function Operations() {
+  const [Set] = useViewTypeTool('set',{description:'Set persisted value',isMutating:true,params:{value:{type:'number',required:true}}},async args=>{setter(args.value);return {success:true};});
+  const [Old] = useViewTypeTool('old',{description:'Check a previous setter',isMutating:false,params:{}},async()=>{const first=[...generations.values()][0];try{first(()=>{throw Error('old updater ran');});}catch(e){return {success:true,data:{code:e.code}};}return {success:true,data:{code:'BAD'}};});
+  const [Flush] = useViewTypeTool('flush',{description:'Flush persisted state',isMutating:false,params:{}},async()=>({success:true,data:await port.flush()}));
+  const [Inspect] = useViewTypeTool('inspect',{description:'Inspect persisted state',isMutating:false,params:{}},async()=>({success:true,data:{value}}));
+  return h('section',{},[h(Set,{key:'set'}),h(Old,{key:'old'}),h(Flush,{key:'flush'}),h(Inspect,{key:'inspect'})]);
+}
+export default createTUIApp({ app_name: 'test', component: Root });
 `;
     await writeFile(file, body);
     return { root, file, body, data: path.join(root, 'data'), record: path.join(root, 'data/app-state/d/test/state.json') };
@@ -46,33 +47,37 @@ const host = (f: Awaited<ReturnType<typeof fixture>>, extra: object = {}) => {
     appModulePath: url(f.file), timeout: 5000, workerScriptPath: path.join(repo, 'runtime/dist/worker-runtime/index.js'),
     config: { AOTUI_DATA_DIR: f.data, AOTUI_APP_NAME: 'test' }, ...extra });
 };
-const operation = (h: AppWorkerHost, op: string, args = {}) => h.executeOperation(op as any, args, 'snapshot' as any);
+const operation = async (h: AppWorkerHost, op: string, args = {}) => {
+    const result = await invokeObservedTool(h, op, args, 'root');
+    if (result?.kind === 'receipt' && result.receipt.outcome.status === 'succeeded') return result.receipt.outcome.value;
+    throw new Error(result?.kind === 'receipt' ? result.receipt.outcome.status : result?.code ?? 'Tool invocation failed');
+};
 async function stop(h: AppWorkerHost) { const worker: Worker | null = (h as any).worker;h.terminate();if (worker) await worker.terminate(); }
 function facts(name: string, value: object) {
     const target = process.env.AOTUI_W08_B2_FACTS_DIR;
     if (target) return mkdir(target, { recursive: true }).then(() => writeFile(path.join(target, name + '.json'), JSON.stringify(value, null, 2)));
 }
-it.each([false, true])('B02/B06/B17/B19 actual emitted Worker reused for two independent managed rounds, Shadow=%s', async snapshotShadow => {
-    const f = await fixture();let first = host(f, { snapshotShadow }), second: AppWorkerHost | undefined, pooled: Worker | null = null;
+it('B02/B06/B17/B19 actual emitted Worker reused for two independent managed rounds', async () => {
+    const f = await fixture();let first = host(f), second: AppWorkerHost | undefined, pooled: Worker | null = null;
     try {
         await first.start();await first.open();expect(first.getPersistenceReport().support).toBe('managed');
         expect((await operation(first, 'set', { value: 1 })).success).toBe(true);
         const close = first.close();expect(first.close()).toBe(close);await close;
         expect(JSON.parse(await readFile(f.record, 'utf8')).value).toBe(1);
         pooled = await first.releaseWorker();expect(pooled).not.toBeNull();const threadId = pooled!.threadId;
-        second = host(f, { snapshotShadow, existingWorker: pooled });await second.start();await second.open();
+        second = host(f, { existingWorker: pooled });await second.start();await second.open();
         const restored: any = await operation(second, 'flush');expect(restored.data.ok).toBe(true);
         const stale: any = await operation(second, 'old');expect(['STALE_BINDING', 'DISPOSED']).toContain(stale.data.code);
         expect((await operation(second, 'set', { value: 2 })).success).toBe(true);await second.close();
         expect(JSON.parse(await readFile(f.record, 'utf8')).value).toBe(2);
         const returned = await second.releaseWorker();expect(returned!.threadId).toBe(threadId);
         expect(first.appInstanceId).not.toBe(second.appInstanceId);expect(second.getPersistenceReport()).toMatchObject({ support: 'managed', unsafe: false, actualIO: 0, ownerRetained: false, release: { status: 'released' }, lifecycle: { ok: true } });
-        await facts('two-rounds-' + snapshotShadow, { fixture: f.body, first: first.getPersistenceReport(), second: second.getPersistenceReport(), samePhysicalThread: true, threadId, value: 2 });
+        await facts('two-rounds', { fixture: f.body, first: first.getPersistenceReport(), second: second.getPersistenceReport(), samePhysicalThread: true, threadId, value: 2 });
         await returned!.terminate();pooled = null;
     } finally { await stop(first);if (second) await stop(second);if (pooled) await pooled.terminate();await rm(f.root, { recursive: true, force: true }); }
 }, 30000);
 it('B03/B17 actual new SDK factory without Hook starts/closes/resets with zero storage I/O', async () => {
-    const f = await fixture(undefined, false);let opens = 0;
+    const f = await fixture(false);let opens = 0;
     const h = host(f, { persistenceBackend: { async open() { opens++;throw Error('storage must not open'); } } });
     try { await h.start();await h.open();await h.close();const worker = await h.releaseWorker();expect(worker).not.toBeNull();expect(opens).toBe(0);await worker!.terminate();await facts('unused', { opens, report: h.getPersistenceReport() }); }
     finally { await stop(h);await rm(f.root, { recursive: true, force: true }); }
@@ -83,7 +88,7 @@ it('B17/B18 a closed Host rejects ordinary business before dispatch while its ph
         await h.start();await h.open();await h.close();
         const physical: Worker = (h as any).worker, post = physical.postMessage.bind(physical);let sent = 0;
         physical.postMessage = ((...args: Parameters<Worker['postMessage']>) => { sent++;return post(...args); }) as any;
-        await expect(operation(h, 'inspect')).rejects.toThrow(/shutdown is pending/);
+        await expect(operation(h, 'inspect')).rejects.toThrow('REF_EXECUTION_UNAVAILABLE');
         expect(sent).toBe(0);physical.postMessage = post;
         expect(h.getPersistenceReport()).toMatchObject({ support: 'managed', lifecycle: { ok: true }, actualIO: 0, ownerRetained: false });
         const worker = await h.releaseWorker();expect(worker).not.toBeNull();await worker!.terminate();
@@ -103,46 +108,6 @@ it('B04/B12 actual default Hosts share backend ownership while separate app name
         await facts('default-shared-hosts', { first: first.getPersistenceReport(), busy: busy.getPersistenceReport(), other: other.getPersistenceReport(), defaultBackendActuallyShared: true });
     } finally { for (const h of [first, busy, other]) await stop(h);await rm(f.root, { recursive: true, force: true }); }
 }, 15000);
-it('B02/B04 Q01 a new-protocol identity survives RESET, deleting offer, and interleaved raw legacy INITs', async () => {
-    const f = await fixture(undefined, false), h = host(f);let worker: Worker | null = null, sequence = 0;
-    try {
-        await h.start();await h.open();await h.close();worker = await h.releaseWorker();expect(worker).not.toBeNull();
-        const send = (message: object): Promise<any> => new Promise((resolve, reject) => {
-            const requestId = 'raw-' + ++sequence;
-            const timer = setTimeout(() => { worker!.off('message', receive);reject(Error('Raw identity response deadline')); }, 5000);
-            function receive(value: any) { if (value.requestId === requestId) { clearTimeout(timer);worker!.off('message', receive);resolve(value); } }
-            worker!.on('message', receive);worker!.postMessage({ ...message, requestId });
-        });
-        const init = (instanceId: string, persistence?: object) => ({ type: 'INIT', appId: 'app', desktopId: 'd', appModulePath: url(f.file), appInstanceId: instanceId,
-            ...(persistence ? { persistence } : {}) });
-        const offer = { protocol: 'state-session-v1', version: 1, instanceId: h.appInstanceId, limits: DEFAULT_STATE_SESSION_LIMITS, transport: DEFAULT_STATE_TRANSPORT_LIMITS };
-        const replies = [];
-        replies.push(await send(init(h.appInstanceId)));expect(replies.at(-1)).toMatchObject({ type: 'ERROR_RESPONSE', success: false, error: { code: 'APP_INSTANCE_REUSE_UNSUPPORTED' } });
-        for (let i = 0; i < 2; i++) { replies.push(await send(init('raw-legacy')));expect(replies.at(-1)).toMatchObject({ type: 'INIT_RESPONSE', success: true }); }
-        replies.push(await send(init(h.appInstanceId)));expect(replies.at(-1)).toMatchObject({ success: false, error: { code: 'APP_INSTANCE_REUSE_UNSUPPORTED' } });
-        replies.push(await send(init(h.appInstanceId, offer)));expect(replies.at(-1)).toMatchObject({ success: false, error: { code: 'APP_INSTANCE_REUSE_UNSUPPORTED' } });
-        const invalid = { ...offer, instanceId: 'invalid-offer', version: 2 };
-        replies.push(await send(init('invalid-offer', invalid)));expect(replies.at(-1)).toMatchObject({ type: 'ERROR_RESPONSE', success: false, error: { code: 'E_INIT_FAILED' } });
-        await facts('q01-mixed-protocol-identity', { protectedInstance: h.appInstanceId, replies, rawLegacyStillUnverified: true });
-    } finally { await stop(h);if (worker) await worker.terminate();await rm(f.root, { recursive: true, force: true }); }
-}, 15000);
-it('B02/B23 actual archived old SDK is legacy-unverified under new Runtime; new SDK ordinary components work with archived old Worker', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'aotui-b2-binary-'));
-    for (const pkg of ['sdk', 'runtime']) {
-        await mkdir(path.join(root, pkg));await cp(path.join(oldPacket, 'artifacts', pkg, 'dist'), path.join(root, pkg, 'dist'), { recursive: true });
-        await writeFile(path.join(root, pkg, 'package.json'), '{"type":"module"}');
-        if (pkg === 'sdk') await linkArchivedSdkDependencies(repo, path.join(root, pkg));
-        else await symlink(path.join(repo, pkg, 'node_modules'), path.join(root, pkg, 'node_modules'));
-    }
-    const oldSDK = await fixture(path.join(root, 'sdk/dist/index.js'), false), ordinary = await fixture(undefined, false), persistent = await fixture();
-    const oldHost = host(oldSDK), newOld = host(ordinary, { workerScriptPath: path.join(root, 'runtime/dist/worker-runtime/index.js') }), unavailable = host(persistent, { workerScriptPath: path.join(root, 'runtime/dist/worker-runtime/index.js') });
-    try {
-        await oldHost.start();await oldHost.open();expect(oldHost.getPersistenceReport().support).toBe('legacy-unverified');await oldHost.close();
-        await newOld.start();await newOld.open();expect(newOld.getPersistenceReport().support).toBe('legacy-unverified');await newOld.close();
-        await unavailable.start();await expect(unavailable.open()).rejects.toThrow(/persistence is unavailable/);
-        await facts('actual-binary-matrix', { oldSDKNewRuntime: oldHost.getPersistenceReport(), newSDKOldRuntime: newOld.getPersistenceReport(), newSDKOldRuntimeHook: 'unavailable', oldArtifactsFrom: oldPacket });
-    } finally { for (const h of [oldHost, newOld, unavailable]) await stop(h);for (const f of [oldSDK, ordinary, persistent]) await rm(f.root, { recursive: true, force: true });await rm(root, { recursive: true, force: true }); }
-}, 30000);
 it('B15/B18 actual rename with lost IPC reply stays unknown, fails close and cannot pool', async () => {
     const f = await fixture(), backend = createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS);
     const h = host(f, { timeout: 1200, persistenceBackend: backend });

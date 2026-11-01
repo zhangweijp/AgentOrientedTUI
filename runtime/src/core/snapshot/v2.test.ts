@@ -43,6 +43,20 @@ function core() {
     c.lifecycle.startApp(appId, instanceId);
     return c;
 }
+
+it('preserves an explicit target parameter in V2 and rejects invalid declarations', () => {
+    const c = core(), draft: any = makeV2();
+    const tool = draft.tools[groupedName];
+    tool.inputSchema = { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'] };
+    tool.targets[0].selector = { param: 'filePath', value: '/a' };
+    const committed: any = published(c.committer.accept(draft));
+    expect(committed.tools[groupedName].targets[0].selector).toEqual({ param: 'filePath', value: '/a' });
+    for (const selector of [null, { param: 'absent', value: '/a' }, { param: 'filePath', value: '' }, { param: 'filePath', value: '/a', extra: true }]) {
+        tool.targets[0].selector = selector; draft.producerSeq++; draft.sourceEpoch++;
+        expect(c.committer.accept(draft).status).toBe('rejected');
+    }
+    c.lifecycle.dispose();
+});
 function published(result: ReturnType<ReturnType<typeof core>['committer']['accept']>) {
     expect(result.status).toBe('published');
     if (result.status !== 'published') throw new Error('Expected published');
@@ -124,7 +138,7 @@ describe('M4 Stage 2: strict versioned V2 source-bound Snapshot contract', () =>
             'SNAPSHOT_SOURCE_EPOCH_CONFLICT');
     });
 
-    it('V1 remains supported and is not silently interpreted as V2', () => {
+    it('rejects Snapshot schema V1 instead of keeping a compatibility publication path', () => {
         const c = core();
         const v1 = {
             schemaVersion: 1, appId, instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
@@ -135,21 +149,12 @@ describe('M4 Stage 2: strict versioned V2 source-bound Snapshot contract', () =>
             }],
             refs: {}, tools: {},
         };
-        const first = published(c.committer.accept(v1));
-        expect(first.schemaVersion).toBe(1);
-        expect(first.id).toContain('aotui-app-snapshot:v1:');
-        rejected(c.committer.accept({
-            ...v1, producerSeq: 2, sourceEpoch: 2,
-            views: [{ ...v1.views[0], viewInstanceId: 'vi_B' }],
-        }), 'SNAPSHOT_INVALID');
-        const next = published(c.committer.accept(makeV2(3, 3)));
+        expect(validatePreparedV2Draft(v1)).toMatchObject({ ok: false, issue: { code: 'SNAPSHOT_INVALID', path: '$.schemaVersion' } });
+        rejected(c.committer.accept(v1), 'SNAPSHOT_INVALID');
+        expect(c.store.readLatest(appId)).toMatchObject({ status: 'degraded', issue: { path: '$.schemaVersion' } });
+        const next = published(c.committer.accept(makeV2(2, 2)));
         expect(next.schemaVersion).toBe(2);
         expect(next.id).toContain('aotui-app-snapshot:v2:');
-        expect(c.store.getById(first.id).status).toBe('found');
-        expect(c.store.resolveRef({
-            snapshotId: first.id, appId, instanceId, viewId: 'fd_0',
-            viewInstanceId: 'sdk_mount_A', refId: 'selection',
-        })).toMatchObject({ status: 'rejected', issue: { code: 'VIEW_INSTANCE_REVOKED' } });
     });
 
     it('rejects non-mounted or mismatched Tool targets, including wrong View type', () => {

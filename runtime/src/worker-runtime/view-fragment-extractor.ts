@@ -38,6 +38,24 @@ function classifyViewFragment(node: Element): ViewFragmentKind {
     return 'view-state';
 }
 
+function viewIdentity(node: Element): string {
+    const identity = node.getAttribute('data-view-id') || node.getAttribute('id') || '<unknown>';
+    if (identity.length <= 26) return identity;
+    const prefix = identity.slice(0, 25).replace(/[\uD800-\uDBFF]$/, '');
+    return `${prefix}…`;
+}
+
+function assertNoNestedViews(container: Element, viewNodes: readonly Element[]): void {
+    for (const node of viewNodes) {
+        const parent = node.parentElement?.closest('[data-view-id]');
+        if (parent && container.contains(parent)) {
+            throw Object.assign(new Error(
+                `NESTED_VIEW_UNSUPPORTED: View "${viewIdentity(node)}" is nested inside View "${viewIdentity(parent)}". Declare independent Views.`,
+            ), { code: 'NESTED_VIEW_UNSUPPORTED' });
+        }
+    }
+}
+
 export function createViewFragmentExtractor(): ViewFragmentExtractor {
     const viewDigestCache = new Map<string, string>();
     const viewTimestampCache = new Map<string, number>();
@@ -47,8 +65,10 @@ export function createViewFragmentExtractor(): ViewFragmentExtractor {
         appId: AppID,
         now: number
     ): WorkerRuntimeViewFragment[] {
-        const result: WorkerRuntimeViewFragment[] = [];
         const viewNodes = Array.from(container.querySelectorAll('[data-view-id]')) as Element[];
+        assertNoNestedViews(container, viewNodes);
+
+        const result: WorkerRuntimeViewFragment[] = [];
         const aliveKeys = new Set<string>();
 
         for (const node of viewNodes) {

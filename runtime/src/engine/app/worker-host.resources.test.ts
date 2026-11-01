@@ -3,7 +3,40 @@ import { EventEmitter } from 'node:events';
 import { AppWorkerHost } from './worker-host.js';
 class ControlledWorker extends EventEmitter {
     threadId = 1;sent: any[] = [];termination: () => Promise<number> = () => Promise.resolve(0);terminations = 0;
-    postMessage(message: any) { this.sent.push(message);queueMicrotask(() => this.emit('message', { type: message.type === 'INIT' ? 'INIT_RESPONSE' : message.type === 'RESET' ? 'RESET_RESPONSE' : 'LIFECYCLE_RESPONSE', requestId: message.requestId, success: true })); }
+    pendingCloseResponse: any;
+    postMessage(message: any) {
+        this.sent.push(message);
+        if (message.type === 'STATE_STORAGE_RESPONSE' && this.pendingCloseResponse) {
+            const response = this.pendingCloseResponse;this.pendingCloseResponse = undefined;
+            queueMicrotask(() => this.emit('message', response));return;
+        }
+        queueMicrotask(() => {
+            const init = message.type === 'INIT';
+            const initMessage = this.sent.find(item => item.type === 'INIT');
+            const instanceId = initMessage?.appInstanceId;
+            const response: any = { type: init ? 'INIT_RESPONSE' : message.type === 'RESET' ? 'RESET_RESPONSE' : 'LIFECYCLE_RESPONSE',
+                requestId: message.requestId, success: true };
+            if (init) Object.assign(response, { appInstanceId: instanceId, acceptedCapabilities: message.requestedCapabilities,
+                appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId },
+                persistence: { protocol: 'state-session-v1', version: 1, instanceId } });
+            if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type)) Object.assign(response, {
+                appCleanup: { protocol: 'app-lifecycle-v2', instanceId,
+                    state: message.type === 'APP_CLOSE' ? 'completed' : 'stopped', issues: [] },
+            });
+            if (message.type === 'APP_SHUTDOWN' || message.type === 'APP_CLOSE') Object.assign(response, {
+                persistence: { protocol: 'state-session-v1', instanceId, ok: message.type === 'APP_CLOSE',
+                    unmount: message.type === 'APP_CLOSE' ? 'completed' : 'pending',
+                    flush: { status: 'completed', ok: true, entries: [] },
+                    ...(message.type === 'APP_CLOSE' ? { dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } : {}) },
+            });
+            if (message.type === 'APP_CLOSE') {
+                this.pendingCloseResponse = response;
+                this.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1, instanceId, sequence: 1, operation: 'release' });
+                return;
+            }
+            this.emit('message', response);
+        });
+    }
     terminate() { this.terminations++;return this.termination(); }
     exit() { this.threadId = -1;this.emit('exit', 0); }
 }

@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { WorkerSandbox } from './worker-sandbox.js';
 import { defineRuntimeConfig } from '../../spi/config/index.js';
+import { invokeObservedTool, linkPreactPeer } from '../../../tests/fixtures/semantic-worker-tools.js';
 
 const repo = resolve(process.cwd(), '..'), url = (file: string) => pathToFileURL(file).href;
 async function capture(file: string, body: string) {
@@ -14,20 +15,22 @@ async function capture(file: string, body: string) {
 }
 async function facts(name: string, value: object) { const root = process.env.AOTUI_W08_C1_FACTS_DIR;if (root) { await mkdir(root, { recursive: true });await writeFile(join(root, 'c2-app-'+name+'.json'), JSON.stringify(value, null, 2)); } }
 
-it.each([['sync', false], ['async', true]] as const)('C2-18/20 actual SDK %s unmount failure is fixed and preserves confirmed flush (Shadow=%s)', async (mode, snapshotShadow) => {
+it.each(['sync', 'async'] as const)('C2-18/20 actual SDK %s unmount failure is fixed and preserves confirmed flush', async mode => {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c2-unmount-')), app = join(dir, 'app.mjs');
-    await capture(app, `import {createTUIApp,usePersistentState} from ${JSON.stringify(url(join(repo,'sdk/dist/index.js')))};
-let set;function Root(){[,set]=usePersistentState('value',0);return null;}
-const factory=createTUIApp({app_name:'close',component:Root,onOperation:async()=>{set(7);return {success:true};}});
+    await linkPreactPeer(dir);
+    await capture(app, `import {h} from 'preact';import {createTUIApp,usePersistentState,View,useViewTypeTool} from ${JSON.stringify(url(join(repo,'sdk/dist/index.js')))};
+let set;function Tools(){const [Save]=useViewTypeTool('save',{description:'Save a value',isMutating:true,params:{value:{type:'number',required:true}}},async args=>{set(args.value);return {success:true};});return h(Save);}
+function Root(){[,set]=usePersistentState('value',0);return h(View,{id:'root',type:'Root'},h(Tools));}
+const factory=createTUIApp({app_name:'close',component:Root});
 const initialize=factory.initializeComponent.bind(factory);factory.initializeComponent=async(...args)=>{const renderer=await initialize(...args);return {...renderer,${mode === 'async' ? 'async ' : ''}unmount(){renderer.unmount();${mode === 'async' ? 'await Promise.resolve();' : ''}throw Error('private renderer detail');}};};export default factory;`);
-    const sandbox = new WorkerSandbox({ appId: 'app', desktopId: 'd', appModulePath: url(app), snapshotShadow,
+    const sandbox = new WorkerSandbox({ appId: 'app', desktopId: 'd', appModulePath: url(app),
         workerScriptPath: join(repo,'runtime/dist/worker-runtime/index.js'), runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 3000, pool: { initialSize: 0, maxSize: 1 } } }), config: { AOTUI_DATA_DIR: join(dir,'data'), AOTUI_APP_NAME: 'close' } });
     try {
-        await sandbox.installDynamic();await sandbox.executeOperation('set', {}, 'snapshot');const worker = (sandbox as any).lease.worker;
+        await sandbox.installDynamic();await invokeObservedTool((sandbox as any).workerHost,'save',{value:7},'root');const worker = (sandbox as any).lease.worker;
         const close = sandbox.close();await expect(close).rejects.toHaveProperty('code','SANDBOX_CLOSE_FAILED');const report = await sandbox.disposeAsync();
         expect(report).toMatchObject({ state:'settled', resourcesReleased:true, ok:false, host:{ storage:{ support:'managed', lifecycle:{ unmount:'failed', flush:{ok:true}, dispose:{release:{status:'released'}} } } }, ownedPool:{state:'closed',total:0} });
         expect(worker.threadId).toBe(-1);expect(JSON.parse(await readFile(join(dir,'data/app-state/d/close/value.json'),'utf8')).value).toBe(7);
-        expect(JSON.stringify(report)).not.toContain('private renderer detail');await facts('unmount-'+mode,{report,threadId:worker.threadId,snapshotShadow});
+        expect(JSON.stringify(report)).not.toContain('private renderer detail');await facts('unmount-'+mode,{report,threadId:worker.threadId});
     } finally { await sandbox.disposeAsync();await rm(dir,{recursive:true,force:true}); }
 }, 15000);
 

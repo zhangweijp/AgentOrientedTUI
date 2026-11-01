@@ -53,18 +53,10 @@ export type WorkerMessageType =
     | 'APP_PAUSE'
     | 'APP_RESUME'
     | 'APP_CLOSE'
-    | 'VIEW_DISMOUNT'
-    | 'APP_OPERATION'
-    | 'VIEW_OPERATION'
-    | 'VIEW_TOOL_INVOKE' // M4 experimental read-only
-    | 'VIEW_TOOL_INVOKE_ORDINARY_V1'
-    | 'VIEW_TOOL_INVOKE_ORDINARY_V1_RESPONSE'
     | 'VIEW_TOOL_INVOKE_ORDINARY_V2'
     | 'VIEW_TOOL_INVOKE_ORDINARY_V2_RESPONSE'
     | 'VIEW_TOOL_INVOKE_REF_V2'
     | 'VIEW_TOOL_INVOKE_REF_V2_RESPONSE'
-    | 'VIEW_TOOL_INVOKE_REF_V1'
-    | 'VIEW_TOOL_VALIDATE' // M4 source-bound mutation preflight only
     | 'EXTERNAL_EVENT'
     | 'RENDER_VIEW'
     | 'RENDER_ALL'
@@ -76,18 +68,13 @@ export type WorkerMessageType =
     // ─────────────────────────────────────────────────────────────
     | 'INIT_RESPONSE'
     | 'LIFECYCLE_RESPONSE'
-    | 'OPERATION_RESPONSE'
-    | 'VIEW_TOOL_INVOKE_REF_V1_RESPONSE'
     | 'RENDER_RESPONSE'
     | 'ERROR_RESPONSE'
     | 'DOM_UPDATE'
     | 'REQUEST_UPDATE'
-    | 'REQUEST_MOUNT_CHILD'
-    | 'REQUEST_DISMOUNT_CHILD'
     | 'RESET_RESPONSE' // Worker Pool support
-    | 'SNAPSHOT_FRAGMENT' // Legacy snapshot
-    | 'SNAPSHOT_PREPARED' // M2 opt-in shadow
-    | 'SNAPSHOT_PREPARE_FAILED'; // M2 opt-in shadow
+    | 'SNAPSHOT_PREPARED' // Semantic source publication
+    | 'SNAPSHOT_PREPARE_FAILED'; // Semantic source publication failure
 
 // ============================================================================
 // Abstract Message Interfaces (稳定契约)

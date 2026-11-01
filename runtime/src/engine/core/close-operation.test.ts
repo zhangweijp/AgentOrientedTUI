@@ -11,10 +11,10 @@ function fixture() {
         scope: 'runtime', state: 'closing', intent: 'close', ok: false, hasFailures: false, resourcesReleased: false, verification: 'managed',
         apps: { accepted: 0, settled: 0, pending: 0, notVerifiedReleased: 0 }, desktops: { accepted: 0, settled: 0, pending: 0, notVerifiedReleased: 0 },
         pendingOperations: 0, unverifiedParticipants: 0,
-        persistence: { managedApps: 0, legacyUnverifiedApps: 0, unnegotiatedApps: 0, notUsedApps: 0, closeReceipts: 0, missingCloseReceipts: 0, confirmedFlushes: 0, failedFlushes: 0, absentFlushes: 0, unknownApps: 0, unsavedKeys: 0 },
-        resources: { activeFileReplacements: 0, retainedStorageOwners: 0, storageActualIO: 0, openingStorageOwners: 0 },
+        persistence: { managedApps: 0, unnegotiatedApps: 0, notUsedApps: 0, closeReceipts: 0, missingCloseReceipts: 0, confirmedFlushes: 0, failedFlushes: 0, absentFlushes: 0, unknownApps: 0, unsavedKeys: 0 },
+        resources: { retainedStorageOwners: 0, storageActualIO: 0, openingStorageOwners: 0 },
         pool: { ownership: 'not-owned', report: null }, beforeClose: 'not-provided',
-        cleanup: { signalBus: 'not-owned', signalService: 'not-owned', llmOutput: 'not-owned', logger: 'not-owned', registry: 'pending', locks: 'not-owned' },
+        cleanup: { signalBus: 'not-owned', llmOutput: 'not-owned', logger: 'not-owned' },
         failures: [], failureCount: 0, samplesTruncated: false,
     };
     const completion = new Promise<RuntimeCloseReport>(resolve => { finish = resolve; });
@@ -50,15 +50,15 @@ it('C2-01 failed reports keep old void wrappers rejected, while mere unverified 
 });
 function envelope(lifecycle: any, extra: any = {}) {
     return { state: 'closing', intent: 'close', ok: false, resourcesReleased: false, issues: [],
-        host: { state: 'closing', worker: 'owned', activeFileReplacements: 0, resourcesReleased: false, issues: [],
+        host: { state: 'closing', worker: 'owned', resourcesReleased: false, issues: [],
             interactions: { closed: true, retainedScopes: 0, retainedBytes: 0 },
             storage: { support: 'managed', unsafe: false, actualIO: 0, pending: 0, opening: false, ownerRetained: true, uncertain: false, lifecycle } }, ...extra } as any;
 }
-it('C2-25 Q01 legacy C1 evidence is mixed without fabricating unknown resources or managed missing receipts', () => {
-    const input = envelope(undefined, { state: 'settled', resourcesReleased: true });input.host.storage = { ...input.host.storage, support: 'legacy-unverified', ownerRetained: false, release: { status: 'released' } };
+it('C2-25 Q01 rejected negotiation remains mixed without fabricating unknown resources or managed missing receipts', () => {
+    const input = envelope(undefined, { state: 'settled', resourcesReleased: true });input.host.storage = { ...input.host.storage, support: 'rejected', ownerRetained: false, release: { status: 'released' } };
     const report = sandboxCloseReport(input, 'd', 'a');expect(report).toMatchObject({ ok: false, hasFailures: false, resourcesReleased: true, verification: 'mixed',
         unverifiedParticipants: 0, apps: { accepted: 1, settled: 1, pending: 0, notVerifiedReleased: 0 },
-        persistence: { legacyUnverifiedApps: 1, managedApps: 0, missingCloseReceipts: 0, absentFlushes: 0, unknownApps: 0 } });
+        persistence: { unnegotiatedApps: 1, managedApps: 0, missingCloseReceipts: 0, absentFlushes: 0, unknownApps: 0 } });
 });
 it.each(['normal', 'failed', 'unknown', 'unmount'])('C2-25 Q02 actual B2 controller/memory %s report keeps progress separate from known failure', async mode => {
     const backend = createMemoryStateStorage({ maxStoredKeys: 4, maxStoredBytes: 100000, maxRecordBytes: 10000, maxAddressBytes: 1024, maxActiveOwners: 2, maxClaimedNamespaces: 2 });

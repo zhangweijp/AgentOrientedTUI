@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useCallback, useLayoutEffect, useState } from 'preact/hooks';
 import { parentPort } from 'node:worker_threads';
-import { createTUIApp, View, useDataRef, experimental_useReadOnlyTool } from '@aotui/sdk';
+import { createTUIApp, View, useDataRef, useViewTypeTool } from '@aotui/sdk';
 import { initialBusiness, applyBusiness, businessResult, ordinaryParams, refParams, description } from './dual-producer-business.mjs';
 
 let handlerSequence = 0, projection;
@@ -12,8 +12,8 @@ function Tools({ id, state }) {
     if (state.holdHandler) await new Promise(() => {});
     return businessResult(id, args);
   }, [id, state.registrations[id], state.holdHandler]);
-  experimental_useReadOnlyTool('read', { description, params: ordinaryParams, additionalProperties: false, enabled: state.enabled[id] }, handler);
-  experimental_useReadOnlyTool('read_ref', { description, params: refParams, additionalProperties: false, enabled: state.enabled[id] }, handler);
+  useViewTypeTool('read', { description, params: ordinaryParams, additionalProperties: false, isMutating: false }, handler, { enabled: state.enabled[id] });
+  useViewTypeTool('read_ref', { description, params: refParams, additionalProperties: false, isMutating: false }, handler, { enabled: state.enabled[id] });
   return null;
 }
 function Detail({ id, state }) {

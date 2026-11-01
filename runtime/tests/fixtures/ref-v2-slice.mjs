@@ -1,5 +1,4 @@
 import * as SDK from '@aotui/sdk';
-import * as OldSDK from '@fixture/old-sdk';
 import { h, Component } from 'preact';
 import { useLayoutEffect, useState } from 'preact/hooks';
 import { parentPort } from 'node:worker_threads';
@@ -13,8 +12,7 @@ function enter(name, view, args, revision, refName = 'file') {
         frozen: Object.isFrozen(args), refFrozen: !args[refName] || Object.isFrozen(args[refName]),
         nestedFrozen: !args[refName]?.list || Object.isFrozen(args[refName].list) });
     if (mode === 'throw') throw Error('REF_V2_PRIVATE_EXCEPTION');
-    const result = () => name === 'create' ? { status: 'succeeded', value: { id, view } }
-        : mode === 'business' ? { success: false, data: { retained: true }, error: { code: 'BUSINESS', message: 'Controlled business failure' } }
+    const result = () => mode === 'business' ? { success: false, data: { retained: true }, error: { code: 'BUSINESS', message: 'Controlled business failure' } }
         : mode === 'malformed' ? { success: true, data: [] }
         : mode === 'huge' ? { success: true, data: { value: 'x'.repeat(600000) } }
         : { success: true, data: name === 'capacity' ? { nodes: args.file.list.length + 3, view, id } : { args, view, revision, id } };
@@ -36,28 +34,16 @@ function NewTools({ view, state }) {
         text: { type: 'string', constraints: { maxLength: state.rule ? 2 : 1 } },
         tags: { type: 'array', itemType: 'string', constraints: { minLength: 2, maxLength: 3 } },
         n: { type: 'number', default: state.defaultValue, constraints: { min: 1, max: 3 } }, meta: { type: 'object', default: literal } };
-    const [Inspect] = SDK.experimental_useReadOnlyTool('inspect', { description: 'When to use: inspect a displayed file value. How to use: provide its Ref and an output choice.', params, enabled: state.enabled }, args => enter('inspect', view, args, state.revision));
-    SDK.experimental_useReadOnlyTool('capacity', { description: 'Count a referenced list', params: { file: ref }, enabled: state.enabled }, args => enter('capacity', view, args, state.revision));
-    SDK.experimental_useReadOnlyTool('open_ref', { description: 'Keep extra parameters', params: { file: ref }, additionalProperties: true, enabled: state.enabled }, args => enter('open_ref', view, args, state.revision));
-    SDK.experimental_useReadOnlyTool('typed', { description: 'Require an explicitly typed Ref', params: { file: { ...ref, refType: 'File' } } }, args => enter('typed', view, args, state.revision));
-    SDK.experimental_useReadOnlyTool('plain', { description: 'Ordinary read', params: {} }, args => enter('plain', view, args, state.revision));
+    const [Inspect] = SDK.useViewTypeTool('inspect', { description: 'When to use: inspect a displayed file value. How to use: provide its Ref and an output choice.', params, isMutating: false }, args => enter('inspect', view, args, state.revision), { enabled: state.enabled });
+    SDK.useViewTypeTool('capacity', { description: 'Count a referenced list', params: { file: ref }, isMutating: false }, args => enter('capacity', view, args, state.revision), { enabled: state.enabled });
+    SDK.useViewTypeTool('open_ref', { description: 'Keep extra parameters', params: { file: ref }, additionalProperties: true, isMutating: false }, args => enter('open_ref', view, args, state.revision), { enabled: state.enabled });
+    SDK.useViewTypeTool('typed', { description: 'Require an explicitly typed Ref', params: { file: { ...ref, refType: 'File' } }, isMutating: false }, args => enter('typed', view, args, state.revision));
+    SDK.useViewTypeTool('plain', { description: 'Ordinary read', params: {}, isMutating: false }, args => enter('plain', view, args, state.revision));
     for (const [index, param] of ['', '__proto__', 'constructor', 'x-aotui-ref', 'x-aotui-parameter-contract', 'line\nname'].entries())
-        SDK.experimental_useReadOnlyTool('special_' + index, { description: 'Preserve an exact own parameter name', params: Object.fromEntries([[param, ref]]) }, args => enter('special_' + index, view, args, state.revision, param));
+        SDK.useViewTypeTool('special_' + index, { description: 'Preserve an exact own parameter name', params: Object.fromEntries([[param, ref]]), isMutating: false }, args => enter('special_' + index, view, args, state.revision, param));
     return h('section', {}, [h('p', {}, [file('Original file value'), big('List value'), foreign('View-specific value')]), h(Inspect, {}, 'Inspect file')]);
 }
-function OldTools({ state }) {
-    const file = OldSDK.useDataRef('file', { label: state.text, view: 'legacy' });
-    OldSDK.useViewTypeTool('old_read', { description: 'Old SDK Ref helper semantics', isMutating: false, params: {
-        file: { type: 'reference', required: true, refSource: 'snapshot-value-v1' }, choice: { type: 'enum', options: ['7', 'ok'] }, text: { type: 'string', constraints: { maxLength: 1 } },
-    } }, args => enter('old_read', 'legacy', args, state.revision));
-    OldSDK.useViewTypeTool('zero', { description: 'Closed empty ordinary read', isMutating: false, params: {} }, args => enter('zero', 'legacy', args, state.revision));
-    OldSDK.experimental_useCreateIfAbsentTool('create', { description: 'Record the creation protocol without filesystem effects', params: {
-        relativePath: { type: 'string', required: true }, content: { type: 'string', required: true },
-    } }, args => enter('create', 'legacy', args, state.revision));
-    return h('p', {}, file('Legacy value'));
-}
 function Root() {
-    const context = SDK.useAppRuntimeContext();
     const [state, set] = useState({ text: 'A', revision: 1, rule: false, defaultValue: 2, enabled: true, show: true, showSecond: true, refType: '', capacityNodes: 8, tag: 0 });
     useLayoutEffect(() => {
         const receive = event => {
@@ -76,7 +62,6 @@ function Root() {
             h('h2', {}, 'How to use Reference Inspector'), h('p', {}, 'Use a displayed reference with the inspect tool. Read its result for the original value.'),
             h('h2', {}, 'Views of Reference Inspector'), state.show || state.showSecond ? h('section', {}, [h('h3', {}, 'File'), h('h4', {}, 'File Instruction'), h('p', {}, 'Displays original values and inspection tools.'), h('h4', {}, 'File Available Tools'), h('p', {}, 'inspect, capacity, open_ref, typed, plain')]) : null]),
         state.show ? view('aa') : null, state.showSecond ? view('bb') : null,
-        h(OldSDK.AppRuntimeContext.Provider, { key: 'legacy', value: context }, h(OldSDK.View, { id: 'legacy', type: 'LegacyFile' }, h(OldTools, { state }))),
     ]);
 }
 export default SDK.createTUIApp({ app_name: 'ref_v2_fixture', component: Root });

@@ -1,19 +1,16 @@
-/**
- * Internal M1 Semantic Snapshot Core.
- * Do not re-export from the runtime package root before M2/M3 producer guarantees.
- */
+/** Snapshot implementation barrel; supported package exports live in `core/index.ts`. */
 export { createSnapshotCore } from './store.js';
-export { refKey, validatePreparedDraft, DEFAULT_SNAPSHOT_LIMITS } from './validator.js';
+export { refKey, DEFAULT_SNAPSHOT_LIMITS } from './snapshot-support.js';
 export { validatePreparedV2Draft } from './v2-validator.js';
 export { canonicalJson, copyJson, diagnosticDigest, SnapshotDataError, utf8Size } from './json.js';
 export type {
-    AppSnapshot, AppSnapshotV1, AppSnapshotV2, AnyPreparedAppSnapshotDraft,
-    CommitResult, JsonValue, LeaseResult, PreparedAppSnapshotDraft, PreparedAppSnapshotDraftV2,
+    AppSnapshot, AppSnapshotV2,
+    CommitResult, JsonValue, LeaseResult, PreparedAppSnapshotDraftV2,
     PreparedSnapshotFailure,
-    RefDescriptor, RefLookup, RefSelector, RefTarget, SnapshotCommitter, SnapshotCore,
+    RefLookup, RefSelector, RefTarget, SnapshotCommitter, SnapshotCore,
     SnapshotHealth, SnapshotIssue, SnapshotIssueCode, SnapshotLease, SnapshotLimits,
     SnapshotLifecycle, SnapshotLookup, SnapshotRead, SnapshotStore, SnapshotStoreOptions,
-    SnapshotStoreStats, ToolDescriptor, ToolDescriptorV2, ToolTargetV2,
-    RefDescriptorV2, ToolLookup, ToolSelector, ViewContent, ViewSnapshot, ViewSnapshotV2,
+    SnapshotStoreStats, ToolDescriptorV2, ToolTargetV2,
+    RefDescriptorV2, ToolLookup, ToolSelector, ViewContent, ViewSnapshotV2,
+    SnapshotDraftEnvelope,
 } from './types.js';
-export type { ValidatedDraft, ValidationResult } from './validator.js';

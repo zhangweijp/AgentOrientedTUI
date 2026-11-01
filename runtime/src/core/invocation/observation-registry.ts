@@ -40,11 +40,15 @@ function object(value: unknown, keys: readonly string[], code: ObservationIssueC
 const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
 const viewKey = (view: ViewIdentity): string => JSON.stringify([view.viewId, view.viewInstanceId]);
 const refKey = (ref: RefIdentity): string => JSON.stringify([ref.viewId, ref.viewInstanceId, ref.refId]);
-const targetKey = (toolId: string, target: ToolTargetV2): string => JSON.stringify([toolId, target.viewId, target.viewInstanceId, target.bindingVersion]);
+const targetKey = (toolId: string, target: ToolTargetV2): string => JSON.stringify([toolId, target.viewId, target.viewInstanceId, target.bindingVersion, target.selector?.param, target.selector?.value]);
 function bounded<T>(input: unknown, limits: ObservationJsonLimits, code: ObservationIssueCode): { value: T; bytes: number } {
     try {
         const value = copyJson(input, limits);
-        const bytes = utf8Size(canonicalJson(value));
+        // Detached records have null prototypes and copied arrays have the
+        // intrinsic Array.prototype. Native JSON preserves byte length across
+        // key order; keep the canonical path if an inherited array toJSON
+        // could add behavior or execute an accessor.
+        const bytes = utf8Size('toJSON' in Array.prototype ? canonicalJson(value) : JSON.stringify(value)!);
         if (bytes > limits.maxCanonicalBytes) fail(code);
         return { value: value as T, bytes };
     } catch { return fail(code); }
@@ -264,7 +268,8 @@ export function createObservationRegistry(store: SnapshotStore & AppIdentityRead
                 refs.add(key);
             }
             for (const t of grant.targets) {
-                object(t, ['toolId', 'target']); object(t.target, ['viewId', 'viewInstanceId', 'bindingVersion']);
+                object(t, ['toolId', 'target']); object(t.target, ['viewId', 'viewInstanceId', 'bindingVersion', ...(Object.hasOwn(t.target, 'selector') ? ['selector'] : [])]);
+                if (Object.hasOwn(t.target, 'selector')) object(t.target.selector, ['param', 'value']);
                 if (!text(t.toolId) || !text(t.target.viewId) || !text(t.target.viewInstanceId) ||
                     !Number.isSafeInteger(t.target.bindingVersion)) fail('OBSERVATION_PROJECTION_INVALID');
                 const key = targetKey(t.toolId, t.target);

@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { AppWorkerHost } from './worker-host.js';
 import { createNodeStateStorage } from '../../adapters/storage/node-state-storage.js';
 import { DEFAULT_NODE_STATE_LIMITS } from './state-storage-host.js';
-import { fileSystemService } from '../../../../demo-apps/aotui-ide/src/core/file-system-service.js';
+import { invokeObservedTool, linkPreactPeer } from '../../../tests/fixtures/semantic-worker-tools.js';
 
 const repo = resolve(process.cwd(), '..'), url = (p: string) => pathToFileURL(p).href;
 const defer = () => { let resolve!: () => void;const promise = new Promise<void>(yes => { resolve = yes; });return { promise, resolve }; };
@@ -25,36 +25,20 @@ async function facts(name: string, report: object) {
 }
 async function fixture(extra: object = {}) {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-host-')), app = join(dir, 'app.mjs');
-    await capture(app, `import {createTUIApp,usePersistentState} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let setter;
-function Root(){[,setter]=usePersistentState('value',0);return null;}
-export default createTUIApp({app_name:'c1',component:Root,onOperation:async(op,args)=>{setter(args.value);return {success:true};}});`);
+    await linkPreactPeer(dir);
+    await capture(app, `import {h} from 'preact';import {createTUIApp,usePersistentState,View,useViewTypeTool} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let setter;
+function Operations(){const [Set]=useViewTypeTool('set',{description:'Set persisted value',isMutating:true,params:{value:{type:'number',required:true}}},async args=>{setter(args.value);return {success:true};});return h(Set);}
+function Root(){[,setter]=usePersistentState('value',0);return h(View,{id:'root',type:'Root'},h(Operations));}
+export default createTUIApp({app_name:'c1',component:Root});`);
     const host = new AppWorkerHost({ appId: 'app' as any, desktopId: 'd' as any, appModulePath: url(app), timeout: 2000,
         workerScriptPath: join(repo, 'runtime/dist/worker-runtime/index.js'), config: { AOTUI_DATA_DIR: join(dir, 'data'), AOTUI_APP_NAME: 'c1' }, ...extra });
     return { dir, host, record: join(dir, 'data/app-state/d/c1/value.json') };
 }
-it('C1-11 actual accepted file CAS keeps its result and prevents physical termination until the adapter completes', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-file-')), file = join(dir, 'file.txt'), app = join(dir, 'app.mjs');
-    await writeFile(file, 'before\n');const source = await fileSystemService.readVersionedFile(dir, file), entered = defer(), finish = defer();
-    await capture(app, `import {h} from ${JSON.stringify(url(join(repo, 'runtime/node_modules/preact/dist/preact.module.js')))};
-import {createTUIApp,View,useEntityRef,useViewTypeTool} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};
-function Detail(){const ref=useEntityRef('file',{entityType:'File',entityId:${JSON.stringify(file)},entityVersion:${JSON.stringify(source.version)}});useViewTypeTool('replace_file',{description:'replace',params:{},isMutating:true},async()=>({success:false}));return h('p',{},ref('file'));}
-export default createTUIApp({app_name:'cas',component:()=>h(View,{id:'detail',type:'Detail'},h(Detail,{}))});`);
-    const host = new AppWorkerHost({ appId: 'app' as any, desktopId: 'd' as any, appModulePath: url(app),
-        workerScriptPath: join(repo, 'runtime/dist/worker-runtime/index.js'), snapshotShadow: true, experimentalVersionedMutations: true });
-    try {
-        await host.start();await host.open();await vi.waitFor(() => expect(host.getSnapshotShadowReport()).toMatchObject({ health: 'ready', lastToolCount: 1 }));
-        const worker = (host as any).worker, terminate = vi.spyOn(worker, 'terminate');
-        const request = { snapshotId: host.getSnapshotShadowReport()!.snapshotId!, toolId: JSON.stringify(['app', 'Detail', 'replace_file']), viewId: 'detail', refId: 'file', newContent: 'after\n' };
-        const writing = host.executeVersionedFileReplace(request, () => true, async input => { entered.resolve();await finish.promise;return fileSystemService.replaceFileIfVersion(dir, input.filePath, input.expectedVersion, input.newContent); });
-        await entered.promise;host.terminate();const waiting = host.waitForResourceRelease();let settled = false;void waiting.then(() => { settled = true; });
-        expect(host.getResourceReport()).toMatchObject({ state: 'closing', worker: 'retiring', activeFileReplacements: 1, resourcesReleased: false });
-        expect(terminate).not.toHaveBeenCalled();await Promise.resolve();expect(settled).toBe(false);finish.resolve();
-        expect(await writing).toMatchObject({ success: true, data: { filePath: file } });const report = await waiting;
-        expect(await readFile(file, 'utf8')).toBe('after\n');expect(worker.threadId).toBe(-1);expect(report).toMatchObject({ worker: 'exited', activeFileReplacements: 0, resourcesReleased: true });
-        await facts('held-file-cas', { report, actualDiskResult: 'after\n', physicalThreadId: worker.threadId, prematureTerminationCalls: 0 });
-    } finally { finish.resolve();host.terminate();await host.waitForResourceRelease();await rm(dir, { recursive: true, force: true }); }
-}, 15000);
-
+async function setPersistedValue(host: AppWorkerHost, value: number) {
+    const result = await invokeObservedTool(host, 'set', { value }, 'root');
+    if (result?.kind !== 'receipt' || result.receipt.outcome.status !== 'succeeded') throw new Error('Set Tool invocation failed');
+    return result.receipt.outcome.value;
+}
 it.each(['open', 'replace'] as const)('C1-12 actual Node backend %s remains supervised after actual Worker exit', async held => {
     const backend = createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS), entered = defer(), finish = defer();
     const f = await fixture({ persistenceBackend: { async open(input: any) {
@@ -68,7 +52,7 @@ it.each(['open', 'replace'] as const)('C1-12 actual Node backend %s remains supe
     try {
         await host.start();const opening = host.open().then(() => true, () => false);
         let closing: Promise<boolean> | undefined;
-        if (held === 'replace') { expect(await opening).toBe(true);await host.executeOperation('set' as any, { value: 12 }, 'snapshot' as any);closing = host.close().then(() => true, () => false); }
+        if (held === 'replace') { expect(await opening).toBe(true);await setPersistedValue(host, 12);closing = host.close().then(() => true, () => false); }
         await entered.promise;const worker = (host as any).worker, exited = once(worker, 'exit');host.terminate();const waiting = host.waitForResourceRelease();
         await exited;expect(worker.threadId).toBe(-1);if (closing) expect(await closing).toBe(false);await opening;
         expect(backend.getStats().ownerSlots).toBe(1);expect(host.getResourceReport()).toMatchObject({ state: 'closing', worker: 'exited', resourcesReleased: false, storage: { actualIO: 1, ...(held === 'open' ? { opening: true } : { ownerRetained: true }) } });
@@ -87,7 +71,7 @@ it.each(['failed', 'unknown'] as const)('C1-19 a terminal backend %s release is 
         return { status: 'opened', storage: { ...result.storage, async release() { await result.storage.release();return { status, issue: { code: 'IO_FAILED' } }; } } };
     } } });
     try {
-        await f.host.start();await f.host.open();await f.host.executeOperation('set' as any, { value: 1 }, 's' as any);
+        await f.host.start();await f.host.open();await setPersistedValue(f.host, 1);
         await expect(f.host.close()).rejects.toThrow();expect(await f.host.releaseWorker()).toBeNull();const report = await f.host.waitForResourceRelease();
         expect(report).toMatchObject({ state: 'settled', worker: 'exited', resourcesReleased: false, storage: { unsafe: true, ownerRetained: true, release: { status } } });
         expect(Object.isFrozen(report)).toBe(true);expect(Object.isFrozen(report.issues)).toBe(true);expect(report.issues.length).toBeLessThanOrEqual(4);

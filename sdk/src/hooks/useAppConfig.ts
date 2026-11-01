@@ -7,14 +7,11 @@
  */
 
 import { useContext } from "./preact-hooks.js";
-import { AppConfigContext } from "../contexts/index.js";
+import { AppRuntimeContext } from "../context/AppRuntimeContext.js";
+import type { AppLaunchConfig } from "@aotui/runtime/spi";
 
 // Note: AppLaunchConfig is merged with Runtime Context in Runtime Layer
 // It supports index signature for direct env access
-interface AppLaunchConfig {
-    [key: string]: unknown;
-}
-
 /**
  * 获取应用启动配置
  *
@@ -31,8 +28,8 @@ interface AppLaunchConfig {
  * ```
  */
 export function useAppConfig(): AppLaunchConfig {
-  const config = useContext(AppConfigContext);
-  return config as AppLaunchConfig ?? {};
+  const context = useContext(AppRuntimeContext);
+  return context?.launchConfig ?? {};
 }
 
 /**

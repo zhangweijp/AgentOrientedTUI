@@ -35,7 +35,6 @@ export interface ScopedInvocation {
   readonly invocationId:string;
   readonly observationId:string;
   readonly bindingId:string;
-  readonly refId?:string;
   readonly input:JsonObject;
 }
 export interface InvocationSource {
@@ -44,8 +43,6 @@ export interface InvocationSource {
   readonly snapshotId:string;
   readonly tool:ToolDescriptorV2;
   readonly target:ToolTargetV2;
-  readonly resource?:Readonly<{entityType:string; entityId:string; entityVersion:string}>;
-  readonly resourceRefId?: string;
 }
 export interface ReceiptMetadata {
   readonly scopeId:string;
@@ -93,8 +90,7 @@ export interface ExecutionBindingBase {
   isLive(source:InvocationSource):LiveCheck;
   execute(context:InvocationContext):ExecutionFact|Promise<ExecutionFact>;
 }
-export type CreateIfAbsentExecutionBinding = ExecutionBindingBase & Readonly<{mode:'create-if-absent';operations?:never}>;
-export type ExecutionBinding = (ExecutionBindingBase & Readonly<{mode:'ordinary'|'snapshot-value-v1'|'versioned-entity';operations?:OperationProvider}>) | CreateIfAbsentExecutionBinding;
+export type ExecutionBinding = ExecutionBindingBase & Readonly<{mode:'ordinary-v2'|'snapshot-value-v2';operations?:OperationProvider}>;
 export interface ExecutionResolver {
   /** Stable identity/function references for one live registered callable. */
   resolve(source:InvocationSource):ExecutionBinding|null;

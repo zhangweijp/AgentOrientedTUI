@@ -32,7 +32,7 @@ export type SnapshotValueArgumentPreparation =
     }>;
 
 type Limits = JsonCopyLimits & { readonly maxCanonicalBytes: number };
-// G0 ref-v1 profiles. M5 keeps its separate, smaller whole-invocation profile.
+// Snapshot-value V2 keeps a separately bounded parameter and envelope profile.
 const REQUEST: Limits = Object.freeze({ maxDepth: 25, maxNodes: 10_004, maxApproxBytes: 136 * 1024, maxCanonicalBytes: 136 * 1024 });
 const ARGUMENTS: Limits = Object.freeze({ maxDepth: 24, maxNodes: 10_000, maxApproxBytes: 128 * 1024, maxCanonicalBytes: 128 * 1024 });
 const ENVELOPE: Limits = Object.freeze({ maxDepth: 26, maxNodes: 11_000, maxApproxBytes: 136 * 1024, maxCanonicalBytes: 136 * 1024 });

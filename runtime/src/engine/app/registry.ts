@@ -11,8 +11,8 @@
  * @module @aotui/runtime/engine/app-registry
  */
 
-import type { IDesktop, AppID, TUIAppFactory, AOAppManifest } from '../../spi/index.js';
-import { isTUIAppFactory, isLegacyFactory, validateManifest, isKernelConfigFactory } from '../../spi/index.js';
+import type { IDesktop, AppID, TUIAppFactory } from '../../spi/index.js';
+import { isTUIAppFactory } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import type { TUIConfig, AppConfigEntry } from './config.js';
 import type { AppLaunchConfig } from '../../spi/app/app-config.interface.js';
@@ -31,10 +31,8 @@ export type { TUIConfig, AppConfigEntry } from './config.js';
  * 已加载的 App 信息
  */
 export interface LoadedApp {
-    /** App 名称 (来自 manifest) */
+    /** Canonical name from the component factory's Kernel config. */
     name: string;
-    /** App 清单 (传统模式) 或 undefined (方案 B kernelConfig 模式) */
-    manifest?: AOAppManifest;
     /** 工厂对象 */
     factory: TUIAppFactory;
     /** 来源 */
@@ -171,7 +169,6 @@ export class AppRegistry {
         // 添加到内存
         this.apps.set(name, {
             name,
-            manifest: factory.manifest,
             factory,
             source
         });
@@ -202,7 +199,6 @@ export class AppRegistry {
         // 添加到内存
         this.apps.set(name, {
             name,
-            manifest: factory.manifest,
             factory,
             source
         });
@@ -333,7 +329,7 @@ export class AppRegistry {
         return this.installEntries(desktop, Array.from(this.apps.keys()), {
             defaultWorkerScript,
             dynamicConfig: options?.dynamicConfig,
-            experimentalInteractionModes: captureInteractionModes(options),
+            interactionModes: captureInteractionModes(options),
         });
     }
 
@@ -348,7 +344,7 @@ export class AppRegistry {
         return this.installEntries(desktop, names, {
             defaultWorkerScript,
             dynamicConfig: options?.dynamicConfig,
-            experimentalInteractionModes: captureInteractionModes(options),
+            interactionModes: captureInteractionModes(options),
         });
     }
 
@@ -490,7 +486,6 @@ export class AppRegistry {
             const factory = await this.loadFactory(entry.source);
             this.apps.set(name, {
                 name,
-                manifest: factory.manifest,
                 factory,
                 source: entry.source
             });
@@ -529,28 +524,15 @@ export class AppRegistry {
             const workerScript = configEntry?.workerScript ?? options.defaultWorkerScript;
 
             try {
-                let promptRole = configEntry?.promptRole;
-                if (!promptRole) {
-                    if (isKernelConfigFactory(app.factory)) {
-                        promptRole = app.factory.kernelConfig.promptRole;
-                    } else if (app.manifest?.promptRole) {
-                        promptRole = app.manifest.promptRole;
-                    }
-                }
-
-                const kernelConfig = isKernelConfigFactory(app.factory)
-                    ? app.factory.kernelConfig
-                    : undefined;
+                const kernelConfig = app.factory.kernelConfig;
+                const promptRole = configEntry?.promptRole ?? kernelConfig.promptRole;
 
                 const whatItIs = configEntry?.whatItIs
-                    ?? kernelConfig?.whatItIs
+                    ?? kernelConfig.whatItIs
                     ?? configEntry?.description
-                    ?? kernelConfig?.description
-                    ?? app.manifest?.whatItIs
-                    ?? app.manifest?.description;
+                    ?? kernelConfig.description;
                 const whenToUse = configEntry?.whenToUse
-                    ?? kernelConfig?.whenToUse
-                    ?? app.manifest?.whenToUse;
+                    ?? kernelConfig.whenToUse;
 
                 if (autoStart) {
                     const appId = await desktop.installDynamicWorkerApp(
@@ -558,12 +540,12 @@ export class AppRegistry {
                         {
                             workerScriptPath: workerScript,
                             name,
-                            description: app.manifest?.description,
+                            description: configEntry?.description ?? kernelConfig.description,
                             whatItIs,
                             whenToUse,
                             promptRole,
                             config: dynamicConfig,
-                            experimentalInteractionModes: options.experimentalInteractionModes,
+                            interactionModes: options.interactionModes,
                         }
                     );
                     installedIds.push(appId as AppID);
@@ -571,14 +553,14 @@ export class AppRegistry {
                 } else {
                     const appId = await desktop.registerPendingApp({
                         name,
-                        description: app.manifest?.description,
+                        description: configEntry?.description ?? kernelConfig.description,
                         whatItIs,
                         whenToUse,
                         modulePath,
                         workerScriptPath: workerScript,
                         promptRole,
                         config: dynamicConfig,
-                        experimentalInteractionModes: options.experimentalInteractionModes,
+                        interactionModes: options.interactionModes,
                     });
                     installedIds.push(appId as AppID);
                     console.log(`[AppRegistry] Registered "${name}" to Desktop ${desktop.id} (Pending mode)`);
@@ -619,16 +601,8 @@ export class AppRegistry {
     }
 
     private resolveRegistrationName(source: string, factory: TUIAppFactory): string {
-        if (isKernelConfigFactory(factory) && factory.kernelConfig.appName) {
+        if (factory.kernelConfig.appName) {
             return factory.kernelConfig.appName;
-        }
-
-        if (factory.manifest?.app_name) {
-            return factory.manifest.app_name;
-        }
-
-        if (factory.manifest?.name) {
-            return factory.manifest.name;
         }
 
         throw new AOTUIError('CONFIG_INVALID', {
@@ -755,21 +729,9 @@ export class AppRegistry {
         // 动态导入模块
         const module = await import(modulePath);
 
-        const candidates = [
-            module.factory,
-            module.default?.factory,
-            module.default,
-            ...Object.values(module)
-        ];
-
-        const factory = candidates.find((candidate) => isTUIAppFactory(candidate));
-
-        if (!factory) {
+        const factory = module.default;
+        if (!isTUIAppFactory(factory)) {
             throw new AOTUIError('APP_INVALID_EXPORT', { modulePath });
-        }
-
-        if (isLegacyFactory(factory) && !validateManifest(factory.manifest)) {
-            throw new AOTUIError('APP_INVALID_MANIFEST', { modulePath });
         }
 
         return factory;
@@ -778,4 +740,4 @@ export class AppRegistry {
 
 // Re-export factory interface
 export type { TUIAppFactory, AOAppManifest } from '../../spi/index.js';
-export { isTUIAppFactory, validateManifest, isValidAppName } from '../../spi/index.js';
+export { validateManifest, isValidAppName } from '../../spi/index.js';

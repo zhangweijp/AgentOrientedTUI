@@ -39,7 +39,12 @@ export function parseActionOutcome(result: JsonValue): ActionOutcome {
 }
 
 export function captureBoundedJson<T>(raw: unknown, limits: ObservationJsonLimits): { value: T; bytes: number } {
-    const value = copyJson(raw, limits), bytes = utf8Size(canonicalJson(value));
+    const value = copyJson(raw, limits);
+    // Detached records have null prototypes and copied arrays have the
+    // intrinsic Array.prototype. Native JSON preserves byte length across
+    // key order; keep the canonical path if an inherited array toJSON
+    // could add behavior or execute an accessor.
+    const bytes = utf8Size('toJSON' in Array.prototype ? canonicalJson(value) : JSON.stringify(value)!);
     if (bytes > limits.maxCanonicalBytes) throw new RangeError('Bounded JSON capacity exceeded');
     return { value: value as T, bytes };
 }

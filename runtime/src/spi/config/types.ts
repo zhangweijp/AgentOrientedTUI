@@ -5,10 +5,6 @@
  */
 
 import type { WorkerConfig } from './domains/worker.config.js';
-import type { BridgeConfig } from './domains/bridge.config.js';
-import type { LockConfig } from './domains/lock.config.js';
-import type { SnapshotConfig } from './domains/snapshot.config.js';
-import type { TransformConfig } from './domains/transform.config.js';
 import type { LoggerConfig } from './domains/logger.config.js';
 
 /**
@@ -18,10 +14,6 @@ import type { LoggerConfig } from './domains/logger.config.js';
  */
 export interface RuntimeConfig {
     readonly worker: WorkerConfig;
-    readonly bridge: BridgeConfig;
-    readonly lock: LockConfig;
-    readonly snapshot: SnapshotConfig;
-    readonly transform: TransformConfig;
     readonly logger: LoggerConfig;
 }
 

@@ -7,7 +7,7 @@ import {
   invocationObject,
   invocationTarget,
   text,
-} from './view-tool-invocation-v1.js';
+} from './worker-message-capture.js';
 import type {
   ViewToolInvokeOrdinaryV2Message,
   ViewToolInvokeOrdinaryV2Response,

@@ -3,7 +3,7 @@ import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import { parentPort } from 'node:worker_threads';
 import { open } from 'node:fs/promises';
 import { createTUIApp, View, useViewTypeTool,
-    experimental_useAppLifecycle, useAppRuntimeContext, usePersistentState } from '@aotui/sdk';
+    useAppLifecycle, useAppRuntimeContext, usePersistentState } from '@aotui/sdk';
 
 function Counter({ owner, generation, binding }) {
     const [, refresh] = useState(0);
@@ -29,7 +29,7 @@ function Root() {
     const owner = useMemo(() => ({ value: 0, live: true, entries: 0, save,
         resource: undefined, handlerRelease: undefined, cleanupRelease: undefined, rejectClose: false }), []);
     const [view, setView] = useState({ generation: 1, enabled: true, binding: 1 });
-    experimental_useAppLifecycle({ stop() { owner.live = false; parentPort.postMessage({ type: 'TEST_STOPPED', value: owner.value }); },
+    useAppLifecycle({ stop() { owner.live = false; parentPort.postMessage({ type: 'TEST_STOPPED', value: owner.value }); },
         async close() {
             parentPort.postMessage({ type: 'TEST_CLEANUP_ENTERED' });
             await new Promise(resolve => { owner.cleanupRelease = resolve; });
@@ -57,7 +57,7 @@ function Root() {
     return h(View, { id: 'counter', type: 'Counter', key: view.generation },
         view.enabled ? h(Counter, { owner, ...view }) : h('p', {}, 'Counter ' + owner.value));
 }
-const factory = createTUIApp({ app_name: 'tool_lifecycle', component: Root, experimentalAppLifecycle: true });
+const factory = createTUIApp({ app_name: 'tool_lifecycle', component: Root });
 const initialize = factory.initializeComponent;
 factory.initializeComponent = async (...args) => {
     if (args[1].launchConfig.holdInitialization) {

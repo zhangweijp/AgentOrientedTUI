@@ -24,7 +24,7 @@ export function renderInstalledAppLines(
         const autoStartStatus = (entry.autoStart ?? true) ? '🚀' : '⏸️';
 
         if (loadedApp) {
-            const version = loadedApp.manifest?.version ?? 'N/A';
+            const version = entry.distribution?.resolvedVersion ?? entry.version ?? 'N/A';
             lines.push(`  ${enabledStatus}${autoStartStatus} ${name}`);
             lines.push(`     Version: ${version}`);
         } else {

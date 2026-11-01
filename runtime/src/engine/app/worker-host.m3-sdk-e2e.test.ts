@@ -10,8 +10,8 @@ import { refKey } from '../../core/snapshot/index.js';
  * M3 real Worker + bundled REAL SDK createTUIApp + Preact hooks.
  * Task object A -> B after initial commit, while rendered DOM stays identical.
  */
-describe('M3 real Worker / SDK projection round trip', () => {
-    it('advances the Shadow Snapshot on a Ref-only update without DOM mutation', async () => {
+describe('Semantic real Worker / SDK projection round trip', () => {
+    it('advances the accepted Snapshot on a Ref-only update without DOM mutation', async () => {
         const temporary = await mkdtemp(join(tmpdir(), 'aotui-m3-'));
         const root = resolve(process.cwd()); // runtime/
         let host: AppWorkerHost | undefined;
@@ -48,8 +48,8 @@ describe('M3 real Worker / SDK projection round trip', () => {
                     }, []);
                     const selected = useDataRef('selected', target);
                     const [listLabel, itemLabel] = useArrayRef('pending', [target], { itemType: 'Task' });
-                    const [ToolUI] = useViewTypeTool('Workspace', 'complete', {
-                        description: 'Complete selected task', params,
+                    const [ToolUI] = useViewTypeTool('complete', {
+                        description: 'Complete selected task', params, isMutating: false,
                     }, async () => ({ success: true }));
                     return h('section', {}, [
                         h('p', {key:'selected'}, selected('Stable task label')),
@@ -75,72 +75,50 @@ describe('M3 real Worker / SDK projection round trip', () => {
             host = new AppWorkerHost({
                 appId: 'm3_app' as any, desktopId: 'desktop_m3' as any,
                 appModulePath: appPath, workerScriptPath: workerPath,
-                snapshotShadow: true,
             });
             await host.start();
             await host.open();
             await import('vitest').then(({ vi }) => vi.waitFor(() => {
-                expect(host?.getSnapshotShadowReport()).toMatchObject({
+                expect(host?.getSemanticSnapshotReport()).toMatchObject({
                     health: 'ready', revision: 1, lastViewCount: 1,
                     lastRefCount: 5, lastToolCount: 1,
                 });
             }, { timeout: 3_000 }));
-            const initial = host.getSnapshotShadowReport()!;
-            // Test-only inspection of the private shadow Store; no production
-            // API exposes Ref payload or enables Tool execution in Shadow mode.
-            const shadowCore = (host as any).shadowReceiver.core;
-            const oldRead = shadowCore.store.getById(initial.snapshotId);
+            const initial = host.getSemanticSnapshotReport()!;
+            // Test-only inspection of the accepted Store; no production API
+            // exposes mutable Ref payload or bypasses source-bound execution.
+            const semanticCore = (host as any).snapshotReceiver.core;
+            const oldRead = semanticCore.store.getById(initial.snapshotId);
             expect(oldRead.status).toBe('found');
-            const oldGeneration = oldRead.snapshot.views[0].generation;
-            const oldRefKey = refKey('workspace', oldGeneration, 'Task:pending[0]');
+            const oldViewInstanceId = oldRead.snapshot.views[0].viewInstanceId;
+            const oldRefKey = refKey('workspace', oldViewInstanceId, 'Task:pending[0]');
             expect(oldRead.snapshot.refs[oldRefKey].target.payload).toMatchObject({ id: 'A' });
-            const markup = host.getSnapshotFragment()!.markup;
+            const markup = oldRead.snapshot.views[0].content.value;
             expect(markup).toContain('Stable task label');
             expect(markup).toContain('App=m3_app');
             await import('vitest').then(({ vi }) => vi.waitFor(() => {
-                expect(host?.getSnapshotShadowReport()).toMatchObject({
+                expect(host?.getSemanticSnapshotReport()).toMatchObject({
                     health: 'ready', revision: 2,
                     lastViewCount: 1, lastRefCount: 5, lastToolCount: 1,
                 });
             }, { timeout: 3_000 }));
-            const changed = host.getSnapshotShadowReport()!;
+            const changed = host.getSemanticSnapshotReport()!;
             expect(changed.published).toBeGreaterThanOrEqual(2);
             expect(changed.snapshotId).not.toBe(initial.snapshotId);
-            const newRead = shadowCore.store.getById(changed.snapshotId);
+            const newRead = semanticCore.store.getById(changed.snapshotId);
             expect(newRead.status).toBe('found');
-            expect(newRead.snapshot.views[0].generation).toBe(oldGeneration);
-            const newRefKey = refKey('workspace', oldGeneration, 'Task:pending[0]');
+            expect(newRead.snapshot.views[0].viewInstanceId).toBe(oldViewInstanceId);
+            const newRefKey = refKey('workspace', oldViewInstanceId, 'Task:pending[0]');
             expect(newRead.snapshot.refs[newRefKey].target.payload).toMatchObject({ id: 'B' });
-            expect(newRead.snapshot.tools['m3_app-Workspace-complete']).toMatchObject({
-                declaredByViewId: 'workspace',
-                declaredByViewGeneration: oldGeneration,
+            expect(Object.values(newRead.snapshot.tools).find((tool: any) => tool.name === 'complete')).toMatchObject({
+                targets: [{ viewId: 'workspace', viewInstanceId: oldViewInstanceId }],
                 viewType: 'Workspace',
-                visible: true,
             });
             // A historical Ref is pinned to its original object even when the
             // same visible Ref ID is reused in a new Snapshot.
             expect(oldRead.snapshot.refs[oldRefKey].target.payload).toMatchObject({ id: 'A' });
-            expect(host.getSnapshotFragment()?.markup).toBe(markup);
-            expect(changed.producerConsistency).toBe('unverified'); // Still Shadow!
-            expect(changed.strictEligible).toBe(false);
-
-            // Verify the DEFAULT legacy path also responds to semantic-only
-            // Ref updates; the Shadow flag must not be required for correctness.
-            host.terminate();
-            host = new AppWorkerHost({
-                appId: 'm3_app' as any, desktopId: 'desktop_m3' as any,
-                appModulePath: appPath, workerScriptPath: workerPath,
-                snapshotShadow: false,
-            });
-            await host.start();
-            await host.open();
-            expect(host.getSnapshotShadowReport()).toBeNull();
-            const originalLegacy = host.getSnapshotFragment()!;
-            expect((originalLegacy.indexMap as any)['workspace:selected']?.id).toBe('A');
-            await import('vitest').then(({ vi }) => vi.waitFor(() => {
-                expect((host?.getSnapshotFragment()?.indexMap as any)['workspace:selected']?.id).toBe('B');
-            }, { timeout: 3_000 }));
-            expect(host.getSnapshotFragment()?.markup).toBe(originalLegacy.markup);
+            expect(newRead.snapshot.views[0].content.value).toBe(markup);
+            expect(changed.health).toBe('ready');
         } finally {
             host?.terminate();
             await rm(temporary, { recursive: true, force: true });

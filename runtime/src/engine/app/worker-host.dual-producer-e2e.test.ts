@@ -56,6 +56,7 @@ function plainActor() {
     if (!ordinary.ok || !reference.ok) throw Error('business declaration');
     function register(id: string, view: any) {
         view.releases = [];
+        if (!state.enabled[id]) return;
         for (const [name, contract, inputSchema, options] of [
             ['read', ordinary.contract, ordinaryParameterProfile(ordinary.contract), { safeOrdinaryParametersInvocationMode: 'ordinary-v2' }],
             ['read_ref', reference.contract, reference.contract.schema, { safeSnapshotValueParametersInvocationMode: 'snapshot-value-v2' }],
@@ -63,7 +64,7 @@ function plainActor() {
             const handler = async (args: any) => { calls.push({ viewId: id, args });return businessResult(id, args); };
             const invoker = async (args: any) => { const valid = name === 'read' ? ordinary.contract.validate(args) : reference.contract.validateEffective(args);
                 return valid.ok ? { phase: 'entered-returned' as const, result: await handler(valid.value) } : { phase: 'not-entered' as const, result: { success: false, error: { code: 'E_INVALID_ARGS', message: 'Input invalid' } } }; };
-            view.releases.push(registry.registerTool(view.viewInstanceId, { name, description, inputSchema, isMutating: false }, handler, state.enabled[id], options, invoker));
+            view.releases.push(registry.registerTool(view.viewInstanceId, { name, description, inputSchema, isMutating: false }, handler, options, invoker));
         }
     }
     function publish() {
@@ -81,7 +82,7 @@ function plainActor() {
     const opened = authority.createScope({ appId: 'app', instanceId: instance, policy: p.policy, execution: { resolve(source: any) {
         let binding = bindings.get(source);if (binding) return binding;
         const tool = { ...source.tool, appId: source.appId, appInstanceId: source.instanceId };
-        const isRef = source.tool.name === 'read_ref';binding = { identity: {}, mode: isRef ? 'snapshot-value-v1' : 'ordinary',
+        const isRef = source.tool.name === 'read_ref';binding = { identity: {}, mode: isRef ? 'snapshot-value-v2' : 'ordinary-v2',
             validateInput: (_source: any, args: any) => { const r = isRef ? reference.contract.validateEffective(args) : ordinary.contract.validate(args);return r.ok ? { ok: true, value: r.value } : { ok: false }; },
             isLive: () => ({ ok: registry.validate(tool, source.target).success }), execute: async (context: any) => {
                 const terminal = await (isRef ? registry.invokeSnapshotValueParameters(tool, source.target, context.effectiveInput) : registry.invokeOrdinaryParameters(tool, source.target, context.effectiveInput));
@@ -118,7 +119,7 @@ async function workerActor() {
             const receive = (m: any) => { if (predicate(m)) { clearTimeout(timer);worker.off('message', receive);yes(m); } };worker.on('message', receive); });
     }
     const host = new Host({ appId: 'app', desktopId: 'd', appModulePath: join(consumer, 'dual-producer-app.mjs'), existingWorker: worker,
-        timeout: 2000, snapshotShadow: true, experimentalReadOnlyViewTools: true, experimentalInteractionModes: ['ordinary-v2', 'snapshot-value-v2'],
+        timeout: 2000, interactionModes: ['ordinary-v2', 'snapshot-value-v2'],
         config: { AOTUI_DATA_DIR: join(consumer, 'data-' + ++actorCount) } });
     const unknown = host.unknownRef.bind(host);host.unknownRef = (...args: any[]) => { const fact = unknown(...args);facts.push(fact);return fact; };
     let opened: any;
@@ -128,7 +129,7 @@ async function workerActor() {
         opened = host.createInteractionScope(p.policy);expect(opened.status).toBe('opened');if (opened.status !== 'opened') throw Error(opened.issue.code);
     } catch (error) { evidence.push({ initializationFailed: true, logs, messages });host.terminate();await host.waitForResourceRelease();throw error; }
     let state = initialBusiness(), lastEpoch = -1;
-    const snapshot = () => { const result = host.shadowReceiver.core.store.readLatest('app');if (result.status !== 'ready') throw Error(result.status);return result.snapshot; };
+    const snapshot = () => { const result = host.snapshotReceiver.core.store.readLatest('app');if (result.status !== 'ready') throw Error(result.status);return result.snapshot; };
     return { kind: 'sdk-worker', client: opened.client, ...p, policyCalls: p.calls, calls, facts, snapshot, stats: () => host.getInteractionReport().core,
         async change(command: any) {
             const from = messages.length;state = applyBusiness(state, command);worker.postMessage({ type: 'DUAL_CONTROL', command });
@@ -239,27 +240,3 @@ it.each(factories)('C12 terminal loss after actual entry revokes authority with 
             underlying: actor.facts, caller: 'SCOPE_UNAVAILABLE', handlers: actor.calls.length });
     } finally { await actor.finish(); }
 }, 20000);
-
-it.each(['non-AppKernel', 'legacy-empty', 'legacy-mixed', 'legacy-DOM-without-owned'])('C05 retains actual V1 selection for %s', async kind => {
-    const app = join(consumer, 'legacy-' + kind + '.mjs');
-    const body = kind === 'non-AppKernel' ? `export default {async onOpen(context,container){container.textContent='Legacy empty App';},async onClose(){}};` :
-        `import {h} from 'preact';import {parentPort} from 'node:worker_threads';import {createTUIApp,View,useViewTypeTool,experimental_useReadOnlyTool} from '@aotui/sdk';
-        const params={},legacy=async()=>{parentPort.postMessage({type:'C_LEGACY_ENTER'});return {success:true,data:{legacy:1}};};function Legacy(){useViewTypeTool('File','legacy',{description:'Legacy ordinary',params},legacy);return h('span',{},'Legacy');}
-        function Owned(){experimental_useReadOnlyTool('read',{description:'Owned',params:{}},async()=>({success:true}));return h('p',{},'Owned');}
-        function Root(){return ${kind === 'legacy-empty' ? "h('p',{},'Empty legacy inventory')" : kind === 'legacy-mixed' ? "h(View,{id:'aa',type:'File'},[h(Legacy,{}),h(Owned,{})])" : "h('div',{'data-view-id':'legacy','data-view-type':'File'},'Old DOM')"};}
-        const app=createTUIApp({app_name:'legacy_fixture',component:Root});
-        ${kind === 'legacy-empty' ? "const initialize=app.initializeComponent;app.initializeComponent=(container,context)=>{context.typeTools.registerTypeTool('File','legacy',{description:'Legacy',params,handler:legacy});return initialize.call(app,container,context);};" : ''}
-        export default app;`;
-    await capture(app, body);const worker = new Worker(join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'));
-    const frames: any[] = [];worker.on('message', m => frames.push(m));
-    const host = new Host({ appId: 'legacy', desktopId: 'legacy', appModulePath: app, existingWorker: worker, snapshotShadow: true,
-        config: { AOTUI_DATA_DIR: join(consumer, 'legacy-data-' + kind) } });
-    try { await host.start();await host.open();
-        const frame = frames.find(m => m.type === 'SNAPSHOT_PREPARED') || await new Promise<any>((yes, no) => {
-            const timer = setTimeout(() => no(Error('Legacy snapshot watchdog')), 5000);const receive = (m: any) => { if (m.type === 'SNAPSHOT_PREPARED' || m.type === 'SNAPSHOT_PREPARE_FAILED') { clearTimeout(timer);worker.off('message', receive);yes(m); } };worker.on('message', receive); });
-        expect(frame.type).toBe('SNAPSHOT_PREPARED');expect(frame.draft.schemaVersion).toBe(1);
-        if (kind === 'legacy-empty' || kind === 'legacy-mixed') { expect(await host.executeOperation('legacy', {}, 'legacy-source', 'File')).toEqual({ success: true, data: { legacy: 1 } });expect(frames.filter(m => m.type === 'C_LEGACY_ENTER')).toHaveLength(1); }
-        evidence.push({ legacyKind: kind, actualWorker: true, schemaVersion: frame.draft.schemaVersion, legacyFragment: host.getSnapshotFragment() });
-    } finally { try { await host.close(); } catch (error) { evidence.push({ legacyKind: kind, closeError: String(error), persistence: host.getPersistenceReport(), frames });throw error; }
-        finally { host.terminate();await host.waitForResourceRelease();expect(host.getResourceReport().interactions.retainedScopes).toBe(0); } }
-}, 15000);

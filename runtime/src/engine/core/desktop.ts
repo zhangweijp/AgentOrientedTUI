@@ -1,15 +1,13 @@
 import type { WorkerPool } from '../app/worker-pool.js';
-import type { IDesktop, DesktopID, AppID, ViewID, UpdateSignal, AppState, DesktopStatus, OperationPayload, IAppHostService, ISignalService, ILLMOutputChannelService, IRuntimeContext, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
-import { createDesktopId, createSnapshotId, createOperationId } from '../../spi/index.js';
-import { AOTUIError, failedResult } from '../../spi/core/errors.js';
+import type { IDesktop, DesktopID, AppID, UpdateSignal, AppState, DesktopStatus, ILLMOutputChannelService, IRuntimeContext, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
+import { createDesktopId } from '../../spi/index.js';
+import { AOTUIError } from '../../spi/core/errors.js';
 import { SignalBus, type SignalOutputStream, type SignalListener } from './signal-bus.js';
 import type { LLMOutputListener } from '../../spi/core/llm-output.js';
 import type { AppManagerCloseOperation, AppManagerCloseReport, DesktopCloseOptions, DesktopCloseOperation, DesktopCloseReport } from '../../spi/runtime/close.interface.js';
 import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseOperation, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose, type CloseState } from './close-operation.js';
 import { DesktopLogger, type LogEntry } from './desktop-logger.js';
-import { AppManager, type InstalledApp } from '../app/index.js';
-import { ViewManager } from '../view/index.js';
-import { SignalServiceImpl } from './signal-service.js';
+import { AppManager } from '../app/index.js';
 import { LLMOutputChannelService } from './llm-output-channel.js';
 import { RuntimeConfig, RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 import type { AppInteractionOptions, AppScopeResult } from '../../spi/runtime/app-interaction.interface.js';
@@ -29,21 +27,12 @@ export { InstalledApp } from '../app/index.js';
  */
 export interface DesktopOptions {
     workerPool?: WorkerPool;
-    /** 使用外部 SignalBus (默认创建内部实例) - 向后兼容 */
+    /** 使用外部 SignalBus (默认创建内部实例) */
     signalBus?: SignalBus;
     /** 使用外部 DesktopLogger (默认创建内部实例) */
     logger?: DesktopLogger;
-    /** 使用外部 AppManager (默认创建内部实例) - 向后兼容 */
+    /** 使用外部 AppManager (默认创建内部实例) */
     appManager?: AppManager;
-    /** 使用外部 ViewManager (默认创建内部实例) */
-    viewManager?: ViewManager;
-
-    // [Option B] 新 Service 接口
-    /** [Option B] 使用外部 IAppHostService */
-    appHostService?: IAppHostService;
-    /** [Option B] 使用外部 ISignalService */
-    signalService?: ISignalService;
-
     // [RFC-005] Runtime Config
     runtimeConfig?: RuntimeConfig;
 
@@ -55,7 +44,6 @@ export interface DesktopOptions {
     context?: IRuntimeContext;
 }
 
-// Desktop now explicitly implements IDesktopDOM for type safety
 export class Desktop implements IDesktop {
     public readonly id: DesktopID;
     public readonly createdAt: number;
@@ -88,13 +76,6 @@ export class Desktop implements IDesktop {
     // Use injected AppManager or create internal instance
     private appManager: AppManager;
 
-    // Use injected ViewManager or create internal instance
-    private viewManager: ViewManager;
-
-    // [Option B] New Service interfaces
-    private appHostService: IAppHostService | null = null;
-    private signalService: ISignalService | null = null;
-
     private config: RuntimeConfig;
 
     // [RFC-011] LLM Output Channel Service
@@ -108,18 +89,7 @@ export class Desktop implements IDesktop {
 
         // Desktop is Headless (No Mirror DOM)
 
-        // [Option B] 新 Service 接口注入
-        this.appHostService = options?.appHostService ?? null;
-        this.signalService = options?.signalService ?? null;
-
-        // 向后兼容: 使用 SignalBus 或从 SignalService 获取
-        if (options?.signalBus) {
-            this.signalBus = options.signalBus;
-        } else if (this.signalService && (this.signalService as any).getBus) {
-            this.signalBus = (this.signalService as SignalServiceImpl).getBus();
-        } else {
-            this.signalBus = new SignalBus();
-        }
+        this.signalBus = options?.signalBus ?? new SignalBus();
 
         this.logger = options?.logger || new DesktopLogger({
             maxSystemLogs: this.config.logger.maxSystemLogs,
@@ -127,8 +97,6 @@ export class Desktop implements IDesktop {
         });
 
         this.appManager = options?.appManager || new AppManager(this, { workerPool: options?.workerPool, runtimeConfig: this.config });
-
-        this.viewManager = options?.viewManager || new ViewManager();
 
         // [RFC-011] LLM Output Channel Service
         this.llmOutputChannel = options?.llmOutputChannelService ?? new LLMOutputChannelService();
@@ -215,9 +183,9 @@ export class Desktop implements IDesktop {
         return this.appManager.openApp(appId);
     }
 
-    async closeApp(appId: AppID): Promise<void> {
+    async closeApp(appId: AppID, expectedInstanceId?: string): Promise<void> {
         this.assertActive();
-        return this.appManager.closeApp(appId);
+        return this.appManager.closeApp(appId, expectedInstanceId);
     }
 
     async reinitializeApps(
@@ -236,68 +204,15 @@ export class Desktop implements IDesktop {
         return desktopResult;
     }
 
-    async collapseApp(appId: AppID): Promise<void> {
+    async collapseApp(appId: AppID, expectedInstanceId?: string): Promise<void> {
         this.assertActive();
-        return this.appManager.collapseApp(appId);
+        return this.appManager.collapseApp(appId, expectedInstanceId);
     }
 
-    async showApp(appId: AppID): Promise<void> {
+    async showApp(appId: AppID, expectedInstanceId?: string): Promise<void> {
         this.assertActive();
-        return this.appManager.showApp(appId);
+        return this.appManager.showApp(appId, expectedInstanceId);
     }
-
-    // --- System Commands (View) ---
-    // Delegate to ViewManager
-
-
-
-    async dismountView(appId: AppID, viewId: ViewID): Promise<void> {
-        this.assertActive();
-        // [Worker-Only] Use IPC for Worker Apps
-        const sandbox = this.appManager.getWorkerSandbox(appId);
-        if (sandbox) {
-            await sandbox.dismountView(viewId);
-        } else {
-            await this.viewManager.dismount(appId, viewId);
-        }
-        this.emitSignal('dom_mutation');  // Notify after view state change
-    }
-
-
-    async hideView(appId: AppID, viewId: ViewID): Promise<void> {
-        this.assertActive();
-        await this.viewManager.hide(appId, viewId);
-        this.emitSignal('dom_mutation');  // Notify after view state change
-    }
-
-    async showView(appId: AppID, viewId: ViewID): Promise<void> {
-        this.assertActive();
-        await this.viewManager.show(appId, viewId);
-        this.emitSignal('dom_mutation');  // Notify after view state change
-    }
-
-    /**
-     * [RFC-006] Mount view via ViewLink
-     * 
-     * Called when Agent uses V2 mount API: mount(parent_view, link_id)
-     */
-    async mountViewByLink(appId: AppID, parentViewId: ViewID, linkId: string): Promise<void> {
-        this.assertActive();
-        // [Worker-Only] Use IPC for Worker Apps
-        const sandbox = this.appManager.getWorkerSandbox(appId);
-        if (sandbox) {
-            await sandbox.mountViewByLink(parentViewId, linkId);
-        } else {
-            // Non-worker apps: delegate to ViewManager (fallback)
-            await this.viewManager.mountByLink(appId, parentViewId, linkId);
-        }
-        this.emitSignal('dom_mutation');  // Notify after view state change
-    }
-
-    /**
-     * Get Window object (for ViewManager)
-     */
-
 
     // --- Core Methods ---
 
@@ -324,7 +239,7 @@ export class Desktop implements IDesktop {
             promptRole?: 'user' | 'assistant';
         }
     ): Promise<string> {
-        const experimentalInteractionModes = captureInteractionModes(options);
+        const interactionModes = captureInteractionModes(options);
         this.assertActive();
         // [RFC-026] Merge Runtime Context into AppLaunchConfig
         // Priority: App Specific Config > Runtime Context
@@ -352,7 +267,7 @@ export class Desktop implements IDesktop {
                 config: mergedConfig, // [RFC-026] Injected Config
                 runtimeConfig: this.config, // [RFC-005] Pass Runtime Config
                 promptRole: options?.promptRole,
-                experimentalInteractionModes
+                interactionModes
             }
         );
     }
@@ -372,7 +287,7 @@ export class Desktop implements IDesktop {
         /** [RFC-014] App Role */
         promptRole?: 'user' | 'assistant';
     }): Promise<string> {
-        const experimentalInteractionModes = captureInteractionModes(options);
+        const interactionModes = captureInteractionModes(options);
         this.assertActive();
         return this.appManager.registerPendingApp({
             appId: options.appId as any,
@@ -385,69 +300,9 @@ export class Desktop implements IDesktop {
             config: { ...this.context?.env, ...options.config },
             runtimeConfig: this.config,
             promptRole: options.promptRole,
-            experimentalInteractionModes
+            interactionModes
         });
     }
-
-
-
-    /**
-     * Get Snapshot Fragments from all Apps
-     * 
-     * When Worker-Side Transformation is enabled, Worker executes Transformer directly.
-     * This method aggregates cached Markdown + IndexMap + ViewTree from all workers.
-     * 
-     * [RFC-007] Added viewTree for Application View Tree section
-     * 
-     * @returns Snapshot Fragments from all apps, or empty array
-     */
-    getSnapshotFragments(): {
-        appId: AppID;
-        markup: string;
-        indexMap: Record<string, unknown>;
-        views?: Array<{
-            viewId: ViewID;
-            viewType: string;
-            viewName?: string;
-            markup: string;
-            timestamp: number;
-        }>;
-        viewTree?: string;
-        timestamp?: number;
-    }[] {
-        this.assertActive();
-
-        const fragments: {
-            appId: AppID;
-            markup: string;
-            indexMap: Record<string, unknown>;
-            views?: Array<{
-                viewId: ViewID;
-                viewType: string;
-                viewName?: string;
-                markup: string;
-                timestamp: number;
-            }>;
-            viewTree?: string;
-            timestamp?: number;
-        }[] = [];
-        for (const [appId, worker] of this.appManager.getAllWorkers()) {
-            const fragment = worker.getSnapshotFragment();
-            if (fragment) {
-                fragments.push({
-                    appId,
-                    markup: fragment.markup,
-                    indexMap: fragment.indexMap,
-                    views: fragment.views,
-                    viewTree: fragment.viewTree,  // [RFC-007]
-                    timestamp: fragment.timestamp,
-                });
-            }
-        }
-
-        return fragments;
-    }
-
     /**
      * 获取 App 信息
      * @param appId - App ID
@@ -496,17 +351,17 @@ export class Desktop implements IDesktop {
     /**
      * 获取已安装应用列表
      */
-    getInstalledApps(): InstalledApp[] {
+    getInstalledApps(): ReturnType<AppManager['getInstalledApps']> {
         return this.appManager.getInstalledApps();
     }
 
-    experimentalCreateAppScope(appId: string, policy: ScopePolicy): AppScopeResult {
+    createAppScope(appId: string, policy: ScopePolicy): AppScopeResult {
         const manager = this.appManager;
         const unavailable = (): AppScopeResult => Object.freeze({ status: 'rejected', issue: Object.freeze({ code: 'SCOPE_UNAVAILABLE', message: 'App scope is unavailable' }) });
         const current = () => !this._isDraining && !this._disposed && this._status === 'active' && this.appManager === manager;
         if (!current()) return unavailable();
-        const create = manager.experimentalCreateAppScope;
-        if (typeof create !== 'function' || !current()) return unavailable();
+        const create = manager.createAppScope;
+        if (!current()) return unavailable();
         const result = create.call(manager, appId, policy);
         if (!current()) { if (result.status === 'opened') result.client.close();return unavailable(); }
         return result;
@@ -567,25 +422,10 @@ export class Desktop implements IDesktop {
         this.drainPromise = completed.then(() => { if (this.closeState.hasFailures || this.drainReport()?.hasFailures) throw closeError('DESKTOP_CLOSE_FAILED', this.report()); });
         void this.drainPromise.catch(() => {});
         const tasks: Promise<unknown>[] = [];
-        if (typeof this.appManager.beginClose === 'function') {
-            try {
-                this.appClose = this.appManager.beginClose(intent);
-                tasks.push(this.appClose.completion.then(report => { this.appReport = report;this.appClose = undefined; }));
-            } catch { addCloseFailure(this.closeState, 'apps', ['APP_CLOSE_FAILED'], { desktopId: this.id });this.closeState.resourcesReleased = false; }
-        } else {
-            const legacy = newCloseState('app-manager', intent);legacy.verification = 'unverified';legacy.unverifiedParticipants = 1;legacy.resourcesReleased = false;legacy.interactions!.verified = false;
-            this.appReport = freezeClose({ ...snapshotClose(legacy), scope: 'app-manager' as const });
-            tasks.push((async () => {
-                try { if (intent === 'delete' && typeof this.appManager.deleteAll === 'function') await this.appManager.deleteAll();else await this.appManager.closeAll(); }
-                catch { addCloseFailure(legacy, 'legacy', ['LEGACY_CLOSE_FAILED'], { desktopId: this.id }); }
-                legacy.state = 'settled';this.appReport = freezeClose({ ...snapshotClose(legacy), scope: 'app-manager' as const });
-            })());
-        }
-        if (this.appHostService) {
-            this.closeState.verification = 'mixed';this.closeState.unverifiedParticipants++;this.closeState.resourcesReleased = false;this.closeState.interactions!.verified = false;
-            tasks.push((async () => { try { await this.appHostService!.closeAll(this.id); }
-                catch { addCloseFailure(this.closeState, 'legacy', ['LEGACY_CLOSE_FAILED'], { desktopId: this.id }); } })());
-        }
+        try {
+            this.appClose = this.appManager.beginClose(intent);
+            tasks.push(this.appClose.completion.then(report => { this.appReport = report;this.appClose = undefined; }));
+        } catch { addCloseFailure(this.closeState, 'apps', ['APP_CLOSE_FAILED'], { desktopId: this.id });this.closeState.resourcesReleased = false; }
         void Promise.allSettled(tasks).then(results => {
             if (results.some(result => result.status === 'rejected')) { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'apps', ['APP_CLOSE_FAILED'], { desktopId: this.id }); }
             finish();
@@ -636,7 +476,7 @@ export class Desktop implements IDesktop {
                 if (this.closeState.beforeClose === 'failed') addCloseFailure(this.closeState, 'before-close', ['BEFORE_CLOSE_FAILED'], { desktopId: this.id });
                 else if (this.closeState.beforeClose !== 'done') addCloseFailure(this.closeState, 'before-close', ['BEFORE_CLOSE_SKIPPED'], { desktopId: this.id });
             }
-            const cleanup = async (key: 'signalBus' | 'signalService' | 'llmOutput' | 'logger', action: () => unknown, stage: 'signals' | 'llm-output' | 'logger') => {
+            const cleanup = async (key: 'signalBus' | 'llmOutput' | 'logger', action: () => unknown, stage: 'signals' | 'llm-output' | 'logger') => {
                 this.closeState.cleanup[key] = 'pending';
                 try { await action();this.closeState.cleanup[key] = 'done'; }
                 catch { this.closeState.cleanup[key] = 'failed';this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, stage, ['DESKTOP_CLEANUP_FAILED'], { desktopId: this.id }); }
@@ -657,15 +497,10 @@ export class Desktop implements IDesktop {
                 }, 'llm-output'),
                 cleanup('logger', () => this.logger.cleanup(this.id), 'logger'),
                 (async () => {
-                    try { if (typeof this.appManager.cleanupAsync === 'function') await this.appManager.cleanupAsync();else if (typeof this.appManager.cleanup === 'function') await this.appManager.cleanup(); }
+                    try { await this.appManager.cleanupAsync(); }
                     catch { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'apps', ['APP_CLOSE_FAILED'], { desktopId: this.id }); }
                 })()
             ];
-            if (this.signalService) {
-                let sameBus = false;
-                try { sameBus = typeof (this.signalService as SignalServiceImpl).getBus === 'function' && (this.signalService as SignalServiceImpl).getBus() === this.signalBus; } catch { /* Separate cleanup still has to be attempted. */ }
-                if (!sameBus) cleanups.push(cleanup('signalService', () => this.signalService!.cleanup(this.id), 'signals'));
-            }
             await Promise.allSettled(cleanups);this._disposed = true;this.closeState.state = 'settled';clearEligibility();complete(this.report());
         })();
         return this.closeOperation;
@@ -678,34 +513,6 @@ export class Desktop implements IDesktop {
     dispose(): Promise<void> { return this.closePromise ??= closeVoid(this.beginClose().completion, 'DESKTOP_CLOSE_FAILED'); }
 
     // --- Internals ---
-
-    /**
-     * Dispatch Operation to App Container
-     * 
-     * Desktop is responsible for converting Operation Payload to DOM Events (or IPC messages)
-     * and sending them to the App.
-     * 
-     * [Worker-Only] For WorkerSandbox, use IPC instead of CustomEvent
-     * [P0-1 FIX] Now returns the actual OperationResult from the Worker
-     */
-    async dispatchOperation(appId: AppID, payload: OperationPayload): Promise<import('../../spi/index.js').OperationResult> {
-        this.assertActive();
-        const sandbox = this.appManager.getWorkerSandbox(appId);
-        if (!sandbox) {
-            return failedResult('APP_NOT_FOUND', { appId, desktopId: this.id });
-        }
-
-        // WorkerSandbox Mode: Dispatch operation via IPC
-        // [P0-1 FIX] Return the actual result from executeOperation
-        return await sandbox.executeOperation(
-            createOperationId(payload.operation),
-            payload.args || {},
-            createSnapshotId(payload.context.snapshotId || ''),
-            payload.context.viewId
-        );
-    }
-
-
 
     // Delegate to SignalBus
     public emitSignal(reason: UpdateSignal['reason']) {

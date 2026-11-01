@@ -9,27 +9,12 @@
  *
  * @module @aotui/runtime/spi/app
  */
-import type { IViewFactory } from './view-factory.interface.js';
-import type { OperationResult } from '../core/operations.js';
 import type { AppLaunchConfig } from './app-config.interface.js';
 import type { AppContext } from './store.interface.js';
-import type { AppID, DesktopID } from '../core/types.js';
 
 export interface AppReinitializeContext extends AppContext {
     reason?: string;
 }
-
-/**
- * App-level Operation Handler
- *
- * 处理 App 级别（非 View 级别）的操作。
- * 当操作没有指定 viewId 时，路由到此处理器。
- */
-export type AppOperationHandler = (
-    operation: string,
-    args: Record<string, unknown>,
-    context: { appId: AppID; desktopId: DesktopID }
-) => Promise<OperationResult>;
 
 /**
  * [RFC-012] App 信号策略
@@ -48,16 +33,7 @@ export type SignalPolicy = 'auto' | 'manual' | 'never';
  * 由 SDK 生成的配置对象，传递给 AppKernel。
  *
  * @example
- * ```typescript
- * // SDK 端
- * const config: AppKernelConfig = {
- *     name: 'System Chat',
- *     root: ChatView,  // IViewFactory
- * };
- *
- * // Runtime 端 (AppKernel)
- * const kernel = new AppKernel(config);
- * ```
+ * SDK 生成的组件配置由 Runtime AppKernel 消费。
  */
 export interface AppKernelConfig {
     /**
@@ -66,9 +42,9 @@ export interface AppKernelConfig {
      * 约束: 仅允许 [a-zA-Z0-9_]
      * 示例: system_ide, planning_app, terminal_app
      *
-     * 若未提供，Runtime 会从 `name` 派生一个兼容值（向后兼容）。
+     * 必须与 SDK 的 `app_name` 一致；缺少该值的工厂无效。
      */
-    appName?: string;
+    appName: string;
 
     /**
      * App 名称
@@ -94,15 +70,6 @@ export interface AppKernelConfig {
     whenToUse?: string;
 
     /**
-     * @deprecated Legacy root-view mode is no longer supported by the current runtime.
-     *
-     * This field remains only for source compatibility while downstream code
-     * migrates to component mode. `AppKernel` requires `component` and will
-     * reject configs that only provide `root`.
-     */
-    root?: IViewFactory;
-
-    /**
      * [RFC-027] 根React组件 (新模式)
      * 
      * Current and only supported app authoring mode.
@@ -110,12 +77,6 @@ export interface AppKernelConfig {
      * discovers them from component rendering.
      */
     component?: any; // ComponentType, 使用any避免引入preact依赖
-
-    /**
-     * 可选：App 级操作处理器
-     * 处理未指定 viewId 的操作
-     */
-    onOperation?: AppOperationHandler;
 
     /**
      * 运行时启动配置

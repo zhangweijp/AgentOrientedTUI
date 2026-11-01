@@ -8,13 +8,13 @@
  * @module @aotui/runtime/spi/worker-protocol
  */
 
-import type { AppID, DesktopID, ViewID, OperationID, SnapshotID, DataPayload, IndexMap } from '../core/index.js';
+import type { AppID, DesktopID, ViewID, DataPayload } from '../core/index.js';
 
 // ============================================================================
 // Re-export core types for convenience
 // ============================================================================
 
-export type { AppID, DesktopID, ViewID, OperationID, SnapshotID, DataPayload, IndexMap };
+export type { AppID, DesktopID, ViewID, DataPayload };
 
 // ============================================================================
 // Re-export from existing worker-message.interface (Single Source of Truth)

@@ -26,28 +26,13 @@ importers:
       '@types/json-schema':
         specifier: ^7.0.15
         version: 7.0.15
-      ai:
-        specifier: ^6.0.77
-        version: 6.0.105(zod@4.3.6)
-      happy-dom:
-        specifier: ^20.8.9
-        version: 20.8.9
       linkedom:
         specifier: ^0.18.12
         version: 0.18.12
       preact:
         specifier: ^10.29.1
         version: 10.29.1
-      preact-render-to-string:
-        specifier: ^6.6.4
-        version: 6.6.6(preact@10.29.1)
-      zod:
-        specifier: ^4.3.6
-        version: 4.3.6
     devDependencies:
-      '@preact/signals':
-        specifier: ^2.5.1
-        version: 2.8.1(preact@10.29.1)
       '@types/node':
         specifier: ^24.10.2
         version: 24.11.0
@@ -495,14 +480,6 @@ packages:
   '@pkgr/core@0.2.9':
     resolution: {integrity: sha512-QNqXyfVS2wm9hweSYD2O7F0G06uurj9kZ96TRQE5Y9hU7+tgdZwIkbAKc5Ocy1HxEY2kuDQa6cQ1WRs/O5LFKA==}
     engines: {node: ^12.20.0 || ^14.18.0 || >=16.0.0}
-
-  '@preact/signals-core@1.13.0':
-    resolution: {integrity: sha512-slT6XeTCAbdql61GVLlGU4x7XHI7kCZV5Um5uhE4zLX4ApgiiXc0UYFvVOKq06xcovzp7p+61l68oPi563ARKg==}
-
-  '@preact/signals@2.8.1':
-    resolution: {integrity: sha512-wX6U0SpcCukZTJBs5ChljvBZb3XmYzA5gd4vKHgX8wZZKaQCo2WHtmThdLx+mcVvlBa5u3XShC7ffbETJD4BiQ==}
-    peerDependencies:
-      preact: ^10.29.1
 
   '@rollup/rollup-android-arm-eabi@4.60.1':
     resolution: {integrity: sha512-d6FinEBLdIiK+1uACUttJKfgZREXrF0Qc2SmLII7W2AD8FfiZ9Wjd+rD/iRuf5s5dWrr1GgwXCvPqOuDquOowA==}
@@ -1624,11 +1601,6 @@ packages:
     resolution: {integrity: sha512-3Ybi1tAuwAP9s0r1UQ2J4n5Y0G05bJkpUIO0/bI9MhwmD70S5aTWbXGBwxHrelT+XM1k6dM0pk+SwNkpTRN7Pg==}
     engines: {node: ^10 || ^12 || >=14}
 
-  preact-render-to-string@6.6.6:
-    resolution: {integrity: sha512-EfqZJytnjJldV+YaaqhthU2oXsEf5e+6rDv957p+zxAvNfFLQOPfvBOTncscQ+akzu6Wrl7s3Pa0LjUQmWJsGQ==}
-    peerDependencies:
-      preact: ^10.29.1
-
   preact@10.29.1:
     resolution: {integrity: sha512-gQCLc/vWroE8lIpleXtdJhTFDogTdZG9AjMUpVkDf2iTCNwYNWA+u16dL41TqUDJO4gm2IgrcMv3uTpjd4Pwmg==}
 
@@ -2403,13 +2375,6 @@ snapshots:
     optional: true
 
   '@pkgr/core@0.2.9': {}
-
-  '@preact/signals-core@1.13.0': {}
-
-  '@preact/signals@2.8.1(preact@10.29.1)':
-    dependencies:
-      '@preact/signals-core': 1.13.0
-      preact: 10.29.1
 
   '@rollup/rollup-android-arm-eabi@4.60.1':
     optional: true
@@ -3578,10 +3543,6 @@ snapshots:
       nanoid: 3.3.11
       picocolors: 1.1.1
       source-map-js: 1.2.1
-
-  preact-render-to-string@6.6.6(preact@10.29.1):
-    dependencies:
-      preact: 10.29.1
 
   preact@10.29.1: {}
 

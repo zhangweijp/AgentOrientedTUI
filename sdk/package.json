@@ -22,8 +22,7 @@
         "preact": "^10.0.0"
     },
     "dependencies": {
-        "@aotui/runtime": "^2.0.0",
-        "linkedom": "^0.18.9"
+        "@aotui/runtime": "^2.0.0"
     },
     "devDependencies": {
         "@testing-library/preact": "^3.2.4",

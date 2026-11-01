@@ -20,6 +20,8 @@
 
 import { AppRegistry } from './engine/app/index.js';
 import { createRuntime } from './facades/index.js';
+import type { AppID } from './spi/core/types.js';
+import type { ScopeClient } from './core/invocation/scoped-interaction-types.js';
 import * as readline from 'readline';
 import fs from 'fs';
 import { installNpmPackage } from './cli/npm-installer.js';
@@ -313,7 +315,7 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
     console.log('[TUI] Starting Runtime...');
     const runtime = createRuntime();
     const desktopId = await runtime.createDesktop();
-    const desktop = (runtime as any).desktopManager.get(desktopId);
+    const desktop = runtime.getDesktop(desktopId);
 
     console.log(`[TUI] Desktop created: ${desktopId}`);
 
@@ -325,25 +327,62 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
     });
 
     let isInteractive = false;
+    const clients = new Map<string, ScopeClient>();
 
-    // Auto-print snapshots on update
-    if ((desktop as any).signalBus) {
-        (desktop as any).signalBus.subscribe(desktopId, (signal: any) => {
-            // Filter relevant signals
-            if (signal.reason === 'dom_mutation' || signal.reason === 'manual_refresh' || signal.reason === 'app_opened') {
-                 console.log('\n[TUI] UI Updated:');
-                 const fragments = desktop.getSnapshotFragments();
-                 fragments.forEach((f: any) => {
-                     console.log(`--- App ${f.appId} ---`);
-                     console.log(f.markup);
-                 });
-                 // Only prompt if in interactive loop
-                 if (isInteractive) {
-                     rl.prompt(true);
-                 }
-            }
+    function openScope(appId: string): void {
+        const opened = runtime.createAppScope(desktopId, appId, {
+            project({ source, selection }) {
+                const selected = source.views.filter(view => selection.viewIds.includes(view.id));
+                return {
+                    views: selected.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
+                    refs: Object.values(source.refs).filter(ref => selection.viewIds.includes(ref.ownerViewId))
+                        .map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
+                    targets: Object.values(source.tools).flatMap(tool => tool.targets
+                        .filter(target => selection.viewIds.includes(target.viewId)).map(target => ({ toolId: tool.id, target }))),
+                    content: selected.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' as const })),
+                };
+            },
+            authorize: () => true,
+            canReadReceipt: () => true,
         });
+        if (opened.status !== 'opened') throw new Error(`Could not open Semantic scope for ${appId}: ${opened.issue.code}`);
+        clients.set(appId, opened.client);
     }
+
+    async function printCurrentViews(): Promise<void> {
+        for (const [appId, client] of clients) {
+            const result = await client.observe({ all: true });
+            if (result.status !== 'observed') {
+                console.error(`[TUI] Could not observe ${appId}: ${result.issue.code}`);
+                continue;
+            }
+            console.log(`--- App ${appId} ---`);
+            for (const view of result.observation.views) {
+                console.log(`<view id="${view.id}" type="${view.type}">`);
+                console.log(view.content?.value ?? '');
+                console.log('</view>');
+            }
+        }
+    }
+
+    let stopping: Promise<void> | undefined;
+    function stop(): Promise<void> {
+        if (!stopping) {
+            for (const client of clients.values()) client.close();
+            clients.clear();
+            stopping = runtime.beginShutdown('CLI stopped').completion.then(report => {
+                if (!report.ok || !report.resourcesReleased) process.exitCode = 1;
+            });
+            rl.close();
+        }
+        return stopping;
+    }
+    rl.on('close', () => { void stop().catch(error => { process.exitCode = 1;console.error('[TUI] Shutdown failed:', error); }); });
+
+    desktop.output.subscribe(() => {
+        if (!isInteractive) return;
+        void printCurrentViews().then(() => rl.prompt(true)).catch(error => console.error('[TUI] Observation failed:', error));
+    });
 
     // Install apps from registry
     const config = registry.getConfig();
@@ -388,7 +427,7 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
         console.log(`[TUI] Installing ${name} from ${realPath}...`);
         
         try {
-            const appId = await desktop.installDynamicWorkerApp(realPath, {
+            const appId = await runtime.installDynamicWorkerApp(desktopId, realPath, {
                 name: name,
                 config: {} // TODO: support config injection
             });
@@ -396,7 +435,8 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
             console.log(`[TUI] Started ${name} (AppID: ${appId})`);
             
             // Auto open
-            await desktop.appManager.openApp(appId);
+            await desktop.openApp(appId as AppID);
+            openScope(appId);
         } catch (e: any) {
             console.error(`[TUI] Failed to start ${name}: ${e.message}`);
         }
@@ -404,7 +444,8 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
 
     if (runningAppIds.length === 0) {
         console.log('[TUI] No apps started.');
-        process.exit(0);
+        await stop();
+        return;
     }
 
     console.log('[TUI] Runtime ready. Type JSON event to send, or "exit" to quit.');
@@ -416,8 +457,8 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
     rl.on('line', async (line: string) => {
         const input = line.trim();
         if (input === 'exit') {
-            rl.close();
-            process.exit(0);
+            await stop();
+            return;
         }
 
         if (input.startsWith('{')) {
@@ -426,7 +467,7 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
                 if (event.type === 'EXTERNAL_EVENT') {
                     // Send to all running apps
                     for (const appId of runningAppIds) {
-                        const workerSandbox = (desktop.appManager as any).workers.get(appId);
+                        const workerSandbox = ((desktop as any).appManager as any).workers.get(appId);
                         if (workerSandbox && workerSandbox.workerHost) {
                              workerSandbox.workerHost.worker.postMessage({
                                 type: 'EXTERNAL_EVENT',
@@ -447,11 +488,7 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
         } else {
              // Render Snapshot check
              if (input === 'snapshot') {
-                 const fragments = desktop.getSnapshotFragments();
-                 fragments.forEach((f: any) => {
-                     console.log(`--- App ${f.appId} ---`);
-                     console.log(f.markup);
-                 });
+                 await printCurrentViews();
              }
         }
         rl.prompt();

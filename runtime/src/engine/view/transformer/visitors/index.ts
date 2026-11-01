@@ -8,9 +8,6 @@
 import type { IElementVisitor } from './interface.js';
 import { applicationVisitor } from './application.visitor.js';
 import { viewVisitor } from './view.visitor.js';
-import { viewLinkVisitor } from './view-link.visitor.js';
-
-import { operationVisitor } from './operation.visitor.js';
 import { htmlVisitor } from './html.visitor.js';
 
 // Default visitors sorted by priority
@@ -18,8 +15,6 @@ import { htmlVisitor } from './html.visitor.js';
 export const DEFAULT_VISITORS: IElementVisitor[] = sortVisitors([
     applicationVisitor,
     viewVisitor,
-    viewLinkVisitor,
-    operationVisitor,
     htmlVisitor
 ]);
 

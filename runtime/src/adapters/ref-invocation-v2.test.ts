@@ -17,9 +17,10 @@ describe('R03/R04 Ref V2 exact codec and pure correspondence projection', () => 
         expect(canonicalJson(input as any)).toBe(before);expect(message.tool.inputSchema).toEqual(input.tool.inputSchema);
         expect(message.tool.inputSchema).toHaveProperty('x-aotui-parameter-contract', 'snapshot-value-params-v1');
     });
-    it.each(['mode', 'type', 'extra', 'getter', 'oversize'])('rejects malformed request %s before projection', kind => {
+    it.each(['mode', 'type', 'tool', 'target', 'extra', 'getter', 'oversize'])('rejects malformed request %s before projection', kind => {
         let reads = 0;const m: any = fixture();
         if (kind === 'mode') m.argumentMode = 'snapshot-value-v1';if (kind === 'type') m.type = 'VIEW_TOOL_INVOKE_REF_V1';
+        if (kind === 'tool') m.tool.unexpected = true;if (kind === 'target') m.target = { ...m.target, bindingVersion: 0 };
         if (kind === 'extra') m.extra = true;if (kind === 'oversize') m.tool.description = 'x'.repeat(600000);
         if (kind === 'getter') Object.defineProperty(m, 'rawArgs', { enumerable: true, get() { reads++;return {}; } });
         expect(() => captureRefV2Request(m)).toThrow();expect(reads).toBe(0);
@@ -47,5 +48,13 @@ describe('R03/R04 Ref V2 exact codec and pure correspondence projection', () => 
         expect(validateRefV2Arguments(captureRefV2Request(raw)).error?.code).toBe('OPERATION_INVALID_ARGS');
         const envelope: any = fixture();envelope.snapshotId = envelope.refSources[0].snapshotId = 's'.repeat(9000);envelope.effectiveArgs.file = { value: 'a'.repeat(122000) };
         expect(validateRefV2Arguments(captureRefV2Request(envelope)).error?.code).toBe('REF_ARGUMENT_BUDGET_EXCEEDED');
+    });
+    it('rejects malformed source metadata and key correspondence without needing a V1 projection', () => {
+        const extra: any = fixture();extra.refSources[0].untrusted = true;
+        expect(validateRefV2Arguments(captureRefV2Request(extra)).error?.code).toBe('OPERATION_INVALID_ARGS');
+        const missing: any = fixture();delete missing.refSources[0].viewInstanceId;
+        expect(validateRefV2Arguments(captureRefV2Request(missing)).error?.code).toBe('OPERATION_INVALID_ARGS');
+        const key: any = fixture();key.effectiveArgs.other = true;
+        expect(validateRefV2Arguments(captureRefV2Request(key)).error?.code).toBe('OPERATION_INVALID_ARGS');
     });
 });

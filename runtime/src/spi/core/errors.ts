@@ -24,7 +24,6 @@ export const ERROR_CODES = {
     // ─────────────────────────────────────────────────────────────
     DESKTOP_NOT_FOUND: 'DESKTOP_NOT_FOUND',
     DESKTOP_DISPOSED: 'DESKTOP_DISPOSED',
-    DESKTOP_LOCKED: 'DESKTOP_LOCKED',
 
     // ─────────────────────────────────────────────────────────────
     //  App Domain
@@ -37,27 +36,13 @@ export const ERROR_CODES = {
     // ─────────────────────────────────────────────────────────────
     //  View Domain
     // ─────────────────────────────────────────────────────────────
-    VIEW_NOT_FOUND: 'VIEW_NOT_FOUND',
     VIEW_DUPLICATE: 'VIEW_DUPLICATE',
-    VIEW_PARENT_NOT_FOUND: 'VIEW_PARENT_NOT_FOUND',
-    VIEW_ROOT_EXISTS: 'VIEW_ROOT_EXISTS',
-    VIEW_MOUNTABLE_NOT_FOUND: 'VIEW_MOUNTABLE_NOT_FOUND',
-    VIEW_INVALID_FACTORY: 'VIEW_INVALID_FACTORY',
-
-    // ─────────────────────────────────────────────────────────────
-    //  ViewLink Domain (RFC-006)
-    // ─────────────────────────────────────────────────────────────
-    LINK_DUPLICATE: 'LINK_DUPLICATE',
-    LINK_NOT_FOUND: 'LINK_NOT_FOUND',
 
     // ─────────────────────────────────────────────────────────────
     //  Operation Domain
     // ─────────────────────────────────────────────────────────────
-    OPERATION_NOT_FOUND: 'OPERATION_NOT_FOUND',
     OPERATION_INVALID_ARGS: 'OPERATION_INVALID_ARGS',
-    OPERATION_NO_HANDLER: 'OPERATION_NO_HANDLER',
     OPERATION_DUPLICATE: 'OPERATION_DUPLICATE',
-    OPERATION_REQUIRES_CONTEXT: 'OPERATION_REQUIRES_CONTEXT',
 
     // ─────────────────────────────────────────────────────────────
     //  Worker Domain
@@ -112,32 +97,19 @@ const ERROR_MESSAGES: Record<ErrorCode, MessageFormatter> = {
     // Desktop
     DESKTOP_NOT_FOUND: (c) => `Desktop '${c.desktopId ?? 'unknown'}' not found`,
     DESKTOP_DISPOSED: (c) => `Desktop '${c.desktopId ?? 'unknown'}' has been disposed`,
-    DESKTOP_LOCKED: (c) => `Desktop '${c.desktopId ?? 'unknown'}' is locked by '${c.ownerId ?? 'unknown'}'`,
 
     // App
     APP_NOT_FOUND: (c) => `App '${c.appId ?? 'unknown'}' not found${c.desktopId ? ` in Desktop '${c.desktopId}'` : ''}`,
     APP_LOAD_FAILED: (c) => `Failed to load app '${c.appId ?? c.modulePath ?? 'unknown'}': ${c.reason ?? 'unknown error'}`,
     APP_INVALID_MANIFEST: (c) => `Invalid manifest for app module '${c.modulePath ?? 'unknown'}'`,
-    APP_INVALID_EXPORT: (c) => `App module '${c.modulePath ?? 'unknown'}' has invalid export: expected default or app`,
+    APP_INVALID_EXPORT: (c) => `App module '${c.modulePath ?? 'unknown'}' must default-export a managed TUIAppFactory component factory`,
 
     // View
-    VIEW_NOT_FOUND: (c) => `View '${c.viewId ?? 'unknown'}' not found`,
     VIEW_DUPLICATE: (c) => `View '${c.viewId ?? 'unknown'}' already exists`,
-    VIEW_PARENT_NOT_FOUND: (c) => `Parent view '${c.parentId ?? 'unknown'}' not found`,
-    VIEW_ROOT_EXISTS: () => `Root view already exists. Remove it first.`,
-    VIEW_MOUNTABLE_NOT_FOUND: (c) => `Mountable view '${c.viewId ?? 'unknown'}' not registered`,
-    VIEW_INVALID_FACTORY: (c) => `Invalid factory for view '${c.viewId ?? 'unknown'}'. Expected function or Factory object`,
-
-    // ViewLink (RFC-006)
-    LINK_DUPLICATE: (c) => `Duplicate LinkID '${c.linkId ?? 'unknown'}' in parent view '${c.parentId ?? 'unknown'}'`,
-    LINK_NOT_FOUND: (c) => `Link '${c.linkId ?? 'unknown'}' not found in parent view '${c.parentId ?? 'unknown'}'`,
 
     // Operation
-    OPERATION_NOT_FOUND: (c) => `Operation '${c.operationName ?? 'unknown'}' not found`,
     OPERATION_INVALID_ARGS: (c) => `Invalid arguments for operation '${c.operationName ?? 'unknown'}': ${c.reason ?? 'validation failed'}`,
-    OPERATION_NO_HANDLER: (c) => `No handler registered for operation '${c.operationName ?? 'unknown'}'`,
     OPERATION_DUPLICATE: (c) => `Operation '${c.operationName ?? 'unknown'}' is already registered`,
-    OPERATION_REQUIRES_CONTEXT: (c) => `Operation '${c.operationName ?? 'unknown'}' requires an App context`,
 
     // Worker
     WORKER_TIMEOUT: (c) => `Worker request timed out after ${c.timeoutMs ?? 30000}ms`,

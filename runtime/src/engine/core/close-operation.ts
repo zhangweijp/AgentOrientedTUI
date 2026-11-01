@@ -76,13 +76,13 @@ export function newCloseState(scope: CloseReport['scope'], intent: CloseReport['
     const counts = () => ({ accepted: 0, settled: 0, pending: 0, notVerifiedReleased: 0 });
     return { scope, state: 'closing', intent, ok: false, hasFailures: false, resourcesReleased: true, verification: 'managed',
         apps: counts(), desktops: counts(), pendingOperations: 0, unverifiedParticipants: 0,
-        appCleanup: { managedApps: 0, legacyUnverifiedApps: 0, completedApps: 0, failedApps: 0 },
-        persistence: { managedApps: 0, legacyUnverifiedApps: 0, unnegotiatedApps: 0, notUsedApps: 0, closeReceipts: 0,
+        appCleanup: { managedApps: 0, completedApps: 0, failedApps: 0 },
+        persistence: { managedApps: 0, unnegotiatedApps: 0, notUsedApps: 0, closeReceipts: 0,
             missingCloseReceipts: 0, confirmedFlushes: 0, failedFlushes: 0, absentFlushes: 0, unknownApps: 0, unsavedKeys: 0 },
-        resources: { activeFileReplacements: 0, retainedStorageOwners: 0, storageActualIO: 0, openingStorageOwners: 0 },
+        resources: { retainedStorageOwners: 0, storageActualIO: 0, openingStorageOwners: 0 },
         interactions: { verified: true, retainedScopes: 0, retainedBytes: 0 },
         pool: { ownership: 'not-owned', report: null }, beforeClose: 'not-provided',
-        cleanup: { signalBus: 'not-owned', signalService: 'not-owned', llmOutput: 'not-owned', logger: 'not-owned', registry: 'not-owned', locks: 'not-owned' },
+        cleanup: { signalBus: 'not-owned', llmOutput: 'not-owned', logger: 'not-owned' },
         failures: [], failureCount: 0, samplesTruncated: false };
 }
 export function addCloseFailure(state: CloseState, stage: Stage, codes: readonly Code[], ids: { desktopId?: string; appId?: string } = {}): void {
@@ -154,7 +154,7 @@ export function sandboxCloseReport(report: SandboxCloseReport, desktopId: string
             state.appCleanup!.failedApps = appCleanup.report?.state === 'failed' ? 1 : 0;
             if (state.appCleanup!.failedApps || report.state === 'settled' && !state.appCleanup!.completedApps)
                 addCloseFailure(state, 'apps', ['APP_CLOSE_FAILED'], ids);
-        } else state.appCleanup!.legacyUnverifiedApps = 1;
+        }
         if (storage!.support === 'managed') {
             state.persistence.managedApps = 1;
             if (lifecycle) {
@@ -165,10 +165,8 @@ export function sandboxCloseReport(report: SandboxCloseReport, desktopId: string
             } else state.persistence.missingCloseReceipts = 1;
         } else {
             state.verification = 'mixed';
-            if (storage!.support === 'legacy-unverified') state.persistence.legacyUnverifiedApps = 1;
-            else state.persistence.unnegotiatedApps = 1;
+            state.persistence.unnegotiatedApps = 1;
         }
-        state.resources.activeFileReplacements = host.activeFileReplacements;
         state.resources.retainedStorageOwners = storage!.ownerRetained ? 1 : 0;
         state.resources.storageActualIO = storage!.actualIO;
         state.resources.openingStorageOwners = storage!.opening ? 1 : 0;

@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createSnapshotCore, refKey, validatePreparedDraft } from './index.js';
+import { createSnapshotCore, refKey, validatePreparedV2Draft } from './index.js';
 import { canonicalJson, utf8Size } from './json.js';
 import type { JsonValue, SnapshotStoreOptions } from './types.js';
 
 function draft(appId = 'a', instanceId = 'i', seq = 1, value = 'old') {
-    return { schemaVersion: 1 as const, appId, instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 0,
-        views: [{ id: 'v', generation: 'g', type: 'Detail', name: value, kind: 'state' as const,
+    return { schemaVersion: 2 as const, appId, instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 0,
+        views: [{ id: 'v', viewInstanceId: 'g', type: 'Detail', name: value, kind: 'state' as const,
             content: { format: 'markdown-v1' as const, value } }],
-        refs: { [refKey('v', 'g', 'r')]: { id: 'r', ownerViewId: 'v', ownerViewGeneration: 'g', refType: 'Value',
+        refs: { [refKey('v', 'g', 'r')]: { id: 'r', ownerViewId: 'v', ownerViewInstanceId: 'g', refType: 'Value',
             target: { kind: 'snapshot-value' as const, payload: { value } } } }, tools: {} };
 }
 const size = (d: ReturnType<typeof draft>) => utf8Size(canonicalJson(d as unknown as JsonValue));
@@ -84,7 +84,7 @@ describe('W09-A Snapshot finite retention', () => {
         expect(c.store.readLatest('a')).toMatchObject({ status: 'degraded', lastGood: old });
         expect(c.store.inspect().currentBytes).toBe(cap);
         expect(c.committer.accept(draft('a', 'i', 1000, 'new'))).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_SEQUENCE_STALE' } });
-        expect(c.store.resolveRef({ snapshotId: old.id, appId: 'a', instanceId: 'i', viewId: 'v', viewGeneration: 'g', refId: 'r' }))
+        expect(c.store.resolveRef({ snapshotId: old.id, appId: 'a', instanceId: 'i', viewId: 'v', viewInstanceId: 'g', refId: 'r' }))
             .toMatchObject({ status: 'resolved', target: { payload: { value: 'old' } } });
         c.lifecycle.stopApp('b', 'j'); const next = published(c, draft('a', 'i', 1001, 'new'));
         expect(next.revision).toBe(2); expect(c.store.inspect().currentBytes).toBe(size(draft('a', 'i', 1001, 'new')));
@@ -136,7 +136,7 @@ describe('W09-A Snapshot finite retention', () => {
         expect(utf8Size(r.issue.path ?? '')).toBeLessThanOrEqual(512); expect(utf8Size(r.issue.message)).toBeLessThanOrEqual(512);
         expect(c.store.inspect().diagnosticBytes).toBeGreaterThan(0);
         expect(c.committer.accept(draft('a', 'i', 3)).status).toBe('unchanged'); expect(c.store.inspect().diagnosticBytes).toBe(0);
-        expect(validatePreparedDraft(draft()).ok).toBe(true);
+        expect(validatePreparedV2Draft(draft()).ok).toBe(true);
     });
     it.each([false, true])('A08/A09 permanent disposal works with failing clock=%s without reading hostile input', broken => {
         let badClock = false, reads = 0;

@@ -15,13 +15,7 @@ declare module "preact" {
       list?: string;
       "item-type"?: string;
 
-      // AOTUI Operation attribute
-      operation?: string;
-
-      // AOTUI ViewLink attribute
-      "view-target"?: string;
-
-      // AOTUI Description attribute (for Operation and ViewLink)
+      // AOTUI Tool description attribute
       desc?: string;
 
       // AOTUI Data attribute (already standard, but ensure it's here)

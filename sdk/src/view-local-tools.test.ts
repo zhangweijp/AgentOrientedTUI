@@ -38,10 +38,31 @@ afterEach(async () => { for (const close of cleanups.splice(0)) await close(); }
 const params = () => ({ value: { type: 'number' as const, required: true as const } });
 
 describe('ordinary View-local tools without entity preconditions', () => {
+  it('captures stable business targets and rebinds only when the target value changes', async () => {
+    let setPath!: (value: string) => void, rerender!: (value: number) => void;
+    const handler = vi.fn(async () => ({ success: true }));
+    function Content() {
+      const [filePath, set] = useState('/a'); setPath = set;
+      const [, bump] = useState(0); rerender = bump;
+      useViewTypeTool('write', { description: 'Write', params: { filePath: { type: 'string', required: true } },
+        target: { param: 'filePath', value: filePath } }, handler);
+      return null;
+    }
+    const app = await setup(Content), original = app.tool();
+    expect(original.targets[0].selector).toEqual({ param: 'filePath', value: '/a' });
+    await act(() => rerender(1)); expect(app.definitions).toHaveLength(1);
+    expect(await app.invoke({ filePath: '/b' })).toMatchObject({ phase: 'not-entered', result: { error: { code: 'INVALID_VIEW_TARGET' } } });
+    expect(handler).not.toHaveBeenCalled();
+    expect(await app.invoke({ filePath: '/a' })).toMatchObject({ result: { success: true } });
+    await act(() => setPath('/b')); expect(app.definitions).toHaveLength(2);
+    expect(app.tool().inputSchema).toEqual(original.inputSchema);
+    expect(await app.invoke({ filePath: '/a' }, original)).toMatchObject({ phase: 'not-entered', result: { error: { code: 'TOOL_SOURCE_STALE' } } });
+    expect(await app.invoke({ filePath: '/b' })).toMatchObject({ result: { success: true } });
+  });
   it.each([
     ['ordinary-v2', { params: params() }],
-    ['ordinary-v1', { params: {}, isMutating: false }],
-    ['snapshot-value-v1', { params: { file: { type: 'reference', required: true, refSource: 'snapshot-value-v1' } }, isMutating: false }],
+    ['ordinary-v2 read-only empty', { params: {}, isMutating: false }],
+    ['snapshot-value-v2', { params: { file: { type: 'reference', required: true, refSource: 'snapshot-value-v1' } }, isMutating: false }],
   ])('keeps %s UI and callable availability in sync when enabled changes', async (_mode, options) => {
     let setEnabled!: (value: boolean) => void;
     function Content() {
@@ -59,6 +80,40 @@ describe('ordinary View-local tools without entity preconditions', () => {
     await act(() => setEnabled(false));
     expect(app.container.querySelector('tool-ref')).toBeNull();
     expect(app.kernel.getViewOwnedToolDefinitions()).toHaveLength(0);
+  });
+  it('executes a newly registered Tool after the Hook is disabled and re-enabled', async () => {
+    let setEnabled!: (value: boolean) => void;
+    const handler = vi.fn(async (args: { value: number }) => ({ success: true, data: { value: args.value } }));
+    function Content() {
+      const [enabled, set] = useState(false); setEnabled = set;
+      const [Tool] = useViewTypeTool('inspect', { description: 'Inspect', params: params() }, handler, { enabled });
+      return h(Tool, {}, 'Inspect');
+    }
+    const app = await setup(Content);
+    expect(app.kernel.getViewOwnedToolDefinitions()).toHaveLength(0);
+
+    await act(() => setEnabled(true));
+    const first = app.tool(), oldTarget = first.targets[0];
+    expect(await app.invoke({ value: 1 }, first)).toMatchObject({
+      phase: 'entered-returned', result: { success: true, data: { value: 1 } },
+    });
+
+    await act(() => setEnabled(false));
+    expect(await app.invoke({ value: 2 }, first)).toMatchObject({
+      phase: 'not-entered', result: { error: { code: 'TOOL_UNAVAILABLE' } },
+    });
+    expect(handler).toHaveBeenCalledOnce();
+
+    await act(() => setEnabled(true));
+    const current = app.tool(), currentTarget = current.targets[0];
+    expect(currentTarget.bindingVersion).not.toBe(oldTarget.bindingVersion);
+    expect(await app.invoke({ value: 3 }, current)).toMatchObject({
+      phase: 'entered-returned', result: { success: true, data: { value: 3 } },
+    });
+    expect(await app.invoke({ value: 4 }, first)).toMatchObject({
+      phase: 'not-entered', result: { error: { code: 'TOOL_SOURCE_STALE' } },
+    });
+    expect(handler).toHaveBeenCalledTimes(2);
   });
   it('awaits the application handler and keeps real mutation metadata', async () => {
     let finish!: () => void, value = 0, settled = false;
@@ -88,16 +143,25 @@ describe('ordinary View-local tools without entity preconditions', () => {
     expect(await app.definitions[0].handler({ value: 1 })).toMatchObject({ success: false, error: { code: 'TOOL_EXECUTION_UNAVAILABLE' } });
     expect(handler).not.toHaveBeenCalled();
   });
-  it('passes application-declared partial failure through the ordinary callable', async () => {
+  it.each(['none', 'partial'] as const)('passes application-declared %s failure through the ordinary callable', async effects => {
     function Content() {
       useViewTypeTool('set', { description: 'Set value', params: params() }, async () => ({
-        success: false, effects: 'partial', error: { code: 'PARTIAL', message: 'Application reports partial work' }, data: { completed: 1 },
+        success: false, effects, error: { code: 'FAILED', message: 'Application reports a known failure' }, data: { completed: 1 },
       })); return null;
     }
     const app = await setup(Content);
-    expect(await app.invoke({ value: 1 })).toEqual({ phase: 'entered-returned', failureEffects: 'partial', result: {
-      success: false, error: { code: 'PARTIAL', message: 'Application reports partial work' }, data: { completed: 1 },
+    expect(await app.invoke({ value: 1 })).toEqual({ phase: 'entered-returned', failureEffects: effects, result: {
+      success: false, error: { code: 'FAILED', message: 'Application reports a known failure' }, data: { completed: 1 },
     } });
+  });
+  it('preserves an unknown failure without inventing an effects declaration', async () => {
+    const result = { success: false, error: { code: 'OUTCOME_UNKNOWN', message: 'Check current state' } };
+    function Content() {
+      useViewTypeTool('set', { description: 'Set value', params: params() }, async () => result);
+      return null;
+    }
+    const app = await setup(Content);
+    expect(await app.invoke({ value: 1 })).toEqual({ phase: 'entered-returned', result });
   });
   it('honors additionalProperties on an empty read-only ordinary contract', async () => {
     const handler = vi.fn(async (args: Record<string, unknown>) => ({ success: true, data: { args } }));
@@ -108,6 +172,18 @@ describe('ordinary View-local tools without entity preconditions', () => {
     const app = await setup(Content);
     expect(app.tool().isMutating).toBe(false);
     expect(await app.invoke({ extra: 'kept' })).toMatchObject({ phase: 'entered-returned', result: { data: { args: { extra: 'kept' } } } });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+  it('uses ordinary-v2 for an empty read-only Tool without making it mutating', async () => {
+    const handler = vi.fn(async () => ({ success: true, data: { read: true } }));
+    function Content() {
+      useViewTypeTool('read_status', { description: 'Read current status', params: {}, isMutating: false }, handler);
+      return null;
+    }
+    const app = await setup(Content);
+    expect(app.tool().isMutating).toBe(false);
+    expect(app.captures).toHaveLength(1);
+    expect(await app.invoke({})).toMatchObject({ phase: 'entered-returned', result: { success: true, data: { read: true } } });
     expect(handler).toHaveBeenCalledOnce();
   });
   it('captures the actual layout contract and avoids a redundant rebind on the next render', async () => {

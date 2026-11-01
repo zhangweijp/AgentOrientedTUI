@@ -22,30 +22,30 @@ describe('DesktopManager admission and captured identity', () => {
         const operation = createCloseOperation(report, completion);vi.spyOn(held, 'beginClose').mockReturnValue(operation);const otherClose = vi.spyOn(other, 'beginClose');
         const shutdown = manager.beginShutdown();expect(manager.beginShutdown()).toBe(shutdown);expect(otherClose).toHaveBeenCalledOnce();
         expect(manager.getWorkerPoolReport().state).not.toBe('open');await expect(manager.create('late')).rejects.toMatchObject({ code: 'RUNTIME_SHUTDOWN' });
-        expect(() => manager.acquireLock('other', 'late')).toThrowError(expect.objectContaining({ code: 'RUNTIME_SHUTDOWN' }));expect(shutdown.inspect().state).toBe('closing');
+        expect(shutdown.inspect().state).toBe('closing');
         release();const result = await shutdown.completion;expect(result).toMatchObject({ ok: true, pool: { ownership: 'owned', report: { state: 'closed', total: 0 } }, desktops: { accepted: 2, settled: 2, pending: 0 } });
         // The barrier is a controlled report, not a real Worker: close its actual empty object too.
         await original().completion;
     });
-    it('retains an unverified released owner and its lock instead of clearing the Map', async () => {
-        const manager = new DesktopManager();await manager.create('unknown');manager.acquireLock('unknown', 'owner');const desktop = manager.get('unknown')!;
+    it('retains a Desktop whose resources were not verified as released', async () => {
+        const manager = new DesktopManager();await manager.create('unknown');const desktop = manager.get('unknown')!;
         const original = desktop.beginClose!.bind(desktop), state = newCloseState('desktop');state.state = 'settled';state.resourcesReleased = false;
         state.desktops = { accepted: 1, settled: 1, pending: 0, notVerifiedReleased: 1 };
         const report: DesktopCloseReport = freezeClose({ ...snapshotClose(state), scope: 'desktop', intent: 'close', desktopId: 'unknown', found: true });
         vi.spyOn(desktop, 'beginClose').mockReturnValue(createCloseOperation(() => report, Promise.resolve(report)));
-        await manager.destroy('unknown');expect(manager.get('unknown')).toBe(desktop);expect(manager.getLockInfo('unknown')?.ownerId).toBe('owner');
+        await manager.destroy('unknown');expect(manager.get('unknown')).toBe(desktop);
         const final = await manager.beginShutdown().completion;expect(final.resourcesReleased).toBe(false);expect(manager.has('unknown')).toBe(true);
         await original().completion;
     });
-    it('a late close cannot remove a replacement object or clear its lock (captured object seam)', async () => {
+    it('a late close cannot remove a replacement Desktop (captured object seam)', async () => {
         const manager = new DesktopManager();await manager.create('same');const old = manager.get('same')!;
         let release!: () => void;const state = newCloseState('desktop');state.desktops = { accepted: 1, settled: 0, pending: 1, notVerifiedReleased: 1 };
         const report = (): DesktopCloseReport => freezeClose({ ...snapshotClose(state), scope: 'desktop', intent: 'close', desktopId: 'same', found: true });
         const completion = new Promise<DesktopCloseReport>(resolve => { release = () => { state.state = 'settled';state.resourcesReleased = true;resolve(report()); }; });
         const original = old.beginClose!.bind(old);vi.spyOn(old, 'beginClose').mockReturnValue(createCloseOperation(report, completion));const destroying = manager.destroy('same');
         // Force the impossible-under-public-API replacement to exercise the identity guard.
-        (manager as any).desktops.delete('same');await manager.create('same');const next = manager.get('same');manager.acquireLock('same', 'new-owner');
-        release();await destroying;expect(manager.get('same')).toBe(next);expect(manager.getLockInfo('same')?.ownerId).toBe('new-owner');await original().completion;await manager.shutdown();
+        (manager as any).desktops.delete('same');await manager.create('same');const next = manager.get('same');
+        release();await destroying;expect(manager.get('same')).toBe(next);await original().completion;await manager.shutdown();
     });
     it('missing ID has no historical resources or Desktop count', async () => {
         const manager = new DesktopManager(), report = await manager.beginDesktopShutdown('missing').completion;

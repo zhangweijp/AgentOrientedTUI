@@ -28,13 +28,13 @@ export interface CloseReport {
     readonly desktops: { readonly accepted: number; readonly settled: number; readonly pending: number; readonly notVerifiedReleased: number };
     readonly pendingOperations: number;
     readonly unverifiedParticipants: number;
-    readonly appCleanup?: { readonly managedApps: number; readonly legacyUnverifiedApps: number; readonly completedApps: number; readonly failedApps: number };
+    readonly appCleanup?: { readonly managedApps: number; readonly completedApps: number; readonly failedApps: number };
     readonly persistence: {
-        readonly managedApps: number; readonly legacyUnverifiedApps: number; readonly unnegotiatedApps: number; readonly notUsedApps: number;
+        readonly managedApps: number; readonly unnegotiatedApps: number; readonly notUsedApps: number;
         readonly closeReceipts: number; readonly missingCloseReceipts: number; readonly confirmedFlushes: number; readonly failedFlushes: number;
         readonly absentFlushes: number; readonly unknownApps: number; readonly unsavedKeys: number;
     };
-    readonly resources: { readonly activeFileReplacements: number; readonly retainedStorageOwners: number; readonly storageActualIO: number; readonly openingStorageOwners: number };
+    readonly resources: { readonly retainedStorageOwners: number; readonly storageActualIO: number; readonly openingStorageOwners: number };
     readonly pool: { readonly ownership: 'owned' | 'not-owned' | 'unverified'; readonly report: null | {
         readonly state: 'open' | 'closing' | 'closed'; readonly limit: number; readonly total: number; readonly reserved: number;
         readonly idle: number; readonly leased: number; readonly retiring: number;
@@ -43,18 +43,15 @@ export interface CloseReport {
     readonly beforeClose: 'not-provided' | 'pending' | 'running' | 'done' | 'failed' | 'skipped-drain-failed' | 'skipped-deadline';
     readonly cleanup: {
         readonly signalBus: 'pending' | 'done' | 'failed' | 'not-owned' | 'unverified';
-        readonly signalService: 'pending' | 'done' | 'failed' | 'not-owned' | 'unverified';
         readonly llmOutput: 'pending' | 'done' | 'failed' | 'not-owned' | 'unverified';
         readonly logger: 'pending' | 'done' | 'failed' | 'not-owned' | 'unverified';
-        readonly registry: 'pending' | 'done' | 'failed' | 'not-owned' | 'unverified';
-        readonly locks: 'pending' | 'done' | 'failed' | 'not-owned' | 'unverified';
     };
     readonly failures: readonly {
-        readonly stage: 'admission' | 'apps' | 'persistence' | 'worker' | 'pool' | 'before-close' | 'signals' | 'llm-output' | 'logger' | 'registry' | 'locks' | 'legacy';
+        readonly stage: 'admission' | 'apps' | 'persistence' | 'worker' | 'pool' | 'before-close' | 'signals' | 'llm-output' | 'logger' | 'legacy';
         readonly codes: readonly ('INSTALL_FAILED' | 'DELETE_FAILED' | 'APP_CLOSE_FAILED' | 'RESET_FAILED' | 'RESOURCE_RELEASE_FAILED' |
             'WORKER_ERROR' | 'WORKER_EXITED_UNEXPECTEDLY' | 'WORKER_TERMINATION_FAILED' | 'PERSISTENCE_CLOSE_FAILED' |
             'APP_UNMOUNT_FAILED' | 'APP_DELETE_FAILED' | 'BEFORE_CLOSE_FAILED' | 'BEFORE_CLOSE_SKIPPED' | 'DESKTOP_CLEANUP_FAILED' |
-            'REGISTRY_CLEANUP_FAILED' | 'MANAGER_CLEANUP_FAILED' | 'LEGACY_CLOSE_FAILED')[];
+            'MANAGER_CLEANUP_FAILED' | 'LEGACY_CLOSE_FAILED')[];
         readonly desktopId?: string; readonly appId?: string;
     }[];
     readonly failureCount: number;

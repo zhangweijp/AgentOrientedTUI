@@ -6,7 +6,6 @@ import { createViewOwnedTools } from './view-owned-tools.js';
 import { compileOrdinaryParams } from './ordinary-parameter-contract.js';
 import { compileOrdinaryProfile, ORDINARY_PARAMETER_MARKER as MARKER } from './ordinary-parameter-profile.js';
 import { validateToolRefDeclarations } from './ref-declarations.js';
-import { captureRefV1Request, validateRefV1Arguments } from '../../adapters/ref-invocation-v1.js';
 import { compileSnapshotValueParams as params, compileSnapshotValueProfile as profile,
     type SnapshotValueCompileResult, type SnapshotValueParameterContract } from './snapshot-value-parameter-contract.js';
 
@@ -279,8 +278,8 @@ describe('P10: structured bounded safe errors', () => {
     });
 });
 
-describe('P11: old declarations and executable entry points stay closed', () => {
-    it('keeps C1/V1/B2 execution closed while Registry/Snapshot admit the exact new declaration', async () => {
+describe('P11: declarations do not grant executable entry points', () => {
+    it('keeps an unqualified Ref declaration closed while Registry and Snapshot admit the exact V2 profile', async () => {
         const c = success(params({ file: ref }));expect(() => validateToolRefDeclarations(c.schema, false)).toThrow();
         expect(compileOrdinaryProfile(c.schema)).toBe(null);
         const r = createViewOwnedTools('app', 'run'), owner = r.mount('v', 'File');
@@ -288,9 +287,8 @@ describe('P11: old declarations and executable entry points stay closed', () => 
         expect(() => r.registerTool(owner.viewInstanceId, { name: 'inspect', description: 'Inspect', inputSchema: c.schema, isMutating: false }, () => { entries++;return { success: true }; })).not.toThrow();
         const declared = r.listTools()[0]!;
         expect(r.validateSnapshotValueParametersBinding(declared, declared.targets[0]!).success).toBe(false);
-        expect((await r.invokeRef(declared, declared.targets[0]!, { file: {} })).phase).toBe('not-entered');
         expect((await r.invokeSnapshotValueParameters(declared, declared.targets[0]!, { file: {} })).phase).toBe('not-entered');
-        expect((await r.invoke(declared, declared.targets[0]!, { file: {} })).success).toBe(false);expect(entries).toBe(0);
+        expect(entries).toBe(0);
         const core = createSnapshotCore();core.lifecycle.startApp('app', 'run');
         const target = { viewId: 'v', viewInstanceId: 'mount', bindingVersion: 1 }, id = JSON.stringify(['app', 'File', 'inspect']);
         const tool = { id, name: 'inspect', description: 'Inspect', viewType: 'File', inputSchema: c.schema, isMutating: false, targets: [target] };
@@ -298,8 +296,5 @@ describe('P11: old declarations and executable entry points stay closed', () => 
             views: [{ id: 'v', viewInstanceId: 'mount', type: 'File', name: 'V', kind: 'state', content: { format: 'markdown-v1', value: 'V' } }],
             refs: { [refKey('v', 'mount', 'id')]: { id: 'id', ownerViewId: 'v', ownerViewInstanceId: 'mount', refType: 'unknown', target: { kind: 'snapshot-value', payload: {} } } }, tools: { [id]: tool } });
         expect(commit.status).toBe('published');
-        const wire = captureRefV1Request({ type: 'VIEW_TOOL_INVOKE_REF_V1', requestId: 'r', appId: 'app', instanceId: 'run', snapshotId: 's', tool, target, argumentMode: 'snapshot-value-v1', rawArgs: { file: 'id' }, effectiveArgs: { file: {} },
-            refSources: [{ param: 'file', refId: 'id', kind: 'snapshot-value', refType: 'unknown', snapshotId: 's', viewId: 'v', viewInstanceId: 'mount' }] });
-        expect(validateRefV1Arguments(wire).success).toBe(false);
     });
 });

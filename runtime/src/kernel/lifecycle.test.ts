@@ -1,56 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { Kernel } from './index.js';
 import { DesktopManager } from '../engine/core/manager.js'; // Use real Manager
 import { DesktopState, createDesktopId } from '../spi/index.js';
 
-// Mock registry and dispatcher
-// Desktop and DesktopManager are REAL to test actual lifecycle logic
-vi.mock('../registry/index.js');
-vi.mock('../dispatcher/index.js');
-
 describe('Kernel Lifecycle Management', () => {
     let kernel: Kernel;
     let desktopManager: DesktopManager;
-    let mockRegistry: any;
-    let mockDispatcher: any;
 
     beforeEach(() => {
-        mockRegistry = {
-            // [Phase 1 C1 FIX] Registry.create now returns full CachedSnapshot object
-            create: vi.fn().mockReturnValue({
-                id: 'snap_1',
-                markup: '# Test',
-                indexMap: {},
-                createdAt: Date.now(),
-                refCount: 1,
-                ttl: 600000,
-                expiresAt: Date.now() + 600000
-            }),
-            retain: vi.fn(),
-            release: vi.fn(),
-            resolve: vi.fn(),
-            shutdown: vi.fn()
-        };
-        mockDispatcher = {
-            dispatch: vi.fn().mockResolvedValue(undefined)
-        };
-
-        // Mock SystemOperationRegistry
-        const mockSystemOps = {
-            has: () => false,
-            execute: async () => ({ success: true }),
-            register: () => { },
-            get: () => undefined
-        } as any;
-
         // Use REAL DesktopManager for integration testing
         desktopManager = new DesktopManager();
-        kernel = new Kernel(
-            desktopManager,
-            mockRegistry,
-            mockDispatcher,
-            mockSystemOps
-        );
+        kernel = new Kernel(desktopManager);
     });
 
     describe('suspend/resume', () => {
@@ -103,7 +63,6 @@ describe('Kernel Lifecycle Management', () => {
 
             expect(desktopManager.has(id1)).toBe(false);
             expect(desktopManager.has(id2)).toBe(false);
-            expect(mockRegistry.shutdown).toHaveBeenCalledTimes(1);
 
             await expect(kernel.createDesktop()).rejects.toThrow(/Runtime has been shut down|RUNTIME_SHUTDOWN/);
         });

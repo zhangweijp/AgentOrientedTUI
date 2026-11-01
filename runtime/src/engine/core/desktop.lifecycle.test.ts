@@ -24,7 +24,8 @@ describe('Desktop actual close ownership', () => {
         expect(Object.isFrozen(snapshot.cleanup)).toBe(true);expect(operation.inspect()).not.toBe(snapshot);
         const report = await operation.completion;await voidPromise;
         expect(report).toMatchObject({ ok: true, resourcesReleased: true, verification: 'managed', state: 'settled', desktops: { accepted: 1, settled: 1, pending: 0 } });
-        expect(snapshot.state).toBe('closing');expect(report.cleanup).toMatchObject({ signalBus: 'done', llmOutput: 'done', logger: 'done', registry: 'not-owned' });
+        expect(snapshot.state).toBe('closing');expect(report.cleanup).toMatchObject({ signalBus: 'done', llmOutput: 'done', logger: 'done' });
+        expect(report.cleanup).not.toHaveProperty('registry');
     });
     it('drain closes admission immediately; full close joins and selects its callback once', async () => {
         const child = appBarrier(), desktop = new Desktop('join', { appManager: child.manager as any });
@@ -86,18 +87,19 @@ describe('Desktop actual close ownership', () => {
         const bus = new SignalBus(), logger = new DesktopLogger(), llm = new LLMOutputChannelService();
         const cleanBus = vi.spyOn(bus, 'cleanup').mockImplementation(() => { throw Error('private'); });
         const cleanLog = vi.spyOn(logger, 'cleanup').mockImplementation(() => { throw Error('private'); });
-        const cleanLLM = vi.spyOn(llm, 'cleanup');const service = { cleanup: vi.fn(() => { throw Error('private'); }) };
-        const other = new Desktop('failures', { signalBus: bus, logger, llmOutputChannelService: llm, signalService: service as any });
+        const cleanLLM = vi.spyOn(llm, 'cleanup');
+        const other = new Desktop('failures', { signalBus: bus, logger, llmOutputChannelService: llm });
         const final = await other.beginClose({ beforeClose: async () => { throw Error('user secret'); } }).completion;
-        expect(final).toMatchObject({ hasFailures: true, resourcesReleased: false, beforeClose: 'failed', cleanup: { signalBus: 'failed', signalService: 'failed', logger: 'failed', llmOutput: 'done' } });
-        expect(cleanBus).toHaveBeenCalledOnce();expect(cleanLog).toHaveBeenCalledOnce();expect(cleanLLM).toHaveBeenCalledOnce();expect(service.cleanup).toHaveBeenCalledOnce();
+        expect(final).toMatchObject({ hasFailures: true, resourcesReleased: false, beforeClose: 'failed', cleanup: { signalBus: 'failed', logger: 'failed', llmOutput: 'done' } });
+        expect(cleanBus).toHaveBeenCalledOnce();expect(cleanLog).toHaveBeenCalledOnce();expect(cleanLLM).toHaveBeenCalledOnce();
         expect(JSON.stringify(final)).not.toMatch(/private|user secret/);
     });
-    it('legacy AppManager and AppHost remain unverified while independently closing; void compatibility resolves', async () => {
-        const app = { closeAll: vi.fn(async () => {}), cleanup: vi.fn() }, host = { closeAll: vi.fn(async () => {}) };
-        const desktop = new Desktop('legacy', { appManager: app as any, appHostService: host as any });
-        const report = await desktop.beginClose({ beforeClose: async () => {} }).completion;
-        expect(report).toMatchObject({ ok: false, hasFailures: false, resourcesReleased: false, verification: 'mixed', unverifiedParticipants: 2, beforeClose: 'done' });
-        expect(app.closeAll).toHaveBeenCalledOnce();expect(host.closeAll).toHaveBeenCalledWith('legacy');await desktop.dispose();
+    it('uses the single managed AppManager close owner and preserves its report', async () => {
+        const child = appBarrier(), desktop = new Desktop('managed', { appManager: child.manager as any });
+        const operation = desktop.beginClose();
+        expect(child.manager.beginClose).toHaveBeenCalledOnce();expect(operation.inspect().verification).toBe('managed');
+        child.release();const report = await operation.completion;
+        expect(report).toMatchObject({ ok: true, hasFailures: false, resourcesReleased: true, verification: 'managed', apps: { accepted: 0, settled: 0, pending: 0 } });
+        expect(child.manager.cleanupAsync).toHaveBeenCalledOnce();
     });
 });

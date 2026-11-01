@@ -17,8 +17,8 @@ export interface IElementVisitor {
      * Processing priority
      * 
      * Lower numbers execute earlier. A rule of thumb:
-     * - 0-30: Structural (Application, View, ViewLink)
-     * - 30-60: Semantic (Operation)
+     * - 0-30: Structural (Application, View)
+     * - 30-60: Reserved for semantic extensions
      * - 60-99: Reserved for extensions
      * - 100+: General HTML fallback
      */
@@ -33,7 +33,7 @@ export interface IElementVisitor {
      * Executes the transformation
      * 
      * @param el - The current element
-     * @param ctx - Transformation context (can modify indexMap)
+     * @param ctx - Transformation context
      * @param children - Function to traverse child nodes
      * @param traverseElement - Function to traverse a single element with full Visitor Chain
      * @returns TUI Markup string
@@ -61,7 +61,7 @@ export type ChildrenTraverser = (
  * Element traverser type
  * 
  * Used by Visitors to recursively process a single element with full Visitor Chain.
- * This DOES apply Visitor matching, allowing Operation/ViewLink/etc to be recognized.
+ * This DOES apply Visitor matching across the configured visitor chain.
  * 
  * [RFC-FIX] Added to support semantic elements inside List items.
  */

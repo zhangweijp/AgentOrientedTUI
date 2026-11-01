@@ -23,9 +23,6 @@ declare const __brand: unique symbol;
 // 标识符类型 (Branded Types)
 // ============================================================================
 
-/** 快照唯一标识 (Branded Type) */
-export type SnapshotID = string & { readonly [__brand]: 'SnapshotID' };
-
 /** 桌面唯一标识 (Branded Type) */
 export type DesktopID = string & { readonly [__brand]: 'DesktopID' };
 
@@ -35,21 +32,12 @@ export type AppID = string & { readonly [__brand]: 'AppID' };
 /** 视图唯一标识 (Branded Type) */
 export type ViewID = string & { readonly [__brand]: 'ViewID' };
 
-/** 操作唯一标识 (Branded Type) */
-export type OperationID = string & { readonly [__brand]: 'OperationID' };
-
-
 // ============================================================================
 // 数据结构
 // ============================================================================
 
 /** 通用数据载荷 */
 export type DataPayload = Record<string, unknown>;
-
-/** 快照数据索引映射 */
-export interface IndexMap {
-    [path: string]: DataPayload;
-}
 
 // ============================================================================
 // 状态类型

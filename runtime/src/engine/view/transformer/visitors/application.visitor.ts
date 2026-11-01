@@ -25,20 +25,10 @@ export const applicationVisitor: IElementVisitor = {
         const appId = el.getAttribute('data-app-id')!;
         const appName = el.getAttribute('name');
 
-        // Manage Context
-        const prevAppId = ctx.currentAppId;
-        ctx.currentAppId = appId;
-
-        // Clean up context on return
-        const restoreContext = () => {
-            ctx.currentAppId = prevAppId;
-        };
-
         const isCollapsed = el.getAttribute('data-state') === 'collapsed';
         const isClosed = el.getAttribute('data-state') === 'closed';
 
         if (isCollapsed || isClosed) {
-            restoreContext();
             return `\n<application id="${appId}" name="${appName || ''}" state="${isClosed ? 'closed' : 'collapsed'}" />\n`;
         }
 
@@ -46,7 +36,6 @@ export const applicationVisitor: IElementVisitor = {
         const childMarkup = children(el, ctx);
         const childrenContent = childMarkup.join('\n');
 
-        restoreContext();
         return `\n<application id="${appId}" name="${appName || ''}">\n${childrenContent}\n</application>\n`;
     }
 };

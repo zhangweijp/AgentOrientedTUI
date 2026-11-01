@@ -1,4 +1,4 @@
-import type { OrdinaryParameterContract, ViewToolInvocationTerminal } from '@aotui/runtime/spi';
+import type { OrdinaryParameterContract, ViewToolInvocationTerminal } from '@aotui/runtime/core';
 import type { OperationResult } from '../operation/types.js';
 
 /** Runtime-captured ordinary validation or the same Ref contract's effective validation, supplied by its trusted factory. */

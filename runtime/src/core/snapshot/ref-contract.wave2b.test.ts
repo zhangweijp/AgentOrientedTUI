@@ -7,7 +7,8 @@ import {
 import type { JsonValue, PreparedAppSnapshotDraftV2, SnapshotCore } from './types.js';
 import type { ViewID } from '../../spi/index.js';
 import { acquireToolSource } from '../tool/source-binding.js';
-import { DomSnapshotShadowProducer, paramsToJsonSchema } from '../../worker-runtime/dom-snapshot-producer.js';
+import { compileSnapshotValueParams } from '../tool/snapshot-value-parameter-contract.js';
+import { captureDOMSnapshot } from '../../worker-runtime/dom-snapshot-producer.js';
 
 // Evidence of CURRENT Core/DOM-adapter behavior, not a proposed Ref executor.
 // Identities and declarations below are fixtures, not mounts performed by SDK.
@@ -17,6 +18,9 @@ const mountA = 'fixture-mount-A';
 const mountB = 'fixture-mount-B';
 const toolId = JSON.stringify([appId, 'FileDetail', 'inspect']);
 const argsLimits = { maxDepth: 24, maxNodes: 10_000, maxApproxBytes: 128 * 1024 };
+const refParameters = compileSnapshotValueParams({ file: { type: 'reference', required: true,
+    refSource: 'snapshot-value-v1', refType: 'File' } });
+if (!refParameters.ok) throw new Error('Invalid Ref V2 fixture');
 
 function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): PreparedAppSnapshotDraftV2 {
     return {
@@ -38,7 +42,7 @@ function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): Pr
         },
         tools: { [toolId]: {
             id: toolId, name: 'inspect', viewType: 'FileDetail', description: 'Inspect',
-            inputSchema: paramsToJsonSchema({ file: { type: 'reference', refType: 'File' } }),
+            inputSchema: refParameters.contract.schema,
             isMutating: false,
             targets: [
                 { viewId: 'fd_A', viewInstanceId: a, bindingVersion: 1 },
@@ -65,20 +69,8 @@ function select(core: SnapshotCore, snapshotId: string, viewId = 'fd_A') {
     return acquireToolSource(core.store, { snapshotId, appId, instanceId, toolId, viewId });
 }
 
-describe('Wave 2B: existing metadata and exact historical Ref lookup (no Ref dispatch)', () => {
-    it('loses reference category and refType when converting SDK-shaped params to public Schema', () => {
-        const schema = (type: string, refType: string) => paramsToJsonSchema({ file: { type, refType } });
-        expect(schema('reference', 'File')).toEqual(schema('string', 'File'));
-        expect(schema('reference', 'File')).toEqual(schema('reference', 'Todo'));
-        expect(schema('reference', 'File')).toMatchObject({ properties: { file: { type: 'string' } } });
-    });
-
-    it('does not project SDK reference arrays as supported View-local Tool parameters', () => {
-        expect(() => paramsToJsonSchema({ files: { type: 'array', itemType: 'reference', refType: 'File' } }))
-            .toThrow('Unsupported array item type');
-    });
-
-    it('the actual DOM V2 adapter writes unknown Ref types and distinguishes data from entity markers', () => {
+describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', () => {
+    it('the Semantic DOM producer reads the committed Ref manifest and keeps marker-shaped values as data', () => {
         const fixture = draft();
         const { document } = parseHTML('<html><body><main></main></body></html>');
         const container = document.querySelector('main')!;
@@ -88,7 +80,7 @@ describe('Wave 2B: existing metadata and exact historical Ref lookup (no Ref dis
             node.setAttribute('data-view-instance-id', view.viewInstanceId);
             container.appendChild(node);
         }
-        const captured = new DomSnapshotShadowProducer().captureV2({
+        const captured = captureDOMSnapshot({
             appId, instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 1, container,
             fragments: fixture.views.map(view => ({
                 viewId: view.id as ViewID, viewType: view.type, viewName: view.name,
@@ -99,17 +91,19 @@ describe('Wave 2B: existing metadata and exact historical Ref lookup (no Ref dis
                     viewId: view.id, viewType: view.type, viewInstanceId: view.viewInstanceId,
                 })),
                 getViewOwnedToolDefinitions: () => [],
-                exportRefsToIndexMap: () => ({
-                    'fd_A:file': { value: 'A' },
-                    'fd_B:file': { $aotuiEntityRefV1: { entityType: 'File', entityId: 'B', entityVersion: 'v1' } },
-                }),
+                getViewRefs: () => [
+                    { viewId: 'fd_A', refId: 'file', value: { value: 'A' } },
+                    { viewId: 'fd_B', refId: 'file', value: { $aotuiEntityRefV1: { entityType: 'File', entityId: 'B', entityVersion: 'v1' } } },
+                ],
             },
         });
         expect(captured.refs[refKey('fd_A', mountA, 'file')]).toMatchObject({
             refType: 'unknown', target: { kind: 'snapshot-value', payload: { value: 'A' } },
         });
         expect(captured.refs[refKey('fd_B', mountB, 'file')]).toMatchObject({
-            refType: 'unknown', target: { kind: 'entity', entityType: 'File', entityId: 'B', entityVersion: 'v1' },
+            refType: 'unknown', target: { kind: 'snapshot-value', payload: {
+                $aotuiEntityRefV1: { entityType: 'File', entityId: 'B', entityVersion: 'v1' },
+            } },
         });
         expect(validatePreparedV2Draft(captured).ok).toBe(true);
     });
@@ -183,7 +177,7 @@ describe('Wave 2B: existing metadata and exact historical Ref lookup (no Ref dis
         });
     });
 
-    it('refType and entity are returned as data: resolveRef does not implement parameter-type or read permissions', () => {
+    it('Ref type and generic entity target are returned as data without read permissions', () => {
         const core = start(); const input = draft();
         const source = publish(core, { ...input, refs: {
             ...input.refs,
