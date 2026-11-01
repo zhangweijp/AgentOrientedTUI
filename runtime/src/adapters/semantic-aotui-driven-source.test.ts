@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SemanticAOTUIDrivenSource, semanticToolResult } from './semantic-aotui-driven-source.js';
+import { SemanticAOTUIDrivenSource } from './semantic-aotui-driven-source.js';
 import { DEFAULT_AOTUI_SYSTEM_INSTRUCTION } from './system-instruction.js';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { SemanticAOTUIDrivenSourceOptions } from './semantic-aotui-driven-source.js';
 import type { IDesktop, IKernel, AppDiscoveryInfo } from '../spi/runtime/kernel.interface.js';
 import type { Observation } from '../core/invocation/observation-types.js';
-import type { InvocationOutcome, InvocationReceipt, ScopedInvocation, ScopeClient } from '../core/invocation/scoped-interaction-types.js';
+import type { InvocationOutcome, InvocationReceipt, InvokeResult, ScopedInvocation, ScopeClient } from '../core/invocation/scoped-interaction-types.js';
 
 const app = (id: string, status: AppDiscoveryInfo['status'] = 'running', appInstanceId: string | null =
     status === 'pending' || status === 'closed' ? null : `${id}-instance`): AppDiscoveryInfo => ({ appId: id as any, name: id, status,
@@ -71,6 +71,17 @@ const findTool = (context: Awaited<ReturnType<SemanticAOTUIDrivenSource['getCont
     const name = Object.keys(context.tools).find(name => name.includes(fragment));
     expect(name).toBeDefined(); return name!;
 };
+async function executeMappedResult(result: InvokeResult) {
+    const h = harness(), context = await h.source.getContext(), name = findTool(context, 'one-');
+    h.clients[0]!.client.invoke.mockResolvedValueOnce(result);
+    try {
+        const mapped = await context.executeTool!(name, {}, 'call');
+        expect(mapped).toBeDefined();
+        return mapped!;
+    } finally {
+        await context.release!(); h.source.dispose();
+    }
+}
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
@@ -261,12 +272,12 @@ describe('SemanticAOTUIDrivenSource', () => {
 });
 
 describe('semantic receipt mapping', () => {
-    it('unwraps ordinary completion and preserves the business error and recovery details', () => {
+    it('unwraps ordinary completion and preserves the business error and recovery details through executeTool', async () => {
         const request = { invocationId: 'c', observationId: 'o', bindingId: 'b', input: {} };
-        const completed = semanticToolResult('tool', 'c', { kind: 'receipt', receipt: receipt(request,
+        const completed = await executeMappedResult({ kind: 'receipt', receipt: receipt(request,
             { status: 'succeeded', value: { success: true, data: { message: 'Edited.', view_id: 'file' } } }) });
         expect(completed.result).toEqual({ message: 'Edited.', view_id: 'file' });
-        const failed = semanticToolResult('tool', 'c', { kind: 'receipt', receipt: receipt(request, {
+        const failed = await executeMappedResult({ kind: 'receipt', receipt: receipt(request, {
             status: 'unknown', code: 'TOOL_OUTCOME_UNKNOWN', message: 'uncertain', details: { kind: 'operation-result', phase: 'entered-returned',
                 result: { success: false, error: { code: 'EDIT_NOT_MATCHED', message: 'Original text was not found.' }, data: { checked: 1 } } },
         }) });
@@ -278,17 +289,20 @@ describe('semantic receipt mapping', () => {
         { status: 'failed', code: 'FAILED', message: 'failed', effects: 'partial' },
         { status: 'accepted', operationId: 'job' }, { status: 'unknown', code: 'UNKNOWN', message: 'uncertain' },
     ];
-    it.each(outcomes)('keeps $status internal without leaking a receipt', outcome => {
+    it.each(outcomes)('keeps $status internal without leaking a receipt', async outcome => {
         const value = receipt({ invocationId: 'call', observationId: 'obs', bindingId: 'binding', input: {} }, outcome);
-        const result = semanticToolResult('tool', 'call', { kind: 'receipt', receipt: value });
+        const result = await executeMappedResult({ kind: 'receipt', receipt: value });
         expect(result.outcomeStatus).toBe(outcome.status);
         expect(JSON.stringify(result)).not.toContain('observationId');
         expect(JSON.stringify(result)).not.toContain('receipt');
         expect(Boolean(result.error)).toBe(['rejected', 'failed', 'unknown', 'accepted'].includes(outcome.status));
+        if (outcome.status === 'accepted') expect(result.error?.code).toBe('TOOL_RESULT_NOT_FINAL');
+        if (outcome.status === 'unknown') expect(result.error?.code).toBe('UNKNOWN');
+        if (outcome.status === 'failed') expect(result.error?.message).toContain('Some changes were applied.');
     });
-    it('distinguishes a known refusal from an unavailable execution result', () => {
-        expect(semanticToolResult('tool', 'call', { kind: 'refused', code: 'FULL', message: 'full' }).outcomeStatus).toBe('rejected');
-        expect(semanticToolResult('tool', 'call', { kind: 'unavailable', code: 'GONE', message: 'gone' }).outcomeStatus).toBe('unknown');
+    it('distinguishes a known refusal from an unavailable execution result', async () => {
+        expect((await executeMappedResult({ kind: 'refused', code: 'FULL', message: 'full' })).outcomeStatus).toBe('rejected');
+        expect((await executeMappedResult({ kind: 'unavailable', code: 'GONE', message: 'gone' })).outcomeStatus).toBe('unknown');
     });
 });
 

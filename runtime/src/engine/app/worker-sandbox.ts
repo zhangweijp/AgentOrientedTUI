@@ -1,14 +1,6 @@
 /**
- * WorkerSandbox - Worker-based App 隔离沙箱
- * 
- * 与 AppSandbox 相同接口，但 App 运行在独立的 Worker Thread 中。
- * 所有 App 交互通过 IPC 进行。
- * 
- * 优点:
- * - 真正的 DOM 隔离 (每个 Worker 有独立 globalThis.document)
- * - 进程级错误隔离
- * - 支持任意 UI 框架
- * 
+ * WorkerSandbox - Worker 隔离的 App 执行与资源生命周期所有者。
+ * App 运行在独立 Worker Thread 中，交互通过 IPC 进行。
  * @module @aotui/runtime/engine/app-sandbox
  */
 
@@ -18,11 +10,11 @@ import { dirname, resolve } from 'path';
 import type { AppID, DesktopID, ViewID } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import type { LLMOutputEventMeta } from '../../spi/core/llm-output.js';
-import { AppWorkerHost, type WorkerStatus, type HostResourceReport } from './worker-host.js';
+import { AppWorkerHost, type HostResourceReport } from './worker-host.js';
 import { WorkerPool, type WorkerPoolReport, type WorkerLease, type WorkerLeaseReleaseReport } from './worker-pool.js';
 import { RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 import type { AppInteractionOptions, AppScopeResult } from '../../spi/runtime/app-interaction.interface.js';
-import type { ScopePolicy } from '../../core/invocation/scoped-interaction.js';
+import type { ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
 import { captureInteractionModes } from './interaction-config.js';
 
 // [C1 Fix] Default worker script path from Runtime package
@@ -30,7 +22,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DEFAULT_WORKER_SCRIPT = resolve(__dirname, '../../worker-runtime/index.js');
 
-// 复用 AppSandbox 的状态类型
 /**
  * Sandbox 状态机
  * 
@@ -66,9 +57,7 @@ export interface WorkerSandboxConfig extends AppInteractionOptions {
 }
 
 /**
- * WorkerSandbox - Worker-based App 隔离
- * 
- * 实现与 AppSandbox 兼容的接口，但使用 Worker 执行 App
+ * WorkerSandbox - 管理 App 的 Worker lease、Host 和关闭流程。
  */
 export interface SandboxCloseReport {
     readonly state: 'active' | 'closing' | 'settled'; readonly intent: null | 'close' | 'delete';
@@ -87,7 +76,6 @@ export class WorkerSandbox {
 
     private workerHost: AppWorkerHost | null = null;
     private _status: SandboxStatus = 'created';
-    private _disposed = false;
     private readonly pool: WorkerPool;
     private readonly ownsPool: boolean;
     private lease?: WorkerLease;
@@ -118,22 +106,11 @@ export class WorkerSandbox {
     }
 
     // ════════════════════════════════════════════════════════════════
-    //  Public Getters (兼容 AppSandbox 接口)
+    //  Public State and Interaction Access
     // ════════════════════════════════════════════════════════════════
 
     get status(): SandboxStatus {
         return this._status;
-    }
-
-    get disposed(): boolean {
-        return this._disposed;
-    }
-
-    /**
-     * 获取 Worker 状态
-     */
-    getWorkerStatus(): WorkerStatus | null {
-        return this.workerHost?.getStatus() ?? null;
     }
 
     get appInstanceId(): string | undefined {
@@ -143,18 +120,12 @@ export class WorkerSandbox {
     createAppScope(policy: ScopePolicy): AppScopeResult {
         const host = this.workerHost;
         const unavailable = (): AppScopeResult => Object.freeze({ status: 'rejected', issue: Object.freeze({ code: 'SCOPE_UNAVAILABLE', message: 'App scope is unavailable' }) });
-        const current = () => !this.intent && !this._disposed && this._status === 'running' && !!host && this.workerHost === host && host.getStatus() === 'running';
+        const current = () => !this.intent && this._status === 'running' && !!host && this.workerHost === host && host.getStatus() === 'running';
         if (!current()) return unavailable();
         const result = host!.createInteractionScope(policy);
         if (!current()) { if (result.status === 'opened') result.client.close();return unavailable(); }
         return result;
     }
-
-    /** Optional publication diagnostics; they do not change Scope authorization or receipts. */
-    getSemanticSnapshotReport(): import('../../adapters/snapshot/receiver.js').SemanticSnapshotReport | null {
-        return this.workerHost?.getSemanticSnapshotReport() ?? null;
-    }
-
 
     // ════════════════════════════════════════════════════════════════
     //  Lifecycle Methods
@@ -166,11 +137,11 @@ export class WorkerSandbox {
      * [WorkerPool] 从池中获取 Worker
      */
     installDynamic(): Promise<void> {
-        if (this.intent || this._disposed) return Promise.reject(lifecycleError('SANDBOX_CLOSED'));
+        if (this.intent) return Promise.reject(lifecycleError('SANDBOX_CLOSED'));
         if (this.installPromise) return this.installSettled ? Promise.reject(lifecycleError('SANDBOX_ALREADY_INSTALLED')) : this.installPromise;
         const token = this.installToken = Object.freeze({});
         const scriptPath = resolve(this.config.workerScriptPath || DEFAULT_WORKER_SCRIPT);
-        const current = () => { if (this.installToken !== token || this.intent || this._disposed) throw lifecycleError('SANDBOX_CLOSED'); };
+        const current = () => { if (this.installToken !== token || this.intent) throw lifecycleError('SANDBOX_CLOSED'); };
         this.installPromise = Promise.resolve().then(async () => {
             current();this.lease = await this.pool.acquireLease(scriptPath);current();
             const host = this.workerHost = new AppWorkerHost({ ...this.config, workerScriptPath: scriptPath,
@@ -188,7 +159,7 @@ export class WorkerSandbox {
      * 暂停 App
      */
     async pause(): Promise<void> {
-        this.ensureNotDisposed();
+        this.ensureNotClosed();
 
         if (this._status !== 'running') {
             return;
@@ -204,7 +175,7 @@ export class WorkerSandbox {
      * 恢复 App
      */
     async resume(): Promise<void> {
-        this.ensureNotDisposed();
+        this.ensureNotClosed();
 
         if (this._status !== 'paused') {
             return;
@@ -217,7 +188,7 @@ export class WorkerSandbox {
     }
 
     async reinitialize(reason?: string): Promise<void> {
-        this.ensureNotDisposed();
+        this.ensureNotClosed();
 
         if (this._status !== 'running' && this._status !== 'paused') {
             return;
@@ -301,8 +272,7 @@ export class WorkerSandbox {
         if (this.intent === 'close') return Promise.reject(lifecycleError('LIFECYCLE_CONFLICT'));
         this.beginCleanup('delete');return this.close();
     }
-    disposeAsync(): Promise<SandboxCloseReport> { this._disposed = true;return this.beginCleanup(this.intent ?? 'close'); }
-    dispose(): void { void this.disposeAsync().catch(() => {}); }
+    disposeAsync(): Promise<SandboxCloseReport> { return this.beginCleanup(this.intent ?? 'close'); }
 
     /**
      * 发送外部事件
@@ -312,7 +282,7 @@ export class WorkerSandbox {
         eventType: string,
         data: Record<string, unknown>
     ): Promise<void> {
-        this.ensureNotDisposed();
+        this.ensureNotClosed();
         if (!this.workerHost) {
             throw new AOTUIError('WORKER_NOT_STARTED', { appId: this.appId });
         }
@@ -332,7 +302,7 @@ export class WorkerSandbox {
         type: 'complete',
         meta?: Pick<LLMOutputEventMeta, 'model' | 'providerId' | 'modelId' | 'usage'>
     ): void {
-        if (this.intent || this._disposed) return;
+        if (this.intent) return;
         if (!this.workerHost) {
             console.warn(`[WorkerSandbox] Cannot push LLM text: Worker not started for ${this.appId}`);
             return;
@@ -346,7 +316,7 @@ export class WorkerSandbox {
     //  Internal
     // ════════════════════════════════════════════════════════════════
 
-    private ensureNotDisposed(): void {
-        if (this._disposed || this.intent) throw lifecycleError('SANDBOX_CLOSED');
+    private ensureNotClosed(): void {
+        if (this.intent) throw lifecycleError('SANDBOX_CLOSED');
     }
 }

@@ -24,7 +24,7 @@ import { WorkerSandbox } from './worker-sandbox.js';
 import { WorkerPool } from './worker-pool.js';
 import { RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 import type { AppInteractionOptions, AppScopeResult } from '../../spi/runtime/app-interaction.interface.js';
-import type { ScopePolicy } from '../../core/invocation/scoped-interaction.js';
+import type { ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
 import { captureInteractionModes } from './interaction-config.js';
 
 /**
@@ -39,7 +39,6 @@ export interface InstalledApp extends AppInteractionOptions {
     whatItIs?: string;
     /** 什么时候用 (用于 Desktop State 展示) */
     whenToUse?: string;
-    html: string;
     /**
      * [RFC-014] App 状态
      * - 'pending': 已注册但未启动 (懒加载)
@@ -62,8 +61,6 @@ export interface InstalledApp extends AppInteractionOptions {
     /** [RFC-005] Reopen 时复用的 Runtime 配置 */
     runtimeConfig?: import('../../spi/config/index.js').RuntimeConfig;
 
-    /** [RFC-014] 消息角色 */
-    promptRole?: 'user' | 'assistant';
 }
 
 export interface AppManagerOptions {
@@ -102,9 +99,6 @@ type InstallOptions = AppInteractionOptions & {
             config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
             runtimeConfig?: import('../../spi/config/index.js').RuntimeConfig; // [RFC-005] Runtime Config
 
-            /** [RFC-014] App Role */
-            promptRole?: 'user' | 'assistant';
-
             /** Internal: suppress install callbacks during reinitialize */
             notifyAppInstalled?: boolean;
             /** Internal: suppress lifecycle signal during reinitialize */
@@ -127,7 +121,6 @@ type PendingOptions = AppInteractionOptions & {
         workerScriptPath?: string;
         config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
         runtimeConfig?: import('../../spi/config/index.js').RuntimeConfig;
-        promptRole?: 'user' | 'assistant';
     };
 type AppCode = AppManagerCloseReport['failures'][number]['codes'][number];
 interface OwnedSandbox { id: AppID; worker: WorkerSandbox; meta?: InstalledApp; codes: Set<AppCode>; stopReopen: boolean; cleanup?: Promise<SandboxCloseReport>; }
@@ -219,8 +212,8 @@ export class AppManager {
         } catch (error) { return Promise.reject(error); }
         return this.track(id, 'install', async () => {
             const meta: InstalledApp = { appId: id, name: options?.name, description: options?.description, whatItIs: options?.whatItIs,
-                whenToUse: options?.whenToUse, html: '', status: 'pending', installedAt: Date.now(), modulePath: appModulePath,
-                workerScript: options?.workerScriptPath, config: options?.config, runtimeConfig: options?.runtimeConfig, promptRole: options?.promptRole,
+                whenToUse: options?.whenToUse, status: 'pending', installedAt: Date.now(), modulePath: appModulePath,
+                workerScript: options?.workerScriptPath, config: options?.config, runtimeConfig: options?.runtimeConfig,
                 interactionModes: options?.interactionModes };
             this.installedApps.set(id, meta);await this.installMeta(meta, options);return id;
         });
@@ -255,7 +248,7 @@ export class AppManager {
         this.assertActive();const id = options.appId ?? this.allocateId();
         if (this.installedApps.has(id) || this.workers.has(id) || this.appOperations.has(id)) throw closeError('APP_ALREADY_EXISTS');
         this.installedApps.set(id, { appId: id, name: options.name, description: options.description, whatItIs: options.whatItIs, whenToUse: options.whenToUse,
-            html: '', status: 'pending', installedAt: Date.now(), modulePath: options.modulePath, workerScript: options.workerScriptPath, promptRole: options.promptRole,
+            status: 'pending', installedAt: Date.now(), modulePath: options.modulePath, workerScript: options.workerScriptPath,
             config: options.config, runtimeConfig: options.runtimeConfig,
             interactionModes });
         this.desktop.logSystem(`Registered pending app: ${id} (${options.name ?? 'unnamed'})`);return id;
@@ -389,7 +382,6 @@ export class AppManager {
     }
     async collapseApp(id: AppID, expectedInstanceId?: string): Promise<void> { this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'collapsed';this.desktop.logAppOperation(id, 'Application collapsed.');this.desktop.emitSignal('dom_mutation'); }
     async showApp(id: AppID, expectedInstanceId?: string): Promise<void> { this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'running';this.desktop.logAppOperation(id, 'Application shown.');this.desktop.emitSignal('dom_mutation'); }
-    getAllWorkers(): Map<AppID, WorkerSandbox> { return new Map(this.workers); }
     getInstalledApps(): Array<InstalledApp & { readonly appInstanceId?: string }> {
         return [...this.installedApps.values()].map(app => {
             const appInstanceId = this.workers.get(app.appId)?.appInstanceId;
@@ -397,13 +389,13 @@ export class AppManager {
         });
     }
     getDynamicAppIds(): AppID[] { return [...this.workers.keys()]; }
-    getAppStates(): AppState[] { return [...this.installedApps].map(([appId, app]) => ({ appId, name: app.name, html: app.html, status: app.status, installedAt: app.installedAt })); }
+    getAppStates(): AppState[] { return [...this.installedApps].map(([appId, app]) => ({ appId, name: app.name, status: app.status, installedAt: app.installedAt })); }
     getWorkerSandbox(id: AppID): WorkerSandbox | undefined { return this.workers.get(id); }
     createAppScope(appId: string, policy: ScopePolicy): AppScopeResult {
         const id = appId as AppID, meta = this.installedApps.get(id), worker = this.workers.get(id);
         const unavailable = (): AppScopeResult => Object.freeze({ status: 'rejected', issue: Object.freeze({ code: 'SCOPE_UNAVAILABLE', message: 'App scope is unavailable' }) });
         const current = () => this.phase === 'active' && !!meta && !!worker && this.installedApps.get(id) === meta && this.workers.get(id) === worker &&
-            (meta.status === 'running' || meta.status === 'collapsed') && worker.status === 'running' && !worker.disposed && !this.details.get(worker)?.stopReopen;
+            (meta.status === 'running' || meta.status === 'collapsed') && worker.status === 'running' && !this.details.get(worker)?.stopReopen;
         if (!current()) return unavailable();
         const create = worker!.createAppScope;
         if (!current()) return unavailable();

@@ -12,7 +12,8 @@ import { useContext, useLayoutEffect, useMemo, useRef } from 'preact/hooks';
 import { ViewRuntimeContext } from '../contexts/view-runtime-context.js';
 import { invokeOrdinaryParameterTool } from '../utils/ordinary-parameter-tool.js';
 import { captureToolTarget, type ToolTarget } from '../utils/tool-target.js';
-import type { InferArgs, OperationResult, ParamSchema } from '../operation/types.js';
+import type { InferArgs, ParamSchema } from '../operation/types.js';
+import type { OperationResult } from '@aotui/runtime/spi';
 
 /** A required, read-only Ref resolved from the current observation's snapshot. */
 export type SnapshotValueRefParamDef = Readonly<{

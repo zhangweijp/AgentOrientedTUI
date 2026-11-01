@@ -671,9 +671,6 @@ async function flushInteractionProjection(): Promise<void> {
     pushSemanticSnapshot();
 }
 
-// [RFC-001 Phase 3] Removed legacy pushDomUpdate
-
-
 function pushSemanticSnapshot(): void {
     if (!appContainer) return;
     const producerSeq = ++producerSequence;

@@ -108,7 +108,7 @@ it('C1-20 Pool and standalone Sandbox close permit a fresh Node child to end nat
 import {WorkerSandbox} from ${JSON.stringify(url(join(repo, 'runtime/dist/engine/app/worker-sandbox.js')))};
 import {defineRuntimeConfig} from ${JSON.stringify(url(join(repo, 'runtime/dist/spi/config/index.js')))};
 import {writeFile} from 'node:fs/promises';import assert from 'node:assert/strict';
-const pool=new WorkerPool({initialSize:2,maxSize:2});await pool.warmup();const closed=await pool.destroy();assert.equal(closed.total,0);
+const pool=new WorkerPool({initialSize:2,maxSize:2});const lease=await pool.acquireLease();await lease.release();const closed=await pool.destroy();assert.equal(closed.total,0);
 const sandbox=new WorkerSandbox({appId:'natural',desktopId:'d',appModulePath:${JSON.stringify(url(app))},runtimeConfig:defineRuntimeConfig({worker:{pool:{initialSize:0,maxSize:1}}}),config:{AOTUI_DATA_DIR:${JSON.stringify(join(dir, 'data'))},AOTUI_APP_NAME:'natural'}});
 await sandbox.installDynamic();const worker=sandbox.lease.worker;const report=await sandbox.disposeAsync();assert.equal(report.ok,true);assert.equal(report.resourcesReleased,true);assert.equal(report.ownedPool.state,'closed');assert.equal(worker.threadId,-1);
 await writeFile(${JSON.stringify(output)},JSON.stringify({closed,report,physicalThreadId:worker.threadId,proof:'natural child completion; no explicit process exit'}));

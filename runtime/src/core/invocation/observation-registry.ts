@@ -137,7 +137,7 @@ export function createObservationRegistry(store: SnapshotStore & AppIdentityRead
         return value;
     }
     try { clock(); } catch { throw new RangeError('Invalid observation registry clock'); }
-    let closed = false, sequence = 0, observations = 0, reservations = 0;
+    let closed = false, sequence = 0;
     let sourceBytes = 0, observationBytes = 0, metadataBytes = 0;
     const scopes = new Map<ScopeHandle, Scope>();
     const sources = new Map<string, { readonly source: AppSnapshotV2; readonly bytes: number; references: number }>();
@@ -159,7 +159,7 @@ export function createObservationRegistry(store: SnapshotStore & AppIdentityRead
         }
     }
     function dropObservation(scope: Scope, key: string, value: Registered): void {
-        scope.observations.delete(key); observations--;
+        scope.observations.delete(key);
         observationBytes -= value.publicBytes; metadataBytes -= value.metadataBytes;
         dropHold(value);
     }
@@ -214,27 +214,36 @@ export function createObservationRegistry(store: SnapshotStore & AppIdentityRead
         if (nextSource > limits.maxSourceBytes || nextPublic > limits.maxObservationBytes ||
             nextMetadata > limits.maxMetadataBytes || nextSource + nextPublic + nextMetadata > limits.maxTotalBytes) fail('OBSERVATION_CAPACITY');
     }
+    function counts() {
+        let observations = 0, reservations = 0, cancelledReservations = 0;
+        for (const scope of scopes.values()) {
+            observations += scope.observations.size;
+            reservations += scope.reservations.size;
+            for (const value of scope.reservations.values()) if (value.cancelled) cancelledReservations++;
+        }
+        return { observations, reservations, cancelledReservations };
+    }
     function settle(scope: Scope, token: ReservationHandle, value: Reservation, transferred = false): void {
-        scope.reservations.delete(token); reservations--;
+        scope.reservations.delete(token);
         observationBytes -= limits.observation.maxCanonicalBytes;
         metadataBytes -= limits.metadata.maxCanonicalBytes;
         if (!transferred) dropHold(value);
         removeClosedScope(scope);
     }
     function stats(error?: unknown): ObservationRegistryStats {
-        let cancelledReservations = 0;
-        for (const scope of scopes.values()) for (const value of scope.reservations.values()) if (value.cancelled) cancelledReservations++;
-        return Object.freeze({ closed, scopes: scopes.size, observations, reservations, cancelledReservations,
-            observationSlots: observations + reservations, sources: sources.size, sourceBytes,
+        const current = counts();
+        return Object.freeze({ closed, scopes: scopes.size, ...current,
+            observationSlots: current.observations + current.reservations, sources: sources.size, sourceBytes,
             observationBytes, metadataBytes, totalBytes: sourceBytes + observationBytes + metadataBytes,
             ...(error === undefined ? {} : { issue: issue(error) }) });
     }
     function cleanup(action?: () => void): ObservationCleanup {
-        const before = { observations, sources: sources.size, scopes: scopes.size };
+        const before = { observations: counts().observations, sources: sources.size, scopes: scopes.size };
         let error: unknown;
         try { sweep(); } catch (caught) { error = caught; }
         try { action?.(); } catch (caught) { error = caught; }
-        return Object.freeze({ ...stats(error), releasedObservations: before.observations - observations,
+        const current = stats(error);
+        return Object.freeze({ ...current, releasedObservations: before.observations - current.observations,
             releasedSources: before.sources - sources.size, removedScopes: before.scopes - scopes.size });
     }
     function project(scope: Scope, value: Reservation, input: unknown): { observation: Observation; metadata: Metadata; publicBytes: number; metadataBytes: number } {
@@ -338,9 +347,10 @@ export function createObservationRegistry(store: SnapshotStore & AppIdentityRead
                 if (!all && (!Array.isArray(data.viewIds) || data.viewIds.length === 0 ||
                     data.viewIds.length > DEFAULT_OBSERVATION_REGISTRY_LIMITS.maxViews ||
                     data.viewIds.some(v => !text(v)) || new Set(data.viewIds).size !== data.viewIds.length)) fail('OBSERVATION_INVALID');
-                if (scope.reservations.size >= limits.maxReservationsPerScope || reservations >= limits.maxReservations ||
+                const current = counts();
+                if (scope.reservations.size >= limits.maxReservationsPerScope || current.reservations >= limits.maxReservations ||
                     scope.reservations.size + scope.observations.size >= limits.maxObservationsPerScope ||
-                    observations + reservations >= limits.maxObservations) fail('OBSERVATION_CAPACITY');
+                    current.observations + current.reservations >= limits.maxObservations) fail('OBSERVATION_CAPACITY');
                 const source = ready(scope);
                 const viewIds = all ? source.views.map(view => view.id) : data.viewIds as string[];
                 if (viewIds.length > DEFAULT_OBSERVATION_REGISTRY_LIMITS.maxViews) fail('OBSERVATION_CAPACITY');
@@ -360,7 +370,7 @@ export function createObservationRegistry(store: SnapshotStore & AppIdentityRead
                 const value = { source, lease, selection, expiresAt, observationId: id('observation'), cancelled: false };
                 if (existing) existing.references++;
                 else { sources.set(source.id, { source, bytes, references: 1 }); sourceBytes += bytes; }
-                scope.reservations.set(token, value); reservations++;
+                scope.reservations.set(token, value);
                 observationBytes += limits.observation.maxCanonicalBytes; metadataBytes += limits.metadata.maxCanonicalBytes;
                 lease = undefined;
                 return Object.freeze({ status: 'reserved' as const, reservation: token, source, selection, expiresAt });
@@ -379,7 +389,7 @@ export function createObservationRegistry(store: SnapshotStore & AppIdentityRead
                 capacity(sourceBytes, observationBytes - limits.observation.maxCanonicalBytes + projected.publicBytes,
                     metadataBytes - limits.metadata.maxCanonicalBytes + projected.metadataBytes);
                 scope.observations.set(value.observationId, { ...projected, source: value.source, lease: value.lease });
-                observations++; observationBytes += projected.publicBytes; metadataBytes += projected.metadataBytes;
+                observationBytes += projected.publicBytes; metadataBytes += projected.metadataBytes;
                 transferred = true;
                 return Object.freeze({ status: 'observed' as const, observation: projected.observation });
             } catch (error) { return rejected(error); }

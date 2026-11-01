@@ -1,9 +1,6 @@
 import { createSnapshotCore } from '../../core/snapshot/store.js';
 import { createScopedInteraction } from '../../core/invocation/scoped-interaction.js';
-import type { ExecutionResolver, InteractionAuthority, ScopePolicy } from '../../core/invocation/scoped-interaction.js';
-import { acquireToolSource } from '../../core/tool/source-binding.js';
-import { prepareSnapshotValueArguments } from '../../core/tool/snapshot-value-arguments.js';
-import type { ToolSourceRequest } from '../../core/tool/source-binding.js';
+import type { ExecutionResolver, InteractionAuthority, ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
 import type { CommitResult, PreparedSnapshotFailure, SnapshotHealth, SnapshotIssueCode } from '../../core/snapshot/types.js';
 
 export interface SemanticSnapshotReport {
@@ -99,13 +96,6 @@ export class SemanticSnapshotReceiver {
             this.lastIssuePath = result.issue.path;
         }
         return Object.freeze({ ...result, healthChanged: before !== this.healthKey() });
-    }
-
-    selectToolSource(request: ToolSourceRequest) { return acquireToolSource(this.core.store, request); }
-
-    prepareSnapshotValueArguments(request: unknown) {
-        return prepareSnapshotValueArguments(this.core.store,
-            { appId: this.appId, instanceId: this.instanceId }, request);
     }
 
     close(): void {

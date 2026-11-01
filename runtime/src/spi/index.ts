@@ -8,7 +8,6 @@
 
 // Core identifiers, state values, results, errors, and notifications.
 export type {
-    AppConfig,
     AppID,
     AppState,
     DataPayload,

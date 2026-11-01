@@ -6,28 +6,8 @@
  * @module @aotui/sdk/contexts/view-runtime-context
  */
 import { createContext } from "preact";
-import type { IViewMeta, IRefRegistry, LLMOutputEvent, LLMOutputListener,
-  ViewToolDefinition, ViewToolRegistrationOptions } from "@aotui/runtime/spi";
-
-// ═══════════════════════════════════════════════════════════════
-//  LLM Output Channel Context (RFC-011)
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * SDK 侧的 LLM 文本通道接口
- * 
- * View 通过此接口订阅 LLM 文本输出。
- */
-interface ILLMOutputChannelContext {
-  /** 
-   * 订阅 LLM 文本事件
-   * @returns 取消订阅函数
-   */
-  subscribe(listener: LLMOutputListener): () => void;
-
-  /** 获取历史消息 */
-  getHistory(): LLMOutputEvent[];
-}
+import type { IViewMeta, IRefRegistry, ViewToolDefinition,
+  ViewToolRegistrationOptions } from "@aotui/runtime/spi";
 
 // ═══════════════════════════════════════════════════════════════
 //  统一 Context 值接口
@@ -69,13 +49,6 @@ interface ViewRuntimeContextValue {
     fingerprintOrdinaryParams?(params: unknown, additionalProperties: boolean): string;
     registerTool(name: string, definition: ViewToolDefinition, options: ViewToolRegistrationOptions): () => void;
   }>;
-
-  // ═══════════════════════════════════════════════════════════
-  // LLM Output Channel (RFC-011)
-  // ═══════════════════════════════════════════════════════════
-
-  /** Actual Provider, when supplied. Component DOM delivery does not provide history. */
-  readonly llmOutput?: Readonly<ILLMOutputChannelContext>;
 }
 
 // ═══════════════════════════════════════════════════════════════

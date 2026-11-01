@@ -1,10 +1,10 @@
 /**
- * AOTUI SDK - Operation Type Definitions
+ * AOTUI SDK - View Tool Parameter Types
  *
- * [SSOT] 所有 Operation 相关类型的唯一来源
+ * Parameter declarations and handler argument inference for View-local Tools.
  *
  * 设计原则:
- * - 此文件不导入任何运行时代码 (仅 preact 类型)
+ * - This file contains types only and imports no runtime code.
  * - 类型按用途分组
  * - 每个类型都有 JSDoc 文档
  *
@@ -179,40 +179,3 @@ export type InferArgs<T extends ParamSchema> = {
     T[K]
   >;
 };
-
-// ═══════════════════════════════════════════════════════════════
-// 4. Runtime Result Types
-// ═══════════════════════════════════════════════════════════════
-
-export interface OperationError {
-  /** 错误码 */
-  code: string;
-  /** 错误信息 */
-  message: string;
-  /** 额外上下文 */
-  context?: Record<string, unknown>;
-}
-
-/**
- * Operation Handler 的返回结果
- *
- * @description Operation 执行后必须返回的结果结构
- *
- * @example
- * // 成功结果
- * { success: true, data: { messageId: '123' } }
- *
- * @example
- * // 失败结果
- * { success: false, error: { code: 'INVALID_INPUT', message: '内容不能为空' } }
- */
-export interface OperationResult {
-  /** 是否成功 */
-  success: boolean;
-  /** 成功时的返回数据 */
-  data?: Record<string, unknown>;
-  /** 失败时的错误信息 */
-  error?: OperationError;
-  /** Application-declared effects on failure; omission leaves effects unknown. */
-  effects?: 'none' | 'partial';
-}

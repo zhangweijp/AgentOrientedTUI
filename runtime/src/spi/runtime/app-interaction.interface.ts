@@ -1,5 +1,5 @@
 import type { DesktopID } from '../core/types.js';
-import type { InteractionAuthority, ScopePolicy } from '../../core/invocation/scoped-interaction.js';
+import type { InteractionAuthority, ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
 
 export type InteractionMode = 'ordinary-v2' | 'snapshot-value-v2';
 

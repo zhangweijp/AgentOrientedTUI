@@ -50,7 +50,6 @@ export type DesktopStatus = 'active' | 'suspended' | 'serialized';
 export interface AppState {
     appId: AppID;
     name?: string;
-    html: string;
     /** [RFC-014] 增加 'pending' 状态用于懒加载 */
     status: 'pending' | 'running' | 'paused' | 'closed' | 'collapsed';
     installedAt: number;
@@ -63,12 +62,4 @@ export interface DesktopState {
     createdAt: number;
     serializedAt?: number;
     apps: AppState[];
-}
-
-/** App 配置 */
-export interface AppConfig {
-    /** 应用名称 (语义名称, 必填) */
-    name: string;
-    /** 应用 HTML 内容 */
-    html: string;
 }

@@ -27,7 +27,6 @@ export {
   useReducer,
 } from 'preact/hooks';
 export { createTUIApp, type TUIAppConfig } from './app-factory/createTUIApp.js';
-export { useAppEnv } from './hooks/useAppEnv.js';
 export { useAppLifecycle, type AppLifecycleCallbacks } from './hooks/useAppLifecycle.js';
 export { useAppRuntimeContext } from './context/AppRuntimeContext.js';
 export { usePersistentState, type PersistOptions, type PersistStatus, type PersistMeta } from './hooks/usePersistentState.js';
@@ -40,7 +39,7 @@ export {
 } from './hooks/useArrayRef.js';
 export { useViewContext } from './hooks/useViewContext.js';
 export { useViewTypeTool } from './hooks/useViewTypeTool.js';
-export { useLLMOutputChannel, useLLMOutputHistory } from './hooks/useLLMOutputChannel.js';
+export { useLLMOutputChannel } from './hooks/useLLMOutputChannel.js';
 export type {
   TypeToolUI,
   UseViewTypeToolResult,
@@ -51,8 +50,6 @@ export type {
   DeepReadonly,
 } from './hooks/useViewTypeTool.js';
 export type {
-  OperationResult,
-  OperationError,
   ParamDef,
   ParamSchema,
   ParamType,
@@ -64,6 +61,8 @@ export type {
   AppID,
   ViewID,
   DesktopID,
+  OperationError,
+  OperationResult,
   AppContext,
   AppReinitializeContext,
   IViewMeta,

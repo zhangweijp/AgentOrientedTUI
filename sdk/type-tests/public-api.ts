@@ -43,23 +43,29 @@ import {
   type ViewProps,
 } from '../src/index.js';
 
-// The live channel takes only a listener; history is a separate Provider API.
+// The live channel takes only a listener.
 // @ts-expect-error The retired options type is not part of the SDK root API.
 import type { LLMOutputChannelOptions } from '../src/index.js';
 import { useLLMOutputChannel, usePersistentState } from '../src/index.js';
 
+// @ts-expect-error Launch config is read from useAppRuntimeContext().
+import { useAppEnv } from '../src/index.js';
+// @ts-expect-error The SDK has no history source for this Hook.
+import { useLLMOutputHistory } from '../src/index.js';
+import type {
+  OperationError as RuntimeOperationError,
+  OperationResult as RuntimeOperationResult,
+} from '@aotui/runtime/spi';
+
 // These former exports describe retired/internal Runtime assembly surfaces.
 // @ts-expect-error Legacy object-app interface is not part of the SDK root API.
 import type { IAOTUIApp } from '../src/index.js';
-// @ts-expect-error Provider assembly context is Runtime plumbing, not SDK authoring API.
-import type { ILLMOutputChannelContext } from '../src/index.js';
 // @ts-expect-error The Context object is private SDK plumbing.
 import { ViewRuntimeContext } from '../src/index.js';
 // @ts-expect-error The full SDK Context accessor is private.
 import { useInternalAppRuntimeContext } from '../src/index.js';
 
 void (null as unknown as IAOTUIApp);
-void (null as unknown as ILLMOutputChannelContext);
 void ViewRuntimeContext;
 void useInternalAppRuntimeContext;
 type PublicAppRuntimeContext = ReturnType<typeof useAppRuntimeContext>;
@@ -71,8 +77,13 @@ type NoInternalContextPorts = AssertNever<InternalContextKeys>;
 type PublicPersistence = NonNullable<PublicAppRuntimeContext['persistence']>;
 type Equal<Left, Right> = (<T>() => T extends Left ? 1 : 2) extends
   (<T>() => T extends Right ? 1 : 2) ? true : false;
+type SDKOperationResultIsRuntimeResult = AssertTrue<Equal<OperationResult, RuntimeOperationResult>>;
+type SDKOperationErrorIsRuntimeError = AssertTrue<Equal<OperationError, RuntimeOperationError>>;
 const publicPersistenceIsTheManagedPort: AssertTrue<Equal<PublicPersistence, AppStatePersistence>> = true;
-type PublicContextChecks = [NoInternalContextPorts, typeof publicPersistenceIsTheManagedPort];
+const operationResultIsRuntimeResult: SDKOperationResultIsRuntimeResult = true;
+const operationErrorIsRuntimeError: SDKOperationErrorIsRuntimeError = true;
+type PublicContextChecks = [NoInternalContextPorts, typeof publicPersistenceIsTheManagedPort,
+  typeof operationResultIsRuntimeResult, typeof operationErrorIsRuntimeError];
 function checkPublicContextShape() {
   const context = useAppRuntimeContext();
   const appId: AppID = context.appId;
@@ -113,7 +124,9 @@ type PublicShapeChecks = [NoRefHandleProperties, NoViewCloseHandler, NoPublicMou
 void (null as unknown as PublicShapeChecks);
 
 useLLMOutputChannel(() => {});
-// @ts-expect-error Live channel history policy belongs to its actual Provider.
+void useAppEnv;
+void useLLMOutputHistory;
+// @ts-expect-error The live channel accepts no configuration object.
 useLLMOutputChannel(() => {}, { includeHistory: false });
 usePersistentState('public-api-type-check', 0, {
   storageKey: 'explicit-key',
@@ -161,6 +174,13 @@ useViewTypeTool(
     return { success: true } satisfies OperationResult;
   },
 );
+
+const failedToolResult = {
+  success: false,
+  error: { code: 'PARTIAL_WRITE', message: 'The application reports partial work.' },
+  effects: 'partial',
+} satisfies OperationResult;
+void failedToolResult;
 
 useViewTypeTool(
   'inspect_snapshot',

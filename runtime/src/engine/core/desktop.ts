@@ -11,7 +11,7 @@ import { AppManager } from '../app/index.js';
 import { LLMOutputChannelService } from './llm-output-channel.js';
 import { RuntimeConfig, RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 import type { AppInteractionOptions, AppScopeResult } from '../../spi/runtime/app-interaction.interface.js';
-import type { ScopePolicy } from '../../core/invocation/scoped-interaction.js';
+import type { ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
 import { captureInteractionModes } from '../app/interaction-config.js';
 
 
@@ -230,8 +230,6 @@ export class Desktop implements IDesktop {
             whenToUse?: string;
             config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
 
-            /** [RFC-014] App Role */
-            promptRole?: 'user' | 'assistant';
         }
     ): Promise<string> {
         const interactionModes = captureInteractionModes(options);
@@ -261,7 +259,6 @@ export class Desktop implements IDesktop {
                 whenToUse: options?.whenToUse,
                 config: mergedConfig, // [RFC-026] Injected Config
                 runtimeConfig: this.config, // [RFC-005] Pass Runtime Config
-                promptRole: options?.promptRole,
                 interactionModes
             }
         );
@@ -279,8 +276,6 @@ export class Desktop implements IDesktop {
         modulePath: string;
         workerScriptPath?: string;
         config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
-        /** [RFC-014] App Role */
-        promptRole?: 'user' | 'assistant';
     }): Promise<string> {
         const interactionModes = captureInteractionModes(options);
         this.assertActive();
@@ -294,25 +289,9 @@ export class Desktop implements IDesktop {
             workerScriptPath: options.workerScriptPath,
             config: { ...this.context?.env, ...options.config },
             runtimeConfig: this.config,
-            promptRole: options.promptRole,
             interactionModes
         });
     }
-    /**
-     * 获取 App 信息
-     * @param appId - App ID
-     * @returns App 信息 (name, etc.) 或 undefined
-     */
-    getAppInfo(appId: AppID): { name?: string } | undefined {
-        if (this._disposed) throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: this.id });
-
-        const worker = this.appManager.getAllWorkers().get(appId);
-        if (worker) {
-            return { name: worker.name };
-        }
-        return undefined;
-    }
-
     // --- Lifecycle Methods ---
 
     /**
@@ -403,8 +382,6 @@ export class Desktop implements IDesktop {
      * 关闭所有 App 并等待 Worker 清理。
      * 调用后 Desktop 进入 draining 状态。
      */
-    drain(): Promise<void> { return this.beginDrain('close'); }
-
     private beginDrain(intent: 'close' | 'delete'): Promise<void> {
         if (this.drainPromise) {
             if (this.closeIntent === 'close' && intent === 'delete') return Promise.reject(closeError('LIFECYCLE_CONFLICT'));

@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const control = vi.hoisted(() => ({ boxes: [] as any[], create: (_box: any) => {}, reinitialize: (_box: any) => {} }));
 vi.mock('./worker-sandbox.js', () => ({ WorkerSandbox: class {
-    status = 'created';disposed = false;closedClients = 0;closed = false;appInstanceId: string | undefined;onUpdateRequest?: () => void;
+    status = 'created';closedClients = 0;closed = false;appInstanceId: string | undefined;onUpdateRequest?: () => void;
     constructor(readonly config: any) { this.appInstanceId = `instance-${control.boxes.length + 1}`;control.boxes.push(this); }
     async installDynamic() { this.status = 'running'; }
     getCloseReport() { return { state: this.closed ? 'settled' : 'active', intent: 'close', resourcesReleased: this.closed, issues: [] }; }
@@ -101,7 +101,7 @@ it.each(['meta', 'worker', 'close'] as const)('B2 C13 App factory revokes a retu
     let close: Promise<unknown> | undefined;
     control.create = () => {
         if (change === 'meta') (manager as any).installedApps.set(id, { ...manager.getInstalledApps()[0] });
-        if (change === 'worker') (manager as any).workers.set(id, { status: 'running', disposed: false });
+        if (change === 'worker') (manager as any).workers.set(id, { status: 'running' });
         if (change === 'close') close = manager.closeApp(id);
     };
     expect(manager.createAppScope(id, {} as any)).toMatchObject({ status: 'rejected', issue: { code: 'SCOPE_UNAVAILABLE' } });expect(captured.closedClients).toBe(1);

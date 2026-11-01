@@ -66,7 +66,7 @@ it('C1-13 close before install and await acquire never reopens or loses the gran
 });
 it.each(['start', 'open'] as const)('C1-13 close while awaiting %s shares cleanup and cannot publish running', async stage => {
     const gate = defer();control[stage] = gate.promise;const s = sandbox();const install = s.installDynamic();await until(stage);
-    const close = s.close();expect(s.close()).toBe(close);const report = s.disposeAsync();expect(s.disposeAsync()).toBe(report);s.dispose();
+    const close = s.close();expect(s.close()).toBe(close);const report = s.disposeAsync();expect(s.disposeAsync()).toBe(report);
     expect(control.log).toContain('app-stop');expect(control.log).not.toContain('close');
     gate.resolve();await expect(install).rejects.toMatchObject({ code: 'INSTALL_FAILED' });await expect(close).rejects.toHaveProperty('code', 'SANDBOX_CLOSE_FAILED');
     expect((await report).resourcesReleased).toBe(true);expect(s.status).toBe('closed');expect(control.log.filter(e => e === 'close')).toHaveLength(1);expect(control.log.filter(e => e === 'reset')).toHaveLength(1);
@@ -100,8 +100,8 @@ it.each(['constructor', 'start', 'open', 'close', 'delete', 'reset', 'terminate'
     if (stage === 'reset') expect(report.issues).toContain('RESET_FAILED');
     if (stage === 'delete') expect(control.log.indexOf('close')).toBeGreaterThan(control.log.indexOf('delete'));
 });
-it('C1-14/15 delete duplicates once and dispose observes that same intent; injected pool remains owned by its parent', async () => {
-    const parent = new WorkerPool({ initialSize: 0 }), s = sandbox({ workerPool: parent });await s.installDynamic();const a = s.delete(), b = s.delete();expect(b).toBe(a);s.dispose();
+it('C1-14/15 delete duplicates once and disposeAsync reports that same intent; injected pool remains owned by its parent', async () => {
+    const parent = new WorkerPool({ initialSize: 0 }), s = sandbox({ workerPool: parent });await s.installDynamic();const a = s.delete(), b = s.delete();expect(b).toBe(a);
     await a;const report = await s.disposeAsync();expect(report).toMatchObject({ intent: 'delete', ok: true, lease: { disposition: 'pooled' } });expect(report.ownedPool).toBeUndefined();
     expect(control.log.filter(e => e === 'delete')).toHaveLength(1);expect(control.log).not.toContain('pool-destroy');await parent.destroy();
 });

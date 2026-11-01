@@ -63,7 +63,6 @@ export async function buildAoappManifest(appDir) {
       main: pkg.main ?? './dist/index.js',
       types: pkg.types,
     },
-    promptRole: kernelConfig.promptRole,
   };
 
   return Object.fromEntries(

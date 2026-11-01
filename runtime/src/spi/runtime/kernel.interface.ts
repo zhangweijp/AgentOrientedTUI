@@ -81,7 +81,6 @@ export interface IDesktop {
             whatItIs?: string;
             whenToUse?: string;
             config?: import('../app/app-config.interface.js').AppLaunchConfig;
-            promptRole?: 'user' | 'assistant';
         }
     ): Promise<string>;
 
@@ -100,7 +99,6 @@ export interface IDesktop {
         modulePath: string;
         workerScriptPath?: string;
         config?: import('../app/app-config.interface.js').AppLaunchConfig;
-        promptRole?: 'user' | 'assistant';
     }): Promise<string>;
 
     // System Commands (App)
@@ -116,30 +114,14 @@ export interface IDesktop {
     };
 
     /**
-     * 获取 App 信息
-     * @param appId - App ID
-     * @returns App 信息 (name, etc.) 或 undefined
-     */
-    getAppInfo?(appId: AppID): { name?: string } | undefined;
-
-    /**
      * 重新初始化 Desktop 上的所有 App，同时保持 Desktop 身份稳定。
      */
     reinitializeApps(options?: ReinitializeDesktopAppsOptions): Promise<ReinitializeDesktopAppsResult>;
 
     /**
-     * 等待所有活动 Worker 结束
-     * 
-     * 用于 Graceful Shutdown
-     */
-    drain(): Promise<void>;
-
-    /**
      * [RFC-015] 删除 Desktop
      * 
-     * 1. 调用所有 App 的 onDelete() (清理持久化数据)
-     * 2. 调用 drain() (关闭 Worker)
-     * 3. 清理资源
+     * 请求 App 删除，等待 App/Worker 清理，并释放 Desktop 资源。
      */
     delete(): Promise<void>;
 }
@@ -183,7 +165,6 @@ export interface IKernel {
             /** [RFC-013] App description for Agent */
             description?: string;
             config?: import('../app/app-config.interface.js').AppLaunchConfig;
-            promptRole?: 'user' | 'assistant';
         }
     ): Promise<string>;
 
@@ -209,7 +190,7 @@ export interface IKernel {
     /**
      * [RFC-014] 优雅关闭 Desktop
      * 
-     * 1. 调用 Desktop.drain() 等待 App 清理
+     * 1. 等待 Desktop 及其 App 清理完成
      * 2. 执行 beforeClose 回调（如持久化）
      * 3. 销毁 Desktop
      * 

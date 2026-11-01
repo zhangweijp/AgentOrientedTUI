@@ -116,11 +116,4 @@ export interface AppKernelConfig {
      */
     onReinitialize?(context: AppReinitializeContext): Promise<void> | void;
 
-    /**
-     * [RFC-014 Extension] 应用在 Prompt 中的角色
-     * 
-     * - 'user': 默认角色，作为用户消息发送
-     * - 'assistant': 作为助手（LLM）消息发送，用于 Thought Recorder 等应用
-     */
-    promptRole?: 'user' | 'assistant';
 }

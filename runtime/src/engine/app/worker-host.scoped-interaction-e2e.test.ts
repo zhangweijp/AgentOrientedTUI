@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { ScopePolicy } from '../../core/invocation/scoped-interaction.js';
+import type { ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
 
 let Host: typeof import('./worker-host.js').AppWorkerHost;
 let temporary: string, appFile: string, workerFile: string;

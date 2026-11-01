@@ -21,8 +21,8 @@ import type { DesktopID, AppID } from '../core/types.js';
  * 提供 App 运行所需的环境信息和能力。
  * 
  * [设计说明]
- * - AOTUI App 的状态 = DOM 内容，由 Desktop.serialize() 管理
- * - 业务数据持久化由 Product Layer 负责 (如 messageService)
+ * - 应用业务数据与持久化由 Product Layer 负责 (如 messageService)
+ * - Runtime 序列化 Desktop 的 App 身份、状态与安装时间等运行元数据
  * - 不再提供 per-app store，简化 API
  */
 export interface AppContext {

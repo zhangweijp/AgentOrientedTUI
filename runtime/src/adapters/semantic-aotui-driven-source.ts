@@ -9,7 +9,7 @@ import type { ContextDrivenSource, DrivenSourceContext, MessageWithTimestamp, To
 import type { AppID } from '../spi/core/types.js';
 import type { IDesktop, IKernel, AppDiscoveryInfo } from '../spi/runtime/kernel.interface.js';
 import type { Observation } from '../core/invocation/observation-types.js';
-import type { InvokeResult, ReceiptAccess, ScopeClient, ScopePolicy } from '../core/invocation/scoped-interaction-types.js';
+import type { InvokeResult, ScopeClient, ScopePolicy } from '../core/invocation/scoped-interaction-types.js';
 
 export interface SemanticAOTUIDrivenSourceOptions {
     includeInstruction?: boolean;
@@ -27,7 +27,7 @@ const unavailable = (toolName: string, toolCallId: string, code: string, message
     ({ toolName, toolCallId, outcomeStatus, error: { code, message } });
 
 /** Keep Core receipts internal while returning operation data and actionable errors to the Driver. */
-export function semanticToolResult(toolName: string, toolCallId: string, result: InvokeResult | ReceiptAccess): ToolResult {
+function semanticToolResult(toolName: string, toolCallId: string, result: InvokeResult): ToolResult {
     if (result.kind !== 'receipt') return unavailable(toolName, toolCallId, result.code, result.message,
         result.kind === 'refused' ? 'rejected' : 'unknown');
     const outcome = result.receipt.outcome;

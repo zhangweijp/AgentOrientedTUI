@@ -1,9 +1,9 @@
-import { h, Component, type ComponentChildren } from 'preact';
+import { h } from 'preact';
 import { act } from 'preact/test-utils';
 import { renderToString } from 'preact-render-to-string';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as SDK from './index.js';
-import { createTUIApp, View, useState, useDataRef, useViewTypeTool, useLLMOutputChannel, useLLMOutputHistory, useAppRuntimeContext } from './index.js';
+import { createTUIApp, View, useState, useDataRef, useViewTypeTool, useLLMOutputChannel, useAppRuntimeContext } from './index.js';
 import { useContext } from 'preact/hooks';
 import { ViewRuntimeContext } from './contexts/view-runtime-context.js';
 import { AppRuntimeContext } from './context/AppRuntimeContext.js';
@@ -23,12 +23,6 @@ const currentOutputEvent = 'aotui:llm-text';
 const outputEvents = [currentOutputEvent, 'aotui:llm-output'];
 function emit(name = currentOutputEvent, detail: any = { content: 'value' }) { document.dispatchEvent(new CustomEvent(name, { detail })); }
 const calls = (spy: any) => spy.mock.calls.filter((args: any[]) => outputEvents.includes(args[0]));
-function provider(order: string[], name: string) {
-    let listener: any;const stop = vi.fn(() => { order.push(name + ':stop');listener = undefined; });
-    return { subscribe: vi.fn((fn: any) => { order.push(name + ':subscribe');listener = fn;return stop; }), getHistory: vi.fn(() => []), stop,
-        emit(event: any) { listener?.(event); } };
-}
-function contextual(Body: () => any, value: any) { return h(ViewRuntimeContext.Provider, { value }, h(Body, {})); }
 
 describe('C04/C09 SDK root exports and app context', () => {
     it('exposes exactly the supported JavaScript entry points', () => {
@@ -36,7 +30,6 @@ describe('C04/C09 SDK root exports and app context', () => {
             'AOTUIError',
             'View',
             'createTUIApp',
-            'useAppEnv',
             'useAppLifecycle',
             'useAppRuntimeContext',
             'useArrayRef',
@@ -44,7 +37,6 @@ describe('C04/C09 SDK root exports and app context', () => {
             'useDataRef',
             'useEffect',
             'useLLMOutputChannel',
-            'useLLMOutputHistory',
             'useMemo',
             'usePersistentState',
             'useReducer',
@@ -59,6 +51,7 @@ describe('C04/C09 SDK root exports and app context', () => {
         for (const name of [
             'ViewRegistry', 'createInlineView', 'useViewSelector', 'useRefRegistry',
             'defineParams', 'escapeHtml', 'escapeJsonForAttr', 'useAppConfig',
+            'useAppEnv', 'useLLMOutputHistory',
         ]) {
             expect(Object.hasOwn(SDK, name), name).toBe(false);
         }
@@ -110,7 +103,7 @@ describe('C01/C02 actual component capability honesty', () => {
         let context: any;
         let refFormatter: any;
         function Body() { context = useContext(ViewRuntimeContext);const ref = useDataRef('record', { label: 'value' });refFormatter = ref;return h('p', {}, ref('Record')); }
-        const x = await mount(Body);expect(context.llmOutput).toBeUndefined();expect(x.kernel.getViewOwnedViewInstances()).toHaveLength(1);
+        const x = await mount(Body);expect(context).not.toHaveProperty('llmOutput');expect(x.kernel.getViewOwnedViewInstances()).toHaveLength(1);
         expect(x.kernel.getViewRefs()).toContainEqual(expect.objectContaining({ viewId: 'detail', refId: 'record' }));expect(x.container.textContent).toContain('[Record](record)');
         expect(refFormatter).not.toHaveProperty('data');
         expect(refFormatter).not.toHaveProperty('id');
@@ -129,7 +122,7 @@ describe('C01/C02 actual component capability honesty', () => {
     });
 });
 
-describe('C03–C06 actual component subscriptions and controlled Providers', () => {
+describe('C03–C06 actual component subscriptions', () => {
     it('subscribes during commit to the current DOM event and cleans it up exactly', async () => {
         const add = vi.spyOn(document, 'addEventListener'), remove = vi.spyOn(document, 'removeEventListener'), received: any[] = [];let update!: () => void;
         function Body() { const [revision, set] = useState(1);update = () => set(2);useLLMOutputChannel(e => received.push({ revision, event: e }));return null; }
@@ -140,52 +133,8 @@ describe('C03–C06 actual component subscriptions and controlled Providers', ()
         await act(update);emit();expect(received.at(-1).revision).toBe(2);expect(calls(add)).toHaveLength(1);
         await x.close();expect(calls(remove)).toHaveLength(1);emit(currentOutputEvent);emit('aotui:llm-output');expect(received).toHaveLength(4);
     });
-    it('selects only the actual Provider and cleans its old source before subscribing the replacement', async () => {
-        const order: string[] = [], first = provider(order, 'first'), second = provider(order, 'second'), received: any[] = [], add = vi.spyOn(document, 'addEventListener');let replace!: () => void;
-        function Child() { useLLMOutputChannel(e => received.push(e));return null; }
-        function Body() { const context = useContext(ViewRuntimeContext)!;const [current, set] = useState(first);replace = () => set(second);return contextual(Child, { ...context, llmOutput: current }); }
-        const x = await mount(Body);expect(calls(add)).toHaveLength(0);emit();first.emit({ content: 'first' });expect(received).toEqual([{ content: 'first' }]);
-        await act(replace);expect(order).toEqual(['first:subscribe', 'first:stop', 'second:subscribe']);first.emit({ content: 'old' });second.emit({ content: 'second' });expect(received).toHaveLength(2);
-        await x.close();expect(first.stop).toHaveBeenCalledOnce();expect(second.stop).toHaveBeenCalledOnce();second.emit({ content: 'closed' });expect(received).toHaveLength(2);expect(calls(add)).toHaveLength(0);
-    });
-    it('propagates Provider subscription failure without adding DOM listeners', async () => {
-        const failure = Error('PROVIDER_FAILURE'), add = vi.spyOn(document, 'addEventListener');
-        let captured: unknown, entered!: () => void;const caught = new Promise<void>(resolve => { entered = resolve; });
-        class Boundary extends Component<{ children?: ComponentChildren }, { failed: boolean }> {
-            state = { failed: false };
-            static getDerivedStateFromError() { return { failed: true }; }
-            componentDidCatch(error: unknown) { captured = error;entered(); }
-            render() { return this.state.failed ? null : this.props.children; }
-        }
-        function Child() { useLLMOutputChannel(() => {});return null; }
-        function Body() { return h(Boundary, {}, contextual(Child, { llmOutput: { subscribe() { throw failure; }, getHistory() { return []; } } })); }
-        await mount(Body);await caught;expect(captured).toBe(failure);expect(calls(add)).toHaveLength(0);
-    });
-    it('leaves Provider-owned synchronous replay unchanged', async () => {
-        const received: any[] = [], subscribe = vi.fn((listener: any) => { listener({ content: 'provider replay' });return () => {}; });
-        function Child() { useLLMOutputChannel(e => received.push(e));useLLMOutputChannel(e => received.push(e));return null; }
-        function Body() { return contextual(Child, { llmOutput: { subscribe, getHistory: () => [] } }); }
-        await mount(Body);expect(subscribe).toHaveBeenCalledTimes(2);expect(received).toEqual([{ content: 'provider replay' }, { content: 'provider replay' }]);
-    });
-    it('rejects unavailable live/history in a no-document SSR hook environment without claiming a no-DOM product', () => {
+    it('rejects unavailable live output in a no-document SSR hook environment', () => {
         vi.stubGlobal('document', undefined);
-        expect(() => renderToString(h(() => { useLLMOutputChannel(() => {});return null; }, {}))).toThrow(/SDK_LLM_OUTPUT_UNAVAILABLE.*Provider.*document/);
-        expect(() => renderToString(h(() => { useLLMOutputHistory();return null; }, {}))).toThrow(/SDK_LLM_HISTORY_UNAVAILABLE.*Provider.*DOM/);
-    });
-    it.each([[], [{ content: 'history', timestamp: 1 }]])('returns actual Provider history %j and propagates failures', events => {
-        const getHistory = vi.fn(() => events);let actual: unknown;
-        function Body() { actual = useLLMOutputHistory();return null; }
-        renderToString(contextual(Body, { llmOutput: { getHistory, subscribe() { return () => {}; } } }));expect(actual).toBe(events);expect(getHistory).toHaveBeenCalledOnce();
-        const failure = Error('HISTORY_FAILURE');expect(() => renderToString(contextual(Body, { llmOutput: { getHistory() { throw failure; } } }))).toThrow(failure);
-    });
-    it.each(['live', 'history'])('rejects an invalid %s Provider method instead of silently falling back', kind => {
-        const add = vi.spyOn(document, 'addEventListener');
-        function Body() { if (kind === 'live') useLLMOutputChannel(() => {});else useLLMOutputHistory();return null; }
-        expect(() => renderToString(contextual(Body, { llmOutput: { subscribe: 1, getHistory: 1 } }))).toThrow(kind === 'live' ? /SDK_LLM_OUTPUT_UNAVAILABLE.*Provider.subscribe/ : /SDK_LLM_HISTORY_UNAVAILABLE.*Provider.getHistory/);
-        expect(calls(add)).toHaveLength(0);
-    });
-    it('does not report empty history from an actual builtin component View without a Provider', async () => {
-        function Body() { useLLMOutputHistory();return null; }
-        await expect(mount(Body)).rejects.toThrow(/SDK_LLM_HISTORY_UNAVAILABLE/);
+        expect(() => renderToString(h(() => { useLLMOutputChannel(() => {});return null; }, {}))).toThrow(/SDK_LLM_OUTPUT_UNAVAILABLE.*document event bridge/);
     });
 });

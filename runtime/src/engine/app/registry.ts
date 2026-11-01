@@ -515,8 +515,6 @@ export class AppRegistry {
 
             try {
                 const kernelConfig = app.factory.kernelConfig;
-                const promptRole = configEntry?.promptRole ?? kernelConfig.promptRole;
-
                 const whatItIs = configEntry?.whatItIs
                     ?? kernelConfig.whatItIs
                     ?? configEntry?.description
@@ -533,7 +531,6 @@ export class AppRegistry {
                             description: configEntry?.description ?? kernelConfig.description,
                             whatItIs,
                             whenToUse,
-                            promptRole,
                             config: dynamicConfig,
                             interactionModes: options.interactionModes,
                         }
@@ -548,7 +545,6 @@ export class AppRegistry {
                         whenToUse,
                         modulePath,
                         workerScriptPath: workerScript,
-                        promptRole,
                         config: dynamicConfig,
                         interactionModes: options.interactionModes,
                     });

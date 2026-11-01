@@ -114,13 +114,6 @@ describe('AppManager', () => {
         });
     });
 
-    describe('getAllWorkers', () => {
-        it('返回空 Map 当没有安装 App', () => {
-            const workers = manager.getAllWorkers();
-            expect(workers.size).toBe(0);
-        });
-    });
-
     // ════════════════════════════════════════════════════════════════
     // 生命周期方法（空状态）
     // ════════════════════════════════════════════════════════════════
@@ -154,7 +147,6 @@ describe('AppManager', () => {
             (manager as any).installedApps.set('app_running', {
                 appId: 'app_running',
                 name: 'ide',
-                html: '',
                 status: 'running',
                 installedAt: Date.now(),
                 modulePath: '/running',
@@ -163,7 +155,6 @@ describe('AppManager', () => {
             (manager as any).installedApps.set('app_paused', {
                 appId: 'app_paused',
                 name: 'paused-app',
-                html: '',
                 status: 'paused',
                 installedAt: Date.now(),
                 modulePath: '/paused',
@@ -171,7 +162,6 @@ describe('AppManager', () => {
             (manager as any).installedApps.set('app_collapsed', {
                 appId: 'app_collapsed',
                 name: 'collapsed-app',
-                html: '',
                 status: 'collapsed',
                 installedAt: Date.now(),
                 modulePath: '/collapsed',
@@ -179,7 +169,6 @@ describe('AppManager', () => {
             (manager as any).installedApps.set('app_closed', {
                 appId: 'app_closed',
                 name: 'closed-app',
-                html: '',
                 status: 'closed',
                 installedAt: Date.now(),
                 modulePath: '/closed',
@@ -187,7 +176,6 @@ describe('AppManager', () => {
             (manager as any).installedApps.set('app_pending', {
                 appId: 'app_pending',
                 name: 'pending-app',
-                html: '',
                 status: 'pending',
                 installedAt: Date.now(),
                 modulePath: '/pending',
@@ -231,7 +219,6 @@ describe('AppManager', () => {
             (manager as any).installedApps.set('app_ok', {
                 appId: 'app_ok',
                 name: 'ok-app',
-                html: '',
                 status: 'running',
                 installedAt: Date.now(),
                 modulePath: '/ok',
@@ -239,7 +226,6 @@ describe('AppManager', () => {
             (manager as any).installedApps.set('app_bad', {
                 appId: 'app_bad',
                 name: 'bad-app',
-                html: '',
                 status: 'running',
                 installedAt: Date.now(),
                 modulePath: '/bad',
@@ -282,7 +268,6 @@ describe('AppManager', () => {
             (manager as any).installedApps.set(appId, {
                 appId,
                 name: 'ide',
-                html: '',
                 status: 'running',
                 installedAt: Date.now(),
                 modulePath: '/path/to/module',
@@ -294,7 +279,7 @@ describe('AppManager', () => {
             expect(worker.close).toHaveBeenCalledTimes(1);
             expect(worker.disposeAsync).toHaveBeenCalledTimes(1);
             expect(worker.getCloseReport()).toMatchObject({ state: 'settled', resourcesReleased: true });
-            expect(manager.getAllWorkers().has(appId)).toBe(false);
+            expect(manager.isWorkerMode(appId)).toBe(false);
             expect(manager.getInstalledApps()[0]?.status).toBe('closed');
         });
     });
@@ -336,7 +321,7 @@ describe('AppManager', () => {
             });
 
             // 验证没有 Worker
-            expect(manager.getAllWorkers().has(appId)).toBe(false);
+            expect(manager.isWorkerMode(appId)).toBe(false);
             expect(manager.getWorkerSandbox(appId)).toBeUndefined();
         });
 
@@ -424,7 +409,7 @@ describe('AppManager', () => {
 
         it('清理后 workers 为空', async () => {
             await manager.cleanupAsync();
-            expect(manager.getAllWorkers().size).toBe(0);
+            expect(manager.getDynamicAppIds()).toEqual([]);
         });
     });
 });

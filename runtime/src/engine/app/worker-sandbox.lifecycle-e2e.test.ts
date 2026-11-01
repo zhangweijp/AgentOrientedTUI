@@ -62,7 +62,7 @@ it('C1-09/16/17 actual SDK two Host rounds use one physical leased Worker', asyn
         const flush: any = await operation(b, 'flush');expect(flush.data.ok).toBe(true);
         expect((await operation(b, 'inspect') as any).data.value).toBe(1);
         expect(['STALE_BINDING', 'DISPOSED']).toContain((await operation(b, 'old') as any).data.code);
-        await (a as any).lease.release(false);a.dispose();firstHost.terminate();expect(pool.getReport().leased).toBe(1);
+        await (a as any).lease.release(false);await a.disposeAsync();firstHost.terminate();expect(pool.getReport().leased).toBe(1);
         expect((await operation(b, 'inspect') as any).success).toBe(true);
         await operation(b, 'set', { value: 2 });await b.close();const second = await b.disposeAsync();
         expect(JSON.parse(await readFile(f.record, 'utf8')).value).toBe(2);expect(second.ok).toBe(true);await pool.destroy();expect(worker.threadId).toBe(-1);

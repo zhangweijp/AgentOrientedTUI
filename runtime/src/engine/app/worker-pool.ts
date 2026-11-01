@@ -97,10 +97,6 @@ export class WorkerPool {
         } catch (failure) { completion.reject(failure); }
         return completion.promise;
     }
-    warmup(): Promise<void> {
-        if (this.state !== 'open') return Promise.reject(error('WORKER_POOL_CLOSED'));
-        return this.beginWarmup(this.path());
-    }
     acquireLease(scriptPath?: string): Promise<WorkerLease> {
         if (this.state !== 'open') return Promise.reject(error('WORKER_POOL_CLOSED'));
         const script = this.path(scriptPath), first = !this.warmupCompletion;

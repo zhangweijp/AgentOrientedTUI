@@ -35,15 +35,14 @@ it('forwards provider/model metadata to the Worker DOM event without mutating ca
                     import { parentPort } from 'node:worker_threads';
                     import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
                     import { View } from './sdk/src/components/View.tsx';
+                    import { useLLMOutputChannel } from './sdk/src/hooks/useLLMOutputChannel.ts';
 
                     function Content() {
+                        useLLMOutputChannel(event => parentPort.postMessage({
+                            type: 'TEST_LLM_EVENT', detail: event,
+                        }));
                         useEffect(() => {
-                            const receive = event => parentPort.postMessage({
-                                type: 'TEST_LLM_EVENT', detail: event.detail,
-                            });
-                            document.addEventListener('aotui:llm-text', receive);
                             parentPort.postMessage({ type: 'TEST_LLM_LISTENER_READY' });
-                            return () => document.removeEventListener('aotui:llm-text', receive);
                         }, []);
                         return h('p', {}, 'Listening for LLM output');
                     }

@@ -15,7 +15,7 @@ import type { DesktopCloseOptions, DesktopCloseOperation, RuntimeCloseOperation,
 import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseOperation, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from '../engine/core/close-operation.js';
 import { captureInteractionModes } from '../engine/app/interaction-config.js';
 import type { AppScopeResult } from '../spi/runtime/app-interaction.interface.js';
-import type { ScopePolicy } from '../core/invocation/scoped-interaction.js';
+import type { ScopePolicy } from '../core/invocation/scoped-interaction-types.js';
 
 /**
  * Kernel - The core orchestrator of the AOTUI Runtime.
@@ -208,7 +208,7 @@ export class Kernel implements IKernel {
     /**
      * [RFC-014] 优雅关闭 Desktop
      * 
-     * 1. 调用 Desktop.drain() 等待 App 清理
+     * 1. 等待 Desktop 及其 App 清理完成
      * 2. 执行 beforeClose 回调（如持久化）
      * 3. 销毁 Desktop
      * 

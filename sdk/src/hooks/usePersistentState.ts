@@ -1,6 +1,5 @@
 import type { Dispatch, StateUpdater } from 'preact/hooks';
 import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
-import { useAppEnv } from './useAppEnv.js';
 import { useInternalAppRuntimeContext } from '../context/AppRuntimeContext.js';
 import type { AppStatePersistence, StateBindingStatus, StateValue, StateIssue } from '@aotui/runtime/spi';
 import type { StateBinding } from '@aotui/runtime/spi';
@@ -31,18 +30,6 @@ export function shouldHydratePersistentState(
   return true;
 }
 
-export function resolvePersistentAppName({
-  storageKey,
-  appNameFromEnv,
-  appId,
-}: {
-  storageKey?: string;
-  appNameFromEnv?: string;
-  appId: string | number;
-}): string {
-  return storageKey || appNameFromEnv || String(appId);
-}
-
 type Candidate<T> = {
   phase: 'pending' | 'bound' | 'released'; value: T; ready: boolean; updates: number;
   serialize?: PersistOptions<T>['serialize']; deserialize?: PersistOptions<T>['deserialize'];
@@ -50,8 +37,8 @@ type Candidate<T> = {
 };
 
 export function usePersistentState<T>(key: string, initial: T, options: PersistOptions<T> = {}): [T, Dispatch<StateUpdater<T>>, PersistMeta] {
-  const { persistence } = useInternalAppRuntimeContext();
-  const lifecycle = useAppEnv<AOTUILifecycleMetadata>('__aotuiLifecycle');
+  const { persistence, launchConfig } = useInternalAppRuntimeContext();
+  const lifecycle = launchConfig?.['__aotuiLifecycle'] as AOTUILifecycleMetadata | undefined;
   const hydrate = shouldHydratePersistentState(lifecycle, options);
   const [, refresh] = useState(0);
   const port: AppStatePersistence | undefined = persistence;

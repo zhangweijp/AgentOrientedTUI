@@ -11,7 +11,6 @@ import type {
     InvocationContext, InvocationReceipt, InvocationSource, Issue, ObserveResult,
     OperationProvider, ReceiptAccess, ReceiptMetadata, ScopeClient, ScopedInvocation, ScopePolicy, TrustedScopeInput,
 } from './scoped-interaction-types.js';
-export type * from './scoped-interaction-types.js';
 
 const KiB = 1024, MiB = KiB * KiB, WORK = MiB;
 const profile = (maxDepth: number, maxNodes: number, bytes: number): ObservationJsonLimits => Object.freeze({
@@ -153,9 +152,19 @@ export function createScopedInteraction(store: SnapshotStore & AppIdentityReader
     const states = new Map<string, State>();
     const sources = new Map<string, { readonly source: AppSnapshotV2; readonly bytes: number; count: number }>();
     const fees: Fees = { source: 0, fingerprint: 0, metadata: 0, work: 0, result: 0 };
-    let closed = false, activeInvocations = 0, activeReads = 0, activeQueries = 0, receiptEntries = 0;
+    let closed = false;
     let completeClosed: (() => void) | undefined;
     const closedCompletion = new Promise<void>(resolve => { completeClosed = resolve; });
+    function stateCounts() {
+        let activeInvocations = 0, activeReads = 0, activeQueries = 0, receiptEntries = 0;
+        for (const state of states.values()) {
+            activeInvocations += state.invocations;
+            activeReads += state.reads;
+            activeQueries += state.queries;
+            receiptEntries += state.ledger.size;
+        }
+        return { activeInvocations, activeReads, activeQueries, receiptEntries };
+    }
     function settleClosed(): void {
         if (closed && states.size === 0) { completeClosed?.(); completeClosed = undefined; }
     }
@@ -175,7 +184,7 @@ export function createScopedInteraction(store: SnapshotStore & AppIdentityReader
     function clean(state: State): void {
         if (states.get(state.id) !== state || !state.closing || state.invocations || state.reads || state.queries || state.projects) return;
         for (const entry of state.ledger.values()) { dropContent(entry); fees.metadata -= entry.metadataBytes; }
-        receiptEntries -= state.ledger.size; fees.fingerprint -= state.fingerprintBytes;
+        fees.fingerprint -= state.fingerprintBytes;
         state.ledger.clear(); state.operations.clear(); state.policy = undefined; state.resolve = undefined;
         states.delete(state.id);
         settleClosed();
@@ -364,7 +373,7 @@ export function createScopedInteraction(store: SnapshotStore & AppIdentityReader
             fees.result -= limits.receipt.maxCanonicalBytes - entry.resultBytes;
             const actualMetadata = captureBoundedJson<Metadata>(entry.metadata, limits.metadata).bytes;
             fees.metadata -= limits.metadata.maxCanonicalBytes - actualMetadata; entry.metadataBytes = actualMetadata;
-            release?.(); fees.work -= WORK; state.invocations--; activeInvocations--;
+            release?.(); fees.work -= WORK; state.invocations--;
             state.controllers.delete(controller); entry.running = false;
             const notify = entry.notify; entry.pending = undefined; entry.notify = undefined; notify?.();
             clean(state);
@@ -389,9 +398,9 @@ export function createScopedInteraction(store: SnapshotStore & AppIdentityReader
     }
     function query(state: State, entry: Entry): QueryWork {
         if (entry.query) return entry.query;
-        if (state.queries >= limits.maxQueriesPerScope || activeQueries >= limits.maxQueries) fail('OPERATION_QUERY_CAPACITY');
+        if (state.queries >= limits.maxQueriesPerScope || stateCounts().activeQueries >= limits.maxQueries) fail('OPERATION_QUERY_CAPACITY');
         charge({ work: WORK, result: limits.receipt.maxCanonicalBytes }, 'OPERATION_QUERY_CAPACITY');
-        const controller = new AbortController(); state.controllers.add(controller); state.queries++; activeQueries++;
+        const controller = new AbortController(); state.controllers.add(controller); state.queries++;
         let notify!: () => void;
         const pending = new Promise<void>(resolve => { notify = resolve; });
         const provider = entry.provider!, operationId = entry.metadata.operationId!;
@@ -418,16 +427,16 @@ export function createScopedInteraction(store: SnapshotStore & AppIdentityReader
             }
             finally {
                 if (work.reserved) fees.result -= limits.receipt.maxCanonicalBytes;
-                fees.work -= WORK; state.queries--; activeQueries--; state.controllers.delete(controller);
+                fees.work -= WORK; state.queries--; state.controllers.delete(controller);
                 entry.query = undefined; work.notify(); clean(state);
             }
         });
         return work;
     }
     function admitRead(state: State): AbortController {
-        if (state.reads >= limits.maxReadsPerScope || activeReads >= limits.maxReads) fail('RECEIPT_READ_CAPACITY');
+        if (state.reads >= limits.maxReadsPerScope || stateCounts().activeReads >= limits.maxReads) fail('RECEIPT_READ_CAPACITY');
         charge({ work: limits.metadata.maxCanonicalBytes }, 'RECEIPT_READ_CAPACITY');
-        const controller = new AbortController(); state.controllers.add(controller); state.reads++; activeReads++;
+        const controller = new AbortController(); state.controllers.add(controller); state.reads++;
         return controller;
     }
     async function read(state: State, entry: Entry, controller: AbortController, explicit: boolean): Promise<ReceiptAccess> {
@@ -444,7 +453,7 @@ export function createScopedInteraction(store: SnapshotStore & AppIdentityReader
             if (entry.receipt!.outcome.status === 'accepted' && !own(entry)) fail('OPERATION_QUERY_UNAVAILABLE');
             return Object.freeze({ kind: 'receipt', receipt: entry.receipt! });
         } catch (error) { return unavailable(problem(error).code); }
-        finally { fees.work -= limits.metadata.maxCanonicalBytes; state.reads--; activeReads--; state.controllers.delete(controller); clean(state); }
+        finally { fees.work -= limits.metadata.maxCanonicalBytes; state.reads--; state.controllers.delete(controller); clean(state); }
     }
     function invoke(id: string, raw: unknown): Promise<import('./scoped-interaction-types.js').InvokeResult> {
         try {
@@ -465,9 +474,10 @@ export function createScopedInteraction(store: SnapshotStore & AppIdentityReader
                 try { return read(state, found.value, admitRead(state), false); }
                 catch (error) { return Promise.resolve(unavailable(problem(error).code)); }
             }
-            if (state.ledger.size >= limits.maxReceiptsPerScope || receiptEntries >= limits.maxReceipts ||
-                state.invocations >= limits.maxInvocationsPerScope || activeInvocations >= limits.maxInvocations) fail('INVOCATION_CAPACITY');
-            if (state.reads >= limits.maxReadsPerScope || activeReads >= limits.maxReads) fail('RECEIPT_READ_CAPACITY');
+            const counts = stateCounts();
+            if (state.ledger.size >= limits.maxReceiptsPerScope || counts.receiptEntries >= limits.maxReceipts ||
+                state.invocations >= limits.maxInvocationsPerScope || counts.activeInvocations >= limits.maxInvocations) fail('INVOCATION_CAPACITY');
+            if (state.reads >= limits.maxReadsPerScope || counts.activeReads >= limits.maxReads) fail('RECEIPT_READ_CAPACITY');
             const initial = capture<Metadata>({ scopeId: state.id, invocationId: request.invocationId, observationId: request.observationId,
                 bindingId: request.bindingId, source: null, operationId: null }, limits.metadata, 'INVOCATION_CAPACITY').value;
             charge({ fingerprint: captured.bytes, metadata: limits.metadata.maxCanonicalBytes, work: WORK + limits.metadata.maxCanonicalBytes,
@@ -477,8 +487,8 @@ export function createScopedInteraction(store: SnapshotStore & AppIdentityReader
             const pending = new Promise<void>(resolve => { notify = resolve; });
             const entry: Entry = { metadata: initial, metadataBytes: limits.metadata.maxCanonicalBytes, phase: 'not-dispatched',
                 pending, notify, running: true, expired: false, unavailable: false, resultBytes: 0 };
-            state.ledger.claim(request.invocationId, fingerprint, entry); state.fingerprintBytes += captured.bytes; receiptEntries++;
-            state.controllers.add(controller); state.controllers.add(readController); state.invocations++; activeInvocations++; state.reads++; activeReads++;
+            state.ledger.claim(request.invocationId, fingerprint, entry); state.fingerprintBytes += captured.bytes;
+            state.controllers.add(controller); state.controllers.add(readController); state.invocations++; state.reads++;
             void Promise.resolve().then(() => run(state, entry, request, controller));
             return read(state, entry, readController, false);
         } catch (error) { return Promise.resolve(Object.freeze({ kind: 'refused', ...problem(error) })); }
@@ -531,14 +541,15 @@ export function createScopedInteraction(store: SnapshotStore & AppIdentityReader
     }
     function stats(error?: unknown): InteractionStats {
         let closingScopes = 0, receiptContents = 0, acceptedOperations = 0;
+        const counts = stateCounts();
         for (const state of states.values()) {
             if (state.closing) closingScopes++;
             acceptedOperations += state.operations.size;
             for (const entry of state.ledger.values()) if (entry.receipt) receiptContents++;
         }
         const observations = registry.inspect();
-        return Object.freeze({ closed, scopes: states.size, closingScopes, activeInvocations, activeReads, activeQueries,
-            receiptEntries, receiptContents, acceptedOperations, sourceBytes: fees.source, fingerprintBytes: fees.fingerprint,
+        return Object.freeze({ closed, scopes: states.size, closingScopes, ...counts,
+            receiptContents, acceptedOperations, sourceBytes: fees.source, fingerprintBytes: fees.fingerprint,
             metadataBytes: fees.metadata, workBytes: fees.work, resultBytes: fees.result, invocationBytes: total(),
             combinedBytes: total() + observations.totalBytes, observations,
             ...(error === undefined ? observations.issue ? { issue: observations.issue } : {} : { issue: problem(error) }) });

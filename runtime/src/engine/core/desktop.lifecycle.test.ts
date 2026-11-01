@@ -27,13 +27,12 @@ describe('Desktop actual close ownership', () => {
         expect(snapshot.state).toBe('closing');expect(report.cleanup).toMatchObject({ signalBus: 'done', llmOutput: 'done', logger: 'done' });
         expect(report.cleanup).not.toHaveProperty('registry');
     });
-    it('drain closes admission immediately; full close joins and selects its callback once', async () => {
+    it('beginClose closes admission immediately, waits for App cleanup, and shares one close operation', async () => {
         const child = appBarrier(), desktop = new Desktop('join', { appManager: child.manager as any });
-        const drain = desktop.drain();expect(desktop.drain()).toBe(drain);
-        await expect(desktop.openApp('x')).rejects.toMatchObject({ code: 'DESKTOP_DISPOSED' });
-        await expect(desktop.installDynamicWorkerApp('x')).rejects.toMatchObject({ code: 'DESKTOP_DISPOSED' });
         const callback = vi.fn(async () => {}), operation = desktop.beginClose({ beforeClose: callback });
         expect(desktop.beginClose({ beforeClose: callback })).toBe(operation);
+        await expect(desktop.openApp('x')).rejects.toMatchObject({ code: 'DESKTOP_DISPOSED' });
+        await expect(desktop.installDynamicWorkerApp('x')).rejects.toMatchObject({ code: 'DESKTOP_DISPOSED' });
         expect(() => desktop.beginClose({ beforeClose: async () => {} })).toThrow('LIFECYCLE_CONFLICT');
         expect(() => desktop.beginClose({ intent: 'delete' })).toThrow('LIFECYCLE_CONFLICT');
         expect(child.manager.beginClose).toHaveBeenCalledTimes(1);expect(callback).not.toHaveBeenCalled();

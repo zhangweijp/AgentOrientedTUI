@@ -36,10 +36,11 @@ it('C1-04 destroy during the exit/replace handoff cancels creation and frees the
     let closing!: ReturnType<typeof p.destroy>;(a.worker as any).once('exit', () => { closing = p.destroy(); });
     (a.worker as any).exit();await expect(pending).rejects.toMatchObject({ code: 'WORKER_POOL_CLOSED' });expect(control.attempts).toBe(1);expect((await closing).total).toBe(0);
 });
-it('C1-05 warmup happens once, includes the first checkout and retains partial construction for cleanup', async () => {
+it('C1-05 first checkout includes the initial pool size and retains partial construction for cleanup', async () => {
     const p = pool({ initialSize: 2, maxSize: 3 });const a = await p.acquireLease('/first.cjs');expect(control.attempts).toBe(2);expect(control.workers.every(w => w.script === '/first.cjs')).toBe(true);
-    const warm = p.warmup();expect(p.warmup()).toBe(warm);await warm;expect(control.attempts).toBe(2);await a.release();const closing = p.destroy();for (const worker of control.workers) worker.exit();await closing;
-    control.failAt = control.attempts + 2;const partial = pool({ initialSize: 2, maxSize: 2 });await expect(partial.warmup()).rejects.toMatchObject({ code: 'WORKER_CREATE_FAILED' });
+    await a.release();const reused = await p.acquireLease('/first.cjs');expect(reused.worker).toBe(a.worker);expect(control.attempts).toBe(2);
+    await reused.release();const closing = p.destroy();for (const worker of control.workers) worker.exit();await closing;
+    control.failAt = control.attempts + 2;const partial = pool({ initialSize: 2, maxSize: 2 });await expect(partial.acquireLease()).rejects.toMatchObject({ code: 'WORKER_CREATE_FAILED' });
     expect(partial.getReport().total).toBe(1);const done = partial.destroy();control.workers.at(-1).exit();expect((await done).total).toBe(0);
 });
 it('C1-06 stale timers cannot clear or terminate a later idle generation; all idle may reach zero', async () => {

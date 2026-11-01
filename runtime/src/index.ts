@@ -44,7 +44,6 @@ export {
     SEMANTIC_INTERACTION_MODES,
 } from './spi/index.js';
 export type {
-    AppConfig,
     AppContext,
     AppDiscoveryInfo,
     AppInteractionOptions,

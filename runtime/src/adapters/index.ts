@@ -5,4 +5,4 @@
  */
 
 export { DEFAULT_AOTUI_SYSTEM_INSTRUCTION } from './system-instruction.js';
-export { SemanticAOTUIDrivenSource, semanticToolResult, type SemanticAOTUIDrivenSourceOptions } from './semantic-aotui-driven-source.js';
+export { SemanticAOTUIDrivenSource, type SemanticAOTUIDrivenSourceOptions } from './semantic-aotui-driven-source.js';

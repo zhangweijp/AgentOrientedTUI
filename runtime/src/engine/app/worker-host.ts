@@ -27,7 +27,7 @@ import { Worker } from 'worker_threads';
 import { randomUUID } from 'node:crypto';
 import { SemanticSnapshotReceiver, type SemanticSnapshotReport } from '../../adapters/snapshot/receiver.js';
 import type { CancellationSignal, ExecutionBinding, ExecutionFact, InteractionAuthority, InteractionStats,
-    InvocationSource, OperationResultData, ScopePolicy } from '../../core/invocation/scoped-interaction.js';
+    InvocationSource, OperationResultData, ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
 import { captureWorkerCapabilities } from '../../adapters/worker-message-capture.js';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';

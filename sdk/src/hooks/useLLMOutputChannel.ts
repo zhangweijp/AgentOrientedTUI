@@ -25,8 +25,7 @@
  * ```
  */
 
-import { useContext, useLayoutEffect, useRef } from 'preact/hooks';
-import { ViewRuntimeContext } from '../contexts/view-runtime-context.js';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 import type { LLMOutputEvent, LLMOutputListener } from '@aotui/runtime/spi';
 
 // ============================================================================
@@ -55,15 +54,9 @@ import type { LLMOutputEvent, LLMOutputListener } from '@aotui/runtime/spi';
  * ```
  */
 export function useLLMOutputChannel(onText: LLMOutputListener): void {
-    // 从 ViewRuntimeContext 获取 llmOutput 通道 (null-safe: 允许在 View 外调用)
-    const viewCtx = useContext(ViewRuntimeContext);
-    const llmOutput = viewCtx?.llmOutput;
-    if (llmOutput != null && typeof llmOutput.subscribe !== 'function') {
-        throw new Error('SDK_LLM_OUTPUT_UNAVAILABLE: useLLMOutputChannel requires a callable Provider.subscribe; an invalid Provider cannot fall back to DOM events.');
-    }
     const dom = typeof document === 'undefined' ? undefined : document;
-    if (llmOutput == null && !dom) {
-        throw new Error('SDK_LLM_OUTPUT_UNAVAILABLE: useLLMOutputChannel requires an actual Provider or a document event bridge.');
+    if (!dom) {
+        throw new Error('SDK_LLM_OUTPUT_UNAVAILABLE: useLLMOutputChannel requires a document event bridge.');
     }
 
     // 使用 ref 保持回调引用最新
@@ -77,9 +70,6 @@ export function useLLMOutputChannel(onText: LLMOutputListener): void {
         const handler: LLMOutputListener = (event) => {
             callbackRef.current(event);
         };
-
-        // Select one actual source; Provider failures propagate without DOM fallback.
-        if (llmOutput != null) return llmOutput.subscribe(handler);
 
         // Worker mode receives the current event emitted by worker-runtime.
         // [RFC-020] 支持 reasoning 字段
@@ -108,38 +98,5 @@ export function useLLMOutputChannel(onText: LLMOutputListener): void {
         return () => {
             dom!.removeEventListener('aotui:llm-text', domHandler);
         };
-    }, [llmOutput, dom]); // eslint-disable-line react-hooks/exhaustive-deps
-}
-
-// ============================================================================
-// History Hook
-// ============================================================================
-
-/**
- * 获取 LLM 文本历史
- * 
- * 查询实际 Provider 的历史；组件 DOM 桥不提供历史查询。
- * 
- * @returns 历史事件数组
- * 
- * @example
- * ```tsx
- * function HistoryView() {
- *     const history = useLLMOutputHistory();
- *     
- *     return (
- *         <ul>
- *             {history.map((e, i) => <li key={i}>{e.content}</li>)}
- *         </ul>
- *     );
- * }
- * ```
- */
-export function useLLMOutputHistory(): LLMOutputEvent[] {
-    const viewCtx = useContext(ViewRuntimeContext);
-    const llmOutput = viewCtx?.llmOutput;
-    if (llmOutput == null || typeof llmOutput.getHistory !== 'function') {
-        throw new Error('SDK_LLM_HISTORY_UNAVAILABLE: useLLMOutputHistory requires a callable Provider.getHistory; the component DOM bridge does not provide history.');
-    }
-    return llmOutput.getHistory();
+    }, [dom]); // eslint-disable-line react-hooks/exhaustive-deps
 }

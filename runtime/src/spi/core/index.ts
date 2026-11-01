@@ -43,7 +43,6 @@ export type {
     DesktopStatus,
     AppState,
     DesktopState,
-    AppConfig,
 } from './types.js';
 
 // ============================================================================

@@ -55,9 +55,6 @@ export interface AppConfigEntry {
      */
     autoStart?: boolean;
 
-    /** [Fix] App 角色 */
-    promptRole?: 'user' | 'assistant';
-
     /**
      * 原始安装来源（用于分发场景），例如：
      * - npm:@scope/my-app@1.2.3

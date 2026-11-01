@@ -1,4 +1,4 @@
-import { createTUIApp, View, useCallback, useEffect, useMemo, useRef, useState, useAppEnv } from '@aotui/sdk';
+import { createTUIApp, View, useCallback, useEffect, useMemo, useRef, useState, useAppRuntimeContext } from '@aotui/sdk';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import os from 'os';
 import { RootView } from './RootView.js';
@@ -26,7 +26,7 @@ function createCommand(commandId: string, command: string): CommandRecord {
 }
 
 function TerminalRoot() {
-    const envProjectPath = useAppEnv<string>('projectPath');
+    const envProjectPath = useAppRuntimeContext().launchConfig?.projectPath as string | undefined;
     const projectPath = useMemo(() => envProjectPath || os.homedir(), [envProjectPath]);
     const [terminals, setTerminals] = useState<TerminalSession[]>([]);
     const terminalsRef = useRef<TerminalSession[]>([]);
