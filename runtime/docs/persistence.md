@@ -8,7 +8,7 @@ Host 使用模块内共享的 createNodeStateStorage backend，构造无 I/O；�
 
 根路径从已合并 launchConfig.AOTUI_DATA_DIR 捕获，不能由存储请求提供。非空字符串按 Host 构造时 cwd 解析并追加 app-state；无配置/空字符串为 `~/.aotui/app-state`。Desktop Manager 已注入的 `~/.aotui/data` 保持对应 `~/.aotui/data/app-state`。非字符串或 NUL 明确拒绝。SDK 不读取 process.env 来选另一个根；业务 namespace 为 JSON.stringify([desktopId, appKey])。历史合法名称原样映射，非法或不可安全表示的名称不清洗，不自动迁移。
 
-INIT 独立提供协议版本、实例和有限预算，Worker 检查实际 factory 自有数据标记 persistenceSupport=state-session-v1 后返回同实例 ACK。缺失为 legacy-unverified，出现但非法/错实例则拒绝；持久化标记不会扩展或授予当前 `ordinary-v2` / `snapshot-value-v2` Worker interaction modes，也不因 Worker 升级而自动把旧 SDK 标记为 managed。一个 Host 只初始化一次，物理 Worker 正常 RESET 后必须换新 Host/实例。
+INIT 独立提供协议版本、实例和有限预算。Worker 只接受同时声明 `persistenceSupport: 'state-session-v1'` 与 `appLifecycleSupport: 'app-lifecycle-v2'` 的正式 SDK 工厂，校验 Host offers 后返回 ACK；Host 校验 ACK 的协议和实例。工厂标记、offer 或 ACK 缺失或非法时拒绝初始化，不提供旧 SDK fallback。持久化标记不会扩展或授予当前 `ordinary-v2` / `snapshot-value-v2` Worker interaction modes。一个 Host 只初始化一次，物理 Worker 正常 RESET 后必须换新 Host/实例。
 
 STATE_STORAGE_REQUEST/RESPONSE 使用 version=1、instanceId、单调 sequence、operation。read/replace/remove 接受精确 address，replace 另含 text，release 不带正文/地址。自有数据属性、精确字段、预算、实例、Desktop 和高水位在 I/O 前验证；release 有独立监督资格，不占普通请求槽。回复匹配实例/序号/operation；畸形修改回执不能 applied。明确发送前拒绝是 failed/effects:none；已发送但结果不能确认的修改为 unknown，迟到回执不会升级成成功。既有风险阻止新请求时，新请求仍属于已知未进入，而非假装其已写过。
 
@@ -38,7 +38,7 @@ App 端口 flush 同步共享 Promise，下一微任务才进入 Core 快照。A
 
 `AppWorkerHost.getPersistenceReport()` 是有限只读快照：
 
-- support：offered / managed / legacy-unverified / rejected，为实际协商事实。
+- support：offered / managed / rejected，为实际协商事实。
 - unsafe：Host 已识别不可健康复用的持久化/关闭风险，后续真实 release 不会将其抹掉。
 - pending、actualIO：当前已接纳、尚未真正结束的后端访问数量（含等待 open）；opening 为真实 opening Promise 是否未完成。它们不是代理 IPC 数量或逐 syscall 数量。
 - bufferedBytes：上述访问持有的请求正文逻辑字节；ownerRetained 表示已得到而尚未确认释放的实际 owner；opening 时另有打开中的归属。

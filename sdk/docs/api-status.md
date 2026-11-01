@@ -9,13 +9,12 @@
 | `createTUIApp`, `View` | 用 Preact 组件声明应用和 View。应用模块的 `default` 必须是 `createTUIApp(...)` 返回的托管组件工厂。 |
 | Preact hooks | `useState`, `useCallback`, `useEffect`, `useMemo`, `useReducer`, `useRef` 从 SDK 根入口导出；SDK 内部直接使用 `preact/hooks`，应用应解析 SDK 声明的 Preact peer。 |
 | `useViewContext` | 在挂载的 View 内读取公开 View 元数据。 |
-| `useAppEnv` | 按键读取当前应用启动配置。读取完整公开上下文时使用 `useAppRuntimeContext().launchConfig`。 |
 | `useAppRuntimeContext` | 读取 App/desktop 元数据、启动配置和当前实例的 `AppStatePersistence` 客户端口。高级应用可显式绑定、恢复、更新、清理并 flush 自己的实例状态；这里不暴露 Host 的文件系统/storage adapter，也不含 SDK Ref/Tool、投影或生命周期端口。 |
 | `useDataRef`, `useArrayRef` | 在 View 中声明当前业务数据的 Ref。每个输出标记对应一个注册 ID；发布 Ref 不授予修改或执行权限。 |
 | `useViewTypeTool` | 唯一 Tool 声明 Hook；普通参数（包括空参数和只读工具）使用 ordinary-v2。恰好一个必填顶层同 View Ref 时使用只读 snapshot-value-v2。只读声明必须显式写 `isMutating: false`。 |
 | `useAppLifecycle` | 可选的应用清理回调 Hook。`createTUIApp` 总是声明 `app-lifecycle-v2`；`stop` 与 `close` 回调各自可选，无需 opt-in 配置。 |
 | `usePersistentState` | 声明应用实例状态。setter 更新当前实例会话；Runtime 在关闭时负责 managed flush，Hook 提供恢复状态和显式 `clear()`。 |
-| `useLLMOutputChannel`, `useLLMOutputHistory` | 仅使用真实 Provider 或现有 DOM 事件桥；无可用来源时报告固定错误，不伪造历史。 |
+| `useLLMOutputChannel` | 订阅 Worker 的 `aotui:llm-text` 实时事件；事件桥不提供历史，没有 `document` 时报告固定错误。 |
 | `AOTUIError` | Runtime 提供的结构化错误类型。 |
 
 SDK 不导出 Runtime 私有 App/View Context、View registry、Ref registry、Tool registry 或 factory assembler。应用应使用上述 Hooks 和组件；Runtime/Host 集成方直接依赖相应 Runtime 合同。
@@ -41,9 +40,9 @@ Ref V2 的 `refSource: 'snapshot-value-v1'` 只标识声明的来源语义；实
 以下名称均为 `@aotui/sdk` 的根 JavaScript 导出：
 
 ```text
-AOTUIError, View, createTUIApp, useAppEnv, useAppLifecycle, useAppRuntimeContext, useArrayRef,
+AOTUIError, View, createTUIApp, useAppLifecycle, useAppRuntimeContext, useArrayRef,
 useCallback, useDataRef,
-useEffect, useLLMOutputChannel, useLLMOutputHistory, useMemo,
+useEffect, useLLMOutputChannel, useMemo,
 usePersistentState, useReducer, useRef, useState, useViewContext,
 useViewTypeTool
 ```
@@ -70,4 +69,4 @@ TypeToolUI, UseViewTypeToolResult, ViewID, ViewProps
 
 ## 已退出的 SDK 根入口
 
-`IAOTUIApp` 的对象生命周期合同与 `ILLMOutputChannelContext` 的 Provider 装配接口不属于当前 SDK 根入口。type-wide Tool、旧 View/Factory/registry 组装、专用只读/实体/创建 Hook 也已退出；迁移说明只在标记为历史对照或已删除 API 的段落中引用旧名称。当前 API 的完整迁移见 [migration](migration.md)。
+`IAOTUIApp` 的对象生命周期合同不属于当前 SDK 根入口。type-wide Tool、旧 View/Factory/registry 组装、专用只读/实体/创建 Hook 也已退出；迁移说明只在标记为历史对照或已删除 API 的段落中引用旧名称。当前 API 的完整迁移见 [migration](migration.md)。

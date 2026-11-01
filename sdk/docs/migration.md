@@ -108,7 +108,9 @@ TypeScript 会提前阻止一部分错误 JS 输入，运行时仍需验证模�
 
 handler 返回应用的 `OperationResult`；Controller 另有来源、执行阶段、可见性和回执。可信 entered-returned 中的业务结果可以映射为 unknown，同时传输仍健康。不能用结果字符串判断 Worker 是否可复用；依据适用的 Runtime 能力合同和终态判断 Worker 是否可复用。
 
-旧 ViewType+ToolName Hook 调用不再有运行时兼容路径。将 Tool 声明放到目标 `<View>` 的子组件内，使用 `useViewTypeTool(name, options, handler, config?)`；每个已挂载实例拥有自己的 binding，跨实例调用仍需来源提供的目标选择与执行时授权。组件通过状态决定是否渲染 `<View>`，以挂载和卸载控制页面生命周期。`useLLMOutputChannel` 只接收实时输出 listener；若旧代码传入已删除的 `includeHistory`，移除该参数。需要历史时调用 `useLLMOutputHistory`，它读取实际 Provider 提供的历史；DOM 事件桥不提供历史。
+`useAppEnv` 已删除；迁移为 `useAppRuntimeContext().launchConfig`，并按应用配置字段检查类型。该 Hook 只能在 Runtime 托管的 App Context 中调用；缺少 Context 时会抛错。SDK 根入口仍导出 `OperationResult` 与 `OperationError`，并直接复用 Runtime SPI 类型定义。
+
+旧 ViewType+ToolName Hook 调用不再有运行时兼容路径。将 Tool 声明放到目标 `<View>` 的子组件内，使用 `useViewTypeTool(name, options, handler, config?)`；每个已挂载实例拥有自己的 binding，跨实例调用仍需来源提供的目标选择与执行时授权。组件通过状态决定是否渲染 `<View>`，以挂载和卸载控制页面生命周期。`useLLMOutputChannel` 只接收实时输出 listener，并监听 Worker 派发的 `aotui:llm-text` 事件；事件桥不提供历史，SDK 不公开历史读取 Hook，也不承诺宿主提供历史 Provider。
 
 使用 `app_name` 字符串替代旧示例误写的 name。应用模块的 `default` 必须是唯一托管组件工厂；Runtime 通过 `initializeComponent` 初始化组件树。`createTUIApp` 总是声明 `app-lifecycle-v2`，清理 callbacks 可选，不再设置实验 opt-in。旧 `factory.create()`、callable factory 与 manifest/create 双模式已退出。
 

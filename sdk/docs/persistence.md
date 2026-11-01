@@ -110,9 +110,9 @@ C01 已删除全局 `persistenceManager` 入口及其类型。通常使用 `useP
 | 实际组合 | 边界 |
 | --- | --- |
 | 当前 SDK＋支持 `state-session-v1` 的 Runtime | 工厂声明经实例确认后使用 managed 会话；Hook 的状态更新、恢复、flush 和 clear 按本文合同执行。 |
-| 旧 SDK＋新 Runtime | legacy-unverified，旧直接写文件不受 managed 互斥保护；不支持新旧实现同时写同 namespace。 |
-| 新 SDK＋旧 Runtime | 普通组件可运行，Hook 明确 unavailable，无文件系统 fallback。 |
-| 旧 SDK＋旧 Runtime | 归档兼容起点，未获得新保证。 |
+| 旧 SDK＋新 Runtime | 当前 Runtime 要求正式 SDK 工厂声明并协商 `state-session-v1` 与 `app-lifecycle-v2`；缺少标记的旧工厂被拒绝，不提供旧直接写文件 fallback。 |
+| 新 SDK＋旧 Runtime | 不属于当前协议合同；不保证可安装或运行，也不提供持久化 fallback。 |
+| 旧 SDK＋旧 Runtime | 超出当前合同，本文不保证其运行或持久化行为。 |
 
 managed 关闭同步 seal，等待既有手工保存并取得最终快照；失败仍独立卸载和 dispose，等待真实存储释放。flush/卸载/释放任何失败或 unknown 均不能成功回池。完整 Manager/Desktop/Kernel 关闭聚合、独立 tarball、无 DOM Producer、跨平台/跨进程以及性能/RSS SLA 不在本批保证内。详见 [API 状态](api-status.md)与 [Runtime 持久化职责](../../runtime/docs/persistence.md)。
 

@@ -113,20 +113,20 @@ useEffect(() => {
 }, [])
 ```
 
-### useAppEnv
+### useAppRuntimeContext
 
 When to use:
-- Access launchConfig values from Root or other Views.
-
-How to use:
-- Request by key and provide a fallback.
+- Read the current App metadata, launch configuration, and managed persistence context.
 
 Example:
 
 ```tsx
-import { useAppEnv } from '@aotui/sdk'
+import { useAppRuntimeContext } from '@aotui/sdk'
 
-const workspacePath = useAppEnv<string>('projectPath') || process.cwd()
+const launchConfig = useAppRuntimeContext().launchConfig
+const projectPath = typeof launchConfig?.projectPath === 'string'
+  ? launchConfig.projectPath
+  : process.cwd()
 ```
 
 ## Demo: AOTUI IDE Style App Skeleton

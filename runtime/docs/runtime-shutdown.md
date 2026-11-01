@@ -65,20 +65,20 @@ const report = await close.completion;
 
 close/delete 由首次意图决定。delete 先开始会先尝试 App 的 `onDelete`；失败仍继续 close/unmount 和资源释放。close/drain 先开始后不能升级为 delete。`AppKernel` 同实例的异步 open、delete、close 各自共用一次操作；卸载失败仍独立撤销五类自身监听和 owned View/Ref/Tool 注册。
 
-## 保存回执、资源释放与兼容
+## 保存回执与资源释放
 
-`persistence` 按实际 Sandbox/Host 聚合：managed、legacy、尚未协商和未启动分开计数；flush 成功、失败、unknown 和 unsaved 分开保留。关闭中 `unmount=pending`、顶层 `ok=false` 的 B2 进度报告本身不算故障。flush 已成功仍计 `confirmedFlushes`。完成时缺合格最终报告，或实际 flush、unmount、dispose、release 失败，则保留固定失败。
+`persistence` 按实际 Sandbox/Host 聚合：`managedApps`、`unnegotiatedApps` 和 `notUsedApps` 分开计数；flush 成功、失败、unknown 和 unsaved 分开保留。关闭中 `unmount=pending`、顶层 `ok=false` 的 B2 进度报告本身不算故障。flush 已成功仍计 `confirmedFlushes`。完成时缺合格最终报告，或实际 flush、unmount、dispose、release 失败，则保留固定失败。
 
 C1 报告中的 `transferred` 表示 Host 已把 Worker 安全交回池，不等于物理 Worker 退出。借用 Runtime 池的 Desktop 报告 `pool.ownership=not-owned`；Runtime 自有池关闭必须等待其全部实际 exit，并报告 `closed`、`total=0`。活动文件 CAS 或后端 open/replace 即使超过调用方期限，仍由原 Host 等待实际完成。
 
-有实际 C1 资源报告的旧 SDK/Worker 保持 `legacy-unverified`：上层为 `mixed`，不能宣称 managed 保存成功；若 C1 已确认资源释放，`resourcesReleased` 可以为 `true`，也不增加虚构的未知资源参与者。仅有未验证证据且没有已知故障时，旧 void 调用保留 resolve 兼容，严格 `ok` 仍为 `false`。
+`mixed` / `unverified` 描述报告中实际存在的未协商或无法确认的资源事实，不代表旧 SDK/Worker 的兼容运行模式。资源释放证据与持久化协商结果分别保留；未使用持久化的 Sandbox 计入 `notUsedApps`，没有 managed 协商的则计入 `unnegotiatedApps`。只有报告中存在相应未确认参与者时才保留 `mixed` / `unverified`，不会仅因已确认释放的资源凭空增加未知参与者。
 
 旧注入 Manager/Desktop/AppManager/AppHostService/Registry 缺少新能力时，仍尝试既有关闭入口，并记录未验证参与者。Promise 返回不能证明物理资源已经释放。真正抛出的关闭故障仍保留。默认装配具有完整报告能力；不会为测试替身把默认路径降成未验证。
 
 ## 对现有调用方的影响
 
 - closing 即拒绝新业务，不能通过之前保存的 Desktop 对象绕过。重复 App/Desktop ID 在活动、关闭中或资源未确认释放时不能覆盖。
-- `getAllWorkers()` 返回独立 Map，`getInstalledApps()` / `getAppStates()` 返回独立记录。业务配置的任意深层冻结不在此保证内。合法 pending/closed 重开使用原 metadata 的内部路径。
+- `getInstalledApps()` / `getAppStates()` 返回独立记录快照，修改快照不会改动 Manager 内部状态。业务配置的任意深层冻结不在此保证内。合法 pending/closed 重开使用原 metadata 的内部路径。
 - `Desktop.output` 和 `getLLMOutputChannel()` 返回本实例缓存 facade。关闭后不能新增订阅；旧取消函数只取消旧订阅，无法作用于同 ID 后继。后者保持服务方法形状，但要求本 Desktop ID，不再等于注入的原始 service 对象；错误 ID 为 `DESKTOP_SCOPE_MISMATCH`。关闭后的旧 facade 历史查询为空，push/subscribe/外部 cleanup 拒绝。
 - `logSystem`、`logAppOperation`、`emitSignal` 的迟到诊断无副作用。Logger 按精确 Desktop/App 元组隔离，包括带冒号的 ID。
 - AppManager 与 Kernel 分别最多接受 128 个规定类别的未完成异步业务操作，超额在依赖副作用之前以 `LIFECYCLE_CAPACITY_EXCEEDED` 拒绝。复用操作不重复占 AppManager 槽，清理、释放和查询不占 Kernel 槽，也没有隐藏等待队列。

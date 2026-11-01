@@ -45,9 +45,7 @@ export default createTUIApp({ app_name: 'example', component: AppRoot });
 ## 环境与不可用的能力
 
 - 组件模式用状态决定是否渲染 `<View>`，由组件挂载和卸载接入 View 实例生命周期。
-- `useLLMOutputChannel` 优先使用宿主实际提供的 Context Provider；没有 Provider 时监听 document 的 `aotui:llm-text` 事件。允许在 View 外的 Root 使用；两种来源择一，没有 Provider 和 document 时明确拒绝。
-- `useLLMOutputHistory` 只查询实际 Provider。组件 DOM 桥不提供历史，没有 Provider 时不会返回伪造空数组；Provider 自身返回空数组则是合法结果。
-- `useLLMOutputChannel` 只订阅实时输出；需要历史时，`useLLMOutputHistory` 读取实际 Provider 提供的历史，DOM 事件桥不提供历史缓存或重放。
+- `useLLMOutputChannel` 在 Worker 中监听 `aotui:llm-text` 事件，可在 View 外的 Root 使用；事件桥仅提供实时事件，没有 document 时明确拒绝。
 - 持久化支持已交付的 managed session；显式存储注入、隔离、关闭排空和 flush 见 [持久化文档](docs/persistence.md)。Legacy 与 managed 确认分别报告，不能相互替代。
 
 ## 普通 Tool 与应用清理
