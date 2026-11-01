@@ -87,7 +87,7 @@ try {
             await invoke(app, 'multi_open_file', { filePaths: [files[0]] }); round.small = composition(app); assert.equal(round.small.views, 2);
             await samples(round, 'smallObserve', async () => { round.observations.small = await observe(app); });
             const writable = await fs.readFile(files[0], 'utf8');
-            await samples(round, 'smallCall', async () => invoke(app, 'write_file', { content: writable }, { view: fileView(app, files[0]).id, changes: false }));
+            await samples(round, 'smallCall', async () => invoke(app, 'write_file', { filePath: files[0], content: writable }, { view: fileView(app, files[0]).id, changes: false }));
             await samples(round, 'typicalOpen', index => invoke(app, 'multi_open_file', { filePaths: files.slice(0, 8) }, { changes: index === 0 })); round.typical = composition(app);
             await samples(round, 'typicalObserve', async () => { round.observations.typical = await observe(app); });
             await samples(round, 'search', () => invoke(app, 'search_files_by_content', { pattern: 'needle', include: 'file-[0-7].ts' }));

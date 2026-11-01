@@ -4,7 +4,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { createInterface } from 'node:readline';
 import { createRuntime } from '@aotui/runtime';
-import { ideEntryForRoute } from '@agentina/aotui-ide';
 
 const { values } = parseArgs({ options: {
     project: { type: 'string' }, data: { type: 'string' }, session: { type: 'string' }, help: { type: 'boolean' },
@@ -55,16 +54,16 @@ if (values.help) {
         const desktopId = await (startup = runtime.createDesktop('local-scoped-ide'));
         startup = undefined;
         if (!closing) {
-            const appId = await (startup = runtime.installDynamicWorkerApp(desktopId, ideEntryForRoute('scoped').href, {
+            const appId = await (startup = runtime.installDynamicWorkerApp(desktopId, import.meta.resolve('@agentina/aotui-ide'), {
                 appId: 'local-ide',
-                experimentalInteractionModes: ['ordinary-v2', 'ordinary-v1', 'create-if-absent-v1'],
-                config: { ideToolRoute: 'scoped', projectPath: project, ideSessionKey: session,
+                interactionModes: ['ordinary-v2', 'snapshot-value-v2'],
+                config: { projectPath: project, ideSessionKey: session,
                     ideHistoryPath: path.join(data, 'history.json'), AOTUI_DATA_DIR: path.join(data, 'state'),
                     enableDiagnosticsRead: true, enableWorkspaceCreate: true },
             }));
             startup = undefined;
             if (!closing) {
-                const opened = runtime.experimentalCreateAppScope(desktopId, appId, {
+                const opened = runtime.createAppScope(desktopId, appId, {
                     project({ source, selection }) {
                         const ids = new Set(selection.viewIds), selected = source.views.filter(view => ids.has(view.id));
                         return {
@@ -114,8 +113,10 @@ if (values.help) {
                         let value;
                         switch (command.op) {
                             case 'views':
-                                value = (runtime.getDesktop(desktopId).getSnapshotFragments().find(fragment => fragment.appId === appId)?.views ?? [])
-                                    .map(({ viewId, viewType, viewName }) => ({ viewId, viewType, viewName }));
+                                value = await client.observe({ all: true });
+                                if (value.status === 'observed') value = value.observation.views
+                                    .map(({ id, type, name }) => ({ viewId: id, viewType: type, viewName: name }));
+                                else throw new Error('Could not observe the current Views: ' + value.issue.code);
                                 break;
                             case 'observe': value = await client.observe({ viewIds: command.viewIds }); break;
                             case 'invoke': value = await client.invoke({ invocationId: command.invocationId ?? randomUUID(),

@@ -1,4 +1,4 @@
-import type { OrdinaryParams } from '@aotui/sdk';
+import type { ParamSchema } from '@aotui/sdk';
 const location = { file_path: { type: 'string', required: true }, line: { type: 'number', required: true }, character: { type: 'number', required: true } } as const;
 const document = { file_path: { type: 'string', required: true } } as const;
 const view = { view_id: { type: 'string', required: true } } as const;
@@ -7,7 +7,7 @@ const write = { ...file, content: { type: 'string', required: true } } as const;
 const files = { filePaths: { type: 'array', itemType: 'string', required: true } } as const;
 const directories = { dirPaths: { type: 'array', itemType: 'string', required: true } } as const;
 const folder = { folderPath: { type: 'string', required: true } } as const;
-export interface IDEToolContract { name: string; description: string; params: OrdinaryParams }
+export interface IDEToolContract { name: string; description: string; params: ParamSchema; targetParam?: string }
 export const workspaceTools: readonly IDEToolContract[] = [
     { name: 'search_files_by_pattern', description: 'Search authorized workspaces by glob pattern and show a complete result view.', params: { pattern: { type: 'string', required: true }, cwd: { type: 'string', required: false } } },
     { name: 'search_files_by_content', description: 'Search authorized workspaces with a regular expression and show a complete result view.', params: { pattern: { type: 'string', required: true }, include: { type: 'string', required: false }, cwd: { type: 'string', required: false } } },
@@ -22,17 +22,17 @@ export const workspaceTools: readonly IDEToolContract[] = [
     { name: 'refresh_workspace', description: 'Reload the workspace tree and reset expanded directories to its roots.', params: {} },
 ];
 export const fileTools: readonly IDEToolContract[] = [
-    { name: 'write_file', description: 'Replace the contents of this loaded file after checking its disk identity and content.', params: { content: { type: 'string', required: true } } },
-    { name: 'edit_file', description: 'Replace matching text in this loaded file. replaceAll defaults to false.', params: { oldString: { type: 'string', required: true }, newString: { type: 'string', required: true }, replaceAll: { type: 'boolean', required: false } } },
-    { name: 'delete_file', description: 'Delete this loaded file after checking that its disk identity and content are unchanged.', params: {} },
-    { name: 'rename_file', description: 'Move this loaded file without overwriting the destination, preserving its detail View ID.', params: { newPath: { type: 'string', required: true } } },
-    { name: 'lsp_hover', description: 'Load type information at a one-based position in this file view.', params: location },
-    { name: 'lsp_goto_definition', description: 'Load definitions at a one-based position in this file view.', params: location },
-    { name: 'lsp_find_references', description: 'Load references at a one-based position in this file view.', params: location },
-    { name: 'lsp_get_diagnostics', description: 'Load diagnostics for the currently observed document in this file view.', params: document },
-    { name: 'lsp_document_symbol', description: 'Load document symbols for this file view.', params: document },
-    { name: 'lsp_incoming_calls', description: 'Load incoming calls at a one-based position in this file view.', params: location },
-    { name: 'lsp_outgoing_calls', description: 'Load outgoing calls at a one-based position in this file view.', params: location },
-    { name: 'close_file_detail', description: 'Close this exact file detail view.', params: view },
+    { name: 'write_file', targetParam: 'filePath', description: 'Replace the contents of this loaded file after checking its disk identity and content.', params: write },
+    { name: 'edit_file', targetParam: 'filePath', description: 'Replace matching text in this loaded file. replaceAll defaults to false.', params: { ...file, oldString: { type: 'string', required: true }, newString: { type: 'string', required: true }, replaceAll: { type: 'boolean', required: false } } },
+    { name: 'delete_file', targetParam: 'filePath', description: 'Delete this loaded file after checking that its disk identity and content are unchanged.', params: file },
+    { name: 'rename_file', targetParam: 'oldPath', description: 'Move this loaded file without overwriting the destination, preserving its detail View ID.', params: { oldPath: { type: 'string', required: true }, newPath: { type: 'string', required: true } } },
+    { name: 'lsp_hover', targetParam: 'file_path', description: 'Load type information at a one-based position in this file view.', params: location },
+    { name: 'lsp_goto_definition', targetParam: 'file_path', description: 'Load definitions at a one-based position in this file view.', params: location },
+    { name: 'lsp_find_references', targetParam: 'file_path', description: 'Load references at a one-based position in this file view.', params: location },
+    { name: 'lsp_get_diagnostics', targetParam: 'file_path', description: 'Load diagnostics for the currently observed document in this file view.', params: document },
+    { name: 'lsp_document_symbol', targetParam: 'file_path', description: 'Load document symbols for this file view.', params: document },
+    { name: 'lsp_incoming_calls', targetParam: 'file_path', description: 'Load incoming calls at a one-based position in this file view.', params: location },
+    { name: 'lsp_outgoing_calls', targetParam: 'file_path', description: 'Load outgoing calls at a one-based position in this file view.', params: location },
+    { name: 'close_file_detail', targetParam: 'view_id', description: 'Close this exact file detail view.', params: view },
 ];
 export const searchTools: readonly IDEToolContract[] = [{ name: 'close_search_view', description: 'Close this exact search result view.', params: view }];

@@ -7,6 +7,23 @@ const workspaceTools = ['search_files_by_pattern', 'search_files_by_content', 'm
     'batch_edit', 'multi_open_dirs', 'multi_close_dirs', 'add_folder_to_workspace', 'remove_folder_from_workspace', 'refresh_workspace'];
 const fileMutations = ['write_file', 'edit_file', 'delete_file', 'rename_file'];
 const languageTools = ['lsp_hover', 'lsp_goto_definition', 'lsp_find_references', 'lsp_get_diagnostics', 'lsp_document_symbol', 'lsp_incoming_calls', 'lsp_outgoing_calls'];
+function panel(app, viewId, name) {
+    const text = viewText(app, viewId);
+    const section = text.split('### ' + name + '\n')[1];
+    const json = section?.match(/```[^\n]*\n([\s\S]*?)\n```/);
+    assert.ok(json, 'Expected structured View panel ' + name + ': ' + text);
+    return JSON.parse(json[1]);
+}
+function assertJsonRecord(actual, expected, label) {
+    assert.ok(actual && typeof actual === 'object' && !Array.isArray(actual), label + ' is a record');
+    const actualKeys = Reflect.ownKeys(actual);
+    assert.ok(actualKeys.every(key => typeof key === 'string'), label + ' has only string keys');
+    assert.deepEqual(actualKeys.sort(), Object.keys(expected).sort(), label + ' has the exact keys');
+    for (const [key, value] of Object.entries(expected)) {
+        if (value && typeof value === 'object' && !Array.isArray(value)) assertJsonRecord(actual[key], value, label + '.' + key);
+        else assert.equal(actual[key], value, label + '.' + key);
+    }
+}
 async function inspectTools(app, viewId) {
     const client = scope(app);
     try {
@@ -36,8 +53,9 @@ try {
             for (const name of fileMutations) {
                 const tool = observed.tools.find(tool => tool.name === name); assert.ok(tool, name + ' belongs to the loaded FileDetail');
                 assert.deepEqual(tool.targets.map(target => [target.viewId, target.viewInstanceId]), [[detail.id, detail.viewInstanceId]]);
-                assert.ok(!Object.hasOwn(tool.inputSchema.properties, 'filePath'));
-                assert.ok(!Object.hasOwn(tool.inputSchema.properties, 'oldPath'));
+                const targetParam = name === 'rename_file' ? 'oldPath' : 'filePath';
+                assert.ok(tool.inputSchema.required.includes(targetParam));
+                assert.equal(tool.targets[0].selector.param, targetParam);
             }
         }
         const workspace = await inspectTools(a, 'workspace');
@@ -57,10 +75,11 @@ try {
     await runCase('real TypeScript seven queries, current document changes, readonly diagnostic slice', async () => {
         await invoke(b, 'multi_open_file', { filePaths: [second] });
         const otherApp = await invoke(b, 'lsp_hover', { file_path: second, line: 1, character: 14 }, { view: fileView(b, second).id });
-        assert.ok(otherApp.value.data.value); assert.equal(snapshot(b).views.filter(view => view.type === 'FileDetail').length, 1);
+        assert.ok(panel(b, fileView(b, second).id, 'hover').value); assert.equal(snapshot(b).views.filter(view => view.type === 'FileDetail').length, 1);
         const otherFile = path.join(other, 'other.ts'); await fs.writeFile(otherFile, 'export const otherRoot = "other";\n');
         await invoke(a, 'multi_open_file', { filePaths: [otherFile] });
-        assert.ok((await invoke(a, 'lsp_hover', { file_path: otherFile, line: 1, character: 16 }, { view: fileView(a, otherFile).id })).value.data.value);
+        await invoke(a, 'lsp_hover', { file_path: otherFile, line: 1, character: 16 }, { view: fileView(a, otherFile).id });
+        assert.ok(panel(a, fileView(a, otherFile).id, 'hover').value);
         let view = fileView(a, file).id;
         const queries = [
             ['lsp_hover', { file_path: file, line: 1, character: 18 }],
@@ -75,20 +94,23 @@ try {
         try {
             for (const [name, args] of queries) {
                 const outcome = await invoke(a, name, args, { view, client, observation });
-                assert.ok(JSON.stringify(outcome.value.data.value).length > 2, name + ' has a real nonempty result');
+                const kind = ({ lsp_hover: 'hover', lsp_goto_definition: 'definition', lsp_find_references: 'references', lsp_get_diagnostics: 'diagnostics', lsp_document_symbol: 'symbols', lsp_incoming_calls: 'incoming', lsp_outgoing_calls: 'outgoing' })[name];
+                assert.ok(JSON.stringify(panel(a, view, kind).value).length > 2, name + ' has a real nonempty View result');
+                assert.equal(outcome.value.data.value, undefined, 'Business results are only in Views');
+                assert.equal(outcome.value.data.view_id, view);
             }
         } finally { client.close(); }
-        let loaded = await invoke(a, 'read_loaded_diagnostics', {}, { view, changes: false });
-        assert.ok(loaded.value.data.diagnostics.some(d => d.code === 2322));
-        await invoke(a, 'edit_file', { oldString: '"wrong"', newString: '1' }, { view: fileView(a, file).id });
+        let loaded = await invoke(a, 'read_loaded_diagnostics', { filePath: file }, { view, changes: false });
+        assert.ok(panel(a, view, 'diagnostics').value.some(d => d.code === 2322));
+        await invoke(a, 'edit_file', { filePath: file, oldString: '"wrong"', newString: '1' }, { view: fileView(a, file).id });
         view = fileView(a, file).id;
         const fresh = await invoke(a, 'lsp_get_diagnostics', { file_path: file }, { view });
-        assert.equal(fresh.value.data.value.some(d => d.code === 2322), false);
-        loaded = await invoke(a, 'read_loaded_diagnostics', {}, { view, changes: false });
-        assert.equal(loaded.value.data.diagnostics.some(d => d.code === 2322), false);
-        await invoke(a, 'lsp_hover', { file_path: second, line: 1, character: 1 }, { view, status: 'failed', changes: false });
+        assert.equal(panel(a, view, 'diagnostics').value.some(d => d.code === 2322), false);
+        loaded = await invoke(a, 'read_loaded_diagnostics', { filePath: file }, { view, changes: false });
+        assert.equal(panel(a, view, 'diagnostics').value.some(d => d.code === 2322), false);
+        await invoke(a, 'lsp_hover', { file_path: second, line: 1, character: 1 }, { view, status: 'rejected', changes: false });
     });
-    await runCase('search completeness, complete View-owned contracts and optional exclusive creation', async () => {
+    await runCase('search completeness, complete View-owned contracts and ordinary-v2 exclusive creation', async () => {
         await invoke(a, 'search_files_by_pattern', { pattern: '**/*.ts' });
         assert.deepEqual([...new Set(toolNames(a))].sort(), [...workspaceTools, ...fileMutations, ...languageTools,
             'close_file_detail', 'close_search_view', 'read_loaded_diagnostics', 'create_file_if_absent'].sort());
@@ -98,11 +120,21 @@ try {
         await invoke(a, 'search_files_by_content', { pattern: '[' }, { status: 'failed', changes: false });
         assert.equal(viewText(a, 'search'), before);
         const createView = snapshot(a).views.find(view => view.type === 'WorkspaceCreate' && view.name === 'Workspace: ' + root).id;
-        await invoke(a, 'create_file_if_absent', { relativePath: 'slice.ts', content: 'export const slice = 1;' }, { view: createView });
-        assert.equal(await fs.readFile(path.join(root, 'slice.ts'), 'utf8'), 'export const slice = 1;');
+        const relativePath = 'src/slice.ts', target = path.join(root, relativePath), content = 'export const 雪 = "😀";\n';
+        const created = await invoke(a, 'create_file_if_absent', { relativePath, content }, { view: createView });
+        assertJsonRecord(created.value, { success: true, data: { filePath: target, bytesWritten: Buffer.byteLength(content) } }, 'created file result');
+        assert.equal(await fs.readFile(target, 'utf8'), content);
+        const duplicate = await invoke(a, 'create_file_if_absent', { relativePath, content: 'overwrite' }, { view: createView, status: 'failed', changes: false });
+        assert.equal(duplicate.effects, 'none');
+        assertJsonRecord(duplicate.details.result, { success: false, error: { code: 'RESOURCE_ALREADY_EXISTS', message: 'Target already exists' } }, 'duplicate file result');
+        assert.equal(await fs.readFile(target, 'utf8'), content, 'A duplicate request never overwrites the created file');
+        const missingParent = await invoke(a, 'create_file_if_absent', { relativePath: 'missing/slice.ts', content }, { view: createView, status: 'failed', changes: false });
+        assert.equal(missingParent.effects, 'none');
+        assertJsonRecord(missingParent.details.result, { success: false, error: { code: 'RESOURCE_PARENT_UNAVAILABLE', message: 'Target parent must already exist' } }, 'missing parent result');
+        await assert.rejects(fs.stat(path.join(root, 'missing')), { code: 'ENOENT' });
     });
     await runCase('observed writes, ordered batch, rename identity, stale same-content inode and deletes', async () => {
-        await invoke(a, 'write_file', { content: 'export const sibling = 8;\n' }, { view: fileView(a, second).id });
+        await invoke(a, 'write_file', { filePath: second, content: 'export const sibling = 8;\n' }, { view: fileView(a, second).id });
         await invoke(a, 'batch_edit', { edits: [{ filePath: second, oldString: '8', newString: '9' }, { filePath: second, oldString: '9', newString: '10' }] });
         assert.match(await fs.readFile(second, 'utf8'), /10/);
         // A two-item batch can publish its first commit before the final one.
@@ -111,7 +143,7 @@ try {
         const created = path.join(root, 'new/deep/file.ts');
         await invoke(a, 'create_file', { filePath: created, content: 'export const created = true;\n' });
         const renamed = path.join(root, 'move/nested/file.ts'), beforeView = fileView(a, created);
-        await invoke(a, 'rename_file', { newPath: renamed }, { view: beforeView.id });
+        await invoke(a, 'rename_file', { oldPath: created, newPath: renamed }, { view: beforeView.id });
         assert.equal(fileView(a, renamed).id, beforeView.id); assert.equal(fileView(a, renamed).viewInstanceId, beforeView.viewInstanceId);
         const renamedView = fileView(a, renamed), content = await fs.readFile(renamed), stale = scope(a);
         const observed = await stale.observe({ viewIds: [renamedView.id] });
@@ -119,11 +151,11 @@ try {
         const observation = observed.observation;
         assert.ok(observation.bindings.some(binding => binding.target.viewId === renamedView.id && binding.target.viewInstanceId === renamedView.viewInstanceId));
         const replacement = renamed + '.replacement'; await fs.writeFile(replacement, content); await fs.rename(replacement, renamed);
-        try { await invoke(a, 'write_file', { content: 'bad' }, { view: renamedView.id, status: 'failed', changes: false, client: stale, observation }); }
+        try { await invoke(a, 'write_file', { filePath: renamed, content: 'bad' }, { view: renamedView.id, status: 'failed', changes: false, client: stale, observation }); }
         finally { stale.close(); }
         assert.deepEqual(await fs.readFile(renamed), content);
         await invoke(a, 'multi_open_file', { filePaths: [renamed] }, { changes: false });
-        await invoke(a, 'delete_file', {}, { view: fileView(a, renamed).id });
+        await invoke(a, 'delete_file', { filePath: renamed }, { view: fileView(a, renamed).id });
         await assert.rejects(fs.stat(renamed), { code: 'ENOENT' });
         const absent = path.join(root, 'create/file.ts'); await invoke(a, 'create_file', { filePath: absent, content: 'absent only' });
         assert.equal(await fs.readFile(absent, 'utf8'), 'absent only');
@@ -137,11 +169,6 @@ try {
         assert.ok(fileView(restarted, file)); assert.ok(!fileView(restarted, second));
         assert.ok(snapshot(restarted).views.every(view => !oldViews.includes(view.viewInstanceId)));
         await close(restarted);
-    });
-    await runCase('explicit legacy rollback entry is separate and uses only a temporary database', async () => {
-        const legacy = await start(root, 'legacy', { route: 'legacy' });
-        assert.equal(legacy.host.getResourceReport().appCleanup.support, 'legacy-unverified');
-        assert.ok(!toolNames(legacy).includes('create_file_if_absent')); await close(legacy);
     });
     facts.passed = true;
 } catch (error) {

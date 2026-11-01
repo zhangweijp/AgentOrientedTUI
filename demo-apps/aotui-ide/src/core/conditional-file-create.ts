@@ -2,24 +2,65 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { BigIntStats } from "node:fs";
 import { types } from "node:util";
-import type { CreateIfAbsentOutcome } from "@aotui/sdk";
+import type { OperationResult } from "@aotui/sdk";
 export interface WorkspaceCreateInput {
   readonly relativePath: string;
   readonly content: string;
 }
+export type WorkspaceFileCreationOutcome =
+  | {
+      readonly status: "succeeded";
+      readonly value: { readonly filePath: string; readonly bytesWritten: number };
+    }
+  | {
+      readonly status: "failed";
+      readonly code: string;
+      readonly message: string;
+      readonly effects: "none" | "partial";
+    }
+  | {
+      readonly status: "unknown";
+      readonly code: string;
+      readonly message: string;
+    };
 export type WorkspaceFileCreator = (
   input: WorkspaceCreateInput,
-) => Promise<CreateIfAbsentOutcome>;
+) => Promise<WorkspaceFileCreationOutcome>;
 export type WorkspaceFileCreatorFactory = (
   workspaceRoot: string,
   current?: () => void,
 ) => Promise<WorkspaceFileCreator>;
+export function mapWorkspaceFileCreationResult(
+  outcome: WorkspaceFileCreationOutcome,
+): OperationResult {
+  switch (outcome.status) {
+    case "succeeded":
+      return {
+        success: true,
+        data: {
+          filePath: outcome.value.filePath,
+          bytesWritten: outcome.value.bytesWritten,
+        },
+      };
+    case "failed":
+      return {
+        success: false,
+        error: { code: outcome.code, message: outcome.message },
+        effects: outcome.effects,
+      };
+    case "unknown":
+      return {
+        success: false,
+        error: { code: outcome.code, message: outcome.message },
+      };
+  }
+}
 const failed = (
   code: string,
   message: string,
   effects: "none" | "partial" = "none",
-): CreateIfAbsentOutcome => ({ status: "failed", code, message, effects });
-const unknown = (): CreateIfAbsentOutcome => ({
+): WorkspaceFileCreationOutcome => ({ status: "failed", code, message, effects });
+const unknown = (): WorkspaceFileCreationOutcome => ({
   status: "unknown",
   code: "RESOURCE_OUTCOME_UNKNOWN",
   message: "Creation outcome could not be established",

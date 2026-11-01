@@ -30,7 +30,30 @@ async function setup() {
     }
     }
     Host = (await import(pathToFileURL(path.join(modules, '@aotui/runtime/dist/engine/app/worker-host.js')))).AppWorkerHost;
-    entry = (await import(pathToFileURL(path.join(modules, '@agentina/aotui-ide/dist/index.js')))).ideEntryForRoute;
+    const idePackage = path.join(modules, '@agentina/aotui-ide');
+    const ideManifest = JSON.parse(await fs.readFile(path.join(idePackage, 'package.json'), 'utf8'));
+    const packageMain = ideManifest.main;
+    if (typeof packageMain !== 'string' || !packageMain.trim() || path.isAbsolute(packageMain) ||
+        path.win32.parse(packageMain).root !== '') {
+        throw new Error('IDE package manifest must define a relative main entry');
+    }
+    const ideMainPath = path.resolve(idePackage, packageMain);
+    const relativeMainPath = path.relative(idePackage, ideMainPath);
+    if (relativeMainPath === '..' || relativeMainPath.startsWith('..' + path.sep) || path.isAbsolute(relativeMainPath)) {
+        throw new Error('IDE package main entry must stay inside the package');
+    }
+    entry = pathToFileURL(await fs.realpath(ideMainPath)).href;
+    const ideModule = await import(entry);
+    const factory = ideModule.default;
+    if (!factory || typeof factory !== 'object' ||
+        typeof Object.getOwnPropertyDescriptor(factory, 'displayName')?.value !== 'string' ||
+        !Object.getOwnPropertyDescriptor(factory, 'kernelConfig')?.value ||
+        typeof Object.getOwnPropertyDescriptor(factory, 'initializeComponent')?.value !== 'function' ||
+        Object.getOwnPropertyDescriptor(factory, 'persistenceSupport')?.value !== 'state-session-v1' ||
+        Object.getOwnPropertyDescriptor(factory, 'appLifecycleSupport')?.value !== 'app-lifecycle-v2' ||
+        Object.hasOwn(ideModule, 'ideEntryForRoute')) {
+        throw new Error('IDE package main must default-export the managed TUIAppFactory');
+    }
 }
 async function eventually(read, label, ms = 15000) {
     const end = Date.now() + ms;
@@ -40,7 +63,7 @@ async function eventually(read, label, ms = 15000) {
         await new Promise(resolve => setTimeout(resolve, 20));
     }
 }
-const snapshot = x => x.host.shadowReceiver?.core.store.readLatest(x.id)?.snapshot;
+const snapshot = x => x.host.snapshotReceiver?.core.store.readLatest(x.id)?.snapshot;
 const toolNames = x => Object.values(snapshot(x)?.tools ?? {}).map(tool => tool.name);
 const viewText = (x, id) => snapshot(x)?.views.find(view => view.id === id)?.content.value ?? '';
 function fileView(x, file) { return snapshot(x)?.views.find(view => view.type === 'FileDetail' && view.content.value.includes(file)); }
@@ -51,11 +74,9 @@ async function start(root, id, options = {}) {
     worker.stdout?.on('data', buffer => { logs.push(String(buffer)); if (logs.length > 30) logs.shift(); });
     worker.stderr?.on('data', buffer => { logs.push(String(buffer)); if (logs.length > 30) logs.shift(); });
     worker.on('message', message => { if (message.type !== 'SNAPSHOT_PREPARED') messages.push(message.type); });
-    const route = options.route ?? 'scoped';
-    const host = new Host({ appId: id, desktopId: 'test', appModulePath: entry(route).href, existingWorker: worker,
-        snapshotShadow: true, experimentalReadOnlyViewTools: true,
-        experimentalInteractionModes: ['ordinary-v2', 'ordinary-v1', 'create-if-absent-v1'], timeout: 45000,
-        config: { ideToolRoute: route, projectPath: root, ideSessionKey: options.sessionKey ?? id,
+    const host = new Host({ appId: id, desktopId: 'test', appModulePath: entry, existingWorker: worker,
+        interactionModes: ['ordinary-v2', 'snapshot-value-v2'], timeout: 45000,
+        config: { projectPath: root, ideSessionKey: options.sessionKey ?? id,
             ideHistoryPath: options.historyPath ?? path.join(working, 'history', id + '.json'),
             ideLegacyDatabasePath: path.join(working, 'legacy', id + '.json'), ideLegacyImportPath: options.legacy,
             enableDiagnosticsRead: options.slices !== false, enableWorkspaceCreate: options.slices !== false, AOTUI_DATA_DIR: data },
@@ -63,7 +84,7 @@ async function start(root, id, options = {}) {
     const x = { id, host, worker, logs, messages, data, closed: false }; apps.push(x);
     await host.start(); await host.open();
     try { await eventually(() => toolNames(x).includes('multi_open_file'), id + ' ready'); }
-    catch (error) { console.error('APP DEBUG', logs, host.getSnapshotFragment(), host.getSnapshotShadowReport()); throw error; }
+    catch (error) { console.error('APP DEBUG', logs, host.getSemanticSnapshotReport()); throw error; }
     return x;
 }
 function scope(x) {

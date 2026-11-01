@@ -1,32 +1,38 @@
-# Semantic IDE: default integration
+# AOTUI IDE package integration
 
-The package default, `SystemIDEApp`, `ideEntryForRoute()` and generated aoapp use the `scoped` implementation. It has one business owner per App and reuses Runtime Scope, snapshots, View registry and managed session. Normal Host startup uses standard AppRegistry installation and the generic Semantic Source. No IDE-specific adapter or development environment variable is required. See the [Host integration contract](../../runtime/docs/semantic-host-integration.zh-CN.md).
+The package has one current entry: its default managed `TUIAppFactory`, created with `createTUIApp` and backed by `ScopedIDEApp`. It has one business owner per App and uses Runtime Scopes, committed snapshots and managed app state. Normal Host startup uses standard AppRegistry installation and the generic Semantic Source. See the [Host integration contract](../../runtime/docs/semantic-host-integration.zh-CN.md).
 
 ## Standard installation and explicit custom hosts
 
-Install Runtime, SDK and IDE tarballs from the same delivery. Published packages with identical version numbers do not prove support for the new capabilities.
+Install Runtime, SDK and IDE packages from a compatible delivery. Published packages with identical version numbers do not prove support for the current contracts.
 
 ```ts
-import { ideEntryForRoute } from '@agentina/aotui-ide';
-const appModulePath = ideEntryForRoute('scoped').href;
-const config = {
-    ideToolRoute: 'scoped',
-    projectPath: '/absolute/project',
-    ideSessionKey: 'my-project',
-    ideHistoryPath: '/absolute/app-data/ide-history.json',
-    AOTUI_DATA_DIR: '/absolute/app-data',
-    enableDiagnosticsRead: true,
-    enableWorkspaceCreate: true,
-};
+import { createRuntime } from '@aotui/runtime';
+
+const runtime = createRuntime();
+const desktopId = await runtime.createDesktop('my-ide');
+const appModulePath = import.meta.resolve('@agentina/aotui-ide');
+const appId = await runtime.installDynamicWorkerApp(desktopId, appModulePath, {
+    appId: 'my-ide',
+    interactionModes: ['ordinary-v2', 'snapshot-value-v2'],
+    config: {
+        projectPath: '/absolute/project',
+        ideSessionKey: 'my-project',
+        ideHistoryPath: '/absolute/app-data/ide-history.json',
+        AOTUI_DATA_DIR: '/absolute/app-data',
+        enableDiagnosticsRead: true,
+        enableWorkspaceCreate: true,
+    },
+});
 ```
 
-Use existing Runtime/WorkerSandbox options: `snapshotShadow: true`, `experimentalInteractionModes: ['ordinary-v2','ordinary-v1','create-if-absent-v1']`. A Host using the diagnostic slice also needs `experimentalReadOnlyViewTools: true`. Supply the Controller's actual Scope projection, authorization and receipt policy; test allow-all policies are not production authorization. App configuration is not an OS filesystem sandbox.
+The Host supports `ordinary-v2` and `snapshot-value-v2`; an omitted `interactionModes` option permits both, while an explicit list selects the modes the Worker may use. The IDE's optional diagnostics tool uses ordinary-v2 as well. Supply the Controller's actual Scope projection, authorization and receipt policy; test allow-all policies are not production authorization. App configuration is not an OS filesystem sandbox.
 
-The normal Host supplies App identity, Desktop identity, project path and managed persistence through AppContext. When omitted, the IDE derives its session key from Desktop and App identity, and stores history under `AOTUI_DATA_DIR/ide-sessions/<sessionKey>/history.json`. Explicit overrides remain available: session keys must be 1–128 ASCII letters/digits/underscore/dot/hyphen and history paths must be absolute. Entry and route config must agree. The Semantic entry does not open the legacy home LowDB. Give concurrent independent Apps distinct session keys; identical keys are not a shared-write protocol. Recent history uses a cooperative lock/CAS and reports conflicts/warnings without invisible retries.
+The normal Host supplies App identity, Desktop identity, project path and managed persistence through AppContext. When omitted, the IDE derives its session key from Desktop and App identity, and stores history under `AOTUI_DATA_DIR/ide-sessions/<sessionKey>/history.json`. Explicit overrides remain available: session keys must be 1–128 ASCII letters/digits/underscore/dot/hyphen and history paths must be absolute. The current package default does not open the legacy home LowDB. Give concurrent independent Apps distinct session keys; identical keys are not a shared-write protocol. Recent history uses a cooperative lock/CAS and reports conflicts/warnings without invisible retries.
 
 ## All tools and business targets
 
-`?` means optional. Single-file write/edit/delete/rename now belong to FileDetail and omit their target path from the public arguments; creating a file remains a Workspace operation. Handler defaults are not silently inserted by schema validation. The first 24 tools reuse the three-argument `useViewTypeTool` with `isMutating: true` and ordinary-v2. Filesystem searches and LSP queries update their result Views. Their handlers return an ordinary `OperationResult`; they do not require an entity Hook, entity type/ID/version tuple or top-level `refId`.
+`?` means optional. Single-file write/edit/delete/rename belong to FileDetail; creating a file remains a Workspace operation. Their schemas keep explicit `filePath` or `oldPath` parameters, and the app's View Type Tool selector binds the call to the matching live FileDetail. Handler defaults are not silently inserted by schema validation. The app's View-local tools use `useViewTypeTool` and ordinary-v2; mutating tools declare `isMutating: true`, while the optional diagnostics tool is read-only. Filesystem searches and LSP queries update their result Views. Their handlers return an ordinary `OperationResult`; they do not require an entity Hook, entity type/ID/version tuple or top-level `refId`.
 
 | Tool | Parameters | View / business target |
 | --- | --- | --- |
@@ -41,11 +47,11 @@ The normal Host supplies App identity, Desktop identity, project path and manage
 | refresh_workspace | none | Workspace |
 | close_file_detail | view_id | FileDetail / its currently loaded file |
 | close_search_view | view_id | Current SearchResult |
-| write_file | content | FileDetail / its currently loaded file |
-| edit_file | oldString, newString, replaceAll? | FileDetail / its currently loaded file |
+| write_file | filePath, content | FileDetail / its currently loaded file |
+| edit_file | filePath, oldString, newString, replaceAll? | FileDetail / its currently loaded file |
 | create_file | filePath, content | Workspace |
-| delete_file | none | FileDetail / its currently loaded file |
-| rename_file | newPath | FileDetail / its currently loaded source file and current destination root |
+| delete_file | filePath | FileDetail / its currently loaded file |
+| rename_file | oldPath, newPath | FileDetail / its currently loaded source file and current destination root |
 | batch_edit | edits: array of {filePath,oldString,newString} | Workspace / current loaded records captured at invocation |
 | lsp_hover | file_path, line, character | FileDetail / its currently loaded file |
 | lsp_goto_definition | file_path, line, character | FileDetail / its currently loaded file |
@@ -54,10 +60,10 @@ The normal Host supplies App identity, Desktop identity, project path and manage
 | lsp_document_symbol | file_path | FileDetail / its currently loaded file |
 | lsp_incoming_calls | file_path, line, character | FileDetail / its currently loaded file |
 | lsp_outgoing_calls | file_path, line, character | FileDetail / its currently loaded file |
-| read_loaded_diagnostics | none | Optional ordinary-v1 slice, already loaded state only |
-| create_file_if_absent | relativePath, content | Optional create-if-absent-v1 WorkspaceCreate slice, existing parent only |
+| read_loaded_diagnostics | filePath | Optional read-only ordinary-v2 slice; status and View hint only |
+| create_file_if_absent | relativePath, content | Optional ordinary-v2 WorkspaceCreate slice, existing parent only; app-owned exclusive create |
 
-File mutation tools use their owning FileDetail record. No file mutation tool is exposed before a file is open; Workspace batch_edit is enabled only when files are loaded. FileDetail LSP queries refuse another file's path. A successful search creates a new SearchResult incarnation. Renaming an open file preserves its View ID and instance. The IDE captures the relevant workspace version or loaded file record when the handler starts. Its own checks reject real file/root replacement, conflicting workspace commits and late language responses. Updating another language panel does not invalidate an otherwise valid query.
+File mutation tools use their owning FileDetail record. `filePath`/`oldPath` still identify the requested business path; the selector binds them to that View and the app verifies the current loaded file record before acting. LSP uses `file_path` and close uses `view_id`. All instances of the same type share one Tool schema, with no additional generated selector parameter. Query collections and diagnostic contents appear only in Views; successful Tool results carry operation hints and View IDs. No file mutation tool is exposed before a file is open; Workspace `batch_edit` is enabled only when files are loaded. FileDetail LSP queries refuse another file's path. A successful search creates a new SearchResult incarnation. Renaming an open file preserves its View ID and instance. The IDE captures the relevant workspace version or loaded file record when the handler starts. Its own checks reject real file/root replacement, conflicting workspace commits and late language responses. Updating another language panel does not invalidate an otherwise valid query.
 
 ## Behavior corrections
 
@@ -77,7 +83,7 @@ The Runtime routes an authorized call to the selected live App, View and Tool bi
 
 A handler returns `{ success: true, data }` for a known success. A failed handler returns `{ success: false, error, effects? }`: the IDE declares `effects: 'none'` or `effects: 'partial'` only when it knows those facts. Leaving `effects` out preserves an unknown outcome. The Runtime records the application's declaration; it does not turn an uncertain operation into a safe retry.
 
-`experimental_useAppLifecycle` uses the negotiated app-lifecycle-v2 protocol. Callbacks are optional for applications in general; this IDE supplies `stop` and `close` because it owns actual file, search and LSP work. Cleanup reports carry `state` and `issues`, without callback counts or a `verifiedReleased` claim. IDE cleanup still awaits its actual resources and reports failures. Runtime resource release and App callback completion are separate facts.
+`createTUIApp` advertises managed app lifecycle support by default. This IDE registers `useAppLifecycle({ stop, close })` because it owns file, search and LSP work. Cleanup reports carry `state` and `issues`, without callback counts or a `verifiedReleased` claim. IDE cleanup still awaits its actual resources and reports failures. Runtime resource release and App callback completion are separate facts.
 
 ## Capacity and process support
 
@@ -108,14 +114,13 @@ The IDE does not recreate missing directories. Restore a folder at its listed pa
 
 Import writes a `history` marker, prepares/saves the managed session, verifies exact flush addresses/revisions, then marks `completed`. The IDE stays unavailable until completion. A new App can resume a failed import using the same source/target; changed source digest conflicts. Corrupt/unknown data is not replaced with defaults. Partial initialization releases unconfirmed bindings before managed flush can deadlock.
 
-## Switch and rollback
+## Replace an installed IDE
 
 1. Stop issuing calls to the current Scope. Close the App and await its actual resource report. Record failed/unknown disk outcomes for inspection.
-2. Create a new App with `ideEntryForRoute('scoped').href` and the configuration above. Obtain fresh observations/bindings; do not reuse old IDs.
-3. Roll back by closing that instance and creating another using `ideEntryForRoute('legacy').href` (explicit historical entry only). For an isolated legacy database, pass `ideLegacyDatabasePath: '/absolute/rollback-data/ide-database.json'`. Omitting it preserves the legacy home behavior.
-4. Check actual edited/renamed/deleted files. Route rollback does not undo disk effects, merge the new session into LowDB or authorize unknown replay. The import source remains available for deliberate recovery.
+2. Install the package version you want through its default entry and create fresh observations/bindings; do not reuse old IDs.
+3. Check actual edited/renamed/deleted files. Replacing an App version does not undo disk effects or authorize replay of an unknown write. A configured legacy data import remains separate from the current app entry.
 
-The default router has switched to Semantic. Legacy is retained only pending the project owner's acceptance of the new path, after which it can be removed. This work does not publish packages; old installed artifacts do not gain the new behavior automatically.
+The package's default factory is the only current app entry. Updating installed packages does not publish a release; older installed artifacts do not gain new behavior automatically.
 
 ## Reproduce
 
@@ -133,7 +138,7 @@ node scripts/scoped-ide.mjs verify
 
 Preparation checks SHA-256 for all five input files, installs with `npm ci --ignore-scripts`, and verifies the lock and installed package identities. Add `--offline` to require a fully cached installation. It uses the same `.tmp/sdk-runtime-current/current` each time, with explicit npm configuration and cache; it does not rebuild the repository's shared `dist`. The terminal executes the example shipped inside the installed IDE package, so changing the working directory cannot silently select old source-linked dependencies. It prints the actual Runtime and IDE module URLs at startup.
 
-`run` is a trusted local stdin Controller with the operator's filesystem/process permissions, all 24 tools and both optional slices enabled. It is not an authenticated network endpoint or an OS sandbox. It uses public Runtime APIs, explicit `scoped` routing, and no model, Agent Driver, home registry or Electron Host. The normal product default also uses Semantic; the terminal remains a separate programmatic consumer.
+`run` is a trusted local stdin Controller with the operator's filesystem/process permissions, all 24 tools and both optional slices enabled. It is not an authenticated network endpoint or an OS sandbox. It uses public Runtime APIs and the IDE package's default entry, with no model, Agent Driver, home registry or Electron Host. The terminal remains a separate programmatic consumer.
 
 Each input line is one JSON command. Structured replies start with `AOTUI_IDE `; other dependency logs may also appear on stdout. `ready` includes the initial Root and Workspace observation. Use its real IDs for a call; the following is a template rather than a command with usable IDs:
 

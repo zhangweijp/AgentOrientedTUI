@@ -15,15 +15,24 @@ async function loadBuiltModule(appDir) {
   return import(`${pathToFileURL(entryPath).href}?t=${Date.now()}`);
 }
 
-function resolveFactory(moduleNamespace) {
-  return moduleNamespace.default ?? moduleNamespace.factory ?? moduleNamespace;
-}
-
 function resolveCanonicalAppName(factory) {
-  const appName =
-    factory?.kernelConfig?.appName ??
-    factory?.manifest?.app_name ??
-    factory?.manifest?.name;
+  if (typeof factory !== 'object' || factory === null || Array.isArray(factory)) {
+    throw new Error('Built app must export the createTUIApp component factory');
+  }
+
+  const factoryFields = Object.getOwnPropertyDescriptors(factory);
+  const displayName = factoryFields.displayName;
+  const kernelConfig = factoryFields.kernelConfig;
+  const initializeComponent = factoryFields.initializeComponent;
+  if (!displayName || !('value' in displayName) || typeof displayName.value !== 'string' || displayName.value.length === 0 ||
+      !kernelConfig || !('value' in kernelConfig) || typeof kernelConfig.value !== 'object' ||
+      kernelConfig.value === null || Array.isArray(kernelConfig.value) ||
+      !initializeComponent || !('value' in initializeComponent) || typeof initializeComponent.value !== 'function') {
+    throw new Error('Built app must export the createTUIApp component factory');
+  }
+
+  const appNameField = Object.getOwnPropertyDescriptor(kernelConfig.value, 'appName');
+  const appName = appNameField && 'value' in appNameField ? appNameField.value : undefined;
 
   if (!isNonEmptyString(appName)) {
     throw new Error('Unable to resolve app_name from built app metadata');
@@ -38,25 +47,23 @@ export async function buildAoappManifest(appDir) {
     loadBuiltModule(appDir),
   ]);
 
-  const factory = resolveFactory(moduleNamespace);
+  const factory = moduleNamespace.default;
   const appName = resolveCanonicalAppName(factory);
   const kernelConfig = factory?.kernelConfig ?? {};
-  const manifest = factory?.manifest ?? {};
 
   const result = {
     app_name: appName,
-    version: pkg.version ?? manifest.version ?? '0.1.0',
-    description: kernelConfig.description ?? manifest.description ?? pkg.description,
-    whatItIs: kernelConfig.whatItIs ?? manifest.whatItIs,
-    whenToUse: kernelConfig.whenToUse ?? manifest.whenToUse,
-    author: pkg.author ?? manifest.author,
-    license: pkg.license ?? manifest.license,
-    runtime: manifest.runtime,
+    version: pkg.version ?? '0.1.0',
+    description: kernelConfig.description ?? pkg.description,
+    whatItIs: kernelConfig.whatItIs,
+    whenToUse: kernelConfig.whenToUse,
+    author: pkg.author,
+    license: pkg.license,
     entry: {
-      main: pkg.main ?? manifest.entry?.main ?? './dist/index.js',
-      types: pkg.types ?? manifest.entry?.types,
+      main: pkg.main ?? './dist/index.js',
+      types: pkg.types,
     },
-    promptRole: kernelConfig.promptRole ?? manifest.promptRole,
+    promptRole: kernelConfig.promptRole,
   };
 
   return Object.fromEntries(

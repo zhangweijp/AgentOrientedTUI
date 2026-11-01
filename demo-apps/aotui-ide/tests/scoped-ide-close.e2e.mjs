@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
-import { factsFile, facts, working, modules, apps, start, fileView, invoke, close, runCase } from './ide-test-harness.mjs';
+import { factsFile, facts, working, modules, apps, start, fileView, viewText, invoke, close, runCase } from './ide-test-harness.mjs';
 
 // Inject only an inability to inspect a process group. Healthy release must
 // still be earned by the unmodified OS probe; this fixture never invents ESRCH.
@@ -64,7 +64,15 @@ try {
         app = await start(root, mode, { worker });
         await invoke(app, 'multi_open_file', { filePaths: [file] });
         const query = await invoke(app, 'lsp_hover', { file_path: file, line: 1, character: 15 }, { view: fileView(app, file).id });
-        assert.match(JSON.stringify(query.value.data.value), /42/);
+        const detail = fileView(app, file);
+        assert.ok(detail, 'The FileDetail View remains projected after the hover query');
+        assert.equal(query.value.data.view_id, detail.id);
+        assert.equal(query.value.data.value, undefined, 'The Tool result is a receipt; hover data belongs to the View');
+        const hoverJson = viewText(app, detail.id).split('### hover\n')[1]?.match(/```[^\n]*\n([\s\S]*?)\n```/);
+        assert.ok(hoverJson, 'The current FileDetail View contains the structured hover panel');
+        const hoverValue = JSON.parse(hoverJson[1]).value;
+        assert.ok(hoverValue, 'The current hover panel contains actual LSP data');
+        assert.match(JSON.stringify(hoverValue), /42/);
         if (mode === 'transient') {
             const transferred = await close(app, true);
             assert.equal(transferred, worker);

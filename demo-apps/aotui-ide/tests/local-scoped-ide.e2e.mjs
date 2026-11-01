@@ -108,7 +108,7 @@ try {
         assert.equal(opened.tools.some(tool => tool.name === 'write_file'), false);
         const fileView = (await app.send({ op: 'views' })).find(view => view.viewType === 'FileDetail' && view.viewName === 'File: ' + file); assert.ok(fileView);
         const writable = await app.observe(fileView.viewId);
-        const written = await app.call(writable, 'write_file', { content: 'export const answer = 2;\n' });
+        const written = await app.call(writable, 'write_file', { filePath: file, content: 'export const answer = 2;\n' });
         assert.equal(await fs.readFile(file, 'utf8'), 'export const answer = 2;\n');
         const receipt = await app.send({ op: 'receipt', invocationId: written.invocationId });
         assert.equal(receipt.kind, 'receipt'); assert.deepEqual(receipt.receipt.outcome, written.result.receipt.outcome);
@@ -117,7 +117,12 @@ try {
         const view = fileView.viewId;
         const detail = await app.observe(view, observation => observation.views.some(view => view.content?.value.includes('answer = 2')));
         const hovered = await app.call(detail, 'lsp_hover', { file_path: file, line: 1, character: 15 });
-        assert.ok(hovered.result.receipt.outcome.value.data.value);
+        assert.equal(hovered.result.receipt.outcome.value.data.view_id, view);
+        assert.equal(hovered.result.receipt.outcome.value.data.value, undefined);
+        const hoverView = await app.observe(view, observation => observation.views.some(v => v.content?.value.includes('### hover')));
+        const hoverJson = hoverView.views[0].content.value.split('### hover\n')[1].match(/```[^\n]*\n([\s\S]*?)\n```/);
+        assert.ok(JSON.parse(hoverJson[1]).value);
+        await app.send({ op: 'release', observationId: hoverView.observationId });
         const report = await app.close();
         assert.equal(report.appCleanup.managedApps, 1); assert.equal(report.appCleanup.completedApps, 1);
         assert.equal(report.appCleanup.failedApps, 0);

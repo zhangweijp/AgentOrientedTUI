@@ -10,7 +10,7 @@ export interface BrowserActions {
 }
 
 export function SearchToolSection({ onSearch }: Pick<BrowserActions, 'onSearch'>) {
-    const [Search] = useViewTypeTool('search_web', {
+    useViewTypeTool('search_web', {
         description: 'Run a web search. Read the results from Search and ResultList Views.',
         params: defineParams({
             query: { type: 'string', required: true, desc: 'Web search query' },
@@ -31,12 +31,12 @@ export function SearchToolSection({ onSearch }: Pick<BrowserActions, 'onSearch'>
             return { success: false, error: { code: 'SEARCH_FAILED', message: (error as Error).message } };
         }
     });
-    return <section><h3>Search tools</h3><Search /></section>;
+    return null;
 }
 
 export function ResultListToolSection({ results, onOpenResult, onClearResults }:
     { results: SearchResultItem[] } & Pick<BrowserActions, 'onOpenResult' | 'onClearResults'>) {
-    const [Open] = useViewTypeTool('open_result', {
+    useViewTypeTool('open_result', {
         description: 'Open a URL from this current result list. Page will contain the fetched content.',
         params: defineParams({ url: { type: 'string', required: true, desc: 'A URL shown in this result list' } }),
         isMutating: true,
@@ -51,17 +51,17 @@ export function ResultListToolSection({ results, onOpenResult, onClearResults }:
             return { success: false, error: { code: 'OPEN_RESULT_FAILED', message: (error as Error).message } };
         }
     });
-    const [Clear] = useViewTypeTool('clear_results', {
+    useViewTypeTool('clear_results', {
         description: 'Remove the current result list and its tools.', params: defineParams({}), isMutating: true,
     }, async () => {
         onClearResults();
         return { success: true, data: { message: 'Search results cleared.' } };
     });
-    return <section><h3>Result tools</h3><ul><li><Open /></li><li><Clear /></li></ul></section>;
+    return null;
 }
 
 export function FetchToolSection({ onFetch }: Pick<BrowserActions, 'onFetch'>) {
-    const [Fetch] = useViewTypeTool('fetch_url', {
+    useViewTypeTool('fetch_url', {
         description: 'Fetch a URL and show its content in Page.',
         params: defineParams({
             url: { type: 'string', required: true, desc: 'URL to fetch' },
@@ -77,15 +77,15 @@ export function FetchToolSection({ onFetch }: Pick<BrowserActions, 'onFetch'>) {
             return { success: false, error: { code: 'FETCH_FAILED', message: (error as Error).message } };
         }
     });
-    return <section><h3>Open a page</h3><Fetch /></section>;
+    return null;
 }
 
 export function PageToolSection({ onClosePage }: Pick<BrowserActions, 'onClosePage'>) {
-    const [Close] = useViewTypeTool('close_page', {
+    useViewTypeTool('close_page', {
         description: 'Close this Page View and remove its tools.', params: defineParams({}), isMutating: true,
     }, async () => {
         onClosePage();
         return { success: true, data: { message: 'Page closed.' } };
     });
-    return <section><h3>Page tools</h3><Close /></section>;
+    return null;
 }

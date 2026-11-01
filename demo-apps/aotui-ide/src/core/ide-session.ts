@@ -434,7 +434,9 @@ export class IDESession {
         const guard = () => { this.current(); requireIDE(this.files.get(record.observed.path) === record, 'IDE_FILE_VIEW_STALE'); };
         guard();
         if (['write_file', 'edit_file', 'delete_file', 'rename_file'].includes(name)) {
-            // The target comes from the mounted FileDetail, never from a model-supplied path.
+            // A supplied business path must agree with the captured View binding.
+            const param = name === 'rename_file' ? 'oldPath' : 'filePath';
+            if (Object.prototype.hasOwnProperty.call(args, param)) requireIDE(textPath(args[param]) === record.observed.path, 'IDE_WRONG_FILE');
             return this.execute(name, { ...args, filePath: record.observed.path, oldPath: record.observed.path }, 'workspace');
         }
         if (name === 'close_file_detail') {

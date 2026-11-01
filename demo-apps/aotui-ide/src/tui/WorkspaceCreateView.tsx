@@ -2,36 +2,48 @@ import {
   View,
   useMemo,
   useState,
-  experimental_useCreateIfAbsentTool,
-  type CreateIfAbsentOutcome,
+  useViewTypeTool,
+  type OperationResult,
 } from "@aotui/sdk";
-import type { WorkspaceFileCreator } from "../core/conditional-file-create.js";
+import {
+  mapWorkspaceFileCreationResult,
+  type WorkspaceFileCreator,
+} from "../core/conditional-file-create.js";
 export interface WorkspaceCreateViewProps {
   readonly viewId: string;
   readonly workspaceLabel: string;
   readonly creator: WorkspaceFileCreator;
   readonly isCurrent?: () => boolean;
 }
-function resultText(outcome: CreateIfAbsentOutcome): string {
-  const fields = Object.getOwnPropertyDescriptors(outcome);
-  const lines = ["status", "code", "message", "effects"].flatMap((key) =>
-    typeof fields[key]?.value === "string"
-      ? [`${key}: ${fields[key]!.value}`]
-      : [],
-  );
-  const value = fields.value?.value;
-  if (value && typeof value === "object") {
-    const data = Object.getOwnPropertyDescriptors(value);
-    if (typeof data.filePath?.value === "string")
-      lines.push(`filePath: ${data.filePath.value}`);
+function resultText(result: OperationResult): string {
+  const fields = Object.getOwnPropertyDescriptors(result);
+  const lines =
+    typeof fields.success?.value === "boolean"
+      ? [`success: ${fields.success.value}`]
+      : [];
+  if (typeof fields.effects?.value === "string")
+    lines.push(`effects: ${fields.effects.value}`);
+  const error = fields.error?.value;
+  if (error && typeof error === "object") {
+    const details = Object.getOwnPropertyDescriptors(error);
+    for (const key of ["code", "message"] as const) {
+      if (typeof details[key]?.value === "string")
+        lines.push(`${key}: ${details[key]!.value}`);
+    }
+  }
+  const data = fields.data?.value;
+  if (data && typeof data === "object") {
+    const metadata = Object.getOwnPropertyDescriptors(data);
+    if (typeof metadata.filePath?.value === "string")
+      lines.push(`filePath: ${metadata.filePath.value}`);
     if (
-      typeof data.bytesWritten?.value === "number" &&
-      Number.isFinite(data.bytesWritten.value)
+      typeof metadata.bytesWritten?.value === "number" &&
+      Number.isFinite(metadata.bytesWritten.value)
     )
-      lines.push(`bytesWritten: ${data.bytesWritten.value}`);
+      lines.push(`bytesWritten: ${metadata.bytesWritten.value}`);
   }
   return (
-    lines.join("\n") || "Consult the trusted creation receipt for the outcome"
+    lines.join("\n") || "Consult the operation receipt for the outcome"
   );
 }
 const params = {
@@ -58,21 +70,21 @@ function WorkspaceCreateContent({
         readonly relativePath: string;
         readonly content: string;
       }) => {
-        const outcome = await creator(input);
+        const result = mapWorkspaceFileCreationResult(await creator(input));
         try {
-          if (!isCurrent || isCurrent()) setLast(resultText(outcome));
+          if (!isCurrent || isCurrent()) setLast(resultText(result));
         } catch {
           /* Display failure cannot undo the known file outcome. */
         }
-        return outcome;
+        return result;
       },
     [creator, isCurrent],
   );
-  experimental_useCreateIfAbsentTool(
+  const [CreateTool] = useViewTypeTool(
     "create_file_if_absent",
     {
       description:
-        "Create a new file in this workspace. The parent must already exist; existing files are never overwritten.",
+        "Create a new workspace file with the supplied relative path and exact text. Its parent must already exist, and existing files are never overwritten. Inspect the receipt before retrying an uncertain result.",
       params,
     },
     create,
@@ -82,8 +94,9 @@ function WorkspaceCreateContent({
       <h2>Workspace: {workspaceLabel}</h2>
       <p>
         Create one new file using an exact relative path and content. Read the
-        result here; uncertain completion must not be retried automatically.
+        receipt here; uncertain completion must not be retried automatically.
       </p>
+      <CreateTool>Create file</CreateTool>
       {last && (
         <>
           <h3>Last creation result</h3>

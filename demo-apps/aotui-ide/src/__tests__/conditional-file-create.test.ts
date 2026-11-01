@@ -2,7 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { types } from "node:util";
-import { createWorkspaceFileCreator } from "../core/conditional-file-create.js";
+import {
+  createWorkspaceFileCreator,
+  mapWorkspaceFileCreationResult,
+} from "../core/conditional-file-create.js";
 let directory: string, root: string, outside: string;
 beforeEach(async () => {
   directory = await fs.realpath(
@@ -22,6 +25,52 @@ async function missing(file: string) {
   await expect(fs.lstat(file)).rejects.toMatchObject({ code: "ENOENT" });
 }
 describe("W06 native exclusive workspace creator", () => {
+  test("maps only the successful creation receipt metadata to OperationResult", () => {
+    const result = mapWorkspaceFileCreationResult({
+      status: "succeeded",
+      value: { filePath: path.join(root, "new"), bytesWritten: 5 },
+    });
+    expect(result).toEqual({
+      success: true,
+      data: { filePath: path.join(root, "new"), bytesWritten: 5 },
+    });
+    expect(result.data).not.toHaveProperty("content");
+  });
+  test.each(["none", "partial"] as const)(
+    "preserves known failed effects: %s",
+    (effects) => {
+      expect(
+        mapWorkspaceFileCreationResult({
+          status: "failed",
+          code: "RESOURCE_WRITE_FAILED",
+          message: "File creation left partial effects",
+          effects,
+        }),
+      ).toEqual({
+        success: false,
+        error: {
+          code: "RESOURCE_WRITE_FAILED",
+          message: "File creation left partial effects",
+        },
+        effects,
+      });
+    },
+  );
+  test("maps an uncertain resource result without claiming effects", () => {
+    const result = mapWorkspaceFileCreationResult({
+      status: "unknown",
+      code: "RESOURCE_OUTCOME_UNKNOWN",
+      message: "Creation outcome could not be established",
+    });
+    expect(result).toEqual({
+      success: false,
+      error: {
+        code: "RESOURCE_OUTCOME_UNKNOWN",
+        message: "Creation outcome could not be established",
+      },
+    });
+    expect(Object.prototype.hasOwnProperty.call(result, "effects")).toBe(false);
+  });
   test.each(["", "plain", "文本😀\n"])(
     "writes exact UTF-8 and closes for %j",
     async (content) => {
