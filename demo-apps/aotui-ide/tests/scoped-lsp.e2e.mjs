@@ -64,16 +64,45 @@ try {
             facts.processes.push({ pid, scenario: 'held initialization', processGone: true, groupGone: true });
         } finally { release.resolve(); LSPServer.Typescript.spawn = original; process.kill = kill; }
     });
-    await run('actual TS two roots/two Apps, change/close/reopen versions and 60 distinct documents remain bounded', async () => {
+    await run('actual TS two roots/two Apps, seven LSP operations and 60 document lifecycles remain bounded', async () => {
         const a = await make('one'), b = await make('two'); a.service.setRoots([await source(a.root), await source(b.root)]);
-        const file = path.join(a.root, 'file.ts'), other = path.join(b.root, 'file.ts'); await fs.writeFile(file, 'export const value = 1;'); await fs.writeFile(other, 'export const value = "other";');
-        const [one, two] = await Promise.all([a.service.query('hover', file, await fs.readFile(file, 'utf8'), 1, 15), b.service.query('hover', other, await fs.readFile(other, 'utf8'), 1, 15)]);
-        assert.match(JSON.stringify(one.value), /1/); assert.match(JSON.stringify(two.value), /other/);
+        const file = path.join(a.root, 'file.ts'), consumer = path.join(a.root, 'consumer.ts'), other = path.join(b.root, 'file.ts');
+        const fileText = [
+            'export function greet(name: string): string {',
+            '  return name.trim();',
+            '}',
+            'export function caller(): string {',
+            "  return greet('Ada');",
+            '}',
+            'export const value: number = 1;',
+        ].join('\n');
+        const consumerText = [
+            "import { caller, greet } from './file';",
+            "export const result = greet('other');",
+            'caller();',
+        ].join('\n');
+        const otherText = 'export const value = "other";';
+        await fs.writeFile(file, fileText); await fs.writeFile(consumer, consumerText); await fs.writeFile(other, otherText);
+        const [one, two] = await Promise.all([a.service.query('hover', file, fileText, 1, 18), b.service.query('hover', other, otherText, 1, 15)]);
+        assert.match(JSON.stringify(one.value), /greet/); assert.match(JSON.stringify(two.value), /other/);
         assert.ok((await a.service.query('hover', other, await fs.readFile(other, 'utf8'), 1, 15)).value);
         await capture(a.service); await capture(b.service);
-        const before = await a.service.query('diagnostics', file, 'export const value: number = "wrong";', 1, 1); assert.ok(before.value.some(item => item.code === 2322));
-        const after = await a.service.query('diagnostics', file, 'export const value: number = 1;', 1, 1); assert.ok(!after.value.some(item => item.code === 2322)); assert.ok(after.documentVersion > before.documentVersion);
-        await a.service.closeDocument(file); const reopened = await a.service.query('hover', file, 'export const value = 1;', 1, 15); assert.ok(reopened.documentVersion > after.documentVersion); await a.service.closeDocument(file); await a.service.closeDocument(other);
+        const hover = await a.service.query('hover', consumer, consumerText, 2, 24); assert.match(JSON.stringify(hover.value), /greet/);
+        const definition = await a.service.query('definition', consumer, consumerText, 2, 24);
+        assert.ok(definition.value.some(item => item.filePath === file));
+        const references = await a.service.query('references', consumer, consumerText, 2, 24);
+        assert.ok(references.value.some(item => item.filePath === file)); assert.ok(references.value.some(item => item.filePath === consumer));
+        const symbols = await a.service.query('symbols', file, fileText, 1, 18);
+        assert.ok(symbols.value.some(item => item.name === 'greet')); assert.ok(symbols.value.some(item => item.name === 'caller'));
+        const incoming = await a.service.query('incoming', file, fileText, 1, 18);
+        assert.ok(incoming.value.some(item => item.from?.name === 'caller'));
+        const outgoing = await a.service.query('outgoing', file, fileText, 4, 18);
+        assert.ok(outgoing.value.some(item => item.to?.name === 'greet'));
+        const erroneous = fileText.replace('export const value: number = 1;', 'export const value: number = "wrong";');
+        const before = await a.service.query('diagnostics', file, erroneous, 1, 1); assert.ok(before.value.some(item => item.code === 2322));
+        const after = await a.service.query('diagnostics', file, fileText, 1, 1); assert.ok(!after.value.some(item => item.code === 2322)); assert.ok(after.documentVersion > before.documentVersion);
+        await a.service.closeDocument(file); const reopened = await a.service.query('hover', file, fileText, 1, 18); assert.ok(reopened.documentVersion > after.documentVersion);
+        await a.service.closeDocument(file); await a.service.closeDocument(consumer); await a.service.closeDocument(other);
         for (let index = 0; index < 60; index++) {
             const current = path.join(a.root, `loop-${index}.ts`), text = `export const value = ${index};`; await fs.writeFile(current, text);
             assert.ok((await a.service.query('hover', current, text, 1, 15)).value); await a.service.closeDocument(current);

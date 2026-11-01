@@ -102,6 +102,8 @@ Observation limits also apply: the existing Core accepts at most 256 KiB and 256
 
 Verified healthy LSP cleanup is scoped to the exercised POSIX profile: typescript-language-server 5.1.3 and TypeScript 5.9.3. Each server has an owned process group; shutdown waits for child close and an empty group. This assumes trusted server/plugin code. Custom servers, other versions/languages and Windows can provide queries, but full cleanup is unverified/failed and prevents healthy Worker reuse. An empty original group is not proof that arbitrary daemonized descendants exited.
 
+The built-in TypeScript profile sets `tsserver.useSyntaxServer: 'never'` during initialization. One full `main` tsserver handles the IDE's syntax and semantic requests instead of a separate syntax server; LSP features remain enabled, and this setting does not disable Automatic Type Acquisition (ATA).
+
 A group probe denied with `EPERM` retains ownership and continues the existing bounded wait; only `ESRCH` proves absence. Persistent denial and failed signals remain cleanup failures. Failure logs contain only bounded phase/resource codes (`LSP_CLOSE_FAILURE` / `IDE_CLOSE_FAILURE`), without document contents or arbitrary server messages. Queued history work cancelled before I/O is a normal stop; uncertain handle/lock cleanup remains sticky and blocks healthy release.
 
 ## Restoration and explicit legacy import

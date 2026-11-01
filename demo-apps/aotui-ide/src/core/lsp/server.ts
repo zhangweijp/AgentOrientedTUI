@@ -95,6 +95,7 @@ export namespace LSPServer {
           if (handle) {
             handle.processGroupVerified = processGroupVerified;
             handle.initialization = {
+              tsserver: { useSyntaxServer: 'never' },
               preferences: {
                 includeInlayParameterNameHints: 'all',
                 includeInlayFunctionParameterTypeHints: true,
