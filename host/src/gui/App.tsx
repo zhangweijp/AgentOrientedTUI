@@ -17,7 +17,7 @@ import { DeleteConfirmModal } from './components/DeleteConfirmModal.js';
 import { Toast } from './components/Toast.js';
 import { SettingsPanel } from './components/settings/SettingsPanel.js';
 import type { AgentConfig } from './components/settings/agent/AgentTab.js';
-import { buildMcpToolItemKey } from '../shared/source-control-keys.js';
+import { appSourceControls, buildMcpToolItemKey } from '../shared/source-control-keys.js';
 
 type ViewMode = 'chat' | 'tui';
 
@@ -253,7 +253,7 @@ export function App() {
     /** Apply an agent's capability config to draft capabilities (source-level + item-level). */
     const applyAgentConfigToDraftCaps = useCallback((agent: AgentConfig, caps: TopicCapabilities | null) => {
         if (!caps) return;
-        const enabledAppsSet = new Set(agent.enabledApps || []);
+        const appControls = appSourceControls(agent.enabledApps || [], caps.apps.items.map(item => item.name));
         const enabledMCPsSet = new Set(agent.enabledMCPs || []);
         const disabledToolsSet = new Set(agent.disabledMcpTools || []);
         const enabledSkillNames = new Set(Object.values(agent.enabledSkills || {}).flat());
@@ -262,8 +262,8 @@ export function App() {
         setDraftCapabilities({
             ...caps,
             apps: {
-                enabled: enabledAppsSet.size > 0,
-                items: caps.apps.items.map((item) => ({ ...item, enabled: enabledAppsSet.has(item.name) })),
+                enabled: appControls.enabled,
+                items: caps.apps.items.map((item) => ({ ...item, enabled: !appControls.disabledItems.includes(item.name) })),
             },
             skill: {
                 enabled: enabledSkillNames.size > 0,
@@ -745,12 +745,12 @@ export function App() {
 
             if (agent) {
                 // 2. Source-level toggles: enable/disable each driven source
-                const enabledAppsSet = new Set(agent.enabledApps || []);
+                const appControls = appSourceControls(agent.enabledApps || [], topicCapabilities?.apps.items.map(item => item.name) ?? []);
                 const enabledSkillNames = new Set(Object.values(agent.enabledSkills || {}).flat());
                 const enabledMCPsSet = new Set(agent.enabledMCPs || []);
                 const disabledToolsSet = new Set(agent.disabledMcpTools || []);
 
-                await trpc.sourceControl.setSourceEnabled.mutate({ id: activeTopicId, source: 'apps', enabled: enabledAppsSet.size > 0 });
+                await trpc.sourceControl.setSourceEnabled.mutate({ id: activeTopicId, source: 'apps', enabled: appControls.enabled });
                 await trpc.sourceControl.setSourceEnabled.mutate({ id: activeTopicId, source: 'skill', enabled: enabledSkillNames.size > 0 });
                 await trpc.sourceControl.setSourceEnabled.mutate({ id: activeTopicId, source: 'mcp', enabled: enabledMCPsSet.size > 0 });
 
@@ -758,7 +758,7 @@ export function App() {
                 const currentCaps = topicCapabilities;
                 if (currentCaps) {
                     for (const item of currentCaps.apps.items) {
-                        const shouldEnable = enabledAppsSet.has(item.name);
+                        const shouldEnable = !appControls.disabledItems.includes(item.name);
                         if (item.enabled !== shouldEnable) {
                             await trpc.sourceControl.setItemEnabled.mutate({
                                 id: activeTopicId, source: 'apps', itemName: item.name, enabled: shouldEnable,
@@ -951,6 +951,7 @@ export function App() {
                             <div className="absolute inset-0 rounded-2xl overflow-hidden border border-transparent">
                                 <TuiDesktopViewer
                                     snapshot={tuiSnapshot}
+                                    apps={topicCapabilities?.apps}
                                     agentThinking={agentThinking}
                                 />
                             </div>

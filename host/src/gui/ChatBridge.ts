@@ -344,9 +344,7 @@ export class ChatBridge {
     // ============ API - Snapshots ============
 
     async requestSnapshot(topicId: string): Promise<void> {
-        if (!this.snapshots.has(topicId)) {
-            return;
-        }
+        await this.ensureSessionReady(topicId, true);
         const snapshot = await this.getTrpcClient().session.snapshot.query({ id: topicId });
         if (snapshot) {
             this.snapshots.set(topicId, (snapshot as any)?.markup ?? null);
@@ -486,8 +484,8 @@ export class ChatBridge {
     }
 
     getSnapshot(topicId: string): string {
-        // Return offline state if no snapshot
-        return this.snapshots.get(topicId) || '<div class="offline">Desktop Offline (Send message to wake agent)</div>';
+        // Missing data is a loading state, not an empty Desktop snapshot.
+        return this.snapshots.get(topicId) || '';
     }
 
     getAgentThinking(topicId: string): string {

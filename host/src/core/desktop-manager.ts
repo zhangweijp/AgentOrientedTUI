@@ -175,7 +175,7 @@ export class DesktopManager {
             const desktop = this.kernel.getDesktop(actualDesktopId);
             const thirdPartyIds = await this.appRegistry.installAll(desktop, {
                 dynamicConfig: config,
-                experimentalInteractionModes: SEMANTIC_INTERACTION_MODES,
+                interactionModes: SEMANTIC_INTERACTION_MODES,
             });
             installedAppIds.push(...thirdPartyIds);
             console.log(`[DesktopManager] Created Desktop ${actualDesktopId} with ${thirdPartyIds.length} third-party apps (Semantic)`);

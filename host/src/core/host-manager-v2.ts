@@ -526,7 +526,7 @@ export class HostManagerV2 {
         const config = await Config.get();
         const agents = (config as any).agents || { list: [] };
         const agent = agents.list.find((item: any) => item.id === agentId);
-        const sourceControls = createSourceControlsFromAgent(agent || {}, config as any);
+        const sourceControls = createSourceControlsFromAgent(agent || {}, config, Object.keys(await this.getAppsConfig()));
 
         if (agent?.prompt) {
             systemPrompt = agent.prompt;

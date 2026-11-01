@@ -32,18 +32,13 @@ import type { DesktopManager } from './desktop-manager.js';
 import * as db from '../db/index.js';
 import { projectService } from './project-service.js';
 import { toLLMConfig } from '../types/llm-config.js';
-import { buildMcpServerItemKey, buildMcpToolItemKey, isMcpServerItemKey, parseMcpServerItemKey } from '../shared/source-control-keys.js';
+import { isMcpServerItemKey, parseMcpServerItemKey } from '../shared/source-control-keys.js';
 import { Config } from '../config/config.js';
+import { createSourceControlsFromAgent, type SourceControlsSnapshot } from './source-controls.js';
 
 type AOTUIControllableSource = {
     setEnabled(enabled: boolean): void;
     setAppEnabled(appName: string, enabled: boolean): void;
-};
-
-type SourceControlsSnapshot = {
-    apps: { enabled: boolean; disabledItems: string[] };
-    mcp: { enabled: boolean; disabledItems: string[] };
-    skill: { enabled: boolean; disabledItems: string[] };
 };
 
 /**
@@ -81,79 +76,6 @@ export class SessionManagerV3 extends EventEmitter {
         }
 
         return candidate as AOTUIControllableSource;
-    }
-
-    private normalizeAgentDisabledMcpToolKeys(rawDisabledTools: unknown): string[] {
-        if (!Array.isArray(rawDisabledTools)) {
-            return [];
-        }
-
-        const normalized = new Set<string>();
-        for (const item of rawDisabledTools) {
-            if (typeof item !== 'string') {
-                continue;
-            }
-
-            const key = item.trim();
-            if (!key) {
-                continue;
-            }
-
-            if (key.startsWith('mcp-')) {
-                normalized.add(key);
-                continue;
-            }
-
-            const separatorIndex = key.indexOf('::');
-            if (separatorIndex > 0 && separatorIndex < key.length - 2) {
-                const serverName = key.slice(0, separatorIndex);
-                const toolName = key.slice(separatorIndex + 2);
-                normalized.add(buildMcpToolItemKey(serverName, toolName));
-                continue;
-            }
-
-            normalized.add(key);
-        }
-
-        return Array.from(normalized);
-    }
-
-    private createSourceControlsFromAgent(agent: any, config: Awaited<ReturnType<typeof Config.get>>): SourceControlsSnapshot {
-        const enabledApps = Array.isArray(agent.enabledApps)
-            ? agent.enabledApps.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
-            : [];
-        const enabledSkills = agent.enabledSkills && typeof agent.enabledSkills === 'object'
-            ? Object.values(agent.enabledSkills as Record<string, unknown>)
-                .flatMap((bucket) => Array.isArray(bucket)
-                    ? bucket.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
-                    : [])
-            : [];
-        const enabledMcpServers = Array.isArray(agent.enabledMCPs)
-            ? agent.enabledMCPs.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
-            : [];
-
-        const enabledMcpSet = new Set(enabledMcpServers);
-        const allConfiguredMcpServers = Object.keys((config.mcp || {}) as Record<string, unknown>);
-        const disabledServerKeys = allConfiguredMcpServers
-            .filter((serverName) => !enabledMcpSet.has(serverName))
-            .map((serverName) => buildMcpServerItemKey(serverName));
-
-        const disabledToolKeys = this.normalizeAgentDisabledMcpToolKeys(agent.disabledMcpTools);
-
-        return {
-            apps: {
-                enabled: enabledApps.length > 0,
-                disabledItems: [],
-            },
-            skill: {
-                enabled: enabledSkills.length > 0,
-                disabledItems: [],
-            },
-            mcp: {
-                enabled: enabledMcpSet.size > 0,
-                disabledItems: Array.from(new Set([...disabledServerKeys, ...disabledToolKeys])),
-            },
-        };
     }
 
     // 配置
@@ -308,7 +230,7 @@ export class SessionManagerV3 extends EventEmitter {
                 if (agent.prompt) effectivePromptOverride = agent.prompt;
 
                 if (!effectiveSourceControls) {
-                    effectiveSourceControls = this.createSourceControlsFromAgent(agent, config);
+                    effectiveSourceControls = createSourceControlsFromAgent(agent, config, Object.keys(await this.desktopManager.getAppsConfig()));
                 }
             }
         }

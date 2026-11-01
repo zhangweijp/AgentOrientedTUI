@@ -33,7 +33,7 @@ describe('DesktopManager', () => {
         await manager.createDesktop(undefined, { projectPath: '/test/workspace' });
         expect(mockRegistry.installAll).toHaveBeenCalledWith(mockKernel.getDesktop(), {
             dynamicConfig: { projectPath: '/test/workspace' },
-            experimentalInteractionModes: SEMANTIC_INTERACTION_MODES,
+            interactionModes: SEMANTIC_INTERACTION_MODES,
         });
     });
 

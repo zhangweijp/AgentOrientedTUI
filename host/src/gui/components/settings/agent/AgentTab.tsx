@@ -16,7 +16,7 @@ import { AgentAppsEditor } from './AgentAppsEditor.js';
 import { AgentSkillsEditor } from './AgentSkillsEditor.js';
 import { AgentMcpEditor } from './AgentMcpEditor.js';
 import { AgentSkinEditor } from './AgentSkinEditor.js';
-import { buildMcpToolItemKey } from '../../../../shared/source-control-keys.js';
+import { appSourceControls, buildMcpToolItemKey } from '../../../../shared/source-control-keys.js';
 
 export interface AgentConfig {
     id: string;
@@ -101,7 +101,7 @@ export const AgentTab: React.FC<{ projectPath?: string | null; onSwitchTab?: (ta
             projectPath: projectPath || undefined,
         });
 
-        const enabledAppsSet = new Set(boundAgent.enabledApps || []);
+        const appControls = appSourceControls(boundAgent.enabledApps || [], currentCaps.apps.items.map(item => item.name));
         const enabledSkillNames = new Set(Object.values(boundAgent.enabledSkills || {}).flat());
         const enabledMCPsSet = new Set(boundAgent.enabledMCPs || []);
         const disabledToolsSet = new Set(boundAgent.disabledMcpTools || []);
@@ -109,7 +109,7 @@ export const AgentTab: React.FC<{ projectPath?: string | null; onSwitchTab?: (ta
         await trpc.sourceControl.setSourceEnabled.mutate({
             id: activeTopicId,
             source: 'apps',
-            enabled: enabledAppsSet.size > 0,
+            enabled: appControls.enabled,
         });
         await trpc.sourceControl.setSourceEnabled.mutate({
             id: activeTopicId,
@@ -123,7 +123,7 @@ export const AgentTab: React.FC<{ projectPath?: string | null; onSwitchTab?: (ta
         });
 
         for (const item of currentCaps.apps.items) {
-            const shouldEnable = enabledAppsSet.has(item.name);
+            const shouldEnable = !appControls.disabledItems.includes(item.name);
             if (item.enabled !== shouldEnable) {
                 await trpc.sourceControl.setItemEnabled.mutate({
                     id: activeTopicId,

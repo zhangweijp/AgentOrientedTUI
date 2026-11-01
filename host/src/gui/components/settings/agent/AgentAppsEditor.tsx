@@ -7,7 +7,7 @@ import React, { useEffect, useState } from 'react';
 import { AgentEditorModal } from './AgentEditorModal.js';
 import { useChatBridge } from '../../../ChatBridge.js';
 
-interface AppEntry { name: string; source?: string; }
+interface AppEntry { name: string; label: string; source?: string; }
 
 export interface AgentAppsEditorProps {
     isOpen: boolean;
@@ -32,7 +32,7 @@ export const AgentAppsEditor: React.FC<AgentAppsEditorProps> = ({
             try {
                 const config = await bridge.getTrpcClient().apps.getConfig.query();
                 const entries: AppEntry[] = Object.entries(config as Record<string, any>).map(
-                    ([k, v]) => ({ name: v?.name || k, source: v?.source }),
+                    ([k, v]) => ({ name: k, label: v?.name || k, source: v?.source }),
                 );
                 entries.sort((a, b) => a.name.localeCompare(b.name));
                 setApps(entries);
@@ -78,6 +78,11 @@ export const AgentAppsEditor: React.FC<AgentAppsEditorProps> = ({
                 </div>
                 {renderToggle(anyEnabled, toggleAll)}
             </div>
+            {!loading && [...draft].some(name => !apps.some(app => app.name === name)) && (
+                <p role="status" className="text-[13px] text-[var(--color-text-tertiary)]">
+                    Unavailable app references: {[...draft].filter(name => !apps.some(app => app.name === name)).join(', ')}. Select the installed apps below to enable them.
+                </p>
+            )}
             {loading ? (
                 <div className="py-6 text-center text-[14px] text-[var(--color-text-tertiary)]">Loading apps...</div>
             ) : apps.length === 0 ? (
@@ -86,7 +91,7 @@ export const AgentAppsEditor: React.FC<AgentAppsEditorProps> = ({
                 <div className="rounded-xl bg-[var(--mat-content-card-hover-bg)] p-2 space-y-1">
                     {apps.map(app => (
                         <label key={`app-${app.name}`} className="flex items-center justify-between gap-2 text-[13px] text-[var(--color-text-secondary)]">
-                            <span className="truncate">{app.name}</span>
+                            <span className="truncate">{app.label}</span>
                             {renderToggle(draft.has(app.name), () => toggle(app.name))}
                         </label>
                     ))}

@@ -43,6 +43,26 @@ describe('ChatBridge Host-only', () => {
         expect(mockTrpcClient.db.createTopic.mutate).toHaveBeenCalledWith({ title: 'Test' });
     });
 
+    it('loads the first preview without a cached snapshot or a user message', async () => {
+        const bridge = ChatBridge.getInstance();
+        const markup = '<desktop>Installed apps</desktop><application id="app_0" name="ide"></application>';
+        const create = vi.fn().mockResolvedValue({ id: topic.id });
+        const query = vi.fn().mockResolvedValue({ markup });
+        const subscribe = vi.fn().mockReturnValue({ unsubscribe: vi.fn() });
+        const notify = vi.fn();
+        (bridge as any).getTrpcClient = () => ({ session: {
+            create: { mutate: create }, snapshot: { query }, events: { subscribe },
+        } });
+        bridge.subscribe(notify);
+        expect(bridge.getSnapshot(topic.id)).toBe('');
+        await bridge.requestSnapshot(topic.id);
+        expect(create).toHaveBeenCalledWith({ id: topic.id, lazy: true });
+        expect(query).toHaveBeenCalledWith({ id: topic.id });
+        expect(subscribe).toHaveBeenCalledOnce();
+        expect(bridge.getSnapshot(topic.id)).toBe(markup);
+        expect(notify).toHaveBeenCalledWith({ type: 'snapshot', topicId: topic.id });
+    });
+
     it('reads IM runtime through tRPC', async () => {
         const bridge = ChatBridge.getInstance();
         const runtime = {

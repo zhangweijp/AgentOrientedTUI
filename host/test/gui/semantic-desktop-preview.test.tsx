@@ -23,7 +23,7 @@ function fixture() {
     const forbidden = vi.fn(() => { throw new Error('LEGACY_INTERACTION_USED'); });
     const desktop = { id: 'preview', getInstalledApps: () => apps, getSystemLogs: () => [], getSnapshotFragments: forbidden };
     const kernel = { acquireSnapshot: forbidden, execute: forbidden,
-        experimentalCreateAppScope: vi.fn((_desktop: string, appId: string) => {
+        createAppScope: vi.fn((_desktop: string, appId: string) => {
             const client = { observe: vi.fn(async () => ({ status: 'observed', observation: {
                 observationId: appId + '-observation', expiresAt: null,
                 source: { appId, instanceId: 'run', snapshotId: 'snapshot', revision: 1 },
@@ -38,6 +38,19 @@ function fixture() {
 }
 
 describe('Semantic Desktop preview → GUI', () => {
+    it('explains installed but disabled applications without hiding them from inspection', async () => {
+        const f = fixture();
+        const apps = { enabled: true, items: f.apps.map(app => ({ name: app.name, enabled: app.name === 'terminal' })) };
+        const ui = render(<TuiDesktopViewer snapshot={await f.preview()} apps={apps} />);
+        expect(screen.getByText(/1 enabled for this topic/)).toBeInTheDocument();
+        expect(screen.getByText(/system_ide is not enabled for this topic/)).toBeInTheDocument();
+        expect(screen.getByText('IDE instructions')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'terminal' }));
+        expect(screen.queryByText(/is not enabled for this topic/)).toBeNull();
+        ui.rerender(<TuiDesktopViewer snapshot={await f.preview()} apps={{ ...apps, enabled: false }} />);
+        expect(screen.getByText(/0 enabled for this topic/)).toBeInTheDocument();
+        expect(screen.getByText(/terminal is not enabled for this topic/)).toBeInTheDocument();
+    });
     it('groups Semantic messages into the GUI application contract and releases observations', async () => {
         const f = fixture(), markup = await f.preview(), parsed = parseTuiSnapshot(markup);
         expect(parsed.parseErrors).toEqual([]);

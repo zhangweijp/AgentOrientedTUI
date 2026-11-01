@@ -14,9 +14,10 @@ import { ApplicationBlock } from './ApplicationBlock.js';
 interface TuiDesktopViewerProps {
     snapshot: string;
     agentThinking?: string;
+    apps?: { enabled: boolean; items: Array<{ name: string; enabled: boolean }> };
 }
 
-export function TuiDesktopViewer({ snapshot, agentThinking }: TuiDesktopViewerProps) {
+export function TuiDesktopViewer({ snapshot, agentThinking, apps }: TuiDesktopViewerProps) {
     const parsed = useMemo(() => parseTuiSnapshot(snapshot), [snapshot]);
     const applications = parsed.desktop?.applications ?? [];
     const [activeAppId, setActiveAppId] = useState<string | null>(null);
@@ -55,6 +56,15 @@ export function TuiDesktopViewer({ snapshot, agentThinking }: TuiDesktopViewerPr
            the context pill, and the pill floats on top as content scrolls under it. */
         <div className="absolute inset-0 overflow-y-auto pt-[78px] px-6 pb-6
                         custom-scrollbar space-y-4">
+
+            {apps && (
+                <p className="text-[13px] text-[var(--color-text-tertiary)]">
+                    Installed applications preview. {apps.enabled ? apps.items.filter(app => app.enabled).length : 0} enabled for this topic.
+                    {activeApp && !(apps.enabled && apps.items.some(app => app.name === activeApp.name && app.enabled)) && (
+                        <span> {activeApp.name} is not enabled for this topic; its Views and Tools are not sent to the Agent. Change this in Chat → Apps.</span>
+                    )}
+                </p>
+            )}
 
             {/* ── App Switcher Row ── */}
             {applications.length > 0 && (

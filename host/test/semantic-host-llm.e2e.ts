@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import type { LLMConfig, ToolOutcomeStatus } from '@aotui/agent-driver-v2';
+import type { LLMConfig } from '@aotui/agent-driver-v2';
 import type { ModelMessage } from 'ai';
 import type { Session, GuiUpdateEvent } from '../src/types/session.js';
 import type { Message } from '../src/types-v2.js';
@@ -35,10 +35,10 @@ interface RequestFacts {
     editTool: boolean;
     nonAppTool: boolean;
 }
-interface ReceiptFacts {
+interface ToolResultFacts {
     tool: ToolLabel;
-    status: ToolOutcomeStatus | 'missing';
-    phase: 'not-dispatched' | 'not-entered' | 'entered-returned' | 'unknown' | 'missing';
+    status: 'succeeded' | 'failed' | 'missing';
+    internalMetadata: boolean;
 }
 interface AssistantFacts {
     hasMarker: boolean;
@@ -54,7 +54,7 @@ const facts = {
     defaultSemanticSource: false,
     legacyCalls: 0,
     modelRequests: [] as RequestFacts[],
-    receipts: [] as ReceiptFacts[],
+    toolResults: [] as ToolResultFacts[],
     assistantMessages: [] as AssistantFacts[],
     markerReceived: false,
     finalFile43: false,
@@ -91,20 +91,16 @@ function toolLabel(name: unknown): ToolLabel {
     }
     return 'other';
 }
-function receiptFacts(part: unknown): ReceiptFacts | undefined {
+function toolResultFacts(part: unknown): ToolResultFacts | undefined {
     const item = object(part);
     if (item?.type !== 'tool-result') return undefined;
     const output = object(item.output);
     const value = object(output?.value);
-    const receipt = object(object(value?.result)?.receipt);
-    const outcome = object(receipt?.outcome);
-    const rawStatus = outcome?.status;
-    const status = rawStatus === 'succeeded' || rawStatus === 'accepted' || rawStatus === 'rejected'
-        || rawStatus === 'failed' || rawStatus === 'unknown' ? rawStatus : 'missing';
-    const rawPhase = receipt?.executionPhase;
-    const phase = rawPhase === 'not-dispatched' || rawPhase === 'not-entered'
-        || rawPhase === 'entered-returned' || rawPhase === 'unknown' ? rawPhase : 'missing';
-    return { tool: toolLabel(item.toolName), status, phase };
+    const status = output?.type === 'json' ? 'succeeded' : output?.type === 'error-json' ? 'failed' : 'missing';
+    const internalMetadata = value !== undefined && (Object.hasOwn(value, 'outcomeStatus') || Object.hasOwn(value, 'receipt')
+        || object(value.result)?.receipt !== undefined);
+    return { tool: toolLabel(item.toolName), status, internalMetadata };
+
 }
 
 /** Only one matching configuration is copied through a private child stdout pipe. */
@@ -301,10 +297,10 @@ try {
         if (event.topicId !== topicId || !event.message) return;
         if (event.type === 'tool' && Array.isArray(event.message.content)) {
             for (const part of event.message.content) {
-                const fact = receiptFacts(part);
+                const fact = toolResultFacts(part);
                 if (fact) {
-                    facts.receipts.push(fact);
-                    progress('tool-receipt', { tool: fact.tool, status: fact.status, phase: fact.phase });
+                    facts.toolResults.push(fact);
+                    progress('tool-result', { tool: fact.tool, status: fact.status });
                 }
             }
         }
@@ -376,10 +372,10 @@ try {
         'MODEL_DID_NOT_RECEIVE_LATEST_VIEW');
     requireFact(!facts.modelRequests.some(request => request.nonAppTool), 'DISABLED_SOURCE_TOOLS_EXPOSED');
     for (const expected of ['multi_open_file', 'read_loaded_diagnostics', 'edit_file'] as const) {
-        requireFact(facts.receipts.some(receipt => receipt.tool === expected
-            && receipt.status === 'succeeded' && receipt.phase === 'entered-returned'), `MISSING_SUCCESSFUL_${expected.toUpperCase()}`);
+        requireFact(facts.toolResults.some(receipt => receipt.tool === expected
+            && receipt.status === 'succeeded' && !receipt.internalMetadata), `MISSING_SUCCESSFUL_${expected.toUpperCase()}`);
     }
-    requireFact(!facts.receipts.some(receipt => receipt.status !== 'succeeded'), 'NON_SUCCESSFUL_TOOL_RECEIPT');
+    requireFact(!facts.toolResults.some(receipt => receipt.status !== 'succeeded'), 'NON_SUCCESSFUL_TOOL_RESULT');
     const configRows = database.getDb().exec('SELECT COUNT(*) FROM llm_configs')[0]?.values[0]?.[0];
     requireFact(typeof configRows === 'number', 'TEST_DATABASE_UNAVAILABLE');
     facts.configurationRowsInTestDatabase = configRows;
@@ -412,6 +408,6 @@ try {
     // Keep the aborting fetch and muted product logger until this isolated
     // process exits, so late SDK retries cannot restart a call or log an error.
     process.stdout.write(JSON.stringify({ passed: facts.passed, failureCode: facts.failureCode,
-        modelRequests: facts.modelRequests.length, receipts: facts.receipts.length, elapsedMs: facts.elapsedMs }) + '\n');
+        modelRequests: facts.modelRequests.length, toolResults: facts.toolResults.length, elapsedMs: facts.elapsedMs }) + '\n');
     process.exit(facts.passed ? 0 : 1);
 }
