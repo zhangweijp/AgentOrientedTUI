@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSnapshotCore } from './index.js';
+import { createSnapshotCore } from './store.js';
 import { compileSnapshotValueParams } from '../tool/snapshot-value-parameter-contract.js';
 const c = compileSnapshotValueParams({ file: { type: 'reference', required: true, refSource: 'snapshot-value-v1' } });if (!c.ok) throw Error('fixture');
 describe('R01 exact readonly new Ref Snapshot admission', () => {

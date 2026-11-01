@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseHTML } from 'linkedom';
 
-import { createViewFragmentExtractor } from './view-fragment-extractor.js';
+import { extractViewFragments } from './view-fragment-extractor.js';
 
 function createContainer(markup: string): Element {
     const { document } = parseHTML('<html><body></body></html>');
@@ -9,13 +9,12 @@ function createContainer(markup: string): Element {
     return document.body;
 }
 
-function fragment(fragments: ReturnType<ReturnType<typeof createViewFragmentExtractor>>, viewId: string) {
+function fragment(fragments: ReturnType<typeof extractViewFragments>, viewId: string) {
     return fragments.find(item => item.viewId === viewId)!;
 }
 
 describe('R2 View projection boundaries', () => {
     it('rejects data-view-id descendants at any depth with both View identities', () => {
-        const extractor = createViewFragmentExtractor();
         const container = createContainer(`
             <div data-view-id="parent_view_123" data-view-type="Parent">
                 <section>
@@ -28,7 +27,7 @@ describe('R2 View projection boundaries', () => {
 
         let rejection: unknown;
         try {
-            extractor(container, 'app' as never, 10);
+            extractViewFragments(container);
         } catch (error) {
             rejection = error;
         }
@@ -43,7 +42,6 @@ describe('R2 View projection boundaries', () => {
     });
 
     it('accepts sibling Views and ordinary nested DOM within each View', () => {
-        const extractor = createViewFragmentExtractor();
         const container = createContainer(`
             <div data-view-id="parent" data-view-type="Parent">
                 <section><article>Ordinary parent content</article></section>
@@ -53,7 +51,7 @@ describe('R2 View projection boundaries', () => {
             </div>
         `);
 
-        const fragments = extractor(container, 'app' as never, 10);
+        const fragments = extractViewFragments(container);
 
         expect(fragments.map(item => item.viewId).sort()).toEqual(['parent', 'sibling']);
         expect(fragment(fragments, 'parent').markup).toContain('Ordinary parent content');
@@ -61,7 +59,6 @@ describe('R2 View projection boundaries', () => {
     });
 
     it('keeps the repair hint within the diagnostic bound for arbitrary raw DOM IDs', () => {
-        const extractor = createViewFragmentExtractor();
         const parentId = 'p'.repeat(300);
         const childId = 'c'.repeat(300);
         const container = createContainer(`
@@ -72,7 +69,7 @@ describe('R2 View projection boundaries', () => {
 
         let rejection: unknown;
         try {
-            extractor(container, 'app' as never, 10);
+            extractViewFragments(container);
         } catch (error) {
             rejection = error;
         }
@@ -85,13 +82,12 @@ describe('R2 View projection boundaries', () => {
         expect(message.length).toBeLessThanOrEqual(160);
     });
 
-    it('preflights the whole DOM before digest caches change on an invalid projection', () => {
-        const extractor = createViewFragmentExtractor();
+    it('preflights nested DOM before extracting any View and recovers after correction', () => {
         const container = createContainer(`
             <div data-view-id="parent" data-view-type="Parent">Parent stable</div>
             <div data-view-id="sibling" data-view-type="Sibling">Sibling stable</div>
         `);
-        const first = extractor(container, 'app' as never, 10);
+        const first = extractViewFragments(container);
         const parent = container.querySelector('[data-view-id="parent"]')!;
         const sibling = container.querySelector('[data-view-id="sibling"]')!;
         parent.innerHTML = 'Parent invalid edit <div data-view-id="rogue">RAW_NESTED_VIEW</div>';
@@ -99,7 +95,7 @@ describe('R2 View projection boundaries', () => {
 
         let rejection: unknown;
         try {
-            extractor(container, 'app' as never, 15);
+            extractViewFragments(container);
         } catch (error) {
             rejection = error;
         }
@@ -109,15 +105,11 @@ describe('R2 View projection boundaries', () => {
 
         parent.textContent = 'Parent stable';
         sibling.textContent = 'Sibling stable';
-        const recovered = extractor(container, 'app' as never, 20);
+        const recovered = extractViewFragments(container);
 
-        expect(fragment(recovered, 'parent')).toMatchObject({
-            markup: fragment(first, 'parent').markup,
-            timestamp: 10,
-        });
-        expect(fragment(recovered, 'sibling')).toMatchObject({
-            markup: fragment(first, 'sibling').markup,
-            timestamp: 10,
-        });
+        expect(fragment(first, 'parent').markup).toBe('Parent stable');
+        expect(fragment(first, 'sibling').markup).toBe('Sibling stable');
+        expect(fragment(recovered, 'parent').markup).toBe('Parent stable');
+        expect(fragment(recovered, 'sibling').markup).toBe('Sibling stable');
     });
 });

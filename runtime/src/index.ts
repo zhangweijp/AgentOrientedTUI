@@ -38,14 +38,9 @@ export { Kernel } from './kernel/index.js';
 export {
     AOTUIError,
     ERROR_CODES,
-    createOperationError,
-    failedResult,
     createDesktopId,
     createAppId,
     createViewId,
-    isDesktopId,
-    isAppId,
-    isViewId,
     SEMANTIC_INTERACTION_MODES,
 } from './spi/index.js';
 export type {
@@ -58,10 +53,6 @@ export type {
     AppScopeResult,
     AppState,
     AppStatePersistence,
-    AOAppEntry,
-    AOAppManifest,
-    AOAppRuntime,
-    AOAppView,
     CloseOperation,
     CloseReport,
     DesktopCloseOperation,

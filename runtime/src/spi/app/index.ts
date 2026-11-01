@@ -10,7 +10,5 @@ export type { AppContext } from './store.interface.js';
 export type { AppLaunchConfig } from './app-config.interface.js';
 export type { TUIAppFactory } from './app-factory.interface.js';
 export { isTUIAppFactory } from './app-factory.interface.js';
-export type { AOAppManifest, AOAppView, AOAppRuntime, AOAppEntry } from './aoapp.js';
-export { validateManifest, isValidAppName } from './aoapp.js';
 export type { IRefExporter } from './ref-exporter.interface.js';
 export type { IViewMeta, IRefRegistry } from './public-types.js';

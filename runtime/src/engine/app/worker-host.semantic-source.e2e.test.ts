@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
-import { refKey } from '../../core/snapshot/index.js';
+import { refKey } from '../../core/snapshot/snapshot-support.js';
 import { acquireToolSource } from '../../core/tool/source-binding.js';
 
 describe('M4 Stage 2: real Worker Semantic source-bound publication', () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createSnapshotCore, refKey } from '../snapshot/index.js';
+import { createSnapshotCore } from '../snapshot/store.js';
+import { refKey } from '../snapshot/snapshot-support.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
 import type { AppSnapshotV2, JsonValue, PreparedAppSnapshotDraftV2, SnapshotStoreOptions } from '../snapshot/types.js';
 import { acquireToolSource } from './source-binding.js';

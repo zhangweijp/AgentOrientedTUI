@@ -3,7 +3,7 @@
  *
  * Reads current View metadata and the internal Ref registration port.
  */
-import { useContext } from "./preact-hooks.js";
+import { useContext } from 'preact/hooks';
 import type { IViewMeta, IRefRegistry } from "@aotui/runtime/spi";
 import { ViewRuntimeContext } from "../contexts/view-runtime-context.js";
 

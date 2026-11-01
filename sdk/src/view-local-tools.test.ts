@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { h } from 'preact';
 import { act } from 'preact/test-utils';
-import { useState } from './hooks/preact-hooks.js';
+import { useState } from 'preact/hooks';
 import { createTUIApp } from './app-factory/createTUIApp.js';
 import { View } from './components/View.js';
 import { useViewTypeTool } from './hooks/useViewTypeTool.js';

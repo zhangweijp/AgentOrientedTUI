@@ -7,6 +7,7 @@ import type { StateAddress, StateStorage, StateValue } from './state-storage.js'
 
 const limits: StateSessionLimits = { maxKeys: 8, maxDepth: 10, maxNodes: 200, maxValueBytes: 512, maxRecordBytes: 1024, maxAddressBytes: 128, maxRetainedBytes: 8192, maxPendingOperations: 8, maxConcurrentOperations: 4, maxRevision: 1000 };
 const a = (key = 'a', namespace = 'n'): StateAddress => ({ namespace, key });
+const v1Record = (value: StateValue): string => JSON.stringify({ version: 1, updatedAt: 1, value })!;
 const defer = <T = void>() => { let resolve!: (v: T) => void;const promise = new Promise<T>(r => { resolve = r; });return { promise, resolve }; };
 function fixture(initial: { address: StateAddress; text: string }[] = [], overrides: Partial<StateStorage> = {}, custom: Partial<StateSessionLimits> = {}) {
     const backend = createMemoryStateStorage({ maxStoredKeys: 20, maxStoredBytes: 20000, maxRecordBytes: 4096, maxAddressBytes: 128, maxActiveOwners: 3, maxClaimedNamespaces: 10 }, initial);
@@ -76,12 +77,12 @@ describe('state session identity, initialization and capture (A02–A07)', () =>
         expect(await f.base.read(a('c', 'a:b'))).toMatchObject({ text: expect.stringContaining('"nested":[3]') });
         await f.session.dispose();
     });
-    it.each(['{', '{"version":2,"updatedAt":1,"value":0}', '{"version":2,"updatedAt":1,"value":0,"extra":1}', '{"version":1,"updatedAt":1,"value":0,"extra":1}', '{"version":1,"updatedAt":null,"value":0}', ' '.repeat(1025)])('blocks invalid record %s without automatic mutation', async text => {
+    it.each(['{', '{"value":{"value":1}}', '{"version":2,"updatedAt":1,"value":0}', '{"version":2,"updatedAt":1,"value":0,"extra":1}', '{"version":1,"updatedAt":1,"value":0,"extra":1}', '{"version":1,"updatedAt":null,"value":0}', ' '.repeat(1025)])('blocks invalid record %s without automatic mutation', async text => {
         const f = fixture([{ address: a(), text }]), binding = f.bind();const { recovery } = await confirm(binding);
         expect(recovery.status).toBe('blocked');expect((await f.session.flush()).entries[0]?.status).toBe('blocked');
         expect(f.calls.replace).toBe(0);expect(f.calls.remove).toBe(0);await f.session.dispose();
     });
-    it.each(['{"value":{"value":1}}', '{"version":1,"updatedAt":1,"value":{"version":2,"updatedAt":2,"value":{"value":1}}}'])('preserves raw / one-layer business values on restart: %s', async text => {
+    it.each(['{"version":1,"updatedAt":1,"value":{"version":2,"updatedAt":2,"value":{"value":1}}}'])('preserves one-layer business values on restart: %s', async text => {
         const f = fixture([{ address: a(), text }]), b = f.bind();const { recovery } = await confirm(b);
         expect(recovery.status).toBe('found');expect((await f.session.flush()).entries[0]?.status).toBe('unchanged');expect(f.calls.replace).toBe(0);
         await f.session.dispose();const next = f.backend.open('next');if (next.status !== 'opened') throw Error('open');expect(await next.storage.read(a())).toEqual({ status: 'found', text });await next.storage.release();
@@ -99,7 +100,7 @@ describe('state session identity, initialization and capture (A02–A07)', () =>
         expect(f.session.getStats().pendingInitializations).toBe(0);expect(b.confirmInitialization(recovery, { status: 'ready' }).status).toBe('rejected');await f.session.dispose();
     });
     it('holds flush while read is pending and preserves update made during recovery', async () => {
-        const started = defer(), gate = defer();const f = fixture([], { read: async () => { started.resolve();await gate.promise;return { status: 'found', text: '1' }; } });
+        const started = defer(), gate = defer();const f = fixture([], { read: async () => { started.resolve();await gate.promise;return { status: 'found', text: v1Record(1) }; } });
         const b = f.bind();await started.promise;b.update(2);const flush = f.session.flush();gate.resolve();const recovery = await b.recovery;
         expect(f.session.getStats()).toMatchObject({ pendingInitializations: 1, activeIO: 0 });expect(recovery).toMatchObject({ status: 'found', value: 1 });
         b.confirmInitialization(recovery, { status: 'ready', value: 1 });expect((await flush).ok).toBe(true);
@@ -112,13 +113,13 @@ describe('state session identity, initialization and capture (A02–A07)', () =>
     });
     it('late old read and ack cannot alter a replacement generation', async () => {
         const started = defer(), gate = defer();let reads = 0;
-        const f = fixture([], { read: async () => { if (++reads === 1) { started.resolve();await gate.promise;return { status: 'found', text: '111' }; }return { status: 'missing' }; } });
+        const f = fixture([], { read: async () => { if (++reads === 1) { started.resolve();await gate.promise;return { status: 'found', text: v1Record(111) }; }return { status: 'missing' }; } });
         const old = f.bind();await started.promise;expect(old.release()).toBe(true);const next = f.bind('a', 22);gate.resolve();
         const stale = await old.recovery;expect(stale.status).toBe('blocked');expect(old.confirmInitialization(stale, { status: 'ready' }).status).toBe('rejected');
         await confirm(next);await f.session.flush();expect(await f.base.read(a())).toMatchObject({ text: expect.stringContaining('"value":22') });await f.session.dispose();
     });
     it('hydrate=false resets only after ack, and still rejects corrupt records', async () => {
-        const f = fixture([{ address: a(), text: '99' }]), b = f.bind('a', 7, false), recovery = await b.recovery;
+        const f = fixture([{ address: a(), text: v1Record(99) }]), b = f.bind('a', 7, false), recovery = await b.recovery;
         const flush = f.session.flush();expect(f.calls.replace).toBe(0);expect(b.confirmInitialization(recovery, { status: 'ready' }).status).toBe('accepted');await flush;
         expect(await f.base.read(a())).toMatchObject({ text: expect.stringContaining('"value":7') });await f.session.dispose();
         const bad = fixture([{ address: a(), text: '{' }]), bb = bad.bind('a', 7, false);await confirm(bb);expect((await bad.session.flush()).ok).toBe(false);expect(bad.calls.replace).toBe(0);await bad.session.dispose();
@@ -189,7 +190,7 @@ describe('flush revisions, clear, failure and ownership (A08–A13)', () => {
 
 describe('seal, disposal and bounded resources (A12, A14–A17)', () => {
     it.each([true, false].flatMap(previousConfirmed => [true, false].flatMap(hydrate => [true, false].map(laterUpdate => ({ previousConfirmed, hydrate, laterUpdate })))))('F04: session baseline and current normalization are generation-local: %j', async ({ previousConfirmed, hydrate, laterUpdate }) => {
-        const entered = defer(), gate = defer();let reads = 0;const f = fixture([{ address: a(), text: '1' }], { read: async () => { if (++reads === 1 && !previousConfirmed) { entered.resolve();await gate.promise; }return { status: 'found', text: '1' }; } });
+        const entered = defer(), gate = defer();let reads = 0;const f = fixture([{ address: a(), text: v1Record(1) }], { read: async () => { if (++reads === 1 && !previousConfirmed) { entered.resolve();await gate.promise; }return { status: 'found', text: v1Record(1) }; } });
         const old = f.bind();if (previousConfirmed) await confirm(old);else await entered.promise;
         old.update(7);old.release();const next = f.bind('a', 9, hydrate);gate.resolve();const recovery = await next.recovery;
         expect(recovery).toMatchObject({ status: 'found', source: 'session', value: 7 });expect(reads).toBe(previousConfirmed ? 1 : 2);
@@ -215,14 +216,14 @@ describe('seal, disposal and bounded resources (A12, A14–A17)', () => {
         expect((await g.session.flush()).ok).toBe(true);expect(await g.base.read(a())).toEqual({ status: 'missing' });expect(g.calls.replace).toBe(0);await g.session.dispose();
     });
     it.each(['applied', 'failed'])('F04: a clear admitted before rebind resolves %s before recovery chooses a baseline', async outcome => {
-        const entered = defer(), gate = defer();const f = fixture([{ address: a(), text: '1' }], { remove: async address => { entered.resolve();await gate.promise;return outcome === 'applied' ? f.base.remove(address) : failedMutation('PERMISSION_DENIED'); } });
+        const entered = defer(), gate = defer();const f = fixture([{ address: a(), text: v1Record(1) }], { remove: async address => { entered.resolve();await gate.promise;return outcome === 'applied' ? f.base.remove(address) : failedMutation('PERMISSION_DENIED'); } });
         const old = f.bind();await confirm(old);old.update(7);const clearing = old.clear();await entered.promise;old.release();const next = f.bind();gate.resolve();await clearing;const r = await next.recovery;
         if (outcome === 'applied') { expect(r.status).toBe('missing');next.confirmInitialization(r, { status: 'ready' });expect((await f.session.flush()).ok).toBe(true);expect(await f.base.read(a())).toEqual({ status: 'missing' });expect(f.calls.replace).toBe(0); }
         else { expect(r).toMatchObject({ status: 'found', source: 'session', value: 7 });next.confirmInitialization(r, { status: 'ready', value: 70 });expect((await f.session.flush()).ok).toBe(true);expect(await f.base.read(a())).toMatchObject({ text: expect.stringContaining('"value":70') }); }
         await f.session.dispose();
     });
     it('F04: a failed post-clear update does not make a pre-clear snapshot recoverable again', async () => {
-        const entered = defer(), gate = defer();const f = fixture([{ address: a(), text: '1' }], { remove: async address => { entered.resolve();await gate.promise;return f.base.remove(address); } });
+        const entered = defer(), gate = defer();const f = fixture([{ address: a(), text: v1Record(1) }], { remove: async address => { entered.resolve();await gate.promise;return f.base.remove(address); } });
         const old = f.bind();await confirm(old);old.update(7);const clearing = old.clear();await entered.promise;old.reportUpdateFailure();gate.resolve();await clearing;old.release();const next = f.bind('a', 9), r = await next.recovery;
         expect(r.status).toBe('missing');next.confirmInitialization(r, { status: 'ready' });expect((await f.session.flush()).ok).toBe(false);expect(f.calls.replace).toBe(0);next.update(8);expect((await f.session.flush()).ok).toBe(true);await f.session.dispose();
     });
@@ -249,7 +250,7 @@ describe('seal, disposal and bounded resources (A12, A14–A17)', () => {
     });
     it.each([1, 2])('F02: a pending clean batch retains its key/address under maxKeys=%s', async maxKeys => {
         const firstAddress = a('a'.repeat(40)), secondAddress = a('b'.repeat(40)), addressBytes = new TextEncoder().encode(JSON.stringify(['n', firstAddress.key])).length;
-        expect(addressBytes).toBe(48);const f = fixture([{ address: firstAddress, text: '0' }], {}, { maxKeys, maxRetainedBytes: 52 });
+        expect(addressBytes).toBe(48);const f = fixture([{ address: firstAddress, text: v1Record(0) }], {}, { maxKeys, maxRetainedBytes: 96 });
         const b = f.bind(firstAddress.key);await confirm(b);let settled = false;const saving = f.session.flush();saving.then(() => { settled = true; });b.release();
         expect(settled).toBe(false);expect(f.session.getStats()).toMatchObject({ retainedKeys: 1, retainedBytes: addressBytes + 1 });
         expect(f.session.bind(secondAddress, 0, { hydrate: true })).toMatchObject({ status: 'rejected', issue: { code: 'CAPACITY_EXCEEDED' } });
@@ -265,12 +266,12 @@ describe('seal, disposal and bounded resources (A12, A14–A17)', () => {
         const next = f.bind('b');await confirm(next);await f.session.dispose();
     });
     it('F02: same-key rebind shares the retained address and keeps already clean data clean', async () => {
-        const f = fixture([{ address: a(), text: '0' }], {}, { maxKeys: 1 }), old = f.bind();await confirm(old);const saving = f.session.flush();old.release();
+        const f = fixture([{ address: a(), text: v1Record(0) }], {}, { maxKeys: 1 }), old = f.bind();await confirm(old);const saving = f.session.flush();old.release();
         const next = f.bind();expect(next.generation).not.toBe(old.generation);const r = await next.recovery;expect(r).toMatchObject({ status: 'found', source: 'session', value: 0 });next.confirmInitialization(r, { status: 'ready', value: 0 });
         expect(old.release()).toBe(false);expect((await saving).ok).toBe(true);expect((await f.session.flush()).entries[0]?.status).toBe('unchanged');expect(f.calls.replace).toBe(0);next.release();expect(f.session.getStats()).toMatchObject({ retainedKeys: 0, retainedBytes: 0 });await f.session.dispose();
     });
     it('F02: clear tombstone retains only its address after batch release, then dispose frees it', async () => {
-        const entered = defer(), gate = defer();const f = fixture([{ address: a(), text: '0' }], { remove: async address => { entered.resolve();await gate.promise;return f.base.remove(address); } });
+        const entered = defer(), gate = defer();const f = fixture([{ address: a(), text: v1Record(0) }], { remove: async address => { entered.resolve();await gate.promise;return f.base.remove(address); } });
         const b = f.bind();await confirm(b);const saving = f.session.flush(), clearing = b.clear();b.release();await entered.promise;expect(f.session.getStats().retainedKeys).toBe(1);gate.resolve();await clearing;await saving;
         expect(f.session.getStats()).toMatchObject({ retainedKeys: 1, retainedBytes: new TextEncoder().encode(JSON.stringify(['n', 'a'])).length });expect(f.calls.replace).toBe(0);
         const final = f.session.flush(), disposal = f.session.dispose();await final;await disposal;expect(f.session.getStats()).toMatchObject({ retainedKeys: 0, retainedBytes: 0, pendingOperations: 0 });
@@ -285,7 +286,7 @@ describe('seal, disposal and bounded resources (A12, A14–A17)', () => {
         expect(f.session.getStats().pendingInitializations).toBe(0);await f.session.dispose();
     });
     it.each([true, false])('F01: a new confirmed binding never grants an old batch eligibility (hydrate=%s)', async hydrate => {
-        const f = fixture([{ address: a(), text: '1' }]), old = f.bind('a', 99);await old.recovery;old.release();const saving = f.session.flush();
+        const f = fixture([{ address: a(), text: v1Record(1) }]), old = f.bind('a', 99);await old.recovery;old.release();const saving = f.session.flush();
         const next = f.bind('a', 2, hydrate), r = await next.recovery;
         expect(next.confirmInitialization(r, hydrate ? { status: 'ready', value: 1 } : { status: 'ready' }).status).toBe('accepted');
         const report = await saving;expect(report.entries[0]).toMatchObject({ revision: 1, status: 'blocked' });expect(f.calls.replace).toBe(0);
@@ -361,8 +362,20 @@ describe('seal, disposal and bounded resources (A12, A14–A17)', () => {
         expect((await f.session.flush()).entries[0]?.status).toBe('blocked');expect(f.calls.replace).toBe(0);await f.session.dispose();
     });
     it('keeps initial/recovered bytes plus pending ack distinct from I/O; tighter aggregate wins', async () => {
-        const f = fixture([{ address: a(), text: '1' }], {}, { maxRetainedBytes: 11 });const b = f.bind('a', 0);const recovery = await b.recovery;
+        const f = fixture([{ address: a(), text: v1Record(1) }], {}, { maxRetainedBytes: 11 });const b = f.bind('a', 0);const recovery = await b.recovery;
         expect(recovery).toMatchObject({ status: 'blocked', issue: { code: 'CAPACITY_EXCEEDED' } });expect(f.session.getStats()).toMatchObject({ activeIO: 0, pendingInitializations: 1 });await confirm(b);expect(f.calls.replace).toBe(0);await f.session.dispose();
+    });
+    it('blocks old bare JSON without rewriting it and releases the owner on dispose', async () => {
+        const original = '{"value":{"value":"business"}}';
+        const f = fixture([{ address: a(), text: original }]), binding = f.bind();
+        const recovery = await binding.recovery;
+        expect(recovery).toMatchObject({ status: 'blocked', issue: { code: 'UNSUPPORTED_FORMAT' } });
+        expect(binding.confirmInitialization(recovery, { status: 'ready' })).toMatchObject({ status: 'rejected', issue: { code: 'UNSUPPORTED_FORMAT' } });
+        expect(await f.session.flush()).toMatchObject({ ok: false, entries: [{ status: 'blocked', issue: { code: 'UNSUPPORTED_FORMAT' } }] });
+        expect(f.calls.replace).toBe(0);
+        expect(await f.base.read(a())).toEqual({ status: 'found', text: original });
+        expect((await f.session.dispose()).release).toEqual({ status: 'released' });
+        expect(f.calls.release).toBe(1);
     });
     it('bounds maxKeys / pending / concurrency without evicting unsaved keys', async () => {
         const started = defer(), gate = defer();const f = fixture([], { read: async () => { started.resolve();await gate.promise;return { status: 'missing' }; } }, { maxKeys: 2, maxPendingOperations: 1, maxConcurrentOperations: 1 });

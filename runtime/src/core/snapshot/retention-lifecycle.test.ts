@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createSnapshotCore, refKey, validatePreparedV2Draft } from './index.js';
+import { createSnapshotCore } from './store.js';
+import { refKey } from './snapshot-support.js';
+import { validatePreparedV2Draft } from './v2-validator.js';
 import { canonicalJson, utf8Size } from './json.js';
 import type { JsonValue, SnapshotStoreOptions } from './types.js';
 

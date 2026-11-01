@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { parseHTML } from 'linkedom';
-import {
-    canonicalJson, copyJson, createSnapshotCore, refKey, utf8Size,
-    validatePreparedV2Draft,
-} from './index.js';
+import { canonicalJson, copyJson, utf8Size } from './json.js';
+import { createSnapshotCore } from './store.js';
+import { refKey } from './snapshot-support.js';
+import { validatePreparedV2Draft } from './v2-validator.js';
 import type { JsonValue, PreparedAppSnapshotDraftV2, SnapshotCore } from './types.js';
 import type { ViewID } from '../../spi/index.js';
 import { acquireToolSource } from '../tool/source-binding.js';
@@ -84,7 +84,7 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
             appId, instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 1, container,
             fragments: fixture.views.map(view => ({
                 viewId: view.id as ViewID, viewType: view.type, viewName: view.name,
-                kind: 'view-state', markup: '[File](file)', timestamp: 1,
+                kind: 'view-state', markup: '[File](file)',
             })),
             kernel: {
                 getViewOwnedViewInstances: () => fixture.views.map(view => ({

@@ -25,8 +25,7 @@
  * ```
  */
 
-import { useLayoutEffect, useRef } from './preact-hooks.js';
-import { useContext } from './preact-hooks.js';
+import { useContext, useLayoutEffect, useRef } from 'preact/hooks';
 import { ViewRuntimeContext } from '../contexts/view-runtime-context.js';
 import type { LLMOutputEvent, LLMOutputListener } from '@aotui/runtime/spi';
 

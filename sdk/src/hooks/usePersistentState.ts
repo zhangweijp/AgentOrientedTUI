@@ -1,6 +1,6 @@
 import type { Dispatch, StateUpdater } from 'preact/hooks';
-import { useLayoutEffect, useMemo, useState } from './preact-hooks.js';
-import { useAppEnv } from './useAppConfig.js';
+import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
+import { useAppEnv } from './useAppEnv.js';
 import { useInternalAppRuntimeContext } from '../context/AppRuntimeContext.js';
 import type { AppStatePersistence, StateBindingStatus, StateValue, StateIssue } from '@aotui/runtime/spi';
 import type { StateBinding } from '@aotui/runtime/spi';

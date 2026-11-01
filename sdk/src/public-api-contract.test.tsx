@@ -36,10 +36,6 @@ describe('C04/C09 SDK root exports and app context', () => {
             'AOTUIError',
             'View',
             'createTUIApp',
-            'defineParams',
-            'escapeHtml',
-            'escapeJsonForAttr',
-            'useAppConfig',
             'useAppEnv',
             'useAppLifecycle',
             'useAppRuntimeContext',
@@ -60,7 +56,10 @@ describe('C04/C09 SDK root exports and app context', () => {
     });
 
     it('does not expose retired View registry, InlineView, selector, or ref-registry assembly values', () => {
-        for (const name of ['ViewRegistry', 'createInlineView', 'useViewSelector', 'useRefRegistry']) {
+        for (const name of [
+            'ViewRegistry', 'createInlineView', 'useViewSelector', 'useRefRegistry',
+            'defineParams', 'escapeHtml', 'escapeJsonForAttr', 'useAppConfig',
+        ]) {
             expect(Object.hasOwn(SDK, name), name).toBe(false);
         }
     });
@@ -109,9 +108,12 @@ describe('C04/C09 SDK root exports and app context', () => {
 describe('C01/C02 actual component capability honesty', () => {
     it('keeps actual View/Ref registration without obsolete component registries', async () => {
         let context: any;
-        function Body() { context = useContext(ViewRuntimeContext);const ref = useDataRef('record', { label: 'value' });return h('p', {}, ref('Record')); }
+        let refFormatter: any;
+        function Body() { context = useContext(ViewRuntimeContext);const ref = useDataRef('record', { label: 'value' });refFormatter = ref;return h('p', {}, ref('Record')); }
         const x = await mount(Body);expect(context.llmOutput).toBeUndefined();expect(x.kernel.getViewOwnedViewInstances()).toHaveLength(1);
         expect(x.kernel.getViewRefs()).toContainEqual(expect.objectContaining({ viewId: 'detail', refId: 'record' }));expect(x.container.textContent).toContain('[Record](record)');
+        expect(refFormatter).not.toHaveProperty('data');
+        expect(refFormatter).not.toHaveProperty('id');
         expect(Object.hasOwn(context, 'mountable')).toBe(false);
         expect(Object.hasOwn(context, 'dynamic')).toBe(false);
         expect(Object.hasOwn(context, 'operations')).toBe(false);expect(Object.hasOwn(context, 'typeTools')).toBe(false);expect(Object.hasOwn(context, 'config')).toBe(false);

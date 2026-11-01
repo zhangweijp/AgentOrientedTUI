@@ -5,7 +5,7 @@ import { AOTUIError } from '../../spi/core/errors.js';
 import { SignalBus, type SignalOutputStream, type SignalListener } from './signal-bus.js';
 import type { LLMOutputListener } from '../../spi/core/llm-output.js';
 import type { AppManagerCloseOperation, AppManagerCloseReport, DesktopCloseOptions, DesktopCloseOperation, DesktopCloseReport } from '../../spi/runtime/close.interface.js';
-import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseOperation, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose, type CloseState } from './close-operation.js';
+import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseOperation, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from './close-operation.js';
 import { DesktopLogger, type LogEntry } from './desktop-logger.js';
 import { AppManager } from '../app/index.js';
 import { LLMOutputChannelService } from './llm-output-channel.js';
@@ -14,11 +14,6 @@ import type { AppInteractionOptions, AppScopeResult } from '../../spi/runtime/ap
 import type { ScopePolicy } from '../../core/invocation/scoped-interaction.js';
 import { captureInteractionModes } from '../app/interaction-config.js';
 
-
-// Re-export for backward compatibility
-export { SignalOutputStream } from './signal-bus.js';
-export { LogEntry } from './desktop-logger.js';
-export { InstalledApp } from '../app/index.js';
 
 /**
  * Desktop 构造参数

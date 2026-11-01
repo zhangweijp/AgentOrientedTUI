@@ -6,18 +6,8 @@
  */
 
 import type { IElementVisitor, ChildrenTraverser, ElementTraverser } from './interface.js';
-import type { TransformContext } from '../types.js';
 
 // ============ List Helper Functions ============
-
-/**
- * Single element traverser type (for recursive calls)
- * 
- * This enables nested HTML elements inside list items to use the same rendering rules.
- * 
- * @deprecated Use ElementTraverser from interface.ts instead
- */
-type SingleElementTraverser = (el: Element, ctx: TransformContext) => string;
 
 /**
  * Transform nested list with proper prefixes using recursive Visitor calls
@@ -26,8 +16,7 @@ type SingleElementTraverser = (el: Element, ctx: TransformContext) => string;
  */
 function transformNestedList(
     list: Element,
-    ctx: TransformContext,
-    traverse: SingleElementTraverser
+    traverse: ElementTraverser
 ): string[] {
     const items: string[] = [];
     const isOrdered = list.tagName.toLowerCase() === 'ol';
@@ -38,7 +27,7 @@ function transformNestedList(
         if (child.tagName.toLowerCase() === 'li') {
             const prefix = isOrdered ? `${i + 1}. ` : '- ';
             // [FIX] Use recursive traversal instead of textContent
-            const content = traverse(child, ctx);
+            const content = traverse(child);
             items.push(prefix + content.trim());
         }
     }
@@ -55,8 +44,7 @@ function transformNestedList(
 function transformListItem(
     li: Element,
     prefix: string,
-    ctx: TransformContext,
-    traverse: SingleElementTraverser
+    traverse: ElementTraverser
 ): string {
     const parts: string[] = [];
     let mainContent = '';
@@ -74,11 +62,11 @@ function transformListItem(
 
             if (tagName === 'ul' || tagName === 'ol') {
                 // Nested list - process with indentation using recursive traversal
-                const nestedItems = transformNestedList(el, ctx, traverse);
+                const nestedItems = transformNestedList(el, traverse);
                 parts.push(...nestedItems);
             } else {
                 // Use recursive traversal for all nested elements.
-                const childOutput = traverse(el, ctx);
+                const childOutput = traverse(el);
                 mainContent += childOutput;
             }
         }
@@ -99,13 +87,12 @@ export const htmlVisitor: IElementVisitor = {
     name: 'html-fallback',
     priority: 100, // Lowest priority
 
-    matches(el: Element, ctx: Readonly<TransformContext>): boolean {
+    matches(): boolean {
         return true;
     },
 
     transform(
         el: Element,
-        ctx: TransformContext,
         children: ChildrenTraverser,
         traverseElement?: ElementTraverser
     ): string {
@@ -117,7 +104,7 @@ export const htmlVisitor: IElementVisitor = {
         // Handle line breaks
         if (tagName === 'br') return '\n';
 
-        const childTexts = children(el, ctx);
+        const childTexts = children(el);
 
         // G. Handle standard HTML elements integration from pure.ts
         if (/^h[1-6]$/.test(tagName)) {
@@ -173,9 +160,9 @@ export const htmlVisitor: IElementVisitor = {
             const listChildren = el.children;
 
             // Use ElementTraverser for nested list elements.
-            const singleTraverse: SingleElementTraverser = traverseElement
+            const singleTraverse: ElementTraverser = traverseElement
                 ? traverseElement
-                : (childEl, childCtx) => children(childEl, childCtx).join(' '); // Fallback
+                : childEl => children(childEl).join(' '); // Fallback
 
             let liIndex = 0;
             for (let i = 0; i < listChildren.length; i++) {
@@ -185,11 +172,11 @@ export const htmlVisitor: IElementVisitor = {
                 if (childTag === 'li') {
                     // Standard list item
                     const prefix = tagName === 'ol' ? `${++liIndex}. ` : '- ';
-                    const liContent = transformListItem(child, prefix, ctx, singleTraverse);
+                    const liContent = transformListItem(child, prefix, singleTraverse);
                     items.push(liContent);
                 } else {
                     // Use ElementTraverser for non-list children.
-                    const childOutput = singleTraverse(child, ctx);
+                    const childOutput = singleTraverse(child);
                     if (childOutput.trim()) {
                         items.push(childOutput.trim());
                     }

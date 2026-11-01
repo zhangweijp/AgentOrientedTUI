@@ -1,4 +1,4 @@
-import { defineParams, useViewTypeTool } from '@aotui/sdk';
+import { useViewTypeTool } from '@aotui/sdk';
 import type { FetchFormat, SearchQuery, SearchResultItem } from '../types.js';
 
 export interface BrowserActions {
@@ -12,13 +12,13 @@ export interface BrowserActions {
 export function SearchToolSection({ onSearch }: Pick<BrowserActions, 'onSearch'>) {
     useViewTypeTool('search_web', {
         description: 'Run a web search. Read the results from Search and ResultList Views.',
-        params: defineParams({
+        params: {
             query: { type: 'string', required: true, desc: 'Web search query' },
             numResults: { type: 'number', required: false, desc: 'Number of results (default 8)' },
             livecrawl: { type: 'string', required: false, desc: 'fallback or preferred' },
             type: { type: 'string', required: false, desc: 'auto, fast or deep' },
             contextMaxCharacters: { type: 'number', required: false, desc: 'Maximum context characters' },
-        }), isMutating: true,
+        }, isMutating: true,
     }, async args => {
         try {
             const result = await onSearch({
@@ -38,7 +38,7 @@ export function ResultListToolSection({ results, onOpenResult, onClearResults }:
     { results: SearchResultItem[] } & Pick<BrowserActions, 'onOpenResult' | 'onClearResults'>) {
     useViewTypeTool('open_result', {
         description: 'Open a URL from this current result list. Page will contain the fetched content.',
-        params: defineParams({ url: { type: 'string', required: true, desc: 'A URL shown in this result list' } }),
+        params: { url: { type: 'string', required: true, desc: 'A URL shown in this result list' } },
         isMutating: true,
     }, async ({ url }) => {
         if (!results.some(result => result.url === url)) {
@@ -52,7 +52,7 @@ export function ResultListToolSection({ results, onOpenResult, onClearResults }:
         }
     });
     useViewTypeTool('clear_results', {
-        description: 'Remove the current result list and its tools.', params: defineParams({}), isMutating: true,
+        description: 'Remove the current result list and its tools.', params: {}, isMutating: true,
     }, async () => {
         onClearResults();
         return { success: true, data: { message: 'Search results cleared.' } };
@@ -63,11 +63,11 @@ export function ResultListToolSection({ results, onOpenResult, onClearResults }:
 export function FetchToolSection({ onFetch }: Pick<BrowserActions, 'onFetch'>) {
     useViewTypeTool('fetch_url', {
         description: 'Fetch a URL and show its content in Page.',
-        params: defineParams({
+        params: {
             url: { type: 'string', required: true, desc: 'URL to fetch' },
             format: { type: 'string', required: false, desc: 'text, markdown or html' },
             timeout: { type: 'number', required: false, desc: 'Timeout in seconds (maximum 120)' },
-        }), isMutating: true,
+        }, isMutating: true,
     }, async args => {
         try {
             const viewId = await onFetch({ url: args.url, timeout: args.timeout,
@@ -82,7 +82,7 @@ export function FetchToolSection({ onFetch }: Pick<BrowserActions, 'onFetch'>) {
 
 export function PageToolSection({ onClosePage }: Pick<BrowserActions, 'onClosePage'>) {
     useViewTypeTool('close_page', {
-        description: 'Close this Page View and remove its tools.', params: defineParams({}), isMutating: true,
+        description: 'Close this Page View and remove its tools.', params: {}, isMutating: true,
     }, async () => {
         onClosePage();
         return { success: true, data: { message: 'Page closed.' } };

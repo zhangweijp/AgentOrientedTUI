@@ -19,9 +19,7 @@ export {
     type LoadedApp,
     type AppRegistryEntry,
     type AppRegistryOptions,
-    type AppRegistryInstallOptions,
-    validateManifest,
-    isValidAppName
+    type AppRegistryInstallOptions
 } from './registry.js';
 export { createDefaultConfig, validateConfig, type TUIConfig, type AppConfigEntry } from './config.js';
 

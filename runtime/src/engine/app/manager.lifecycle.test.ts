@@ -24,7 +24,7 @@ describe('AppManager owned lifecycle (controlled C1 Sandbox seam, no OS Workers)
     it.each(['close','delete','cleanup'] as const)('accepted initialization remains supervised during %s and cannot restore running metadata', async intent => {
         const gate = barrier();controls.install = () => gate.promise;const { manager, desktop } = fixture();
         const installing = manager.install('/pending', { appId: 'app' });
-        if (intent === 'delete') void manager.deleteAll().catch(() => {});else if (intent === 'cleanup') manager.cleanup();else void manager.closeAll().catch(() => {});
+        if (intent === 'delete') void manager.beginClose('delete').completion.catch(() => {});else if (intent === 'cleanup') void manager.cleanupAsync().catch(() => {});else void manager.beginClose().completion.catch(() => {});
         expect(manager.getAllWorkers().size).toBe(1);expect(manager.getCloseReport().state).toBe('closing');expect(controls.boxes[0].cleanCalls).toBe(1);
         gate.resolve();await expect(installing).rejects.toHaveProperty('code','INSTALL_FAILED');await manager.cleanupAsync();
         expect(manager.getAllWorkers().size).toBe(0);expect(manager.getInstalledApps()).toEqual([]);expect(desktop.emitSignal).not.toHaveBeenCalled();
@@ -57,9 +57,9 @@ describe('AppManager owned lifecycle (controlled C1 Sandbox seam, no OS Workers)
     it('all cleanups start before waiting on one hung install or resource; metadata is preserved until cleanupAsync', async () => {
         const gate = barrier();const { manager } = fixture();await manager.install('/a', { appId: 'a' });await manager.install('/b', { appId: 'b' });
         controls.clean = async box => { if (box.appId === 'a') await gate.promise;return true; };
-        const close = manager.closeAll();expect(manager.closeAll()).toBe(close);expect(controls.boxes.map(box => box.cleanCalls)).toEqual([1,1]);
+        const close = manager.beginClose();expect(manager.beginClose()).toBe(close);expect(controls.boxes.map(box => box.cleanCalls)).toEqual([1,1]);
         await Promise.resolve();expect(manager.getCloseReport().state).toBe('closing');expect(manager.getInstalledApps().every(app => app.status === 'running')).toBe(true);
-        await expect(manager.deleteAll()).rejects.toMatchObject({ code: 'LIFECYCLE_CONFLICT' });gate.resolve();await close;
+        expect(() => manager.beginClose('delete')).toThrow(/LIFECYCLE_CONFLICT/);gate.resolve();await close.completion;
         expect(manager.getInstalledApps().every(app => app.status === 'running')).toBe(true);expect(manager.getAllWorkers().size).toBe(0);await manager.cleanupAsync();expect(manager.getInstalledApps()).toEqual([]);
     });
     it('cleanup never drops an unconfirmed owner and metadata/query snapshots cannot mutate ownership', async () => {
@@ -103,7 +103,7 @@ describe('AppManager owned lifecycle (controlled C1 Sandbox seam, no OS Workers)
         gate.resolve();const report=await closing.completion;expect(report.hasFailures).toBe(true);expect(report.resourcesReleased).toBe(false);expect(manager.getAllWorkers().has('throw')).toBe(true);expect(manager.getAllWorkers().size).toBe(1);await manager.cleanupAsync();
     });
     it('delete first starts delete and actual cleanup once; ID counter does not wrap or reset', async () => {
-        const { manager } = fixture();await manager.install('/a', { appId: 'a' });const deleted = manager.deleteAll();expect(manager.deleteAll()).toBe(deleted);expect(controls.boxes[0].deleteCalls).toBe(1);await deleted;await manager.cleanupAsync();
+        const { manager } = fixture();await manager.install('/a', { appId: 'a' });const deleted = manager.beginClose('delete');expect(manager.beginClose('delete')).toBe(deleted);expect(controls.boxes[0].deleteCalls).toBe(1);await deleted.completion;await manager.cleanupAsync();
         const other = fixture().manager;(other as any).appIdCounter = Number.MAX_SAFE_INTEGER;
         expect(other.registerPendingApp({ modulePath: '/last' })).toBe('app_'+Number.MAX_SAFE_INTEGER);
         expect(() => other.registerPendingApp({ modulePath: '/overflow' })).toThrow('LIFECYCLE_CAPACITY_EXCEEDED');await other.cleanupAsync();expect((other as any).idsExhausted).toBe(true);

@@ -24,26 +24,19 @@ it('injects the formal lifecycle port when a managed factory is initialized dire
     const close = vi.fn();runtime.appLifecycle.register({ close });
     await kernel.onClose();expect(close).toHaveBeenCalledTimes(1);
 });
-it.each(['sync', 'async'])('C2-18 %s unmount failure still clears every listener and owned registry', async kind => {
+it.each(['sync', 'async'])('C2-18 %s unmount failure still clears owned registries', async kind => {
     const f = fixture(context => {
         context.refExporter.registerRef('v', 'key', {});context.viewTools.mount('v', 'Detail');
         return { unmount: () => { if (kind === 'sync') throw Error('private sync');return Promise.reject(Error('private async')); } };
     });
-    const remove = vi.spyOn(f.container, 'removeEventListener');await f.open();expect(f.kernel.getViewOwnedViewInstances()).toHaveLength(1);
+    await f.open();expect(f.kernel.getViewOwnedViewInstances()).toHaveLength(1);
     const closing = f.kernel.onClose();expect(f.kernel.onClose()).toBe(closing);await expect(closing).rejects.toMatchObject({ code: 'APP_UNMOUNT_FAILED', message: 'APP_UNMOUNT_FAILED' });
-    expect(remove.mock.calls.map(([name]) => name)).toEqual(['aotui:system']);
     expect(f.kernel.getViewRefs()).toEqual([]);expect(f.kernel.getViewOwnedViewInstances()).toHaveLength(0);
     expect((f.kernel as any).viewRegistry).toBeUndefined();expect((f.kernel as any).typeTools).toBeUndefined();expect((f.kernel as any).viewKeyToId).toBeUndefined();
 });
-it('C2-18 a listener removal failure cannot skip other listeners or registries', async () => {
-    const f = fixture(context => { context.refExporter.registerRef('v', 'r', {});return { unmount() {} }; });await f.open();
-    const original = f.container.removeEventListener.bind(f.container), seen: string[] = [];
-    vi.spyOn(f.container, 'removeEventListener').mockImplementation(((name: string, ...args: any[]) => { seen.push(name);if (name === 'aotui:system') throw Error('private listener');return original(name, ...args); }) as any);
-    await expect(f.kernel.onClose()).rejects.toHaveProperty('code', 'APP_UNMOUNT_FAILED');expect(seen).toEqual(['aotui:system']);expect(f.kernel.getViewRefs()).toEqual([]);
-});
 it('C2-19 closing during initialization owns the late renderer without registering or reviving', async () => {
     const entered = defer(), finish = defer(), unmount = vi.fn();
-    const f = fixture(async () => { entered.resolve();await finish.promise;return { unmount }; }), add = vi.spyOn(f.container, 'addEventListener');
+    const f = fixture(async () => { entered.resolve();await finish.promise;return { unmount }; });
     const opening = f.open();expect(f.open()).toBe(opening);await entered.promise;const closing = f.kernel.onClose();
     expect(f.runtime().registerView).toBeUndefined();expect(f.runtime().allocateViewId).toBeUndefined();expect(f.runtime().typeTools).toBeUndefined();
     expect(() => f.runtime().refExporter.registerRef('v', 'r', {})).toThrow(expect.objectContaining({ code: 'APP_KERNEL_CLOSED' }));
@@ -51,7 +44,7 @@ it('C2-19 closing during initialization owns the late renderer without registeri
     const dirty = f.context.markDirty.mock.calls.length;f.runtime().markDirty();expect(f.context.markDirty).toHaveBeenCalledTimes(dirty);
     await expect(f.kernel.onReinitialize()).rejects.toHaveProperty('code', 'APP_KERNEL_CLOSED');
     expect((f.kernel as any).onOperation).toBeUndefined();
-    finish.resolve();await expect(opening).rejects.toHaveProperty('code', 'APP_KERNEL_CLOSED');await closing;expect(unmount).toHaveBeenCalledTimes(1);expect(add).not.toHaveBeenCalled();
+    finish.resolve();await expect(opening).rejects.toHaveProperty('code', 'APP_KERNEL_CLOSED');await closing;expect(unmount).toHaveBeenCalledTimes(1);
     await expect(f.open()).rejects.toHaveProperty('code', 'APP_KERNEL_CLOSED');expect(f.kernel.onClose()).toBe(closing);
 });
 it('C2-19 async unmount is actually awaited and its rejection never becomes a success', async () => {

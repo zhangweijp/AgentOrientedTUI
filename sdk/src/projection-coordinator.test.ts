@@ -10,6 +10,7 @@ import { View } from './components/View.js';
 import { useDataRef } from './hooks/useRef.js';
 import { useArrayRef } from './hooks/useArrayRef.js';
 import { useViewTypeTool } from './hooks/useViewTypeTool.js';
+import { ViewRuntimeContext } from './contexts/view-runtime-context.js';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -36,7 +37,6 @@ function setup(component: () => any) {
             }, container);
         },
         async close() {
-            (kernel as any).componentRenderer?.unmount();
             await kernel.onClose();
             container.remove();
         },
@@ -67,12 +67,10 @@ describe('M3 SDK semantic projection commit', () => {
             await x.open();
             const view = x.container.querySelector('[data-view-id="workspace"]');
             expect(view).not.toBeNull();
-            expect(view?.getAttribute('data-view-generation')).toMatch(/^sdk_mount_/);
+            expect(view?.getAttribute('data-view-instance-id')).toBeTruthy();
             expect(Object.keys(refsOf(x.kernel)).sort()).toEqual([
                 'workspace:Task:pending[0]',
                 'workspace:Task[]:pending',
-                'workspace:pending',
-                'workspace:pending[0]',
                 'workspace:selected',
             ].sort());
             const allRefs = refsOf(x.kernel) as Record<string, any>;
@@ -158,7 +156,7 @@ describe('M3 SDK semantic projection commit', () => {
         }
     });
 
-    it('changes View generation after unmount/remount with identical View ID', async () => {
+    it('changes Runtime View identity after unmount/remount with identical View ID', async () => {
         let setVisible!: (value: boolean) => void;
         function App() {
             const [visible, update] = useState(true);
@@ -168,14 +166,14 @@ describe('M3 SDK semantic projection commit', () => {
         const x = setup(App);
         try {
             await x.open();
-            const original = x.container.querySelector('[data-view-id="workspace"]')?.getAttribute('data-view-generation');
+            const original = x.container.querySelector('[data-view-id="workspace"]')?.getAttribute('data-view-instance-id');
             expect(original).toBeTruthy();
             setVisible(false);
             await sleep(35);
             expect(x.container.querySelector('[data-view-id="workspace"]')).toBeNull();
             setVisible(true);
             await sleep(35);
-            const fresh = x.container.querySelector('[data-view-id="workspace"]')?.getAttribute('data-view-generation');
+            const fresh = x.container.querySelector('[data-view-id="workspace"]')?.getAttribute('data-view-instance-id');
             expect(fresh).toBeTruthy();
             expect(fresh).not.toBe(original);
             expect(x.kernel.getProjectionCoordinator().token().ready).toBe(true);
@@ -233,8 +231,8 @@ describe('M3 observable commit-phase consistency', () => {
     });
 });
 
-describe('M3 typed ArrayRef marker and registry parity', () => {
-    it('resolves every emitted typed Ref marker, preserves bare aliases and cleans up stale items', async () => {
+describe('M3 ArrayRef marker and registry parity', () => {
+    it('registers only emitted typed Ref IDs and cleans up stale items', async () => {
         type Task = { id: string };
         let setItems!: (next: { items: Task[]; itemType: string }) => void;
         function Content() {
@@ -257,8 +255,8 @@ describe('M3 typed ArrayRef marker and registry parity', () => {
             const refs = () => refsOf(x.kernel) as Record<string, any>;
             expect(refs()[key('Task[]:pending')]).toEqual([{ id: 'A' }, { id: 'B' }]);
             expect(refs()[key('Task:pending[0]')]).toEqual({ id: 'A' });
-            expect(refs()[key('pending[0]')]).toEqual({ id: 'A' });
-            expect(refs()[key('pending')]).toEqual([{ id: 'A' }, { id: 'B' }]);
+            expect(refs()[key('pending[0]')]).toBeUndefined();
+            expect(refs()[key('pending')]).toBeUndefined();
 
             let domMutations = 0;
             const beforeHtml = x.container.innerHTML;
@@ -278,14 +276,14 @@ describe('M3 typed ArrayRef marker and registry parity', () => {
             await sleep(40);
             expect(refs()[key('Task[]:pending')]).toBeUndefined();
             expect(refs()[key('Task:pending[0]')]).toBeUndefined();
-            expect(refs()[key('pending[1]')]).toBeUndefined();
             expect(refs()[key('Job[]:pending')]).toEqual([{ id: 'B' }]);
             expect(refs()[key('Job:pending[0]')]).toEqual({ id: 'B' });
+            expect(refs()[key('pending[0]')]).toBeUndefined();
+            expect(refs()[key('pending')]).toBeUndefined();
 
             setItems({ items: [], itemType: 'Job' });
             await sleep(40);
             expect(refs()[key('Job[]:pending')]).toEqual([]);
-            expect(refs()[key('pending[0]')]).toBeUndefined();
             expect(refs()[key('Job:pending[0]')]).toBeUndefined();
         } finally {
             await x.close();
@@ -331,11 +329,11 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
                 if (ids.length || tools.length) torn++;
             } else {
                 const domNode = x.container.querySelector('[data-view-id="workspace"]');
-                if (!domNode || !domNode.getAttribute('data-view-generation')) torn++;
+                if (!domNode || !domNode.getAttribute('data-view-instance-id')) torn++;
                 // An emitted Ref must be registered under the same exact key.
                 if (!Object.hasOwn(refs, 'workspace:Task[]:tasks')) torn++;
                 if (Object.hasOwn(refs, 'workspace:Task:tasks[0]') &&
-                    !Object.hasOwn(refs, 'workspace:tasks[0]')) torn++;
+                    !domNode?.textContent?.includes('(Task:tasks[0])')) torn++;
             }
             observed.push(views.length + '/' + ids.length + '/' + tools.length);
         });
@@ -362,7 +360,7 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
                     expect(workspaceTools(x.kernel)).toHaveLength(0);
                 } else {
                     expect(currentViews).toHaveLength(1);
-                    expect(Object.keys(refs).length).toBe(2 + data.length * 2);
+                    expect(Object.keys(refs).length).toBe(1 + data.length);
                     expect(workspaceTools(x.kernel).length).toBe(enabled ? 1 : 0);
                 }
             }
@@ -370,6 +368,53 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
             expect(torn).toBe(0);
         } finally {
             unlisten();
+            await x.close();
+        }
+    });
+});
+
+describe('M3 ArrayRef cleanup on registration failure', () => {
+    it('removes every Ref registered before a later item registration throws', () => {
+        const refs = new Map<string, object>();
+        const registry = {
+            registerRef(id: string, value: object) {
+                if (id === 'Task:pending[1]') throw new Error('controlled Ref registration failure');
+                refs.set(id, value);
+            },
+            unregisterRef(id: string) { refs.delete(id); },
+        };
+        function Content() {
+            useArrayRef('pending', [{ id: 'A' }, { id: 'B' }], { itemType: 'Task' });
+            return null;
+        }
+        const container = document.createElement('div');
+        expect(() => render(
+            h(ViewRuntimeContext.Provider, {
+                value: { meta: {}, refs: registry } as any,
+            }, h(Content, {})),
+            container,
+        )).toThrow('controlled Ref registration failure');
+        expect([...refs.keys()]).toEqual([]);
+        render(null, container);
+    });
+});
+
+describe('M3 untyped ArrayRef marker and registry parity', () => {
+    it('registers only bare IDs when itemType is omitted', async () => {
+        function Content() {
+            const [, item] = useArrayRef('pending', [{ id: 'A' }]);
+            return h('p', {}, item(0, 'Stable'));
+        }
+        function App() { return h(View, { id: 'workspace', type: 'Workspace' }, h(Content, {})); }
+        const x = setup(App);
+        try {
+            await x.open();
+            expect(Object.keys(refsOf(x.kernel)).sort()).toEqual([
+                'workspace:pending',
+                'workspace:pending[0]',
+            ]);
+            expect(x.container.textContent).toContain('(pending[0])');
+        } finally {
             await x.close();
         }
     });

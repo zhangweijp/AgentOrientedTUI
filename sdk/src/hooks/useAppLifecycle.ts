@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from './preact-hooks.js';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 import { useInternalAppRuntimeContext } from '../context/AppRuntimeContext.js';
 import type { AppLifecycleCallbacks } from '@aotui/runtime/spi';
 export type { AppLifecycleCallbacks } from '@aotui/runtime/spi';

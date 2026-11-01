@@ -25,13 +25,13 @@ class Boundary extends Component {
   render() { return this.state.failed ? h('p', {}, 'ordinary-v2 unsupported') : this.props.children; }
 }
 function NewTools({ view, state }) {
-  const params = SDK.defineParams({
+  const params = {
     q: { type: 'string', required: true, constraints: { minLength: 1, maxLength: state.rule ? 2 : 1 } },
     e: { type: 'enum', options: ['1', 'yes'], required: true },
     items: { type: 'array', itemType: 'string', required: true, constraints: { minLength: 2, maxLength: 3 } },
     n: { type: 'number', default: 2, constraints: { min: 1, max: 3 } },
     payload: { type: 'object', default: { note: 'annotation' } },
-  });
+  };
   const [Find] = SDK.useViewTypeTool('find', { description: 'Find current symbols', params, isMutating: false },
     args => enter('find', view, args, state.revision), { enabled: state.enabled });
   SDK.useViewTypeTool('flags', { description: 'Count flags', params: { flags: { type: 'array', itemType: 'boolean', required: true } }, isMutating: false },

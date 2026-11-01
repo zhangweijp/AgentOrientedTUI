@@ -86,17 +86,17 @@ describe('B05–B10 actual Preact commits with actual A and Memory', () => {
     f.change({ child: () => { useLayoutEffect(() => { f.tuple[1](7);pending = f.managed.port.flush(); }, []);return null; } });
     await f.commit();expect((await pending).ok).toBe(true);expect(await f.value()).toBe(7);await f.managed.close(() => render(null, f.container));
   });
-  it.each(['{"value":{"value":1}}', '{"version":1,"updatedAt":1,"value":{"value":1}}'])('restores one exact Core-decoded layer, %s', async text => {
-    const f = setup(text);await f.commit();expect(f.tuple[0]).toEqual(text.startsWith('{"version"') ? { value: 1 } : { value: { value: 1 } });
+  it('restores an application value property from the formal Core envelope', async () => {
+    const f = setup('{"version":1,"updatedAt":1,"value":{"value":1}}');await f.commit();expect(f.tuple[0]).toEqual({ value: 1 });
     expect((await f.managed.port.flush()).ok).toBe(true);expect(f.calls.replace).toBe(0);await f.managed.close(() => render(null, f.container));
   });
   it.each([false, true])('reinitialize hydration opt-in=%s restores according to the actual session', async hydrate => {
-    const f = setup('5');f.change({ config: { __aotuiLifecycle: { startupKind: 'reinitialize' } }, options: { rehydrateOnReinitialize: hydrate } });
+    const f = setup('{"version":1,"updatedAt":1,"value":5}');f.change({ config: { __aotuiLifecycle: { startupKind: 'reinitialize' } }, options: { rehydrateOnReinitialize: hydrate } });
     await f.commit();expect(f.tuple[0]).toBe(hydrate ? 5 : 0);await f.managed.port.flush();expect(await f.value()).toBe(hydrate ? 5 : 0);
     await f.managed.close(() => render(null, f.container));
   });
   it('late recovery does not overwrite a newer setter; custom Date normalizes without freezing user T', async () => {
-    const entered = defer(), finish = defer();const f = setup(undefined, { read: async () => { entered.resolve();await finish.promise;return { status: 'found', text: '"2000-01-01T00:00:00.000Z"' }; } });
+    const entered = defer(), finish = defer();const f = setup(undefined, { read: async () => { entered.resolve();await finish.promise;return { status: 'found', text: '{"version":1,"updatedAt":1,"value":"2000-01-01T00:00:00.000Z"}' }; } });
     f.change({ initial: new Date('1999-01-01'), options: { serialize: d => d.toISOString(), deserialize: s => new Date(s as string) } });
     act(() => f.draw());await entered.promise;const value = new Date('2020-01-01');f.tuple[1](value);value.setUTCFullYear(2030);
     finish.resolve();await settle();expect(f.tuple[0]).toBe(value);await f.managed.port.flush();expect(await f.value()).toBe('2020-01-01T00:00:00.000Z');
@@ -129,7 +129,7 @@ describe('B05–B10 actual Preact commits with actual A and Memory', () => {
       const f = setup(text);await f.commit();expect(f.tuple[2].ready).toBe(true);expect((await f.managed.port.flush()).ok).toBe(false);expect(f.calls.replace).toBe(0);
       await f.tuple[2].clear();f.tuple[1](6);expect((await f.managed.port.flush()).ok).toBe(true);await f.managed.close(() => render(null, f.container));
     }
-    const f = setup('1');f.change({ options: { deserialize() { throw Error('private'); } } });await f.commit();
+    const f = setup('{"version":1,"updatedAt":1,"value":1}');f.change({ options: { deserialize() { throw Error('private'); } } });await f.commit();
     expect(f.tuple[2].getStatus()).toMatchObject({ issue: { code: 'INITIALIZATION_FAILED' } });await f.managed.close(() => render(null, f.container));
   });
   it.each(['failed', 'unknown'] as const)('clear %s rejects with fixed diagnostic and does not reset UI', async status => {
@@ -150,7 +150,7 @@ describe('B05–B10 actual Preact commits with actual A and Memory', () => {
   });
   it('old recovery and stale setter cannot change a newly committed key', async () => {
     const entered = defer(), finish = defer();const f = setup(undefined, { read: async address => {
-      if (address.key === 'k') { entered.resolve();await finish.promise;return { status: 'found', text: '9' }; }
+      if (address.key === 'k') { entered.resolve();await finish.promise;return { status: 'found', text: '{"version":1,"updatedAt":1,"value":9}' }; }
       return { status: 'missing' };
     } });
     act(() => f.draw());await entered.promise;const old = f.tuple;f.change({ key: 'new' });await f.commit();f.tuple[1](3);

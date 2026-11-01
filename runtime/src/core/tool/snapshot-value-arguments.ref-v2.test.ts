@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createSnapshotCore, refKey } from '../snapshot/index.js';
+import { createSnapshotCore } from '../snapshot/store.js';
+import { refKey } from '../snapshot/snapshot-support.js';
 import { compileSnapshotValueParams } from './snapshot-value-parameter-contract.js';
 import { prepareSnapshotValueArguments } from './snapshot-value-arguments.js';
 const c = compileSnapshotValueParams({ file: { type: 'reference', required: true, refSource: 'snapshot-value-v1' }, choice: { type: 'enum', options: ['ok'] } });if (!c.ok) throw Error('fixture');

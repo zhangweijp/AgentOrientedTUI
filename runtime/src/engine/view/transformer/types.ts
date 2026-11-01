@@ -7,7 +7,3 @@
 export interface TransformResult {
     markup: string;
 }
-
-export interface TransformContext {}
-
-export function createTransformContext(): TransformContext { return {}; }

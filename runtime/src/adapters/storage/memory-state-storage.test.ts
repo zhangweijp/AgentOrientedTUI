@@ -11,6 +11,7 @@ describe('A02/A16/A17/Q04 bounded owner and namespace memory storage', () => {
         await first.storage.release();const replacement = backend.open('first');if (replacement.status !== 'opened') throw Error('fixture');expect(await replacement.storage.read(a)).toEqual({ status: 'found', text: 'raw-a' });
         expect(await first.storage.replace(a, 'old')).toMatchObject({ status: 'failed', effects: 'none', issue: { code: 'OWNER_RELEASED' } });await first.storage.release();expect(await replacement.storage.read(a)).toEqual({ status: 'found', text: 'raw-a' });
         await replacement.storage.release();await second.storage.release();expect(backend.getStats()).toMatchObject({ activeOwners: 0, claimedNamespaces: 0, storedKeys: 2 });
+        expect(backend.getStats()).not.toHaveProperty('activeOperations');
     });
     it('bounds owners and even empty namespaces without evicting another owner', async () => {
         const backend = createMemoryStateStorage({ ...limits, maxActiveOwners: 1, maxClaimedNamespaces: 1 }), result = backend.open('owner');if (result.status !== 'opened') throw Error('fixture');

@@ -8,7 +8,7 @@ import { createInvocationLedger } from './invocation-ledger.js';
 import { captureBoundedJson, exactFields, jsonObject, mapExecutionFact, unknownOutcome, type ExecutionMapping } from './invocation-outcome.js';
 import type {
     ExecutionBinding, InteractionAuthority, InteractionLimits, InteractionLimitOverrides, InteractionStats,
-    InvocationContext, InvocationOutcome, InvocationReceipt, InvocationSource, Issue, ObserveResult,
+    InvocationContext, InvocationReceipt, InvocationSource, Issue, ObserveResult,
     OperationProvider, ReceiptAccess, ReceiptMetadata, ScopeClient, ScopedInvocation, ScopePolicy, TrustedScopeInput,
 } from './scoped-interaction-types.js';
 export type * from './scoped-interaction-types.js';

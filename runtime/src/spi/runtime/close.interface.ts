@@ -47,11 +47,11 @@ export interface CloseReport {
         readonly logger: 'pending' | 'done' | 'failed' | 'not-owned' | 'unverified';
     };
     readonly failures: readonly {
-        readonly stage: 'admission' | 'apps' | 'persistence' | 'worker' | 'pool' | 'before-close' | 'signals' | 'llm-output' | 'logger' | 'legacy';
+            readonly stage: 'admission' | 'apps' | 'persistence' | 'worker' | 'pool' | 'before-close' | 'signals' | 'llm-output' | 'logger' | 'manager';
         readonly codes: readonly ('INSTALL_FAILED' | 'DELETE_FAILED' | 'APP_CLOSE_FAILED' | 'RESET_FAILED' | 'RESOURCE_RELEASE_FAILED' |
             'WORKER_ERROR' | 'WORKER_EXITED_UNEXPECTEDLY' | 'WORKER_TERMINATION_FAILED' | 'PERSISTENCE_CLOSE_FAILED' |
             'APP_UNMOUNT_FAILED' | 'APP_DELETE_FAILED' | 'BEFORE_CLOSE_FAILED' | 'BEFORE_CLOSE_SKIPPED' | 'DESKTOP_CLEANUP_FAILED' |
-            'MANAGER_CLEANUP_FAILED' | 'LEGACY_CLOSE_FAILED')[];
+            'MANAGER_CLEANUP_FAILED')[];
         readonly desktopId?: string; readonly appId?: string;
     }[];
     readonly failureCount: number;

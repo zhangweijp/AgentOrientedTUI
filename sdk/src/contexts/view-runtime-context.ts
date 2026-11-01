@@ -49,6 +49,9 @@ interface ViewRuntimeContextValue {
   /** View 元数据 (viewId, appId, desktopId, markDirty) */
   readonly meta: Readonly<IViewMeta>;
 
+  /** Internal mount generation used to release bindings when a View is recreated. */
+  readonly viewGeneration: string;
+
   // ═══════════════════════════════════════════════════════════
   // 内部 API - 仅 SDK 组件/Hooks 使用
   // ═══════════════════════════════════════════════════════════
@@ -56,7 +59,7 @@ interface ViewRuntimeContextValue {
   /** Ref 注册表 - useArrayRef, useRef */
   readonly refs: Readonly<IRefRegistry>;
 
-  /** M4 Stage 1: View-local binding; not yet published to Agent tools. */
+  /** View-local Tool registration; capability support is supplied by Runtime. */
   readonly viewTools?: Readonly<{
     readonly targetSelectorSupport?: 'argument-v1';
     readonly refDeclarationSupport?: 'snapshot-value-v1';

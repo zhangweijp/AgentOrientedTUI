@@ -1,6 +1,16 @@
 import { expect, expectTypeOf, it } from 'vitest';
 import * as core from './index.js';
 import * as memory from '../adapters/storage/memory-state-storage.js';
+// @ts-expect-error AppSnapshotV2 is the only public AppSnapshot name.
+import type { AppSnapshot } from './index.js';
+// @ts-expect-error Failure envelope details are internal to snapshot validation.
+import type { SnapshotDraftEnvelope } from './index.js';
+// @ts-expect-error Snapshot health is represented by SnapshotRead.status.
+import type { SnapshotHealth } from './index.js';
+// @ts-expect-error Factory return types are inferred rather than exported as aliases.
+import type { ViewOwnedTools } from './index.js';
+// @ts-expect-error Factory return types are inferred rather than exported as aliases.
+import type { StateSession } from './index.js';
 import type { ViewToolInvocationTerminal as ProtocolTerminal } from '../spi/worker-protocol/messages.js';
 import type { SafeRefInvoker as ProtocolSafeRef, SafeOrdinaryInvoker as ProtocolSafeOrdinary } from '../spi/runtime/view-owned-tools.interface.js';
 
@@ -18,8 +28,6 @@ it('C13 keeps the shared terminal identity, mutable terminal data and Promise-on
     expectTypeOf<ProtocolSafeRef>().toEqualTypeOf<core.SafeRefInvoker>();
     expectTypeOf<ProtocolSafeOrdinary>().toEqualTypeOf<core.SafeOrdinaryInvoker>();
     expectTypeOf<ReturnType<core.SafeRefInvoker>>().toEqualTypeOf<Promise<core.ViewToolInvocationTerminal>>();
-    expectTypeOf<core.ViewOwnedTools>().toEqualTypeOf<ReturnType<typeof core.createViewOwnedTools>>();
-    expectTypeOf<core.StateSession>().toEqualTypeOf<ReturnType<typeof core.createStateSession>>();
     const result: core.ViewToolInvocationTerminal = { phase: 'not-entered', result: { success: true } };
     result.result = { success: false };
     const entered: core.ViewToolInvocationTerminal = { phase: 'entered-returned', result: { success: true } };

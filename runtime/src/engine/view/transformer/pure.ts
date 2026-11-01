@@ -7,8 +7,7 @@
  * @module @aotui/runtime/engine/transformer/pure
  */
 
-import type { TransformResult, TransformContext } from './types.js';
-import { createTransformContext } from './types.js';
+import type { TransformResult } from './types.js';
 import { isElement, isText, DOMNode } from './helpers.js';
 import { DEFAULT_VISITORS } from './visitors/index.js';
 import { IElementVisitor } from './visitors/interface.js';
@@ -20,9 +19,8 @@ import { IElementVisitor } from './visitors/interface.js';
 /**
  * Transform a single Element to TUI Markup
  */
-export function transformElement(element: Element, _appId?: string): TransformResult {
-    const ctx = createTransformContext();
-    const markup = traverse(element, ctx);
+export function transformElement(element: Element): TransformResult {
+    const markup = traverse(element);
     return { markup };
 }
 
@@ -35,7 +33,6 @@ export function transformElement(element: Element, _appId?: string): TransformRe
  */
 function traverse(
     node: DOMNode,
-    ctx: TransformContext,
     visitors: IElementVisitor[] = DEFAULT_VISITORS
 ): string {
     // 1. Text Nodes
@@ -54,7 +51,7 @@ function traverse(
 
     // 4. Find Matching Visitor
     // Visitors are strict priority ordered. The first match wins.
-    const visitor = visitors.find(v => v.matches(el, ctx));
+    const visitor = visitors.find(v => v.matches(el));
 
     if (visitor) {
         // Log visitor usage for debug?
@@ -63,14 +60,14 @@ function traverse(
         // [RFC-FIX] Provide both ChildrenTraverser and ElementTraverser to visitors
         // - ChildrenTraverser: traverse child nodes (existing behavior)
         // - ElementTraverser: traverse a single element with full Visitor Chain
-        const childrenTraverser = (el: Element, ctx: TransformContext) => traverseChildren(el, ctx, visitors);
-        const elementTraverser = (el: Element, ctx: TransformContext) => traverse(el, ctx, visitors);
+        const childrenTraverser = (el: Element) => traverseChildren(el, visitors);
+        const elementTraverser = (el: Element) => traverse(el, visitors);
 
-        return visitor.transform(el, ctx, childrenTraverser, elementTraverser);
+        return visitor.transform(el, childrenTraverser, elementTraverser);
     }
 
     // 5. Fallback (Should be handled by HtmlVisitor if configured correctly, but as safety)
-    return traverseChildren(el, ctx, visitors).join(' ');
+    return traverseChildren(el, visitors).join(' ');
 }
 
 /**
@@ -78,12 +75,11 @@ function traverse(
  */
 function traverseChildren(
     el: Element,
-    ctx: TransformContext,
     visitors: IElementVisitor[] = DEFAULT_VISITORS
 ): string[] {
     const results: string[] = [];
     for (const child of Array.from(el.childNodes)) {
-        const text = traverse(child, ctx, visitors);
+        const text = traverse(child, visitors);
         if (text) results.push(text);
     }
     return results;

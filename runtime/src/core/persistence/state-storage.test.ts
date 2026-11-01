@@ -43,12 +43,13 @@ describe('Node adapter environment-independent issue codes', () => {
     });
 });
 describe('A04/Q01/Q02 record format and bounded receipts', () => {
-    it('decodes only one wrapper and preserves raw business value fields', () => {
-        const business = { version: 7, updatedAt: 9, value: { value: 'business' } }, raw = decodeStateRecord(JSON.stringify({ value: { value: 'business' } }), limits), wrapped = decodeStateRecord(JSON.stringify({ version: 1, updatedAt: 5, value: business }), limits);
-        expect(raw).toMatchObject({ status: 'found', format: 'legacy-raw', snapshot: { value: { value: { value: 'business' } } } });
-        expect(wrapped).toMatchObject({ status: 'found', format: 'v1', snapshot: { value: business } });
+    it('requires the exact v1 envelope and preserves business value fields', () => {
+        const legacyText = JSON.stringify({ value: { value: 'business' } });
+        const business = { version: 7, updatedAt: 9, value: { value: 'business' } }, raw = decodeStateRecord(legacyText, limits), wrapped = decodeStateRecord(JSON.stringify({ version: 1, updatedAt: 5, value: business }), limits);
+        expect(raw).toEqual({ status: 'rejected', issue: { code: 'UNSUPPORTED_FORMAT', message: 'Stored state format is unsupported' } });
+        expect(wrapped).toMatchObject({ status: 'found', snapshot: { value: business } });
         const captured = captureStateValue(business, limits);if (captured.status !== 'captured') throw Error('fixture');const encoded = encodeStateRecord(captured.snapshot, 1, limits);expect(encoded.status).toBe('encoded');
-        if (encoded.status === 'encoded') expect(decodeStateRecord(encoded.text, limits)).toMatchObject({ status: 'found', format: 'v1', snapshot: { value: business } });
+        if (encoded.status === 'encoded') expect(decodeStateRecord(encoded.text, limits)).toMatchObject({ status: 'found', snapshot: { value: business } });
     });
     it.each(['{', '{"version":2,"updatedAt":1,"value":0}', '{"version":2,"updatedAt":1,"value":0,"extra":1}', '{"version":1,"updatedAt":1,"value":0,"extra":1}', '{"version":1,"updatedAt":null,"value":0}', '1e999'])('blocks unsupported/corrupt original text %s', text => { expect(decodeStateRecord(text, limits).status).toBe('rejected'); });
     it('checks raw and complete encoded bytes separately from the value', () => {

@@ -1,4 +1,4 @@
-import { WorkerPool, type WorkerPoolReport } from '../app/worker-pool.js';
+import { WorkerPool } from '../app/worker-pool.js';
 /**
  * Engine Layer - Desktop Manager Implementation
  * 
@@ -19,7 +19,7 @@ import type {
 import { AOTUIError } from '../../spi/core/errors.js';
 import { Desktop } from './desktop.js';
 import type { DesktopCloseOptions, DesktopCloseOperation, DesktopCloseReport, RuntimeCloseOperation, RuntimeCloseReport } from '../../spi/runtime/close.interface.js';
-import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseOperation, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose, type CloseState } from './close-operation.js';
+import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseOperation, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from './close-operation.js';
 
 // ============================================================================
 // Desktop Manager Implementation
@@ -63,8 +63,6 @@ export class DesktopManager implements IDesktopManager {
     //  IDesktopRepository 实现
     // ─────────────────────────────────────────────────────────────
 
-    closeWorkerPool(): Promise<WorkerPoolReport> { return this.workerPool.destroy(); }
-    getWorkerPoolReport(): WorkerPoolReport { return this.workerPool.getReport(); }
 
     async create(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID> {
         this.assertActive();
@@ -74,8 +72,6 @@ export class DesktopManager implements IDesktopManager {
         this.desktops.set(desktop.id, desktop);
         return desktop.id;
     }
-
-    destroy(desktopId: DesktopID): Promise<void> { return closeVoid(this.beginDesktopShutdown(desktopId).completion, 'DESKTOP_CLOSE_FAILED'); }
 
     beginDesktopShutdown(desktopId: DesktopID, options?: DesktopCloseOptions): DesktopCloseOperation {
         closeTimeout(options);
@@ -93,7 +89,7 @@ export class DesktopManager implements IDesktopManager {
                 if (report.resourcesReleased && this.desktops.get(desktopId) === desktop) {
                     this.desktops.delete(desktopId);
                 }
-            }).catch(() => { addCloseFailure(this.closeState, 'legacy', ['MANAGER_CLEANUP_FAILED'], { desktopId });this.closeState.resourcesReleased = false; });
+            }).catch(() => { addCloseFailure(this.closeState, 'manager', ['MANAGER_CLEANUP_FAILED'], { desktopId });this.closeState.resourcesReleased = false; });
             this.removing.add(removing);void removing.then(() => this.removing.delete(removing));
         }
         return operation;

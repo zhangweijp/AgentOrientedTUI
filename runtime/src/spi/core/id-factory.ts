@@ -73,31 +73,3 @@ export function createViewId(indexOrId: number | string): ViewID {
     }
     return indexOrId as ViewID;
 }
-
-// ============================================================================
-// Type Guards (for runtime validation in future)
-// ============================================================================
-
-/**
- * 检查字符串是否为有效的 DesktopID 格式
- * 
- * @param value - 要检查的字符串
- * @returns 类型谓词
- */
-export function isDesktopId(value: string): value is DesktopID {
-    return typeof value === 'string' && value.startsWith(ID_PREFIXES.Desktop);
-}
-
-/**
- * 检查字符串是否为有效的 AppID 格式
- */
-export function isAppId(value: string): value is AppID {
-    return typeof value === 'string' && value.startsWith(ID_PREFIXES.App);
-}
-
-/**
- * 检查字符串是否为有效的 ViewID 格式
- */
-export function isViewId(value: string): value is ViewID {
-    return typeof value === 'string' && value.startsWith(ID_PREFIXES.View);
-}

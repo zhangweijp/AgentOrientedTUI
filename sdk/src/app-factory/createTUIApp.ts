@@ -34,9 +34,6 @@ export interface TUIAppConfig {
      */
     app_name: string;
 
-    /** App 描述 (兼容旧字段) */
-    description?: string;
-
     /** App 是什么 */
     whatItIs?: string;
 
@@ -73,7 +70,7 @@ export interface TUIAppConfig {
  *     return (
  *         <>
  *             <TodoHomeComponent onOpenDetail={(id) => setShowDetail(true)} />
- *             {showDetail && <TodoDetailComponent onClose={() => setShowDetail(false)} />}
+ *             {showDetail && <TodoDetailComponent onRequestClose={() => setShowDetail(false)} />}
  *         </>
  *     );
  * }
@@ -102,7 +99,6 @@ export function createTUIApp(config: TUIAppConfig): TUIAppFactory {
     const kernelConfig: AppKernelConfig = {
         appName: config.app_name,
         name: config.app_name,
-        description: config.description,
         whatItIs: config.whatItIs,
         whenToUse: config.whenToUse,
         // [重要] 传递Factory本身而非Component
@@ -162,11 +158,11 @@ export function createTUIApp(config: TUIAppConfig): TUIAppFactory {
             // Internal component setState commits are tracked by registry mutations
             // and DOM invalidations; these explicit brackets are not their only gate.
             const renderCommitted = (node: typeof rootVNode | null) => {
-                context.projection?.beginCommit();
+                context.projection.beginCommit();
                 try {
                     render(node, container);
                 } finally {
-                    context.projection?.endCommit();
+                    context.projection.endCommit();
                 }
             };
 

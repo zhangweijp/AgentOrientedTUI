@@ -140,7 +140,7 @@ describe('Wave 2C: real Preact, SDK and AppKernel declaration registration', () 
         } finally { if (mount) env.port.unmount(mount); await env.close(); }
     });
 
-    it('new validation works in production without defineParams dev checks', async () => {
+    it('Runtime validates Ref declarations in production', async () => {
         vi.stubEnv('NODE_ENV', 'production');
         function Content() {
             useViewTypeTool('inspect', options({ params: { file: { ...declaration, constraints: {} } } }),

@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { createViewOwnedTools } from './view-owned-tools.js';
 import { compileSnapshotValueParams } from './snapshot-value-parameter-contract.js';
 import { ORDINARY_PARAMETER_MARKER } from './ordinary-parameter-profile.js';
-import { validatePreparedV2Draft, createSnapshotCore } from '../snapshot/index.js';
+import { createSnapshotCore } from '../snapshot/store.js';
+import { validatePreparedV2Draft } from '../snapshot/v2-validator.js';
 import { acquireToolSource } from './source-binding.js';
 
 const metadata = (refType?: string) => ({ version: 1, kind: 'snapshot-value', owner: 'tool-target',

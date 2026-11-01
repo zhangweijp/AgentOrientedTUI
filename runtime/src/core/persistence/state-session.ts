@@ -21,7 +21,7 @@ export interface StateSessionLimits extends StateValueLimits {
 }
 export type StateRecovery = Readonly<{
     instanceId: string; address: StateAddress; generation: number;
-} & ({ status: 'missing' } | { status: 'found'; source: 'v1' | 'legacy-raw' | 'session'; value: StateValue } | { status: 'blocked'; issue: StateIssue })>;
+} & ({ status: 'missing' } | { status: 'found'; source: 'v1' | 'session'; value: StateValue } | { status: 'blocked'; issue: StateIssue })>;
 export type InitializationConfirmation = Readonly<{ status: 'ready'; value?: StateValue }> | Readonly<{ status: 'failed' }>;
 export type StateChangeResult = Readonly<{ status: 'accepted'; revision: number }> | Rejected;
 export interface StateFlushEntry {
@@ -163,7 +163,7 @@ export function createStateSession(options: Readonly<{ instanceId: string; stora
     function issueRecovery(init: Initialization, receipt: StateReadResult | 'checked-session') {
         const e = init.entry;
         if (init.completed || e.initialization !== init || !current(e.identity, init.generation) || phase === 'disposed') return;
-        let detail: { status: 'missing' } | { status: 'found'; source: 'v1' | 'legacy-raw' | 'session'; value: StateValue } | { status: 'blocked'; issue: StateIssue };
+        let detail: { status: 'missing' } | { status: 'found'; source: 'v1' | 'session'; value: StateValue } | { status: 'blocked'; issue: StateIssue };
         if (receipt === 'checked-session' || receipt.status === 'missing') detail = { status: 'missing' };
         else if (receipt.status === 'failed') detail = { status: 'blocked', issue: receipt.issue };
         else {
@@ -176,7 +176,7 @@ export function createStateSession(options: Readonly<{ instanceId: string; stora
                 if (decoded.status === 'rejected') detail = { status: 'blocked', issue: decoded.issue };
                 else {
                     init.restored = own(decoded.snapshot);
-                    detail = init.restored ? { status: 'found', source: decoded.format, value: decoded.snapshot.value } : { status: 'blocked', issue: stateIssue('CAPACITY_EXCEEDED') };
+                    detail = init.restored ? { status: 'found', source: 'v1', value: decoded.snapshot.value } : { status: 'blocked', issue: stateIssue('CAPACITY_EXCEEDED') };
                 }
                 retainedBytes -= textBytes;
             }

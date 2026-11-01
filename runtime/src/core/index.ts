@@ -6,7 +6,7 @@ export { createStateSession } from './persistence/state-session.js';
 export { compileOrdinaryParams, compileOrdinarySchema } from './tool/ordinary-parameter-contract.js';
 export { ordinaryParameterProfile, compileOrdinaryProfile } from './tool/ordinary-parameter-profile.js';
 export { compileSnapshotValueParams, compileSnapshotValueProfile } from './tool/snapshot-value-parameter-contract.js';
-export type { JsonValue, ViewContent, RefTarget, ViewSnapshotV2, RefDescriptorV2, ToolTargetV2, ToolDescriptorV2, PreparedAppSnapshotDraftV2, AppSnapshotV2, AppSnapshot, SnapshotDraftEnvelope, SnapshotHealth, SnapshotIssueCode, SnapshotIssue, CommitResult, SnapshotRead, SnapshotLookup, SnapshotLease, LeaseResult, RefLookup, ToolLookup, RefSelector, ToolSelector, SnapshotLimits, SnapshotStoreOptions, SnapshotStoreStats, SnapshotStore, PreparedSnapshotFailure, SnapshotCommitter, SnapshotLifecycle, SnapshotCore, AppIdentityRead, AppIdentityReader } from './snapshot/types.js';
+export type { JsonValue, ViewContent, RefTarget, ViewSnapshotV2, RefDescriptorV2, ToolTargetV2, ToolDescriptorV2, PreparedAppSnapshotDraftV2, AppSnapshotV2, SnapshotIssueCode, SnapshotIssue, CommitResult, SnapshotRead, SnapshotLookup, SnapshotLease, LeaseResult, RefLookup, ToolLookup, RefSelector, ToolSelector, SnapshotLimits, SnapshotStoreOptions, SnapshotStoreStats, SnapshotStore, PreparedSnapshotFailure, SnapshotCommitter, SnapshotLifecycle, SnapshotCore, AppIdentityRead, AppIdentityReader } from './snapshot/types.js';
 export type { ViewInstance, ViewToolSpec, ToolTarget, AggregatedViewTool, ViewOwnedToolLimits, ViewOwnedToolsStats } from './tool/view-owned-tools.js';
 export type { CancellationSignal, OperationResultData, ExecutionPhase, BusinessDetails, InvocationOutcome, ExecutionFact, ScopedInvocation, InvocationSource, ReceiptMetadata, InvocationReceipt, ReceiptAccess, InvokeResult, ObserveResult, InvocationContext, InputValidation, LiveCheck, OperationQuery, OperationProvider, ExecutionBindingBase, ExecutionBinding, ExecutionResolver, ScopePolicy, ScopeClient, TrustedScopeInput, InteractionLimits, InteractionLimitOverrides, InteractionStats, InteractionAuthority, Issue as InteractionIssue } from './invocation/scoped-interaction-types.js';
 export type { ActionOutcome } from './invocation/invocation-outcome.js';
@@ -18,5 +18,3 @@ export type { OrdinaryParameterContract, OrdinaryValidation, ParameterDiagnostic
 export type { SnapshotValueParameterContract, SnapshotValueCompileResult } from './tool/snapshot-value-parameter-contract.js';
 export type { ViewToolInvocationTerminal, SafeRefInvoker, SafeOrdinaryInvoker } from './tool/invocation-terminal.js';
 export type { OperationResult, OperationError } from '../spi/core/operations.js';
-export type ViewOwnedTools = ReturnType<typeof import('./tool/view-owned-tools.js').createViewOwnedTools>;
-export type StateSession = ReturnType<typeof import('./persistence/state-session.js').createStateSession>;

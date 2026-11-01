@@ -20,9 +20,6 @@ describe('Transformer Integration', () => {
 
         const m = result.markup;
 
-        // App
-        expect(m).toContain('<application id="chat-app" name="Chat App">');
-
         // View
         expect(m).toContain('<view id="chat-view" name="chat-view">');
 
@@ -35,9 +32,10 @@ describe('Transformer Integration', () => {
         expect(m).toContain('Settings');
         expect(m).not.toContain('(tool:send_message)');
         expect(m).not.toContain('(view:settings)');
+        expect(m).not.toContain('<application');
     });
 
-    it('handles nested structures and context correctly', () => {
+    it('passes ordinary wrapper content while preserving sibling View markup', () => {
         const html = `
         <div data-app-id="app1">
             <div view="v1" id="v1">
@@ -54,5 +52,6 @@ describe('Transformer Integration', () => {
 
         expect(result.markup).toContain('First view text');
         expect(result.markup).toContain('Second view text');
+        expect(result.markup).not.toContain('<application');
     });
 });

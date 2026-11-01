@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createSnapshotCore, refKey } from './index.js';
+import { createSnapshotCore } from './store.js';
+import { refKey } from './snapshot-support.js';
 
 /**
  * M1 integration fixture: a memory-only App producer. The business execution is

@@ -3,34 +3,21 @@
  *
  * 创建一个指向数据数组的引用。
  *
- * @module @aotui/sdk/hooks/useArrayRef
+ * @module @aotui/sdk/useArrayRef
  *
  * @example
  * ```tsx
  * function ChatView({ messages }) {
  *   const [listRef, itemRef] = useArrayRef('messages', messages, { itemType: 'Message' });
  *
- *   return (
- *     <View name="Chat">
- *       <h2>{listRef('消息历史')}</h2>
- *       {/* Agent 看到: ## [消息历史](Message[]:messages) *\/\}
- *
- *       <ul>
- *         {messages.map((msg, idx) => (
- *           <li key={msg.id}>
- *             {itemRef(idx, `${msg.role}: ${msg.content}`)}
- *             {/* Agent 看到: 1. [[human]: Hello](Message:messages[0]) *\/\}
- *           </li>
- *         ))}
- *       </ul>
- *     </View>
- *   );
+ *   return <ul>{messages.map((msg, idx) => (
+ *     <li key={msg.id}>{itemRef(idx, `${msg.role}: ${msg.content}`)}</li>
+ *   ))}</ul>;
  * }
  * ```
  */
-import { useLayoutEffect, useRef as usePreactRef } from 'preact/hooks';
-// [P1 ISP] Use specialized hook instead of useInternalViewContext
-import { useRefRegistry } from "./useViewContext.js";
+import { useLayoutEffect } from 'preact/hooks';
+import { useRefRegistry } from './useViewContext.js';
 
 /**
  * ListRefFormatter - 列表标题格式化函数
@@ -52,7 +39,7 @@ export type ItemRefFormatter = (index: number, content: string) => string;
  * [0]: listRef - 格式化列表标题
  * [1]: itemRef - 格式化列表项
  */
-export type ArrayRefHandle<T> = [ListRefFormatter, ItemRefFormatter];
+export type ArrayRefHandle = [ListRefFormatter, ItemRefFormatter];
 
 export interface UseArrayRefOptions {
   /**
@@ -73,47 +60,34 @@ export interface UseArrayRefOptions {
  * @param options - 配置选项
  * @returns [listRef, itemRef] - 列表标题和列表项的格式化函数
  */
-export function useArrayRef<T extends object>(
+export function useArrayRef(
   refId: string,
-  data: T[],
+  data: object[],
   options?: UseArrayRefOptions,
-): ArrayRefHandle<T> {
-  // [P1 ISP] Use specialized hook
+): ArrayRefHandle {
   const { registerRef, unregisterRef } = useRefRegistry();
   const itemType = options?.itemType;
 
-  // 使用 Preact ref 跟踪已注册的项
-  const registeredItemsRef = usePreactRef<Set<string>>(new Set());
-
-  // M3: Every emitted list/item link MUST resolve to a registered Ref.
-  // Keep legacy bare IDs as aliases so existing Tool handlers need no changes.
-  // Typed aliases match the itemType-prefixed IDs exposed by listRef/itemRef.
-  // Lists are genuine Ref targets; oversized lists are rejected by Core's
-  // Snapshot limits rather than silently publishing a ghost reference.
+  // Lists are real Ref targets; capacity limits belong to Core.
   useLayoutEffect(() => {
-    const registered = new Set<string>();
+    const registered: string[] = [];
     const add = (id: string, value: object) => {
       registerRef(id, value);
-      registered.add(id);
+      registered.push(id);
     };
 
-    add(refId, data);
-    if (itemType) add(`${itemType}[]:${refId}`, data);
-
-    data.forEach((item, idx) => {
-      const itemId = `${refId}[${idx}]`;
-      add(itemId, item);
-      if (itemType) add(`${itemType}:${itemId}`, item);
-    });
-
-    // Remove stale aliases after the new projection is registered.
-    for (const oldId of registeredItemsRef.current) {
-      if (!registered.has(oldId)) unregisterRef(oldId);
+    try {
+      add(itemType ? `${itemType}[]:${refId}` : refId, data);
+      data.forEach((item, idx) => {
+        const itemId = `${refId}[${idx}]`;
+        add(itemType ? `${itemType}:${itemId}` : itemId, item);
+      });
+    } catch (error) {
+      for (const id of registered.reverse()) unregisterRef(id);
+      throw error;
     }
-    registeredItemsRef.current = registered;
     return () => {
-      for (const id of registeredItemsRef.current) unregisterRef(id);
-      registeredItemsRef.current = new Set();
+      for (const id of registered) unregisterRef(id);
     };
   }, [refId, data, itemType, registerRef, unregisterRef]);
 

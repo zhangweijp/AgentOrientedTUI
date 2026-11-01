@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
 
-describe('Semantic Stage 1: actual WorkerHost + Runtime-issued View identity + SDK local Tool', () => {
+describe('Semantic WorkerHost View identity and SDK local Tool', () => {
     it('publishes trusted View identity and local Tool bindings across physical Worker reuse', async () => {
         const temp = await mkdtemp(join(tmpdir(), 'aotui-m4-viewowned-'));
         const root = resolve(process.cwd());
@@ -27,24 +27,17 @@ describe('Semantic Stage 1: actual WorkerHost + Runtime-issued View identity + S
             });
             const fixture = `
                 import { h } from 'preact';
-                import { useState, useLayoutEffect } from 'preact/hooks';
                 import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
                 import { View } from './sdk/src/components/View.tsx';
                 import { useViewTypeTool } from './sdk/src/hooks/useViewTypeTool.ts';
-                import { useViewContext } from './sdk/src/hooks/useViewContext.ts';
 
                 function Detail({ label }) {
-                    const context = useViewContext();
-                    const [identity, setIdentity] = useState('');
-                    useLayoutEffect(() => {
-                        setIdentity(context.viewInstanceId || 'NO_RUNTIME_INSTANCE');
-                    }, []);
                     const [InspectUI] = useViewTypeTool('inspect', {
                         description: 'Inspect the selected file',
                         params: {}
                     }, async () => ({ success: true, data: { file: label } }));
                     return h('section', {}, [
-                        h('p', {key:'info'}, label + ' Instance=' + identity),
+                        h('p', {key:'info'}, label),
                         h(InspectUI, {key:'tool'}, 'Inspect')
                     ]);
                 }
@@ -88,17 +81,20 @@ describe('Semantic Stage 1: actual WorkerHost + Runtime-issued View identity + S
             };
             const first = readSnapshot(host);
             const firstMarkup = first.views.map((view: any) => view.content.value).join('\n');
-            expect(firstMarkup).toContain('App.tsx Instance=vi:v1:');
-            expect(firstMarkup).toContain('package.json Instance=vi:v1:');
-            expect(firstMarkup).toContain(host.appInstanceId);
-            expect(firstMarkup).not.toContain('NO_RUNTIME_INSTANCE');
+            expect(firstMarkup).toContain('App.tsx');
+            expect(firstMarkup).toContain('package.json');
             expect(new Set(first.views.map((view: any) => view.viewInstanceId)).size).toBe(2);
+            const firstViewsById = new Map(first.views.map((view: any) => [view.id, view]));
+            for (const view of first.views) {
+                expect(view.viewInstanceId).toContain(host.appInstanceId);
+                expect(view.content.value).not.toContain(view.viewInstanceId);
+            }
             const inspect = Object.values(first.tools).find((tool: any) => tool.name === 'inspect') as any;
             expect(inspect.targets).toHaveLength(2);
             expect(inspect.targets.map((target: any) => target.viewId).sort()).toEqual(['fd_0', 'fd_1']);
             for (const target of inspect.targets) {
-                expect(first.views.find((view: any) => view.id === target.viewId).viewInstanceId)
-                    .toBe(target.viewInstanceId);
+                expect(firstViewsById.get(target.viewId).viewInstanceId).toBe(target.viewInstanceId);
+                expect(target.bindingVersion).toBeGreaterThan(0);
             }
 
             // A managed close ends this port; remounting requires RESET and a new Host.
@@ -113,8 +109,8 @@ describe('Semantic Stage 1: actual WorkerHost + Runtime-issued View identity + S
             expect(host.getSemanticSnapshotReport()?.snapshotId).toBeUndefined();
 
             // Reuse the SAME physical Worker via RESET, but issue a new logical
-            // AppInstanceId. Neither SDK view mount identities nor Tool bind
-            // generations from the old run can be inherited.
+            // AppInstanceId. Neither Runtime View identities nor Tool bindings
+            // from the old execution can be inherited.
             const oldExecution = host.appInstanceId;
             const previousWorker = await host.releaseWorker();
             expect(previousWorker).not.toBeNull();
@@ -134,13 +130,21 @@ describe('Semantic Stage 1: actual WorkerHost + Runtime-issued View identity + S
                 for (const view of current.views) {
                     expect(view.viewInstanceId).toContain(host!.appInstanceId);
                     expect(view.viewInstanceId).not.toContain(oldExecution);
-                    expect(view.content.value).not.toContain('NO_RUNTIME_INSTANCE');
                 }
             }, { timeout: 3_000 });
             const current = readSnapshot(host);
+            const currentViewsById = new Map(current.views.map((view: any) => [view.id, view]));
+            for (const view of current.views) {
+                expect(view.viewInstanceId).not.toBe(firstViewsById.get(view.id).viewInstanceId);
+                expect(view.content.value).not.toContain(view.viewInstanceId);
+            }
             const currentInspect = Object.values(current.tools).find((tool: any) => tool.name === 'inspect') as any;
             expect(currentInspect.targets).toHaveLength(2);
-            expect(currentInspect.targets.every((target: any) => target.viewInstanceId.includes(host!.appInstanceId))).toBe(true);
+            for (const target of currentInspect.targets) {
+                expect(target.viewInstanceId).toContain(host!.appInstanceId);
+                expect(currentViewsById.get(target.viewId).viewInstanceId).toBe(target.viewInstanceId);
+                expect(target.bindingVersion).toBeGreaterThan(0);
+            }
         } finally {
             host?.terminate();
             await rm(temp, { recursive: true, force: true });

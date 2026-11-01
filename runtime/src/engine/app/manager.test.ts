@@ -137,9 +137,9 @@ describe('AppManager', () => {
         });
     });
 
-    describe('closeAll', () => {
-        it('空状态下不抛出错误', async () => {
-            await expect(manager.closeAll()).resolves.toBeUndefined();
+    describe('beginClose', () => {
+        it('空状态下完成并返回关闭报告', async () => {
+            await expect(manager.beginClose().completion).resolves.toMatchObject({ state: 'settled', resourcesReleased: true });
         });
     });
 
@@ -417,36 +417,14 @@ describe('AppManager', () => {
     // ════════════════════════════════════════════════════════════════
 
     describe('cleanup', () => {
-        it('清理后 installedApps 为空', () => {
-            manager.cleanup();
+        it('清理后 installedApps 为空', async () => {
+            await manager.cleanupAsync();
             expect(manager.getInstalledApps()).toHaveLength(0);
         });
 
-        it('清理后 workers 为空', () => {
-            manager.cleanup();
+        it('清理后 workers 为空', async () => {
+            await manager.cleanupAsync();
             expect(manager.getAllWorkers().size).toBe(0);
         });
-    });
-});
-
-// ============================================================================
-// 集成测试（需要真实 Worker）- 标记为需要单独运行
-// ============================================================================
-
-describe.skip('AppManager Integration (requires real Worker)', () => {
-    // 这些测试需要真实的 Worker 环境
-    // 在 CI/CD 中可能需要特殊配置
-
-    describe('install', () => {
-        it.todo('安装 App 并返回 AppID');
-        it.todo('安装后 App 状态为 running');
-        it.todo('触发 onAppInstalled 回调');
-        it.todo('emitSignal 被调用');
-    });
-
-    describe('App 生命周期', () => {
-        it.todo('pauseAll 暂停所有运行中的 App');
-        it.todo('resumeAll 恢复所有暂停的 App');
-        it.todo('closeAll 关闭并清理所有 App');
     });
 });

@@ -65,8 +65,8 @@ describe('createTUIApp', () => {
         const coercion = vi.fn(() => 'valid');
         expect(() => createTUIApp({ app_name: { toString: coercion }, component: () => null } as any)).toThrow(/app_name.*string/);
         expect(coercion).not.toHaveBeenCalled();
-        const factory = createTUIApp({ app_name: 'valid_123', description: 'Description', whatItIs: 'What', whenToUse: 'When', component: () => null });
-        expect(factory.displayName).toBe('valid_123');expect(factory.kernelConfig).toMatchObject({ appName: 'valid_123', name: 'valid_123', description: 'Description', whatItIs: 'What', whenToUse: 'When' });
+        const factory = createTUIApp({ app_name: 'valid_123', whatItIs: 'What', whenToUse: 'When', component: () => null });
+        expect(factory.displayName).toBe('valid_123');expect(factory.kernelConfig).toMatchObject({ appName: 'valid_123', name: 'valid_123', whatItIs: 'What', whenToUse: 'When' });
         expect(typeof factory.initializeComponent).toBe('function');
         expect(Object.hasOwn(factory.kernelConfig, 'onOperation')).toBe(false);
         expect(Object.hasOwn(factory, 'create')).toBe(false);

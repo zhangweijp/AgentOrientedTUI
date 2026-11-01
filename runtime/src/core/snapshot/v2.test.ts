@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createSnapshotCore, refKey } from './index.js';
+import { createSnapshotCore } from './store.js';
+import { refKey } from './snapshot-support.js';
 import { validatePreparedV2Draft } from './v2-validator.js';
 
 const appId = 'system_ide';

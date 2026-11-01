@@ -5,8 +5,6 @@
  * Visitors should be stateless pure functions.
  */
 
-import type { TransformContext } from '../types.js';
-
 export interface IElementVisitor {
     /** 
      * Visitor name (for debugging and logging)
@@ -17,7 +15,7 @@ export interface IElementVisitor {
      * Processing priority
      * 
      * Lower numbers execute earlier. A rule of thumb:
-     * - 0-30: Structural (Application, View)
+     * - 0-30: Structural (View)
      * - 30-60: Reserved for semantic extensions
      * - 60-99: Reserved for extensions
      * - 100+: General HTML fallback
@@ -27,20 +25,18 @@ export interface IElementVisitor {
     /**
      * Determines if this visitor should handle the element
      */
-    matches(el: Element, ctx: Readonly<TransformContext>): boolean;
+    matches(el: Element): boolean;
 
     /**
      * Executes the transformation
      * 
      * @param el - The current element
-     * @param ctx - Transformation context
      * @param children - Function to traverse child nodes
      * @param traverseElement - Function to traverse a single element with full Visitor Chain
      * @returns TUI Markup string
      */
     transform(
         el: Element,
-        ctx: TransformContext,
         children: ChildrenTraverser,
         traverseElement?: ElementTraverser
     ): string;
@@ -53,8 +49,7 @@ export interface IElementVisitor {
  * This does NOT apply Visitor matching to the element itself.
  */
 export type ChildrenTraverser = (
-    el: Element,
-    ctx: TransformContext
+    el: Element
 ) => string[];
 
 /**
@@ -66,6 +61,5 @@ export type ChildrenTraverser = (
  * [RFC-FIX] Added to support semantic elements inside List items.
  */
 export type ElementTraverser = (
-    el: Element,
-    ctx: TransformContext
+    el: Element
 ) => string;

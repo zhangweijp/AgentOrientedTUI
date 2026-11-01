@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSnapshotCore } from '../snapshot/index.js';
+import { createSnapshotCore } from '../snapshot/store.js';
 import { acquireToolSource } from './source-binding.js';
 
 const appId = 'ide';

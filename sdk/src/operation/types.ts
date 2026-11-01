@@ -216,29 +216,3 @@ export interface OperationResult {
   /** Application-declared effects on failure; omission leaves effects unknown. */
   effects?: 'none' | 'partial';
 }
-
-// ═══════════════════════════════════════════════════════════════
-// 6. 验证相关类型 (Validation Types)
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * 参数验证错误
- */
-export interface ValidationError {
-  /** 参数名 */
-  param: string;
-  /** 错误类型 */
-  type: "missing" | "type_mismatch" | "constraint_violation";
-  /** 错误描述 */
-  message: string;
-}
-
-/**
- * 验证结果
- */
-export interface ValidationResult {
-  /** 是否有效 */
-  valid: boolean;
-  /** 错误列表 */
-  errors: ValidationError[];
-}

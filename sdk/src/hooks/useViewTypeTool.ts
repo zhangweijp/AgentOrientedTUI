@@ -8,7 +8,7 @@
  */
 
 import { h, type VNode } from 'preact';
-import { useContext, useLayoutEffect, useMemo, useRef } from './preact-hooks.js';
+import { useContext, useLayoutEffect, useMemo, useRef } from 'preact/hooks';
 import { ViewRuntimeContext } from '../contexts/view-runtime-context.js';
 import { invokeOrdinaryParameterTool } from '../utils/ordinary-parameter-tool.js';
 import { captureToolTarget, type ToolTarget } from '../utils/tool-target.js';
@@ -179,7 +179,7 @@ export function useViewTypeTool<const T extends ParamSchema, const Options exten
     useLayoutEffect(() => () => {
         registered.current?.release();
         registered.current = undefined;
-    }, [port, ctx.meta.viewId, ctx.meta.viewGeneration]);
+    }, [port, ctx.meta.viewId, ctx.viewGeneration]);
     useLayoutEffect(() => {
         const previous = registered.current;
         const mutating = isMutating ?? true;

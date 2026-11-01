@@ -43,6 +43,13 @@ it('C2-02 repeated expired observers do not attach unbounded completion callback
     for (let i = 0; i < 100; i++) { const wait = f.operation.wait({ timeoutMs: 1 });await vi.advanceTimersByTimeAsync(1);expect((await wait).status).toBe('deadline'); }
     expect(then).not.toHaveBeenCalled();expect(vi.getTimerCount()).toBe(0);f.finish();await f.operation.completion;
 });
+it('labels a rejected close completion without the retired legacy name', async () => {
+    const failure = Error('private completion failure');
+    const operation = createCloseOperation(() => fixture().report, Promise.reject(failure));
+    const waiting = operation.wait();
+    await expect(waiting).rejects.toHaveProperty('code', 'CLOSE_COMPLETION_FAILED');
+    await expect(operation.completion).rejects.toBe(failure);
+});
 it('C2-01 failed reports keep old void wrappers rejected, while mere unverified preserves compatibility', async () => {
     const f = fixture(), failed = closeVoid(f.operation.completion, 'RUNTIME_CLOSE_FAILED');f.finish({ ok: false, hasFailures: true });
     await expect(failed).rejects.toMatchObject({ code: 'RUNTIME_CLOSE_FAILED', report: { hasFailures: true } });await expect(failed).rejects.toHaveProperty('code', 'RUNTIME_CLOSE_FAILED');

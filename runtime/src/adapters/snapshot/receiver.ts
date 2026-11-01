@@ -1,10 +1,10 @@
-import { createSnapshotCore } from '../../core/snapshot/index.js';
+import { createSnapshotCore } from '../../core/snapshot/store.js';
 import { createScopedInteraction } from '../../core/invocation/scoped-interaction.js';
 import type { ExecutionResolver, InteractionAuthority, ScopePolicy } from '../../core/invocation/scoped-interaction.js';
 import { acquireToolSource } from '../../core/tool/source-binding.js';
 import { prepareSnapshotValueArguments } from '../../core/tool/snapshot-value-arguments.js';
 import type { ToolSourceRequest } from '../../core/tool/source-binding.js';
-import type { CommitResult, PreparedSnapshotFailure, SnapshotHealth, SnapshotIssueCode } from '../../core/snapshot/index.js';
+import type { CommitResult, PreparedSnapshotFailure, SnapshotHealth, SnapshotIssueCode } from '../../core/snapshot/types.js';
 
 export interface SemanticSnapshotReport {
     readonly appId: string;

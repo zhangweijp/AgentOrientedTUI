@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
 import type { JsonValue } from '../snapshot/types.js';
-import { createSnapshotCore, refKey } from '../snapshot/index.js';
+import { createSnapshotCore } from '../snapshot/store.js';
+import { refKey } from '../snapshot/snapshot-support.js';
 import { createViewOwnedTools } from './view-owned-tools.js';
 import { compileOrdinaryParams } from './ordinary-parameter-contract.js';
 import { compileOrdinaryProfile, ORDINARY_PARAMETER_MARKER as MARKER } from './ordinary-parameter-profile.js';

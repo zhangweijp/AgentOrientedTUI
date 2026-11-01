@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { copyJson } from '../snapshot/json.js';
-import { validatePreparedV2Draft } from '../snapshot/index.js';
+import { validatePreparedV2Draft } from '../snapshot/v2-validator.js';
 import type { JsonValue } from '../snapshot/types.js';
 import { validateToolRefDeclarations } from './ref-declarations.js';
 import { createViewOwnedTools } from './view-owned-tools.js';

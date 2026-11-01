@@ -1,6 +1,6 @@
 /** Internal Core contracts; no root package export. */
-import type { AppSnapshotV2, JsonValue, SnapshotStore, ToolDescriptorV2, ToolTargetV2 } from '../snapshot/types.js';
-import type { Observation, ObservationSelection, ObservationGrant, ObservationSource, ObservationRegistryLimitOverrides, ObservationRegistryStats, ObservationJsonLimits } from './observation-types.js';
+import type { AppSnapshotV2, JsonValue, ToolDescriptorV2, ToolTargetV2 } from '../snapshot/types.js';
+import type { Observation, ObservationSelection, ObservationGrant, ObservationSource, ObservationRegistryStats, ObservationJsonLimits } from './observation-types.js';
 import type { SnapshotValueRefSource } from '../tool/snapshot-value-arguments.js';
 export type { AppIdentityRead, AppIdentityReader } from '../snapshot/types.js';
 type JsonObject = Readonly<Record<string, JsonValue>>;

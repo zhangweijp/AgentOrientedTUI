@@ -84,11 +84,13 @@ describe('Kernel close reporting', () => {
         expect(operation.inspect().beforeClose).toBe('running');gate.resolve();expect((await operation.completion).beforeClose).toBe('done');await runtime.completion;expect(vi.getTimerCount()).toBe(0);
     });
     it('a real Manager close exception remains a bounded failure fact', async () => {
-        const manager = new DesktopManager();vi.spyOn(manager, 'beginShutdown').mockImplementation(() => { throw Error('private manager failure'); });
+        const manager = new DesktopManager(), actualBeginShutdown = manager.beginShutdown.bind(manager);vi.spyOn(manager, 'beginShutdown').mockImplementation(() => { throw Error('private manager failure'); });
         const { kernel } = setup(manager), report = await kernel.beginShutdown().completion;
         expect(report).toMatchObject({ state: 'settled', hasFailures: true, resourcesReleased: false });
         expect(report.failures.flatMap(row => row.codes)).toContain('MANAGER_CLEANUP_FAILED');
+        expect(report.failures).toContainEqual(expect.objectContaining({ stage: 'manager', codes: ['MANAGER_CLEANUP_FAILED'] }));
         expect(JSON.stringify(report)).not.toContain('private manager failure');
-        await manager.closeWorkerPool();
+        vi.mocked(manager.beginShutdown).mockRestore();
+        expect(await actualBeginShutdown().completion).toMatchObject({ pool: { ownership: 'owned', report: { state: 'closed', total: 0 } } });
     });
 });

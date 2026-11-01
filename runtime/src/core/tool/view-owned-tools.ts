@@ -24,7 +24,7 @@ export interface ViewToolSpec {
 
 export interface ToolTarget extends ToolTargetV2 {}
 
-/** An observation for a future AppSnapshot producer, NOT an execution permit. */
+/** An observation for a future AppSnapshotV2 producer, NOT an execution permit. */
 export interface AggregatedViewTool extends Omit<ViewToolSpec, 'target'> {
     readonly id: string;
     readonly appId: string;
@@ -80,7 +80,7 @@ function failure(code: string, message: string): OperationResult {
  *
  * No DOM/Worker/model imports. Does not publish snapshots or authorize external
  * calls. A future M4 adapter must obtain the observed target from a validated,
- * pinned Runtime-owned AppSnapshot before invoking this registry.
+ * pinned Runtime-owned AppSnapshotV2 before invoking this registry.
  */
 export function createViewOwnedTools(appId: string, appInstanceId: string, limits: Partial<ViewOwnedToolLimits> = {}) {
     const ceilings: ViewOwnedToolLimits = { maxViews: 1000, maxBindings: 10000, maxRetainedBytes: 32 * 1024 * 1024 };

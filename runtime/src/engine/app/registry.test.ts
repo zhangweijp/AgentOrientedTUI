@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AppRegistry, validateManifest, isValidAppName } from './index.js';
+import { AppRegistry } from './index.js';
 import { isTUIAppFactory } from '../../spi/app/app-factory.interface.js';
 import { SEMANTIC_INTERACTION_MODES } from '../../spi/runtime/app-interaction.interface.js';
 import type { TUIAppFactory } from '../../spi/app/app-factory.interface.js';
@@ -91,19 +91,20 @@ describe('AppRegistry', () => {
             expect(registry.has('non-existent')).toBe(false);
         });
 
-        it('requires the canonical app_name from component Kernel metadata', async () => {
+        it('uses the non-empty appName from component Kernel metadata without format checks', async () => {
             const registry = new AppRegistry({ configPath });
             await registry.loadFromConfig();
+            const canonicalName = 'a'.repeat(51);
 
             const factoryWithoutManifestName = {
                 persistenceSupport: 'state-session-v1',
                 appLifecycleSupport: 'app-lifecycle-v2',
                 kernelConfig: {
-                    appName: 'system_ide',
-                    name: 'system_ide',
+                    appName: canonicalName,
+                    name: canonicalName,
                     component: {},
                 },
-                displayName: 'system_ide',
+                displayName: canonicalName,
                 initializeComponent: vi.fn(async () => ({ render: vi.fn(), unmount: vi.fn() })),
             } as unknown as TUIAppFactory;
 
@@ -111,8 +112,18 @@ describe('AppRegistry', () => {
             registry.loadFactory = vi.fn().mockResolvedValue(factoryWithoutManifestName);
 
             const name = await registry.add('local:/tmp/cache/node_modules/@agentina/aotui-ide');
-            expect(name).toBe('system_ide');
-            expect(registry.getConfig().apps['system_ide']).toBeDefined();
+            expect(name).toBe(canonicalName);
+            expect(registry.getConfig().apps[canonicalName]).toBeDefined();
+        });
+
+        it('rejects an empty appName from component Kernel metadata', async () => {
+            const registry = new AppRegistry({ configPath });
+            await registry.loadFromConfig();
+            registry.loadFactory = vi.fn().mockResolvedValue(createMockFactory(''));
+
+            await expect(registry.add('local:/tmp/unnamed-app')).rejects.toMatchObject({
+                code: 'CONFIG_INVALID',
+            });
         });
 
         it('should delete managed npm install artifacts on remove', async () => {
@@ -183,6 +194,34 @@ describe('AppRegistry', () => {
 
             expect(await fs.stat(installRoot)).toBeDefined();
         });
+    });
+
+    it('resolves aoapp.json entry.main relative to its app directory', async () => {
+        const appDir = path.join(tempDir, 'manifest-app');
+        await fs.mkdir(appDir);
+        await fs.writeFile(path.join(appDir, 'aoapp.json'), JSON.stringify({ entry: { main: './dist/entry.mjs' } }));
+
+        const registry = new AppRegistry({ configPath });
+        expect(registry.resolveModulePath(`local:${appDir}`)).toBe(path.join(appDir, 'dist/entry.mjs'));
+    });
+
+    it('falls back to package.json main for local directories without aoapp.json', async () => {
+        const appDir = path.join(tempDir, 'package-app');
+        await fs.mkdir(appDir);
+        await fs.writeFile(path.join(appDir, 'package.json'), JSON.stringify({ main: './lib/index.mjs' }));
+
+        const registry = new AppRegistry({ configPath });
+        expect(registry.resolveModulePath(`local:${appDir}`)).toBe(path.join(appDir, 'lib/index.mjs'));
+    });
+
+    it('prefers aoapp.json entry.main to package.json main', async () => {
+        const appDir = path.join(tempDir, 'manifest-package-app');
+        await fs.mkdir(appDir);
+        await fs.writeFile(path.join(appDir, 'aoapp.json'), JSON.stringify({ entry: { main: './semantic/main.mjs' } }));
+        await fs.writeFile(path.join(appDir, 'package.json'), JSON.stringify({ main: './package/main.mjs' }));
+
+        const registry = new AppRegistry({ configPath });
+        expect(registry.resolveModulePath(`local:${appDir}`)).toBe(path.join(appDir, 'semantic/main.mjs'));
     });
 
     describe('Component factory detection', () => {
@@ -433,50 +472,6 @@ describe('AppRegistry', () => {
                     name: 'beta-app'
                 })
             );
-        });
-    });
-});
-
-describe('AOApp Validation', () => {
-    describe('validateManifest', () => {
-        it('should accept valid manifest', () => {
-            const manifest = {
-                app_name: 'my_app',
-                version: '1.0.0',
-                entry: { main: './index.js' }
-            };
-            expect(validateManifest(manifest)).toBe(true);
-        });
-
-        it('should reject missing app_name', () => {
-            const manifest = {
-                version: '1.0.0',
-                entry: { main: './index.js' }
-            };
-            expect(validateManifest(manifest)).toBe(false);
-        });
-
-        it('should reject missing entry', () => {
-            const manifest = {
-                app_name: 'my_app',
-                version: '1.0.0'
-            };
-            expect(validateManifest(manifest)).toBe(false);
-        });
-    });
-
-    describe('isValidAppName', () => {
-        it('should accept valid names', () => {
-            expect(isValidAppName('weather')).toBe(true);
-            expect(isValidAppName('todo_list')).toBe(true);
-            expect(isValidAppName('my_app_123')).toBe(true);
-        });
-
-        it('should reject invalid names', () => {
-            expect(isValidAppName('MyApp')).toBe(false); // uppercase
-            expect(isValidAppName('my-app')).toBe(false); // hyphen
-            expect(isValidAppName('-app')).toBe(false); // starts with hyphen
-            expect(isValidAppName('app-')).toBe(false); // ends with hyphen
         });
     });
 });

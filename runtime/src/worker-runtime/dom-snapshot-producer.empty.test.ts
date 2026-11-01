@@ -8,7 +8,7 @@ function fixture(ids: string[] = []) {
     const views = ids.map(viewId => ({ viewId, viewInstanceId: 'instance-' + viewId, viewType: 'File' }));
     for (const view of views) { const node = document.createElement('section');node.setAttribute('data-view-id', view.viewId);node.setAttribute('data-view-instance-id', view.viewInstanceId);container.appendChild(node); }
     return { document, container, views, input: { appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 0, container,
-        fragments: ids.map(viewId => ({ viewId: viewId as any, viewType: 'File', markup: 'stable', kind: 'view-state' as const, timestamp: 0 })),
+        fragments: ids.map(viewId => ({ viewId: viewId as any, viewType: 'File', markup: 'stable', kind: 'view-state' as const })),
         kernel: { getViewOwnedViewInstances: () => views, getViewOwnedToolDefinitions: () => [], getViewRefs: () => [] } } };
 }
 const capture = (input: any) => captureDOMSnapshot(input);

@@ -1,4 +1,4 @@
-import { defineParams, useViewTypeTool } from '@aotui/sdk';
+import { useViewTypeTool } from '@aotui/sdk';
 import type { TerminalSession } from '../types.js';
 
 export interface TerminalActions {
@@ -11,7 +11,7 @@ export interface TerminalActions {
 export function TerminalConsoleTools({ onSendCommandNewTerminal }: Pick<TerminalActions, 'onSendCommandNewTerminal'>) {
     useViewTypeTool('new_terminal_and_send_command', {
         description: 'Create a terminal and start a shell command. Inspect the new Terminal View for output and completion.',
-        params: defineParams({ command: { type: 'string', required: true, desc: 'Shell command' } }),
+        params: { command: { type: 'string', required: true, desc: 'Shell command' } },
         isMutating: true,
     }, async ({ command }) => {
         const result = await onSendCommandNewTerminal(command);
@@ -25,11 +25,11 @@ export function TerminalConsoleTools({ onSendCommandNewTerminal }: Pick<Terminal
 export function TerminalTools({ terminal, onSendCommand, onCloseTerminal, onLoadMoreOutput }:
     { terminal: TerminalSession } & Omit<TerminalActions, 'onSendCommandNewTerminal'>) {
     const target = { param: 'terminal_id', value: terminal.id };
-    const terminalParam = { terminal_id: { type: 'string' as const, required: true, desc: 'Terminal ID from the current Terminal View' } };
+    const terminalParam = { terminal_id: { type: 'string', required: true, desc: 'Terminal ID from the current Terminal View' } } as const;
     useViewTypeTool('send_command_to_exist_terminal', {
         target,
         description: 'Start a shell command in this Terminal. Read this View for output and completion.',
-        params: defineParams({ ...terminalParam, command: { type: 'string', required: true, desc: 'Shell command' } }),
+        params: { ...terminalParam, command: { type: 'string', required: true, desc: 'Shell command' } },
         isMutating: true,
     }, async ({ command }) => {
         const result = await onSendCommand(terminal.id, command);
@@ -40,7 +40,7 @@ export function TerminalTools({ terminal, onSendCommand, onCloseTerminal, onLoad
     useViewTypeTool('load_more_output', {
         target,
         description: 'Show more lines of the current command output in this Terminal View.',
-        params: defineParams({ ...terminalParam, tail_lines: { type: 'number', required: true, desc: 'Positive number of additional lines' } }),
+        params: { ...terminalParam, tail_lines: { type: 'number', required: true, desc: 'Positive number of additional lines' } },
         isMutating: true,
     }, async ({ tail_lines }) => {
         if (!Number.isSafeInteger(tail_lines) || tail_lines <= 0) {
@@ -53,7 +53,7 @@ export function TerminalTools({ terminal, onSendCommand, onCloseTerminal, onLoad
     useViewTypeTool('close_terminal', {
         target,
         description: 'Close this Terminal and request termination of its active command.',
-        params: defineParams(terminalParam), isMutating: true,
+        params: terminalParam, isMutating: true,
     }, async () => onCloseTerminal(terminal.id)
         ? { success: true, data: { message: 'Terminal closed; its current View and tools are removed.' } }
         : { success: false, error: { code: 'TERMINAL_NOT_FOUND', message: 'Terminal is already closed.' } });

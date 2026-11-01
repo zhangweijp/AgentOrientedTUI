@@ -83,7 +83,6 @@ export default createTUIApp({app_name:'c1',component:Root});`);
                 expect(sandbox.workerHost.timeout).toBe(2345);
                 const other = await runtime.createDesktop();expect(runtime.desktopManager.get(other).appManager.workerPool).toBe(manager.workerPool);
                 await expect(runtime.installDynamicWorkerApp(other, url(app), { workerScriptPath: script })).rejects.toHaveProperty('code', 'INSTALL_FAILED');
-                expect(runtime.desktopManager.getWorkerPoolReport()).toMatchObject({ total: 1, leased: 1 });
             }
         }
         const firstRuntimeClose = await runtimes[0].beginShutdown().completion;
@@ -94,7 +93,7 @@ export default createTUIApp({app_name:'c1',component:Root});`);
         const secondRuntimeClose = await runtimes[1].beginShutdown().completion;
         expect(secondRuntimeClose.ok).toBe(true);expect(secondRuntimeClose.pool).toMatchObject({ ownership: 'owned', report: { state: 'closed', total: 0 } });
         expect(workers[1].threadId).toBe(-1);
-        await fact('runtime-scripts', { scripts: ['A', 'B'], independentOwners: true, sameRuntimeDesktopCap: 1, reports: runtimes.map(r => r.desktopManager.getWorkerPoolReport()) });
+        await fact('runtime-scripts', { scripts: ['A', 'B'], independentOwners: true, sameRuntimeDesktopCap: 1, reports: [firstRuntimeClose.pool.report, secondRuntimeClose.pool.report] });
     } finally {
         await Promise.all(runtimes.map(runtime => runtime.beginShutdown().completion));
         await rm(dir, { recursive: true, force: true });

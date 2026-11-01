@@ -1,4 +1,4 @@
-import { defineParams, useArrayRef, useDataRef, useViewTypeTool } from '@aotui/sdk';
+import { useArrayRef, useDataRef, useViewTypeTool } from '@aotui/sdk';
 import type { Phase, Plan, TaskInput, TaskItem } from '../types.js';
 
 type PlanDetailViewProps = {
@@ -18,8 +18,7 @@ const splitPhases = (phases: Phase[]) => {
     phases.forEach(phase => phase.status === 'completed' ? completed.push(phase) : pending.push(phase));
     return { completed, current: pending[0] || null, upcoming: pending.slice(1) };
 };
-const addRefAliases = <T,>(map: Map<string, T>, base: string, type: string, index: number, value: T) => {
-    map.set(`${base}[${index}]`, value);
+const addTypedRef = <T,>(map: Map<string, T>, base: string, type: string, index: number, value: T) => {
     map.set(`${type}:${base}[${index}]`, value);
 };
 
@@ -32,14 +31,14 @@ export function PlanDetailView({ plan, addPhase, deletePhase, completePhase, add
     // Business callbacks receive ids only after the current View resolves them.
     const phasesByRef = new Map<string, Phase>();
     if (current) phasesByRef.set('current_phase', current);
-    completed.forEach((phase, index) => addRefAliases(phasesByRef, 'completed_phases', 'Phase', index, phase));
-    upcoming.forEach((phase, index) => addRefAliases(phasesByRef, 'upcoming_phases', 'Phase', index, phase));
+    completed.forEach((phase, index) => addTypedRef(phasesByRef, 'completed_phases', 'Phase', index, phase));
+    upcoming.forEach((phase, index) => addTypedRef(phasesByRef, 'upcoming_phases', 'Phase', index, phase));
 
     const tasksByRef = new Map<string, { task: TaskItem; phaseId: string }>();
     const addTaskRefs = (base: string, tasks: TaskItem[], phaseId: string) => {
         tasks.forEach((task, index) => {
             const binding = { task, phaseId };
-            addRefAliases(tasksByRef, base, 'Task', index, binding);
+            addTypedRef(tasksByRef, base, 'Task', index, binding);
         });
     };
     if (current) {
@@ -61,11 +60,11 @@ export function PlanDetailView({ plan, addPhase, deletePhase, completePhase, add
 
     const [AddPhaseTool] = useViewTypeTool('add_phase', {
         description: 'Add a phase to the current plan, optionally with initial tasks.',
-        params: defineParams({
+        params: {
             title: { type: 'string', required: true, desc: 'Phase title' },
             description: { type: 'string', required: false, desc: 'Optional phase description' },
             tasks: { type: 'array', required: false, itemType: 'object', desc: 'Initial tasks: [{ title, description? }]' },
-        }),
+        },
     }, async args => {
         const tasks = (args.tasks ?? []) as unknown as TaskInput[];
         if (!await addPhase(args.title, args.description, tasks)) return { success: false, error: { code: 'PHASE_ADD_FAILED', message: 'Add phase failed' } };
@@ -74,7 +73,7 @@ export function PlanDetailView({ plan, addPhase, deletePhase, completePhase, add
 
     const [DeletePhaseTool] = useViewTypeTool('delete_phase', {
         description: 'Delete a Phase reference currently shown in this PlanDetail View.',
-        params: defineParams({ phase: { type: 'string', required: true, desc: 'Phase reference id currently shown in this PlanDetail View.' } }),
+        params: { phase: { type: 'string', required: true, desc: 'Phase reference id currently shown in this PlanDetail View.' } },
     }, async args => {
         const phase = resolvePhase(args.phase);
         if (!phase) return { success: false, error: { code: 'PHASE_NOT_FOUND', message: 'Pass a currently shown Phase reference.' } };
@@ -84,7 +83,7 @@ export function PlanDetailView({ plan, addPhase, deletePhase, completePhase, add
 
     const [CompletePhaseTool] = useViewTypeTool('complete_phase', {
         description: 'Complete a Phase reference currently shown in this PlanDetail View.',
-        params: defineParams({ phase: { type: 'string', required: true, desc: 'Phase reference id currently shown in this PlanDetail View.' } }),
+        params: { phase: { type: 'string', required: true, desc: 'Phase reference id currently shown in this PlanDetail View.' } },
     }, async args => {
         const phase = resolvePhase(args.phase);
         if (!phase) return { success: false, error: { code: 'PHASE_NOT_FOUND', message: 'Pass a currently shown Phase reference.' } };
@@ -94,11 +93,11 @@ export function PlanDetailView({ plan, addPhase, deletePhase, completePhase, add
 
     const [AddTaskTool] = useViewTypeTool('add_task', {
         description: 'Add a task to a Phase reference currently shown in this PlanDetail View.',
-        params: defineParams({
+        params: {
             phase: { type: 'string', required: true, desc: 'Phase reference id currently shown in this PlanDetail View.' },
             title: { type: 'string', required: true, desc: 'Task title' },
             description: { type: 'string', required: false, desc: 'Optional task description' },
-        }),
+        },
     }, async args => {
         const phase = resolvePhase(args.phase);
         if (!phase) return { success: false, error: { code: 'PHASE_NOT_FOUND', message: 'Pass a currently shown Phase reference.' } };
@@ -108,11 +107,11 @@ export function PlanDetailView({ plan, addPhase, deletePhase, completePhase, add
 
     const [UpdateTaskTool] = useViewTypeTool('update_task', {
         description: 'Update a Task reference currently shown in this PlanDetail View.',
-        params: defineParams({
+        params: {
             task: { type: 'string', required: true, desc: 'Task reference id currently shown in this PlanDetail View.' },
             title: { type: 'string', required: false, desc: 'New task title' },
             description: { type: 'string', required: false, desc: 'New task description' },
-        }),
+        },
     }, async args => {
         const task = resolveTask(args.task);
         if (!task) return { success: false, error: { code: 'TASK_NOT_FOUND', message: 'Pass a currently shown Task reference.' } };
@@ -122,7 +121,7 @@ export function PlanDetailView({ plan, addPhase, deletePhase, completePhase, add
 
     const [DeleteTaskTool] = useViewTypeTool('delete_task', {
         description: 'Delete a Task reference currently shown in this PlanDetail View.',
-        params: defineParams({ task: { type: 'string', required: true, desc: 'Task reference id currently shown in this PlanDetail View.' } }),
+        params: { task: { type: 'string', required: true, desc: 'Task reference id currently shown in this PlanDetail View.' } },
     }, async args => {
         const task = resolveTask(args.task);
         if (!task || !plan.phases.some(phase => phase.id === task.phaseId)) return { success: false, error: { code: 'TASK_NOT_FOUND', message: 'Pass a currently shown Task reference from this plan.' } };
@@ -132,7 +131,7 @@ export function PlanDetailView({ plan, addPhase, deletePhase, completePhase, add
 
     const [CompleteTaskTool] = useViewTypeTool('complete_task', {
         description: 'Complete a Task reference currently shown in this PlanDetail View.',
-        params: defineParams({ task: { type: 'string', required: true, desc: 'Task reference id currently shown in this PlanDetail View.' } }),
+        params: { task: { type: 'string', required: true, desc: 'Task reference id currently shown in this PlanDetail View.' } },
     }, async args => {
         const task = resolveTask(args.task);
         if (!task || !plan.phases.some(phase => phase.id === task.phaseId)) return { success: false, error: { code: 'TASK_NOT_FOUND', message: 'Pass a currently shown Task reference from this plan.' } };

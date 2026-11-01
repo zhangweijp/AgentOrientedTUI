@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSnapshotCore } from '../snapshot/index.js';
+import { createSnapshotCore } from '../snapshot/store.js';
 import { acquireToolSource } from './source-binding.js';
 
 describe('Wave 2A: current Store lease and historical-source contract', () => {

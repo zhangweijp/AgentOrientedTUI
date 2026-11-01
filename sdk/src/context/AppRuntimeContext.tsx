@@ -8,8 +8,8 @@
 
 import type { AppLifecyclePort } from '@aotui/runtime/spi';
 import type { AppStatePersistence } from '@aotui/runtime/spi';
-import { createContext } from 'preact/compat';
-import { useContext, useMemo } from '../hooks/preact-hooks.js';
+import { createContext } from 'preact';
+import { useContext, useMemo } from 'preact/hooks';
 import type { AppID, DesktopID, IRefExporter, IProjectionPort, IViewOwnedToolPort, AppLaunchConfig } from '@aotui/runtime/spi';
 
 // ═══════════════════════════════════════════════════════════════
@@ -43,10 +43,10 @@ interface AppRuntimeContextValue {
      */
     markDirty: () => void;
 
-    /** Internal M3 commit-phase coordination, optional for legacy Runtime. */
-    projection?: IProjectionPort;
+    /** Semantic commit coordination supplied by Runtime. */
+    projection: IProjectionPort;
 
-    /** M4 Stage 1: optional View-instance-owned Tool port. */
+    /** View-instance-owned Tool port with Runtime-advertised capabilities. */
     viewTools?: IViewOwnedToolPort;
 }
 

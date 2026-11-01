@@ -1,5 +1,5 @@
 import type {
-    AppSnapshot, CommitResult, LeaseResult, PreparedSnapshotFailure, RefLookup, RefSelector, SnapshotCore,
+    AppSnapshotV2, CommitResult, LeaseResult, PreparedSnapshotFailure, RefLookup, RefSelector, SnapshotCore,
     SnapshotIssue, SnapshotIssueCode, SnapshotLease, SnapshotLookup, SnapshotRead,
     SnapshotStoreOptions, SnapshotStoreStats, ToolLookup, ToolSelector, AppIdentityRead,
 } from './types.js';
@@ -8,7 +8,7 @@ import { refKey } from './snapshot-support.js';
 import { validatePreparedV2Draft } from './v2-validator.js';
 
 interface SnapshotEntry {
-    readonly snapshot: AppSnapshot;
+    readonly snapshot: AppSnapshotV2;
     canonical: string | undefined;
     readonly bytes: number;
     readonly leases: Map<object, number | null>;
@@ -340,7 +340,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
                 refs: data.draft.refs,
                 tools: data.draft.tools,
                 contentDigest: data.contentDigest,
-            }) as AppSnapshot;
+            }) as AppSnapshotV2;
             const record: SnapshotEntry = {
                 snapshot, canonical: data.canonicalContent, bytes: data.bytes,
                 leases: new Map(),

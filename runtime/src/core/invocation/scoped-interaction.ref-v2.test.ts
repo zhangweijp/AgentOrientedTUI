@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createSnapshotCore, refKey } from '../snapshot/index.js';
+import { createSnapshotCore } from '../snapshot/store.js';
+import { refKey } from '../snapshot/snapshot-support.js';
 import { compileSnapshotValueParams } from '../tool/snapshot-value-parameter-contract.js';
 import { createScopedInteraction } from './scoped-interaction.js';
 function deferred() { let resolve!: () => void;const promise = new Promise<void>(yes => { resolve = yes; });return { promise, resolve }; }

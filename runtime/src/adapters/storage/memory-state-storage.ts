@@ -76,5 +76,5 @@ export function createMemoryStateStorage(limits: MemoryStateStorageLimits, initi
         });
         return Object.freeze({ status: 'opened', storage });
     }
-    return Object.freeze({ open, getStats: () => Object.freeze({ storedKeys: values.size, storedBytes, activeOwners: owners.size, claimedNamespaces: namespaces.size, activeOperations: 0 }) });
+    return Object.freeze({ open, getStats: () => Object.freeze({ storedKeys: values.size, storedBytes, activeOwners: owners.size, claimedNamespaces: namespaces.size }) });
 }

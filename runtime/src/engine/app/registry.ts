@@ -184,7 +184,7 @@ export class AppRegistry {
      * 注册临时 App (不保存到配置文件)
      * 用于开发环境自动发现或运行时动态添加
      */
-    async registerTransient(source: string, options?: { alias?: string }): Promise<string> {
+    async registerTransient(source: string): Promise<string> {
         // 加载工厂
         const factory = await this.loadFactory(source);
 
@@ -411,7 +411,6 @@ export class AppRegistry {
         // npm:package-name -> 需要进一步解析，暂不支持
         if (source.startsWith('npm:')) {
             throw new AOTUIError('CONFIG_NOT_SUPPORTED', { feature: 'npm sources in Worker mode' });
-            return null;
         }
         return null;
     }
@@ -470,15 +469,6 @@ export class AppRegistry {
         this.entryConfigs.set(name, { ...entry });
 
         if (!entry.enabled) {
-            return;
-        }
-
-        // [Hybrid Model] 跳过 system: 协议 - 系统 App 应通过 local: 或 npm: 安装
-        if (entry.source.startsWith('system:')) {
-            console.warn(
-                `[AppRegistry] Skipped "${name}": 'system:' protocol is deprecated. ` +
-                `Use 'local:' or 'npm:' instead.`
-            );
             return;
         }
 
@@ -669,57 +659,7 @@ export class AppRegistry {
             // npm 包: npm:@scope/name 或 npm:name
             modulePath = source.slice(4);
         } else if (source.startsWith('local:')) {
-            // 本地路径: local:/path/to/app
-            let localPath = source.slice(6);
-
-            const fs = await import('fs');
-            const path = await import('path');
-
-            if (!path.isAbsolute(localPath)) {
-                localPath = path.resolve(process.cwd(), localPath);
-            }
-
-            if (fs.existsSync(localPath) && fs.statSync(localPath).isDirectory()) {
-                // Try to find entry point from aoapp.json or package.json
-                const aoappPath = path.join(localPath, 'aoapp.json');
-                const pkgPath = path.join(localPath, 'package.json');
-
-                if (fs.existsSync(aoappPath)) {
-                    try {
-                        const aoapp = JSON.parse(fs.readFileSync(aoappPath, 'utf-8'));
-                        if (aoapp.entry?.main) {
-                            localPath = path.join(localPath, aoapp.entry.main);
-                        }
-                    } catch (e) {
-                        console.warn(`[AppRegistry] Failed to parse aoapp.json at ${aoappPath}:`, e);
-                    }
-                }
-                
-                // Fallback to package.json if no aoapp entry or failed
-                if (fs.existsSync(pkgPath) && (!fs.existsSync(aoappPath) || localPath === source.slice(6))) {
-                    try {
-                        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-                        if (pkg.main) {
-                            localPath = path.join(localPath, pkg.main);
-                        }
-                    } catch (e) {
-                         console.warn(`[AppRegistry] Failed to parse package.json at ${pkgPath}:`, e);
-                    }
-                }
-                
-                // If still directory, default to index.js or dist/index.js check
-                if (fs.existsSync(localPath) && fs.statSync(localPath).isDirectory()) {
-                     const distIndex = path.join(localPath, 'dist/index.js');
-                     const srcIndex = path.join(localPath, 'index.js');
-                     if (fs.existsSync(distIndex)) {
-                         localPath = distIndex;
-                     } else if (fs.existsSync(srcIndex)) {
-                         localPath = srcIndex;
-                     }
-                }
-            }
-
-            modulePath = localPath;
+            modulePath = this.resolveModulePath(source)!;
         } else if (source.startsWith('git:')) {
             throw new AOTUIError('CONFIG_NOT_SUPPORTED', { feature: 'Git source' });
         } else {
@@ -738,6 +678,4 @@ export class AppRegistry {
     }
 }
 
-// Re-export factory interface
-export type { TUIAppFactory, AOAppManifest } from '../../spi/index.js';
-export { validateManifest, isValidAppName } from '../../spi/index.js';
+export type { TUIAppFactory } from '../../spi/index.js';

@@ -20,7 +20,7 @@ it('C05 all supported V2 subsets capture canonical independent frozen arrays', (
     expect(captureInteractionModes(Object.create({ interactionModes: modes }))).toBeUndefined();
 });
 
-it('C05 invalid values/descriptors never execute a getter or allocate metadata/AppID/Worker pool', () => {
+it('C05 invalid values/descriptors never execute a getter or allocate metadata/AppID/Worker pool', async () => {
     let getters = 0;
     const values = [null, true, 1, 'ordinary-v2', {}, ['unknown'], ['ordinary-v2', 'ordinary-v2'], Array(1), Array(3).fill('ordinary-v2'),
         [['ordinary-v2']], ['x'.repeat(300)], Object.assign(['ordinary-v2'], { extra: 1 }),
@@ -42,7 +42,7 @@ it('C05 invalid values/descriptors never execute a getter or allocate metadata/A
         }
     }
     expect(getters).toBe(0);expect(manager.getInstalledApps()).toEqual([]);
-    expect(manager.registerPendingApp({ modulePath: '/unused' })).toBe('app_0');manager.cleanup();
+    expect(manager.registerPendingApp({ modulePath: '/unused' })).toBe('app_0');await manager.cleanupAsync();
 });
 
 it('C05 missing config defaults to both V2 channels while explicit [] disables both', () => {

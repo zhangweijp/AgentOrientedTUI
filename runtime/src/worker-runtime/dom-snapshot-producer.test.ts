@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { parseHTML } from 'linkedom';
 import { captureDOMSnapshot } from './dom-snapshot-producer.js';
-import { createSnapshotCore, refKey } from '../core/snapshot/index.js';
+import { createSnapshotCore } from '../core/snapshot/store.js';
+import { refKey } from '../core/snapshot/snapshot-support.js';
 import type { WorkerRuntimeViewFragment } from './view-fragment-extractor.js';
 
 const fragment = (id: string, type = 'Workspace', markup = '<view>Tasks</view>'): WorkerRuntimeViewFragment => ({
     viewId: id as any, viewType: type, viewName: id,
-    markup, kind: 'view-state', timestamp: 1,
+    markup, kind: 'view-state',
 });
 
 function documentWithView(id = 'workspace') {

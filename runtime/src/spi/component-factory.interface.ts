@@ -58,10 +58,10 @@ export interface RuntimeContext {
      */
     markDirty: () => void;
 
-    /** M3 optional semantic projection transaction port (no DOM/Preact types). */
-    projection?: IProjectionPort;
+    /** Semantic projection transaction port (no DOM/Preact types). */
+    projection: IProjectionPort;
 
-    /** M4 Stage 1: optional per-View Tool registration, not Agent execution. */
+    /** Per-View Tool port for current capability support, not Agent execution. */
     viewTools?: IViewOwnedToolPort;
 }
 

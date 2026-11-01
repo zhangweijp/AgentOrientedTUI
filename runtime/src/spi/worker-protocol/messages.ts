@@ -29,13 +29,6 @@ import type { SnapshotValueRefSource } from '../../core/tool/snapshot-value-argu
 import type { LLMOutputEventMeta } from '../core/llm-output.js';
 
 // ============================================================================
-// Re-export WorkerMessageType from canonical source
-// ============================================================================
-// WorkerMessageType is defined in worker-message.interface.ts (Single Source of Truth)
-// We re-export it here for convenience when importing from worker-protocol
-export type { WorkerMessageType } from '../runtime/worker-message.interface.js';
-
-// ============================================================================
 // Main → Worker Messages
 // ============================================================================
 

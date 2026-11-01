@@ -1,4 +1,4 @@
-import { defineParams, useArrayRef, useDataRef, useViewTypeTool } from '@aotui/sdk';
+import { useArrayRef, useDataRef, useViewTypeTool } from '@aotui/sdk';
 import type { PhaseInput, Plan } from '../types.js';
 
 type PlanListViewProps = {
@@ -18,7 +18,6 @@ export function PlanListView({ plans, activePlanId, createPlan, updatePlan, dele
     const planByRef = new Map<string, Plan>();
     if (activePlan) planByRef.set('active_plan', activePlan);
     unfinishedPlans.forEach((plan, index) => {
-        planByRef.set(`unfinished_plans[${index}]`, plan);
         planByRef.set(`Plan:unfinished_plans[${index}]`, plan);
     });
     const resolvePlan = (refId?: string) => refId ? planByRef.get(refId) ?? null : null;
@@ -28,14 +27,14 @@ export function PlanListView({ plans, activePlanId, createPlan, updatePlan, dele
 
     const [CreatePlanTool] = useViewTypeTool('create_plan', {
         description: 'Create a new plan, optionally with phases and tasks.',
-        params: defineParams({
+        params: {
             title: { type: 'string', required: true, desc: 'Plan title' },
             description: { type: 'string', required: false, desc: 'Optional plan description' },
             phases: {
                 type: 'array', required: false, itemType: 'object',
                 desc: 'Phases with tasks: [{ title, description?, tasks?: [{ title, description? }] }]',
             },
-        }),
+        },
     }, async args => {
         const phases = (args.phases ?? []) as unknown as PhaseInput[];
         await createPlan(args.title, args.description, phases);
@@ -45,11 +44,11 @@ export function PlanListView({ plans, activePlanId, createPlan, updatePlan, dele
 
     const [UpdatePlanTool] = useViewTypeTool('update_plan', {
         description: 'Update a shown Plan reference. Omit plan to use the active plan.',
-        params: defineParams({
+        params: {
             plan: { type: 'string', required: false, desc: 'Reference id currently shown in PlanList; omit to use the active plan.' },
             title: { type: 'string', required: false, desc: 'New plan title' },
             description: { type: 'string', required: false, desc: 'New plan description' },
-        }),
+        },
     }, async args => {
         const plan = args.plan ? resolvePlan(args.plan) : activePlan;
         if (!plan) return { success: false, error: { code: 'PLAN_NOT_FOUND', message: 'Pass a currently shown Plan reference or open a plan first.' } };
@@ -61,7 +60,7 @@ export function PlanListView({ plans, activePlanId, createPlan, updatePlan, dele
 
     const [DeletePlanTool] = useViewTypeTool('delete_plan', {
         description: 'Delete a shown Plan reference. Omit plan to use the active plan.',
-        params: defineParams({ plan: { type: 'string', required: false, desc: 'Reference id currently shown in PlanList; omit to use the active plan.' } }),
+        params: { plan: { type: 'string', required: false, desc: 'Reference id currently shown in PlanList; omit to use the active plan.' } },
     }, async args => {
         const plan = args.plan ? resolvePlan(args.plan) : activePlan;
         if (!plan) return { success: false, error: { code: 'PLAN_NOT_FOUND', message: 'Pass a currently shown Plan reference or open a plan first.' } };
@@ -71,7 +70,7 @@ export function PlanListView({ plans, activePlanId, createPlan, updatePlan, dele
 
     const [OpenPlanTool] = useViewTypeTool('open_plan', {
         description: 'Open a plan using a Plan reference currently shown in this View.',
-        params: defineParams({ plan: { type: 'string', required: true, desc: 'Plan reference id currently shown in PlanList.' } }),
+        params: { plan: { type: 'string', required: true, desc: 'Plan reference id currently shown in PlanList.' } },
     }, async args => {
         const plan = resolvePlan(args.plan);
         if (!plan) return { success: false, error: { code: 'PLAN_NOT_FOUND', message: 'Pass a currently shown Plan reference.' } };
@@ -81,7 +80,7 @@ export function PlanListView({ plans, activePlanId, createPlan, updatePlan, dele
 
     const [ClosePlanTool] = useViewTypeTool('close_plan', {
         description: 'Close the active plan.',
-        params: defineParams({}),
+        params: {},
     }, async () => {
         if (!activePlan) return { success: false, error: { code: 'PLAN_NOT_FOUND', message: 'There is no active plan to close.' } };
         closePlan();

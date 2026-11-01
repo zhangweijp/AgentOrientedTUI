@@ -91,12 +91,12 @@ function checkPublicContextShape() {
 void checkPublicContextShape;
 
 type PublicTypes = [
-  AppContext, AppID, AppReinitializeContext, ArrayRefHandle<object>,
+  AppContext, AppID, AppReinitializeContext, ArrayRefHandle,
   DeepReadonly<unknown>, DesktopID, InferArgs<{ value: { type: 'string' } }>,
   IViewMeta, ItemRefFormatter, LLMOutputEvent,
   LLMOutputListener, ListRefFormatter, OperationError, OperationResult,
   ParamBaseType, ParamConstraints, ParamDef, ParamSchema, ParamType,
-  PersistMeta, PersistOptions<string>, PersistStatus, RefHandle<object>,
+  PersistMeta, PersistOptions<string>, PersistStatus, RefHandle,
   SnapshotValueRefParamDef, StateBindingStatus, StateFlushReport, StateIssue,
   StateValue,
   TypeToolArgs<{ value: { type: 'string' } }, { isMutating: false }>,
@@ -105,6 +105,12 @@ type PublicTypes = [
 ];
 declare const publicTypes: PublicTypes;
 void publicTypes;
+
+type NoRefHandleProperties = AssertNever<Extract<keyof RefHandle, 'data' | 'id'>>;
+type NoViewCloseHandler = AssertNever<Extract<keyof ViewProps, 'onClose'>>;
+type NoPublicMountIdentity = AssertNever<Extract<keyof IViewMeta, 'viewGeneration' | 'viewInstanceId'>>;
+type PublicShapeChecks = [NoRefHandleProperties, NoViewCloseHandler, NoPublicMountIdentity];
+void (null as unknown as PublicShapeChecks);
 
 useLLMOutputChannel(() => {});
 // @ts-expect-error Live channel history policy belongs to its actual Provider.
@@ -122,6 +128,9 @@ const config: TUIAppConfig = {
   app_name: 'public_api_types',
   component: () => null,
 };
+// @ts-expect-error Application metadata now uses whatItIs and whenToUse.
+const oldDescriptionConfig: TUIAppConfig = { app_name: 'old_description', description: 'Old', component: () => null };
+void oldDescriptionConfig;
 const factory = createTUIApp(config);
 const lifecycleProtocol: 'app-lifecycle-v2' = factory.appLifecycleSupport;
 void lifecycleProtocol;

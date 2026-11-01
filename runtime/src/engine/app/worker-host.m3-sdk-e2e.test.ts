@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
-import { refKey } from '../../core/snapshot/index.js';
+import { refKey } from '../../core/snapshot/snapshot-support.js';
 
 /**
  * M3 real Worker + bundled REAL SDK createTUIApp + Preact hooks.
@@ -31,7 +31,7 @@ describe('Semantic real Worker / SDK projection round trip', () => {
             });
             const sdkFixture = `
                 import { h } from 'preact';
-                import { useEffect, useState } from 'preact/hooks';
+                import { useLayoutEffect, useState } from 'preact/hooks';
                 import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
                 import { View } from './sdk/src/components/View.tsx';
                 import { useAppRuntimeContext } from './sdk/src/context/AppRuntimeContext.tsx';
@@ -42,9 +42,14 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                 function Content() {
                     const appId = useAppRuntimeContext().appId;
                     const [target, setTarget] = useState({ id: 'A' });
-                    useEffect(() => {
-                        const timer = setTimeout(() => setTarget({ id: 'B' }), 240);
-                        return () => clearTimeout(timer);
+                    useLayoutEffect(() => {
+                        const onExternalEvent = event => {
+                            if (event.detail?.type === 'replace-target') {
+                                setTarget({ id: event.detail.data.id });
+                            }
+                        };
+                        document.addEventListener('aotui:external-event', onExternalEvent);
+                        return () => document.removeEventListener('aotui:external-event', onExternalEvent);
                     }, []);
                     const selected = useDataRef('selected', target);
                     const [listLabel, itemLabel] = useArrayRef('pending', [target], { itemType: 'Task' });
@@ -81,7 +86,7 @@ describe('Semantic real Worker / SDK projection round trip', () => {
             await import('vitest').then(({ vi }) => vi.waitFor(() => {
                 expect(host?.getSemanticSnapshotReport()).toMatchObject({
                     health: 'ready', revision: 1, lastViewCount: 1,
-                    lastRefCount: 5, lastToolCount: 1,
+                    lastRefCount: 3, lastToolCount: 1,
                 });
             }, { timeout: 3_000 }));
             const initial = host.getSemanticSnapshotReport()!;
@@ -96,11 +101,12 @@ describe('Semantic real Worker / SDK projection round trip', () => {
             const markup = oldRead.snapshot.views[0].content.value;
             expect(markup).toContain('Stable task label');
             expect(markup).toContain('App=m3_app');
+            await host.sendExternalEvent('workspace' as any, 'replace-target', { id: 'B' });
             await import('vitest').then(({ vi }) => vi.waitFor(() => {
-                expect(host?.getSemanticSnapshotReport()).toMatchObject({
-                    health: 'ready', revision: 2,
-                    lastViewCount: 1, lastRefCount: 5, lastToolCount: 1,
-                });
+                const report = host?.getSemanticSnapshotReport();
+                expect(report?.health).toBe('ready');
+                expect(report?.revision).toBeGreaterThan(initial.revision);
+                expect(report).toMatchObject({ lastViewCount: 1, lastRefCount: 3, lastToolCount: 1 });
             }, { timeout: 3_000 }));
             const changed = host.getSemanticSnapshotReport()!;
             expect(changed.published).toBeGreaterThanOrEqual(2);

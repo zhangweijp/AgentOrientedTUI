@@ -2,7 +2,6 @@
 import { describe, it, expect } from 'vitest';
 import { defineRuntimeConfig, RUNTIME_DEFAULTS } from '../../../src/spi/config/define-config.js';
 import { AOTUIError } from '../../../src/spi/core/errors.js';
-import { validateRuntimeConfig } from '../../../src/spi/config/index.js';
 import * as configExports from '../../../src/spi/config/index.js';
 
 function captureError(run: () => unknown): unknown {
@@ -34,6 +33,7 @@ describe('Configuration Architecture', () => {
             expect(configExports).not.toHaveProperty('BridgeConfig');
             expect(configExports).not.toHaveProperty('TRANSFORM_DEFAULTS');
             expect(configExports).not.toHaveProperty('TransformConfig');
+            expect(configExports).not.toHaveProperty('validateRuntimeConfig');
         });
 
         it('should return complete default config when input is empty', () => {
@@ -53,9 +53,37 @@ describe('Configuration Architecture', () => {
         it('should return a frozen immutable object', () => {
             const config = defineRuntimeConfig();
             expect(Object.isFrozen(config)).toBe(true);
+            expect(Object.isFrozen(config.worker)).toBe(true);
+            expect(Object.isFrozen(config.worker.pool)).toBe(true);
+            expect(Object.isFrozen(config.logger)).toBe(true);
+        });
 
-            // Runtime modification attempt should throw in strict mode 
-            // or just checking frozen status is enough for unit test
+        it('keeps defaults immutable and overridden instances detached from inputs', () => {
+            const first = defineRuntimeConfig();
+            const input = { worker: { pool: { maxSize: 12 } }, logger: { maxAppLogs: 80 } };
+            const overridden = defineRuntimeConfig(input);
+            const later = defineRuntimeConfig();
+
+            expect(overridden.worker).not.toBe(input.worker);
+            expect(overridden.worker.pool).not.toBe(input.worker.pool);
+            expect(overridden.logger).not.toBe(input.logger);
+            expect(first.worker.pool.maxSize).toBe(10);
+            expect(later.worker.pool.maxSize).toBe(10);
+            expect(overridden.worker.pool.maxSize).toBe(12);
+            expect(first.worker.pool).toBe(later.worker.pool);
+            expect(Object.isFrozen(first.worker.pool)).toBe(true);
+            expect(Object.isFrozen(overridden.worker.pool)).toBe(true);
+            expect(Object.isFrozen(RUNTIME_DEFAULTS.worker)).toBe(true);
+            expect(Object.isFrozen(RUNTIME_DEFAULTS.worker.pool)).toBe(true);
+            expect(Object.isFrozen(RUNTIME_DEFAULTS.logger)).toBe(true);
+
+            input.worker.pool.maxSize = 20;
+            input.logger.maxAppLogs = 90;
+            expect(overridden.worker.pool.maxSize).toBe(12);
+            expect(overridden.logger.maxAppLogs).toBe(80);
+            expect(Object.isFrozen(input)).toBe(false);
+            expect(Object.isFrozen(input.worker.pool)).toBe(false);
+            expect(Object.isFrozen(input.logger)).toBe(false);
         });
 
         it('should merge top-level overrides correctly', () => {
@@ -122,6 +150,13 @@ describe('Configuration Architecture', () => {
             expect(dataError.message).toContain('enumerable');
         });
 
+        it('rejects symbol configuration keys with their key path', () => {
+            const input = { worker: { timeoutMs: 60_000 } } as any;
+            input.worker[Symbol('hidden')] = 1;
+
+            expectConfigError(captureError(() => defineRuntimeConfig(input)), 'worker.Symbol(hidden)');
+        });
+
         it('accepts ordinary and null-prototype partial data without mutating inputs', () => {
             const ordinary = { worker: { pool: { maxSize: 12 } }, logger: { maxAppLogs: 80 } };
             const nullPool = Object.assign(Object.create(null), { maxSize: 13 });
@@ -156,39 +191,6 @@ describe('Configuration Architecture', () => {
                 worker: { timeoutMs: 30_000, pool: { maxSize: 10 } },
                 logger: { maxAppLogs: 50 },
             });
-        });
-
-        it('rejects accessors through the public validateRuntimeConfig entry without evaluating them', () => {
-            const cases: Array<[string, (onRead: () => void) => unknown]> = [
-                ['worker', onRead => {
-                    const input = { logger: RUNTIME_DEFAULTS.logger };
-                    Object.defineProperty(input, 'worker', { enumerable: true, get() { onRead(); return RUNTIME_DEFAULTS.worker; } });
-                    return input;
-                }],
-                ['worker.pool', onRead => ({
-                    worker: Object.defineProperty({ timeoutMs: 30_000 }, 'pool', {
-                        enumerable: true, get() { onRead(); return RUNTIME_DEFAULTS.worker.pool; },
-                    }),
-                    logger: RUNTIME_DEFAULTS.logger,
-                })],
-                ['worker.pool.initialSize', onRead => ({
-                    worker: {
-                        timeoutMs: 30_000,
-                        pool: Object.defineProperty({ maxSize: 10, idleTimeoutMs: 60_000 }, 'initialSize', {
-                            enumerable: true, get() { onRead(); return 2; },
-                        }),
-                    },
-                    logger: RUNTIME_DEFAULTS.logger,
-                })],
-            ];
-
-            for (const [path, createConfig] of cases) {
-                let getterCalls = 0;
-                const error = captureError(() => validateRuntimeConfig(createConfig(() => { getterCalls++; }) as any));
-                const configError = expectConfigError(error, path);
-                expect(configError.message).toContain('accessor');
-                expect(getterCalls).toBe(0);
-            }
         });
 
         it('rejects non-plain root and nested object shapes with their paths', () => {
@@ -246,6 +248,16 @@ describe('Configuration Architecture', () => {
             }));
             expectConfigError(error, 'worker.timeoutMs');
             expect((error as AOTUIError).message).toContain('[logger.maxSystemLogs]');
+        });
+
+        it.each([
+            ['worker.timeoutMs', (value: number) => ({ worker: { timeoutMs: value } }), 1_000, 300_000],
+            ['logger.maxSystemLogs', (value: number) => ({ logger: { maxSystemLogs: value } }), 10, 10_000],
+            ['logger.maxAppLogs', (value: number) => ({ logger: { maxAppLogs: value } }), 10, 10_000],
+        ] as const)('rejects NaN at %s and accepts both bounds', (path, createInput, minimum, maximum) => {
+            expectConfigError(captureError(() => defineRuntimeConfig(createInput(Number.NaN) as any)), path);
+            expect(() => defineRuntimeConfig(createInput(minimum) as any)).not.toThrow();
+            expect(() => defineRuntimeConfig(createInput(maximum) as any)).not.toThrow();
         });
 
         it('rejects non-numeric leaf values without invoking coercion hooks', () => {

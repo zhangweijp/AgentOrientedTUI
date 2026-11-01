@@ -17,7 +17,17 @@ try {
     const coreDoc = await fs.readFile(path.join(consumer, 'node_modules/@aotui/runtime/docs/core-public-entry.md'), 'utf8');
     const example = coreDoc.match(/<!-- b1-example:start -->\n```ts\n([\s\S]*?)\n```\n<!-- b1-example:end -->/)?.[1]; assert.ok(example);
     await fs.writeFile(path.join(folder, 'core-example.ts'), example);
-    await fs.writeFile(path.join(folder, 'tool-types.ts'), `import type { RefTarget, OperationResult, ViewToolInvocationTerminal, SafeOrdinaryInvoker } from '@aotui/runtime/core';
+    await fs.writeFile(path.join(folder, 'tool-types.ts'), `import type { RefTarget, OperationResult, ViewToolInvocationTerminal, SafeOrdinaryInvoker, AppSnapshotV2, SnapshotRead } from '@aotui/runtime/core';
+// @ts-expect-error AppSnapshotV2 is the only public snapshot type name.
+import type { AppSnapshot } from '@aotui/runtime/core';
+// @ts-expect-error Validation envelope details are not part of the Core package API.
+import type { SnapshotDraftEnvelope } from '@aotui/runtime/core';
+// @ts-expect-error Snapshot health is represented by SnapshotRead.status.
+import type { SnapshotHealth } from '@aotui/runtime/core';
+// @ts-expect-error Factory return types are inferred rather than exported as aliases.
+import type { ViewOwnedTools } from '@aotui/runtime/core';
+// @ts-expect-error Factory return types are inferred rather than exported as aliases.
+import type { StateSession } from '@aotui/runtime/core';
 // @ts-expect-error Removed entity-only transport type is not a public API.
 import type { VersionedEntityResource } from '@aotui/runtime/core';
 // @ts-expect-error Removed entity-only terminal is not a public API.
@@ -32,7 +42,8 @@ const result: OperationResult = { success: false, effects: 'partial', error: { c
 result.effects = 'verified';
 const terminal: ViewToolInvocationTerminal = { phase: 'entered-returned', result: { success: false }, failureEffects: 'partial' };
 const invoke: SafeOrdinaryInvoker = async _args => terminal;
-void [entity, result, invoke];
+const readySnapshot = (read: SnapshotRead): AppSnapshotV2 | undefined => read.status === 'ready' ? read.snapshot : undefined;
+void [entity, result, invoke, readySnapshot];
 `);
     const compiler = { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, skipLibCheck: false,
         lib: ['ES2022'], types: [], outDir: './core-out' };

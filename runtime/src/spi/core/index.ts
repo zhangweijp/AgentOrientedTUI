@@ -24,12 +24,6 @@ export {
     createDesktopId,
     createAppId,
     createViewId,
-    // Type Guards
-    isDesktopId,
-    isAppId,
-    isViewId,
-    // Unsafe Casts (backward compatibility)
-
     // Constants
     ID_PREFIXES,
 } from './id-factory.js';
@@ -71,8 +65,6 @@ export type { UpdateSignal } from './signals.js';
 export {
     ERROR_CODES,
     AOTUIError,
-    createOperationError,
-    failedResult,
 } from './errors.js';
 
 export type { ErrorCode } from './errors.js';

@@ -7,7 +7,7 @@
  * to create and configure AOTUI Runtime instances.
  * 
  * Note: This is NOT the Developer SDK. For building TUI apps, use @aotui/sdk:
- *   import { createTUIApp, View, defineParams, useViewTypeTool } from '@aotui/sdk';
+ *   import { createTUIApp, View, useViewTypeTool } from '@aotui/sdk';
  */
 
 // Facade 函数

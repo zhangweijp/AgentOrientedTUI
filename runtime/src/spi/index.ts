@@ -21,12 +21,9 @@ export {
     createAppId,
     createDesktopId,
     createViewId,
-    isAppId,
-    isDesktopId,
-    isViewId,
 } from './core/id-factory.js';
 export type { OperationError, OperationResult } from './core/operations.js';
-export { AOTUIError, ERROR_CODES, createOperationError, failedResult } from './core/errors.js';
+export { AOTUIError, ERROR_CODES } from './core/errors.js';
 export type { ErrorCode } from './core/errors.js';
 export type { UpdateSignal } from './core/signals.js';
 export type { LLMOutputEvent, LLMOutputEventMeta, LLMOutputListener } from './core/llm-output.js';
@@ -37,8 +34,7 @@ export type { AppKernelConfig, AppReinitializeContext, SignalPolicy } from './ap
 export type { AppContext } from './app/store.interface.js';
 export type { AppLaunchConfig } from './app/app-config.interface.js';
 export type { TUIAppFactory } from './app/app-factory.interface.js';
-export { isTUIAppFactory, validateManifest, isValidAppName } from './app/index.js';
-export type { AOAppEntry, AOAppManifest, AOAppRuntime, AOAppView } from './app/aoapp.js';
+export { isTUIAppFactory } from './app/index.js';
 export type { IRefExporter } from './app/ref-exporter.interface.js';
 export type { IRefRegistry, IViewMeta } from './app/public-types.js';
 

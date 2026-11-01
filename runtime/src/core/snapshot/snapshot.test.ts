@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { copyJson, createSnapshotCore, refKey, validatePreparedV2Draft } from './index.js';
-import type { PreparedAppSnapshotDraftV2, SnapshotCore, SnapshotStoreOptions } from './index.js';
+import { copyJson } from './json.js';
+import { createSnapshotCore } from './store.js';
+import { refKey } from './snapshot-support.js';
+import { validatePreparedV2Draft } from './v2-validator.js';
+import type { PreparedAppSnapshotDraftV2, SnapshotCore, SnapshotStoreOptions } from './types.js';
 
 const KEY = refKey('workspace', 'mount_1', 'tasks[0]');
 const TOOL = JSON.stringify(['task_app', 'Workspace', 'complete_task']);

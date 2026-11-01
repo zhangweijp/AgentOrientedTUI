@@ -6,13 +6,12 @@
  */
 
 import type { IElementVisitor, ChildrenTraverser } from './interface.js';
-import type { TransformContext } from '../types.js';
 
 export const viewVisitor: IElementVisitor = {
     name: 'view',
     priority: 20,
 
-    matches(el: Element, ctx: Readonly<TransformContext>): boolean {
+    matches(el: Element): boolean {
         const viewAttr = el.getAttribute('view');
         // View definition if:
         // 1. has 'view' attribute AND NO 'href' (href implies it's a link)
@@ -26,7 +25,6 @@ export const viewVisitor: IElementVisitor = {
 
     transform(
         el: Element,
-        ctx: TransformContext,
         children: ChildrenTraverser
     ): string {
         const viewAttr = el.getAttribute('view');
@@ -40,12 +38,12 @@ export const viewVisitor: IElementVisitor = {
                 `This View will be skipped. Please ensure SDK View outputs id.`
             );
             // Traverse children but don't wrap in <view>
-            const childMarkup = children(el, ctx);
+            const childMarkup = children(el);
             return childMarkup.join('\n');
         }
 
         // Recursively process children
-        const childMarkup = children(el, ctx);
+        const childMarkup = children(el);
         const childrenContent = childMarkup.join('\n');
 
         return `\n<view id="${viewId}" name="${viewName}">\n${childrenContent}\n</view>\n`;

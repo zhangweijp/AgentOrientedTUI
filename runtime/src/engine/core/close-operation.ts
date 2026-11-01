@@ -34,7 +34,7 @@ export function createCloseOperation<R extends CloseReport>(inspect: () => R, co
         waiters.clear();return final;
     });
     void completed.catch(() => {
-        for (const waiter of waiters) { clearTimeout(waiter.timer);waiter.reject(closeError('LEGACY_CLOSE_FAILED')); }
+        for (const waiter of waiters) { clearTimeout(waiter.timer);waiter.reject(closeError('CLOSE_COMPLETION_FAILED')); }
         waiters.clear();
     });
     return Object.freeze({ completion: completed, inspect: snapshot, wait(options?: { readonly timeoutMs?: number }) {

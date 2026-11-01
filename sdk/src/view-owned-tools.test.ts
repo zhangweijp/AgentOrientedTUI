@@ -29,7 +29,6 @@ function setup(component: () => any, options?: { instanceId?: string; container?
             }, container);
         },
         async close() {
-            (kernel as any).componentRenderer?.unmount();
             await kernel.onClose();
             container.remove();
         },
@@ -40,7 +39,7 @@ function setup(component: () => any, options?: { instanceId?: string; container?
 }
 const refMap = (kernel: AppKernel) => Object.fromEntries(kernel.getViewRefs().map(ref => [`${ref.viewId}:${ref.refId}`, ref.value]));
 
-describe('M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel', () => {
+describe('View-local useViewTypeTool with real Preact and AppKernel', () => {
     it('uses mounted Semantic View bindings without the retired View/type registries or tree', async () => {
         function Root() { return h(View, { id: 'root', type: 'Root' }, h('p', {}, 'Ready')); }
         const x = setup(Root);
@@ -93,7 +92,9 @@ describe('M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel', ()
             expect(second).toMatchObject({ success: true, data: { file: 'package.json' } });
             expect(appHover).toHaveBeenCalledTimes(1);
             expect(pkgHover).toHaveBeenCalledTimes(1);
-            expect(x.container.querySelectorAll('[data-view-generation]')).toHaveLength(2);
+            const instanceIds = Array.from(x.container.querySelectorAll('[data-view-instance-id]'))
+                .map(node => node.getAttribute('data-view-instance-id'));
+            expect(new Set(instanceIds).size).toBe(2);
         } finally {
             await x.close();
         }
@@ -196,9 +197,8 @@ describe('M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel', ()
         }
     });
 
-    it('onClose unmounts the exact View and releases its Ref and View-local Tool', async () => {
+    it('unmounting a View releases its Ref and View-local Tool', async () => {
         let setOpen!: (open: boolean) => void;
-        const onClose = vi.fn(() => setOpen(false));
         function Content() {
             const record = useDataRef('record', { id: 'A' });
             useViewTypeTool('inspect', { description: 'Inspect', params: {} },
@@ -209,29 +209,17 @@ describe('M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel', ()
             const [open, update] = useState(true);
             setOpen = update;
             return open
-                ? h(View, { id: 'fd_0', type: 'FileDetail', onClose }, h(Content, {}))
+                ? h(View, { id: 'fd_0', type: 'FileDetail' }, h(Content, {}))
                 : null;
         }
         const x = setup(Root);
         try {
             await x.open();
-            const node = x.container.querySelector('[data-view-id="fd_0"]')!;
             expect(refMap(x.kernel)['fd_0:record']).toEqual({ id: 'A' });
             expect(x.kernel.getViewOwnedToolDefinitions()[0]?.targets).toHaveLength(1);
 
-            const CustomEventCtor = x.container.ownerDocument.defaultView!.CustomEvent;
-            node.dispatchEvent(new CustomEventCtor('aotui:view-close', {
-                bubbles: true, detail: { viewId: 'fd_1' },
-            }));
-            await sleep(20);
-            expect(onClose).not.toHaveBeenCalled();
-            expect(x.kernel.getViewOwnedViewInstances()).toHaveLength(1);
-
-            node.dispatchEvent(new CustomEventCtor('aotui:view-close', {
-                bubbles: true, detail: { viewId: 'fd_0' },
-            }));
+            setOpen(false);
             await sleep(35);
-            expect(onClose).toHaveBeenCalledOnce();
             expect(x.kernel.getViewOwnedViewInstances()).toHaveLength(0);
             expect(refMap(x.kernel)).toEqual({});
             expect(x.kernel.getViewOwnedToolDefinitions()).toEqual([]);
@@ -242,7 +230,7 @@ describe('M4 Stage 1: View-local useViewTypeTool, real Preact and AppKernel', ()
 
 });
 
-describe('M4 Stage 1: committed lifecycle and Tool metadata updates', () => {
+describe('Committed lifecycle and Tool metadata updates', () => {
     it('APP_CLOSE fully unmounts Tool-owning Views, and APP_OPEN gets fresh IDs', async () => {
         const handler = vi.fn(async () => ({ success: true }));
         function Content() {
@@ -328,7 +316,7 @@ describe('M4 Stage 1: committed lifecycle and Tool metadata updates', () => {
     });
 });
 
-describe('M4 Stage 1: deterministic multi-View lifecycle stress', () => {
+describe('Deterministic multi-View lifecycle stress', () => {
     it('60 rapid commits preserve exclusive owners and never resurrect removed Tools', async () => {
         type Flags = Record<string, boolean>;
         let update!: (state: { mounted: Flags; enabled: Flags }) => void;
@@ -388,7 +376,7 @@ describe('M4 Stage 1: deterministic multi-View lifecycle stress', () => {
     });
 });
 
-describe('M4 Stage 1: stable canonical Tool schema', () => {
+describe('Stable canonical Tool schema', () => {
     it('a merely reordered parameter object does not recreate the Tool binding', async () => {
         let reorder!: (state: boolean) => void;
         function Content() {
@@ -438,7 +426,7 @@ describe('M4 Stage 1: stable canonical Tool schema', () => {
     });
 });
 
-describe('M4 Stage 1: failed mount is not a partially published Tool', () => {
+describe('Failed mount is not a partially published Tool', () => {
     it('rejects incompatible same-type definitions without exposing a conflicting group', async () => {
         let conflict = true;
         function Content({ description }: { description: string }) {

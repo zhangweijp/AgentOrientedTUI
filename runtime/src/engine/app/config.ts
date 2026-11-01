@@ -38,10 +38,7 @@ export interface AppConfigEntry {
      */
     workerScript?: string;
 
-    /**
-     * App 简介 (兼容旧字段)
-     * - 建议使用 whatItIs + whenToUse
-     */
+    /** Short App summary shown in Desktop State and Tool discovery. */
     description?: string;
 
     /** App 是什么 (用于 Desktop State 展示) */

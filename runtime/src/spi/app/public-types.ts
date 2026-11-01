@@ -47,12 +47,6 @@ export interface IViewMeta {
      */
     readonly viewType?: string;
 
-    /** SDK View mount identity; distinct from the stable viewId. */
-    readonly viewGeneration?: string;
-
-    /** Runtime-owned current mount identity; never a developer-assigned viewId. */
-    readonly viewInstanceId?: string;
-
     /** 父 App 的唯一标识符 */
     readonly appId: string;
 

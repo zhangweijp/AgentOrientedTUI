@@ -97,22 +97,19 @@ export function captureStateValue(input: unknown, limits: StateValueLimits): Rea
         return bytes > limits.maxValueBytes ? rejectState('CAPACITY_EXCEEDED') : Object.freeze({ status: 'captured', snapshot: Object.freeze({ value, bytes }) });
     } catch (error) { return rejectState(error instanceof SnapshotDataError && /budget|exceed/i.test(error.message) ? 'CAPACITY_EXCEEDED' : 'SERIALIZATION_FAILED'); }
 }
-export type DecodedState = Readonly<{ status: 'found'; format: 'v1' | 'legacy-raw'; snapshot: CapturedStateValue }> | Rejected;
+export type DecodedState = Readonly<{ status: 'found'; snapshot: CapturedStateValue }> | Rejected;
 export function decodeStateRecord(text: string, limits: StateValueLimits): DecodedState {
     if (typeof text !== 'string') return rejectState('CORRUPT');
     if (utf8Size(text) > limits.maxRecordBytes) return rejectState('CAPACITY_EXCEEDED');
     let parsed: unknown;
     try { parsed = JSON.parse(text); } catch { return rejectState('CORRUPT'); }
     const fields = stateFields(parsed);
-    const candidate = fields && ['version', 'updatedAt', 'value'].every(k => Object.hasOwn(fields, k));
-    let value = parsed, format: 'v1' | 'legacy-raw' = 'legacy-raw';
-    if (candidate) {
-        if (fields.version!.value !== 1 || Object.keys(fields).length !== 3) return rejectState('UNSUPPORTED_FORMAT');
-        if (typeof fields.updatedAt!.value !== 'number' || !Number.isFinite(fields.updatedAt!.value)) return rejectState('CORRUPT');
-        value = fields.value!.value;format = 'v1';
-    }
+    if (!fields || Object.keys(fields).length !== 3 || ['version', 'updatedAt', 'value'].some(k => !Object.hasOwn(fields, k))) return rejectState('UNSUPPORTED_FORMAT');
+    if (fields.version!.value !== 1) return rejectState('UNSUPPORTED_FORMAT');
+    if (typeof fields.updatedAt!.value !== 'number' || !Number.isFinite(fields.updatedAt!.value)) return rejectState('CORRUPT');
+    const value = fields.value!.value;
     const captured = captureStateValue(value, limits);
-    return captured.status === 'rejected' ? rejectState(captured.issue.code === 'CAPACITY_EXCEEDED' ? 'CAPACITY_EXCEEDED' : 'CORRUPT') : Object.freeze({ status: 'found', format, snapshot: captured.snapshot });
+    return captured.status === 'rejected' ? rejectState(captured.issue.code === 'CAPACITY_EXCEEDED' ? 'CAPACITY_EXCEEDED' : 'CORRUPT') : Object.freeze({ status: 'found', snapshot: captured.snapshot });
 }
 export function encodeStateRecord(snapshot: CapturedStateValue, updatedAt: number, limits: StateValueLimits): Readonly<{ status: 'encoded'; text: string; bytes: number }> | Rejected {
     if (typeof updatedAt !== 'number' || !Number.isFinite(updatedAt)) return rejectState('CLOCK_INVALID');

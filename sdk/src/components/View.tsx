@@ -12,10 +12,10 @@
  * Transformer转换为: <view id="fd_0" type="FileDetail" name="File: auth.ts">...</view>
  */
 import { ComponentChildren, h } from "preact";
-import { useMemo, useEffect, useRef as usePreactRef, useContext } from "preact/compat";
+import { useContext, useMemo, useRef as usePreactRef } from 'preact/hooks';
 import { AppRuntimeContext } from "../context/AppRuntimeContext.js";
 import { ViewRuntimeContext } from "../contexts/view-runtime-context.js";
-import { createViewId, type ViewID } from "@aotui/runtime/spi";
+import { createViewId } from "@aotui/runtime/spi";
 
 // M3: per-mount View identity, independent of list position and DOM node reuse.
 // AppInstance ID (owned by Runtime) namespaces this counter across Worker resets.
@@ -58,17 +58,12 @@ export interface ViewProps {
   /** Child elements */
   children?: ComponentChildren;
 
-  /**
-   * Optional close handler for system-initiated dismount.
-   * Use to update state and unmount this View.
-   */
-  onClose?: () => void;
 }
 
 /**
  * View组件
  */
-export function View({ id, type, name, children, onClose }: ViewProps) {
+export function View({ id, type, name, children }: ViewProps) {
   // Validate ID format
   if (!id) {
     throw new Error(
@@ -111,7 +106,7 @@ export function View({ id, type, name, children, onClose }: ViewProps) {
     throw new Error(`[AOTUI SDK] Empty AppRuntimeContext`);
   }
 
-  return h(ComponentModeView, { id, type, name, children, onClose });
+  return h(ComponentModeView, { id, type, name, children });
 }
 
 
@@ -119,7 +114,7 @@ export function View({ id, type, name, children, onClose }: ViewProps) {
 /**
  * 组件模式View (RFC-027新模式 + View Type机制)
  */
-function ComponentModeView({ id, type, name, children, onClose }: ViewProps) {
+function ComponentModeView({ id, type, name, children }: ViewProps) {
   const appContext = useContext(AppRuntimeContext)!;
 
   // Derive type and display name
@@ -151,37 +146,16 @@ function ComponentModeView({ id, type, name, children, onClose }: ViewProps) {
     }
   }, [viewId, viewType, viewToolsPort]);
 
-  useEffect(() => {
-    if (!onClose || !containerRef.current) {
-      return;
-    }
-
-    const handler = (event: Event) => {
-      const detail = (event as CustomEvent).detail as { viewId?: ViewID } | undefined;
-      if (detail?.viewId && detail.viewId !== viewId) {
-        return;
-      }
-      onClose();
-    };
-
-    const node = containerRef.current;
-    node.addEventListener('aotui:view-close', handler as EventListener);
-    return () => {
-      node.removeEventListener('aotui:view-close', handler as EventListener);
-    };
-  }, [onClose, viewId]);
-
   // 构建ViewRuntimeContext (供子组件使用)
   const viewRuntimeContext = useMemo(() => ({
     meta: {
       viewId: viewId,
       viewType: viewType,  // ✅ 传递type信息
-      viewGeneration: generationRef.current!, // M3 compatibility
-      get viewInstanceId() { return instanceRef.current ?? undefined; },
       appId: appContext.appId,
       desktopId: appContext.desktopId,
       markDirty: appContext.markDirty,
     },
+    viewGeneration: generationRef.current!,
     refs: {
       registerRef: (refId: string, data: object) => {
         appContext.refExporter.registerRef(viewId, refId, data);
@@ -221,7 +195,6 @@ function ComponentModeView({ id, type, name, children, onClose }: ViewProps) {
         ref: attachContainer,
         id: viewId,
         'data-view-id': viewId,
-        'data-view-generation': generationRef.current,
         'data-view-type': viewType,  // ✅ 添加type属性
         'data-view-name': displayName,
         view: displayName

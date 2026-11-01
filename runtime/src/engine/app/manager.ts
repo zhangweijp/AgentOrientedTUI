@@ -19,9 +19,9 @@ import type { AppID, AppState, DesktopID, ReinitializeDesktopAppsOptions, Reinit
 import { createAppId } from '../../spi/index.js';
 import type { SandboxCloseReport } from './worker-sandbox.js';
 import type { AppManagerCloseReport, AppManagerCloseOperation } from '../../spi/runtime/close.interface.js';
-import { closeError, closeVoid, createCloseOperation, newCloseState, mergeCloseReport, sandboxCloseReport, addCloseFailure, snapshotClose, freezeClose, type CloseState } from '../core/close-operation.js';
+import { closeError, createCloseOperation, newCloseState, mergeCloseReport, sandboxCloseReport, addCloseFailure, snapshotClose, freezeClose, type CloseState } from '../core/close-operation.js';
 import { WorkerSandbox } from './worker-sandbox.js';
-import { WorkerPool, type WorkerPoolReport } from './worker-pool.js';
+import { WorkerPool } from './worker-pool.js';
 import { RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 import type { AppInteractionOptions, AppScopeResult } from '../../spi/runtime/app-interaction.interface.js';
 import type { ScopePolicy } from '../../core/invocation/scoped-interaction.js';
@@ -144,7 +144,6 @@ export class AppManager {
     private readonly inFlight = new Set<Promise<unknown>>();
     private readonly appOperations = new Map<AppID, { kind: string; promise: Promise<unknown> }>();
     private closing?: AppManagerCloseOperation;
-    private voidClose?: Promise<void>;
     private cleanupPromise?: Promise<AppManagerCloseReport>;
     private phase: 'active' | 'closing' | 'settled' = 'active';
     private intent: 'close' | 'delete' | null = null;
@@ -156,8 +155,6 @@ export class AppManager {
         this.ownsWorkerPool = !options?.workerPool;
         this.workerPool = options?.workerPool ?? new WorkerPool({ ...(options?.runtimeConfig ?? RUNTIME_DEFAULTS).worker.pool });
     }
-    closeWorkerPool(): Promise<WorkerPoolReport | null> { return this.ownsWorkerPool ? this.workerPool.destroy() : Promise.resolve(null); }
-    getWorkerPoolReport(): WorkerPoolReport | null { return this.ownsWorkerPool ? this.workerPool.getReport() : null; }
     private assertActive(): void { if (this.phase !== 'active') throw closeError('APP_MANAGER_CLOSED'); }
     private assertExpectedInstance(worker: WorkerSandbox | undefined, expectedInstanceId?: string): void {
         if (expectedInstanceId !== undefined && (!worker?.appInstanceId || worker.appInstanceId !== expectedInstanceId))
@@ -361,20 +358,11 @@ export class AppManager {
         });
         return this.closing;
     }
-    closeAll(): Promise<void> { return this.voidClose ??= closeVoid(this.beginClose().completion, 'APP_CLOSE_FAILED'); }
-    deleteAll(): Promise<void> {
-        try { const operation = this.beginClose('delete');return this.voidClose ??= closeVoid(operation.completion, 'APP_CLOSE_FAILED'); }
-        catch (error) { return Promise.reject(error); }
-    }
     cleanupAsync(): Promise<AppManagerCloseReport> {
         return this.cleanupPromise ??= this.beginClose().completion.then(report => {
             for (const [id] of this.installedApps) if (!this.workers.has(id)) this.installedApps.delete(id);
             return report;
         });
-    }
-    cleanup(): void {
-        const cleaning = this.cleanupAsync();void cleaning.catch(() => {});
-        if (!this.workers.size && !this.inFlight.size) this.installedApps.clear();
     }
     async openApp(id: AppID): Promise<void> {
         this.assertActive();const meta = this.installedApps.get(id);

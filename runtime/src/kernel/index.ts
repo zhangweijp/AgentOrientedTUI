@@ -3,7 +3,6 @@ import type {
     IKernel,
     DesktopID,
     IDesktop,
-    AppID,
     DesktopState,
     IDesktopManager,
     IRuntimeContext, // New
@@ -26,12 +25,6 @@ import type { ScopePolicy } from '../core/invocation/scoped-interaction.js';
  * - Exposes Semantic App Scope creation
  * - Manages Desktop lifecycle (suspend, resume, serialize, restore)
  * 
- * @example
- * ```typescript
- * // Use createKernel factory to get a properly configured Kernel
- * import { createKernel } from '@aotui/runtime';
- * const kernel = createKernel(desktopManager);
- * ```
  */
 export class Kernel implements IKernel {
     private shutdownReason?: string;
@@ -262,10 +255,10 @@ export class Kernel implements IKernel {
         const accepted = [...this.inFlight];
         const managerTask = (async () => {
             try { this.managerClose = this.desktopManager.beginShutdown();this.managerReport = await this.managerClose.completion;this.managerClose = undefined; }
-            catch { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'legacy', ['MANAGER_CLEANUP_FAILED']); }
+            catch { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'manager', ['MANAGER_CLEANUP_FAILED']); }
         })();
         void Promise.allSettled([managerTask, ...accepted]).then(results => {
-            if (results[0]?.status === 'rejected') { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'legacy', ['MANAGER_CLEANUP_FAILED']); }
+            if (results[0]?.status === 'rejected') { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'manager', ['MANAGER_CLEANUP_FAILED']); }
             this.closeState.state = 'settled';this.isShutdownComplete = true;complete(this.report());
         });
         return this.closing;

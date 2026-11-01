@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createSnapshotCore, validatePreparedV2Draft } from './index.js';
+import { createSnapshotCore } from './store.js';
+import { validatePreparedV2Draft } from './v2-validator.js';
 import { canonicalJson } from './json.js';
 
 const text = '中文😀\n"\\\ud800';

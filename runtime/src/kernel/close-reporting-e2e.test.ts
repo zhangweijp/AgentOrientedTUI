@@ -81,7 +81,7 @@ it('C2-25 Desktop close safely transfers a lease without claiming its borrowed R
         await install(runtime,f,'first');await install(runtime,f,'second');const first=sandbox(runtime,'first'),second=sandbox(runtime,'second'),workers=[first.lease.worker,second.lease.worker];
         const closed=await runtime.beginDesktopShutdown('first').completion;expect(closed).toMatchObject({ok:true,resourcesReleased:true,pool:{ownership:'not-owned',report:null},apps:{accepted:1,settled:1}});
         expect(first.getCloseReport()).toMatchObject({host:{worker:'transferred'},lease:{disposition:'pooled'}});expect(workers.every(worker=>worker.threadId>0)).toBe(true);
-        expect((runtime as any).desktopManager.getWorkerPoolReport()).toMatchObject({state:'open',total:2,idle:1,leased:1});expect((await invoke(runtime,'second')).success).toBe(true);
+        expect((await invoke(runtime,'second')).success).toBe(true);
         const report=await runtime.beginShutdown().completion;expect(report).toMatchObject({ok:true,apps:{accepted:1,settled:1},desktops:{accepted:1,settled:1},pool:{report:{state:'closed',total:0}}});expect(workers.map(worker=>worker.threadId)).toEqual([-1,-1]);await facts('desktop-transfer',{closed,report,first:first.getCloseReport(),threadIds:workers.map(worker=>worker.threadId)});
     }finally{await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
 },15000);

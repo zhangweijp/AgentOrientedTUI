@@ -31,17 +31,20 @@ describe('DesktopManager', () => {
         });
     });
 
-    describe('destroy()', () => {
-        it('should destroy existing desktop', async () => {
+    describe('beginDesktopShutdown()', () => {
+        it('should close and remove an existing desktop after confirmed release', async () => {
             const id = await manager.create();
             expect(manager.has(id)).toBe(true);
 
-            await manager.destroy(id);
+            const operation = manager.beginDesktopShutdown(id);
+            expect((await operation.completion).resourcesReleased).toBe(true);
             expect(manager.has(id)).toBe(false);
         });
 
-        it('should be idempotent for non-existent desktop', async () => {
-            await expect(manager.destroy('non_existent')).resolves.not.toThrow();
+        it('reports a missing desktop without inventing resources', async () => {
+            await expect(manager.beginDesktopShutdown('non_existent').completion).resolves.toMatchObject({
+                found: false, resourcesReleased: true, desktops: { accepted: 0, settled: 0 },
+            });
         });
     });
 

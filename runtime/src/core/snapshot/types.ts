@@ -83,8 +83,6 @@ export interface AppSnapshotV2 {
     readonly tools: Readonly<Record<string, ToolDescriptorV2>>;
     readonly contentDigest: string;
 }
-export type AppSnapshot = AppSnapshotV2;
-
 export type SnapshotDraftEnvelope = Readonly<{
     appId: string;
     instanceId: string;
@@ -123,21 +121,21 @@ export interface SnapshotIssue {
 }
 
 export type CommitResult =
-    | Readonly<{ status: 'published' | 'unchanged'; snapshot: AppSnapshot }>
+    | Readonly<{ status: 'published' | 'unchanged'; snapshot: AppSnapshotV2 }>
     | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
 
 export type SnapshotRead =
-    | Readonly<{ status: 'ready'; snapshot: AppSnapshot }>
+    | Readonly<{ status: 'ready'; snapshot: AppSnapshotV2 }>
     | Readonly<{ status: 'unready' }>
-    | Readonly<{ status: 'degraded'; lastGood?: AppSnapshot; issue: SnapshotIssue }>
+    | Readonly<{ status: 'degraded'; lastGood?: AppSnapshotV2; issue: SnapshotIssue }>
     | Readonly<{ status: 'stopped' }>;
 
 export type SnapshotLookup =
-    | Readonly<{ status: 'found'; snapshot: AppSnapshot }>
+    | Readonly<{ status: 'found'; snapshot: AppSnapshotV2 }>
     | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
 
 export interface SnapshotLease {
-    readonly snapshot: AppSnapshot;
+    readonly snapshot: AppSnapshotV2;
     /** null means retained by an explicit owner until release/dispose. */
     readonly expiresAt: number | null;
     release(): void;

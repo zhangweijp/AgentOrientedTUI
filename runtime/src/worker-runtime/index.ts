@@ -37,7 +37,7 @@ import type {
 } from '../spi/worker-protocol/index.js';
 
 // [RFC-001] Transformer for Worker-Side Transformation
-import { createViewFragmentExtractor } from './view-fragment-extractor.js';
+import { extractViewFragments } from './view-fragment-extractor.js';
 import { captureDOMSnapshot } from './dom-snapshot-producer.js';
 
 // Runtime SPI types
@@ -96,7 +96,6 @@ let domObserver: MutationObserver | null = null;
 let domUpdateTimer: ReturnType<typeof setTimeout> | null = null;
 const DOM_UPDATE_THROTTLE_MS = 16;  // ~60fps 节流
 
-const extractViewFragments = createViewFragmentExtractor();
 
 // [RFC-012] Signal Policy - 控制何时触发 UpdateSignal
 let signalPolicy: SignalPolicy = 'auto';
@@ -276,7 +275,6 @@ async function handleReset(requestId: RequestID, initGeneration?: number): Promi
 }
 
 async function handleInit(msg: InitMessage): Promise<void> {
-    const persistenceInit = Object.hasOwn(msg, 'persistence');
     if (msg.appInstanceId && msg.appInstanceId === lastInitInstanceId) {
         sendError(msg.requestId, 'APP_INSTANCE_REUSE_UNSUPPORTED', 'A logical App instance can initialize only once');return;
     }
@@ -687,7 +685,7 @@ function pushSemanticSnapshot(): void {
         const now = Date.now();
         const draft = copyJson(captureDOMSnapshot({ appId, instanceId: appInstanceId,
             producerSeq, sourceEpoch, capturedAt: now, container: appContainer,
-            fragments: extractViewFragments(appContainer, appId, now), kernel: app }), {
+            fragments: extractViewFragments(appContainer), kernel: app }), {
                 maxDepth: DEFAULT_SNAPSHOT_LIMITS.maxDepth,
                 maxNodes: DEFAULT_SNAPSHOT_LIMITS.maxNodes,
                 maxApproxBytes: DEFAULT_SNAPSHOT_LIMITS.maxSnapshotBytes * 2,

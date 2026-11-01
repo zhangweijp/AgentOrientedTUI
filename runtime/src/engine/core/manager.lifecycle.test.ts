@@ -21,7 +21,7 @@ describe('DesktopManager admission and captured identity', () => {
         const completion = new Promise<DesktopCloseReport>(resolve => { release = () => { state.state = 'settled';state.resourcesReleased = true;state.desktops = { accepted: 1, settled: 1, pending: 0, notVerifiedReleased: 0 };resolve(report()); }; });
         const operation = createCloseOperation(report, completion);vi.spyOn(held, 'beginClose').mockReturnValue(operation);const otherClose = vi.spyOn(other, 'beginClose');
         const shutdown = manager.beginShutdown();expect(manager.beginShutdown()).toBe(shutdown);expect(otherClose).toHaveBeenCalledOnce();
-        expect(manager.getWorkerPoolReport().state).not.toBe('open');await expect(manager.create('late')).rejects.toMatchObject({ code: 'RUNTIME_SHUTDOWN' });
+        expect(shutdown.inspect().pool.report?.state).not.toBe('open');await expect(manager.create('late')).rejects.toMatchObject({ code: 'RUNTIME_SHUTDOWN' });
         expect(shutdown.inspect().state).toBe('closing');
         release();const result = await shutdown.completion;expect(result).toMatchObject({ ok: true, pool: { ownership: 'owned', report: { state: 'closed', total: 0 } }, desktops: { accepted: 2, settled: 2, pending: 0 } });
         // The barrier is a controlled report, not a real Worker: close its actual empty object too.
@@ -33,7 +33,7 @@ describe('DesktopManager admission and captured identity', () => {
         state.desktops = { accepted: 1, settled: 1, pending: 0, notVerifiedReleased: 1 };
         const report: DesktopCloseReport = freezeClose({ ...snapshotClose(state), scope: 'desktop', intent: 'close', desktopId: 'unknown', found: true });
         vi.spyOn(desktop, 'beginClose').mockReturnValue(createCloseOperation(() => report, Promise.resolve(report)));
-        await manager.destroy('unknown');expect(manager.get('unknown')).toBe(desktop);
+        await manager.beginDesktopShutdown('unknown').completion;expect(manager.get('unknown')).toBe(desktop);
         const final = await manager.beginShutdown().completion;expect(final.resourcesReleased).toBe(false);expect(manager.has('unknown')).toBe(true);
         await original().completion;
     });
@@ -42,10 +42,10 @@ describe('DesktopManager admission and captured identity', () => {
         let release!: () => void;const state = newCloseState('desktop');state.desktops = { accepted: 1, settled: 0, pending: 1, notVerifiedReleased: 1 };
         const report = (): DesktopCloseReport => freezeClose({ ...snapshotClose(state), scope: 'desktop', intent: 'close', desktopId: 'same', found: true });
         const completion = new Promise<DesktopCloseReport>(resolve => { release = () => { state.state = 'settled';state.resourcesReleased = true;resolve(report()); }; });
-        const original = old.beginClose!.bind(old);vi.spyOn(old, 'beginClose').mockReturnValue(createCloseOperation(report, completion));const destroying = manager.destroy('same');
+        const original = old.beginClose!.bind(old);vi.spyOn(old, 'beginClose').mockReturnValue(createCloseOperation(report, completion));const destroying = manager.beginDesktopShutdown('same');
         // Force the impossible-under-public-API replacement to exercise the identity guard.
         (manager as any).desktops.delete('same');await manager.create('same');const next = manager.get('same');
-        release();await destroying;expect(manager.get('same')).toBe(next);await original().completion;await manager.shutdown();
+        release();await destroying.completion;expect(manager.get('same')).toBe(next);await original().completion;await manager.shutdown();
     });
     it('missing ID has no historical resources or Desktop count', async () => {
         const manager = new DesktopManager(), report = await manager.beginDesktopShutdown('missing').completion;

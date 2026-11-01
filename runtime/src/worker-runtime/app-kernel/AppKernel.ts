@@ -6,7 +6,6 @@
  * Worker 内的 App 执行引擎，负责：
  * - App 生命周期管理 (onOpen, onClose...)
  * - Component View mount and owned Tool lifecycle
- * - system close events from the Runtime Bridge
  * - source-bound View Tool lifecycle and invocation
  * - Semantic projection and Ref export
  *
@@ -15,7 +14,6 @@
 
 import type {
     AppID,
-    ViewID,
     OperationResult,
     AppContext,
     IAOTUIApp,
@@ -23,7 +21,7 @@ import type {
     IRefExporter, // [RFC-002]
 } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
-import type { DataPayload, ViewToolInvocationTerminal } from '../../spi/worker-protocol/index.js';
+import type { ViewToolInvocationTerminal } from '../../spi/worker-protocol/index.js';
 import type { SafeRefInvoker } from '../../spi/runtime/view-owned-tools.interface.js';
 import { compileOrdinaryParams, type OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
 import { compileSnapshotValueParams, type SnapshotValueParameterContract } from '../../core/tool/snapshot-value-parameter-contract.js';
@@ -194,13 +192,6 @@ export class AppKernel implements IAOTUIApp, IRefExporter {
         return appName;
     }
 
-    /**
-     * Tool 前缀语义名（供 Worker 侧导出 Tool Key）
-     */
-    getToolAppName(): string {
-        return this.toolAppName;
-    }
-
     get id(): AppID {
         return this._id;
     }
@@ -222,13 +213,8 @@ export class AppKernel implements IAOTUIApp, IRefExporter {
             this.initializeDOMStructure();
             await this.initializeFromComponent();
             this.assertActive();
-            for (const [name, listener] of this.eventListeners()) container.addEventListener(name, listener);
         });
         void this.openPromise.catch(() => {});return this.openPromise;
-    }
-
-    private eventListeners(): Array<[string, EventListener]> {
-        return [['aotui:system', this.handleSystemEvent]];
     }
 
     onClose(): Promise<void> {
@@ -246,9 +232,6 @@ export class AppKernel implements IAOTUIApp, IRefExporter {
             try { await this.componentRenderer?.unmount(); } catch { failed = true; }
             this.componentRenderer = undefined;
             try { await this.appLifecycle?.close(); } catch { failed = true; }
-            for (const [name, listener] of this.eventListeners()) {
-                try { this.container?.removeEventListener(name, listener); } catch { failed = true; }
-            }
             revokeViews();
             for (const clear of [() => this.viewOwnedTools?.dispose(), () => this.refRegistry.clear()]) {
                 try { clear(); } catch { failed = true; }
@@ -283,101 +266,16 @@ export class AppKernel implements IAOTUIApp, IRefExporter {
         void this.deletePromise.catch(() => {});return this.deletePromise;
     }
 
-    async onPause(): Promise<void> {
+    public registerRef(viewId: string, refId: string, data: object): void {
         this.assertActive();
-        // Default: no-op
-    }
-
-    async onResume(): Promise<void> {
-        this.assertActive();
-        // Default: no-op
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    //  System Events (Runtime Bridge)
-    // ─────────────────────────────────────────────────────────────
-
-    /**
-     * Handle system events from Desktop
-     * 
-     * View lifecycle is managed by component mount and unmount.
-     */
-    async onSystemEvent(event: string, payload: DataPayload): Promise<void> {
-        this.assertActive();
-        console.log(`[AppKernel] System event: ${event}`, payload);
-        console.warn(`[AppKernel] System event '${event}' is not supported in component mode.`);
-    }
-
-    /**
-     * Handle DOM-based system events from worker runtime.
-     * Used to request view close in component mode.
-     */
-    private handleSystemEvent = (event: Event) => {
-        if (this.closing) return;
-        const detail = (event as CustomEvent).detail as { type?: string; viewId?: ViewID } | undefined;
-        if (!detail || detail.type !== 'dismount_view' || !detail.viewId) {
-            return;
-        }
-
-        const viewId = detail.viewId;
-        const viewNode = this.container.querySelector(`[data-view-id="${viewId}"]`) as HTMLElement | null
-            ?? this.container.querySelector(`#${viewId}`) as HTMLElement | null;
-
-        if (!viewNode) {
-            console.warn(`[AppKernel] dismount_view target not found: ${viewId}`);
-            return;
-        }
-
-        const CustomEventCtor = this.container.ownerDocument.defaultView?.CustomEvent as typeof CustomEvent | undefined;
-        if (!CustomEventCtor) {
-            console.warn('[AppKernel] CustomEvent not available for view close dispatch');
-            return;
-        }
-
-        const closeEvent = new CustomEventCtor('aotui:view-close', {
-            bubbles: true,
-            detail: { viewId, reason: 'system_dismount' }
-        });
-
-        viewNode.dispatchEvent(closeEvent);
-    };
-
-    // ─────────────────────────────────────────────────────────────
-    //  Ref Registry (RFC-002)
-    // ─────────────────────────────────────────────────────────────
-    //  [RFC-002] RefExporter Implementation
-    // ─────────────────────────────────────────────────────────────
-
-    /**
-     * Export ref from view
-     */
-    exportRef<T extends object>(viewId: ViewID, key: string, data: T): void {
-        this.assertActive();
-        const fullKey = `${viewId}:${key}`;
+        const fullKey = `${viewId}:${refId}`;
         this.refRegistry.set(fullKey, data);
         this.projection.recordMutation('ref');
     }
 
-    /**
-     * Unexport ref from view
-     */
-    unexportRef(viewId: ViewID, key: string): void {
-        const fullKey = `${viewId}:${key}`;
-        if (this.refRegistry.delete(fullKey)) this.projection.recordMutation('ref');
-    }
-
-    /**
-     * [IRefExporter] Alias for exportRef
-     */
-    public registerRef(viewId: string, refId: string, data: object): void {
-        this.exportRef(viewId as ViewID, refId, data);
-    }
-
-    /**
-     * [IRefExporter] Alias for unexportRef
-     */
     public unregisterRef(viewId: string, refId: string): void {
-        this.unexportRef(viewId as ViewID, refId);
+        const fullKey = `${viewId}:${refId}`;
+        if (this.refRegistry.delete(fullKey)) this.projection.recordMutation('ref');
     }
 
     getViewRefs(): readonly { viewId: string; refId: string; value: object }[] {
