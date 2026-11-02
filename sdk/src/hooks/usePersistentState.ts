@@ -1,21 +1,19 @@
-import type { Dispatch, StateUpdater } from "preact/hooks";
-import { useEffect, useRef, useState } from "./preact-hooks.js";
-import { useAppEnv } from "./useAppConfig.js";
-import { useAppRuntimeContext } from "../context/AppRuntimeContext.js";
-import { persistenceManager } from "./persistence-manager.js";
+import type { Dispatch, StateUpdater } from 'preact/hooks';
+import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
+import { useInternalAppRuntimeContext } from '../context/AppRuntimeContext.js';
+import type { AppStatePersistence, StateBindingStatus, StateValue, StateIssue } from '@aotui/runtime/spi';
+import type { StateBinding } from '@aotui/runtime/spi';
 
-type PersistOptions<T> = {
-  debounceMs?: number;
+export type PersistOptions<T> = {
   storageKey?: string;
   serialize?: (value: T) => unknown;
   deserialize?: (value: unknown) => T;
   rehydrateOnReinitialize?: boolean;
 };
-
-type PersistMeta = {
-  ready: boolean;
-  clear: () => Promise<void>;
-};
+export type PersistStatus = StateBindingStatus | Readonly<{ phase: 'pending' }>;
+export type PersistMeta = { ready: boolean; clear: () => Promise<void>; getStatus: () => PersistStatus };
+const error = (issue: StateIssue) => Object.assign(new Error(issue.message), { code: issue.code });
+const unavailable = () => Object.assign(new Error('Instance persistence is unavailable; use a compatible managed Runtime'), { code: 'PERSISTENCE_UNAVAILABLE' });
 
 export type AOTUILifecycleMetadata = {
   startupKind?: "normal" | "reinitialize";
@@ -32,190 +30,77 @@ export function shouldHydratePersistentState(
   return true;
 }
 
-export function resolvePersistentAppName({
-  storageKey,
-  appNameFromEnv,
-  appId,
-}: {
-  storageKey?: string;
-  appNameFromEnv?: string;
-  appId: string | number;
-}): string {
-  return storageKey || appNameFromEnv || String(appId);
-}
+type Candidate<T> = {
+  phase: 'pending' | 'bound' | 'released'; value: T; ready: boolean; updates: number;
+  serialize?: PersistOptions<T>['serialize']; deserialize?: PersistOptions<T>['deserialize'];
+  binding?: StateBinding; early?: { value?: unknown; failed: boolean };
+};
 
-function sanitizeSegment(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
-}
-
-async function resolveStoragePath(
-  baseDir: string | undefined,
-  desktopId: string,
-  appKey: string,
-  key: string
-): Promise<string> {
-  const [{ join }, { homedir }] = await Promise.all([import("path"), import("os")]);
-  const rootDir = baseDir && baseDir.length > 0
-    ? join(baseDir, "app-state")
-    : join(homedir(), ".aotui", "app-state");
-
-  return join(
-    rootDir,
-    sanitizeSegment(desktopId),
-    sanitizeSegment(appKey),
-    `${sanitizeSegment(key)}.json`
-  );
-}
-
-async function readJson(filePath: string): Promise<unknown | undefined> {
-  try {
-    const fs = await import("fs/promises");
-    const raw = await fs.readFile(filePath, "utf-8");
-    const parsed = JSON.parse(raw) as { value?: unknown };
-    if (parsed && typeof parsed === "object" && "value" in parsed) {
-      return parsed.value;
+export function usePersistentState<T>(key: string, initial: T, options: PersistOptions<T> = {}): [T, Dispatch<StateUpdater<T>>, PersistMeta] {
+  const { persistence, launchConfig } = useInternalAppRuntimeContext();
+  const lifecycle = launchConfig?.['__aotuiLifecycle'] as AOTUILifecycleMetadata | undefined;
+  const hydrate = shouldHydratePersistentState(lifecycle, options);
+  const [, refresh] = useState(0);
+  const port: AppStatePersistence | undefined = persistence;
+  const candidate = useMemo<Candidate<T>>(() => ({ phase: 'pending', value: initial, ready: false, updates: 0,
+    serialize: options.serialize, deserialize: options.deserialize }), [key, options.storageKey, hydrate, port, port?.instanceId]);
+  // Updating callback identities is a commit operation, never a render-time mutation of a live binding.
+  useLayoutEffect(() => { candidate.serialize = options.serialize;candidate.deserialize = options.deserialize; });
+  useLayoutEffect(() => {
+    if (!port || port.protocol !== 'state-session-v1' || typeof port.bind !== 'function' || typeof port.flush !== 'function' || typeof port.captureValue !== 'function') throw unavailable();
+    let captured: unknown;
+    try { captured = candidate.serialize ? candidate.serialize(initial) : initial; }
+    catch { throw Object.assign(new Error('Initial state could not be captured'), { code: 'SERIALIZATION_FAILED' }); }
+    const result = port.bind(key, captured as StateValue, { hydrate, ...(options.storageKey !== undefined ? { storageKey: options.storageKey } : {}) });
+    if (result.status !== 'bound') throw error(result.issue);
+    const binding = result.binding;
+    candidate.binding = binding;candidate.phase = 'bound';
+    if (candidate.early) {
+      if (candidate.early.failed) binding.reportUpdateFailure();
+      else binding.update(candidate.early.value as StateValue);
+      candidate.early = undefined;
     }
-    return parsed;
-  } catch (error) {
-    const code = (error as { code?: string }).code;
-    if (code === "ENOENT") {
-      return undefined;
-    }
-    return undefined;
-  }
-}
-
-function unwrapLegacyValue(value: unknown): unknown {
-  let current = value;
-  let depth = 0;
-  while (
-    current &&
-    typeof current === "object" &&
-    "value" in (current as Record<string, unknown>) &&
-    depth < 3
-  ) {
-    current = (current as Record<string, unknown>).value;
-    depth += 1;
-  }
-  return current;
-}
-
-/** 导出writeJson供persistence-manager使用 */
-export async function writeJson(filePath: string, value: unknown): Promise<void> {
-  const fs = await import("fs/promises");
-  const path = await import("path");
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const payload = {
-    version: 1,
-    updatedAt: Date.now(),
-    value,
-  };
-  await fs.writeFile(filePath, JSON.stringify(payload, null, 2), "utf-8");
-}
-
-async function removeJson(filePath: string): Promise<void> {
-  try {
-    const fs = await import("fs/promises");
-    await fs.unlink(filePath);
-  } catch (error) {
-    const code = (error as { code?: string }).code;
-    if (code !== "ENOENT") {
-      throw error;
-    }
-  }
-}
-
-export function usePersistentState<T>(
-  key: string,
-  initial: T,
-  options: PersistOptions<T> = {}
-): [T, Dispatch<StateUpdater<T>>, PersistMeta] {
-  const { appId, desktopId } = useAppRuntimeContext();
-  const dataDir = useAppEnv<string>("AOTUI_DATA_DIR");
-  const appNameFromEnv = useAppEnv<string>("AOTUI_APP_NAME");
-  const lifecycle = useAppEnv<AOTUILifecycleMetadata>("__aotuiLifecycle");
-  const appKey = resolvePersistentAppName({
-    storageKey: options.storageKey,
-    appNameFromEnv,
-    appId,
-  });
-
-  const [state, setState] = useState<T>(initial);
-  const [ready, setReady] = useState(false);
-  const filePathRef = useRef<string | null>(null);
-  const stateRef = useRef<T>(state);
-  const serializeRef = useRef<PersistOptions<T>["serialize"]>(options.serialize);
-  const deserializeRef = useRef<PersistOptions<T>["deserialize"]>(options.deserialize);
-
-  // Keep stateRef updated
-  useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
-
-  useEffect(() => {
-    serializeRef.current = options.serialize;
-    deserializeRef.current = options.deserialize;
-  }, [options.serialize, options.deserialize]);
-
-  // Load initial state from disk
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      const filePath = await resolveStoragePath(dataDir, String(desktopId), appKey, key);
-      filePathRef.current = filePath;
-      if (shouldHydratePersistentState(lifecycle, options)) {
-        const rawValue = await readJson(filePath);
-        if (cancelled) {
-          return;
-        }
-        if (rawValue !== undefined) {
-          const normalizedRaw = unwrapLegacyValue(rawValue);
-          const value = deserializeRef.current ? deserializeRef.current(normalizedRaw) : (normalizedRaw as T);
-          setState(value);
-        }
-      }
-      setReady(true);
-    };
-
-    void load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [dataDir, desktopId, appKey, key, lifecycle?.startupKind, options.rehydrateOnReinitialize]);
-
-  // Register with PersistenceManager for shutdown-only persistence
-  useEffect(() => {
-    if (!ready) {
-      return;
-    }
-    const filePath = filePathRef.current;
-    if (!filePath) {
-      return;
-    }
-
-    const registryKey = `${desktopId}:${appKey}:${key}`;
-
-    persistenceManager.register(registryKey, {
-      filePath,
-      getState: () => {
-        const currentState = stateRef.current;
-        return serializeRef.current ? serializeRef.current(currentState) : currentState;
-      },
+    void binding.recovery.then(recovery => {
+      if (candidate.phase !== 'bound' || binding.inspect().phase === 'released') return;
+      const needsValue = recovery.status === 'found' && (hydrate || recovery.source === 'session');
+      let restored: T | undefined;
+      try {
+        if (needsValue && recovery.status === 'found') {
+          restored = candidate.deserialize ? candidate.deserialize(recovery.value) : recovery.value as T;
+          const normalized = candidate.serialize ? candidate.serialize(restored) : restored;
+          const ack = binding.confirmInitialization(recovery, { status: 'ready', value: normalized as StateValue });
+          if (ack.status === 'accepted' && candidate.updates === 0) candidate.value = restored;
+        } else binding.confirmInitialization(recovery, { status: 'ready' });
+      } catch { binding.confirmInitialization(recovery, { status: 'failed' }); }
+      candidate.ready = true;refresh(n => n + 1);
     });
-
-    return () => {
-      persistenceManager.unregister(registryKey);
-    };
-  }, [ready, desktopId, appKey, key]);
-
-  const clear = async () => {
-    const filePath = filePathRef.current;
-    if (!filePath) {
-      return;
+    return () => { candidate.phase = 'released';binding.release(); };
+  }, [candidate]);
+  const setter: Dispatch<StateUpdater<T>> = useMemo(() => update => {
+    if (candidate.phase === 'released') throw Object.assign(new Error('State binding is no longer current'), { code: 'STALE_BINDING' });
+    if (!port || typeof port.captureValue !== 'function') throw unavailable();
+    if (candidate.binding) {
+      const status = candidate.binding.inspect();
+      if (status.phase === 'released') throw error(status.issue);
+      if (status.phase !== 'open') throw Object.assign(new Error('State session is sealed'), { code: 'SEALED' });
     }
-    await removeJson(filePath);
-  };
-
-  return [state, setState, { ready, clear }];
+    const value = typeof update === 'function' ? (update as (previous: T) => T)(candidate.value) : update;
+    let captured: unknown, failed = false;
+    try { captured = candidate.serialize ? candidate.serialize(value) : value; } catch { failed = true; }
+    if (candidate.binding) {
+      if (failed) candidate.binding.reportUpdateFailure();else candidate.binding.update(captured as StateValue);
+    } else {
+      const snapshot = failed ? undefined : port.captureValue(captured);
+      candidate.early = snapshot?.status === 'captured' ? { value: snapshot.snapshot.value, failed: false } : { failed: true };
+    }
+    candidate.updates++;candidate.value = value;
+    refresh(n => n + 1);
+  }, [candidate]);
+  const clear = useMemo(() => async () => {
+    if (!candidate.binding) throw unavailable();
+    const result = await candidate.binding.clear();
+    if (result.status !== 'applied') throw error(result.issue);
+  }, [candidate]);
+  return [candidate.value, setter, { ready: candidate.ready, clear,
+    getStatus: () => candidate.phase === 'released' ? candidate.binding!.inspect() : candidate.binding?.inspect() ?? Object.freeze({ phase: 'pending' }) }];
 }

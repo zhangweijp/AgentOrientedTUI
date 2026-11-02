@@ -6,6 +6,7 @@ import { PageView } from './PageView.js';
 import { ResultListView } from './ResultListView.js';
 import { RootView } from './RootView.js';
 import { SearchView } from './SearchView.js';
+import { SearchToolSection, ResultListToolSection, PageToolSection } from './BrowserTools.js';
 
 function LiteBrowserRoot() {
     const [searchState, setSearchState] = useState<SearchState>({
@@ -78,27 +79,22 @@ function LiteBrowserRoot() {
     return (
         <>
             <View id="root" type="Root" name="Root">
-                <RootView
-                    hasResults={hasResults}
-                    hasPage={hasPage}
-                    onSearch={handleSearch}
-                    onOpenResult={handleOpenResult}
-                    onClearResults={handleClearResults}
-                    onFetch={handleFetch}
-                    onClosePage={handleClosePage}
-                />
+                <RootView onFetch={handleFetch} />
             </View>
             <View id="search" type="Search" name="Search">
                 <SearchView state={searchState} />
+                <SearchToolSection onSearch={handleSearch} />
             </View>
             {hasResults ? (
-                <View id="results" type="ResultList" name="Result List">
+                <View key={searchState.updatedAt} id="results" type="ResultList" name="Result List">
                     <ResultListView results={searchState.results} />
+                    <ResultListToolSection results={searchState.results} onOpenResult={handleOpenResult} onClearResults={handleClearResults} />
                 </View>
             ) : null}
             {hasPage ? (
-                <View id="page" type="Page" name="Page">
+                <View key={pageState.document?.url ?? 'error'} id="page" type="Page" name="Page">
                     <PageView state={pageState} />
+                    <PageToolSection onClosePage={handleClosePage} />
                 </View>
             ) : null}
         </>

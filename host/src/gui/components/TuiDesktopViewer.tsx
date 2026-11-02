@@ -14,9 +14,10 @@ import { ApplicationBlock } from './ApplicationBlock.js';
 interface TuiDesktopViewerProps {
     snapshot: string;
     agentThinking?: string;
+    apps?: { enabled: boolean; items: Array<{ name: string; enabled: boolean }> };
 }
 
-export function TuiDesktopViewer({ snapshot, agentThinking }: TuiDesktopViewerProps) {
+export function TuiDesktopViewer({ snapshot, agentThinking, apps }: TuiDesktopViewerProps) {
     const parsed = useMemo(() => parseTuiSnapshot(snapshot), [snapshot]);
     const applications = parsed.desktop?.applications ?? [];
     const [activeAppId, setActiveAppId] = useState<string | null>(null);
@@ -47,13 +48,23 @@ export function TuiDesktopViewer({ snapshot, agentThinking }: TuiDesktopViewerPr
         );
     }
 
-    const activeApp = applications.find(app => app.id === activeAppId) ?? null;
+    const activeApp = applications.find(app => app.id === activeAppId)
+        ?? applications.find(app => app.id === 'app_0') ?? applications[0] ?? null;
 
     return (
         /* Mirrors ChatArea layout: absolute inset-0 + pt-[78px] so first content clears
            the context pill, and the pill floats on top as content scrolls under it. */
         <div className="absolute inset-0 overflow-y-auto pt-[78px] px-6 pb-6
                         custom-scrollbar space-y-4">
+
+            {apps && (
+                <p className="text-[13px] text-[var(--color-text-tertiary)]">
+                    Installed applications preview. {apps.enabled ? apps.items.filter(app => app.enabled).length : 0} enabled for this topic.
+                    {activeApp && !(apps.enabled && apps.items.some(app => app.name === activeApp.name && app.enabled)) && (
+                        <span> {activeApp.name} is not enabled for this topic; its Views and Tools are not sent to the Agent. Change this in Chat → Apps.</span>
+                    )}
+                </p>
+            )}
 
             {/* ── App Switcher Row ── */}
             {applications.length > 0 && (
@@ -70,7 +81,7 @@ export function TuiDesktopViewer({ snapshot, agentThinking }: TuiDesktopViewerPr
                                 h-8 px-3.5 rounded-full text-[13px] font-medium
                                 transition-all duration-200 select-none
                                 active:scale-[0.97]
-                                ${app.id === activeAppId
+                                ${app.id === activeApp?.id
                                     ? 'text-[var(--color-accent)] bg-[var(--color-accent)]/10'
                                     : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-white/5'}
                             `}

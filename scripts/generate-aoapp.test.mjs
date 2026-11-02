@@ -31,6 +31,10 @@ test('buildAoappManifest derives aoapp.json from the built app metadata', async 
       path.join(tempDir, 'dist/index.js'),
       `
       export default {
+        displayName: 'system_ide',
+        persistenceSupport: 'state-session-v1',
+        appLifecycleSupport: 'app-lifecycle-v2',
+        initializeComponent() {},
         kernelConfig: {
           appName: 'system_ide',
           description: 'IDE app',
@@ -59,5 +63,78 @@ test('buildAoappManifest derives aoapp.json from the built app metadata', async 
     assert.equal(written.version, '1.2.3');
   } finally {
     await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('buildAoappManifest rejects the retired manifest/create factory shape', async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
+
+  try {
+    await mkdir(path.join(tempDir, 'dist'), { recursive: true });
+    await writeFile(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'old-app' }));
+    await writeFile(
+      path.join(tempDir, 'dist/index.js'),
+      `export default { manifest: { app_name: 'old_app', version: '1.0.0', entry: { main: './dist/index.js' } }, create() {} };`,
+    );
+
+    await assert.rejects(buildAoappManifest(tempDir), /createTUIApp component factory/);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('buildAoappManifest rejects a kernelConfig-shaped non-factory export', async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
+
+  try {
+    await mkdir(path.join(tempDir, 'dist'), { recursive: true });
+    await writeFile(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'incomplete-app' }));
+    await writeFile(
+      path.join(tempDir, 'dist/index.js'),
+      `export default { displayName: 'incomplete_app', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', kernelConfig: { appName: 'incomplete_app' } };`,
+    );
+
+    await assert.rejects(buildAoappManifest(tempDir), /createTUIApp component factory/);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('buildAoappManifest rejects named and nested factories instead of resolving a fallback export', async () => {
+  for (const source of [
+      `const f = { displayName: 'named_app', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', kernelConfig: { appName: 'named_app' }, initializeComponent() {} }; export const factory = f;`,
+    `export default { factory: { displayName: 'nested_app', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', kernelConfig: { appName: 'nested_app' }, initializeComponent() {} } };`,
+  ]) {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
+
+    try {
+      await mkdir(path.join(tempDir, 'dist'), { recursive: true });
+      await writeFile(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'alternate-export' }));
+      await writeFile(path.join(tempDir, 'dist/index.js'), source);
+
+      await assert.rejects(buildAoappManifest(tempDir), /createTUIApp component factory/);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }
+});
+
+test('buildAoappManifest requires a nonempty displayName and appName on the default factory', async () => {
+  for (const [displayName, appName, expectedError] of [
+    ['', 'missing_display', /createTUIApp component factory/],
+    ['missing_app', '', /app_name/],
+  ]) {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
+
+    try {
+      await mkdir(path.join(tempDir, 'dist'), { recursive: true });
+      await writeFile(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'invalid-metadata' }));
+      await writeFile(path.join(tempDir, 'dist/index.js'),
+      `export default { displayName: ${JSON.stringify(displayName)}, persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', kernelConfig: { appName: ${JSON.stringify(appName)} }, initializeComponent() {} };`);
+
+      await assert.rejects(buildAoappManifest(tempDir), expectedError);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   }
 });

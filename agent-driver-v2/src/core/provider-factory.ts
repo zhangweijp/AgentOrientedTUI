@@ -28,7 +28,7 @@ const ENV_KEY_MAP: Record<string, string> = {
 };
 
 export function createLanguageModel(deps: ProviderFactoryDeps) {
-    const { config, target, warn } = deps;
+    const { config, target } = deps;
     const { providerId, modelName, registryModelId } = target;
 
     const apiKey = config.apiKey || getApiKeyFromEnv(providerId);
@@ -46,7 +46,7 @@ export function createLanguageModel(deps: ProviderFactoryDeps) {
         ? config.provider.headers
         : undefined;
 
-    const provider = buildProvider(providerId, apiKey, customBaseURL, headers, warn);
+    const provider = buildProvider(providerId, apiKey, customBaseURL, headers);
     const registryProvider = customProvider({
         languageModels: {},
         fallbackProvider: provider as any,
@@ -63,8 +63,7 @@ function buildProvider(
     providerId: string,
     apiKey: string,
     customBaseURL: string | undefined,
-    headers: Record<string, string> | undefined,
-    warn: (message: string) => void
+    headers: Record<string, string> | undefined
 ) {
     switch (providerId) {
         case 'anthropic':

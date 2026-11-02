@@ -3,15 +3,14 @@
  * 
  * [RFC-027] App层级的Runtime上下文,提供给View组件使用
  * 
- * 职责:
- * - 暴露viewId分配接口 (allocateViewId)
- * - 暴露View注册接口 (registerView/unregisterView)
- * - 提供RefExporter访问 (registerRef/unregisterRef)
- * - 传递App/Desktop元数据 (appId, desktopId)
+ * Supplies app metadata and the Runtime-owned Ref/Tool ports to mounted Views.
  */
 
-import { createContext, useContext } from 'preact/compat';
-import type { AppID, DesktopID, ViewID, IView, IRefExporter, ITypeToolRegistry, AppLaunchConfig } from '@aotui/runtime/spi';
+import type { AppLifecyclePort } from '@aotui/runtime/spi';
+import type { AppStatePersistence } from '@aotui/runtime/spi';
+import { createContext } from 'preact';
+import { useContext, useMemo } from 'preact/hooks';
+import type { AppID, DesktopID, IRefExporter, IProjectionPort, IViewOwnedToolPort, AppLaunchConfig } from '@aotui/runtime/spi';
 
 // ═══════════════════════════════════════════════════════════════
 //  Types
@@ -22,7 +21,9 @@ import type { AppID, DesktopID, ViewID, IView, IRefExporter, ITypeToolRegistry, 
  * 
  * 由AppKernel在initializeFromComponent时创建并提供
  */
-export interface AppRuntimeContextValue {
+interface AppRuntimeContextValue {
+    persistence?: AppStatePersistence;
+    appLifecycle?: AppLifecyclePort;
     /** App ID */
     appId: AppID;
 
@@ -33,50 +34,27 @@ export interface AppRuntimeContextValue {
     launchConfig?: AppLaunchConfig;
 
     /**
-     * 分配viewId (层序遍历递增)
-     * 
-     * @param key - View唯一键 (name或name_uniqueId)
-     * @returns 分配的viewId (如view_0, view_1...)
-     */
-    allocateViewId: (key: string) => ViewID;
-
-    /**
-     * 注册IView实例到AppKernel
-     * 
-     * @param view - IView实例
-     */
-    registerView: (view: IView) => void;
-
-    /**
-     * 注销IView实例
-     * 
-     * @param viewId - View ID
-     */
-    unregisterView: (viewId: ViewID) => void;
-
-    /**
      * RefExporter访问 (用于useRef/useArrayRef)
      */
     refExporter: IRefExporter;
 
     /**
-     * Type Tool Registry访问 (用于useViewTypeTool) [RFC-020]
-     */
-    typeTools: ITypeToolRegistry;
-
-    /**
-     * ViewRegistry访问 (用于View组件ID冲突检测)
-     * 
-     * @optional 如果为空View组件将跳过ID冲突检测
-     */
-    viewRegistry?: {
-        has(viewId: ViewID): boolean;
-    };
-
-    /**
      * 标记App为脏状态 (触发重新渲染)
      */
     markDirty: () => void;
+
+    /** Semantic commit coordination supplied by Runtime. */
+    projection: IProjectionPort;
+
+    /** View-instance-owned Tool port with Runtime-advertised capabilities. */
+    viewTools?: IViewOwnedToolPort;
+}
+
+interface AppRuntimePublicContextValue {
+    readonly appId: AppID;
+    readonly desktopId: DesktopID;
+    readonly launchConfig?: AppLaunchConfig;
+    readonly persistence?: AppStatePersistence;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -102,15 +80,31 @@ export const AppRuntimeContext = createContext<AppRuntimeContextValue | null>(nu
  * 
  * @throws 如果不在AppRuntimeContext.Provider内调用
  */
-export function useAppRuntimeContext(): AppRuntimeContextValue {
+export function useInternalAppRuntimeContext(): AppRuntimeContextValue {
     const ctx = useContext(AppRuntimeContext);
 
     if (!ctx) {
         throw new Error(
-            '[AOTUI SDK] useAppRuntimeContext must be used within AppRuntimeContext.Provider.\n\n' +
-            'This is an internal error. Please contact framework maintainers if you see this message.'
+            '[AOTUI SDK] useAppRuntimeContext must be used within a managed App component.'
         );
     }
 
     return ctx;
+}
+
+/**
+ * Read app metadata, launch configuration and the managed instance persistence
+ * client port. SDK-owned registries and lifecycle ports are kept internal.
+ */
+export function useAppRuntimeContext(): AppRuntimePublicContextValue {
+    const context = useInternalAppRuntimeContext();
+    return useMemo(() => {
+        const persistence = context.persistence;
+        return Object.freeze({
+            appId: context.appId,
+            desktopId: context.desktopId,
+            ...(context.launchConfig === undefined ? {} : { launchConfig: context.launchConfig }),
+            ...(persistence === undefined ? {} : { persistence }),
+        });
+    }, [context]);
 }

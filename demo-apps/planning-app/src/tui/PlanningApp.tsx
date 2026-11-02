@@ -335,7 +335,11 @@ function PlanningApp() {
     return (
         <>
             <View id="root" type="Root" name="Root">
-                <RootView
+                <RootView />
+            </View>
+
+            <View id="plan_list" type="PlanList" name={planListName}>
+                <PlanListView
                     plans={plans}
                     activePlanId={activePlanId}
                     createPlan={createPlan}
@@ -343,23 +347,21 @@ function PlanningApp() {
                     deletePlan={deletePlan}
                     openPlan={openPlan}
                     closePlan={closePlan}
-                    addPhase={addPhase}
-                    deletePhase={deletePhase}
-                    completePhase={completePhase}
-                    addTask={addTask}
-                    updateTask={updateTask}
-                    deleteTask={deleteTask}
-                    completeTask={completeTask}
                 />
-            </View>
-
-            <View id="plan_list" type="PlanList" name={planListName}>
-                <PlanListView plans={plans} activePlanId={activePlanId} />
             </View>
 
             {activePlan ? (
                 <View id="plan_detail" type="PlanDetail" name={planDetailName}>
-                    <PlanDetailView plan={activePlan} />
+                    <PlanDetailView
+                        plan={activePlan}
+                        addPhase={addPhase}
+                        deletePhase={deletePhase}
+                        completePhase={completePhase}
+                        addTask={addTask}
+                        updateTask={updateTask}
+                        deleteTask={deleteTask}
+                        completeTask={completeTask}
+                    />
                 </View>
             ) : null}
         </>

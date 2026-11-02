@@ -37,7 +37,7 @@ export interface DesktopLoggerOptions {
  */
 export class DesktopLogger {
     private systemLogs = new Map<DesktopID, LogEntry[]>();
-    private appLogs = new Map<string, LogEntry[]>();  // key: desktopId:appId
+    private appLogs = new Map<DesktopID, Map<AppID, LogEntry[]>>();
     private options: Required<DesktopLoggerOptions>;
 
     constructor(options?: DesktopLoggerOptions) {
@@ -97,11 +97,12 @@ export class DesktopLogger {
         message: string,
         level: LogLevel = 'info'
     ): void {
-        const key = `${desktopId}:${appId}`;
-        let logs = this.appLogs.get(key);
+        let apps = this.appLogs.get(desktopId);
+        if (!apps) { apps = new Map();this.appLogs.set(desktopId, apps); }
+        let logs = apps.get(appId);
         if (!logs) {
             logs = [];
-            this.appLogs.set(key, logs);
+            apps.set(appId, logs);
         }
 
         logs.push({
@@ -120,8 +121,7 @@ export class DesktopLogger {
      * 获取 App 操作日志
      */
     getAppLogs(desktopId: DesktopID, appId: AppID): LogEntry[] {
-        const key = `${desktopId}:${appId}`;
-        return this.appLogs.get(key) ?? [];
+        return this.appLogs.get(desktopId)?.get(appId) ?? [];
     }
 
     // ========================================================================
@@ -134,22 +134,16 @@ export class DesktopLogger {
     cleanup(desktopId: DesktopID): void {
         this.systemLogs.delete(desktopId);
 
-        // 清理该 Desktop 下所有 App 的日志
-        const keysToDelete: string[] = [];
-        for (const key of this.appLogs.keys()) {
-            if (key.startsWith(`${desktopId}:`)) {
-                keysToDelete.push(key);
-            }
-        }
-        keysToDelete.forEach(key => this.appLogs.delete(key));
+        this.appLogs.delete(desktopId);
     }
 
     /**
      * 清理指定 App 的日志
      */
     cleanupApp(desktopId: DesktopID, appId: AppID): void {
-        const key = `${desktopId}:${appId}`;
-        this.appLogs.delete(key);
+        const apps = this.appLogs.get(desktopId);
+        apps?.delete(appId);
+        if (apps?.size === 0) this.appLogs.delete(desktopId);
     }
 
     // ========================================================================
@@ -161,14 +155,9 @@ export class DesktopLogger {
      */
     getStats(desktopId: DesktopID): { systemCount: number; appCounts: Record<string, number> } {
         const systemCount = this.systemLogs.get(desktopId)?.length ?? 0;
-        const appCounts: Record<string, number> = {};
-
-        for (const [key, logs] of this.appLogs.entries()) {
-            if (key.startsWith(`${desktopId}:`)) {
-                const appId = key.split(':')[1];
-                appCounts[appId] = logs.length;
-            }
-        }
+        const appCounts: Record<string, number> = Object.fromEntries(
+            [...this.appLogs.get(desktopId) ?? []].map(([appId, logs]) => [appId, logs.length]),
+        );
 
         return { systemCount, appCounts };
     }

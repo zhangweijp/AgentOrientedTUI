@@ -19,8 +19,8 @@ importers:
   .:
     dependencies:
       '@aotui/sdk':
-        specifier: file:../../sdk
-        version: file:../../sdk(preact@10.29.1)
+        specifier: ^0.2.0
+        version: 0.2.0(preact@10.29.1)
       emittery:
         specifier: ^1.2.1
         version: 1.2.1
@@ -143,8 +143,8 @@ packages:
     resolution: {integrity: sha512-II4xkyyCadEFlTdQLFjEbSTg+sw/CefcY9F/H87AZkAIOwfQeEu6mNEFLEFjfPOVr80+orpq351MLyjdW1VHMA==}
     hasBin: true
 
-  '@aotui/sdk@file:../../sdk':
-    resolution: {directory: ../../sdk, type: directory}
+  '@aotui/sdk@0.2.0':
+    resolution: {integrity: sha512-ibADio5XWByq+28lgVn5iWOFIl+nGjw3BjWxBo7ZMtokc9J5sjprg4rE8o1CnONY5l++qUoqF4AHJg6JiMRHoA==}
     peerDependencies:
       preact: ^10.29.1
 
@@ -1885,7 +1885,7 @@ snapshots:
       - canvas
       - utf-8-validate
 
-  '@aotui/sdk@file:../../sdk(preact@10.29.1)':
+  '@aotui/sdk@0.2.0(preact@10.29.1)':
     dependencies:
       '@aotui/runtime': 2.0.0
       '@preact/signals': 2.8.1(preact@10.29.1)

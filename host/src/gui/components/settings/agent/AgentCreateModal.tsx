@@ -19,7 +19,7 @@ interface ModelGroup {
     displayName?: string;
 }
 interface PromptTemplate { id: string; name: string; content: string; }
-interface AppEntry { name: string; source?: string; }
+interface AppEntry { name: string; label: string; source?: string; }
 interface SkillEntry { name: string; description?: string; scope?: string; enabled?: boolean; }
 interface McpServer { name: string; connected: boolean; status?: string; tools: Array<{ name: string; description: string; enabled: boolean }>; }
 
@@ -158,7 +158,7 @@ export const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
 
         // Apps
         trpc.apps.getConfig.query().then((cfg: any) => {
-            const arr: AppEntry[] = Object.entries(cfg || {}).map(([k, v]: any) => ({ name: v?.name || k, source: v?.source }));
+            const arr: AppEntry[] = Object.entries(cfg || {}).map(([k, v]: any) => ({ name: k, label: v?.name || k, source: v?.source }));
             setApps(arr);
             if (!initial) setEnabledApps(arr.map(a => a.name));
         }).catch(() => {});
@@ -469,6 +469,11 @@ export const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
                             </div>
                             {renderToggle(anyEnabled, toggleAll)}
                         </div>
+                        {enabledApps.some(name => !apps.some(app => app.name === name)) && (
+                            <p role="status" className="text-[13px] text-[var(--color-text-tertiary)]">
+                                Unavailable app references: {enabledApps.filter(name => !apps.some(app => app.name === name)).join(', ')}. Select the installed apps below to enable them.
+                            </p>
+                        )}
                         {apps.length === 0 ? (
                             <div className="text-[13px] text-[var(--color-text-tertiary)]">No apps found</div>
                         ) : (
@@ -477,7 +482,7 @@ export const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
                                     const checked = enabledApps.includes(app.name);
                                     return (
                                         <label key={`app-${app.name}`} className="flex items-center justify-between gap-2 text-[13px] text-[var(--color-text-secondary)]">
-                                            <span className="truncate">{app.name}</span>
+                                            <span className="truncate">{app.label}</span>
                                             {renderToggle(checked, v => setEnabledApps(prev => v ? [...prev, app.name] : prev.filter(n => n !== app.name)))}
                                         </label>
                                     );

@@ -19,10 +19,18 @@
     "./adapters": {
       "import": "./dist/adapters/index.js",
       "types": "./dist/adapters/index.d.ts"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./adapters/memory-state-storage": {
+      "types": "./dist/adapters/storage/memory-state-storage.d.ts",
+      "import": "./dist/adapters/storage/memory-state-storage.js"
     }
   },
   "scripts": {
-    "build": "tsc && chmod +x dist/cli.js",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc && chmod +x dist/cli.js",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -42,7 +50,8 @@
     "access": "public"
   },
   "files": [
-    "dist"
+    "dist",
+    "docs"
   ],
   "devDependencies": {
     "@types/node": "^24.10.2",
@@ -55,6 +64,7 @@
     "eslint-plugin-prettier": "^5.5.4",
     "jsdom": "^27.0.1",
     "madge": "^8.0.0",
+    "preact": "^10.29.1",
     "prettier": "^3.7.4",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
@@ -62,12 +72,8 @@
   },
   "dependencies": {
     "@aotui/agent-driver-v2": "^0.2.1",
-    "ai": "^6.0.77",
-    "happy-dom": "^20.8.9",
-    "linkedom": "^0.18.12",
-    "preact": "^10.29.1",
-    "preact-render-to-string": "^6.6.4",
-    "zod": "^4.3.6"
+    "@types/json-schema": "^7.0.15",
+    "linkedom": "^0.18.12"
   },
   "overrides": {
     "ajv": "^6.14.0",

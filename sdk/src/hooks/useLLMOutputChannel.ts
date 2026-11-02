@@ -17,7 +17,7 @@
  *     });
  *     
  *     return (
- *         <View name="Chat">
+ *         <View id="chat" type="Chat" name="Chat">
  *             {thoughts.map((t, i) => <p key={i}>💭 {t}</p>)}
  *         </View>
  *     );
@@ -25,25 +25,8 @@
  * ```
  */
 
-import { useEffect, useRef } from './preact-hooks.js';
-import { useContext } from './preact-hooks.js';
-import { ViewRuntimeContext } from '../contexts/view-runtime-context.js';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 import type { LLMOutputEvent, LLMOutputListener } from '@aotui/runtime/spi';
-
-// ============================================================================
-// Types
-// ============================================================================
-
-/**
- * useLLMOutputChannel 配置选项
- */
-export interface LLMOutputChannelOptions {
-    /** 
-     * 是否在订阅时接收历史消息
-     * @default true
-     */
-    includeHistory?: boolean;
-}
 
 // ============================================================================
 // Hook Implementation
@@ -55,7 +38,6 @@ export interface LLMOutputChannelOptions {
  * 当 LLM 产生非 Tool Call 的文本输出时触发回调。
  * 
  * @param onText - 接收文本事件的回调函数
- * @param options - 可选配置
  * 
  * @example
  * ```tsx
@@ -71,31 +53,25 @@ export interface LLMOutputChannelOptions {
  * });
  * ```
  */
-export function useLLMOutputChannel(
-    onText: LLMOutputListener,
-    options?: LLMOutputChannelOptions
-): void {
-    // 从 ViewRuntimeContext 获取 llmOutput 通道 (null-safe: 允许在 View 外调用)
-    const viewCtx = useContext(ViewRuntimeContext);
-    const llmOutput = viewCtx?.llmOutput ?? null;
+export function useLLMOutputChannel(onText: LLMOutputListener): void {
+    const dom = typeof document === 'undefined' ? undefined : document;
+    if (!dom) {
+        throw new Error('SDK_LLM_OUTPUT_UNAVAILABLE: useLLMOutputChannel requires a document event bridge.');
+    }
 
     // 使用 ref 保持回调引用最新
     const callbackRef = useRef(onText);
     callbackRef.current = onText;
 
-    useEffect(() => {
+    // Register before the first committed snapshot can notify the Host; a
+    // passive effect could miss usage pushed immediately after initial mount.
+    useLayoutEffect(() => {
         // 包装 listener 以使用最新的回调
         const handler: LLMOutputListener = (event) => {
             callbackRef.current(event);
         };
 
-        // [RFC-011] 方案1: 通过 Context Subscribe (用于 Embedded 模式)
-        const unsubscribeFn = llmOutput?.subscribe(handler) ?? (() => {});
-
-        // [RFC-011] 方案2: Worker 模式通过 DOM 事件接收
-        // 兼容两种事件名：
-        // - 'aotui:llm-output' (旧)
-        // - 'aotui:llm-text'   (当前 worker-runtime)
+        // Worker mode receives the current event emitted by worker-runtime.
         // [RFC-020] 支持 reasoning 字段
         const domHandler = (e: Event) => {
             const detail = (e as CustomEvent).detail;
@@ -117,47 +93,10 @@ export function useLLMOutputChannel(
         };
 
         // 监听 document 级别的自定义事件 (bubbles: true)
-        if (typeof document !== 'undefined') {
-            document.addEventListener('aotui:llm-output', domHandler);
-            document.addEventListener('aotui:llm-text', domHandler);
-        }
+        dom!.addEventListener('aotui:llm-text', domHandler);
 
         return () => {
-            unsubscribeFn();
-            if (typeof document !== 'undefined') {
-                document.removeEventListener('aotui:llm-output', domHandler);
-                document.removeEventListener('aotui:llm-text', domHandler);
-            }
+            dom!.removeEventListener('aotui:llm-text', domHandler);
         };
-    }, [llmOutput]); // eslint-disable-line react-hooks/exhaustive-deps
-}
-
-// ============================================================================
-// History Hook
-// ============================================================================
-
-/**
- * 获取 LLM 文本历史
- * 
- * 返回最近 N 条 LLM 文本消息 (默认 3 条)。
- * 
- * @returns 历史事件数组
- * 
- * @example
- * ```tsx
- * function HistoryView() {
- *     const history = useLLMOutputHistory();
- *     
- *     return (
- *         <ul>
- *             {history.map((e, i) => <li key={i}>{e.content}</li>)}
- *         </ul>
- *     );
- * }
- * ```
- */
-export function useLLMOutputHistory(): LLMOutputEvent[] {
-    const viewCtx = useContext(ViewRuntimeContext);
-    const llmOutput = viewCtx?.llmOutput ?? null;
-    return llmOutput?.getHistory() ?? [];
+    }, [dom]); // eslint-disable-line react-hooks/exhaustive-deps
 }

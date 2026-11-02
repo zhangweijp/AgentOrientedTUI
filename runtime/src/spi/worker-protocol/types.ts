@@ -8,25 +8,16 @@
  * @module @aotui/runtime/spi/worker-protocol
  */
 
-import type { AppID, DesktopID, ViewID, OperationID, SnapshotID, DataPayload, IndexMap } from '../core/index.js';
+import type { AppID, DesktopID, ViewID, DataPayload } from '../core/index.js';
 
 // ============================================================================
 // Re-export core types for convenience
 // ============================================================================
 
-export type { AppID, DesktopID, ViewID, OperationID, SnapshotID, DataPayload, IndexMap };
+export type { AppID, DesktopID, ViewID, DataPayload };
 
-// ============================================================================
-// Re-export from existing worker-message.interface (Single Source of Truth)
-// ============================================================================
-// Note: WorkerMessageType is defined in messages.ts with additional types (RESET, RESET_RESPONSE)
-// so we don't re-export it here to avoid conflicts.
+export type RequestID = string;
 
-export {
-    type RequestID,
-    generateRequestId,
-    type IWorkerMessage,
-    type IWorkerRequest,
-    type IWorkerResponse,
-    type IWorkerError,
-} from '../runtime/worker-message.interface.js';
+export function generateRequestId(): RequestID {
+    return `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}

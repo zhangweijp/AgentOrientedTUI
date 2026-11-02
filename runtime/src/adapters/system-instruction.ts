@@ -7,6 +7,19 @@
  * - 可通过 AOTUIDrivenSourceOptions.instruction / instructionPath 或环境变量覆盖
  */
 
+import { readFileSync } from 'node:fs';
+
+export function loadAOTUIInstruction(options: { instruction?: string; instructionPath?: string }, fallback: string): string {
+    if (options.instruction?.trim()) return options.instruction.trim();
+    const path = options.instructionPath ?? process.env.AOTUI_SYSTEM_INSTRUCTION_PATH;
+    if (!path) return fallback;
+    try { return readFileSync(path, 'utf8'); }
+    catch (error) {
+        console.error(`[AOTUIDrivenSource] Failed to load system instruction from path: ${path}`, error);
+        return fallback;
+    }
+}
+
 export const DEFAULT_AOTUI_SYSTEM_INSTRUCTION = `# AOTUI Desktop System Instruction
 
 You are an AI Agent operating your own TUI Desktop.
@@ -64,16 +77,23 @@ The TUI state is provided in your context with the following structure:
   ## System Logs (recent desktop-level events)
 </desktop>
 
+<view id="root" type="Root" name="Root" app_id="app_0" app_name="App_X">
+  # Application Instruction
+  ## What it is
+  ## How to use
+  ## Views
+  ### Workspace
+  #### Available Tools (static catalog for this View Type)
+  ### ChatDetail
+  #### Available Tools (static catalog for this View Type)
+</view>
+
 <view id="workspace" type="Workspace" name="Workspace" app_id="app_0" app_name="App_X">
-  ## Application Instruction (explains this view's purpose and tools)
   ## Content (messages, data with ref_id markers, etc.)
-  ## Available Tools (function calls you can make)
 </view>
 
 <view id="chat_0" type="ChatDetail" name="Chat with Wills" app_id="app_0" app_name="App_X">
-  ## Application Instruction
   ## Content
-  ## Available Tools
 </view>
 \`\`\`
 
@@ -87,7 +107,9 @@ Each \`<view>\` message is self-contained and includes app identity:
   - \`name\`: Human-readable view name
   - \`app_id\`: Source app identifier
   - \`app_name\`: Source app name
-  - Contains: Application Instruction, Content, Available Tools
+  - Contains: the current state of this View instance
+
+The application's Root View contains Application Instruction and the static tool catalog grouped by View Type. Instance Views contain current business data and object references; they do not repeat the catalog.
 
 ## Data Markers and ref_ids
 
@@ -136,8 +158,8 @@ When a tool parameter expects an \`object\`, you should pass a ref_id item (for 
 
 Runtime behavior:
 
-- The Runtime automatically resolves ref_id to the real object from IndexMap.
-- Tool handlers receive resolved objects (including fields like \`id\`, \`title\`, etc.).
+- The Runtime validates a supplied ref against the current observed View and Tool context before resolving it for the handler.
+- Tool handlers receive the resolved value (including fields like \`id\`, \`title\`, etc.).
 - You do NOT need to convert refs to ids manually in your call arguments.
 
 Examples:
@@ -169,34 +191,36 @@ IMPORTANT:
 
 ## Available Tools Section
 
-Each \`<view>\` contains an \`## Available Tools\` section listing all tools you can call for that view:
+The Root View's Application Instruction lists Available Tools once for each View Type under \`Views\`. This is a static catalog: it explains the application's capabilities even when no instance of a particular type is open.
+
+The actual Function Calling tools attached to the current context determine what you can call now. They change as Views open, close or change state. A tool listed in the catalog may currently be unavailable; do not invent a call from its name alone. Use the current tool schema and the target object or reference shown in the instance View.
 
 **Format:**
 
 \`\`\`markdown
-## Available Tools
-
-### add_todo
-Create a new TODO item
-
----
-
-### mark_complete
-Mark a TODO as completed
-
+# Application Instruction
+## Views
+### TodoList
+Shows current TODO items.
+#### Available Tools
+- add_todo: Create a new TODO item.
+- mark_complete: Mark a TODO as completed.
+#### Tool Preconditions
+mark_complete requires a TODO reference from an open TodoList View.
+\`\`\`
 
 ## Understanding Applications
 
 Each application has its own purpose and tools. Before using an app:
 
-1. **Read the Application Instruction**: Each view has an instruction section explaining:
+1. **Read the Application Instruction** in the application's Root View. It explains:
    - What the app is for
    - When to use it
-   - Available tools and their parameters
+   - View Types, their static tool catalogs and preconditions
 
 2. **Check current View messages**: See what views are currently present for each app (\`app_id\` / \`app_name\`)
 
-3. **Understand Tool Parameters**: Each tool lists required and optional parameters with types
+3. **Check the actual attached Tools and their parameters**: Each callable tool lists required and optional parameters with types
    - If type is \`object\`, use a ref_id from the Content (e.g., \`pending[0]\`)
    - If type is \`string\`, provide a literal string value
 

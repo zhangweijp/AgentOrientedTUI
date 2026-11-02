@@ -5,8 +5,7 @@
  * AOTUIApp 抽象基类在 SDK 层。
  */
 
-import type { AppID, OperationID } from '../core/types.js';
-import type { OperationContext, OperationResult } from '../core/operations.js';
+import type { AppID } from '../core/types.js';
 import type { AppContext } from './store.interface.js';
 import type { AppReinitializeContext } from './app-kernel.interface.js';
 
@@ -83,24 +82,4 @@ export interface IAOTUIApp {
      */
     onResume?(): Promise<void>;
 
-    /**
-     * 处理 Agent 发送的操作
-     * 
-     * @param context - 操作上下文 (包含 appId 和可选的 viewId)
-     * @param operation - 操作名称
-     * @param args - 操作参数
-     */
-    onOperation(
-        context: OperationContext,
-        operation: OperationID,
-        args: Record<string, unknown>
-    ): Promise<OperationResult>;
-
-    /**
-     * [RFC-007] Render View Tree
-     * 
-     * Optional method to render the application's view tree in Markdown format.
-     * Used for TUI snapshots.
-     */
-    renderViewTree?(): string;
 }

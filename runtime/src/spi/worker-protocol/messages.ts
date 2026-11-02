@@ -1,3 +1,7 @@
+import type { AppLifecycleAck } from '../../adapters/app-lifecycle-protocol.js';
+import type { AppCleanupReport } from '../runtime/app-lifecycle.interface.js';
+import type { StatePersistenceOffer, StatePersistenceAck, StateStorageRequest, StateStorageResponse } from '../../adapters/storage/state-storage-protocol.js';
+import type { ManagedPersistenceReport } from '../../worker-runtime/state-persistence.js';
 /**
  * Worker Protocol - Message Definitions
  * 
@@ -13,21 +17,16 @@
  * 
  * 1. 所有消息都有 `type` 字段用于区分
  * 2. 请求消息都有 `requestId` 用于匹配响应
- * 3. Worker 可以主动推送消息 (如 DOM_UPDATE)
+ * 3. Worker 可以主动推送 Semantic Snapshot 发布结果
  * 
  * @module @aotui/runtime/spi/worker-protocol
  */
 
-import type { RequestID, AppID, DesktopID, ViewID, OperationID, SnapshotID, DataPayload } from './types.js';
-import type { OperationResult } from '../core/index.js';
+import type { RequestID, AppID, DesktopID, ViewID, DataPayload } from './types.js';
 import type { AppLaunchConfig } from '../app/app-config.interface.js';
-
-// ============================================================================
-// Re-export WorkerMessageType from canonical source
-// ============================================================================
-// WorkerMessageType is defined in worker-message.interface.ts (Single Source of Truth)
-// We re-export it here for convenience when importing from worker-protocol
-export type { WorkerMessageType } from '../runtime/worker-message.interface.js';
+import type { ToolDescriptorV2, ToolTargetV2 } from '../../core/snapshot/types.js';
+import type { SnapshotValueRefSource } from '../../core/tool/snapshot-value-arguments.js';
+import type { LLMOutputEventMeta } from '../core/llm-output.js';
 
 // ============================================================================
 // Main → Worker Messages
@@ -39,6 +38,8 @@ export type { WorkerMessageType } from '../runtime/worker-message.interface.js';
  */
 export interface InitMessage {
     type: 'INIT';
+    persistence: StatePersistenceOffer;
+    appLifecycle: AppLifecycleAck;
     requestId: RequestID;
     appId: AppID;
     desktopId: DesktopID;
@@ -46,37 +47,47 @@ export interface InitMessage {
     appModulePath: string;
     /** 应用启动配置 (Configuration Injection) */
     config?: AppLaunchConfig;
+    /** M2: Runtime-generated logical App execution instance token. */
+    appInstanceId: string;
+    requestedCapabilities: string[];
 }
 
 /**
  * App 生命周期消息
  */
 export interface AppLifecycleMessage {
-    type: 'APP_OPEN' | 'APP_PAUSE' | 'APP_RESUME' | 'APP_CLOSE' | 'APP_DELETE' | 'APP_SHUTDOWN' | 'APP_REINITIALIZE';
+    type: 'APP_STOP' | 'APP_OPEN' | 'APP_PAUSE' | 'APP_RESUME' | 'APP_CLOSE' | 'APP_DELETE' | 'APP_SHUTDOWN' | 'APP_REINITIALIZE';
     requestId: RequestID;
     reason?: string;
 }
 
-/**
- * View 生命周期消息
- */
-export interface ViewLifecycleMessage {
-    type: 'VIEW_DISMOUNT';
-    requestId: RequestID;
-    viewId: ViewID;
-    parentId?: ViewID | null;
+export type { InteractionMode } from '../runtime/app-interaction.interface.js';
+export type { SnapshotValueParameterContract } from '../../core/tool/snapshot-value-parameter-contract.js';
+export interface ViewToolInvokeRefV2Message {
+    type: 'VIEW_TOOL_INVOKE_REF_V2';
+    requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string;
+    tool: ToolDescriptorV2; target: ToolTargetV2; argumentMode: 'snapshot-value-v2';
+    rawArgs: Readonly<Record<string, unknown>>; effectiveArgs: Readonly<Record<string, unknown>>;
+    refSources: readonly SnapshotValueRefSource[];
 }
+export interface ViewToolInvokeRefV2Response {
+    type: 'VIEW_TOOL_INVOKE_REF_V2_RESPONSE'; requestId: RequestID; appId: AppID; instanceId: string;
+    argumentMode: 'snapshot-value-v2'; success: true; terminal: ViewToolInvocationTerminal;
+}
+export type { OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
+import type { ViewToolInvocationTerminal } from '../../core/tool/invocation-terminal.js';
+export type { ViewToolInvocationTerminal } from '../../core/tool/invocation-terminal.js';
 
-/**
- * Operation 执行消息
- */
-export interface OperationMessage {
-    type: 'APP_OPERATION' | 'VIEW_OPERATION';
-    requestId: RequestID;
-    viewId?: ViewID;
-    operation: OperationID;
-    args: Record<string, unknown>;
-    snapshotId: SnapshotID;
+export interface ViewToolInvokeOrdinaryV2Message {
+    type: 'VIEW_TOOL_INVOKE_ORDINARY_V2';
+    requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string;
+    tool: ToolDescriptorV2; target: ToolTargetV2; argumentMode: 'ordinary-v2';
+    args: Readonly<Record<string, unknown>>;
+}
+export interface ViewToolInvokeOrdinaryV2Response {
+    type: 'VIEW_TOOL_INVOKE_ORDINARY_V2_RESPONSE';
+    requestId: RequestID; appId: AppID; instanceId: string; argumentMode: 'ordinary-v2';
+    success: true; terminal: ViewToolInvocationTerminal;
 }
 
 /**
@@ -87,7 +98,7 @@ export interface ExternalEventMessage {
     requestId: RequestID;
     viewId: ViewID;
     eventType: string;
-    data: Record<string, unknown>;
+    data: DataPayload;
 }
 
 
@@ -107,16 +118,6 @@ export interface ResetMessage {
 }
 
 /**
- * [RFC-006] ViewLink Mount 消息
- */
-export interface ViewMountByLinkMessage {
-    type: 'VIEW_MOUNT_BY_LINK';
-    requestId: RequestID;
-    parentViewId: ViewID;
-    linkId: string;
-}
-
-/**
  * [RFC-011] LLM Output Push 消息
  * [RFC-020] 支持结构化 payload { reasoning?, content? }
  * 
@@ -130,25 +131,18 @@ export interface LLMOutputPushMessage {
     content?: string;
     eventType: 'complete';
     timestamp: number;
-    meta?: {
-        model?: string;
-        usage?: {
-            promptTokens: number;
-            completionTokens: number;
-            totalTokens: number;
-        };
-    };
+    meta?: Pick<LLMOutputEventMeta, 'model' | 'providerId' | 'modelId' | 'usage'>;
 }
 
 /**
  * 主线程 → Worker 消息联合类型
  */
 export type MainToWorkerMessage =
+    | ViewToolInvokeOrdinaryV2Message
+    | StateStorageResponse
     | InitMessage
     | AppLifecycleMessage
-    | ViewLifecycleMessage
-    | ViewMountByLinkMessage
-    | OperationMessage
+    | ViewToolInvokeRefV2Message
     | ExternalEventMessage
     | TerminateMessage
     | ResetMessage
@@ -179,6 +173,10 @@ export interface ResponseBase {
  */
 export interface InitResponse extends ResponseBase {
     type: 'INIT_RESPONSE';
+    persistence: StatePersistenceAck;
+    appLifecycle: AppLifecycleAck;
+    acceptedCapabilities: string[];
+    appInstanceId: string;
 }
 
 /**
@@ -186,16 +184,9 @@ export interface InitResponse extends ResponseBase {
  */
 export interface LifecycleResponse extends ResponseBase {
     type: 'LIFECYCLE_RESPONSE';
+    persistence?: ManagedPersistenceReport;
+    appCleanup?: AppCleanupReport;
 }
-
-/**
- * Operation 结果响应
- */
-export interface OperationResponse extends ResponseBase {
-    type: 'OPERATION_RESPONSE';
-    result: OperationResult;
-}
-
 
 /**
  * 错误响应
@@ -214,75 +205,25 @@ export interface UpdateRequest {
 }
 
 /**
- * Worker 主动请求: mount 子 View
+ * Semantic publication: a prepared, versioned App Snapshot Draft from a Worker Producer.
+ * Wire data is untrusted until the Runtime Core validator accepts it.
+ * No handler functions or live Ref objects are part of this contract.
  */
-export interface MountChildRequest {
-    type: 'REQUEST_MOUNT_CHILD';
-    viewId: ViewID;
+export interface SnapshotPreparedPush {
+    type: 'SNAPSHOT_PREPARED';
+    draft: unknown;
+    suppressSignal: boolean;
 }
 
-/**
- * Worker 主动请求: dismount 子 View
- */
-export interface DismountChildRequest {
-    type: 'REQUEST_DISMOUNT_CHILD';
-    viewId: ViewID;
-}
-
-
-
-/**
- * Worker 主动推送: Snapshot Fragment
- * 
- * [RFC-001] Worker-Side Transformation
- * Worker 直接执行 Transformer，推送 Markdown + IndexMap，
- * 避免主线程 HTML 解析开销。
- */
-export interface SnapshotFragmentPush {
-    type: 'SNAPSHOT_FRAGMENT';
-    /** App ID */
+/** Worker could not prepare or transport a Semantic Draft. */
+export interface SnapshotPrepareFailedPush {
+    type: 'SNAPSHOT_PREPARE_FAILED';
     appId: AppID;
-    /** 更新时间戳 (用于去重) */
-    timestamp: number;
-    /** TUI Markdown for this App */
-    markup: string;
-    /** Partial IndexMap (app-scoped paths) */
-    indexMap: Record<string, DataPayload>;
-
-    /**
-     * View 级片段
-     *
-     * 每个 View 独立维护 timestamp，支持消息按 View 更新时间排序。
-     */
-    views?: Array<{
-        viewId: ViewID;
-        viewType: string;
-        viewName?: string;
-        markup: string;
-        timestamp: number;
-    }>;
-    /**
-     * [RFC-007] View tree markdown for Application Info section
-     * 
-     * Format:
-     * ```markdown
-     * ## Application View Tree
-     * - [Chat](view:view_0, mounted)
-     *     ↳ [Detail](link:CD_0)
-     * ```
-     */
-    viewTree?: string;
-    /** Version for incremental updates (future) */
-    version?: number;
-
-    /**
-     * [RFC-012] Signal Suppression Flag
-     * 
-     * When true, main thread should update snapshot cache but NOT emit UpdateSignal.
-     * Used by passive apps (signalPolicy: 'never') to maintain data freshness
-     * without triggering Agent reaction loops.
-     */
-    suppressSignal?: boolean;
+    instanceId: string;
+    producerSeq: number;
+    sourceEpoch: number;
+    error: { code: 'SNAPSHOT_INVALID' | 'SNAPSHOT_SERIALIZATION_ERROR'; message: string };
+    suppressSignal: boolean;
 }
 
 /**
@@ -296,15 +237,15 @@ export interface ResetResponse extends ResponseBase {
  * Worker → 主线程消息联合类型
  */
 export type WorkerToMainMessage =
+    | StateStorageRequest
+    | ViewToolInvokeOrdinaryV2Response
+    | ViewToolInvokeRefV2Response
     | InitResponse
     | LifecycleResponse
-    | OperationResponse
     | ErrorResponse
     | UpdateRequest
-    | MountChildRequest
-    | DismountChildRequest
-
-    | SnapshotFragmentPush
+    | SnapshotPreparedPush
+    | SnapshotPrepareFailedPush
     | ResetResponse;
 
 // ============================================================================
@@ -323,14 +264,4 @@ export function isResponse(msg: WorkerToMainMessage): msg is ResponseBase & Work
  */
 export function isRequest(msg: WorkerToMainMessage): boolean {
     return msg.type.startsWith('REQUEST_');
-}
-
-
-
-/**
- * 检查是否为 Snapshot Fragment 推送
- * [RFC-001] Worker-Side Transformation
- */
-export function isSnapshotFragment(msg: WorkerToMainMessage): msg is SnapshotFragmentPush {
-    return msg.type === 'SNAPSHOT_FRAGMENT';
 }

@@ -799,7 +799,7 @@ const skillsRouter = router({
 const sourceControlRouter = router({
     getDraft: publicProcedure
         .input(z.object({ projectPath: z.string().optional() }).optional())
-        .query(async ({ input }) => {
+        .query(async ({ input, ctx }) => {
             const { MCP } = await import('../mcp/index.js');
             const config = await Config.getGlobal();
             const mcpConfig: Record<string, any> = normalizeMcpConfig(config.mcp ?? (config as Record<string, any>).mcpServers ?? {});
@@ -848,7 +848,7 @@ const sourceControlRouter = router({
 
             const skillService = new SkillCatalogService({ projectPath: input?.projectPath });
             const skillEntries = await skillService.listSkills();
-            const appsConfig = await Config.getAppsConfig();
+            const appsConfig = await ctx.hostManager.getAppsConfig();
             const appItems = Object.entries(appsConfig)
                 .sort(([a], [b]) => a.localeCompare(b))
                 .map(([name, entry]) => ({
@@ -941,7 +941,7 @@ const sourceControlRouter = router({
 
             const skillService = new SkillCatalogService({ projectPath: input.projectPath });
             const skillEntries = await skillService.listSkills();
-            const appsConfig = await Config.getAppsConfig();
+            const appsConfig = await ctx.hostManager.getAppsConfig();
             const appItems = Object.entries(appsConfig)
                 .sort(([a], [b]) => a.localeCompare(b))
                 .map(([name, entry]) => {

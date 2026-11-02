@@ -1,10 +1,10 @@
 /**
- * AOTUI SDK - Operation Type Definitions
+ * AOTUI SDK - View Tool Parameter Types
  *
- * [SSOT] 所有 Operation 相关类型的唯一来源
+ * Parameter declarations and handler argument inference for View-local Tools.
  *
  * 设计原则:
- * - 此文件不导入任何运行时代码 (仅 preact 类型)
+ * - This file contains types only and imports no runtime code.
  * - 类型按用途分组
  * - 每个类型都有 JSDoc 文档
  *
@@ -95,10 +95,12 @@ export interface ParamDef {
   itemType?: ParamBaseType;
   /** 枚举选项 (type: 'enum' 时必填) */
   options?: readonly string[];
-  /** 默认值 */
+  /** 描述默认值，不自动填充缺席参数；实际规则由所用 API/Runtime 合同决定。 */
   default?: unknown;
-  /** 引用类型 (type: 'reference' 时必填，如 'Message', 'Todo') */
+  /** 可省略；受支持的快照 Ref 执行路径在显式声明时要求与实际 Ref 类型匹配。 */
   refType?: string;
+  /** View-local readonly snapshot declaration; execution requires its matching negotiated private qualification. */
+  refSource?: 'snapshot-value-v1';
 }
 
 /**
@@ -177,64 +179,3 @@ export type InferArgs<T extends ParamSchema> = {
     T[K]
   >;
 };
-
-// ═══════════════════════════════════════════════════════════════
-// 4. Runtime Result Types
-// ═══════════════════════════════════════════════════════════════
-
-export interface OperationError {
-  /** 错误码 */
-  code: string;
-  /** 错误信息 */
-  message: string;
-  /** 额外上下文 */
-  context?: Record<string, unknown>;
-}
-
-/**
- * Operation Handler 的返回结果
- *
- * @description Operation 执行后必须返回的结果结构
- *
- * @example
- * // 成功结果
- * { success: true, data: { messageId: '123' } }
- *
- * @example
- * // 失败结果
- * { success: false, error: { code: 'INVALID_INPUT', message: '内容不能为空' } }
- */
-export interface OperationResult {
-  /** 是否成功 */
-  success: boolean;
-  /** 成功时的返回数据 */
-  data?: Record<string, unknown>;
-  /** 失败时的错误信息 */
-  error?: OperationError;
-}
-
-// ═══════════════════════════════════════════════════════════════
-// 6. 验证相关类型 (Validation Types)
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * 参数验证错误
- */
-export interface ValidationError {
-  /** 参数名 */
-  param: string;
-  /** 错误类型 */
-  type: "missing" | "type_mismatch" | "constraint_violation";
-  /** 错误描述 */
-  message: string;
-}
-
-/**
- * 验证结果
- */
-export interface ValidationResult {
-  /** 是否有效 */
-  valid: boolean;
-  /** 错误列表 */
-  errors: ValidationError[];
-}

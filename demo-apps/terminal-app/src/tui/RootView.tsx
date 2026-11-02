@@ -1,187 +1,24 @@
-import { defineParams, useViewTypeTool } from '@aotui/sdk';
-import type { TerminalSession } from '../types.js';
-
-type RootViewProps = {
-    projectPath: string;
-    terminals: TerminalSession[];
-    onCloseTerminal: (terminalId: string) => boolean;
-    onSendCommand: (terminalId: string, command: string) => Promise<{ success: boolean; message: string }>;
-    onSendCommandNewTerminal: (command: string) => Promise<{ success: boolean; terminalId?: string; message: string }>;
-    onLoadMoreOutput: (terminalId: string, tailLines: number) => boolean;
-};
-
-type ToolTerminalArg = Partial<Pick<TerminalSession, 'id' | 'cwd' | 'status'>>;
-
-export function RootView({
-    terminals,
-    onCloseTerminal,
-    onSendCommand,
-    onSendCommandNewTerminal,
-    onLoadMoreOutput
-}: RootViewProps) {
-    const hasTerminals = terminals.length > 0;
-    const [CloseTerminalsTool] = useViewTypeTool(
-        'TerminalConsole',
-        'close_terminals',
-        {
-            description: `WHEN TO USE: Close one or more existing terminal sessions.
-HOW TO USE: Provide one or more Terminal reference ids (type: Terminal).`,
-            params: defineParams({
-                terminals: { type: 'array', itemType: 'reference', refType: 'Terminal', required: true, desc: 'Terminal ref ids to close' }
-            })
-        },
-        async (args) => {
-            const terminals = (args.terminals as ToolTerminalArg[]);
-            if (!terminals?.length) {
-                return { success: false, error: { code: 'TERMINAL_NOT_FOUND', message: 'At least one Terminal reference is required.' } };
-            }
-            const closed: string[] = [];
-            const notFound: string[] = [];
-            for (const t of terminals) {
-                const terminalId = t?.id;
-                if (!terminalId) { notFound.push('unknown'); continue; }
-                if (onCloseTerminal(terminalId)) { closed.push(terminalId); }
-                else { notFound.push(terminalId); }
-            }
-            if (closed.length === 0) {
-                return { success: false, error: { code: 'TERMINAL_NOT_FOUND', message: `No terminals found: ${notFound.join(', ')}` } };
-            }
-            return { success: true, data: { message: `Closed: ${closed.join(', ')}.${notFound.length ? ` Not found: ${notFound.join(', ')}` : ''}` } };
-        },
-        { enabled: hasTerminals }
-    );
-
-    const [SendCommandTool] = useViewTypeTool(
-        'TerminalConsole',
-        'send_command_to_exist_terminal',
-        {
-            description: `WHEN TO USE: Execute a command in an existing terminal.
-HOW TO USE: Provide terminal reference and command.`,
-            params: defineParams({
-                terminal: { type: 'reference', refType: 'Terminal', required: true, desc: 'Terminal ref id' },
-                command: { type: 'string', required: true, desc: 'Shell command' }
-            })
-        },
-        async (args: { terminal: ToolTerminalArg; command: string }) => {
-            const terminalId = args.terminal?.id ?? null;
-            if (!terminalId) {
-                return { success: false, error: { code: 'TERMINAL_NOT_FOUND', message: 'Terminal reference is required.' } };
-            }
-
-            const result = await onSendCommand(terminalId, args.command);
-            if (!result.success) {
-                return { success: false, error: { code: 'COMMAND_REJECTED', message: result.message } };
-            }
-            return { success: true, data: { message: result.message, terminal_id: terminalId } };
-        },
-        { enabled: hasTerminals }
-    );
-
-    const [SendCommandNewTerminalTool] = useViewTypeTool(
-        'TerminalConsole',
-        'new_terminal_and_send_command',
-        {
-            description: `WHEN TO USE: Create a new terminal and execute a command immediately.
-HOW TO USE: Provide command.`,
-            params: defineParams({
-                command: { type: 'string', required: true, desc: 'Shell command' }
-            })
-        },
-        async (args: { command: string }) => {
-            const result = await onSendCommandNewTerminal(args.command);
-            if (!result.success || !result.terminalId) {
-                return { success: false, error: { code: 'COMMAND_REJECTED', message: result.message } };
-            }
-            return {
-                success: true,
-                data: { message: `Terminal opened (${result.terminalId}) and command started.`, terminal_id: result.terminalId }
-            };
-        }
-    );
-
-    const [LoadMoreOutputTool] = useViewTypeTool(
-        'Terminal',
-        'load_more_output',
-        {
-            description: `WHEN TO USE: Increase the output tail size for a terminal.
-HOW TO USE: Provide terminal reference and tail_lines.`,
-            params: defineParams({
-                terminal: { type: 'reference', refType: 'Terminal', required: true, desc: 'Terminal ref id' },
-                tail_lines: { type: 'number', required: true, desc: 'Number of additional lines to load' }
-            })
-        },
-        async (args: { terminal: ToolTerminalArg; tail_lines: number }) => {
-            const terminalId = args.terminal?.id ?? null;
-            if (!terminalId) {
-                return { success: false, error: { code: 'TERMINAL_NOT_FOUND', message: 'Terminal reference is required.' } };
-            }
-
-            const updated = onLoadMoreOutput(terminalId, args.tail_lines);
-            if (!updated) {
-                return { success: false, error: { code: 'TERMINAL_NOT_FOUND', message: 'Terminal not found' } };
-            }
-            return { success: true, data: { message: `Loaded ${args.tail_lines} more lines of output.`, terminal_id: terminalId } };
-        },
-        { enabled: hasTerminals }
-    );
-
-    return (
-        <>
-            <div data-role="application-instruction">
-                <section>
-                    <h1>Terminal App - Application Instruction</h1>
-                    <h2>What it is</h2>
-                    <p>Terminal App manages multiple shell sessions constrained to the project path and tracks command history, working directory, and output tails.</p>
-                    <h2>How to use</h2>
-                    <ul>
-                        <li>Send commands to an existing terminal by passing terminal refs.</li>
-                        <li>Create a new terminal and run a command in one step.</li>
-                        <li>Adjust output tail to view more lines from the latest command.</li>
-                        <li>Use <code>cd</code> commands only within the configured project path.</li>
-                        <li>Use refs rendered in Terminal Console/Terminal views: (content)[Terminal:ref_id].</li>
-                        <li>In tool args, pass terminal ref ids (for example: terminals[0]).</li>
-                        <li>Runtime resolves refs to real terminal data automatically; do not pass view ids.</li>
-                    </ul>
-                    <h2>Views</h2>
-                    <h3>TerminalConsole</h3>
-                    <p>Shows project path, terminal list, and console tools.</p>
-                    <p><strong>How to use:</strong> Start here to open terminals, send commands, and close terminal sessions by Terminal reference.</p>
-                    <h4>Tool Preconditions</h4>
-                    <ul>
-                        <li><strong>new_terminal_and_send_command</strong>: requires a shell command.</li>
-                        <li><strong>close_terminals</strong>: requires one or more Terminal references.</li>
-                        <li><strong>send_command_to_exist_terminal</strong>: requires a Terminal reference and a shell command.</li>
-                    </ul>
-
-                    <h3>Terminal</h3>
-                    <p><strong>What it shows:</strong> Command history, current working directory, current command status, and the visible output tail for a terminal session.</p>
-                    <p><strong>How to use:</strong> Inspect a specific terminal after launching or reusing it, then expand the output tail if more context is needed.</p>
-                    <h4>Tool Preconditions</h4>
-                    <ul>
-                        <li><strong>load_more_output</strong>: requires a Terminal reference and a positive <code>tail_lines</code> value.</li>
-                    </ul>
-                </section>
-            </div>
-
-
-            <div data-role="available-tools">
-                <section>
-                    <h2>Terminal Console Tools</h2>
-                    <ul>
-                        <li><SendCommandNewTerminalTool /></li>
-                        {hasTerminals && <li><CloseTerminalsTool /></li>}
-                        {hasTerminals && <li><SendCommandTool /></li>}
-                    </ul>
-                    {hasTerminals && (
-                        <>
-                            <h2>Terminal Tools</h2>
-                            <ul>
-                                <li><LoadMoreOutputTool /></li>
-                            </ul>
-                        </>
-                    )}
-                </section>
-            </div>
-        </>
-    );
+export function RootView() {
+    return <section data-role="application-instruction">
+        <h1>Terminal App - Application Instruction</h1>
+        <h2>What it is</h2><p>A multi-terminal shell application with command history, current working directories and output tails.</p>
+        <h2>How to use</h2><ol>
+            <li>Start in TerminalConsole with new_terminal_and_send_command.</li>
+            <li>Read the new Terminal View for command status, exit code and output.</li>
+            <li>Use that Terminal's tools to run another command, expand output or close the session. Use terminal_id from the intended Terminal View when calling its tools.</li>
+        </ol>
+        <p>A command-start receipt means the shell process was started. Read its status, exit code and output in the Terminal View to determine completion.</p>
+        <h2>Views</h2>
+        <h3>TerminalConsole</h3><p>Shows the project path and current terminals. new_terminal_and_send_command requires a shell command and opens a Terminal View.</p>
+        <h4>Available Tools</h4><ul><li>new_terminal_and_send_command</li></ul>
+        <h3>Terminal</h3><p>Shows one session's working directory, command history, execution status and visible output.</p>
+        <h4>Available Tools</h4><ul><li>send_command_to_exist_terminal</li><li>load_more_output</li><li>close_terminal</li></ul>
+        <h4>Tool Preconditions</h4><ul>
+            <li>send_command_to_exist_terminal requires a command and is available when this terminal is not running another command.</li>
+            <li>load_more_output requires a positive integer tail_lines and expands this terminal's visible output.</li>
+            <li>close_terminal closes this terminal and requests termination of its active command. The closed View's tools are no longer valid.</li>
+        </ul>
+        <p>Available Tools is a static catalog by View Type. Only tools attached to the current context are callable; Terminal tools require a live Terminal View.</p>
+        <p>The project path sets the initial working directory and limits the built-in cd operation. Shell commands run with the Host's operating-system permissions.</p>
+    </section>;
 }

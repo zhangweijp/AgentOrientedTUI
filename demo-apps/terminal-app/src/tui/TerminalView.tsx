@@ -1,4 +1,3 @@
-import { useDataRef } from '@aotui/sdk';
 import type { TerminalSession, CommandRecord } from '../types.js';
 
 type TerminalViewProps = {
@@ -20,7 +19,6 @@ function getActiveCommand(terminal: TerminalSession): CommandRecord | undefined 
 }
 
 export function TerminalView({ terminal }: TerminalViewProps) {
-    const terminalRef = useDataRef(`terminal_detail_${terminal.id}`, terminal);
     const activeCommand = getActiveCommand(terminal);
     const outputLines = activeCommand ? tailLines(activeCommand.outputLines, terminal.outputTail) : [];
     const outputText = outputLines.join('\n');
@@ -28,7 +26,6 @@ export function TerminalView({ terminal }: TerminalViewProps) {
     return (
         <div>
             <h2>Terminal {terminal.id}</h2>
-            <p>{terminalRef(`Terminal Ref: ${terminal.id}`)}</p>
             <ul>
                 <li><strong>Status:</strong> {terminal.status}</li>
                 <li><strong>Current Path:</strong> {terminal.cwd}</li>

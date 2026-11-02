@@ -11,11 +11,13 @@
  * @module @aotui/runtime/engine/app-registry
  */
 
-import type { IDesktop, AppID, TUIAppFactory, AOAppManifest } from '../../spi/index.js';
-import { isTUIAppFactory, isLegacyFactory, validateManifest, isValidAppName, isKernelConfigFactory } from '../../spi/index.js';
+import type { IDesktop, AppID, TUIAppFactory } from '../../spi/index.js';
+import { isTUIAppFactory } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import type { TUIConfig, AppConfigEntry } from './config.js';
 import type { AppLaunchConfig } from '../../spi/app/app-config.interface.js';
+import type { AppInteractionOptions } from '../../spi/runtime/app-interaction.interface.js';
+import { captureInteractionModes } from './interaction-config.js';
 import { createDefaultConfig, validateConfig } from './config.js';
 // [Option C] ESM-compatible imports for file system operations
 import * as fs from 'fs';
@@ -29,10 +31,8 @@ export type { TUIConfig, AppConfigEntry } from './config.js';
  * 已加载的 App 信息
  */
 export interface LoadedApp {
-    /** App 名称 (来自 manifest) */
+    /** Canonical name from the component factory's Kernel config. */
     name: string;
-    /** App 清单 (传统模式) 或 undefined (方案 B kernelConfig 模式) */
-    manifest?: AOAppManifest;
     /** 工厂对象 */
     factory: TUIAppFactory;
     /** 来源 */
@@ -52,6 +52,12 @@ export interface AppRegistryOptions {
     configPath?: string;
     /** 是否自动加载 (默认 true) */
     autoLoad?: boolean;
+}
+
+/** Host-owned installation policy; business launch config cannot enable Runtime capabilities. */
+export interface AppRegistryInstallOptions extends AppInteractionOptions {
+    defaultWorkerScript?: string;
+    dynamicConfig?: AppLaunchConfig;
 }
 
 /**
@@ -163,7 +169,6 @@ export class AppRegistry {
         // 添加到内存
         this.apps.set(name, {
             name,
-            manifest: factory.manifest,
             factory,
             source
         });
@@ -179,7 +184,7 @@ export class AppRegistry {
      * 注册临时 App (不保存到配置文件)
      * 用于开发环境自动发现或运行时动态添加
      */
-    async registerTransient(source: string, options?: { alias?: string }): Promise<string> {
+    async registerTransient(source: string): Promise<string> {
         // 加载工厂
         const factory = await this.loadFactory(source);
 
@@ -194,7 +199,6 @@ export class AppRegistry {
         // 添加到内存
         this.apps.set(name, {
             name,
-            manifest: factory.manifest,
             factory,
             source
         });
@@ -313,11 +317,7 @@ export class AppRegistry {
      */
     async installAll(
         desktop: IDesktop,
-        options?: { 
-            defaultWorkerScript?: string;
-            /** [RFC-025] Dynamic config to inject into all apps (e.g. projectPath) */
-            dynamicConfig?: AppLaunchConfig;
-        }
+        options?: AppRegistryInstallOptions
     ): Promise<AppID[]> {
         // 获取默认 Worker 脚本路径
         const defaultWorkerScript = options?.defaultWorkerScript
@@ -329,16 +329,14 @@ export class AppRegistry {
         return this.installEntries(desktop, Array.from(this.apps.keys()), {
             defaultWorkerScript,
             dynamicConfig: options?.dynamicConfig,
+            interactionModes: captureInteractionModes(options),
         });
     }
 
     async installSelected(
         desktop: IDesktop,
         names: string[],
-        options?: {
-            defaultWorkerScript?: string;
-            dynamicConfig?: AppLaunchConfig;
-        }
+        options?: AppRegistryInstallOptions
     ): Promise<AppID[]> {
         const defaultWorkerScript = options?.defaultWorkerScript
             ?? this.config.runtime?.workerScript;
@@ -346,6 +344,7 @@ export class AppRegistry {
         return this.installEntries(desktop, names, {
             defaultWorkerScript,
             dynamicConfig: options?.dynamicConfig,
+            interactionModes: captureInteractionModes(options),
         });
     }
 
@@ -412,7 +411,6 @@ export class AppRegistry {
         // npm:package-name -> 需要进一步解析，暂不支持
         if (source.startsWith('npm:')) {
             throw new AOTUIError('CONFIG_NOT_SUPPORTED', { feature: 'npm sources in Worker mode' });
-            return null;
         }
         return null;
     }
@@ -474,20 +472,10 @@ export class AppRegistry {
             return;
         }
 
-        // [Hybrid Model] 跳过 system: 协议 - 系统 App 应通过 local: 或 npm: 安装
-        if (entry.source.startsWith('system:')) {
-            console.warn(
-                `[AppRegistry] Skipped "${name}": 'system:' protocol is deprecated. ` +
-                `Use 'local:' or 'npm:' instead.`
-            );
-            return;
-        }
-
         try {
             const factory = await this.loadFactory(entry.source);
             this.apps.set(name, {
                 name,
-                manifest: factory.manifest,
                 factory,
                 source: entry.source
             });
@@ -500,10 +488,7 @@ export class AppRegistry {
     private async installEntries(
         desktop: IDesktop,
         names: string[],
-        options: {
-            defaultWorkerScript?: string;
-            dynamicConfig?: AppLaunchConfig;
-        }
+        options: AppRegistryInstallOptions
     ): Promise<AppID[]> {
         const installedIds: AppID[] = [];
 
@@ -529,28 +514,13 @@ export class AppRegistry {
             const workerScript = configEntry?.workerScript ?? options.defaultWorkerScript;
 
             try {
-                let promptRole = configEntry?.promptRole;
-                if (!promptRole) {
-                    if (isKernelConfigFactory(app.factory)) {
-                        promptRole = app.factory.kernelConfig.promptRole;
-                    } else if (app.manifest?.promptRole) {
-                        promptRole = app.manifest.promptRole;
-                    }
-                }
-
-                const kernelConfig = isKernelConfigFactory(app.factory)
-                    ? app.factory.kernelConfig
-                    : undefined;
-
+                const kernelConfig = app.factory.kernelConfig;
                 const whatItIs = configEntry?.whatItIs
-                    ?? kernelConfig?.whatItIs
+                    ?? kernelConfig.whatItIs
                     ?? configEntry?.description
-                    ?? kernelConfig?.description
-                    ?? app.manifest?.whatItIs
-                    ?? app.manifest?.description;
+                    ?? kernelConfig.description;
                 const whenToUse = configEntry?.whenToUse
-                    ?? kernelConfig?.whenToUse
-                    ?? app.manifest?.whenToUse;
+                    ?? kernelConfig.whenToUse;
 
                 if (autoStart) {
                     const appId = await desktop.installDynamicWorkerApp(
@@ -558,11 +528,11 @@ export class AppRegistry {
                         {
                             workerScriptPath: workerScript,
                             name,
-                            description: app.manifest?.description,
+                            description: configEntry?.description ?? kernelConfig.description,
                             whatItIs,
                             whenToUse,
-                            promptRole,
-                            config: dynamicConfig
+                            config: dynamicConfig,
+                            interactionModes: options.interactionModes,
                         }
                     );
                     installedIds.push(appId as AppID);
@@ -570,12 +540,13 @@ export class AppRegistry {
                 } else {
                     const appId = await desktop.registerPendingApp({
                         name,
-                        description: app.manifest?.description,
+                        description: configEntry?.description ?? kernelConfig.description,
                         whatItIs,
                         whenToUse,
                         modulePath,
                         workerScriptPath: workerScript,
-                        promptRole
+                        config: dynamicConfig,
+                        interactionModes: options.interactionModes,
                     });
                     installedIds.push(appId as AppID);
                     console.log(`[AppRegistry] Registered "${name}" to Desktop ${desktop.id} (Pending mode)`);
@@ -616,16 +587,8 @@ export class AppRegistry {
     }
 
     private resolveRegistrationName(source: string, factory: TUIAppFactory): string {
-        if (isKernelConfigFactory(factory) && factory.kernelConfig.appName) {
+        if (factory.kernelConfig.appName) {
             return factory.kernelConfig.appName;
-        }
-
-        if (factory.manifest?.app_name) {
-            return factory.manifest.app_name;
-        }
-
-        if (factory.manifest?.name) {
-            return factory.manifest.name;
         }
 
         throw new AOTUIError('CONFIG_INVALID', {
@@ -692,57 +655,7 @@ export class AppRegistry {
             // npm 包: npm:@scope/name 或 npm:name
             modulePath = source.slice(4);
         } else if (source.startsWith('local:')) {
-            // 本地路径: local:/path/to/app
-            let localPath = source.slice(6);
-
-            const fs = await import('fs');
-            const path = await import('path');
-
-            if (!path.isAbsolute(localPath)) {
-                localPath = path.resolve(process.cwd(), localPath);
-            }
-
-            if (fs.existsSync(localPath) && fs.statSync(localPath).isDirectory()) {
-                // Try to find entry point from aoapp.json or package.json
-                const aoappPath = path.join(localPath, 'aoapp.json');
-                const pkgPath = path.join(localPath, 'package.json');
-
-                if (fs.existsSync(aoappPath)) {
-                    try {
-                        const aoapp = JSON.parse(fs.readFileSync(aoappPath, 'utf-8'));
-                        if (aoapp.entry?.main) {
-                            localPath = path.join(localPath, aoapp.entry.main);
-                        }
-                    } catch (e) {
-                        console.warn(`[AppRegistry] Failed to parse aoapp.json at ${aoappPath}:`, e);
-                    }
-                }
-                
-                // Fallback to package.json if no aoapp entry or failed
-                if (fs.existsSync(pkgPath) && (!fs.existsSync(aoappPath) || localPath === source.slice(6))) {
-                    try {
-                        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-                        if (pkg.main) {
-                            localPath = path.join(localPath, pkg.main);
-                        }
-                    } catch (e) {
-                         console.warn(`[AppRegistry] Failed to parse package.json at ${pkgPath}:`, e);
-                    }
-                }
-                
-                // If still directory, default to index.js or dist/index.js check
-                if (fs.existsSync(localPath) && fs.statSync(localPath).isDirectory()) {
-                     const distIndex = path.join(localPath, 'dist/index.js');
-                     const srcIndex = path.join(localPath, 'index.js');
-                     if (fs.existsSync(distIndex)) {
-                         localPath = distIndex;
-                     } else if (fs.existsSync(srcIndex)) {
-                         localPath = srcIndex;
-                     }
-                }
-            }
-
-            modulePath = localPath;
+            modulePath = this.resolveModulePath(source)!;
         } else if (source.startsWith('git:')) {
             throw new AOTUIError('CONFIG_NOT_SUPPORTED', { feature: 'Git source' });
         } else {
@@ -752,27 +665,13 @@ export class AppRegistry {
         // 动态导入模块
         const module = await import(modulePath);
 
-        const candidates = [
-            module.factory,
-            module.default?.factory,
-            module.default,
-            ...Object.values(module)
-        ];
-
-        const factory = candidates.find((candidate) => isTUIAppFactory(candidate));
-
-        if (!factory) {
+        const factory = module.default;
+        if (!isTUIAppFactory(factory)) {
             throw new AOTUIError('APP_INVALID_EXPORT', { modulePath });
-        }
-
-        if (isLegacyFactory(factory) && !validateManifest(factory.manifest)) {
-            throw new AOTUIError('APP_INVALID_MANIFEST', { modulePath });
         }
 
         return factory;
     }
 }
 
-// Re-export factory interface
-export type { TUIAppFactory, AOAppManifest } from '../../spi/index.js';
-export { isTUIAppFactory, validateManifest, isValidAppName } from '../../spi/index.js';
+export type { TUIAppFactory } from '../../spi/index.js';

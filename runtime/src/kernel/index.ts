@@ -1,74 +1,48 @@
 // [DIP FIX] Kernel now depends ONLY on interfaces from SPI, not concrete Engine classes
 import type {
     IKernel,
-    Operation,
-    OperationResult,
     DesktopID,
-    SnapshotID,
-    CachedSnapshot,
     IDesktop,
-    IRegistry,
-    AppID,
-    AppConfig,
     DesktopState,
-    IAOTUIApp,
-
-    ISystemOperationRegistry,
-    IDesktopForOperation,
-    SystemOperationContext,
     IDesktopManager,
-    ITransformer,
-    IDispatcher,
-    OperationLogScope,
     IRuntimeContext, // New
     ReinitializeDesktopAppsOptions,
     ReinitializeDesktopAppsResult,
 } from '../spi/index.js';
 
-import { AOTUIError, failedResult } from '../spi/core/errors.js';
-import { createOperationId } from '../spi/core/id-factory.js';
-import { buildOperationLogEntry } from '../engine/core/operation-log-formatter.js';
-import type { Tool } from '../spi/core/tool-call.js';
+import { AOTUIError } from '../spi/core/errors.js';
+import type { DesktopCloseOptions, DesktopCloseOperation, RuntimeCloseOperation, RuntimeCloseReport, ShutdownOptions } from '../spi/runtime/close.interface.js';
+import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseOperation, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from '../engine/core/close-operation.js';
+import { captureInteractionModes } from '../engine/app/interaction-config.js';
+import type { AppScopeResult } from '../spi/runtime/app-interaction.interface.js';
+import type { ScopePolicy } from '../core/invocation/scoped-interaction-types.js';
 
 /**
  * Kernel - The core orchestrator of the AOTUI Runtime.
  * 
  * Responsibilities:
  * - Creates and manages Desktop instances (via IDesktopManager)
- * - Handles concurrency via lock mechanism (delegated to IDesktopManager)
- * - Generates and manages Snapshots for Agent consumption
- * - Dispatches operations to Apps via IDispatcher
+ * - Exposes Semantic App Scope creation
  * - Manages Desktop lifecycle (suspend, resume, serialize, restore)
  * 
- * [DIP] Kernel depends ONLY on interfaces (IDesktopManager, IRegistry, ITransformer, IDispatcher).
- * Concrete implementations are injected via constructor (Inversion of Control).
- * 
- * @example
- * ```typescript
- * // Use createKernel factory to get a properly configured Kernel
- * import { createKernel } from '@aotui/runtime';
- * const kernel = createKernel(desktopManager, registry, systemOps);
- * ```
  */
 export class Kernel implements IKernel {
-    private static readonly EXTERNAL_SYSTEM_TOOL_NAMES = new Set([
-        'system-open_app',
-        'system-close_app',
-    ]);
     private shutdownReason?: string;
     private shutdownPromise: Promise<void> | null = null;
     private isShutdownComplete = false;
+    private closing?: RuntimeCloseOperation;
+    private readonly inFlight = new Set<Promise<unknown>>();
+    private managerClose?: RuntimeCloseOperation;
+    private managerReport?: RuntimeCloseReport;
+    private readonly lateDesktopCloses = new Set<DesktopCloseOperation>();
+    private shutdownDesktopIds?: Set<DesktopID>;
+    private readonly closingDesktops = new WeakSet<IDesktop>();
+    private closeState = newCloseState('runtime');
 
-    constructor(
-        private desktopManager: IDesktopManager,
-        private snapshotRegistry: IRegistry,
-        private transformer: ITransformer,
-        private dispatcher: IDispatcher,
-        private systemOps: ISystemOperationRegistry
-    ) { }
+    constructor(private desktopManager: IDesktopManager) { }
 
     private assertRuntimeAvailable(): void {
-        if (!this.isShutdownComplete) {
+        if (!this.closing && !this.isShutdownComplete) {
             return;
         }
         throw new AOTUIError('RUNTIME_SHUTDOWN', {
@@ -76,11 +50,25 @@ export class Kernel implements IKernel {
         });
     }
 
-    getSystemToolDefinitions() {
-        return this.systemOps.getToolDefinitions().filter((tool) => {
-            const name = (tool as Tool).function?.name;
-            return !!name && Kernel.EXTERNAL_SYSTEM_TOOL_NAMES.has(name);
-        });
+    private business<T>(run: () => Promise<T>): Promise<T> {
+        try { this.assertRuntimeAvailable();if (this.inFlight.size >= 128) throw closeError('LIFECYCLE_CAPACITY_EXCEEDED'); }
+        catch (error) { return Promise.reject(error); }
+        let resolve!: (value: T) => void, reject!: (error: unknown) => void;
+        const promise = new Promise<T>((yes, no) => { resolve = yes;reject = no; });this.inFlight.add(promise);
+        const release = () => this.inFlight.delete(promise);
+        try { void run().then(value => { release();resolve(value); }, error => { release();reject(error); }); }
+        catch (error) { release();reject(error); }
+        void promise.catch(() => {});return promise;
+    }
+    private isDesktopClosing(desktop: IDesktop): boolean {
+        return this.closingDesktops.has(desktop) || (desktop as IDesktop & { readonly isClosing?: boolean }).isClosing === true;
+    }
+    private assertDesktopAvailable(desktop: IDesktop): void {
+        if (this.isDesktopClosing(desktop))
+            throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: desktop.id });
+    }
+    private acceptsDesktopDiagnostics(desktop: IDesktop, desktopId: DesktopID): boolean {
+        return !this.closing && !this.isShutdownComplete && this.desktopManager.get(desktopId) === desktop && !this.isDesktopClosing(desktop);
     }
 
     /**
@@ -95,9 +83,16 @@ export class Kernel implements IKernel {
      * @param context - Optional: Runtime Context to inject into the Desktop
      * @returns The unique identifier of the created Desktop
      */
-    async createDesktop(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID> {
+    createDesktop(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID> { return this.business(() => this.createDesktopAccepted(desktopId, context)); }
+    private async createDesktopAccepted(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID> {
         this.assertRuntimeAvailable();
-        return this.desktopManager.create(desktopId, context);
+        const id = await this.desktopManager.create(desktopId, context);
+        if (this.closing) {
+            const operation = this.beginDesktopShutdown(id);
+            if (!this.shutdownDesktopIds?.has(id)) this.lateDesktopCloses.add(operation);
+            await operation.completion;throw new AOTUIError('RUNTIME_SHUTDOWN');
+        }
+        return id;
     }
 
     /**
@@ -106,17 +101,16 @@ export class Kernel implements IKernel {
      * 
      * @param desktopId - The ID of the Desktop to destroy
      */
-    async destroyDesktop(desktopId: DesktopID): Promise<void> {
-        this.assertRuntimeAvailable();
-        await this.desktopManager.destroy(desktopId);
+    destroyDesktop(desktopId: DesktopID): Promise<void> {
+        try { return closeVoid(this.beginDesktopShutdown(desktopId).completion, 'DESKTOP_CLOSE_FAILED'); }
+        catch (error) { return Promise.reject(error); }
     }
 
     /**
-     * 获取 Desktop 实例 (供 ToolCallAdapter 使用)
+     * Gets a Desktop instance for direct lifecycle and output access.
      * @throws {Error} E_NOT_FOUND if Desktop doesn't exist
      */
     getDesktop(desktopId: DesktopID): IDesktop {
-        this.assertRuntimeAvailable();
         const desktop = this.desktopManager.get(desktopId);
         if (!desktop) {
             throw new AOTUIError('DESKTOP_NOT_FOUND', { desktopId });
@@ -124,82 +118,46 @@ export class Kernel implements IKernel {
         return desktop;
     }
 
+    createAppScope(desktopId: DesktopID, appId: string, policy: ScopePolicy): AppScopeResult {
+        const desktop = this.desktopManager.get(desktopId);
+        const unavailable = (): AppScopeResult => Object.freeze({ status: 'rejected', issue: Object.freeze({ code: 'SCOPE_UNAVAILABLE', message: 'App scope is unavailable' }) });
+        const current = () => !!desktop && this.acceptsDesktopDiagnostics(desktop, desktopId);
+        if (!current()) return unavailable();
+        const create = desktop!.createAppScope;
+        if (!current()) return unavailable();
+        const result = create.call(desktop, appId, policy);
+        if (!current()) { if (result.status === 'opened') result.client.close();return unavailable(); }
+        return result;
+    }
+
     /**
      * [Worker-Only] 安装 App
      * 
      * [C1 Fix] workerScriptPath 现在是可选的，默认使用 Runtime 内置的 worker-runtime
      */
-    async installDynamicWorkerApp(
+    installDynamicWorkerApp(desktopId: DesktopID, appModulePath: string, options?: Parameters<IKernel['installDynamicWorkerApp']>[2]): Promise<string> {
+        try {
+            const interactionModes = captureInteractionModes(options);
+            const captured = { ...options, interactionModes };
+            return this.business(() => this.installDynamicWorkerAppAccepted(desktopId, appModulePath, captured));
+        } catch (error) { return Promise.reject(error); }
+    }
+    private async installDynamicWorkerAppAccepted(
         desktopId: DesktopID,
         appModulePath: string,
-        options?: {
-            workerScriptPath?: string;
-            appId?: string;
-            name?: string;
-            /** [RFC-013] App description for Agent */
-            description?: string;
-            config?: import('../spi/app/app-config.interface.js').AppLaunchConfig;
-            promptRole?: 'user' | 'assistant';
-        }
+        options?: Parameters<IKernel['installDynamicWorkerApp']>[2]
     ): Promise<string> {
         this.assertRuntimeAvailable();
         const desktop = this.desktopManager.get(desktopId);
         if (!desktop) {
             throw new AOTUIError('DESKTOP_NOT_FOUND', { desktopId });
         }
-        // [Refactor] Use DesktopManager to centralize log/signal if needed, but direct Desktop call is fine via Kernel
-        // Actually, Kernel mostly delegates to DesktopManager or Desktop directly.
-        // Let's delegate to DesktopManager to keep symmetry if Manager has it.
-        // Wait, Kernel line 110 calls 'desktop.installDynamicWorkerApp'.
-        // But DesktopManager ALSO has 'installDynamicWorkerApp'.
-        // Let's stick to what Kernel was doing: calling `desktop.installDynamicWorkerApp`.
+        this.assertDesktopAvailable(desktop);
         return desktop.installDynamicWorkerApp(appModulePath, options);
     }
 
-    /**
-     * [C1 FIX] Lock management delegated to IDesktopManager
-     */
-    acquireLock(desktopId: DesktopID, ownerId: string): void {
-        this.assertRuntimeAvailable();
-        this.desktopManager.acquireLock(desktopId, ownerId);
-    }
-
-    releaseLock(desktopId: DesktopID, ownerId: string): void {
-        this.desktopManager.releaseLock(desktopId, ownerId);
-    }
-
-    async acquireSnapshot(desktopId: DesktopID, ttl?: number): Promise<CachedSnapshot> {
-        this.assertRuntimeAvailable();
-        const desktop = this.desktopManager.get(desktopId);
-        if (!desktop) {
-            throw new AOTUIError('DESKTOP_NOT_FOUND', { desktopId });
-        }
-
-        // [RFC-001] Get Worker-pushed SnapshotFragments
-        const fragments = desktop.getSnapshotFragments();
-
-        // [RFC-007] Use SnapshotFormatter for complete TUI output
-        // [RFC-014] SnapshotFormatter now returns structured output
-        const { SnapshotFormatter } = await import('../engine/view/snapshot/index.js');
-        const formatter = new SnapshotFormatter();
-
-        // Desktop implements IDesktopMetadata (getInstalledApps, getSystemLogs, etc.)
-        const result = formatter.format(fragments, desktop as any);
-
-        // [RFC-014] Pass structured output to Registry
-        return this.snapshotRegistry.create(
-            result.indexMap as any,
-            result.markup,
-            ttl,
-            result.structured
-        );
-    }
-
-    releaseSnapshot(snapshotId: SnapshotID): void {
-        this.snapshotRegistry.release(snapshotId);
-    }
-
-    async reinitializeDesktopApps(
+    reinitializeDesktopApps(desktopId: DesktopID, options?: ReinitializeDesktopAppsOptions): Promise<ReinitializeDesktopAppsResult> { return this.business(() => this.reinitializeDesktopAppsAccepted(desktopId, options)); }
+    private async reinitializeDesktopAppsAccepted(
         desktopId: DesktopID,
         options?: ReinitializeDesktopAppsOptions
     ): Promise<ReinitializeDesktopAppsResult> {
@@ -209,207 +167,30 @@ export class Kernel implements IKernel {
             throw new AOTUIError('DESKTOP_NOT_FOUND', { desktopId });
         }
 
-        return desktop.reinitializeApps(options);
+        this.assertDesktopAvailable(desktop);return desktop.reinitializeApps(options);
     }
-
-    async execute(desktopId: DesktopID, operation: Operation, ownerId: string): Promise<OperationResult> {
-        this.assertRuntimeAvailable();
-        const startTime = Date.now();
-
-        try {
-            // 1. Verify Desktop
-            const desktop = this.desktopManager.get(desktopId);
-            if (!desktop) throw new AOTUIError('DESKTOP_NOT_FOUND', { desktopId });
-
-            // 2. Verify Lock (delegated to desktopManager)
-            if (!this.desktopManager.verifyLock(desktopId, ownerId)) {
-                const lockInfo = this.desktopManager.getLockInfo(desktopId);
-                throw new AOTUIError('DESKTOP_LOCKED', {
-                    desktopId,
-                    ownerId: lockInfo?.ownerId ?? 'none',
-                    claimant: ownerId,
-                });
-            }
-
-            // Refresh timestamp on successful lock verification
-            this.desktopManager.refreshLock(desktopId, ownerId);
-
-            const { context, name: operationName, args } = operation;
-
-            // 3. System Operation Dispatch (via Registry - replaces switch statement)
-            if (this.systemOps.has(operationName)) {
-                const systemCtx: SystemOperationContext = {
-                    desktopId,
-                    args: { ...args, appId: context.appId }  // Inject appId for view operations
-                };
-                const result = await this.systemOps.execute(operationName, systemCtx, desktop as IDesktopForOperation);
-                if (result.success && 'emitSignal' in desktop) {
-                    (desktop as { emitSignal: (reason: string) => void }).emitSignal('manual_refresh');
-                }
-                return this.enrichResult(result, operationName, startTime, desktop, desktopId, context.appId, args || {});
-            }
-
-            // 4. App Operation Dispatch
-            // [Worker-Only] 所有 App 操作通过 Dispatcher 路由到 Worker
-            if (!context.appId) {
-                throw new AOTUIError('OPERATION_REQUIRES_CONTEXT', { operationName });
-            }
-
-            // Pass Operation directly to Dispatcher (handles Worker IPC routing)
-            const dispatchOp: Operation = {
-                context,
-                name: operationName,
-                args
-            };
-            // [P0-1 FIX] Now returns the actual OperationResult from the App
-            const result = await this.dispatcher.dispatch(desktop, dispatchOp, this.snapshotRegistry);
-            return this.enrichResult(result, operationName, startTime, desktop, desktopId, context.appId, args || {});
-
-        } catch (e: unknown) {
-            // If already AOTUIError, preserve it. Otherwise wrap.
-            const aotuiError = AOTUIError.is(e) ? e : AOTUIError.fromError(e, 'EXECUTION_FAILED');
-            const durationMs = Date.now() - startTime;
-
-            // [RFC-008] Log failed operation
-            const desktop = this.desktopManager.get(desktopId);
-            if (desktop) {
-                this.logOperationExecution(
-                    desktop,
-                    desktopId,
-                    operation.context.appId,
-                    operation.name,
-                    operation.args || {},
-                    false,
-                    durationMs,
-                    'agent',  // Default actor for now - could be passed in
-                    aotuiError.message
-                );
-            }
-
-            return {
-                success: false,
-                error: aotuiError.toOperationError(),
-                data: { durationMs }
-            };
-        }
-    }
-
-    /**
-     * Enrich OperationResult with execution metadata
-     * 
-     * @param result - Original operation result
-     * @param operationName - Name of the executed operation
-     * @param startTime - Execution start timestamp
-     * @returns Result with added durationMs
-     */
-    private enrichResult(
-        result: OperationResult,
-        operationName: string,
-        startTime: number,
-        desktop: IDesktop,
-        desktopId: DesktopID,
-        appId: AppID | undefined,
-        args: Record<string, unknown>
-    ): OperationResult {
-        const durationMs = Date.now() - startTime;
-
-        // [RFC-008] Log successful operation
-        this.logOperationExecution(
-            desktop,
-            desktopId,
-            appId,
-            operationName,
-            args,
-            result.success,
-            durationMs,
-            'agent'  // Default actor for now
-        );
-
-        return {
-            ...result,
-            data: {
-                ...result.data,
-                durationMs,
-                operationName
-            }
-        };
-    }
-
-    /**
-     * [RFC-008] Log operation execution with semantic format
-     * 
-     * Generates WHO/WHEN/WHERE/WHAT log entries:
-     * - WHO: The actor (agent name)
-     * - WHEN: Timestamp and duration
-     * - WHERE: Desktop > App > View
-     * - WHAT: Operation name and result
-     */
-    private logOperationExecution(
-        desktop: IDesktop,
-        desktopId: DesktopID,
-        appId: AppID | undefined,
-        operationName: string,
-        args: Record<string, unknown>,
-        success: boolean,
-        durationMs: number,
-        actor: string,
-        errorMessage?: string
-    ): void {
-        const scope: OperationLogScope = this.systemOps.has(operationName) ? 'system' : 'app';
-
-        // Get app name for semantic description (getAppInfo is optional on IDesktop)
-        let appName: string | undefined;
-        if (appId && desktop.getAppInfo) {
-            const appInfo = desktop.getAppInfo(appId);
-            appName = appInfo?.name;
-        }
-
-        const entry = buildOperationLogEntry({
-            actor,
-            desktopId,
-            scope,
-            operationName: createOperationId(operationName),
-            args,
-            success,
-            durationMs,
-            appId,
-            appName,
-            errorMessage
-        });
-
-        // Log using Desktop's existing logger (duck typing for concrete Desktop methods)
-        // These methods exist on concrete Desktop but not on IDesktop interface
-        const desktopWithLogger = desktop as unknown as {
-            logSystem?: (msg: string, level: 'info' | 'warn' | 'error') => void;
-            logAppOperation?: (appId: AppID, msg: string, level: 'info' | 'warn' | 'error') => void;
-        };
-
-        if (scope === 'system' && desktopWithLogger.logSystem) {
-            desktopWithLogger.logSystem(entry.semanticDescription, success ? 'info' : 'error');
-        } else if (appId && desktopWithLogger.logAppOperation) {
-            desktopWithLogger.logAppOperation(appId, entry.semanticDescription, success ? 'info' : 'error');
-        }
-    }
-
 
     /**
      * [C1 FIX] Now type-safe via IDesktopManager
      */
-    async suspend(desktopId: DesktopID): Promise<void> {
+    suspend(desktopId: DesktopID): Promise<void> { return this.business(() => this.suspendAccepted(desktopId)); }
+    private async suspendAccepted(desktopId: DesktopID): Promise<void> {
         this.assertRuntimeAvailable();
+        const desktop = this.desktopManager.get(desktopId);if (desktop) this.assertDesktopAvailable(desktop);
         await this.desktopManager.suspend(desktopId);
     }
 
     /**
      * [C1 FIX] Now type-safe via IDesktopManager
      */
-    async resume(desktopId: DesktopID): Promise<void> {
+    resume(desktopId: DesktopID): Promise<void> { return this.business(() => this.resumeAccepted(desktopId)); }
+    private async resumeAccepted(desktopId: DesktopID): Promise<void> {
         this.assertRuntimeAvailable();
+        const desktop = this.desktopManager.get(desktopId);if (desktop) this.assertDesktopAvailable(desktop);
         await this.desktopManager.resume(desktopId);
     }
 
     serialize(desktopId: DesktopID): DesktopState {
-        this.assertRuntimeAvailable();
         const info = this.desktopManager.getDesktopInfo(desktopId);
         if (!info) {
             throw new AOTUIError('DESKTOP_NOT_FOUND', { desktopId });
@@ -427,105 +208,61 @@ export class Kernel implements IKernel {
     /**
      * [RFC-014] 优雅关闭 Desktop
      * 
-     * 1. 调用 Desktop.drain() 等待 App 清理
+     * 1. 等待 Desktop 及其 App 清理完成
      * 2. 执行 beforeClose 回调（如持久化）
      * 3. 销毁 Desktop
      * 
      * @param desktopId - Desktop ID
      * @param options - 关闭选项
      */
-    async gracefulShutdown(
-        desktopId: DesktopID,
-        options?: import('../spi/index.js').ShutdownOptions
-    ): Promise<void> {
-        this.assertRuntimeAvailable();
-        const timeout = options?.timeoutMs ?? 30000;
-
-        const desktop = this.desktopManager.get(desktopId);
-        if (!desktop) {
-            // 已不存在，直接返回
-            console.log(`[Kernel] gracefulShutdown: Desktop ${desktopId} not found, skipping`);
-            return;
-        }
-
-        const shutdownTask = async () => {
-            // 1. Drain Desktop (等待 App 清理)
-            await desktop.drain();
-
-            // 2. 执行 beforeClose 回调
-            if (options?.beforeClose) {
-                await options.beforeClose();
-            }
-
-            // 3. 销毁 Desktop
-            await this.destroyDesktop(desktopId);
-        };
-
-        // 超时保护
-        const timeoutPromise = new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error('gracefulShutdown timeout')), timeout);
-        });
-
-        try {
-            await Promise.race([shutdownTask(), timeoutPromise]);
-            console.log(`[Kernel] gracefulShutdown completed for ${desktopId}`);
-        } catch (e) {
-            console.warn(`[Kernel] gracefulShutdown timeout for ${desktopId}, forcing destroy`);
-            await this.destroyDesktop(desktopId);
-        }
+    async gracefulShutdown(desktopId: DesktopID, options?: ShutdownOptions): Promise<void> {
+        const operation = this.beginDesktopShutdown(desktopId, options);
+        const result = await operation.wait(options);
+        if (result.status === 'deadline') throw closeError('CLOSE_DEADLINE_EXCEEDED', result.report);
+        if (result.report.hasFailures) throw closeError('DESKTOP_CLOSE_FAILED', result.report);
     }
 
-    /**
-     * [RFC-015] 删除 Desktop (清理数据)
-     */
-    async deleteDesktop(desktopId: DesktopID): Promise<void> {
-        this.assertRuntimeAvailable();
-        const desktop = this.desktopManager.get(desktopId);
-        if (!desktop) {
-            console.log(`[Kernel] deleteDesktop: Desktop ${desktopId} not found, skipping`);
-            return;
-        }
-
-        console.log(`[Kernel] Deleting Desktop ${desktopId}...`);
-
-        // 1. 调用 Desktop.delete() (触发 App onDelete + drain)
-        await desktop.delete();
-
-        // 2. 从 DesktopManager 移除
-        this.desktopManager.destroy(desktopId);
-
-        console.log(`[Kernel] Desktop ${desktopId} deleted.`);
+    deleteDesktop(desktopId: DesktopID): Promise<void> {
+        try { return closeVoid(this.beginDesktopClose(desktopId, { intent: 'delete' }).completion, 'DESKTOP_CLOSE_FAILED'); }
+        catch (error) { return Promise.reject(error); }
     }
 
-    async shutdown(reason?: string): Promise<void> {
-        if (this.isShutdownComplete) {
-            return;
-        }
+    beginDesktopShutdown(desktopId: DesktopID, options?: ShutdownOptions): DesktopCloseOperation { return this.beginDesktopClose(desktopId, options); }
 
-        if (this.shutdownPromise) {
-            return this.shutdownPromise;
-        }
+    private beginDesktopClose(desktopId: DesktopID, options?: DesktopCloseOptions): DesktopCloseOperation {
+        closeTimeout(options);const callback = options?.beforeClose, intent = options?.intent ?? 'close';
+        if (intent !== 'close' && intent !== 'delete' || callback !== undefined && typeof callback !== 'function') throw closeError('CLOSE_OPTIONS_INVALID');
+        const captured = this.desktopManager.get(desktopId);if (captured) this.closingDesktops.add(captured);
+        return this.desktopManager.beginDesktopShutdown(desktopId, options);
+    }
 
-        this.shutdownReason = reason;
-        this.shutdownPromise = (async () => {
-            const desktopIds = this.desktopManager.listDesktopIds();
-            for (const desktopId of desktopIds) {
-                try {
-                    await this.desktopManager.destroy(desktopId);
-                } catch (error) {
-                    console.warn(`[Kernel] Failed to destroy Desktop during runtime shutdown: ${desktopId}`, error);
-                }
-            }
+    private report(): RuntimeCloseReport {
+        const state = structuredClone(this.closeState), manager = this.managerClose?.inspect() ?? this.managerReport;
+        if (manager) { mergeCloseReport(state, manager);state.pool = { ownership: manager.pool.ownership, report: manager.pool.report ? { ...manager.pool.report, issues: [...manager.pool.report.issues] } : null }; }
+        for (const operation of this.lateDesktopCloses) mergeCloseReport(state, operation.inspect());
+        state.pendingOperations = this.inFlight.size;
+        if (state.pendingOperations) state.resourcesReleased = false;
+        return freezeClose({ ...snapshotClose(state), scope: 'runtime' as const, intent: 'close' as const });
+    }
 
-            try {
-                await this.desktopManager.shutdown?.();
-            } finally {
-                this.snapshotRegistry.shutdown?.();
-                this.isShutdownComplete = true;
-            }
+    beginShutdown(_reason?: string): RuntimeCloseOperation {
+        if (this.closing) return this.closing;
+        this.shutdownDesktopIds = new Set(this.desktopManager.listDesktopIds());
+        let complete!: (value: RuntimeCloseReport) => void;
+        const completion = new Promise<RuntimeCloseReport>(resolve => { complete = resolve; });
+        this.closing = createCloseOperation(() => this.report(), completion);
+        // Snapshot accepted calls after synchronously stopping admission.
+        const accepted = [...this.inFlight];
+        const managerTask = (async () => {
+            try { this.managerClose = this.desktopManager.beginShutdown();this.managerReport = await this.managerClose.completion;this.managerClose = undefined; }
+            catch { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'manager', ['MANAGER_CLEANUP_FAILED']); }
         })();
-
-        return this.shutdownPromise;
+        void Promise.allSettled([managerTask, ...accepted]).then(results => {
+            if (results[0]?.status === 'rejected') { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'manager', ['MANAGER_CLEANUP_FAILED']); }
+            this.closeState.state = 'settled';this.isShutdownComplete = true;complete(this.report());
+        });
+        return this.closing;
     }
 
+    shutdown(reason?: string): Promise<void> { return this.shutdownPromise ??= closeVoid(this.beginShutdown(reason).completion, 'RUNTIME_CLOSE_FAILED'); }
 }

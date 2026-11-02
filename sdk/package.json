@@ -12,7 +12,7 @@
         }
     },
     "scripts": {
-        "build": "tsc",
+        "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc",
         "test": "vitest",
         "test:run": "vitest --run",
         "lint": "ESLINT_USE_FLAT_CONFIG=false eslint src",
@@ -22,9 +22,7 @@
         "preact": "^10.0.0"
     },
     "dependencies": {
-        "@aotui/runtime": "^2.0.0",
-        "@preact/signals": "^2.5.1",
-        "linkedom": "^0.18.9"
+        "@aotui/runtime": "^2.0.0"
     },
     "devDependencies": {
         "@testing-library/preact": "^3.2.4",
@@ -69,7 +67,8 @@
         }
     },
     "files": [
-        "dist"
+        "dist",
+        "docs"
     ],
     "keywords": [
         "aotui",

@@ -4,7 +4,7 @@
  * 测试信号发布订阅机制。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SignalBus, createSignalOutputStream, type SignalListener } from './signal-bus.js';
+import { SignalBus, type SignalListener } from './signal-bus.js';
 import type { DesktopID, UpdateSignal } from '../../spi/index.js';
 
 describe('SignalBus', () => {
@@ -257,43 +257,5 @@ describe('SignalBus', () => {
         it('对不存在的 desktop 返回 0', () => {
             expect(bus.getListenerCount('nonexistent' as DesktopID)).toBe(0);
         });
-    });
-});
-
-// ============================================================================
-// createSignalOutputStream
-// ============================================================================
-
-describe('createSignalOutputStream', () => {
-    it('创建具有 subscribe 和 unsubscribe 方法的对象', () => {
-        const bus = new SignalBus();
-        const desktopId = 'dt_test' as DesktopID;
-        const output = createSignalOutputStream(bus, desktopId);
-
-        expect(typeof output.subscribe).toBe('function');
-        expect(typeof output.unsubscribe).toBe('function');
-    });
-
-    it('subscribe 委托给 SignalBus', () => {
-        const bus = new SignalBus();
-        const desktopId = 'dt_test' as DesktopID;
-        const output = createSignalOutputStream(bus, desktopId);
-        const listener = vi.fn();
-
-        output.subscribe(listener);
-
-        expect(bus.getListenerCount(desktopId)).toBe(1);
-    });
-
-    it('unsubscribe 委托给 SignalBus', () => {
-        const bus = new SignalBus();
-        const desktopId = 'dt_test' as DesktopID;
-        const output = createSignalOutputStream(bus, desktopId);
-        const listener = vi.fn();
-
-        output.subscribe(listener);
-        output.unsubscribe(listener);
-
-        expect(bus.getListenerCount(desktopId)).toBe(0);
     });
 });

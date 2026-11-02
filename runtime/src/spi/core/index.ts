@@ -11,11 +11,9 @@
 // ID Types
 // ============================================================================
 export type {
-    SnapshotID,
     DesktopID,
     AppID,
     ViewID,
-    OperationID,
 } from './types.js';
 
 // ============================================================================
@@ -26,15 +24,6 @@ export {
     createDesktopId,
     createAppId,
     createViewId,
-    createSnapshotId,
-    createOperationId,
-    // Type Guards
-    isDesktopId,
-    isAppId,
-    isViewId,
-    isSnapshotId,
-    // Unsafe Casts (backward compatibility)
-
     // Constants
     ID_PREFIXES,
 } from './id-factory.js';
@@ -45,7 +34,6 @@ export {
 // ============================================================================
 export type {
     DataPayload,
-    IndexMap,
 } from './types.js';
 
 // ============================================================================
@@ -55,23 +43,14 @@ export type {
     DesktopStatus,
     AppState,
     DesktopState,
-    AppConfig,
 } from './types.js';
 
 // ============================================================================
 // Operation Types
 // ============================================================================
 export type {
-    OperationContext,
-    OperationScope,
-    Operation,
     OperationError,
     OperationResult,
-    OperationPayload,
-    SystemOperationContext,
-    ISystemOperation,
-    IDesktopForOperation,
-    ISystemOperationRegistry,
 } from './operations.js';
 
 // ============================================================================
@@ -80,49 +59,14 @@ export type {
 export type { UpdateSignal } from './signals.js';
 
 // ============================================================================
-// Snapshot
-// ============================================================================
-export type {
-    CachedSnapshot,
-    StructuredSnapshot,
-    AppStateFragment,
-    ApplicationInstructionFragment,
-    ViewStateFragment,
-} from './snapshot.js';
-export { isSnapshotExpired } from './snapshot.js';
-
-// ============================================================================
-// Tool Call Types (LLM Function Calling)
-// ============================================================================
-export type {
-    Tool,
-    ToolCall,
-    ToolCallResult,
-    OperationParamDef,
-    OperationDef,
-} from './tool-call.js';
-
-// ============================================================================
 // Error System
 // ============================================================================
 export {
     ERROR_CODES,
     AOTUIError,
-    createOperationError,
-    failedResult,
 } from './errors.js';
 
 export type { ErrorCode } from './errors.js';
-
-// ============================================================================
-// Operation Log Types (RFC-008)
-// ============================================================================
-export type {
-    OperationLogScope,
-    OperationLogEntry,
-    IOperationLogBuffer,
-    OperationLogParams,
-} from './operation-log.js';
 
 // ============================================================================
 // LLM Output Types (RFC-011)

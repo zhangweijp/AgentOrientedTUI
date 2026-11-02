@@ -19,8 +19,7 @@ export {
     type LoadedApp,
     type AppRegistryEntry,
     type AppRegistryOptions,
-    validateManifest,
-    isValidAppName
+    type AppRegistryInstallOptions
 } from './registry.js';
 export { createDefaultConfig, validateConfig, type TUIConfig, type AppConfigEntry } from './config.js';
 
@@ -39,8 +38,3 @@ export { AppWorkerHost, type AppWorkerHostConfig, type WorkerStatus } from './wo
 // WorkerPool - Worker 池管理
 // ============================================================================
 export { WorkerPool, type WorkerPoolConfig } from './worker-pool.js';
-
-// ============================================================================
-// WorkerAppHostService - IAppHostService 实现 (Option B)
-// ============================================================================
-export { WorkerAppHostService } from './worker-app-host.service.js';

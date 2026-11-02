@@ -13,10 +13,10 @@
  * ## 使用方式
  * 
  * ```typescript
- * // Runtime 端 (AppWorkerHost)
- * import type { MainToWorkerMessage, WorkerToMainMessage } from '@aotui/runtime/spi';
+ * // Runtime 端 (src/engine/app/worker-host.ts)
+ * import type { MainToWorkerMessage, WorkerToMainMessage } from '../../spi/worker-protocol/index.js';
  * 
- * // Worker 端 (worker-runtime)
+ * // Worker 端 (src/worker-runtime/index.ts)
  * import type { MainToWorkerMessage, WorkerToMainMessage } from '../spi/worker-protocol/index.js';
  * ```
  * 

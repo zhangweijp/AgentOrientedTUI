@@ -8,39 +8,32 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AppManager, type InstalledApp } from './index.js';
-import type { IDesktop, AppID } from '../../spi/index.js';
+import type { AppID } from '../../spi/index.js';
+import { WorkerSandbox } from './worker-sandbox.js';
 
 // ============================================================================
 // Mock Desktop
 // ============================================================================
-function createMockDesktop(): IDesktop & {
-    emitSignal: ReturnType<typeof vi.fn>;
-    logSystem: ReturnType<typeof vi.fn>;
-    logAppOperation: ReturnType<typeof vi.fn>;
-} {
+function createMockDesktop() {
     return {
         id: 'dt_test' as any,
-        status: 'running',
-        createdAt: Date.now(),
         emitSignal: vi.fn(),
         logSystem: vi.fn(),
         logAppOperation: vi.fn(),
-        getInstalledApps: vi.fn().mockReturnValue([]),
-        getSystemLogs: vi.fn().mockReturnValue([]),
-        getAppOperationLogs: vi.fn().mockReturnValue([]),
-        getAppStates: vi.fn().mockReturnValue([]),
-        suspend: vi.fn(),
-        resume: vi.fn(),
-        dispose: vi.fn(),
-        installDynamicWorkerApp: vi.fn(),
-        dispatchOperation: vi.fn(),
-        injectEvent: vi.fn(),
-
-        dismountView: vi.fn(),
-        acquireSnapshot: vi.fn(),
-        releaseSnapshot: vi.fn(),
-    } as any;
+    };
 }
+
+// These private fixture objects own no OS resources. Their C1 reports describe only
+// the controlled close attempt, retaining a rejected close as a known failure.
+function c1Worker(reinitialize = vi.fn().mockResolvedValue(undefined), close = vi.fn().mockResolvedValue(undefined)) {
+    let settled = false;const issues: string[] = [];
+    const getCloseReport = () => ({ state: settled ? 'settled' : 'active', intent: settled ? 'close' : null,
+        ok: settled && !issues.length, resourcesReleased: settled, issues: [...issues] });
+    return { reinitialize, close, getCloseReport, disposeAsync: vi.fn(async () => {
+        try { await close(); } catch { issues.push('APP_CLOSE_FAILED'); }settled = true;return getCloseReport();
+    }) };
+}
+function launchConfig(manager: AppManager, appId: string) { return (manager.getWorkerSandbox(appId) as any).config; }
 
 // ============================================================================
 // Tests
@@ -55,9 +48,8 @@ describe('AppManager', () => {
         manager = new AppManager(desktop);
     });
 
-    afterEach(() => {
-        // 清理所有 Worker（防止泄漏）
-        manager.cleanup();
+    afterEach(async () => {
+        await manager.cleanupAsync();
     });
 
     // ════════════════════════════════════════════════════════════════
@@ -122,13 +114,6 @@ describe('AppManager', () => {
         });
     });
 
-    describe('getAllWorkers', () => {
-        it('返回空 Map 当没有安装 App', () => {
-            const workers = manager.getAllWorkers();
-            expect(workers.size).toBe(0);
-        });
-    });
-
     // ════════════════════════════════════════════════════════════════
     // 生命周期方法（空状态）
     // ════════════════════════════════════════════════════════════════
@@ -145,36 +130,23 @@ describe('AppManager', () => {
         });
     });
 
-    describe('closeAll', () => {
-        it('空状态下不抛出错误', async () => {
-            await expect(manager.closeAll()).resolves.toBeUndefined();
+    describe('beginClose', () => {
+        it('空状态下完成并返回关闭报告', async () => {
+            await expect(manager.beginClose().completion).resolves.toMatchObject({ state: 'settled', resourcesReleased: true });
         });
     });
 
     describe('reinitializeAll', () => {
         it('对 running / paused / collapsed app 重新初始化，并跳过 closed / pending', async () => {
-            const installSpy = vi.spyOn(manager, 'install').mockResolvedValue('app_running' as any);
+            const startSpy = vi.spyOn(WorkerSandbox.prototype, 'installDynamic').mockResolvedValue(undefined);
 
-            const runningWorker = {
-                reinitialize: vi.fn().mockResolvedValue(undefined),
-                close: vi.fn().mockResolvedValue(undefined),
-                dispose: vi.fn(),
-            };
-            const pausedWorker = {
-                reinitialize: vi.fn().mockResolvedValue(undefined),
-                close: vi.fn().mockResolvedValue(undefined),
-                dispose: vi.fn(),
-            };
-            const collapsedWorker = {
-                reinitialize: vi.fn().mockResolvedValue(undefined),
-                close: vi.fn().mockResolvedValue(undefined),
-                dispose: vi.fn(),
-            };
+            const runningWorker = c1Worker();
+            const pausedWorker = c1Worker();
+            const collapsedWorker = c1Worker();
 
             (manager as any).installedApps.set('app_running', {
                 appId: 'app_running',
                 name: 'ide',
-                html: '',
                 status: 'running',
                 installedAt: Date.now(),
                 modulePath: '/running',
@@ -183,7 +155,6 @@ describe('AppManager', () => {
             (manager as any).installedApps.set('app_paused', {
                 appId: 'app_paused',
                 name: 'paused-app',
-                html: '',
                 status: 'paused',
                 installedAt: Date.now(),
                 modulePath: '/paused',
@@ -191,7 +162,6 @@ describe('AppManager', () => {
             (manager as any).installedApps.set('app_collapsed', {
                 appId: 'app_collapsed',
                 name: 'collapsed-app',
-                html: '',
                 status: 'collapsed',
                 installedAt: Date.now(),
                 modulePath: '/collapsed',
@@ -199,7 +169,6 @@ describe('AppManager', () => {
             (manager as any).installedApps.set('app_closed', {
                 appId: 'app_closed',
                 name: 'closed-app',
-                html: '',
                 status: 'closed',
                 installedAt: Date.now(),
                 modulePath: '/closed',
@@ -207,7 +176,6 @@ describe('AppManager', () => {
             (manager as any).installedApps.set('app_pending', {
                 appId: 'app_pending',
                 name: 'pending-app',
-                html: '',
                 status: 'pending',
                 installedAt: Date.now(),
                 modulePath: '/pending',
@@ -216,11 +184,6 @@ describe('AppManager', () => {
             (manager as any).workers.set('app_running', runningWorker);
             (manager as any).workers.set('app_paused', pausedWorker);
             (manager as any).workers.set('app_collapsed', collapsedWorker);
-
-            installSpy
-                .mockResolvedValueOnce('app_running' as any)
-                .mockResolvedValueOnce('app_paused' as any)
-                .mockResolvedValueOnce('app_collapsed' as any);
 
             const result = await manager.reinitializeAll({ reason: 'context_compaction' });
 
@@ -235,33 +198,27 @@ describe('AppManager', () => {
             expect(runningWorker.close).toHaveBeenCalledTimes(1);
             expect(pausedWorker.close).toHaveBeenCalledTimes(1);
             expect(collapsedWorker.close).toHaveBeenCalledTimes(1);
-            expect(installSpy).toHaveBeenNthCalledWith(1, '/running', expect.objectContaining({ appId: 'app_running' }));
-            expect(installSpy).toHaveBeenNthCalledWith(2, '/paused', expect.objectContaining({ appId: 'app_paused' }));
-            expect(installSpy).toHaveBeenNthCalledWith(3, '/collapsed', expect.objectContaining({ appId: 'app_collapsed' }));
+            expect(startSpy).toHaveBeenCalledTimes(3);
+            for (const [appId, modulePath] of [['app_running','/running'],['app_paused','/paused'],['app_collapsed','/collapsed']]) {
+                expect(launchConfig(manager, appId)).toMatchObject({ appId, appModulePath: modulePath,
+                    config: { __aotuiLifecycle: { startupKind: 'reinitialize', reason: 'context_compaction' } } });
+            }
+            expect(launchConfig(manager, 'app_running').config.projectPath).toBe('/repo');
             expect(manager.getInstalledApps().find((app) => app.appId === 'app_closed')?.status).toBe('closed');
             expect(manager.getInstalledApps().find((app) => app.appId === 'app_pending')?.status).toBe('pending');
 
-            installSpy.mockRestore();
+            startSpy.mockRestore();
         });
 
         it('单个 app 重新初始化失败时不影响其他 app，并将失败 app 置为 closed', async () => {
-            const installSpy = vi.spyOn(manager, 'install').mockResolvedValue('app_ok' as any);
+            const startSpy = vi.spyOn(WorkerSandbox.prototype, 'installDynamic').mockResolvedValue(undefined);
 
-            const okWorker = {
-                reinitialize: vi.fn().mockResolvedValue(undefined),
-                close: vi.fn().mockResolvedValue(undefined),
-                dispose: vi.fn(),
-            };
-            const badWorker = {
-                reinitialize: vi.fn().mockRejectedValue(new Error('boom')),
-                close: vi.fn().mockRejectedValue(new Error('boom')),
-                dispose: vi.fn(),
-            };
+            const okWorker = c1Worker();
+            const badWorker = c1Worker(vi.fn().mockRejectedValue(new Error('boom')), vi.fn().mockRejectedValue(new Error('boom')));
 
             (manager as any).installedApps.set('app_ok', {
                 appId: 'app_ok',
                 name: 'ok-app',
-                html: '',
                 status: 'running',
                 installedAt: Date.now(),
                 modulePath: '/ok',
@@ -269,7 +226,6 @@ describe('AppManager', () => {
             (manager as any).installedApps.set('app_bad', {
                 appId: 'app_bad',
                 name: 'bad-app',
-                html: '',
                 status: 'running',
                 installedAt: Date.now(),
                 modulePath: '/bad',
@@ -283,11 +239,11 @@ describe('AppManager', () => {
             expect(result.reinitializedAppIds).toEqual(['app_ok']);
             expect(result.failedAppIds).toEqual(['app_bad']);
             expect(result.skippedAppIds).toEqual([]);
-            expect(installSpy).toHaveBeenCalledTimes(1);
-            expect(installSpy).toHaveBeenCalledWith('/ok', expect.objectContaining({ appId: 'app_ok' }));
+            expect(startSpy).toHaveBeenCalledTimes(1);
+            expect(launchConfig(manager, 'app_ok')).toMatchObject({ appId: 'app_ok', appModulePath: '/ok' });
             expect(manager.getInstalledApps().find((app) => app.appId === 'app_bad')?.status).toBe('closed');
 
-            installSpy.mockRestore();
+            startSpy.mockRestore();
         });
     });
 
@@ -307,15 +263,11 @@ describe('AppManager', () => {
 
         it('应该真正关闭 worker 并将 app 标记为 closed', async () => {
             const appId = 'app_0' as AppID;
-            const worker = {
-                close: vi.fn().mockResolvedValue(undefined),
-                dispose: vi.fn(),
-            };
+            const worker = c1Worker();
 
             (manager as any).installedApps.set(appId, {
                 appId,
                 name: 'ide',
-                html: '',
                 status: 'running',
                 installedAt: Date.now(),
                 modulePath: '/path/to/module',
@@ -325,8 +277,9 @@ describe('AppManager', () => {
             await manager.closeApp(appId);
 
             expect(worker.close).toHaveBeenCalledTimes(1);
-            expect(worker.dispose).toHaveBeenCalledTimes(1);
-            expect(manager.getAllWorkers().has(appId)).toBe(false);
+            expect(worker.disposeAsync).toHaveBeenCalledTimes(1);
+            expect(worker.getCloseReport()).toMatchObject({ state: 'settled', resourcesReleased: true });
+            expect(manager.isWorkerMode(appId)).toBe(false);
             expect(manager.getInstalledApps()[0]?.status).toBe('closed');
         });
     });
@@ -368,13 +321,13 @@ describe('AppManager', () => {
             });
 
             // 验证没有 Worker
-            expect(manager.getAllWorkers().has(appId)).toBe(false);
+            expect(manager.isWorkerMode(appId)).toBe(false);
             expect(manager.getWorkerSandbox(appId)).toBeUndefined();
         });
 
         it('openApp 应该自动启动 pending 状态的 App', async () => {
             // Mock install 方法以避开 WorkerSandbox 创建
-            const installSpy = vi.spyOn(manager, 'install').mockResolvedValue('app_0' as any);
+            const startSpy = vi.spyOn(WorkerSandbox.prototype, 'installDynamic').mockResolvedValue(undefined);
 
             const appId = manager.registerPendingApp({
                 name: 'lazy-app',
@@ -383,16 +336,15 @@ describe('AppManager', () => {
 
             await manager.openApp(appId);
 
-            expect(installSpy).toHaveBeenCalledWith('/path/to/module', expect.objectContaining({
-                appId: appId,
-                name: 'lazy-app'
-            }));
+            expect(startSpy).toHaveBeenCalledTimes(1);
+            expect(launchConfig(manager, appId)).toMatchObject({ appId, appModulePath: '/path/to/module', name: 'lazy-app' });
+            expect(manager.getInstalledApps()[0].status).toBe('running');
 
-            installSpy.mockRestore();
+            startSpy.mockRestore();
         });
 
         it('openApp 应该自动重新启动 closed 状态的 App', async () => {
-            const installSpy = vi.spyOn(manager, 'install').mockResolvedValue('app_0' as any);
+            const startSpy = vi.spyOn(WorkerSandbox.prototype, 'installDynamic').mockResolvedValue(undefined);
 
             const appId = manager.registerPendingApp({
                 name: 'lazy-app',
@@ -400,32 +352,28 @@ describe('AppManager', () => {
                 workerScriptPath: '/path/to/worker',
             });
 
-            const installedApp = manager.getInstalledApps()[0]!;
+            const installedApp = (manager as any).installedApps.get(appId)!;
             installedApp.status = 'closed';
             installedApp.whatItIs = 'IDE';
             installedApp.whenToUse = 'Use for code';
             installedApp.config = { projectPath: '/repo' };
+            expect(manager.getInstalledApps()[0]).toMatchObject({ appId, status: 'closed', whatItIs: 'IDE', whenToUse: 'Use for code', config: { projectPath: '/repo' } });
 
             await manager.openApp(appId);
 
-            expect(installSpy).toHaveBeenCalledWith('/path/to/module', {
-                appId,
-                name: 'lazy-app',
-                description: undefined,
-                whatItIs: 'IDE',
-                whenToUse: 'Use for code',
-                workerScriptPath: '/path/to/worker',
-                config: { projectPath: '/repo' },
-                runtimeConfig: undefined,
-                promptRole: undefined,
+            expect(startSpy).toHaveBeenCalledTimes(1);
+            expect(launchConfig(manager, appId)).toMatchObject({
+                appId, name: 'lazy-app', appModulePath: '/path/to/module', workerScriptPath: '/path/to/worker',
+                config: { projectPath: '/repo', __aotuiLifecycle: { startupKind: 'normal' } }
             });
+            expect(manager.getInstalledApps()[0]).toMatchObject({ appId, status: 'running', whatItIs: 'IDE', whenToUse: 'Use for code' });
 
-            installSpy.mockRestore();
+            startSpy.mockRestore();
         });
 
         it('startPendingApp 应该启动 App 并更新状态', async () => {
             // Mock install 方法
-            const installSpy = vi.spyOn(manager, 'install').mockResolvedValue('app_0' as any);
+            const startSpy = vi.spyOn(WorkerSandbox.prototype, 'installDynamic').mockResolvedValue(undefined);
 
             const appId = manager.registerPendingApp({
                 name: 'lazy-app',
@@ -436,14 +384,11 @@ describe('AppManager', () => {
             const result = await manager.startPendingApp(appId);
 
             expect(result).toBe(true);
-            expect(installSpy).toHaveBeenCalledWith('/path/to/module', {
-                appId,
-                name: 'lazy-app',
-                description: undefined,
-                workerScriptPath: '/path/to/worker'
-            });
+            expect(startSpy).toHaveBeenCalledTimes(1);
+            expect(launchConfig(manager, appId)).toMatchObject({ appId, name: 'lazy-app', appModulePath: '/path/to/module', workerScriptPath: '/path/to/worker' });
+            expect(manager.getInstalledApps()[0].status).toBe('running');
 
-            installSpy.mockRestore();
+            startSpy.mockRestore();
         });
 
         it('startPendingApp 对非 staged App 应返回 false', async () => {
@@ -457,36 +402,14 @@ describe('AppManager', () => {
     // ════════════════════════════════════════════════════════════════
 
     describe('cleanup', () => {
-        it('清理后 installedApps 为空', () => {
-            manager.cleanup();
+        it('清理后 installedApps 为空', async () => {
+            await manager.cleanupAsync();
             expect(manager.getInstalledApps()).toHaveLength(0);
         });
 
-        it('清理后 workers 为空', () => {
-            manager.cleanup();
-            expect(manager.getAllWorkers().size).toBe(0);
+        it('清理后 workers 为空', async () => {
+            await manager.cleanupAsync();
+            expect(manager.getDynamicAppIds()).toEqual([]);
         });
-    });
-});
-
-// ============================================================================
-// 集成测试（需要真实 Worker）- 标记为需要单独运行
-// ============================================================================
-
-describe.skip('AppManager Integration (requires real Worker)', () => {
-    // 这些测试需要真实的 Worker 环境
-    // 在 CI/CD 中可能需要特殊配置
-
-    describe('install', () => {
-        it.todo('安装 App 并返回 AppID');
-        it.todo('安装后 App 状态为 running');
-        it.todo('触发 onAppInstalled 回调');
-        it.todo('emitSignal 被调用');
-    });
-
-    describe('App 生命周期', () => {
-        it.todo('pauseAll 暂停所有运行中的 App');
-        it.todo('resumeAll 恢复所有暂停的 App');
-        it.todo('closeAll 关闭并清理所有 App');
     });
 });

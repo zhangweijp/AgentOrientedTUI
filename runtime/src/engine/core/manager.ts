@@ -1,3 +1,4 @@
+import { WorkerPool } from '../app/worker-pool.js';
 /**
  * Engine Layer - Desktop Manager Implementation
  * 
@@ -8,7 +9,6 @@
 
 import type {
     IDesktopManager,
-    LockInfo,
     DesktopID,
     AppID,
     AppState,
@@ -18,7 +18,8 @@ import type {
 } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import { Desktop } from './desktop.js';
-import { InMemoryLockService } from './services/lock.service.js';
+import type { DesktopCloseOptions, DesktopCloseOperation, DesktopCloseReport, RuntimeCloseOperation, RuntimeCloseReport } from '../../spi/runtime/close.interface.js';
+import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseOperation, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from './close-operation.js';
 
 // ============================================================================
 // Desktop Manager Implementation
@@ -27,52 +28,71 @@ import { InMemoryLockService } from './services/lock.service.js';
 /**
  * Desktop 管理器实现
  * 
- * 封装 Desktop 的创建、存储、锁管理和生命周期控制。
+ * 封装 Desktop 的创建、存储和生命周期控制。
  * Kernel 通过 IDesktopManager 接口与之交互，实现依赖反转。
  * 
  * @example
  * ```typescript
  * const manager = new DesktopManager();
  * const desktopId = await manager.create();
- * manager.acquireLock(desktopId, 'agent_1');
  * await manager.installDynamicWorkerApp(desktopId, myApp);
- * manager.releaseLock(desktopId, 'agent_1');
  * ```
  */
 import { RuntimeConfig, RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 
 export class DesktopManager implements IDesktopManager {
     private desktops = new Map<DesktopID, Desktop>();
-    private lockService: InMemoryLockService;
     private config: RuntimeConfig;
+    private readonly workerPool: WorkerPool;
+    private closing?: RuntimeCloseOperation;
+    private shutdownPromise?: Promise<void>;
+    private phase: 'active' | 'closing' | 'settled' = 'active';
+    private closeState = newCloseState('runtime');
+    private closeTargets?: Map<Desktop, DesktopCloseOperation>;
+    private readonly capturedClosures = new WeakSet<Desktop>();
+    private readonly removing = new Set<Promise<void>>();
+
+    private assertActive(): void { if (this.phase !== 'active') throw new AOTUIError('RUNTIME_SHUTDOWN'); }
 
     constructor(config?: RuntimeConfig) {
         this.config = config ?? RUNTIME_DEFAULTS;
-        // [RFC-004] 内部服务组合: 锁管理委托给 InMemoryLockService
-        this.lockService = new InMemoryLockService(
-            (id) => this.desktops.has(id),
-            { ttlMs: this.config.lock.ttlMs }
-        );
+        this.workerPool = new WorkerPool({ ...this.config.worker.pool });
     }
 
     // ─────────────────────────────────────────────────────────────
     //  IDesktopRepository 实现
     // ─────────────────────────────────────────────────────────────
 
+
     async create(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID> {
-        const desktop = new Desktop(desktopId, { runtimeConfig: this.config, context });
+        this.assertActive();
+        if (desktopId !== undefined && this.desktops.has(desktopId)) throw closeError('DESKTOP_ALREADY_EXISTS');
+        const desktop = new Desktop(desktopId, { runtimeConfig: this.config, context, workerPool: this.workerPool });
+        if (this.desktops.has(desktop.id)) { void desktop.dispose().catch(() => {});throw closeError('DESKTOP_ALREADY_EXISTS'); }
         this.desktops.set(desktop.id, desktop);
         return desktop.id;
     }
 
-    async destroy(desktopId: DesktopID): Promise<void> {
+    beginDesktopShutdown(desktopId: DesktopID, options?: DesktopCloseOptions): DesktopCloseOperation {
+        closeTimeout(options);
         const desktop = this.desktops.get(desktopId);
-        if (desktop) {
-            await desktop.dispose();
-            this.desktops.delete(desktopId);
-            // [RFC-004] 清理关联的锁
-            this.lockService.clearLock(desktopId);
+        if (!desktop) {
+            const state = newCloseState('desktop', options?.intent ?? 'close');state.state = 'settled';
+            const report: DesktopCloseReport = freezeClose({ ...snapshotClose(state), scope: 'desktop', intent: options?.intent ?? 'close', desktopId: displayCloseId(desktopId), found: false });
+            return createCloseOperation(() => report, Promise.resolve(report));
         }
+        const operation = desktop.beginClose(options);
+        // Capture the actual object. A late completion can never remove a successor.
+        if (!this.capturedClosures.has(desktop)) {
+            this.capturedClosures.add(desktop);
+            const removing = operation.completion.then(report => {
+                if (report.resourcesReleased && this.desktops.get(desktopId) === desktop) {
+                    this.desktops.delete(desktopId);
+                }
+            }).catch(() => { addCloseFailure(this.closeState, 'manager', ['MANAGER_CLEANUP_FAILED'], { desktopId });this.closeState.resourcesReleased = false; });
+            this.removing.add(removing);void removing.then(() => this.removing.delete(removing));
+        }
+        return operation;
     }
 
     has(desktopId: DesktopID): boolean {
@@ -85,30 +105,6 @@ export class DesktopManager implements IDesktopManager {
 
     listDesktopIds(): DesktopID[] {
         return Array.from(this.desktops.keys());
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    //  IDesktopLockService 实现 (Delegate)
-    // ─────────────────────────────────────────────────────────────
-
-    acquireLock(desktopId: DesktopID, ownerId: string): void {
-        this.lockService.acquireLock(desktopId, ownerId);
-    }
-
-    releaseLock(desktopId: DesktopID, ownerId: string): void {
-        this.lockService.releaseLock(desktopId, ownerId);
-    }
-
-    verifyLock(desktopId: DesktopID, ownerId: string): boolean {
-        return this.lockService.verifyLock(desktopId, ownerId);
-    }
-
-    refreshLock(desktopId: DesktopID, ownerId: string): void {
-        this.lockService.refreshLock(desktopId, ownerId);
-    }
-
-    getLockInfo(desktopId: DesktopID): LockInfo | undefined {
-        return this.lockService.getLockInfo(desktopId);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -165,13 +161,37 @@ export class DesktopManager implements IDesktopManager {
         await desktop.resume();
     }
 
-    async shutdown(): Promise<void> {
-        const desktopIds = this.listDesktopIds();
-        for (const desktopId of desktopIds) {
-            await this.destroy(desktopId);
-        }
-        this.lockService.clearAll();
+    private report(): RuntimeCloseReport {
+        const state = structuredClone(this.closeState);state.state = this.phase;
+        for (const operation of this.closeTargets?.values() ?? []) mergeCloseReport(state, operation.inspect());
+        const pool = this.workerPool.getReport();state.pool = { ownership: 'owned', report: { ...pool, issues: [...pool.issues] } };
+        state.resourcesReleased &&= pool.state === 'closed';
+        addCloseFailure(state, 'pool', pool.issues);
+        return freezeClose({ ...snapshotClose(state), scope: 'runtime' as const, intent: 'close' as const });
     }
+    beginShutdown(): RuntimeCloseOperation {
+        if (this.closing) return this.closing;
+        this.phase = 'closing';this.closeTargets = new Map();
+        let complete!: (report: RuntimeCloseReport) => void;
+        const completion = new Promise<RuntimeCloseReport>(resolve => { complete = resolve; });
+        this.closing = createCloseOperation(() => this.report(), completion);
+        const pool = this.workerPool.destroy();
+        // Every Desktop is started synchronously before any completion is awaited.
+        for (const [id, desktop] of this.desktops) {
+            try { this.closeTargets.set(desktop, this.beginDesktopShutdown(id)); }
+            catch { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'apps', ['MANAGER_CLEANUP_FAILED'], { desktopId: id }); }
+        }
+        void (async () => {
+            await Promise.allSettled([pool, ...this.closeTargets!.values()].map(value => value instanceof Promise ? value : value.completion));
+            await Promise.allSettled([...this.removing]);
+            const folded = structuredClone(this.closeState);
+            for (const operation of this.closeTargets!.values()) mergeCloseReport(folded, operation.inspect());
+            this.closeTargets = undefined;this.closeState = folded;
+            this.phase = 'settled';complete(this.report());
+        })();
+        return this.closing;
+    }
+    shutdown(): Promise<void> { return this.shutdownPromise ??= closeVoid(this.beginShutdown().completion, 'RUNTIME_CLOSE_FAILED'); }
 
     // ─────────────────────────────────────────────────────────────
     //  Internal Helpers
@@ -181,6 +201,7 @@ export class DesktopManager implements IDesktopManager {
      * 获取 Desktop 或抛出 E_NOT_FOUND 错误
      */
     private getDesktopOrThrow(desktopId: DesktopID): Desktop {
+        this.assertActive();
         const desktop = this.desktops.get(desktopId);
         if (!desktop) {
             throw new AOTUIError('DESKTOP_NOT_FOUND', { desktopId });

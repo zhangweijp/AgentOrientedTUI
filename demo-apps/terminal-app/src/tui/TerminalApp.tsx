@@ -1,9 +1,10 @@
-import { createTUIApp, View, useCallback, useEffect, useMemo, useRef, useState, useAppEnv } from '@aotui/sdk';
+import { createTUIApp, View, useCallback, useEffect, useMemo, useRef, useState, useAppRuntimeContext } from '@aotui/sdk';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import os from 'os';
 import { RootView } from './RootView.js';
 import { TerminalConsoleView } from './TerminalConsoleView.js';
 import { TerminalView } from './TerminalView.js';
+import { TerminalConsoleTools, TerminalTools } from './TerminalTools.js';
 import type { TerminalSession, CommandRecord, CommandStatus } from '../types.js';
 import {
     DEFAULT_TAIL_LINES,
@@ -25,7 +26,7 @@ function createCommand(commandId: string, command: string): CommandRecord {
 }
 
 function TerminalRoot() {
-    const envProjectPath = useAppEnv<string>('projectPath');
+    const envProjectPath = useAppRuntimeContext().launchConfig?.projectPath as string | undefined;
     const projectPath = useMemo(() => envProjectPath || os.homedir(), [envProjectPath]);
     const [terminals, setTerminals] = useState<TerminalSession[]>([]);
     const terminalsRef = useRef<TerminalSession[]>([]);
@@ -212,21 +213,17 @@ function TerminalRoot() {
     return (
         <>
             <View id="root" type="Root" name="Root">
-                <RootView
-                    projectPath={projectPath}
-                    terminals={terminals}
-                    onCloseTerminal={closeTerminal}
-                    onSendCommand={sendCommand}
-                    onSendCommandNewTerminal={sendCommandNewTerminal}
-                    onLoadMoreOutput={setOutputTail}
-                />
+                <RootView />
             </View>
             <View id="term_console" type="TerminalConsole" name="TerminalConsole">
                 <TerminalConsoleView projectPath={projectPath} terminals={terminals} />
+                <TerminalConsoleTools onSendCommandNewTerminal={sendCommandNewTerminal} />
             </View>
             {terminals.map((terminal: TerminalSession) => (
                 <View key={terminal.id} id={terminal.id} type="Terminal" name={`Terminal ${terminal.id}`}>
                     <TerminalView terminal={terminal} />
+                    <TerminalTools terminal={terminal} onCloseTerminal={closeTerminal}
+                        onSendCommand={sendCommand} onLoadMoreOutput={setOutputTail} />
                 </View>
             ))}
         </>
@@ -235,8 +232,8 @@ function TerminalRoot() {
 
 export default createTUIApp({
     app_name: 'terminal',
-    whatItIs: 'A multi-terminal command execution system constrained to the project path, providing command history, working directory tracking, and output tailing for LLM workflows.',
-    whenToUse: 'Use Terminal when you need to run shell commands, manage multiple terminal sessions, and review command outputs while staying within the current project directory.',
+    whatItIs: 'A multi-terminal shell application with command history, working directory tracking, and output tailing for LLM workflows.',
+    whenToUse: 'Run shell commands in the project workspace, manage terminal sessions, and inspect command status and output.',
     component: TerminalRoot,
     launchConfig: {
         projectPath: process.env.PROJECT_PATH || process.argv[2] || ''

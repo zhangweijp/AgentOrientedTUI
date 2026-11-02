@@ -2,7 +2,7 @@
  * DesktopManager Unit Tests
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { DesktopManager } from './manager.js';
 
 describe('DesktopManager', () => {
@@ -31,26 +31,20 @@ describe('DesktopManager', () => {
         });
     });
 
-    describe('destroy()', () => {
-        it('should destroy existing desktop', async () => {
+    describe('beginDesktopShutdown()', () => {
+        it('should close and remove an existing desktop after confirmed release', async () => {
             const id = await manager.create();
             expect(manager.has(id)).toBe(true);
 
-            await manager.destroy(id);
+            const operation = manager.beginDesktopShutdown(id);
+            expect((await operation.completion).resourcesReleased).toBe(true);
             expect(manager.has(id)).toBe(false);
         });
 
-        it('should be idempotent for non-existent desktop', async () => {
-            await expect(manager.destroy('non_existent')).resolves.not.toThrow();
-        });
-
-        it('should also release lock when destroying', async () => {
-            const id = await manager.create();
-            manager.acquireLock(id, 'owner_1');
-            expect(manager.verifyLock(id, 'owner_1')).toBe(true);
-
-            await manager.destroy(id);
-            expect(manager.getLockInfo(id)).toBeUndefined();
+        it('reports a missing desktop without inventing resources', async () => {
+            await expect(manager.beginDesktopShutdown('non_existent').completion).resolves.toMatchObject({
+                found: false, resourcesReleased: true, desktops: { accepted: 0, settled: 0 },
+            });
         });
     });
 
@@ -64,81 +58,6 @@ describe('DesktopManager', () => {
 
         it('should return undefined if not exists', () => {
             expect(manager.get('non_existent')).toBeUndefined();
-        });
-    });
-
-    // ─────────────────────────────────────────────────────────────
-    //  锁管理
-    // ─────────────────────────────────────────────────────────────
-
-    describe('acquireLock()', () => {
-        it('should acquire lock successfully', async () => {
-            const id = await manager.create();
-            expect(() => manager.acquireLock(id, 'owner_1')).not.toThrow();
-            expect(manager.verifyLock(id, 'owner_1')).toBe(true);
-        });
-
-        it('should throw E_LOCKED if already locked by another owner', async () => {
-            const id = await manager.create();
-            manager.acquireLock(id, 'owner_1');
-
-            expect(() => manager.acquireLock(id, 'owner_2')).toThrow(/DESKTOP_LOCKED|is locked by/);
-        });
-
-        it('should allow re-acquire by same owner (re-entrant)', async () => {
-            const id = await manager.create();
-            manager.acquireLock(id, 'owner_1');
-
-            expect(() => manager.acquireLock(id, 'owner_1')).not.toThrow();
-            expect(manager.verifyLock(id, 'owner_1')).toBe(true);
-        });
-    });
-
-    describe('releaseLock()', () => {
-        it('should release lock for owner', async () => {
-            const id = await manager.create();
-            manager.acquireLock(id, 'owner_1');
-            manager.releaseLock(id, 'owner_1');
-
-            expect(manager.verifyLock(id, 'owner_1')).toBe(false);
-        });
-
-        it('should ignore release from non-owner', async () => {
-            const id = await manager.create();
-            manager.acquireLock(id, 'owner_1');
-            manager.releaseLock(id, 'owner_2'); // Different owner
-
-            expect(manager.verifyLock(id, 'owner_1')).toBe(true); // Still locked
-        });
-    });
-
-    describe('verifyLock()', () => {
-        it('should return false if no lock exists', async () => {
-            const id = await manager.create();
-            expect(manager.verifyLock(id, 'anyone')).toBe(false);
-        });
-
-        it('should return false for wrong owner', async () => {
-            const id = await manager.create();
-            manager.acquireLock(id, 'owner_1');
-            expect(manager.verifyLock(id, 'owner_2')).toBe(false);
-        });
-    });
-
-    describe('getLockInfo()', () => {
-        it('should return lock info when locked', async () => {
-            const id = await manager.create();
-            manager.acquireLock(id, 'owner_1');
-
-            const info = manager.getLockInfo(id);
-            expect(info).toBeDefined();
-            expect(info?.ownerId).toBe('owner_1');
-            expect(info?.valid).toBe(true);
-        });
-
-        it('should return undefined when not locked', async () => {
-            const id = await manager.create();
-            expect(manager.getLockInfo(id)).toBeUndefined();
         });
     });
 

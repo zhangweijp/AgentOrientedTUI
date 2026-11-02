@@ -47,18 +47,36 @@ export interface MessageWithTimestamp {
 /**
  * ToolResult - 工具执行结果
  */
+export type ToolOutcomeStatus = 'succeeded' | 'rejected' | 'failed' | 'accepted' | 'unknown';
+
 export interface ToolResult {
     /** Tool Call ID，用于匹配 ToolCall */
     toolCallId: string;
     /** 工具名称 */
     toolName: string;
-    /** 执行结果 (成功时) */
+    /** Internal execution classification for metrics; never a model-facing result envelope. */
+    outcomeStatus?: ToolOutcomeStatus;
+    /** Public operation data or recovery details. Core receipts belong to the source. */
     result?: unknown;
-    /** 错误信息 (失败时) */
+    /** 受控错误信息；配合 outcomeStatus 区分拒绝、失败和未知。 */
     error?: {
         code: string;
         message: string;
     };
+}
+
+/** One source's messages, tools and invocation route captured for one model turn. */
+export interface DrivenSourceContext {
+    messages: MessageWithTimestamp[];
+    tools: Record<string, Tool>;
+    /** Uses the bindings captured with this context, rather than a later source read. */
+    executeTool?: (
+        toolName: string,
+        args: unknown,
+        toolCallId: string
+    ) => Promise<ToolResult | undefined>;
+    /** Releases this turn's retained observation after model and tool execution finish. */
+    release?: () => void | Promise<void>;
 }
 
 /**
@@ -85,6 +103,12 @@ export interface IDrivenSource {
      * 数据源名称 (用于日志和调试)
      */
     readonly name: string;
+
+    /**
+     * Atomically capture a model turn. If supplied, Driver does not separately
+     * call getMessages/getTools for that turn, nor fall back after capture fails.
+     */
+    getContext?(): Promise<DrivenSourceContext>;
 
     /**
      * 获取该源的所有消息
@@ -135,11 +159,27 @@ export interface IDrivenSource {
 }
 
 /**
+ * Atomic source contract. A model turn owns one captured set of messages, tools,
+ * and tool bindings, so callers do not need to implement split-read methods.
+ */
+export interface ContextDrivenSource {
+    readonly name: string;
+    getContext(): Promise<DrivenSourceContext>;
+    getMessages?: never;
+    getTools?: never;
+    executeTool?: never;
+    onUpdate(callback: () => void): () => void;
+}
+
+/** A Driver can combine atomic Context sources with existing split-read sources. */
+export type DrivenSource = IDrivenSource | ContextDrivenSource;
+
+/**
  * AgentDriverV2Config - 配置接口
  */
 export interface AgentDriverV2Config {
     /** Driven Sources 列表 */
-    sources: IDrivenSource[];
+    sources: DrivenSource[];
 
     /** 
      * LLM 配置

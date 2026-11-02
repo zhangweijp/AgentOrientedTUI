@@ -18,11 +18,22 @@ describe('source-controls', () => {
                     'server-b': { type: 'local', command: ['node', 'b.js'], enabled: true },
                 },
             },
+            [],
         );
 
         expect(controls.mcp.enabled).toBe(true);
         expect(controls.mcp.disabledItems).toContain('server:server-b');
         expect(controls.mcp.disabledItems).toContain('mcp-server-a-search');
+    });
+
+    it('applies an Agent allowlist to every registered app, including non-GUI sessions', () => {
+        const apps = ['system_ide', 'terminal', 'lite_browser'];
+        expect(createSourceControlsFromAgent({ enabledApps: ['system_ide', 'lite_browser'] }, {}, apps).apps)
+            .toEqual({ enabled: true, disabledItems: ['terminal'] });
+        expect(createSourceControlsFromAgent({ enabledApps: [] }, {}, apps).apps)
+            .toEqual({ enabled: false, disabledItems: apps });
+        expect(createSourceControlsFromAgent({ enabledApps: ['unavailable-app'] }, {}, apps).apps)
+            .toEqual({ enabled: true, disabledItems: apps });
     });
 
     it('applies source controls across aotui, mcp, and skill sources', () => {

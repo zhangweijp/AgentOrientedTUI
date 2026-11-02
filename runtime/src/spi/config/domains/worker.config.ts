@@ -7,7 +7,7 @@
  */
 export interface WorkerPoolConfig {
     /**
-     * 初始/最小 Worker 数量
+     * 首次预热目标数量（cold构造；空闲可回收到0，不是永久最小值）
      * 
      * @default 2
      * @rationale 2 个预热 Worker 平衡了启动时间与资源占用。

@@ -1,6 +1,15 @@
 const MCP_SERVER_ITEM_PREFIX = 'server:';
 const MCP_TOOL_ITEM_PREFIX = 'mcp-';
 
+// Application references always use registry keys, never display or package names.
+export function appSourceControls(enabledApps: readonly string[], registeredApps: readonly string[]) {
+    const selected = new Set(enabledApps);
+    return {
+        enabled: selected.size > 0,
+        disabledItems: registeredApps.filter(name => !selected.has(name)),
+    };
+}
+
 export function sanitizeMcpKeySegment(input: string): string {
     return input.replace(/[^a-zA-Z0-9_-]/g, '_');
 }

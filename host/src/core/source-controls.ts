@@ -1,7 +1,8 @@
-import type { AOTUIDrivenSource } from '@aotui/runtime/adapters';
+import type { SemanticAOTUIDrivenSource } from '@aotui/runtime/adapters';
 import type { McpDrivenSource } from '../mcp/source.js';
 import type { SkillDrivenSource } from '../skills/skill-driven-source.js';
 import {
+    appSourceControls,
     buildMcpServerItemKey,
     buildMcpToolItemKey,
     isMcpServerItemKey,
@@ -90,6 +91,7 @@ export function normalizeAgentDisabledMcpToolKeys(rawDisabledTools: unknown): st
 export function createSourceControlsFromAgent(
     agent: any,
     config: { mcp?: Record<string, unknown> },
+    registeredApps: readonly string[],
 ): SourceControlsSnapshot {
     const enabledApps = Array.isArray(agent?.enabledApps)
         ? agent.enabledApps.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
@@ -113,10 +115,7 @@ export function createSourceControlsFromAgent(
     const disabledToolKeys = normalizeAgentDisabledMcpToolKeys(agent?.disabledMcpTools);
 
     return normalizeSourceControlsSnapshot({
-        apps: {
-            enabled: enabledApps.length > 0,
-            disabledItems: [],
-        },
+        apps: appSourceControls(enabledApps, registeredApps),
         skill: {
             enabled: enabledSkills.length > 0,
             disabledItems: [],
@@ -128,7 +127,7 @@ export function createSourceControlsFromAgent(
     });
 }
 
-function asAOTUIControllableSource(source: AOTUIDrivenSource): AOTUIControllableSource | null {
+function asAOTUIControllableSource(source: SemanticAOTUIDrivenSource): AOTUIControllableSource | null {
     const candidate = source as unknown as Partial<AOTUIControllableSource>;
     if (typeof candidate.setEnabled !== 'function' || typeof candidate.setAppEnabled !== 'function') {
         return null;
@@ -140,7 +139,7 @@ function asAOTUIControllableSource(source: AOTUIDrivenSource): AOTUIControllable
 export function applySourceControlsToSources(
     controlsInput: SourceControlsSnapshot | undefined,
     options: {
-        aotuiSource?: AOTUIDrivenSource;
+        aotuiSource?: SemanticAOTUIDrivenSource;
         mcpSource?: McpDrivenSource;
         skillSource?: SkillDrivenSource;
     },

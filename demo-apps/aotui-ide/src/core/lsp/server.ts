@@ -2,12 +2,29 @@ import { spawn, type ChildProcessWithoutNullStreams } from "child_process"
 import path from "path"
 import { Log, Instance } from "./adapters.js"
 import fs from "fs/promises"
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+export async function spawnLSPServer(root: string, command: string, args: string[], extraEnv: Record<string, string> = {}): Promise<LSPServer.Handle> {
+  const bins = [path.join(root, 'node_modules/.bin'), fileURLToPath(new URL('../../../node_modules/.bin/', import.meta.url))];
+  const proc = spawn(command, args, { cwd: root, detached: process.platform !== 'win32', env: { ...process.env, ...extraEnv,
+    PATH: [...bins, extraEnv.PATH ?? process.env.PATH ?? ''].join(path.delimiter) } });
+  await new Promise<void>((resolve, reject) => {
+    const failed = (error: Error) => { proc.off('spawn', ready); reject(error); };
+    const ready = () => { proc.off('error', failed); resolve(); };
+    proc.once('error', failed); proc.once('spawn', ready);
+  });
+  return { process: proc, processGroup: process.platform !== 'win32' ? proc.pid : undefined };
+}
 
 export namespace LSPServer {
   const log = Log.create({ service: "lsp.server" })
 
   export interface Handle {
     process: ChildProcessWithoutNullStreams
+    processGroup?: number
+    /** Only the pinned, exercised server profile may certify group cleanup. */
+    processGroupVerified?: boolean
     initialization?: Record<string, any>
   }
 
@@ -49,35 +66,7 @@ export namespace LSPServer {
   // =========================================================
 
   async function spawnServer(root: string, command: string, args: string[]): Promise<Handle | undefined> {
-    try {
-      // 增强: 将当前进程工作目录下的 node_modules/.bin 添加到 PATH
-      // 这样即使用户没有全局安装 server，只要项目中安装了，也能找到
-      const npmBin = path.join(process.cwd(), 'node_modules', '.bin');
-      const env = {
-        ...process.env,
-        PATH: `${npmBin}${path.delimiter}${process.env.PATH || ''}`
-      };
-
-      const proc = spawn(command, args, {
-        cwd: root,
-        env: env,
-      });
-
-      // 静默失败策略：LSP启动失败不应阻塞IDE功能
-      proc.on('error', (err: NodeJS.ErrnoException) => {
-        if (err.code === 'ENOENT') {
-          log.warn(`LSP server not found: ${command}. Please install it globally or add to project dependencies.`);
-          log.warn(`Installation guide: see demo-apps/aotui-ide/LSP_SETUP.md`);
-        } else {
-          log.error(`Failed to start ${command}`, err);
-        }
-      });
-
-      return { process: proc };
-    } catch (e) {
-      log.error(`Failed to spawn ${command}`, e);
-      return undefined;
-    }
+    return spawnLSPServer(root, command, args);
   }
 
   // =========================================================
@@ -90,12 +79,23 @@ export namespace LSPServer {
     root: NearestRoot(
       ["package.json", "tsconfig.json", "jsconfig.json"]
     ),
-    extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
+    extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"],
     async spawn(root) {
-      return spawnServer(root, "typescript-language-server", ["--stdio"])
+      let command = 'typescript-language-server', args = ['--stdio'];
+      let processGroupVerified = false;
+      try {
+        const packageFile = createRequire(import.meta.url).resolve('typescript-language-server/package.json');
+        const manifest = JSON.parse(await fs.readFile(packageFile, 'utf8'));
+        const typescript = JSON.parse(await fs.readFile(createRequire(packageFile).resolve('typescript/package.json'), 'utf8'));
+        processGroupVerified = process.platform !== 'win32' && manifest.version === '5.1.3' && typescript.version === '5.9.3';
+        command = process.execPath; args = [path.join(path.dirname(packageFile), manifest.bin['typescript-language-server']), '--stdio'];
+      } catch { /* A separately installed server can still be resolved on PATH. */ }
+      return spawnServer(root, command, args)
         .then(handle => {
           if (handle) {
+            handle.processGroupVerified = processGroupVerified;
             handle.initialization = {
+              tsserver: { useSyntaxServer: 'never' },
               preferences: {
                 includeInlayParameterNameHints: 'all',
                 includeInlayFunctionParameterTypeHints: true,

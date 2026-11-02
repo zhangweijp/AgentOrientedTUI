@@ -5,52 +5,99 @@
  */
 
 import { WORKER_DEFAULTS } from './domains/worker.config.js';
-import { BRIDGE_DEFAULTS } from './domains/bridge.config.js';
-import { LOCK_DEFAULTS } from './domains/lock.config.js';
-import { SNAPSHOT_DEFAULTS } from './domains/snapshot.config.js';
-import { TRANSFORM_DEFAULTS } from './domains/transform.config.js';
 import { LOGGER_DEFAULTS } from './domains/logger.config.js';
-import { validateRuntimeConfig } from './validate.js';
-import type { RuntimeConfig, RuntimeConfigInput, DeepPartial } from './types.js';
+import { AOTUIError } from '../core/errors.js';
+import type { RuntimeConfig, RuntimeConfigInput } from './types.js';
+
+function isConfigRecord(value: unknown): value is Record<string, unknown> {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+}
+
+function invalidConfiguration(path: string, reason: string): never {
+    throw new AOTUIError('CONFIG_INVALID', { reason: `[${path || 'configuration'}] ${reason}` });
+}
+
+function readOwnEnumerableConfigValue(source: unknown, key: PropertyKey, parentPath = ''): unknown {
+    if (!isConfigRecord(source)) invalidConfiguration(parentPath, 'must be a plain object');
+    const keyPath = parentPath ? `${parentPath}.${String(key)}` : String(key);
+    const descriptor = Object.getOwnPropertyDescriptor(source, key);
+    if (!descriptor) invalidConfiguration(keyPath, 'property is missing');
+    if (!('value' in descriptor)) invalidConfiguration(keyPath, 'accessor properties are not supported');
+    if (!descriptor.enumerable) invalidConfiguration(keyPath, 'property must be enumerable');
+    return descriptor.value;
+}
 
 /**
  * 完整默认配置
  */
-export const RUNTIME_DEFAULTS: RuntimeConfig = {
-    worker: WORKER_DEFAULTS,
-    bridge: BRIDGE_DEFAULTS,
-    lock: LOCK_DEFAULTS,
-    snapshot: SNAPSHOT_DEFAULTS,
-    transform: TRANSFORM_DEFAULTS,
-    logger: LOGGER_DEFAULTS,
-} as const;
+export const RUNTIME_DEFAULTS: RuntimeConfig = Object.freeze({
+    worker: Object.freeze({
+        timeoutMs: WORKER_DEFAULTS.timeoutMs,
+        pool: Object.freeze({ ...WORKER_DEFAULTS.pool }),
+    }),
+    logger: Object.freeze({ ...LOGGER_DEFAULTS }),
+});
 
 /**
- * 深度合并配置
+ * 深度合并 plain own enumerable data properties，并在同一次遍历中校验形状和字段。
  */
-function deepMerge<T extends object>(target: T, source: DeepPartial<T>): T {
+function mergeConfig<T extends object>(target: T, source: unknown, path = ''): T {
+    if (!isConfigRecord(source)) invalidConfiguration(path, 'must be a plain object');
     const result = { ...target } as T;
+    const targetRecord = target as unknown as Record<string, unknown>;
 
-    for (const key in source) {
-        const sourceValue = source[key];
-        const targetValue = target[key];
+    for (const key of Reflect.ownKeys(source)) {
+        const keyText = String(key);
+        const keyPath = path ? `${path}.${keyText}` : keyText;
+        const sourceValue = readOwnEnumerableConfigValue(source, key, path);
+        if (typeof key !== 'string') invalidConfiguration(keyPath, 'configuration keys must be strings');
+        if (!Object.hasOwn(targetRecord, key)) invalidConfiguration(keyPath, 'unknown configuration key');
 
-        if (
-            sourceValue !== undefined &&
-            typeof sourceValue === 'object' &&
-            sourceValue !== null &&
-            !Array.isArray(sourceValue) &&
-            targetValue !== undefined &&
-            typeof targetValue === 'object' &&
-            targetValue !== null
-        ) {
-            (result as any)[key] = deepMerge(targetValue as object, sourceValue as object);
-        } else if (sourceValue !== undefined) {
-            (result as any)[key] = sourceValue;
+        if (sourceValue === undefined) continue;
+
+        const targetValue = targetRecord[key];
+        if (isConfigRecord(targetValue)) {
+            if (!isConfigRecord(sourceValue)) invalidConfiguration(keyPath, 'must be a plain object');
+            (result as Record<string, unknown>)[key] = mergeConfig(targetValue, sourceValue, keyPath);
+        } else {
+            (result as Record<string, unknown>)[key] = sourceValue;
         }
     }
 
     return result;
+}
+
+function validateRuntimeConfig(config: RuntimeConfig): void {
+    const errors: string[] = [];
+    const { worker, logger } = config;
+    const initialSizeIsValid = Number.isSafeInteger(worker.pool.initialSize) &&
+        worker.pool.initialSize >= 0 && worker.pool.initialSize <= 100;
+
+    if (!(typeof worker.timeoutMs === 'number' && worker.timeoutMs >= 1000 && worker.timeoutMs <= 300_000)) {
+        errors.push('[worker.timeoutMs] worker.timeoutMs must be a number between 1000ms and 300000ms');
+    }
+    if (!Number.isSafeInteger(worker.pool.maxSize) || worker.pool.maxSize < 1 || worker.pool.maxSize > 100 ||
+        (initialSizeIsValid && worker.pool.maxSize < worker.pool.initialSize)) {
+        errors.push('[worker.pool.maxSize] worker.pool.maxSize must be a safe integer between 1 and 100 and >= worker.pool.initialSize');
+    }
+    if (!initialSizeIsValid) {
+        errors.push('[worker.pool.initialSize] worker.pool.initialSize must be between 0 and 100');
+    }
+    if (!Number.isSafeInteger(worker.pool.idleTimeoutMs) || worker.pool.idleTimeoutMs < 5000 || worker.pool.idleTimeoutMs > 600_000) {
+        errors.push('[worker.pool.idleTimeoutMs] worker.pool.idleTimeoutMs must be between 5000ms and 600000ms');
+    }
+    if (!(typeof logger.maxSystemLogs === 'number' && logger.maxSystemLogs >= 10 && logger.maxSystemLogs <= 10_000)) {
+        errors.push('[logger.maxSystemLogs] logger.maxSystemLogs must be a number between 10 and 10000');
+    }
+    if (!(typeof logger.maxAppLogs === 'number' && logger.maxAppLogs >= 10 && logger.maxAppLogs <= 10_000)) {
+        errors.push('[logger.maxAppLogs] logger.maxAppLogs must be a number between 10 and 10000');
+    }
+
+    if (errors.length > 0) {
+        throw new AOTUIError('CONFIG_INVALID', { reason: errors.join('; ') });
+    }
 }
 
 /**
@@ -74,7 +121,10 @@ function deepMerge<T extends object>(target: T, source: DeepPartial<T>): T {
  * ```
  */
 export function defineRuntimeConfig(input: RuntimeConfigInput = {}): RuntimeConfig {
-    const config = deepMerge(RUNTIME_DEFAULTS, input);
+    const config = mergeConfig(RUNTIME_DEFAULTS, input);
     validateRuntimeConfig(config);
+    Object.freeze(config.worker.pool);
+    Object.freeze(config.worker);
+    Object.freeze(config.logger);
     return Object.freeze(config) as RuntimeConfig;
 }

@@ -38,10 +38,7 @@ export interface AppConfigEntry {
      */
     workerScript?: string;
 
-    /**
-     * App 简介 (兼容旧字段)
-     * - 建议使用 whatItIs + whenToUse
-     */
+    /** Short App summary shown in Desktop State and Tool discovery. */
     description?: string;
 
     /** App 是什么 (用于 Desktop State 展示) */
@@ -57,9 +54,6 @@ export interface AppConfigEntry {
      * @default true
      */
     autoStart?: boolean;
-
-    /** [Fix] App 角色 */
-    promptRole?: 'user' | 'assistant';
 
     /**
      * 原始安装来源（用于分发场景），例如：

@@ -1,4 +1,3 @@
-import { useArrayRef } from '@aotui/sdk';
 import type { TerminalSession } from '../types.js';
 
 type TerminalConsoleViewProps = {
@@ -8,7 +7,6 @@ type TerminalConsoleViewProps = {
 
 export function TerminalConsoleView({ projectPath, terminals }: TerminalConsoleViewProps) {
     const terminalIds = terminals.map(terminal => terminal.id).join(', ') || 'None';
-    const [terminalsRef, terminalRef] = useArrayRef('terminals', terminals, { itemType: 'Terminal' });
 
     return (
         <div>
@@ -16,13 +14,12 @@ export function TerminalConsoleView({ projectPath, terminals }: TerminalConsoleV
             <ul>
                 <li><strong>Project Path:</strong> {projectPath}</li>
                 <li><strong>Open Terminals:</strong> {terminals.length}</li>
-                <li><strong>Terminal Refs:</strong> {terminalsRef('Open Terminals')}</li>
                 <li><strong>Terminal IDs:</strong> {terminalIds}</li>
             </ul>
             {terminals.length > 0 ? (
                 <ul>
-                    {terminals.map((terminal, index) => (
-                        <li key={terminal.id}>{terminalRef(index, terminal.id)}</li>
+                    {terminals.map(terminal => (
+                        <li key={terminal.id}>{terminal.id} — {terminal.status}</li>
                     ))}
                 </ul>
             ) : null}

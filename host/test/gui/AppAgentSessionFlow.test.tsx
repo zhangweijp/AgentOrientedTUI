@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { migrateAgentAppReferences } from '../../src/config/app-reference-migration.js';
 
 const mockRef = vi.hoisted(() => ({
     bridge: null as any,
@@ -147,11 +148,12 @@ vi.mock('../../src/gui/components/Sidebar.js', () => ({
 }));
 
 vi.mock('../../src/gui/components/ChatArea.js', () => ({
-    ChatArea: ({ agents = [], selectedAgentId = null, onSelectAgent, onSendMessage }: any) => {
+    ChatArea: ({ agents = [], selectedAgentId = null, onSelectAgent, onSendMessage, topicCapabilities }: any) => {
         const currentName = agents.find((a: any) => a.id === selectedAgentId)?.name || 'No Agent';
         return (
             <div>
                 <div data-testid="agent-pill">{currentName}</div>
+                <div data-testid="app-capabilities">{JSON.stringify(topicCapabilities?.apps)}</div>
                 <button data-testid="select-agent-2" onClick={() => onSelectAgent?.('agent_2')}>Select Agent Two</button>
                 <button data-testid="send-message" onClick={() => onSendMessage?.('hello')}>Send</button>
             </div>
@@ -171,6 +173,29 @@ import { App } from '../../src/gui/App.js';
 describe('App agent flow around New Session', () => {
     beforeEach(() => {
         mockRef.bridge = createMockBridge();
+    });
+
+    it('creates a Topic from migrated app IDs while preserving an unselected application', async () => {
+        const registry = Object.fromEntries(['system_ide', 'terminal', 'lite_browser'].map(name => [name, { source: name, enabled: true }]));
+        const stored = await mockRef.bridge.getAgents();
+        stored.list[0].enabledApps = ['aotui-ide', 'lite-browser-app'];
+        const migrated = migrateAgentAppReferences({ agents: stored }, registry, { 'aotui-ide': 'system_ide', 'lite-browser-app': 'lite_browser' });
+        mockRef.bridge.getAgents.mockResolvedValue(migrated.config.agents);
+        mockRef.bridge.getTrpcClient().sourceControl.getDraft.query.mockResolvedValue({
+            apps: { enabled: true, items: Object.keys(registry).map(name => ({ name, enabled: true })) },
+            mcp: { enabled: true, groups: [] }, skill: { enabled: true, items: [] },
+        });
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId('select-project')).toBeInTheDocument());
+        fireEvent.click(screen.getByTestId('select-project'));
+        await waitFor(() => expect(screen.getByTestId('agent-pill')).toHaveTextContent('Agent One'));
+        await waitFor(() => expect(JSON.parse(screen.getByTestId('app-capabilities').textContent!).items).toEqual([
+            { name: 'system_ide', enabled: true }, { name: 'terminal', enabled: false }, { name: 'lite_browser', enabled: true },
+        ]));
+        fireEvent.click(screen.getByTestId('send-message'));
+        await waitFor(() => expect(mockRef.bridge.createTopic).toHaveBeenCalled());
+        expect(mockRef.bridge.createTopic.mock.calls.at(-1)[2].sourceControls.apps)
+            .toEqual({ enabled: true, disabledItems: ['terminal'] });
     });
 
     it('updates agent pill immediately before first send and persists selected agent into createTopic', async () => {
