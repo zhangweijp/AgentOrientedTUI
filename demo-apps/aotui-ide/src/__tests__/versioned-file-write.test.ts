@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { jest } from '@jest/globals';
 import { readVersionedFile, replaceFileIfVersion } from '../core/versioned-file-write.js';
 
 describe('M4 Stage 5: scoped versioned file replacement (real filesystem)', () => {

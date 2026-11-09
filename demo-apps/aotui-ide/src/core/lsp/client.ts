@@ -1,17 +1,17 @@
-import { BusEvent, Bus, withTimeout, Filesystem } from './adapters.js';
+import { withTimeout } from './adapters.js';
+import path from 'node:path';
+import fs from 'node:fs/promises';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createMessageConnection, StreamMessageReader, StreamMessageWriter } from 'vscode-jsonrpc/node.js';
 import type { Diagnostic as VSCodeDiagnostic } from 'vscode-languageserver-types';
 import { LANGUAGE_EXTENSIONS } from './language.js';
 import type { LSPServer } from './server.js';
 import { boundedJSON, IDEError, requireIDE, nextVersion } from '../ide-errors.js';
-import z from 'zod';
 import { joinProcessGroup, signalProcessGroup } from './process-resources.js';
 
 export namespace LSPClient {
     export type Info = Awaited<ReturnType<typeof create>>;
     export type Diagnostic = VSCodeDiagnostic;
-    export const Event = { Diagnostics: BusEvent.define('lsp.client.diagnostics', z.object({ serverID: z.string(), path: z.string() })) };
     export async function create(input: { serverID: string; server: LSPServer.Handle; root: string;
         onDiagnostics?: (file: string, version: number | undefined) => void; signal?: AbortSignal }) {
         const child = input.server.process;
@@ -33,18 +33,21 @@ export namespace LSPClient {
         });
         const connection = createMessageConnection(new StreamMessageReader(child.stdout), new StreamMessageWriter(child.stdin));
         connection.onNotification('textDocument/publishDiagnostics', (params: any) => {
-            let file: string; try { file = Filesystem.normalizePath(fileURLToPath(params.uri)); } catch { return; }
+            let file: string; try { file = path.normalize(fileURLToPath(params.uri)); } catch { return; }
             const doc = documents.get(file);
             if (closing || !doc || !Array.isArray(params.diagnostics) || params.version !== undefined && params.version !== doc.version) return;
             // Missing server versions remain explicitly unverified, never relabelled current.
             try { diagnostics.set(file, boundedJSON(params.diagnostics)); diagnosticErrors.delete(file); }
             catch { diagnostics.delete(file); diagnosticErrors.add(file); }
             diagnosticVersions.set(file, params.version);
-            if (input.onDiagnostics) input.onDiagnostics(file, params.version);
-            else Bus.publish(Event.Diagnostics, { path: file, serverID: input.serverID });
+            input.onDiagnostics?.(file, params.version);
             for (const waiter of waiters) waiter();
         });
+        connection.onNotification('window/logMessage', (params: { message?: unknown }) => {
+            if (typeof params?.message === 'string') receiveLog(Buffer.from(params.message));
+        });
         connection.onRequest('window/workDoneProgress/create', () => null);
+        connection.onRequest('workspace/diagnostic/refresh', () => null);
         connection.onRequest('workspace/configuration', (params: any) => (params.items ?? []).map((item: any) =>
             item.section ? item.section.split('.').reduce((value: any, key: string) => value?.[key], input.server.initialization) ?? null : input.server.initialization ?? null));
         connection.onRequest('client/registerCapability', () => null);
@@ -67,15 +70,19 @@ export namespace LSPClient {
             catch { if (child.pid) signalProcessGroup(input.server.processGroup, child, 'SIGKILL'); await withTimeout(exited, 5000); }
             child.stderr.off('data', receiveLog); child.off('error', onError);
         }
+        let capabilities: { positionEncoding: string; diagnosticProvider: boolean } = { positionEncoding: 'utf-16', diagnosticProvider: false };
         try {
-            await withTimeout(connection.sendRequest('initialize', {
+            const initialized: any = await withTimeout(connection.sendRequest('initialize', {
                 rootUri: pathToFileURL(input.root).href, processId: process.pid,
                 workspaceFolders: [{ name: 'workspace', uri: pathToFileURL(input.root).href }],
                 initializationOptions: input.server.initialization ?? {},
-                capabilities: { window: { workDoneProgress: true }, workspace: { configuration: true },
-                    textDocument: { synchronization: { didOpen: true, didChange: true, didClose: true }, publishDiagnostics: { versionSupport: true } } },
+                capabilities: { general: { positionEncodings: ['utf-16'] }, window: { workDoneProgress: true }, workspace: { configuration: true, diagnostics: { refreshSupport: true } },
+                    textDocument: { diagnostic: { dynamicRegistration: false, relatedDocumentSupport: false }, synchronization: { didOpen: true, didChange: true, didClose: true }, publishDiagnostics: { versionSupport: true } } },
             }), 45000);
             if (spawnError) throw spawnError;
+            requireIDE(initialized?.capabilities && typeof initialized.capabilities === 'object', 'LSP_CAPABILITIES_INVALID');
+            capabilities = { positionEncoding: initialized.capabilities.positionEncoding ?? 'utf-16', diagnosticProvider: !!initialized.capabilities.diagnosticProvider };
+            requireIDE(capabilities.positionEncoding === 'utf-16', 'LSP_POSITION_ENCODING_UNSUPPORTED');
             await connection.sendNotification('initialized', {});
             if (input.server.initialization) await connection.sendNotification('workspace/didChangeConfiguration', { settings: input.server.initialization });
         } catch (error) {
@@ -92,7 +99,7 @@ export namespace LSPClient {
             const previous = queues.get(params.path) ?? Promise.resolve();
             const pending = previous.catch(() => {}).then(async () => {
                 requireIDE(!closing, 'LSP_CLOSED');
-                const text = params.text ?? await Filesystem.readFile(params.path);
+                const text = params.text ?? await fs.readFile(params.path, 'utf-8');
                 requireIDE(Buffer.byteLength(text) <= 4 * 1024 * 1024, 'LSP_DOCUMENT_TOO_LARGE');
                 const before = documents.get(params.path);
                 if (before?.text === text) return before.version;
@@ -152,6 +159,7 @@ export namespace LSPClient {
                     await connection.sendNotification('exit');
                     phase = 'child-close';
                     await withTimeout(exited, 5000);
+                    requireIDE(child.exitCode === 0 && child.signalCode === null, 'LSP_SHUTDOWN_EXIT_FAILED');
                 } catch (error) {
                     failure = error;
                     console.error('LSP_CLOSE_FAILURE', JSON.stringify({ phase, code: failureCode(error) }));
@@ -170,8 +178,8 @@ export namespace LSPClient {
             })();
             void completion.catch(() => {}); return completion;
         }
-        return { root: input.root, serverID: input.serverID, connection, process: child, notify: { open, close: closeFile },
+        return { root: input.root, serverID: input.serverID, capabilities, connection, process: child, notify: { open, close: closeFile },
             waitForDiagnostics, diagnostics, diagnosticVersions, shutdown, versionFor: (file: string) => documents.get(file)?.version,
-            inspect: () => ({ closed: closing, documentCount: documents.size, pendingDocuments: queues.size, diagnosticWaiters: waiters.size, logs: [...logs], pid: child.pid }) };
+            inspect: () => ({ closed: closing, documentCount: documents.size, pendingDocuments: queues.size, diagnosticWaiters: waiters.size, logs: [...logs], pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode, terminationSignalled }) };
     }
 }

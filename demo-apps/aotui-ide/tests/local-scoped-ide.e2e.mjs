@@ -50,21 +50,25 @@ function start(extra = [], nodeArgs = []) {
         const deadline = Date.now() + 15000;
         for (;;) {
             const result = await send({ op: 'observe', viewIds: [viewId] });
-            if (result.status === 'observed' && condition(result.observation)) return result.observation;
+            if (result.status === 'observed' && condition(result.observation)) {
+                assert.equal((await send({ op: 'adopt', observationId: result.observation.observationId })).status, 'adopted');
+                return result.observation;
+            }
             if (result.status === 'observed') await send({ op: 'release', observationId: result.observation.observationId });
             if (Date.now() >= deadline) throw new Error('Observation barrier: ' + JSON.stringify(result));
             await new Promise(resolve => setTimeout(resolve, 20));
         }
     }
     async function call(observation, name, input) {
+        assert.equal((await send({ op: 'adopt', observationId: observation.observationId })).status, 'adopted');
         const tool = observation.tools.find(tool => tool.name === name);
         const binding = observation.bindings.find(binding => binding.toolId === tool?.id); assert.ok(binding, name);
         const invocationId = 'local-' + sequence;
-        const result = await send({ op: 'invoke', invocationId, observationId: observation.observationId,
-            bindingId: binding.bindingId, input });
+        const request = { op: 'invoke', invocationId, observationId: observation.observationId, bindingId: binding.bindingId, input };
+        const result = await send(request);
         assert.equal(result.kind, 'receipt', JSON.stringify(result));
         assert.equal(result.receipt.outcome.status, 'succeeded', JSON.stringify(result));
-        return { invocationId, result };
+        return { invocationId, result, request };
     }
     async function close(how = 'eof', expectedCode = 0) {
         if (how === 'eof') child.stdin.end();
@@ -100,8 +104,8 @@ try {
         const app = start();
         const ready = await app.wait(event => event.event === 'ready', 'ready');
         const started = app.record.events.find(event => event.event === 'starting');
-        assert.equal(started.runtimeModule, pathToFileURL(path.join(consumer, 'node_modules/@aotui/runtime/dist/index.js')).href);
-        assert.equal(started.ideModule, pathToFileURL(path.join(consumer, 'node_modules/@agentina/aotui-ide/dist/index.js')).href);
+        assert.equal(started.runtimeModule, pathToFileURL(await fs.realpath(path.join(consumer, 'node_modules/@aotui/runtime/dist/index.js'))).href);
+        assert.equal(started.ideModule, pathToFileURL(await fs.realpath(path.join(consumer, 'node_modules/@agentina/aotui-ide/dist/index.js'))).href);
         await app.call(ready.observation, 'multi_open_file', { filePaths: [file] });
         await app.send({ op: 'release', observationId: ready.observation.observationId });
         const opened = await app.observe('workspace', observation => observation.views.some(view => view.content?.value.includes(file)));
@@ -110,8 +114,10 @@ try {
         const writable = await app.observe(fileView.viewId);
         const written = await app.call(writable, 'write_file', { filePath: file, content: 'export const answer = 2;\n' });
         assert.equal(await fs.readFile(file, 'utf8'), 'export const answer = 2;\n');
-        const receipt = await app.send({ op: 'receipt', invocationId: written.invocationId });
-        assert.equal(receipt.kind, 'receipt'); assert.deepEqual(receipt.receipt.outcome, written.result.receipt.outcome);
+        const writtenVersion = (await fs.stat(file, { bigint: true })).mtimeNs;
+        const receipt = await app.send(written.request);
+        assert.equal(receipt.kind, 'receipt'); assert.deepEqual(receipt.receipt, written.result.receipt);
+        assert.equal((await fs.stat(file, { bigint: true })).mtimeNs, writtenVersion, 'receipt replay does not repeat the write');
         await app.send({ op: 'release', observationId: opened.observationId });
         await app.send({ op: 'release', observationId: writable.observationId });
         const view = fileView.viewId;

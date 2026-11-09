@@ -1,9 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process"
 import path from "path"
-import { Log, Instance } from "./adapters.js"
 import fs from "fs/promises"
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
+import { requireIDE } from '../ide-errors.js';
 
 export async function spawnLSPServer(root: string, command: string, args: string[], extraEnv: Record<string, string> = {}): Promise<LSPServer.Handle> {
   const bins = [path.join(root, 'node_modules/.bin'), fileURLToPath(new URL('../../../node_modules/.bin/', import.meta.url))];
@@ -18,7 +18,6 @@ export async function spawnLSPServer(root: string, command: string, args: string
 }
 
 export namespace LSPServer {
-  const log = Log.create({ service: "lsp.server" })
 
   export interface Handle {
     process: ChildProcessWithoutNullStreams
@@ -28,45 +27,10 @@ export namespace LSPServer {
     initialization?: Record<string, any>
   }
 
-  type RootFunction = (file: string) => Promise<string | undefined>
-
-  // Helper to find nearest root containing specific files
-  const NearestRoot = (includePatterns: string[]): RootFunction => {
-    return async (file) => {
-      let current = path.dirname(file)
-      const stop = Instance.directory
-
-      while (true) {
-        for (const pattern of includePatterns) {
-          try {
-            await fs.access(path.join(current, pattern))
-            return current
-          } catch { }
-        }
-
-        if (current === stop || current === path.dirname(current)) {
-          return Instance.directory
-        }
-        current = path.dirname(current)
-      }
-    }
-  }
-
   export interface Info {
     id: string
     extensions: string[]
-    global?: boolean
-    root: RootFunction
     spawn(root: string): Promise<Handle | undefined>
-    initialization?: Record<string, any>
-  }
-
-  // =========================================================
-  // Generic Spawn Helper
-  // =========================================================
-
-  async function spawnServer(root: string, command: string, args: string[]): Promise<Handle | undefined> {
-    return spawnLSPServer(root, command, args);
   }
 
   // =========================================================
@@ -76,77 +40,54 @@ export namespace LSPServer {
   // TypeScript / JavaScript
   export const Typescript: Info = {
     id: "typescript",
-    root: NearestRoot(
-      ["package.json", "tsconfig.json", "jsconfig.json"]
-    ),
     extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"],
     async spawn(root) {
-      let command = 'typescript-language-server', args = ['--stdio'];
-      let processGroupVerified = false;
-      try {
-        const packageFile = createRequire(import.meta.url).resolve('typescript-language-server/package.json');
-        const manifest = JSON.parse(await fs.readFile(packageFile, 'utf8'));
-        const typescript = JSON.parse(await fs.readFile(createRequire(packageFile).resolve('typescript/package.json'), 'utf8'));
-        processGroupVerified = process.platform !== 'win32' && manifest.version === '5.1.3' && typescript.version === '5.9.3';
-        command = process.execPath; args = [path.join(path.dirname(packageFile), manifest.bin['typescript-language-server']), '--stdio'];
-      } catch { /* A separately installed server can still be resolved on PATH. */ }
-      return spawnServer(root, command, args)
-        .then(handle => {
-          if (handle) {
-            handle.processGroupVerified = processGroupVerified;
-            handle.initialization = {
-              tsserver: { useSyntaxServer: 'never' },
-              preferences: {
-                includeInlayParameterNameHints: 'all',
-                includeInlayFunctionParameterTypeHints: true,
-                includeInlayVariableTypeHints: true
-              }
-            };
-          }
-          return handle;
-        });
+      requireIDE(process.platform === 'darwin' && process.arch === 'arm64', 'LSP_NATIVE_PLATFORM_UNSUPPORTED');
+      const directory = new URL('../../../native-lsp/', import.meta.url);
+      const profile = JSON.parse(await fs.readFile(new URL('profile.json', directory), 'utf8'));
+      const expected = JSON.parse(await fs.readFile(new URL('../../../toolchain/native-lsp.json', import.meta.url), 'utf8'));
+      requireIDE(JSON.stringify(profile) === JSON.stringify(expected), 'LSP_NATIVE_PROFILE_MISMATCH');
+      const executable = fileURLToPath(new URL('tsgo', directory));
+      requireIDE(createHash('sha256').update(await fs.readFile(executable)).digest('hex') === expected.binarySHA256, 'LSP_NATIVE_BINARY_MISMATCH');
+      const handle = await spawnLSPServer(root, executable, ['--lsp', '--stdio']);
+      if (handle) handle.processGroupVerified = true;
+      return handle;
     },
   }
 
   // Python (Pyright)
   export const Pyright: Info = {
     id: "pyright",
-    root: NearestRoot(
-      ["pyrightconfig.json", "pyproject.toml", "setup.py", "requirements.txt"]
-    ),
     extensions: [".py", ".pyi"],
     async spawn(root) {
-      return spawnServer(root, "pyright-langserver", ["--stdio"]);
+      return spawnLSPServer(root, "pyright-langserver", ["--stdio"]);
     }
   }
 
   // Go (gopls)
   export const Go: Info = {
     id: "gopls",
-    root: NearestRoot(["go.mod", "go.work"]),
     extensions: [".go"],
     async spawn(root) {
-      return spawnServer(root, "gopls", ["serve"]);
+      return spawnLSPServer(root, "gopls", ["serve"]);
     }
   }
 
   // Rust (rust-analyzer)
   export const Rust: Info = {
     id: "rust-analyzer",
-    root: NearestRoot(["Cargo.toml"]),
     extensions: [".rs"],
     async spawn(root) {
-      return spawnServer(root, "rust-analyzer", []);
+      return spawnLSPServer(root, "rust-analyzer", []);
     }
   }
 
   // C/C++ (clangd)
   export const Clangd: Info = {
     id: "clangd",
-    root: NearestRoot(["compile_commands.json", "compile_flags.txt", ".clang-format"]),
     extensions: [".c", ".cpp", ".objc", ".objcpp", ".cc", ".h", ".hpp"],
     async spawn(root) {
-      return spawnServer(root, "clangd", []);
+      return spawnLSPServer(root, "clangd", []);
     }
   }
 

@@ -1,5 +1,12 @@
+import type { ToolResult } from '@aotui/sdk';
 export class IDEError extends Error {
-    constructor(readonly code: string, readonly effects: 'none' | 'partial' | 'unknown' = 'none', readonly details?: unknown) { super(code); }
+    constructor(readonly code: string, readonly effects: 'none' | 'partial' | 'unknown' = 'none', readonly details?: NonNullable<ToolResult['data']>) {
+        super(code === 'IDE_FILE_NOT_LOADED'
+            ? 'The file is not open in this IDE. Use multi_open_file with its absolute path, read the current FileDetail View, then retry.'
+            : code === 'RESOURCE_CONFLICT'
+                ? 'The file no longer matches the loaded version. Use multi_open_file to reload it, review the latest FileDetail content, then reapply your edit.'
+                : code);
+    }
 }
 export function requireIDE(condition: unknown, code: string): asserts condition {
     if (!condition) throw new IDEError(code);

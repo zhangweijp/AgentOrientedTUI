@@ -92,21 +92,10 @@ export class ScopedLSP {
             const params = { textDocument: { uri }, position: { line: line - 1, character: character - 1 } };
             let raw: any;
             if (kind === 'diagnostics' && client.serverID === 'typescript') {
-                const diagnostics: any[] = [];
-                for (const command of ['syntacticDiagnosticsSync', 'semanticDiagnosticsSync', 'suggestionDiagnosticsSync']) {
-                    const response: any = await client.connection.sendRequest('workspace/executeCommand', {
-                        command: 'typescript.tsserverRequest', arguments: [command, { file: uri, includeLinePosition: true }, { executionTarget: 0, expectsResult: true, isAsync: false }],
-                    });
-                    requireIDE(response?.type === 'response' && response.success === true && Array.isArray(response.body), 'LSP_DIAGNOSTICS_UNAVAILABLE');
-                    boundedJSON(response.body);
-                    diagnostics.push(...response.body.map((item: any) => {
-                        requireIDE(item.startLocation && item.endLocation && typeof item.message === 'string', 'LSP_DIAGNOSTICS_INVALID');
-                        return { range: { start: { line: item.startLocation.line - 1, character: item.startLocation.offset - 1 },
-                            end: { line: item.endLocation.line - 1, character: item.endLocation.offset - 1 } },
-                            message: item.message, severity: item.category === 'error' ? 1 : item.category === 'warning' ? 2 : 3, code: item.code, source: 'typescript' };
-                    }));
-                }
-                raw = diagnostics;
+                requireIDE(client.capabilities.diagnosticProvider, 'LSP_DIAGNOSTICS_UNAVAILABLE');
+                const report: any = boundedJSON(await client.connection.sendRequest('textDocument/diagnostic', { textDocument: { uri } }));
+                requireIDE(report?.kind === 'full' && Array.isArray(report.items), 'LSP_DIAGNOSTICS_INVALID');
+                raw = report.items;
             } else if (kind === 'diagnostics') { await client.waitForDiagnostics({ path: file, version }); raw = client.diagnostics.get(file) ?? []; }
             else if (kind === 'incoming' || kind === 'outgoing') {
                 const items: any = boundedJSON(await client.connection.sendRequest('textDocument/prepareCallHierarchy', params));

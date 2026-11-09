@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { inside, readObservedFile } from './versioned-file-write.js';
-import { replaceObservedFile, createFileWithParents, withLocks } from './observed-file-operations.js';
+import { replaceObservedFile, createFileWithParents, withLocks } from './observed-file-actions.js';
 import { directoryIdentity } from './versioned-file-write.js';
 import { IDEError, boundedJSON, requireIDE } from './ide-errors.js';
 import type { FileInfo } from '../types.js';

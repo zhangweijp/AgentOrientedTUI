@@ -6,7 +6,7 @@ import { IDESession, filePage } from '../dist/core/ide-session.js';
 import { IDEHistory, pathList } from '../dist/core/ide-history.js';
 import { ScopedSearch } from '../dist/core/scoped-search.js';
 import { directoryIdentity } from '../dist/core/versioned-file-write.js';
-import { createFileWithParents } from '../dist/core/observed-file-operations.js';
+import { createFileWithParents } from '../dist/core/observed-file-actions.js';
 import { boundedJSON } from '../dist/core/ide-errors.js';
 import { createMemoryStateStorage } from '../../../runtime/dist/adapters/storage/memory-state-storage.js';
 import { createAppStatePersistence } from '../../../runtime/dist/worker-runtime/state-persistence.js';

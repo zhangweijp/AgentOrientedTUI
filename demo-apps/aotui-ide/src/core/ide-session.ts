@@ -1,10 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { OperationResult, useAppRuntimeContext } from '@aotui/sdk';
+import type { ToolResult, useAppRuntimeContext } from '@aotui/sdk';
 import { readObservedFile, directoryIdentity, checkedPath, inside, type ObservedFile } from './versioned-file-write.js';
-import { createFileWithParents, replaceObservedFile, deleteObservedFile, renameObservedFile } from './observed-file-operations.js';
+import { createFileWithParents, replaceObservedFile, deleteObservedFile, renameObservedFile } from './observed-file-actions.js';
 import { applyEditReplacement } from './file-system-service.js';
-import { createWorkspaceFileCreator, type WorkspaceFileCreator } from './conditional-file-create.js';
+import { createWorkspaceFileCreator, mapWorkspaceFileCreationResult, type WorkspaceFileCreator } from './conditional-file-create.js';
 import { IDEHistory, pathList, readLegacyIDE } from './ide-history.js';
 import { ScopedLSP, type LSPQuery } from './scoped-lsp.js';
 import { ScopedSearch } from './scoped-search.js';
@@ -19,12 +19,12 @@ export interface IDEFile { viewId: string; observed: ObservedFile; offset: numbe
 type Root = { path: string; identity: string; creator: WorkspaceFileCreator };
 export interface IDEOptions { sessionKey: string; historyPath: string; projectPath?: string; legacyImportPath?: string }
 const sessionKeys = ['workspaceFolders', 'activeFiles', 'expandedDirs'] as const;
-const fail = (error: IDEError): OperationResult => ({
-    success: false, error: { code: error.code, message: error.code },
-    ...(error.details ? { data: error.details as Record<string, unknown> } : {}),
+const fail = (error: IDEError): ToolResult => ({
+    success: false, error: { code: error.code, message: error.message },
+    ...(error.details ? { data: error.details } : {}),
     ...(error.effects === 'unknown' ? {} : { effects: error.effects }),
 });
-const success = (data: Record<string, unknown> = {}): OperationResult => ({ success: true, data });
+const success = (data: NonNullable<ToolResult['data']> = {}): ToolResult => ({ success: true, data });
 const textPath = (input: unknown): string => {
     requireIDE(typeof input === 'string' && input.length > 0 && !input.includes('\0') && Buffer.byteLength(input) <= 4096 && path.isAbsolute(input), 'IDE_PATH_INVALID');
     return path.resolve(input);
@@ -246,14 +246,89 @@ export class IDESession {
         const guard = () => { this.current(); requireIDE(this.files.get(file) === record, 'IDE_FILE_STALE'); };
         guard(); return { record, guard };
     }
-    invoke(name: string, args: Readonly<Record<string, any>>, viewId = 'workspace'): Promise<OperationResult> {
+    invoke(name: string, args: Readonly<Record<string, any>>, viewId = 'workspace'): Promise<ToolResult> {
         if (!this.live || !this.ready) return Promise.resolve(fail(new IDEError('IDE_NOT_READY')));
         return this.track(this.execute(name, args, viewId).catch(error => {
             if (/CLEANUP|CLOSE_UNCERTAIN/.test(error?.code ?? '')) this.cleanupFailed = true;
             return fail(error instanceof IDEError ? error : ['ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'ELOOP'].includes(error?.code)
                 ? new IDEError('IDE_IO_' + error.code) : /^(RESOURCE_UNSUPPORTED|RESOURCE_SCOPE_DENIED|RESOURCE_SCOPE_CHANGED|RESOURCE_PARENT_INVALID|RESOURCE_CHANGED_DURING_READ)(:|$)/.test(error?.message ?? '')
-                    ? new IDEError(error.message.split(':')[0]) : new IDEError('IDE_OPERATION_UNKNOWN', 'unknown'));
+                    ? new IDEError(error.message.split(':')[0]) : new IDEError('IDE_TOOL_UNKNOWN', 'unknown'));
         }));
+    }
+    /** App-owned write entry for FileDetail Tools; unlike workspace write_file, it can never create an unopened path. */
+    invokeOpenedFile(args: Readonly<Record<string, any>>): Promise<ToolResult> {
+        return this.invoke('write_file', args, 'opened-file');
+    }
+    /** Select an already opened file by the Tool's explicit business path, then run its per-file LSP request. */
+    invokeLoadedFileTool(name: string, args: Readonly<Record<string, any>>): Promise<ToolResult> {
+        if (!this.live || !this.ready) return Promise.resolve(fail(new IDEError('IDE_NOT_READY')));
+        try {
+            const file = this.files.get(textPath(args.file_path));
+            requireIDE(file, 'IDE_FILE_NOT_LOADED');
+            return this.invoke(name, args, file.viewId);
+        } catch (error) {
+            return Promise.resolve(fail(error instanceof IDEError ? error : new IDEError('IDE_TOOL_UNKNOWN')));
+        }
+    }
+    /** Return the current app-owned FileDetail View ID for a loaded file, if one exists. */
+    getLoadedFileViewId(filePath: string): string | undefined {
+        if (!this.live || !this.ready) return undefined;
+        try { return this.files.get(textPath(filePath))?.viewId; }
+        catch { return undefined; }
+    }
+    /** Return only the receipt metadata; diagnostics themselves stay in the committed FileDetail View. */
+    readLoadedDiagnostics(filePath: string): ToolResult {
+        if (!this.live || !this.ready) return fail(new IDEError('IDE_NOT_READY'));
+        try {
+            const file = this.files.get(textPath(filePath));
+            requireIDE(file, 'IDE_FILE_NOT_LOADED');
+            return success({
+                message: 'Read the loaded diagnostics from this FileDetail View.',
+                filePath: file.observed.path,
+                status: file.diagnostics.status,
+                updatedAt: file.diagnostics.updatedAt,
+            });
+        } catch (error) {
+            return fail(error instanceof IDEError ? error : new IDEError('IDE_TOOL_UNKNOWN'));
+        }
+    }
+    /** Resolve the explicit workspacePath input to this App's current authorized creator. */
+    createWorkspaceFile(workspacePath: string, relativePath: string, content: string): Promise<ToolResult> {
+        return this.track((async () => {
+            if (!this.live || !this.ready) return fail(new IDEError('IDE_NOT_READY'));
+            try {
+                const root = this.roots.find(candidate => candidate.path === textPath(workspacePath));
+                requireIDE(root && this.roots.includes(root), 'IDE_WORKSPACE_NOT_OPEN');
+                const outcome = await root.creator({ relativePath, content });
+                const result = mapWorkspaceFileCreationResult(outcome);
+                let refreshFailed = false;
+                try {
+                    const version = this.workspaceVersion;
+                    const guard = () => {
+                        this.current();
+                        requireIDE(this.workspaceVersion === version && this.roots.includes(root), 'IDE_WORKSPACE_STALE');
+                    };
+                    const trees = await this.readTree(this.roots, this.expanded, guard);
+                    guard();
+                    this.trees = trees;
+                    this.publish();
+                } catch {
+                    refreshFailed = true;
+                    this.warn('WORKSPACE_TREE_REFRESH_FAILED');
+                    this.publish();
+                }
+                if (!refreshFailed) return result;
+                return {
+                    ...result,
+                    data: {
+                        ...(result.data ?? {}),
+                        workspaceRefreshWarning: 'WORKSPACE_TREE_REFRESH_FAILED',
+                    },
+                };
+            } catch (error) {
+                return fail(error instanceof IDEError ? error : new IDEError('IDE_TOOL_UNKNOWN'));
+            }
+        })());
     }
     private async finishDisk(record: IDEFile | undefined, file: string, expected: string | undefined, guard: () => void, action: string, effect: { cleanupWarning?: string }) {
         const warnings: string[] = effect.cleanupWarning ? [effect.cleanupWarning] : [];
@@ -284,7 +359,14 @@ export class IDESession {
         }
         return { result: success({ action, filePath: file, diskCommitted: true, warnings }), committedWorkspaceVersion };
     }
-    private async execute(name: string, args: Readonly<Record<string, any>>, viewId: string): Promise<OperationResult> {
+    private async execute(name: string, args: Readonly<Record<string, any>>, viewId: string): Promise<ToolResult> {
+        if (viewId === 'opened-file') {
+            requireIDE(name === 'write_file', 'IDE_TOOL_UNKNOWN');
+            const file = textPath(args.filePath), { record, guard } = this.fileGuard(file);
+            requireIDE(typeof args.content === 'string', 'IDE_CONTENT_INVALID');
+            const effect = await replaceObservedFile(record.observed, args.content, guard);
+            return (await this.finishDisk(record, file, args.content, guard, 'write', effect)).result;
+        }
         if (viewId !== 'workspace') return this.executeView(name, args, viewId);
         if (['edit_file', 'delete_file', 'rename_file'].includes(name) || name === 'write_file' && this.files.has(textPath(args.filePath))) {
             const file = textPath(name === 'rename_file' ? args.oldPath : args.filePath), { record, guard } = this.fileGuard(file);
@@ -393,7 +475,7 @@ export class IDESession {
         }
         throw new IDEError('IDE_TOOL_UNKNOWN');
     }
-    private async batch(input: unknown, initialGuard: () => void): Promise<OperationResult> {
+    private async batch(input: unknown, initialGuard: () => void): Promise<ToolResult> {
         requireIDE(Array.isArray(input) && input.length <= 64, 'IDE_BATCH_INVALID');
         const edits = input.map(item => {
             requireIDE(item && typeof item === 'object' && !Array.isArray(item) && Object.keys(item).length === 3 && ['filePath', 'oldString', 'newString'].every(key => typeof item[key] === 'string'), 'IDE_BATCH_INVALID');
@@ -425,7 +507,7 @@ export class IDESession {
         }
         this.lastBatch = boundedJSON(results); this.publish(); return success({ results });
     }
-    private async executeView(name: string, args: Readonly<Record<string, any>>, viewId: string): Promise<OperationResult> {
+    private async executeView(name: string, args: Readonly<Record<string, any>>, viewId: string): Promise<ToolResult> {
         if (viewId === 'search') {
             const current = this.search; requireIDE(current && name === 'close_search_view' && args.view_id === viewId, 'IDE_SEARCH_STALE');
             this.current(); this.search = null; this.commitWorkspace(); return success({ closed: 1 });

@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const factsFile = process.argv[2];
-const facts = { profile: 'scoped-ide-ordinary-v2', startedAt: new Date().toISOString(), cases: [], calls: [], cleanup: [], passed: false };
+const facts = { profile: 'scoped-ide-view-type-parameters-v1', startedAt: new Date().toISOString(), cases: [], calls: [], cleanup: [], passed: false };
 const working = await fs.realpath(await fs.mkdtemp(path.join(tmpdir(), 'aotui-full-ide-')));
 const consumer = process.env.AOTUI_IDE_CONSUMER ?? path.join(working, 'consumer'), modules = path.join(consumer, 'node_modules');
 const apps = [];
@@ -19,6 +19,8 @@ async function setup() {
         const base = path.join(modules, target); await fs.mkdir(base);
         await fs.copyFile(path.join(repo, source, 'package.json'), path.join(base, 'package.json'));
         await fs.cp(path.join(repo, source, 'dist'), path.join(base, 'dist'), { recursive: true });
+        if (source === 'demo-apps/aotui-ide') for (const asset of ['native-lsp', 'toolchain'])
+            await fs.cp(path.join(repo, source, asset), path.join(base, asset), { recursive: true });
     }
     for (const source of ['runtime', 'sdk', 'demo-apps/aotui-ide']) {
         const deps = path.join(repo, source, 'node_modules');
@@ -75,7 +77,7 @@ async function start(root, id, options = {}) {
     worker.stderr?.on('data', buffer => { logs.push(String(buffer)); if (logs.length > 30) logs.shift(); });
     worker.on('message', message => { if (message.type !== 'SNAPSHOT_PREPARED') messages.push(message.type); });
     const host = new Host({ appId: id, desktopId: 'test', appModulePath: entry, existingWorker: worker,
-        interactionModes: ['ordinary-v2', 'snapshot-value-v2'], timeout: 45000,
+        interactionModes: ['view-type-parameters-v1'], timeout: 45000,
         config: { projectPath: root, ideSessionKey: options.sessionKey ?? id,
             ideHistoryPath: options.historyPath ?? path.join(working, 'history', id + '.json'),
             ideLegacyDatabasePath: path.join(working, 'legacy', id + '.json'), ideLegacyImportPath: options.legacy,
@@ -92,7 +94,9 @@ function scope(x) {
         const ids = new Set(selection.viewIds), selected = source.views.filter(view => ids.has(view.id));
         return { views: selected.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
             refs: [],
-            targets: Object.values(source.tools).flatMap(tool => tool.targets.filter(target => ids.has(target.viewId)).map(target => ({ toolId: tool.id, target }))),
+            toolBindings: Object.values(source.tools)
+                .filter(tool => selected.some(view => view.type === tool.viewType))
+                .map(tool => ({ toolId: tool.id, execution: tool.execution })),
             content: selected.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' })) };
     }, authorize: () => true, canReadReceipt: () => true });
     assert.equal(opened.status, 'opened', JSON.stringify(opened)); return opened.client;
@@ -101,8 +105,10 @@ async function invoke(x, name, args, { view = 'workspace', status = 'succeeded',
     const owned = !client, c = client ?? scope(x);
     const observed = observation ?? (await c.observe({ viewIds: [view] })).observation;
     assert.ok(observed, 'Observation exists for ' + name);
+    if (!observation) assert.equal(c.adoptObservation(observed.observationId).status, 'adopted');
     const tool = observed.tools.find(tool => tool.name === name); assert.ok(tool, 'Tool exists: ' + name);
-    const binding = observed.bindings.find(binding => binding.toolId === tool.id && binding.target.viewId === view); assert.ok(binding);
+    const binding = observed.bindings.find(binding => binding.toolId === tool.id &&
+        binding.execution.activationId === tool.execution.activationId); assert.ok(binding);
     const beforeRevision = snapshot(x).revision;
     const started = performance.now();
     try {
@@ -111,7 +117,7 @@ async function invoke(x, name, args, { view = 'workspace', status = 'succeeded',
         const outcome = reply.receipt.outcome;
         facts.calls.push({ name, view, status: outcome.status, elapsedMs: performance.now() - started, outcome });
         assert.equal(outcome.status, status, name + ': ' + JSON.stringify(outcome));
-        // Callers disable this for operations whose displayed state is unchanged.
+        // Callers disable this for tool calls whose displayed state is unchanged.
         // A Tool receipt completes its handler; rendering may publish afterwards.
         if (changes && status === 'succeeded') await eventually(() => snapshot(x).revision > beforeRevision, name + ' published snapshot');
         return outcome;
