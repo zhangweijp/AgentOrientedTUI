@@ -1,10 +1,18 @@
-import { createTUIApp, View, useCallback, useEffect, useMemo, useRef, useState, useAppRuntimeContext } from '@aotui/sdk';
+import { createTUIApp, View, useCallback, useEffect, useMemo, useRef, useState, useAppRuntimeContext, AppTools, ToolRef } from '@aotui/sdk';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import os from 'os';
 import { RootView } from './RootView.js';
 import { TerminalConsoleView } from './TerminalConsoleView.js';
 import { TerminalView } from './TerminalView.js';
-import { TerminalConsoleTools, TerminalTools } from './TerminalTools.js';
+import {
+    createCloseTerminalBinding,
+    createLoadMoreOutputBinding,
+    terminalTools,
+    createNewTerminalBinding,
+    createSendCommandBinding,
+    TerminalConsoleToolList,
+    TerminalToolList,
+} from './TerminalTools.js';
 import type { TerminalSession, CommandRecord, CommandStatus } from '../types.js';
 import {
     DEFAULT_TAIL_LINES,
@@ -210,23 +218,35 @@ function TerminalRoot() {
         return { success: true, terminalId: terminal.id, message: result.message };
     }, [addTerminal, closeTerminal, sendCommand]);
 
+    const bindings = {
+        newTerminal: createNewTerminalBinding(sendCommandNewTerminal),
+        sendCommand: { ...createSendCommandBinding(terminals, sendCommand), enabled: terminals.some(terminal => terminal.status !== 'running') },
+        loadMoreOutput: createLoadMoreOutputBinding(setOutputTail),
+        closeTerminal: createCloseTerminalBinding(closeTerminal),
+    };
+
     return (
-        <>
-            <View id="root" type="Root" name="Root">
+        <AppTools definition={terminalTools} bindings={bindings}>
+            <View kind="instruction" id="root" type="Root" name="Root">
                 <RootView />
             </View>
-            <View id="term_console" type="TerminalConsole" name="TerminalConsole">
+            <View kind="state" id="term_console" type="TerminalConsole" name="TerminalConsole">
                 <TerminalConsoleView projectPath={projectPath} terminals={terminals} />
-                <TerminalConsoleTools onSendCommandNewTerminal={sendCommandNewTerminal} />
+                <TerminalConsoleToolList><ToolRef tool={terminalTools.newTerminal} /></TerminalConsoleToolList>
             </View>
             {terminals.map((terminal: TerminalSession) => (
-                <View key={terminal.id} id={terminal.id} type="Terminal" name={`Terminal ${terminal.id}`}>
+                <View kind="state" key={terminal.id} id={terminal.id} type="Terminal" name={`Terminal ${terminal.id}`}>
                     <TerminalView terminal={terminal} />
-                    <TerminalTools terminal={terminal} onCloseTerminal={closeTerminal}
-                        onSendCommand={sendCommand} onLoadMoreOutput={setOutputTail} />
+                    <TerminalToolList>
+                        <ul>
+                            <li><ToolRef tool={terminalTools.sendCommand} /></li>
+                            <li><ToolRef tool={terminalTools.loadMoreOutput} /></li>
+                            <li><ToolRef tool={terminalTools.closeTerminal} /></li>
+                        </ul>
+                    </TerminalToolList>
                 </View>
             ))}
-        </>
+        </AppTools>
     );
 }
 

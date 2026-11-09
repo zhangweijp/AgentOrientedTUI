@@ -1,10 +1,11 @@
-import { createTUIApp, View, useEffect, useMemo, useState, useAppRuntimeContext, usePersistentState } from '@aotui/sdk';
+import { createTUIApp, View, useEffect, useMemo, useState, useAppRuntimeContext, usePersistentState, AppTools } from '@aotui/sdk';
 import type { Plan, Phase, PhaseInput, TaskInput, TaskItem, TaskStatus } from '../types.js';
 import { RootView } from './RootView.js';
 import { PlanListView } from './PlanListView.js';
 import { PlanDetailView } from './PlanDetailView.js';
 import { planningService } from '../core/planning-service.js';
 import type { AppContext } from '@aotui/sdk';
+import { planningTools, createPlanDetailBindings, createPlanListBindings } from './planning-tools.js';
 
 const isPlanCompleted = (plan: Plan) => {
     if (plan.phases.length === 0) {
@@ -329,48 +330,65 @@ function PlanningApp() {
         return true;
     };
 
+    const planListBindings = createPlanListBindings({
+        plans,
+        activePlan,
+        createPlan,
+        updatePlan,
+        deletePlan,
+        openPlan,
+        closePlan,
+    });
+
+    const planDetailBindings = createPlanDetailBindings({
+        activePlan,
+        addPhase,
+        deletePhase,
+        completePhase,
+        addTask,
+        updateTask,
+        deleteTask,
+        completeTask,
+    });
+
+    const bindings = {
+        ...planListBindings,
+        ...planDetailBindings,
+        closePlan: { ...planListBindings.closePlan, enabled: Boolean(activePlan) },
+        addPhase: { ...planDetailBindings.addPhase, enabled: Boolean(activePlan) },
+        deletePhase: { ...planDetailBindings.deletePhase, enabled: Boolean(activePlan) },
+        completePhase: { ...planDetailBindings.completePhase, enabled: Boolean(activePlan) },
+        addTask: { ...planDetailBindings.addTask, enabled: Boolean(activePlan) },
+        updateTask: { ...planDetailBindings.updateTask, enabled: Boolean(activePlan) },
+        deleteTask: { ...planDetailBindings.deleteTask, enabled: Boolean(activePlan) },
+        completeTask: { ...planDetailBindings.completeTask, enabled: Boolean(activePlan) },
+    };
+
     const planListName = activePlan ? 'Plan List (Active Plan Open)' : 'Plan List';
     const planDetailName = activePlan ? `Plan: ${activePlan.title}` : 'Plan Detail';
 
     return (
-        <>
-            <View id="root" type="Root" name="Root">
+        <AppTools definition={planningTools} bindings={bindings}>
+            <View kind="instruction" id="root" type="Root" name="Root">
                 <RootView />
             </View>
 
-            <View id="plan_list" type="PlanList" name={planListName}>
-                <PlanListView
-                    plans={plans}
-                    activePlanId={activePlanId}
-                    createPlan={createPlan}
-                    updatePlan={updatePlan}
-                    deletePlan={deletePlan}
-                    openPlan={openPlan}
-                    closePlan={closePlan}
-                />
+            <View kind="state" id="plan_list" type="PlanList" name={planListName}>
+                <PlanListView plans={plans} activePlan={activePlan} />
             </View>
 
             {activePlan ? (
-                <View id="plan_detail" type="PlanDetail" name={planDetailName}>
-                    <PlanDetailView
-                        plan={activePlan}
-                        addPhase={addPhase}
-                        deletePhase={deletePhase}
-                        completePhase={completePhase}
-                        addTask={addTask}
-                        updateTask={updateTask}
-                        deleteTask={deleteTask}
-                        completeTask={completeTask}
-                    />
+                <View kind="state" id="plan_detail" type="PlanDetail" name={planDetailName}>
+                    <PlanDetailView plan={activePlan} />
                 </View>
             ) : null}
-        </>
+        </AppTools>
     );
 }
 
 export default createTUIApp({
     app_name: 'planning_app',
-    whatItIs: 'A hierarchical task planning and progress tracking system that organizes work into three levels: Plans (projects), Phases (major milestones), and Tasks (individual work items). Each level supports full CRUD operations and tracks completion status. All data is persisted per-desktop using SQLite.',
+    whatItIs: 'A hierarchical task planning and progress tracking system that organizes work into three levels: Plans (projects), Phases (major milestones), and Tasks (individual work items). Each level supports full CRUD actions and tracks completion status. All data is persisted per-desktop using SQLite.',
     whenToUse: 'Use Planning App when you need to: (1) Break down complex projects into manageable phases and tasks, (2) Track progress across multiple work streams or milestones, (3) Create structured, hierarchical work plans with descriptions and metadata, (4) Monitor completion status at plan, phase, and task levels, (5) Organize iterative development with clear phases and actionable tasks.',
     component: PlanningApp,
     onDelete: async (context: AppContext) => {
