@@ -14,12 +14,11 @@ export interface IRefExporter {
      * @param refId The Ref ID (unique within the View)
      * @param data The data object
      */
-    registerRef(viewId: string, refId: string, data: object): void;
+    registerRef(viewId: string, refId: string, data: object, refType?: string): IRefBinding;
+}
 
-    /**
-     * Unregister a Ref
-     * @param viewId The View ID
-     * @param refId The Ref ID
-     */
-    unregisterRef(viewId: string, refId: string): void;
+/** A Ref registration handle; only its owner can update or release it. */
+export interface IRefBinding {
+    update(data: object): void;
+    release(): void;
 }

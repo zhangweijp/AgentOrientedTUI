@@ -17,7 +17,7 @@ import { AppManager } from './manager.js';
 import { WorkerSandbox } from './worker-sandbox.js';
 
 function barrier() { let resolve!: () => void, reject!: (error: unknown) => void;const promise = new Promise<void>((yes, no) => { resolve = yes;reject = no; });return { promise, resolve, reject }; }
-function fixture() { const desktop = { id: 'd', emitSignal: vi.fn(), logSystem: vi.fn(), logAppOperation: vi.fn() };return { manager: new AppManager(desktop as any), desktop }; }
+function fixture() { const desktop = { id: 'd', emitSignal: vi.fn(), logSystem: vi.fn() };return { manager: new AppManager(desktop as any), desktop }; }
 beforeEach(() => { controls.boxes.length = 0;controls.install = async () => {};controls.clean = async () => true;controls.reinitialize = async () => {}; });
 
 describe('AppManager owned lifecycle (controlled C1 Sandbox seam, no OS Workers)', () => {
@@ -34,24 +34,24 @@ describe('AppManager owned lifecycle (controlled C1 Sandbox seam, no OS Workers)
         const installing = manager.install('/app', { appId: 'app_0' });expect(manager.getDynamicAppIds()).toEqual(['app_0']);expect(manager.getInstalledApps()[0].status).toBe('pending');
         await expect(manager.install('/other', { appId: 'app_0' })).rejects.toMatchObject({ code: 'APP_ALREADY_EXISTS' });
         expect(() => manager.registerPendingApp({ appId: 'app_0', modulePath: '/x' })).toThrow('APP_ALREADY_EXISTS');
-        const operation = manager.beginClose();expect(manager.beginClose()).toBe(operation);expect(controls.boxes[0].cleanCalls).toBe(1);
+        const handle = manager.beginClose();expect(manager.beginClose()).toBe(handle);expect(controls.boxes[0].cleanCalls).toBe(1);
         await expect(manager.install('/late')).rejects.toMatchObject({ code: 'APP_MANAGER_CLOSED' });gate.resolve();
-        await expect(installing).rejects.toMatchObject({ code: 'INSTALL_FAILED' });const report = await operation.completion;
-        expect(report).toMatchObject({ state: 'settled', pendingOperations: 0, apps: { accepted: 1, settled: 1 }, hasFailures: true });expect(manager.getDynamicAppIds()).toEqual([]);await manager.cleanupAsync();
+        await expect(installing).rejects.toMatchObject({ code: 'INSTALL_FAILED' });const report = await handle.completion;
+        expect(report).toMatchObject({ state: 'settled', pendingTasks: 0, apps: { accepted: 1, settled: 1 }, hasFailures: true });expect(manager.getDynamicAppIds()).toEqual([]);await manager.cleanupAsync();
     });
     it('enforces 128 accepted installs before any Sandbox side effect and restores capacity when calls end', async () => {
         const gate = barrier();controls.install = () => gate.promise;const { manager } = fixture();
         const calls = Array.from({ length: 128 }, (_, i) => manager.install('/app', { appId: 'x'+i }));expect(controls.boxes).toHaveLength(128);
         await expect(manager.install('/overflow', { appId: 'overflow' })).rejects.toMatchObject({ code: 'LIFECYCLE_CAPACITY_EXCEEDED' });expect(controls.boxes).toHaveLength(128);
-        gate.resolve();await Promise.all(calls);await manager.install('/later', { appId: 'later' });expect(controls.boxes).toHaveLength(129);expect(manager.getCloseReport().pendingOperations).toBe(0);
+        gate.resolve();await Promise.all(calls);await manager.install('/later', { appId: 'later' });expect(controls.boxes).toHaveLength(129);expect(manager.getCloseReport().pendingTasks).toBe(0);
         await manager.cleanupAsync();
     });
-    it('shares pending open/reinitialize operations without consuming a second slot; automatic IDs avoid explicit IDs', async () => {
+    it('shares pending open/reinitialize tasks without consuming a second slot; automatic IDs avoid explicit IDs', async () => {
         const { manager } = fixture();manager.registerPendingApp({ appId: 'app_0', modulePath: '/explicit' });
         expect(manager.registerPendingApp({ modulePath: '/auto' })).toBe('app_1');const gate = barrier();controls.install = () => gate.promise;
-        const first = manager.startPendingApp('app_0'), second = manager.startPendingApp('app_0');expect(first).toBe(second);expect(manager.getCloseReport().pendingOperations).toBe(1);
+        const first = manager.startPendingApp('app_0'), second = manager.startPendingApp('app_0');expect(first).toBe(second);expect(manager.getCloseReport().pendingTasks).toBe(1);
         gate.resolve();await first;const reset = barrier();controls.reinitialize = () => reset.promise;
-        const a = manager.reinitializeApp('app_0', { reason: 'r' }), b = manager.reinitializeApp('app_0', { reason: 'r' });expect(a).toBe(b);expect(manager.getCloseReport().pendingOperations).toBe(1);
+        const a = manager.reinitializeApp('app_0', { reason: 'r' }), b = manager.reinitializeApp('app_0', { reason: 'r' });expect(a).toBe(b);expect(manager.getCloseReport().pendingTasks).toBe(1);
         reset.resolve();await a;expect(controls.boxes[0].reinitializeCalls).toEqual(['r']);await manager.cleanupAsync();
     });
     it('all cleanups start before waiting on one hung install or resource; metadata is preserved until cleanupAsync', async () => {

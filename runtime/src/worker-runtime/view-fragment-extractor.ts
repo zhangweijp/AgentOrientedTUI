@@ -1,25 +1,13 @@
 import { transformElement } from '../engine/view/transformer/pure.js';
 import type { ViewID } from '../spi/index.js';
-
-export type ViewFragmentKind = 'application-instruction' | 'view-state';
+import type { ViewSnapshotV2 } from '../core/snapshot/types.js';
 
 export interface WorkerRuntimeViewFragment {
     viewId: ViewID;
     viewType: string;
     viewName?: string;
     markup: string;
-    kind: ViewFragmentKind;
-}
-
-function classifyViewFragment(node: Element): ViewFragmentKind {
-    if (
-        node.getAttribute('data-role') === 'application-instruction' ||
-        node.querySelector('[data-role="application-instruction"]')
-    ) {
-        return 'application-instruction';
-    }
-
-    return 'view-state';
+    kind: ViewSnapshotV2['kind'];
 }
 
 function viewIdentity(node: Element): string {
@@ -49,11 +37,15 @@ export function extractViewFragments(container: Element): WorkerRuntimeViewFragm
         const rawViewId = node.getAttribute('data-view-id') || node.getAttribute('id');
         if (!rawViewId) continue;
 
-        const viewType = node.getAttribute('data-view-type') || rawViewId;
+        const viewType = node.getAttribute('data-view-type');
+        const kind = node.getAttribute('data-view-kind');
+        if (!viewType?.trim() || (kind !== 'instruction' && kind !== 'state')) {
+            throw Object.assign(new Error(
+                `VIEW_METADATA_INVALID: View "${viewIdentity(node)}" requires explicit data-view-type and data-view-kind="instruction" or "state".`,
+            ), { code: 'VIEW_METADATA_INVALID' });
+        }
         const viewName = node.getAttribute('data-view-name') || undefined;
-        const kind = classifyViewFragment(node);
-        const markup = transformElement(node).markup.trim();
-        if (!markup) continue;
+        const markup = transformElement(node).markup;
 
         result.push({ viewId: rawViewId as ViewID, viewType, viewName, markup, kind });
     }

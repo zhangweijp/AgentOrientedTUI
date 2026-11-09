@@ -91,7 +91,7 @@ export function sortProviders(providers: ProviderConfig[]): ProviderConfig[] {
 /**
  * useProviderConfigs Hook
  * 
- * Manages provider configurations with CRUD operations via tRPC
+ * Manages provider configurations with CRUD actions via tRPC
  * Tracks active provider and handles loading/error states
  */
 export function useProviderConfigs(): UseProviderConfigsResult {

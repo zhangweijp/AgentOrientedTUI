@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { BigIntStats } from "node:fs";
 import { types } from "node:util";
-import type { OperationResult } from "@aotui/sdk";
+import type { ToolResult } from "@aotui/sdk";
 export interface WorkspaceCreateInput {
   readonly relativePath: string;
   readonly content: string;
@@ -32,7 +32,7 @@ export type WorkspaceFileCreatorFactory = (
 ) => Promise<WorkspaceFileCreator>;
 export function mapWorkspaceFileCreationResult(
   outcome: WorkspaceFileCreationOutcome,
-): OperationResult {
+): ToolResult {
   switch (outcome.status) {
     case "succeeded":
       return {

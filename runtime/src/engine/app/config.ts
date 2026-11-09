@@ -20,32 +20,17 @@ export interface AppConfigEntry {
      */
     source: string;
 
-    /** 版本约束 (仅 npm 来源有效) */
-    version?: string;
-
     /** 是否启用 */
     enabled: boolean;
 
     /** 安装时间 */
     installedAt?: string;
 
-    /** 别名 (用于解决命名冲突) */
-    alias?: string;
-
     /** 
      * [Option D] 自定义 Worker 脚本路径 (可选)
      * 为空时使用 runtime.workerScript 默认值
      */
     workerScript?: string;
-
-    /** Short App summary shown in Desktop State and Tool discovery. */
-    description?: string;
-
-    /** App 是什么 (用于 Desktop State 展示) */
-    whatItIs?: string;
-
-    /** 什么时候用 (用于 Desktop State 展示) */
-    whenToUse?: string;
 
     /**
      * [RFC-014] Desktop 创建时是否自动启动此 App

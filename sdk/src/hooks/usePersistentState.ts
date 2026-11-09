@@ -1,3 +1,4 @@
+import { STATE_SESSION_PROTOCOL } from '@aotui/runtime/spi';
 import type { Dispatch, StateUpdater } from 'preact/hooks';
 import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import { useInternalAppRuntimeContext } from '../context/AppRuntimeContext.js';
@@ -33,7 +34,7 @@ export function shouldHydratePersistentState(
 type Candidate<T> = {
   phase: 'pending' | 'bound' | 'released'; value: T; ready: boolean; updates: number;
   serialize?: PersistOptions<T>['serialize']; deserialize?: PersistOptions<T>['deserialize'];
-  binding?: StateBinding; early?: { value?: unknown; failed: boolean };
+  binding?: StateBinding; early?: { value?: unknown; failed: boolean } | undefined;
 };
 
 export function usePersistentState<T>(key: string, initial: T, options: PersistOptions<T> = {}): [T, Dispatch<StateUpdater<T>>, PersistMeta] {
@@ -44,10 +45,10 @@ export function usePersistentState<T>(key: string, initial: T, options: PersistO
   const port: AppStatePersistence | undefined = persistence;
   const candidate = useMemo<Candidate<T>>(() => ({ phase: 'pending', value: initial, ready: false, updates: 0,
     serialize: options.serialize, deserialize: options.deserialize }), [key, options.storageKey, hydrate, port, port?.instanceId]);
-  // Updating callback identities is a commit operation, never a render-time mutation of a live binding.
+  // Updating callback identities is a commit-phase step, never a render-time mutation of a live binding.
   useLayoutEffect(() => { candidate.serialize = options.serialize;candidate.deserialize = options.deserialize; });
   useLayoutEffect(() => {
-    if (!port || port.protocol !== 'state-session-v1' || typeof port.bind !== 'function' || typeof port.flush !== 'function' || typeof port.captureValue !== 'function') throw unavailable();
+    if (!port || port.protocol !== STATE_SESSION_PROTOCOL || typeof port.bind !== 'function' || typeof port.flush !== 'function' || typeof port.captureValue !== 'function') throw unavailable();
     let captured: unknown;
     try { captured = candidate.serialize ? candidate.serialize(initial) : initial; }
     catch { throw Object.assign(new Error('Initial state could not be captured'), { code: 'SERIALIZATION_FAILED' }); }

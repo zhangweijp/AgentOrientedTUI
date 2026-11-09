@@ -22,8 +22,8 @@ describe('ERROR_CODES', () => {
         expect(ERROR_CODES.APP_NOT_FOUND).toBe('APP_NOT_FOUND');
         expect(ERROR_CODES.APP_INVALID_EXPORT).toBe('APP_INVALID_EXPORT');
 
-        // Operation
-        expect(ERROR_CODES.OPERATION_DUPLICATE).toBe('OPERATION_DUPLICATE');
+        // App registration
+        expect(ERROR_CODES.APP_ALREADY_REGISTERED).toBe('APP_ALREADY_REGISTERED');
 
         // Worker
         expect(ERROR_CODES.WORKER_NOT_STARTED).toBe('WORKER_NOT_STARTED');
@@ -44,7 +44,7 @@ describe('ERROR_CODES', () => {
         expect(ERROR_CODES.DESKTOP_NOT_FOUND).toBe('DESKTOP_NOT_FOUND');
     });
 
-    it('does not publish retired ViewFactory, ViewLink, or operation dispatcher codes', () => {
+    it('does not publish retired ViewFactory, ViewLink, or Tool dispatcher codes', () => {
         for (const code of [
             'VIEW_NOT_FOUND',
             'VIEW_PARENT_NOT_FOUND',
@@ -53,9 +53,9 @@ describe('ERROR_CODES', () => {
             'VIEW_INVALID_FACTORY',
             'LINK_DUPLICATE',
             'LINK_NOT_FOUND',
-            'OPERATION_NOT_FOUND',
-            'OPERATION_NO_HANDLER',
-            'OPERATION_REQUIRES_CONTEXT',
+            'TOOL_NOT_FOUND',
+            'TOOL_NO_HANDLER',
+            'TOOL_REQUIRES_CONTEXT',
         ]) {
             expect(ERROR_CODES).not.toHaveProperty(code);
         }
@@ -63,7 +63,7 @@ describe('ERROR_CODES', () => {
 
     it('does not publish error codes with no Runtime producer', () => {
         for (const code of [
-            'APP_LOAD_FAILED', 'APP_INVALID_MANIFEST', 'VIEW_DUPLICATE', 'OPERATION_INVALID_ARGS',
+            'APP_LOAD_FAILED', 'APP_INVALID_MANIFEST', 'VIEW_DUPLICATE', 'TOOL_INVALID_ARGS',
             'WORKER_TIMEOUT', 'WORKER_TERMINATED', 'SNAPSHOT_NOT_FOUND', 'SNAPSHOT_EXPIRED',
             'CONTEXT_NOT_FOUND', 'NOT_IMPLEMENTED', 'EXECUTION_FAILED',
         ]) {

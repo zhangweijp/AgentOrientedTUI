@@ -13,6 +13,7 @@ const repo = resolve(process.cwd(), '..'), url = (p: string) => pathToFileURL(p)
 async function linkSDKPeers(dir: string) {
     await mkdir(join(dir, 'node_modules'), { recursive: true });
     await symlink(join(repo, 'sdk/node_modules/preact'), join(dir, 'node_modules/preact'), 'dir');
+    await symlink(join(repo, 'sdk/node_modules/typebox'), join(dir, 'node_modules/typebox'), 'dir');
 }
 async function capture(file: string, body: string) {
     await writeFile(file, body);const folder = process.env.AOTUI_W08_C1_FACTS_DIR ?? process.env.AOTUI_W08_B2_FACTS_DIR;
@@ -48,9 +49,15 @@ it('C1-02/03/04 real Node capacity, script identity, actual replacement exit, an
 it('C1-08 two actual createRuntime instances execute their own A/B scripts; same Runtime Desktops share one bound', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-runtimes-')), app = join(dir, 'app.mjs');
     await linkSDKPeers(dir);
-    await capture(app, `import {h} from 'preact';import {createTUIApp,useAppRuntimeContext,View,useViewTypeTool} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let launch;
-function Tools(){const [Inspect]=useViewTypeTool('inspect',{description:'Inspect launch facts',isMutating:false,params:{}},async()=>{const script=globalThis.__c1Script,forwarded=launch?.C1_LAUNCH;return {success:true,data:{script:typeof script==='string'?script:'<script:'+typeof script+'>',launch:{C1_LAUNCH:typeof forwarded==='string'?forwarded:'<C1_LAUNCH:'+typeof forwarded+'>'}}};});return h(Inspect);}
-function Root(){launch=useAppRuntimeContext().launchConfig;return h(View,{id:'root',type:'Root'},h(Tools));}
+    await capture(app, `import {h} from 'preact';import Type from 'typebox';import {createTUIApp,defineViewTypeTool,useAppRuntimeContext,View,AppTools, ToolRef, defineToolSet} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let launch;
+
+
+const fixtureTools0 = defineToolSet({
+Inspect: defineViewTypeTool({viewType:'Root',name:'inspect',description:'Inspect launch facts',inputSchema:Type.Object({}, {additionalProperties:false}),})
+});
+function Root(){launch=useAppRuntimeContext().launchConfig;const Inspect = fixtureTools0.Inspect;return h(AppTools, { definition: fixtureTools0, bindings: {
+Inspect: { execute: async()=>{const script=globalThis.__c1Script,forwarded=launch?.C1_LAUNCH;return {success:true,data:{script:typeof script==='string'?script:'<script:'+typeof script+'>',launch:{C1_LAUNCH:typeof forwarded==='string'?forwarded:'<C1_LAUNCH:'+typeof forwarded+'>'}}};} }
+} }, h(View,{kind: 'instruction',id:'root',type:'Root'},h(ToolRef, { tool: Inspect })));}
 export default createTUIApp({app_name:'c1',component:Root});`);
     const runtimes = [createRuntime({ worker: { timeoutMs: 2345, pool: { initialSize: 0, maxSize: 1 } } }), createRuntime({ worker: { pool: { initialSize: 0, maxSize: 1 } } })] as any[];
     const sandboxes: any[] = [], workers: any[] = [];
@@ -109,7 +116,7 @@ import {WorkerSandbox} from ${JSON.stringify(url(join(repo, 'runtime/dist/engine
 import {defineRuntimeConfig} from ${JSON.stringify(url(join(repo, 'runtime/dist/spi/config/index.js')))};
 import {writeFile} from 'node:fs/promises';import assert from 'node:assert/strict';
 const pool=new WorkerPool({initialSize:2,maxSize:2});const lease=await pool.acquireLease();await lease.release();const closed=await pool.destroy();assert.equal(closed.total,0);
-const sandbox=new WorkerSandbox({appId:'natural',desktopId:'d',appModulePath:${JSON.stringify(url(app))},runtimeConfig:defineRuntimeConfig({worker:{pool:{initialSize:0,maxSize:1}}}),config:{AOTUI_DATA_DIR:${JSON.stringify(join(dir, 'data'))},AOTUI_APP_NAME:'natural'}});
+const sandbox=new WorkerSandbox({appId:'natural',desktopId:'d',appModulePath:${JSON.stringify(url(app))},runtimeConfig:defineRuntimeConfig({worker:{pool:{initialSize:0,maxSize:1}}}),config:{AOTUI_DATA_DIR:${JSON.stringify(join(dir, 'data'))},AOTUI_APP_KEY:'natural'}});
 await sandbox.installDynamic();const worker=sandbox.lease.worker;const report=await sandbox.disposeAsync();assert.equal(report.ok,true);assert.equal(report.resourcesReleased,true);assert.equal(report.ownedPool.state,'closed');assert.equal(worker.threadId,-1);
 await writeFile(${JSON.stringify(output)},JSON.stringify({closed,report,physicalThreadId:worker.threadId,proof:'natural child completion; no explicit process exit'}));
 `);

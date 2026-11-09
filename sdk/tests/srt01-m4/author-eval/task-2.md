@@ -1,0 +1,11 @@
+Build app.ts as a pure TypeScript SDK integration. Read public-docs/static-tools.md and public-docs/binding-tools.md. Use @aotui/sdk/tools runtime imports; public Runtime SPI type imports are allowed. Do not import SDK root, Preact, DOM or Worker internals.
+
+Export counterTools, one module-static ToolSet with Counter/increment, a closed object Schema {amount:number}, isMutating:true. Static definitions have no handler or business owner.
+
+Export createCounterBindings(port, owner). port is the public IAppTypeToolPort supplied by trusted integration. owner is a mutable application object {value:number,label:string}. Each call creates one shared SDK controller for that port and that ToolSet, without registering until commit. Return {commit(enabled:boolean,label:string):void, dispose():void}.
+
+commit supplies the complete binding map to the same controller. Each invocation adds args.amount to this owner's value and returns success:true with small receipt data {label,value}. The label is from the committed handler frame, not another App. Owner objects must not be frozen by your code. Handler-only commits retain registration/activation identity; disabled releases and revokes the old qualification; re-enabled creates a fresh qualification. Two distinct ports share counterTools but have isolated owners. A second binding owner on one port, including all disabled, must be rejected by the SDK. dispose must not release another controller's later owner.
+
+Export catalog() which delegates to the static SDK catalog for counterTools. Its JSON bytes must remain the same across all dynamic changes. Do not filter it by enabled or owner state.
+
+Use the SDK's createToolBindings implementation, precise Schema-derived parameters and accurate public types, no any, unsafe coercion or compiler suppressions. Do not hand-write a registry, lifecycle state machine or permissions system. Do not inspect private implementation JS or any external repository; public docs and .d.ts only. No network or delegation. Change only app.ts; do not change package.json, tsconfig.json, AGENTS.md or evaluator. You may compile locally. There are at most two external repair feedback turns after this initial attempt.

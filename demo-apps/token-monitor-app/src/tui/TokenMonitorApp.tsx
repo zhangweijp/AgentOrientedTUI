@@ -103,11 +103,11 @@ function TokenMonitorRoot() {
 
     return (
         <>
-            <View id="root" type="Root" name="Root">
+            <View id="root" type="Root" kind="instruction" name="Root">
                 <RootView settings={settings} onUpdateSettings={updateSettings} />
             </View>
             {shouldWarn ? (
-                <View id="monitor" type="TokenMonitor" name="Token Monitor">
+                <View id="monitor" type="TokenMonitor" kind="state" name="Token Monitor">
                     <MonitorView settings={settings} history={history} latestMaxTokens={latestMaxTokens} />
                 </View>
             ) : null}

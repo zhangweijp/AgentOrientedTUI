@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createRuntime } from '../../src/facades/index.js';
+import { createRuntime } from '../../src/facades/facades.js';
 import type { IRuntimeContext } from '../../src/spi/index.js';
 
 describe('RuntimeContext Integration', () => {

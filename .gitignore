@@ -52,3 +52,6 @@ ui.md
 
 # Local historical delivery artifacts
 /rfcs/sdk-runtime-delivery/
+
+# Local review evidence (kept on this machine)
+/review-evidence/

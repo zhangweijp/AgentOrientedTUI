@@ -8,9 +8,9 @@ Host 使用模块内共享的 createNodeStateStorage backend，构造无 I/O；�
 
 根路径从已合并 launchConfig.AOTUI_DATA_DIR 捕获，不能由存储请求提供。非空字符串按 Host 构造时 cwd 解析并追加 app-state；无配置/空字符串为 `~/.aotui/app-state`。Desktop Manager 已注入的 `~/.aotui/data` 保持对应 `~/.aotui/data/app-state`。非字符串或 NUL 明确拒绝。SDK 不读取 process.env 来选另一个根；业务 namespace 为 JSON.stringify([desktopId, appKey])。历史合法名称原样映射，非法或不可安全表示的名称不清洗，不自动迁移。
 
-INIT 独立提供协议版本、实例和有限预算。Worker 只接受同时声明 `persistenceSupport: 'state-session-v1'` 与 `appLifecycleSupport: 'app-lifecycle-v2'` 的正式 SDK 工厂，校验 Host offers 后返回 ACK；Host 校验 ACK 的协议和实例。工厂标记、offer 或 ACK 缺失或非法时拒绝初始化，不提供旧 SDK fallback。持久化标记不会扩展或授予当前 `ordinary-v2` / `snapshot-value-v2` Worker interaction modes。一个 Host 只初始化一次，物理 Worker 正常 RESET 后必须换新 Host/实例。
+INIT 独立提供协议版本、实例和有限预算。Worker 只接受同时声明 `persistenceSupport: 'state-session-v1'` 与 `appLifecycleSupport: 'app-lifecycle-v2'` 的正式 SDK 工厂，校验 Host offers 后返回 ACK；Host 校验 ACK 的协议和实例。工厂标记、offer 或 ACK 缺失或非法时拒绝初始化，不提供旧 SDK fallback。持久化标记不会扩展或授予当前 `view-type-parameters-v1` Worker interaction mode。一个 Host 只初始化一次，物理 Worker 正常 RESET 后必须换新 Host/实例。
 
-STATE_STORAGE_REQUEST/RESPONSE 使用 version=1、instanceId、单调 sequence、operation。read/replace/remove 接受精确 address，replace 另含 text，release 不带正文/地址。自有数据属性、精确字段、预算、实例、Desktop 和高水位在 I/O 前验证；release 有独立监督资格，不占普通请求槽。回复匹配实例/序号/operation；畸形修改回执不能 applied。明确发送前拒绝是 failed/effects:none；已发送但结果不能确认的修改为 unknown，迟到回执不会升级成成功。既有风险阻止新请求时，新请求仍属于已知未进入，而非假装其已写过。
+STATE_STORAGE_REQUEST/RESPONSE 使用 version=1、instanceId、单调 sequence、action。read/replace/remove 接受精确 address，replace 另含 text，release 不带正文/地址。自有数据属性、精确字段、预算、实例、Desktop 和高水位在 I/O 前验证；release 有独立监督资格，不占普通请求槽。回复匹配实例/序号/action；畸形修改回执不能 applied。明确发送前拒绝是 failed/effects:none；已发送但结果不能确认的修改为 unknown，迟到回执不会升级成成功。既有风险阻止新请求时，新请求仍属于已知未进入，而非假装其已写过。
 
 记录正文只接受精确的 `{ version: 1, updatedAt: <finite number>, value: <JSON> }` 外壳。裸 JSON、未知版本、缺项或额外字段在恢复时报告 `UNSUPPORTED_FORMAT` 并保持原文本；不会自动迁移、覆盖或删除旧记录。确认不再需要旧内容后，应用可显式 clear。解包只进行一层，因此业务对象自己的 `value` 字段保持原样。
 
@@ -21,13 +21,13 @@ Host 在首次合法访问时才 open，同一实例共享一次 opening Promise
 | maxKeys / maxDepth / maxNodes | 128 / 32 / 16384 |
 | maxValueBytes / maxRecordBytes / maxAddressBytes | 262144 / 262272 / 1024 |
 | maxRetainedBytes | 8388608 |
-| maxPendingOperations / maxConcurrentOperations | 128 / 4 |
+| maxPendingRequests / maxConcurrentRequests | 128 / 4 |
 | maxRevision | Number.MAX_SAFE_INTEGER |
 
 | 默认 Node 后端拒绝上限 | 数值 |
 | --- | --- |
 | maxActiveOwners / maxRoots / maxClaimedNamespaces | 64 / 16 / 512 |
-| maxPendingOperations | 256 |
+| maxPendingRequests | 256 |
 | maxRecordBytes / maxAddressBytes | 262272 / 1024 |
 | maxPathBytes / maxSegmentBytes / maxDirectoryEntries | 4096 / 128 / 4096 |
 | maxBufferedBytes | 16777216 |

@@ -14,7 +14,9 @@ import { SessionManagerV3 } from '../src/core/session-manager-v3.js';
 import { MessageServiceV2 } from '../src/core/message-service-v2.js';
 import { LLMConfigService } from '../src/core/llm-config-service.js';
 import type { IDesktop, IKernel } from '@aotui/runtime/spi';
-import type { LLMConfig } from '@aotui/agent-driver-v2';
+import type { DesktopManager } from '../src/core/desktop-manager.js';
+import { LLMClient } from '@aotui/agent-driver-v2/dist/core/llm-client.js';
+import type { DrivenSourceContext, LLMConfig } from '@aotui/agent-driver-v2';
 import type { ModelRegistry } from '../src/services/model-registry.js';
 import * as dbV2 from '../src/db-v2.js';
 
@@ -33,8 +35,32 @@ const mockDb = {
 const mockMessages: any[] = [];
 
 vi.mock('../src/db/index.js', () => ({
-    getDb: () => mockDb
+    getDb: () => mockDb,
+    persistDatabase: vi.fn(),
+    getTopic: vi.fn(() => undefined),
+    updateTopic: vi.fn()
 }));
+
+vi.mock('../src/config/config.js', () => ({ Config: { get: async () => ({
+    agents: { list: [] }, mcp: {}, experimental: { contextCompaction: { enabled: false } },
+}) } }));
+vi.mock('../src/mcp/index.js', () => ({ MCP: { tools: async () => ({}) } }));
+vi.mock('../src/skills/skill-driven-source.js', () => ({ SkillDrivenSource: class {
+    name = 'Skill'; setEnabled() {} setSkillEnabled() {}
+    onUpdate() { return () => {}; }
+    async getContext(): Promise<DrivenSourceContext> { return { messages: [], tools: {} }; }
+} }));
+vi.mock('@aotui/agent-driver-adapter', () => ({ SemanticAOTUIDrivenSource: class {
+    name = 'AOTUI'; setEnabled() {} setAppEnabled() {}
+    onUpdate() { return () => {}; }
+    async getContext(): Promise<DrivenSourceContext> { return {
+        messages: [
+            { role: 'system', content: 'AOTUI Instruction', timestamp: 1, region: 'static' },
+            { role: 'user', content: 'Desktop State', timestamp: 2, region: 'dynamic' },
+        ], tools: {}, release: vi.fn(),
+    }; }
+    async dispose() {}
+} }));
 
 // Mock ModelRegistry
 const createMockModelRegistry = (): ModelRegistry => ({
@@ -52,52 +78,30 @@ const createMockModelRegistry = (): ModelRegistry => ({
 } as any);
 
 // Mock Kernel
-const createMockKernel = (): IKernel => {
+const createMockKernel = () => {
     const desktops = new Map<string, IDesktop>();
-    
     return {
-        createDesktop: vi.fn(async (desktopId: any) => {
-            if (!desktops.has(desktopId)) {
-                const mockDesktop: IDesktop = {
-                    id: desktopId,
-                    output: {
-                        subscribe: vi.fn(),
-                        unsubscribe: vi.fn(),
-                    } as any,
-                    query: vi.fn().mockResolvedValue({}),
-                    pull: vi.fn().mockResolvedValue(null),
-                    lease: vi.fn().mockResolvedValue(null),
-                    stop: vi.fn().mockResolvedValue(undefined),
-                } as any;
-                desktops.set(desktopId, mockDesktop);
-            }
-            return desktops.get(desktopId);
+        createDesktop: vi.fn(async (desktopId: string) => {
+            if (!desktops.has(desktopId)) desktops.set(desktopId, { id: desktopId } as IDesktop);
+            return desktops.get(desktopId)!;
         }),
-        getDesktop: vi.fn((desktopId: any) => desktops.get(desktopId)),
-        destroyDesktop: vi.fn(async (desktopId: any) => {
-            desktops.delete(desktopId);
-        }),
-        // ✅ Add acquireSnapshot and releaseSnapshot for AOTUIDrivenSource
-        acquireSnapshot: vi.fn(() => ({
-            state: { components: [] },
-            timestamp: Date.now(),
-        })),
-        releaseSnapshot: vi.fn(),
-    } as any;
+        getDesktop: vi.fn((desktopId: string) => desktops.get(desktopId)),
+        destroyDesktop: vi.fn(async (desktopId: string) => { desktops.delete(desktopId); }),
+    };
 };
 
 describe('SessionManager V3 Integration', () => {
     let sessionManager: SessionManagerV3;
     let messageService: MessageServiceV2;
     let llmConfigService: LLMConfigService;
-    let mockKernel: IKernel;
+    let mockKernel: ReturnType<typeof createMockKernel>;
     let mockModelRegistry: ModelRegistry;
 
     beforeEach(() => {
         vi.clearAllMocks();
         mockMessages.length = 0;
 
-        // Mock DB operations
+        // Mock DB calls
         vi.spyOn(dbV2, 'createMessageV2').mockImplementation((db, topicId, message) => {
             mockMessages.push({ ...message, topic_id: topicId });
         });
@@ -116,24 +120,30 @@ describe('SessionManager V3 Integration', () => {
         // ✅ Mock getActiveLLMConfig to return a valid config
         vi.spyOn(llmConfigService, 'getActiveLLMConfig').mockResolvedValue({
             model: 'gpt-4',
-            provider: 'openai',
+            provider: { id: 'openai' },
             apiKey: 'test-key',
         } as any);
         
         mockKernel = createMockKernel();
 
         // Create SessionManager
+        const desktopManager = { createDesktop: vi.fn(async (id: string) => {
+            await mockKernel.createDesktop(id);
+            return { desktopId: id, thirdPartyAppCount: 0 };
+        }) };
+        vi.spyOn(LLMClient.prototype, 'call').mockResolvedValue({ text: '', toolCalls: [], finishReason: 'stop' });
         sessionManager = new SessionManagerV3(
-            mockKernel,
+            mockKernel as unknown as IKernel,
+            desktopManager as unknown as DesktopManager,
             llmConfigService,
             messageService
         );
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         // Clean up
         if (sessionManager) {
-            sessionManager.cleanup();
+            await sessionManager.cleanup();
         }
     });
 
@@ -142,7 +152,7 @@ describe('SessionManager V3 Integration', () => {
             const topicId = 'topic_test_1';
 
             // Act
-            const session = await sessionManager.getOrCreateSession(topicId);
+            const session = await sessionManager.ensureSession(topicId);
 
             // Assert
             expect(session).toBeDefined();
@@ -157,8 +167,8 @@ describe('SessionManager V3 Integration', () => {
             const topicId = 'topic_test_2';
 
             // Act
-            const session1 = await sessionManager.getOrCreateSession(topicId);
-            const session2 = await sessionManager.getOrCreateSession(topicId);
+            const session1 = await sessionManager.ensureSession(topicId);
+            const session2 = await sessionManager.ensureSession(topicId);
 
             // Assert
             expect(session1).toBe(session2);
@@ -170,8 +180,8 @@ describe('SessionManager V3 Integration', () => {
             const topic2 = 'topic_test_3b';
 
             // Act
-            const session1 = await sessionManager.getOrCreateSession(topic1);
-            const session2 = await sessionManager.getOrCreateSession(topic2);
+            const session1 = await sessionManager.ensureSession(topic1);
+            const session2 = await sessionManager.ensureSession(topic2);
 
             // Assert
             expect(session1).not.toBe(session2);
@@ -185,7 +195,7 @@ describe('SessionManager V3 Integration', () => {
             const sessions: any[] = [];
             for (let i = 0; i < 11; i++) {
                 const topicId = `topic_test_limit_${i}`;
-                const session = await sessionManager.getOrCreateSession(topicId);
+                const session = await sessionManager.ensureSession(topicId);
                 sessions.push(session);
             }
 
@@ -200,7 +210,7 @@ describe('SessionManager V3 Integration', () => {
             const topicId = 'topic_test_message_1';
 
             // Act
-            await sessionManager.getOrCreateSession(topicId);
+            await sessionManager.ensureSession(topicId);
             
             // Get messages through DrivenSources
             const session = (sessionManager as any).sessions.get(topicId);
@@ -209,7 +219,7 @@ describe('SessionManager V3 Integration', () => {
             // Iterate over sources object properties
             const sources = [session.sources.systemPrompt, session.sources.aotui, session.sources.host];
             for (const source of sources) {
-                const messages = await source.getMessages();
+                const messages = (await source.getContext()).messages;
                 allMessages.push(...messages as ModelMessage[]);
             }
 
@@ -235,7 +245,7 @@ describe('SessionManager V3 Integration', () => {
             const content = 'Hello, AI!';
 
             // Act
-            await sessionManager.getOrCreateSession(topicId);
+            await sessionManager.ensureSession(topicId);
             await sessionManager.sendMessage(topicId, content);
 
             // Assert
@@ -256,12 +266,12 @@ describe('SessionManager V3 Integration', () => {
             // Promise to wait for event
             const eventPromise = new Promise<any>((resolve) => {
                 sessionManager.on('message', (event) => {
-                    resolve(event);
+                    if (event.type === 'user') resolve(event);
                 });
             });
 
             // Act
-            await sessionManager.getOrCreateSession(topicId);
+            await sessionManager.ensureSession(topicId);
             await sessionManager.sendMessage(topicId, content);
 
             // Wait for event with timeout
@@ -283,7 +293,7 @@ describe('SessionManager V3 Integration', () => {
             const topicId = 'topic_test_cleanup_1';
 
             // Act
-            const session = await sessionManager.getOrCreateSession(topicId);
+            const session = await sessionManager.ensureSession(topicId);
             await sessionManager.destroySession(topicId);
 
             // Assert
@@ -303,13 +313,15 @@ describe('SessionManager V3 Integration', () => {
     });
 
     describe('Topic Switching', () => {
-        it('should switch active topic and create session if needed', async () => {
+        it('should switch to sessions created through the current ensureSession entry', async () => {
             const topic1 = 'topic_switch_1';
             const topic2 = 'topic_switch_2';
 
             // Act
-            await sessionManager.switchTopic(topic1);
-            await sessionManager.switchTopic(topic2);
+            const first = await sessionManager.ensureSession(topic1);
+            const second = await sessionManager.ensureSession(topic2);
+            expect(await sessionManager.switchTopic(topic1)).toBe(first);
+            expect(await sessionManager.switchTopic(topic2)).toBe(second);
 
             // Assert
             expect(mockKernel.createDesktop).toHaveBeenCalledWith(topic1);
@@ -324,7 +336,7 @@ describe('SessionManager V3 Integration', () => {
 
             // Act - Create sessions concurrently
             await Promise.all(
-                topicIds.map(id => sessionManager.getOrCreateSession(id))
+                topicIds.map(id => sessionManager.ensureSession(id))
             );
 
             // Assert
@@ -342,8 +354,8 @@ describe('SessionManager V3 Integration', () => {
             const message2 = 'Message for topic 2';
 
             // Act
-            await sessionManager.getOrCreateSession(topic1);
-            await sessionManager.getOrCreateSession(topic2);
+            await sessionManager.ensureSession(topic1);
+            await sessionManager.ensureSession(topic2);
             await sessionManager.sendMessage(topic1, message1);
             await sessionManager.sendMessage(topic2, message2);
 

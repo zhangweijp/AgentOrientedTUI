@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { facts, factsFile, working, apps, start, scope, snapshot, fileView, invoke, close } from './ide-test-harness.mjs';
 const execute = promisify(execFile), MiB = 1024 * 1024, samplerPIDs = new Set();
-facts.profile = 'scoped-ide-ordinary-v2'; facts.rounds = []; facts.node = process.version; facts.platform = process.platform;
+facts.profile = 'scoped-ide-view-type-parameters-v1'; facts.rounds = []; facts.node = process.version; facts.platform = process.platform;
 const budgets = { smallObserve: 250, typicalObserve: 750, smallCall: 750, typicalOpen: 3000, search: 3000, warmLSP: 3000, boundaryObserve: 3000, close: 5000, coldLSP: 15000 };
 let phase = 'setup';
 const gone = pid => { try { process.kill(pid, 0); return false; } catch (error) { if (error.code === 'ESRCH') return true; throw error; } };

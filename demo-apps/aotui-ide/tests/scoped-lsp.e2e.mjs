@@ -64,7 +64,7 @@ try {
             facts.processes.push({ pid, scenario: 'held initialization', processGone: true, groupGone: true });
         } finally { release.resolve(); LSPServer.Typescript.spawn = original; process.kill = kill; }
     });
-    await run('actual TS two roots/two Apps, seven LSP operations and 60 document lifecycles remain bounded', async () => {
+    await run('actual TS two roots/two Apps, seven LSP requests and 60 document lifecycles remain bounded', async () => {
         const a = await make('one'), b = await make('two'); a.service.setRoots([await source(a.root), await source(b.root)]);
         const file = path.join(a.root, 'file.ts'), consumer = path.join(a.root, 'consumer.ts'), other = path.join(b.root, 'file.ts');
         const fileText = [

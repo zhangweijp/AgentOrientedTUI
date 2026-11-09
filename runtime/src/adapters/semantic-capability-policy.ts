@@ -3,6 +3,7 @@ import type { ObservationGrant } from '../core/invocation/observation-types.js';
 import { DEFAULT_OBSERVATION_REGISTRY_LIMITS } from '../core/invocation/observation-registry.js';
 import { captureBoundedJson } from '../core/invocation/invocation-outcome.js';
 import { canonicalJson } from '../core/snapshot/json.js';
+import type { AppSnapshotV3, JsonValue, ObservedToolExecutionV3, ToolDescriptorV3 } from '../core/snapshot/types.js';
 
 function fields(value: unknown, names: readonly string[]): value is Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false;
@@ -10,6 +11,23 @@ function fields(value: unknown, names: readonly string[]): value is Record<strin
     const keys = Reflect.ownKeys(descriptors);
     return keys.length === names.length && names.every(name => Object.hasOwn(descriptors, name)) &&
         keys.every(name => typeof name === 'string' && names.includes(name) && descriptors[name]!.enumerable && 'value' in descriptors[name]!);
+}
+
+function text(value: unknown): value is string { return typeof value === 'string' && value.length > 0; }
+
+function executableBinding(value: unknown, tool: ToolDescriptorV3, grant: ObservationGrant,
+    source: AppSnapshotV3): value is ObservedToolExecutionV3 {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const execution = value as Record<string, unknown>;
+    if (execution.kind === 'view-type') {
+        if (!fields(execution, ['kind', 'activationId']) || !text(execution.activationId) || tool.execution.kind !== 'view-type' ||
+            tool.execution.activationId !== execution.activationId) return false;
+        return grant.views.some(identity => {
+            const view = source.views.find(candidate => candidate.id === identity.viewId && candidate.viewInstanceId === identity.viewInstanceId);
+            return view?.type === tool.viewType;
+        });
+    }
+    return false;
 }
 
 /** Host capability is an upper bound on a trusted policy's observable targets. */
@@ -27,27 +45,24 @@ export function withExecutableTools(policy: ScopePolicy, execution: ExecutionRes
             let grant: ObservationGrant;
             try { grant = captureBoundedJson<ObservationGrant>(raw, DEFAULT_OBSERVATION_REGISTRY_LIMITS.metadata).value; }
             catch { return raw; }
-            if (!fields(grant, ['views', 'refs', 'targets', 'content']) ||
-                ![grant.views, grant.refs, grant.targets, grant.content].every(Array.isArray) ||
-                grant.targets.length > DEFAULT_OBSERVATION_REGISTRY_LIMITS.maxBindings) return raw;
+            if (!fields(grant, ['views', 'refs', 'toolBindings', 'content']) ||
+                ![grant.views, grant.refs, grant.toolBindings, grant.content].every(Array.isArray) ||
+                grant.toolBindings.length > DEFAULT_OBSERVATION_REGISTRY_LIMITS.maxBindings) return raw;
             // Invalid or duplicate grants must be rejected by Core, not made
-            // valid by silently deleting their unsupported targets.
+            // valid by silently deleting their unsupported execution bindings.
             const seen = new Set<string>();
-            for (const entry of grant.targets) {
-                if (!fields(entry, ['toolId', 'target']) || !fields(entry.target, ['viewId', 'viewInstanceId', 'bindingVersion', ...(entry.target && Object.hasOwn(entry.target, 'selector') ? ['selector'] : [])])) return raw;
-                const target = entry.target;
-                if (typeof entry.toolId !== 'string' || typeof target.viewId !== 'string' || typeof target.viewInstanceId !== 'string' ||
-                    !Number.isSafeInteger(target.bindingVersion) || !Object.hasOwn(context.source.tools, entry.toolId)) return raw;
+            for (const view of grant.views) if (!fields(view, ['viewId', 'viewInstanceId']) || !text(view.viewId) || !text(view.viewInstanceId)) return raw;
+            for (const entry of grant.toolBindings) {
+                if (!fields(entry, ['toolId', 'execution']) || !text(entry.toolId) || !Object.hasOwn(context.source.tools, entry.toolId)) return raw;
                 const tool = context.source.tools[entry.toolId];
-                const identity = JSON.stringify([entry.toolId, target.viewId, target.viewInstanceId, target.bindingVersion]);
-                if (!tool || seen.has(identity) || !grant.views.some(view => view.viewId === target.viewId && view.viewInstanceId === target.viewInstanceId) ||
-                    !tool.targets.some(candidate => candidate.viewId === target.viewId && candidate.viewInstanceId === target.viewInstanceId && candidate.bindingVersion === target.bindingVersion &&
-                        canonicalJson(candidate.selector ? { ...candidate.selector } : null) === canonicalJson(target.selector ? { ...target.selector } : null))) return raw;
+                if (!tool || !executableBinding(entry.execution, tool, grant, context.source)) return raw;
+                const identity = canonicalJson({ toolId: entry.toolId, execution: entry.execution as unknown as JsonValue });
+                if (seen.has(identity)) return raw;
                 seen.add(identity);
             }
-            return { ...grant, targets: grant.targets.filter(entry => execution.resolve({
+            return { ...grant, toolBindings: grant.toolBindings.filter(entry => execution.resolve({
                 appId: context.source.appId, instanceId: context.source.instanceId, snapshotId: context.source.id,
-                tool: context.source.tools[entry.toolId]!, target: entry.target,
+                tool: context.source.tools[entry.toolId]!, execution: entry.execution as ObservedToolExecutionV3,
             }) !== null) };
         },
     };

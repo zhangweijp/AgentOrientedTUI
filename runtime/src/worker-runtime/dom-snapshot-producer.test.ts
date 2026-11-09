@@ -3,16 +3,18 @@ import { parseHTML } from 'linkedom';
 import { captureDOMSnapshot } from './dom-snapshot-producer.js';
 import { createSnapshotCore } from '../core/snapshot/store.js';
 import { refKey } from '../core/snapshot/snapshot-support.js';
+import { compileOrdinarySchema } from '../core/tool/ordinary-parameter-contract.js';
+import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profile.js';
 import type { WorkerRuntimeViewFragment } from './view-fragment-extractor.js';
 
 const fragment = (id: string, type = 'Workspace', markup = '<view>Tasks</view>'): WorkerRuntimeViewFragment => ({
     viewId: id as any, viewType: type, viewName: id,
-    markup, kind: 'view-state',
+    markup, kind: 'state',
 });
 
 function documentWithView(id = 'workspace') {
     const { document } = parseHTML('<html><body><div id="root"><div data-view-id="' +
-        id + '" data-view-type="Workspace"></div></div></body></html>');
+        id + '" data-view-type="Workspace" data-view-kind="state"></div></div></body></html>');
     return document.querySelector('#root')!;
 }
 
@@ -22,6 +24,8 @@ describe('DOM producer preserves Ref payloads as snapshot data', () => {
         const node = root.querySelector('[data-view-id]')!;
         node.setAttribute('data-view-instance-id', 'vi:v1:["logical-run",1]');
         const toolId = JSON.stringify(['task_app', 'Workspace', 'replace_file']);
+        const compiled = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: false }, 'view-type-parameters-v1');
+        if (!compiled.ok) throw Error('Ref Schema fixture');
         const kernel = {
             getViewRefs: () => Object.entries(refs).map(([key, value]) => ({
                 viewId: key.slice(0, key.indexOf(':')), refId: key.slice(key.indexOf(':') + 1), value,
@@ -29,15 +33,11 @@ describe('DOM producer preserves Ref payloads as snapshot data', () => {
             getViewOwnedViewInstances: () => [{
                 viewId: 'workspace', viewInstanceId: 'vi:v1:["logical-run",1]', viewType: 'Workspace',
             }],
-            getViewOwnedToolDefinitions: () => [{
-                id: toolId, appId: 'task_app', appInstanceId: 'logical-run',
-                viewType: 'Workspace', name: 'replace_file',
+            getToolDefinitions: () => [{
+                id: toolId, viewType: 'Workspace', name: 'replace_file',
                 description: 'Replace file with a version guard',
-                inputSchema: { type: 'object' }, isMutating: true,
-                targets: [{
-                    viewId: 'workspace',
-                    viewInstanceId: 'vi:v1:["logical-run",1]', bindingVersion: 1,
-                }],
+                inputSchema: ordinaryParameterProfile(compiled.contract), 
+                execution: { kind: 'view-type' as const, activationId: 'active-1' },
             }],
         };
         return {
@@ -66,7 +66,7 @@ describe('DOM producer preserves Ref payloads as snapshot data', () => {
         } });
         expect(draft.refs[refKey('workspace', instanceId, 'selected')].target)
             .toEqual({ kind: 'snapshot-value', payload: { id: 'other data' } });
-        expect(draft.tools[toolId].targets[0].viewInstanceId).toBe(instanceId);
+        expect(draft.tools[toolId].execution).toMatchObject({ kind: 'view-type', activationId: 'active-1' });
 
         const core = createSnapshotCore();
         core.lifecycle.startApp('task_app', 'logical-run');

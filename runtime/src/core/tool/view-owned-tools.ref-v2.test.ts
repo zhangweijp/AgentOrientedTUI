@@ -1,64 +1,81 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createViewOwnedTools } from './view-owned-tools.js';
-import { compileSnapshotValueParams } from './snapshot-value-parameter-contract.js';
-const c = compileSnapshotValueParams({ file: { type: 'reference', required: true, refSource: 'snapshot-value-v1' } });if (!c.ok) throw Error('fixture');
-const spec = { name: 'read', description: 'Read original object', inputSchema: c.contract.schema, isMutating: false };
-function setup() { const r = createViewOwnedTools('app', 'run'), owner = r.mount('aa', 'File');return { r, owner }; }
-describe('R01/R02/R12 Registry exact Ref V2 private qualification', () => {
-    it('admits a declaration without granting Ref execution until a private V2 callable is registered', async () => {
-        const { r, owner } = setup(), handler = vi.fn(async () => ({ success: true }));r.registerTool(owner.viewInstanceId, spec, handler);
-        const t = r.listTools()[0]!, target = t.targets[0]!;
-        expect(r.validateSnapshotValueParametersBinding(t, target).success).toBe(false);
-        expect((await r.invokeSnapshotValueParameters(t, target, { file: {} })).phase).toBe('not-entered');
-        expect(handler).not.toHaveBeenCalled();
+import type { SafeOrdinaryInvoker, ViewToolInvocationTerminal } from './invocation-terminal.js';
+const definition = { viewType: 'File', name: 'read', description: 'Read original object', 
+    inputSchema: { type: 'object', properties: { file: { type: 'string', minLength: 1,
+        'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: false },
+} as const;
+function setup() { const r = createViewOwnedTools('app', 'run'), owner = r.mount('aa', 'File'); return { r, owner }; }
+function register(r: ReturnType<typeof createViewOwnedTools>, invoke: SafeOrdinaryInvoker, name = 'read') {
+    return r.registerTypeTool({ ...definition, name }, { safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: () => invoke });
+}
+function terminal(data: any = undefined): ViewToolInvocationTerminal {
+    return { phase: 'entered-returned', result: { success: true, ...(data === undefined ? {} : { data }) } };
+}
+describe('Ref parameters in the ViewType registry', () => {
+    it('requires an exact contract and a private safe invoker', () => {
+        const { r } = setup();
+        for (const factory of [() => undefined, async () => terminal()]) expect(() => r.registerTypeTool(definition, {
+            safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: factory,
+        } as any)).toThrow(expect.objectContaining({ code: 'TOOL_INVALID' }));
+        expect(r.listTools()).toEqual([]); r.dispose();
     });
-    it.each(['retired-mode', 'old-profile', 'missing-callable', 'mutating'])('refuses mismatched %s registration', kind => {
-        const { r, owner } = setup();const options: any = kind === 'retired-mode' ? { safeRefInvocationMode: 'snapshot-value-v1' } : { safeSnapshotValueParametersInvocationMode: 'snapshot-value-v2' };
-        const schema: any = JSON.parse(JSON.stringify(spec.inputSchema));if (kind === 'old-profile') delete schema['x-aotui-parameter-contract'];
-        expect(() => r.registerTool(owner.viewInstanceId, { ...spec, inputSchema: schema, isMutating: kind === 'mutating' }, async () => ({ success: true }), options,
-            kind === 'missing-callable' ? undefined : async () => ({ phase: 'entered-returned', result: { success: true } }))).toThrow();expect(r.listTools()).toHaveLength(0);
+    it('keeps one shared handler active until the last matching View closes', async () => {
+        const { r, owner } = setup(), other = r.mount('bb', 'File');
+        const invoke = vi.fn(async (args: any) => terminal({ owner: args.file.owner })); const release = register(r, invoke);
+        const observed = r.listTools()[0]!; expect(r.listTools()).toHaveLength(1);
+        expect(observed.execution.kind).toBe('view-type'); expect(observed.execution).not.toHaveProperty('targets');
+        for (const owner of ['A', 'B']) expect(await r.invokeTypeTool(observed, observed.execution, { file: { owner } })).toEqual(terminal({ owner }));
+        expect(invoke).toHaveBeenCalledTimes(2); r.unmount(owner.viewInstanceId);
+        expect(r.validateTypeToolBinding(observed, observed.execution)).toEqual({ success: true });
+        r.unmount(other.viewInstanceId); expect(await r.invokeTypeTool(observed, observed.execution, { file: { owner: 'A' } })).toMatchObject({ phase: 'not-entered' });
+        release(); r.dispose();
     });
-    it('calls only the current target safe wrapper and revokes old binding identity', async () => {
-        const { r, owner } = setup(), other = r.mount('bb', 'File');const a = vi.fn(async () => ({ phase: 'entered-returned' as const, result: { success: true } })), b = vi.fn(a);
-        const release = r.registerTool(owner.viewInstanceId, spec, async () => ({ success: true }), { safeSnapshotValueParametersInvocationMode: 'snapshot-value-v2' }, a);
-        r.registerTool(other.viewInstanceId, spec, async () => ({ success: true }), { safeSnapshotValueParametersInvocationMode: 'snapshot-value-v2' }, b);
-        const t = r.listTools()[0]!, target = t.targets.find(x => x.viewId === 'aa')!;
-        expect((await r.invokeSnapshotValueParameters(t, target, { file: {} })).phase).toBe('entered-returned');expect(a).toHaveBeenCalledOnce();expect(b).not.toHaveBeenCalled();
-        expect(r.validateSnapshotValueParametersBinding({ ...t, appInstanceId: 'other' }, target).success).toBe(false);
-        expect(r.validateSnapshotValueParametersBinding({ ...t, description: 'changed' }, target).success).toBe(false);
-        release();r.registerTool(owner.viewInstanceId, spec, async () => ({ success: true }), { safeSnapshotValueParametersInvocationMode: 'snapshot-value-v2' }, a);
-        expect((await r.invokeSnapshotValueParameters(t, target, { file: {} })).phase).toBe('not-entered');
-        r.unmount(owner.viewInstanceId);r.mount('aa', 'File');expect((await r.invokeSnapshotValueParameters(t, target, { file: {} })).phase).toBe('not-entered');
+    it('rejects changed public contract, App identity and retired activation', () => {
+        const { r, owner } = setup(), invoke = vi.fn(async () => terminal()); register(r, invoke);
+        const observed = r.listTools()[0]!;
+        for (const patch of [{ description: 'changed' }, { id: 'other' }]) expect(r.validateTypeToolBinding({ ...observed, ...patch }, observed.execution).success).toBe(false);
+        expect(r.validateTypeToolBinding(observed, { kind: 'view-type', activationId: 'forged' }).success).toBe(false);
+        r.unmount(owner.viewInstanceId); expect(r.validateTypeToolBinding(observed, observed.execution).success).toBe(false);
+        const reopened = r.mount('aa', 'File'); expect(reopened.viewInstanceId).not.toBe(owner.viewInstanceId);
+        expect(r.listTools()[0]!.execution).not.toEqual(observed.execution);
+        expect(r.validateTypeToolBinding(observed, observed.execution).success).toBe(false); expect(invoke).not.toHaveBeenCalled(); r.dispose();
     });
-    it('invokes a fresh snapshot-value-v2 binding after same-View release and re-registration', async () => {
-        const { r, owner } = setup();
-        const oldSafe = vi.fn(async () => ({ phase: 'entered-returned' as const, result: { success: true, data: { binding: 'old' } } }));
-        const release = r.registerTool(owner.viewInstanceId, spec, async () => ({ success: true }),
-            { safeSnapshotValueParametersInvocationMode: 'snapshot-value-v2' }, oldSafe);
-        const observed = r.listTools()[0]!, oldTarget = observed.targets[0]!;
-        expect(await r.invokeSnapshotValueParameters(observed, oldTarget, { file: {} })).toMatchObject({ result: { data: { binding: 'old' } } });
-        expect(oldSafe).toHaveBeenCalledOnce();
-        release();
-        expect(await r.invokeSnapshotValueParameters(observed, oldTarget, { file: {} })).toMatchObject({
-            phase: 'not-entered', result: { error: { code: 'TOOL_UNAVAILABLE' } },
+    it('refuses duplicate ownership without replacing the original callable', async () => {
+        const { r } = setup(), original = vi.fn(async () => terminal({ owner: 'original' })), duplicate = vi.fn(async () => terminal());
+        register(r, original); expect(() => register(r, duplicate)).toThrow(expect.objectContaining({ code: 'TOOL_DUPLICATE' }));
+        const tool = r.listTools()[0]!; expect(await r.invokeTypeTool(tool, tool.execution, { file: {} })).toEqual(terminal({ owner: 'original' }));
+        expect(original).toHaveBeenCalledOnce(); expect(duplicate).not.toHaveBeenCalled(); r.dispose();
+    });
+    it('rejects retired annotations and leaves a current shared registration unchanged', () => {
+        const { r } = setup(); register(r, async () => terminal()); const original = r.listTools();
+        expect(() => r.registerTypeTool({ ...definition, name: 'legacy', inputSchema: { ...definition.inputSchema,
+            properties: { file: { type: 'string', 'x-aotui-ref': { version: 1 } } } } }, {
+            safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: () => async () => terminal(),
+        })).toThrow(); expect(r.listTools()).toEqual(original); r.dispose();
+    });
+    it.each(['success', 'throw'] as const)('preserves an already-entered Ref %s after disposal', async outcome => {
+        const { r } = setup(); let resolve!: () => void; const gate = new Promise<void>(yes => { resolve = yes; });
+        register(r, async () => { await gate; if (outcome === 'throw') throw Error('ref failure'); return terminal({ retained: true }); });
+        const tool = r.listTools()[0]!, pending = r.invokeTypeTool(tool, tool.execution, { file: {} }); r.dispose();
+        expect(await r.invokeTypeTool(tool, tool.execution, { file: {} })).toMatchObject({ phase: 'not-entered' }); resolve();
+        if (outcome === 'throw') await expect(pending).rejects.toThrow('ref failure'); else expect(await pending).toEqual(terminal({ retained: true }));
+    });
+    it('keeps an App registration hidden when its factory unmounts the last View', () => {
+        const { r, owner } = setup(); const release = r.registerTypeTool(definition, {
+            safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: () => {
+                r.unmount(owner.viewInstanceId); return async () => terminal();
+            },
         });
-        const newSafe = vi.fn(async () => ({ phase: 'entered-returned' as const, result: { success: true, data: { binding: 'new' } } }));
-        r.registerTool(owner.viewInstanceId, spec, async () => ({ success: true }),
-            { safeSnapshotValueParametersInvocationMode: 'snapshot-value-v2' }, newSafe);
-
-        const current = r.listTools()[0]!, currentTarget = current.targets[0]!;
-        expect(currentTarget.bindingVersion).not.toBe(oldTarget.bindingVersion);
-        expect(r.validateSnapshotValueParametersBinding(current, currentTarget)).toEqual({ success: true });
-        expect(await r.invokeSnapshotValueParameters(current, currentTarget, { file: {} })).toEqual({
-            phase: 'entered-returned', result: { success: true, data: { binding: 'new' } },
-        });
-        expect(await r.invokeSnapshotValueParameters(observed, oldTarget, { file: {} })).toMatchObject({
-            phase: 'not-entered', result: { error: { code: 'TOOL_SOURCE_STALE' } },
-        });
-        expect(oldSafe).toHaveBeenCalledOnce(); expect(newSafe).toHaveBeenCalledOnce();
+        expect(r.listViews()).toEqual([]); expect(r.listTools()).toEqual([]); expect(r.inspect()).toMatchObject({ views: 0, bindings: 1 });
+        r.mount('aa', 'File'); expect(r.listTools()).toHaveLength(1); release(); expect(r.inspect().bindings).toBe(0); r.dispose();
     });
-    it('compares the full public profile for same type/name and never picks a first definition', () => {
-        const { r, owner } = setup(), other = r.mount('bb', 'File');r.registerTool(owner.viewInstanceId, spec, async () => ({ success: true }));
-        expect(() => r.registerTool(other.viewInstanceId, { ...spec, inputSchema: { ...spec.inputSchema, description: 'changed' } }, async () => ({ success: true }))).toThrow('TOOL_SCHEMA_CONFLICT');
+    it('rechecks duplicate ownership after invoker factory reentry', () => {
+        const { r } = setup(); expect(() => r.registerTypeTool(definition, {
+            safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: () => {
+                register(r, async () => terminal()); return async () => terminal();
+            },
+        })).toThrow(expect.objectContaining({ code: 'TOOL_DUPLICATE' }));
+        expect(r.inspect()).toMatchObject({ views: 1, bindings: 1 }); expect(r.listTools()).toHaveLength(1); r.dispose();
     });
 });

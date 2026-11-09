@@ -8,7 +8,7 @@
  * 4. 管理工作循环
  * 
  * 设计原则：
- * - **依赖反转**: 依赖 IDrivenSource 接口，不依赖具体实现
+ * - **依赖反转**: 依赖 ContextDrivenSource 接口，不依赖具体实现
  * - **职责清晰**: AgentDriver 只负责聚合和路由，不负责业务逻辑
  * - **可扩展**: 易于添加新的 DrivenSource
  */
@@ -147,26 +147,10 @@ export class AgentDriverV2 {
      * - 每个 source 已经保证消息去重
      * - AgentDriver 只需拼接并排序
      */
-    private async collectMessages(captured?: readonly CapturedSourceContext[]): Promise<ModelMessage[]> {
+    private async collectMessages(captured: readonly CapturedSourceContext[]): Promise<ModelMessage[]> {
         const allMessages: MessageWithTimestamp[] = [];
 
-        if (captured) {
-            for (const { context } of captured) allMessages.push(...context.messages);
-        } else for (const source of this.getActiveSources()) {
-            if (typeof source.getMessages !== 'function') continue;
-            try {
-                const messages = await source.getMessages();
-                allMessages.push(...messages);
-                this.logger.debug(
-                    `Collected ${messages.length} messages from ${source.name}`
-                );
-            } catch (error) {
-                this.logger.error(
-                    `Failed to collect messages from ${source.name}:`,
-                    error
-                );
-            }
-        }
+        for (const { context } of captured) allMessages.push(...context.messages);
 
         this.logger.info(`Total messages collected: ${allMessages.length}`);
 
@@ -331,51 +315,17 @@ export class AgentDriverV2 {
         return protocolSafe;
     }
 
-    /**
-     * 收集所有工具
-     */
-    private async collectTools(): Promise<Record<string, Tool>> {
-        const allTools: Record<string, Tool> = {};
-
-        for (const source of this.getActiveSources()) {
-            if (typeof source.getTools !== 'function') continue;
-            try {
-                const tools = await source.getTools();
-                Object.assign(allTools, tools);
-                this.logger.debug(
-                    `Collected ${Object.keys(tools).length} tools from ${source.name}`
-                );
-            } catch (error) {
-                this.logger.error(
-                    `Failed to collect tools from ${source.name}:`,
-                    error
-                );
-            }
-        }
-
-        this.logger.info(`Total tools collected: ${Object.keys(allTools).length}`);
-
-        return allTools;
-    }
-
     /** Capture once per source; never silently replace a failed atomic capture. */
     private async captureContexts(retained: CapturedSourceContext[]): Promise<void> {
         for (const source of this.getActiveSources()) {
             try {
-                let context: DrivenSourceContext;
-                if (typeof source.getContext === 'function') {
-                    context = await source.getContext();
-                } else if (typeof source.getMessages === 'function' && typeof source.getTools === 'function') {
-                    context = { messages: await source.getMessages(), tools: await source.getTools() };
-                } else {
-                    throw new Error('DRIVEN_SOURCE_CONTEXT_UNAVAILABLE');
-                }
+                const context = await source.getContext();
                 retained.push({ source, context });
             } catch (error) {
                 this.logger.error(`Failed to capture context from ${source.name}:`, error);
                 // An atomic source is part of the current working state. A failed
                 // capture must fail the turn, not silently omit that state.
-                if (typeof source.getContext === 'function') throw error;
+                throw error;
             }
         }
     }
@@ -395,16 +345,16 @@ export class AgentDriverV2 {
             toolName: string;
             args: unknown;
         }>,
-        routes?: ReadonlyMap<string, ToolExecutionRoute>
+        routes: ReadonlyMap<string, ToolExecutionRoute>
     ): Promise<ToolResult[]> {
         const results: ToolResult[] = [];
 
         for (const toolCall of toolCalls) {
-            // 使用映射查找对应的 source
-            const route = routes?.get(toolCall.toolName);
-            const source = routes ? route?.source : this.toolToSourceMap.get(toolCall.toolName);
+            // 使用本轮路由查找对应的 source
+            const route = routes.get(toolCall.toolName);
+            const source = route?.source;
 
-            if (routes && (!this.running || (source && this.sourceEnabledMap.get(source.name) === false))) {
+            if (!this.running || (source && this.sourceEnabledMap.get(source.name) === false)) {
                 results.push({
                     toolCallId: toolCall.toolCallId,
                     toolName: toolCall.toolName,
@@ -415,8 +365,7 @@ export class AgentDriverV2 {
             }
 
             if (source) {
-                const execute = route?.executeTool ?? (typeof source.executeTool === 'function'
-                    ? source.executeTool.bind(source) : undefined);
+                const execute = route.executeTool;
                 if (!execute) {
                     results.push({
                         toolCallId: toolCall.toolCallId,
@@ -492,32 +441,6 @@ export class AgentDriverV2 {
     }
 
     /**
-     * 更新 Tool → Source 映射
-     */
-    private async updateToolMapping(): Promise<void> {
-        this.toolToSourceMap.clear();
-
-        for (const source of this.getActiveSources()) {
-            if (typeof source.getTools !== 'function') continue;
-            try {
-                const tools = await source.getTools();
-                for (const toolName of Object.keys(tools)) {
-                    this.toolToSourceMap.set(toolName, source);
-                }
-            } catch (error) {
-                this.logger.error(
-                    `Failed to update tool mapping from ${source.name}:`,
-                    error
-                );
-            }
-        }
-
-        this.logger.debug(
-            `Tool mapping updated: ${this.toolToSourceMap.size} tools`
-        );
-    }
-
-    /**
      * 设置状态
      */
     private async setState(newState: AgentState): Promise<void> {
@@ -580,7 +503,7 @@ export class AgentDriverV2 {
             do {
                 this.pending = false;
                 await this.run();
-            } while (this.pending && this.running);
+            } while (this.pending && this.running && !this.paused);
         })().finally(() => {
             this.runInFlight = null;
         });
@@ -641,14 +564,14 @@ export class AgentDriverV2 {
         try {
             // 1. 收集 Messages 和 Tools
             await this.captureContexts(retained);
+            if (!this.running) return;
+            for (const { context } of retained) await context.adopt?.();
             const messages = await this.collectMessages(retained);
             const tools: Record<string, Tool> = {};
             const routes = new Map<string, ToolExecutionRoute>();
             this.toolToSourceMap.clear();
             for (const { source, context } of retained) {
-                const executeTool = context.executeTool
-                    ? context.executeTool.bind(context)
-                    : typeof source.executeTool === 'function' ? source.executeTool.bind(source) : undefined;
+                const executeTool = context.executeTool?.bind(context);
                 for (const [name, tool] of Object.entries(context.tools)) {
                     tools[name] = tool;
                     routes.set(name, { source, executeTool });
@@ -734,7 +657,7 @@ export class AgentDriverV2 {
                 }
 
                 // Outcomes alone never schedule retries. In particular an unknown
-                // result is not evidence that the operation had no side effects.
+                // result is not evidence that the Tool call had no side effects.
                 // A new user message or source update may request a fresh turn.
 
                 // ✅ 关键改进: 执行完 Tool 后，不立即进入下一循环
@@ -799,7 +722,7 @@ export class AgentDriverV2 {
         return error ? { type: 'error-json', value: {
             ...error, ...(result.result === undefined ? {} : { result: result.result }),
             ...(uncertain ? { retryable: false,
-                message: error.message + ' The operation may have had effects. Check the application View before retrying.' } : {}),
+                message: error.message + ' The Tool call may have had effects. Check the application View before retrying.' } : {}),
         } } : { type: 'json', value: result.result ?? { success: true } };
     }
 

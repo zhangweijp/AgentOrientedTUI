@@ -103,7 +103,7 @@ serializer 或 deserialize 失败不会保留原异常正文/cause。有效 UI �
 | PERMISSION_DENIED / IO_FAILED / NAMESPACE_BUSY | 修复权限/环境或等待真实旧 owner 释放，检查本次报告。 |
 | UNKNOWN_OUTCOME / INVALID_RECEIPT | 不自动重试可能已执行的修改；保留报告、检查结果并结束风险实例。 |
 
-Hook 不安装自动保存定时器。`PersistOptions` 支持 `storageKey`、`serialize`、`deserialize` 和 `rehydrateOnReinitialize`；文件根、路径校验、Node backend、seal/dispose 都不暴露给 Hook。namespace 为 Runtime 捕获的 Desktop 与有效 AOTUI_APP_NAME（缺省 appId）；`storageKey` 显式覆盖 App 部分。同一 backend 的不同 namespace 独立，同 namespace 的活动 owner 互斥；不同进程或 backend 不保证互斥。
+Hook 不安装自动保存定时器。`PersistOptions` 支持 `storageKey`、`serialize`、`deserialize` 和 `rehydrateOnReinitialize`；文件根、路径校验、Node backend、seal/dispose 都不暴露给 Hook。namespace 为 Runtime 捕获的 Desktop 与有效 AOTUI_APP_KEY（缺省 appId）；`storageKey` 显式覆盖 App 部分。同一 backend 的不同 namespace 独立，同 namespace 的活动 owner 互斥；不同进程或 backend 不保证互斥。
 
 C01 已删除全局 `persistenceManager` 入口及其类型。通常使用 `usePersistentState` 声明实例状态；需要应用拥有更细的绑定/恢复流程时，可使用 `useAppRuntimeContext().persistence` 的 `AppStatePersistence` 接口，并在显式保存后检查 `flush()` 报告的 `ok` 和 `entries`。该客户端口不暴露 Host 文件系统/storage adapter。内部 writeJson 与 DOM shutdown 模块已删除。
 

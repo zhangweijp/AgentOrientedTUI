@@ -51,18 +51,18 @@ describe('Kernel Lifecycle Management', () => {
     // Worker-Only apps have different lifecycle patterns.
 
     describe('runtime shutdown', () => {
-        it('shutdown is idempotent and rejects further runtime operations', async () => {
+        it('shutdown is idempotent and rejects further Runtime requests', async () => {
             const id1 = await kernel.createDesktop();
             const id2 = await kernel.createDesktop();
 
-            expect(desktopManager.has(id1)).toBe(true);
-            expect(desktopManager.has(id2)).toBe(true);
+            expect(desktopManager.get(id1)).toBeDefined();
+            expect(desktopManager.get(id2)).toBeDefined();
 
             await kernel.shutdown('service_stop');
             await kernel.shutdown('service_stop');
 
-            expect(desktopManager.has(id1)).toBe(false);
-            expect(desktopManager.has(id2)).toBe(false);
+            expect(desktopManager.get(id1)).toBeUndefined();
+            expect(desktopManager.get(id2)).toBeUndefined();
 
             await expect(kernel.createDesktop()).rejects.toThrow(/Runtime has been shut down|RUNTIME_SHUTDOWN/);
         });

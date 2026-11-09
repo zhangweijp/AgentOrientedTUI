@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { types } from "node:util";
+import { jest } from "@jest/globals";
 import {
   createWorkspaceFileCreator,
   mapWorkspaceFileCreationResult,
@@ -25,7 +26,7 @@ async function missing(file: string) {
   await expect(fs.lstat(file)).rejects.toMatchObject({ code: "ENOENT" });
 }
 describe("W06 native exclusive workspace creator", () => {
-  test("maps only the successful creation receipt metadata to OperationResult", () => {
+  test("maps only the successful creation receipt metadata to ToolResult", () => {
     const result = mapWorkspaceFileCreationResult({
       status: "succeeded",
       value: { filePath: path.join(root, "new"), bytesWritten: 5 },

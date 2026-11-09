@@ -26,7 +26,7 @@ export interface CloseReport {
     readonly intent: 'close' | 'delete' | null;
     readonly apps: { readonly accepted: number; readonly settled: number; readonly pending: number; readonly notVerifiedReleased: number };
     readonly desktops: { readonly accepted: number; readonly settled: number; readonly pending: number; readonly notVerifiedReleased: number };
-    readonly pendingOperations: number;
+    readonly pendingTasks: number;
     readonly unverifiedParticipants: number;
     readonly appCleanup?: { readonly managedApps: number; readonly completedApps: number; readonly failedApps: number };
     readonly persistence: {
@@ -60,17 +60,17 @@ export interface CloseReport {
 export interface AppManagerCloseReport extends CloseReport { readonly scope: 'app-manager' }
 export interface DesktopCloseReport extends CloseReport { readonly scope: 'desktop'; readonly intent: 'close' | 'delete'; readonly desktopId: string; readonly found: boolean }
 export interface RuntimeCloseReport extends CloseReport { readonly scope: 'runtime'; readonly intent: 'close' }
-export interface CloseOperation<R extends CloseReport> {
+export interface CloseHandle<R extends CloseReport> {
     readonly completion: Promise<R>;
     inspect(): R;
     wait(options?: { readonly timeoutMs?: number }): Promise<
         { readonly status: 'settled'; readonly report: R } | { readonly status: 'deadline'; readonly report: R }
     >;
 }
-export type DesktopCloseOperation = CloseOperation<DesktopCloseReport>;
-export type RuntimeCloseOperation = CloseOperation<RuntimeCloseReport>;
-export type AppManagerCloseOperation = CloseOperation<AppManagerCloseReport>;
+export type DesktopCloseHandle = CloseHandle<DesktopCloseReport>;
+export type RuntimeCloseHandle = CloseHandle<RuntimeCloseReport>;
+export type AppManagerCloseHandle = CloseHandle<AppManagerCloseReport>;
 export interface RuntimeCloseReporting {
-    beginShutdown(reason?: string): RuntimeCloseOperation;
-    beginDesktopShutdown(id: DesktopID, options?: ShutdownOptions): DesktopCloseOperation;
+    beginShutdown(reason?: string): RuntimeCloseHandle;
+    beginDesktopShutdown(id: DesktopID, options?: ShutdownOptions): DesktopCloseHandle;
 }

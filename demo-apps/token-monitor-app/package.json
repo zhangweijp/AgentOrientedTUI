@@ -11,17 +11,17 @@
         "test:run": "vitest run"
     },
     "dependencies": {
-        "@aotui/sdk": "^0.2.0",
+        "@aotui/sdk": "0.8.0-srt.1",
         "preact": "^10.25.4"
     },
     "devDependencies": {
-        "@aotui/runtime": "^2.0.0",
+        "@aotui/runtime": "7.0.0-srt.1",
         "@types/node": "^22.15.21",
-        "typescript": "^5.9.3",
+        "typescript": "7.0.2",
         "vitest": "^3.2.4"
     },
     "peerDependencies": {
-        "@aotui/runtime": "^2.0.0"
+        "@aotui/runtime": "7.0.0-srt.1"
     },
     "overrides": {
         "picomatch@4.0.3": "4.0.4",
@@ -29,6 +29,8 @@
     },
     "pnpm": {
         "overrides": {
+            "@aotui/runtime": "link:../../runtime",
+            "@aotui/sdk": "link:../../sdk",
             "picomatch@4.0.3": "4.0.4",
             "rollup": "^4.60.1"
         }

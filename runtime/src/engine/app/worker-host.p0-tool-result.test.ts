@@ -17,6 +17,7 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
             const modules = join(temporary, 'node_modules');
             await mkdir(join(modules, '@aotui'), { recursive: true });
             await symlink(join(root, 'node_modules/preact'), join(modules, 'preact'), 'dir');
+            await symlink(join(root, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
             await symlink(join(root, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
             await symlink(root, join(modules, '@aotui/runtime'), 'dir');
             await build({
@@ -26,31 +27,37 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
             });
             const fixture = `
                 import { h } from 'preact';
-                import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
+                import Type from 'typebox';
+                import { createTUIApp, defineViewTypeTool, AppTools, ToolRef, defineToolSet } from './sdk/src/index.ts';
                 import { View } from './sdk/src/components/View.tsx';
-                import { useViewTypeTool } from './sdk/src/hooks/useViewTypeTool.ts';
 
-                function RootTools() {
-                    const [Fail] = useViewTypeTool('fail', {
-                        description: 'Fails as business result', params: {}, isMutating: false,
-                    }, async () => ({ success:false, error:{
+
+const fixtureTools0 = defineToolSet({
+Fail: defineViewTypeTool({
+                        viewType: 'FileDetail', name: 'fail',
+                        description: 'Fails as business result', inputSchema: Type.Object({}, {additionalProperties:false}), }),
+OK: defineViewTypeTool({
+                        viewType: 'FileDetail', name: 'ok', description: 'Successful Tool',
+                        inputSchema: Type.Object({}, {additionalProperties:false}), }),
+Invalid: defineViewTypeTool({
+                        viewType: 'FileDetail', name: 'invalid', description: 'Reject invalid Tool arguments',
+                        inputSchema: Type.Object({target:Type.String()}, {additionalProperties:false}), })
+});
+function App() {
+                    const Fail = fixtureTools0.Fail;
+                    const OK = fixtureTools0.OK;
+                    const Invalid = fixtureTools0.Invalid;
+                    return h(AppTools, { definition: fixtureTools0, bindings: {
+Fail: { execute: async () => ({ success:false, error:{
                         code:'BUSINESS_FAILED', message:'The requested file is locked',
-                    }}));
-                    const [OK] = useViewTypeTool('ok', {
-                        description: 'Successful operation', params: {}, isMutating: false,
-                    }, async () => ({success:true,data:{message:'completed'}}));
-                    const [Invalid] = useViewTypeTool('invalid', {
-                        description: 'Reject invalid Tool arguments',
-                        params: { target: {type:'string',required:true} }, isMutating: false,
-                    }, async () => ({success:true,data:{unreachable:true}}));
-                    return h('section',{},[
-                        h(Fail,{key:'fail'},'Fail'),
-                        h(OK,{key:'ok'},'OK'),
-                        h(Invalid,{key:'invalid'},'Invalid'),
-                    ]);
-                }
-                function App() {
-                    return h(View,{id:'root',type:'FileDetail'},h(RootTools,{}));
+                    }}) },
+OK: { execute: async () => ({success:true,data:{message:'completed'}}) },
+Invalid: { execute: async () => ({success:true,data:{unreachable:true}}) }
+} }, h(View,{kind: 'instruction',id:'root',type:'FileDetail'},h('section',{},[
+                        h(ToolRef,{ tool: Fail, ...({key:'fail'}) },'Fail'),
+                        h(ToolRef,{ tool: OK, ...({key:'ok'}) },'OK'),
+                        h(ToolRef,{ tool: Invalid, ...({key:'invalid'}) },'Invalid'),
+                    ])));
                 }
                 export default createTUIApp({app_name:'test_result',component:App});
             `;
@@ -65,7 +72,8 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
             host = new AppWorkerHost({
                 appId: 'result_app' as any, desktopId: 'result_desktop' as any,
                 appModulePath: appFile, workerScriptPath: workerFile,
-                interactionModes: ['ordinary-v2'],
+                interactionModes: ['view-type-parameters-v1'],
+                config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR! },
             });
             await host.start();
             await host.open();
@@ -73,7 +81,7 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
             const failed = await invokeObservedTool(host, 'fail', {}, 'root');
             expect(failed).toMatchObject({ kind: 'receipt', receipt: {
                 executionPhase: 'entered-returned', outcome: { status: 'unknown', details: {
-                    kind: 'operation-result', result: { success: false, error: { code: 'BUSINESS_FAILED',
+                    kind: 'tool-result', result: { success: false, error: { code: 'BUSINESS_FAILED',
                         message: 'The requested file is locked' } },
                 } },
             } });
@@ -89,6 +97,7 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
             } });
         } finally {
             host?.terminate();
+            await host?.waitForResourceRelease();
             await rm(temporary, { recursive: true, force: true });
         }
     }, 12_000);

@@ -1,14 +1,15 @@
+import { SNAPSHOT_SCHEMA_VERSION } from './types.js';
 import type {
-    AppSnapshotV2, CommitResult, LeaseResult, PreparedSnapshotFailure, RefLookup, RefSelector, SnapshotCore,
+    AppSnapshotV3, CommitResult, LeaseResult, PreparedSnapshotFailure, RefLookup, RefSelector, SnapshotCore,
     SnapshotIssue, SnapshotIssueCode, SnapshotLease, SnapshotLookup, SnapshotRead,
     SnapshotStoreOptions, SnapshotStoreStats, ToolLookup, ToolSelector, AppIdentityRead,
 } from './types.js';
 import { utf8Size } from './json.js';
 import { refKey } from './snapshot-support.js';
-import { validatePreparedV2Draft } from './v2-validator.js';
+import { validatePreparedV3Draft } from './v3-validator.js';
 
 interface SnapshotEntry {
-    readonly snapshot: AppSnapshotV2;
+    readonly snapshot: AppSnapshotV3;
     canonical: string | undefined;
     readonly bytes: number;
     readonly leases: Map<object, number | null>;
@@ -53,8 +54,13 @@ function issue(
         ...(context.path !== undefined ? { path: boundedText(typeof context.path === 'string' ? context.path : '', 512) } : {}),
     });
 }
-function releaseLease(leases: Map<object, number | null>, token: object): () => void {
-    return () => { leases.delete(token); };
+function releaseLease(leases: Map<object, number | null> | undefined, token: object, settle: (() => void) | undefined): () => void {
+    return () => {
+        if (!leases) return;
+        const owned = leases, finish = settle;
+        leases = undefined; settle = undefined;
+        owned.delete(token); finish?.();
+    };
 }
 function capacity(label: string): never {
     throw Object.assign(new Error('Snapshot capacity exceeded: ' + label), { code: 'SNAPSHOT_CAPACITY' });
@@ -68,7 +74,7 @@ function nonEmpty(value: string, label: string): void {
     if (typeof value !== 'string' || !value.trim()) throw new TypeError(label + ' must be non-empty');
 }
 function snapshotId(appId: string, instanceId: string, revision: number): string {
-    return 'aotui-app-snapshot:v2:' + JSON.stringify([appId, instanceId, revision]);
+    return 'aotui-app-snapshot:v3:' + JSON.stringify([appId, instanceId, revision]);
 }
 
 /**
@@ -124,8 +130,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
     function trimExpired(time = clock()): void {
         for (const [id, entry] of entries) {
             cleanLeases(entry, time);
-            if (entry.retiredAt !== undefined &&
-                time >= entry.retiredAt + historyTtlMs && entry.leases.size === 0) {
+            if (entry.retiredAt !== undefined && entry.leases.size === 0) {
                 entries.delete(id);
             }
         }
@@ -193,7 +198,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
             if (prior?.current) {
                 currentBytes -= prior.current.bytes;
                 retire(prior.current, time);
-                // Lifecycle operations may have to invalidate an app while leases are
+                // Lifecycle changes may have to invalidate an app while leases are
                 // still live. Preserve pinned snapshots; block future commits if over budget.
                 const trim = budgetTransition(undefined, time);
                 if (trim.ok) trim.evictions.forEach(entry => entries.delete(entry.snapshot.id));
@@ -261,7 +266,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
         accept(input: unknown): CommitResult {
             if (disposed) return rejected('APP_STOPPED', 'Snapshot Core is closed');
             const time = clock();
-            const checked = validatePreparedV2Draft(input, options.limits);
+            const checked = validatePreparedV3Draft(input, options.limits);
             if (!checked.ok) {
                 const envelope = checked.envelope;
                 if (envelope) {
@@ -330,7 +335,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
             }
             const revision = app.revision + 1;
             const snapshot = Object.freeze({
-                schemaVersion: 2,
+                schemaVersion: SNAPSHOT_SCHEMA_VERSION,
                 id: snapshotId(draft.appId, draft.instanceId, revision),
                 appId: draft.appId,
                 instanceId: draft.instanceId,
@@ -340,7 +345,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
                 refs: data.draft.refs,
                 tools: data.draft.tools,
                 contentDigest: data.contentDigest,
-            }) as AppSnapshotV2;
+            }) as AppSnapshotV3;
             const record: SnapshotEntry = {
                 snapshot, canonical: data.canonicalContent, bytes: data.bytes,
                 leases: new Map(),
@@ -418,7 +423,9 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
             const token = {};
             entry.leases.set(token, expiresAt);
             const lease: SnapshotLease = Object.freeze({
-                snapshot: entry.snapshot, expiresAt, release: releaseLease(entry.leases, token),
+                snapshot: entry.snapshot, expiresAt, release: releaseLease(entry.leases, token, () => {
+                    if (entry.retiredAt !== undefined && entry.leases.size === 0) entries.delete(id);
+                }),
             });
             return Object.freeze({ status: 'acquired', lease });
         },
@@ -457,7 +464,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
                 });
             }
             const tool = snapshot.tools[selector.toolId];
-            if (tool?.targets.length) return Object.freeze({ status: 'found', tool });
+            if (tool && tool.execution.kind === 'view-type') return Object.freeze({ status: 'found', tool });
             return Object.freeze({ status: 'rejected', issue: issue('TOOL_UNAVAILABLE',
                 'Tool unavailable in source snapshot', { snapshotId: selector.snapshotId }) });
         },

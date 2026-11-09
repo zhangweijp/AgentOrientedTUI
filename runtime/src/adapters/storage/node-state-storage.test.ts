@@ -21,7 +21,7 @@ vi.mock('node:fs/promises', async load => {
 });
 vi.mock('node:crypto', async load => { const actual = await load<typeof import('node:crypto')>();return { ...actual, randomUUID: vi.fn(actual.randomUUID) }; });
 const real = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
-const limits: NodeStateStorageLimits = { maxActiveOwners: 5, maxRoots: 3, maxClaimedNamespaces: 10, maxPendingOperations: 10, maxRecordBytes: 4096, maxAddressBytes: 512, maxPathBytes: 2048, maxSegmentBytes: 128, maxDirectoryEntries: 100, maxBufferedBytes: 32768 };
+const limits: NodeStateStorageLimits = { maxActiveOwners: 5, maxRoots: 3, maxClaimedNamespaces: 10, maxPendingRequests: 10, maxRecordBytes: 4096, maxAddressBytes: 512, maxPathBytes: 2048, maxSegmentBytes: 128, maxDirectoryEntries: 100, maxBufferedBytes: 32768 };
 let folder: string;const address = (key = 'state', desktop = 'desktop', app = 'system_ide') => ({ namespace: JSON.stringify([desktop, app]), key });
 const deferred = <T = void>() => { let resolve!: (v: T) => void;const promise = new Promise<T>(r => { resolve = r; });return { promise, resolve }; };
 const errno = (code: string) => Object.assign(new Error('PRIVATE_FS_PATH_AND_CAUSE'), { code });
@@ -36,7 +36,7 @@ async function setup(custom: Partial<NodeStateStorageLimits> = {}, owner = 'owne
     return { backend, storage: opened.storage, root, file: (key = 'state', desktop = 'desktop', app = 'system_ide') => path.join(root, desktop, app, key + '.json') };
 }
 async function seed(root: string, text: string | Uint8Array, key = 'state', desktop = 'desktop', app = 'system_ide') { const dir = path.join(root, desktop, app);await real.mkdir(dir, { recursive: true });await real.writeFile(path.join(dir, key + '.json'), text);return path.join(dir, key + '.json'); }
-function expectEmpty(backend: ReturnType<typeof createNodeStateStorage>) { expect(backend.getStats()).toMatchObject({ ownerSlots: 0, roots: 0, claimedNamespaces: 0, pendingOperations: 0, ioInFlight: 0, retainedOperations: 0, fileHandles: 0, directoryHandles: 0, temporaryFiles: 0, bufferedBytes: 0 }); }
+function expectEmpty(backend: ReturnType<typeof createNodeStateStorage>) { expect(backend.getStats()).toMatchObject({ ownerSlots: 0, roots: 0, claimedNamespaces: 0, pendingStorageIO: 0, ioInFlight: 0, retainedStorageIO: 0, fileHandles: 0, directoryHandles: 0, temporaryFiles: 0, bufferedBytes: 0 }); }
 
 describe('N02–N05 configuration, root and namespace ownership', () => {
     it.each([1, 2].flatMap(barrier => [true, false].map(alias => ({ barrier, alias }))))('F01: root adoption remains single across last release / third open: %j', async ({ barrier, alias }) => {
@@ -71,8 +71,8 @@ describe('N02–N05 configuration, root and namespace ownership', () => {
     });
     it('reserves pending owner/open slots; duplicate owner and capacity do not enter I/O', async () => {
         const entered = deferred(), gate = deferred();control.handlers.mkdir = async (...args) => { entered.resolve();await gate.promise;return (real.mkdir as any)(...args); };
-        const backend = createNodeStateStorage({ ...limits, maxPendingOperations: 1, maxActiveOwners: 1 }), pending = backend.open({ owner: 'a', rootDirectory: folder });await entered.promise;const count = control.calls.length;
-        expect(backend.getStats()).toMatchObject({ ownerSlots: 1, pendingOpens: 1, pendingOperations: 1, ioInFlight: 1 });expect(await backend.open({ owner: 'a', rootDirectory: folder })).toMatchObject({ status: 'rejected', issue: { code: 'OWNER_BUSY' } });expect((await backend.open({ owner: 'b', rootDirectory: folder })).status).toBe('rejected');expect(control.calls).toHaveLength(count);
+        const backend = createNodeStateStorage({ ...limits, maxPendingRequests: 1, maxActiveOwners: 1 }), pending = backend.open({ owner: 'a', rootDirectory: folder });await entered.promise;const count = control.calls.length;
+        expect(backend.getStats()).toMatchObject({ ownerSlots: 1, pendingOpens: 1, pendingStorageIO: 1, ioInFlight: 1 });expect(await backend.open({ owner: 'a', rootDirectory: folder })).toMatchObject({ status: 'rejected', issue: { code: 'OWNER_BUSY' } });expect((await backend.open({ owner: 'b', rootDirectory: folder })).status).toBe('rejected');expect(control.calls).toHaveLength(count);
         gate.resolve();const opened = await pending;if (opened.status !== 'opened') throw Error('open');await opened.storage.release();expectEmpty(backend);
     });
     it('coalesces canonical path and symlink aliases even at maxRoots=1, and reclaims roots', async () => {
@@ -130,7 +130,7 @@ describe('N02/N03/N06/N07 actual paths, content and types', () => {
         if (kind === 'parent-symlink') { await real.rename(path.dirname(target), path.join(folder, 'elsewhere'));await real.symlink(path.join(folder, 'elsewhere'), path.dirname(target)); }
         if (kind === 'fifo') { await real.unlink(target);execFileSync('mkfifo', [target]); }
         for (const op of [() => f.storage.read(address()), () => f.storage.replace(address(), 'bad'), () => f.storage.remove(address())]) expect(await op()).toMatchObject({ status: 'failed', issue: { code: 'RESOURCE_UNSUPPORTED' } });
-        expect(f.backend.getStats()).toMatchObject({ fileHandles: 0, directoryHandles: 0, temporaryFiles: 0, pendingOperations: 0 });await f.storage.release();
+        expect(f.backend.getStats()).toMatchObject({ fileHandles: 0, directoryHandles: 0, temporaryFiles: 0, pendingStorageIO: 0 });await f.storage.release();
     });
     it('rejects existing case aliases and in-flight empty-directory key aliases', async () => {
         const f = await setup();await seed(f.root, 'keep', 'Case');expect(await f.storage.read(address('case'))).toMatchObject({ issue: { code: 'ADDRESS_UNSUPPORTED' } });
@@ -150,7 +150,7 @@ describe('N02/N03/N06/N07 actual paths, content and types', () => {
         const f = await setup(), target = await seed(f.root, 'private');await real.chmod(target, 0);
         let denied = false;try { const native = await real.open(target, 'r');await native.close(); } catch (error: any) { expect(['EACCES', 'EPERM']).toContain(error.code);denied = true; }
         const result = await f.storage.read(address());if (denied) expect(result).toMatchObject({ status: 'failed', issue: { code: 'PERMISSION_DENIED' } });else expect(result).toEqual({ status: 'found', text: 'private' });
-        expect(f.backend.getStats()).toMatchObject({ pendingOperations: 0, fileHandles: 0, directoryHandles: 0 });await real.chmod(target, 0o600);await f.storage.release();
+        expect(f.backend.getStats()).toMatchObject({ pendingStorageIO: 0, fileHandles: 0, directoryHandles: 0 });await real.chmod(target, 0o600);await f.storage.release();
     });
 });
 
@@ -158,12 +158,12 @@ describe('N08 exact mutation phases and retained resources', () => {
     it('confirms a temporary cleanup actually completed even when its Promise rejects afterwards', async () => {
         const f = await setup(), target = await seed(f.root, 'old');control.handlers.open = async (...args) => { const h = await (real.open as any)(...args);vi.spyOn(h, 'write').mockRejectedValue(errno('EIO'));return h; };
         control.handlers.unlink = async (...args) => { await (real.unlink as any)(...args);if (String(args[0]).endsWith('.tmp')) throw errno('EIO'); };
-        expect(await f.storage.replace(address(), 'new')).toMatchObject({ status: 'failed', effects: 'none' });expect(await real.readFile(target, 'utf8')).toBe('old');expect(f.backend.getStats()).toMatchObject({ retainedOperations: 0, temporaryFiles: 0, fileHandles: 0 });expect(await f.storage.release()).toEqual({ status: 'released' });expectEmpty(f.backend);
+        expect(await f.storage.replace(address(), 'new')).toMatchObject({ status: 'failed', effects: 'none' });expect(await real.readFile(target, 'utf8')).toBe('old');expect(f.backend.getStats()).toMatchObject({ retainedStorageIO: 0, temporaryFiles: 0, fileHandles: 0 });expect(await f.storage.release()).toEqual({ status: 'released' });expectEmpty(f.backend);
     });
     it('never deletes a foreign object that replaced an owned temporary pathname', async () => {
         const f = await setup();let foreign = '';
         control.handlers.open = async (...args) => { const h = await (real.open as any)(...args);foreign = String(args[0]);vi.spyOn(h, 'write').mockImplementation(async () => { await real.rename(foreign, foreign + '-moved');await real.writeFile(foreign, 'foreign');throw errno('EACCES'); });return h; };
-        expect(await f.storage.replace(address(), 'new')).toMatchObject({ status: 'failed', effects: 'none' });expect(await real.readFile(foreign, 'utf8')).toBe('foreign');expect(f.backend.getStats()).toMatchObject({ retainedOperations: 1, temporaryFiles: 1 });expect(await f.storage.release()).toMatchObject({ status: 'unknown' });
+        expect(await f.storage.replace(address(), 'new')).toMatchObject({ status: 'failed', effects: 'none' });expect(await real.readFile(foreign, 'utf8')).toBe('foreign');expect(f.backend.getStats()).toMatchObject({ retainedStorageIO: 1, temporaryFiles: 1 });expect(await f.storage.release()).toMatchObject({ status: 'unknown' });
     });
     it.each(['rename', 'unlink'].flatMap(method => [true, false].map(committed => ({ method, committed }))))('F02: a prior unknown does not make zero-I/O rejected new requests unknown: %j', async ({ method, committed }) => {
         const f = await setup(), uncertain = await seed(f.root, 'uncertain-old', 'unknown'), healthy = await seed(f.root, 'healthy-old', 'healthy');
@@ -174,7 +174,7 @@ describe('N08 exact mutation phases and retained resources', () => {
         expect(await (method === 'rename' ? f.storage.replace(address('unknown'), 'new') : f.storage.remove(address('unknown')))).toMatchObject({ status: 'unknown' });const before = control.calls.length;
         for (const key of ['unknown', 'healthy']) for (const mutation of [() => f.storage.replace(address(key), 'blocked'), () => f.storage.remove(address(key))]) expect(await mutation()).toMatchObject({ status: 'failed', effects: 'none', issue: { code: 'UNKNOWN_OUTCOME' } });
         expect(control.calls).toHaveLength(before);expect(await real.readFile(healthy, 'utf8')).toBe('healthy-old');expect(await f.storage.replace(address('healthy', 'independent'), 'ok')).toEqual({ status: 'applied' });
-        expect(await f.storage.release()).toMatchObject({ status: 'unknown' });expect(f.backend.getStats()).toMatchObject({ retainedOwners: 1, retainedOperations: 1, claimedNamespaces: 2, ioInFlight: 0 });
+        expect(await f.storage.release()).toMatchObject({ status: 'unknown' });expect(f.backend.getStats()).toMatchObject({ retainedOwners: 1, retainedStorageIO: 1, claimedNamespaces: 2, ioInFlight: 0 });
     });
     it('does not delete an exclusive temporary-name collision that it never owned', async () => {
         const f = await setup(), target = await seed(f.root, 'old'), uuid = '11111111-1111-1111-1111-111111111111';
@@ -190,36 +190,36 @@ describe('N08 exact mutation phases and retained resources', () => {
             return h;
         };
         expect(await f.storage.replace(address(), 'new-data')).toMatchObject({ status: 'failed', effects: 'none' });expect(await real.readFile(target, 'utf8')).toBe('old');expect((await real.readdir(path.dirname(target))).filter(n => n.endsWith('.tmp'))).toEqual([]);
-        expect(f.backend.getStats()).toMatchObject({ pendingOperations: 0, fileHandles: 0, directoryHandles: 0, temporaryFiles: 0, bufferedBytes: 0 });expect(await f.storage.release()).toEqual({ status: 'released' });
+        expect(f.backend.getStats()).toMatchObject({ pendingStorageIO: 0, fileHandles: 0, directoryHandles: 0, temporaryFiles: 0, bufferedBytes: 0 });expect(await f.storage.release()).toEqual({ status: 'released' });
     });
     it.each([false, true])('rename rejection after entered => unknown (actual commit=%s)', async commit => {
         const f = await setup(), target = await seed(f.root, 'old');control.handlers.rename = async (...args) => { if (commit) await (real.rename as any)(...args);throw errno('EIO'); };
         expect(await f.storage.replace(address(), 'new')).toMatchObject({ status: 'unknown' });expect(await real.readFile(target, 'utf8')).toBe(commit ? 'new' : 'old');const count = control.calls.length;
         expect(await f.storage.replace(address('other'), 'blocked')).toMatchObject({ status: 'failed', effects: 'none', issue: { code: 'UNKNOWN_OUTCOME' } });expect(control.calls.length).toBe(count);delete control.handlers.rename;
-        expect(await f.storage.replace(address('healthy', 'different', 'app'), 'healthy')).toEqual({ status: 'applied' });expect(f.backend.getStats()).toMatchObject({ activeOperations: 0, retainedOperations: 1, bufferedBytes: 0, fileHandles: 0, temporaryFiles: 0 });
+        expect(await f.storage.replace(address('healthy', 'different', 'app'), 'healthy')).toEqual({ status: 'applied' });expect(f.backend.getStats()).toMatchObject({ activeStorageIO: 0, retainedStorageIO: 1, bufferedBytes: 0, fileHandles: 0, temporaryFiles: 0 });
         expect(await f.storage.release()).toMatchObject({ status: 'unknown' });expect(f.backend.getStats()).toMatchObject({ retainedOwners: 1, claimedNamespaces: 2 });
     });
     it.each([false, true])('target unlink rejection => unknown, not fake none (actual delete=%s)', async deleted => {
         const f = await setup(), target = await seed(f.root, 'old');control.handlers.unlink = async (...args) => { if (String(args[0]) === target) { if (deleted) await (real.unlink as any)(...args);throw errno('EIO'); }return (real.unlink as any)(...args); };
         expect(await f.storage.remove(address())).toMatchObject({ status: 'unknown' });expect(await real.stat(target).then(() => true, () => false)).toBe(!deleted);expect(await f.storage.release()).toMatchObject({ status: 'unknown' });
     });
-    it('failed pre-commit temp cleanup keeps a known resource and operation slot, release needs no new slot', async () => {
-        const f = await setup({ maxPendingOperations: 1 }), target = await seed(f.root, 'old');
+    it('failed pre-commit temp cleanup keeps a known resource and StorageIO slot, release needs no new slot', async () => {
+        const f = await setup({ maxPendingRequests: 1 }), target = await seed(f.root, 'old');
         control.handlers.open = async (...args) => { const h = await (real.open as any)(...args);vi.spyOn(h, 'write').mockRejectedValue(errno('EACCES'));return h; };
         control.handlers.unlink = async (...args) => { if (String(args[0]).endsWith('.tmp')) throw errno('EACCES');return (real.unlink as any)(...args); };
         expect(await f.storage.replace(address(), 'new')).toMatchObject({ status: 'failed', effects: 'none', issue: { code: 'PERMISSION_DENIED' } });expect(await real.readFile(target, 'utf8')).toBe('old');
-        expect(f.backend.getStats()).toMatchObject({ activeOperations: 0, ioInFlight: 0, retainedOperations: 1, pendingOperations: 1, temporaryFiles: 1, bufferedBytes: 0 });
+        expect(f.backend.getStats()).toMatchObject({ activeStorageIO: 0, ioInFlight: 0, retainedStorageIO: 1, pendingStorageIO: 1, temporaryFiles: 1, bufferedBytes: 0 });
         expect(await f.storage.read(address('other'))).toMatchObject({ issue: { code: 'CAPACITY_EXCEEDED' } });const releasing = f.storage.release();expect(f.storage.release()).toBe(releasing);expect(await releasing).toMatchObject({ status: 'failed', issue: { code: 'PERMISSION_DENIED' } });
         expect(f.backend.getStats()).toMatchObject({ retainedOwners: 1, claimedNamespaces: 1 });
     });
     it('failed file close does not drop the unconfirmed handle or grant namespace to another owner', async () => {
         const f = await setup(), target = await seed(f.root, 'old');control.handlers.open = async (...args) => { const h = await (real.open as any)(...args);vi.spyOn(h, 'close').mockRejectedValue(errno('EIO'));return h; };
-        expect(await f.storage.replace(address(), 'new')).toMatchObject({ status: 'failed', effects: 'none' });expect(await real.readFile(target, 'utf8')).toBe('old');expect(f.backend.getStats()).toMatchObject({ fileHandles: 1, retainedOperations: 1, ioInFlight: 0 });expect(await f.storage.release()).toMatchObject({ status: 'unknown' });
+        expect(await f.storage.replace(address(), 'new')).toMatchObject({ status: 'failed', effects: 'none' });expect(await real.readFile(target, 'utf8')).toBe('old');expect(f.backend.getStats()).toMatchObject({ fileHandles: 1, retainedStorageIO: 1, ioInFlight: 0 });expect(await f.storage.release()).toMatchObject({ status: 'unknown' });
         const next = await f.backend.open({ owner: 'next', rootDirectory: f.root });if (next.status !== 'opened') throw Error('open');expect(await next.storage.read(address())).toMatchObject({ issue: { code: 'NAMESPACE_BUSY' } });await next.storage.release();
     });
     it('confirmed rename remains applied when later directory cleanup fails', async () => {
         const f = await setup(), target = await seed(f.root, 'old');control.handlers.opendir = async (...args) => { const dir = await (real.opendir as any)(...args);if (String(args[0]) === path.dirname(target)) vi.spyOn(dir, 'close').mockRejectedValue(errno('EIO'));return dir; };
-        expect(await f.storage.replace(address(), 'new')).toEqual({ status: 'applied' });expect(await real.readFile(target, 'utf8')).toBe('new');expect(f.backend.getStats()).toMatchObject({ directoryHandles: 1, retainedOperations: 1, ioInFlight: 0, fileHandles: 0, temporaryFiles: 0, bufferedBytes: 0 });expect(await f.storage.release()).toMatchObject({ status: 'unknown' });
+        expect(await f.storage.replace(address(), 'new')).toEqual({ status: 'applied' });expect(await real.readFile(target, 'utf8')).toBe('new');expect(f.backend.getStats()).toMatchObject({ directoryHandles: 1, retainedStorageIO: 1, ioInFlight: 0, fileHandles: 0, temporaryFiles: 0, bufferedBytes: 0 });expect(await f.storage.release()).toMatchObject({ status: 'unknown' });
     });
 });
 
@@ -231,20 +231,20 @@ describe('N06/N09/N10 bounded resources and actual completion', () => {
         if (phase === 'remove') control.handlers.unlink = async (...args) => { if (String(args[0]) === target) { entered.resolve();await gate.promise; }return (real.unlink as any)(...args); };
         if (phase === 'directory-close') control.handlers.opendir = async (...args) => { const dir = await (real.opendir as any)(...args);if (String(args[0]) === path.dirname(target)) { const close = dir.close.bind(dir);vi.spyOn(dir, 'close').mockImplementation(async () => { entered.resolve();await gate.promise;return close(); }); }return dir; };
         const pending = phase === 'read' ? f.storage.read(address()) : phase === 'remove' ? f.storage.remove(address()) : f.storage.replace(address(), 'new');await entered.promise;
-        let released = false;const closing = f.storage.release();closing.then(() => { released = true; });expect(f.storage.release()).toBe(closing);await Promise.resolve();expect(released).toBe(false);expect(f.backend.getStats()).toMatchObject({ closingOwners: 1, claimedNamespaces: 1, pendingOperations: 1, activeOperations: 1, ioInFlight: 1 });
+        let released = false;const closing = f.storage.release();closing.then(() => { released = true; });expect(f.storage.release()).toBe(closing);await Promise.resolve();expect(released).toBe(false);expect(f.backend.getStats()).toMatchObject({ closingOwners: 1, claimedNamespaces: 1, pendingStorageIO: 1, activeStorageIO: 1, ioInFlight: 1 });
         expect(await f.storage.read(address('late'))).toMatchObject({ issue: { code: 'OWNER_RELEASED' } });expect((await f.backend.open({ owner: 'owner', rootDirectory: f.root })).status).toBe('rejected');gate.resolve();expect((await pending).status).toBe(phase === 'read' ? 'found' : 'applied');expect(await closing).toEqual({ status: 'released' });expectEmpty(f.backend);
     });
     it('reads growth under a fixed limit and never substitutes malformed or oversized content', async () => {
         const f = await setup({ maxRecordBytes: 4 }), target = await seed(f.root, '1');let appended = false;
         control.handlers.open = async (...args) => { const h = await (real.open as any)(...args), read = h.read.bind(h);vi.spyOn(h, 'read').mockImplementation(async (...input: any[]) => { if (!appended) { appended = true;await real.appendFile(target, '23456'); }return read(...input); });return h; };
-        expect(await f.storage.read(address())).toMatchObject({ issue: { code: 'CAPACITY_EXCEEDED' } });expect(await real.readFile(target, 'utf8')).toBe('123456');expect(f.backend.getStats()).toMatchObject({ fileHandles: 0, directoryHandles: 0, bufferedBytes: 0, pendingOperations: 0 });await f.storage.release();
+        expect(await f.storage.read(address())).toMatchObject({ issue: { code: 'CAPACITY_EXCEEDED' } });expect(await real.readFile(target, 'utf8')).toBe('123456');expect(f.backend.getStats()).toMatchObject({ fileHandles: 0, directoryHandles: 0, bufferedBytes: 0, pendingStorageIO: 0 });await f.storage.release();
     });
     it('checks all directory entries even after finding the target', async () => {
         const f = await setup({ maxDirectoryEntries: 1 }), target = await seed(f.root, 'old');expect(await f.storage.read(address())).toEqual({ status: 'found', text: 'old' });await real.writeFile(path.join(path.dirname(target), 'unrelated'), 'x');
-        expect(await f.storage.read(address())).toMatchObject({ issue: { code: 'CAPACITY_EXCEEDED' } });expect(f.backend.getStats()).toMatchObject({ directoryHandles: 0, pendingOperations: 0 });await f.storage.release();
+        expect(await f.storage.read(address())).toMatchObject({ issue: { code: 'CAPACITY_EXCEEDED' } });expect(f.backend.getStats()).toMatchObject({ directoryHandles: 0, pendingStorageIO: 0 });await f.storage.release();
     });
-    it('shares operation and buffer capacity across owners and releases it only after work ends', async () => {
-        const f = await setup({ maxBufferedBytes: 6, maxPendingOperations: 2 }), second = await f.backend.open({ owner: 'b', rootDirectory: f.root });if (second.status !== 'opened') throw Error('open');const entered = deferred(), gate = deferred();
+    it('shares StorageIO and buffer capacity across owners and releases it only after work ends', async () => {
+        const f = await setup({ maxBufferedBytes: 6, maxPendingRequests: 2 }), second = await f.backend.open({ owner: 'b', rootDirectory: f.root });if (second.status !== 'opened') throw Error('open');const entered = deferred(), gate = deferred();
         control.handlers.open = async (...args) => { entered.resolve();await gate.promise;return (real.open as any)(...args); };
         const first = f.storage.replace(address(), 'abc');await entered.promise;expect(f.backend.getStats().bufferedBytes).toBe(6);const count = control.calls.length;expect(await second.storage.replace(address('other', 'other'), 'x')).toMatchObject({ issue: { code: 'CAPACITY_EXCEEDED' } });expect(control.calls.length).toBe(count);gate.resolve();await first;
         expect(f.backend.getStats().bufferedBytes).toBe(0);expect(await second.storage.replace(address('other', 'other'), 'x')).toEqual({ status: 'applied' });await second.storage.release();await f.storage.release();expectEmpty(f.backend);
@@ -269,7 +269,7 @@ describe('N06/N09/N10 bounded resources and actual completion', () => {
 });
 
 describe('N11 real accepted A session + real Node filesystem', () => {
-    const sessionLimits = { maxKeys: 5, maxDepth: 10, maxNodes: 100, maxValueBytes: 512, maxRecordBytes: 1024, maxAddressBytes: 512, maxRetainedBytes: 8192, maxPendingOperations: 5, maxConcurrentOperations: 2, maxRevision: 100 };
+    const sessionLimits = { maxKeys: 5, maxDepth: 10, maxNodes: 100, maxValueBytes: 512, maxRecordBytes: 1024, maxAddressBytes: 512, maxRetainedBytes: 8192, maxPendingRequests: 5, maxConcurrentRequests: 2, maxRevision: 100 };
     function session(storage: StateStorage) { return createStateSession({ instanceId: storage.owner, storage, limits: sessionLimits, now: () => 1 }); }
     it('two real sessions cannot use an initial value to overwrite another owner, and a later owner restores the saved file', async () => {
         const f = await setup(), s = session(f.storage), first = s.bind(address(), 1, { hydrate: true });if (first.status !== 'bound') throw Error('bind');const r = await first.binding.recovery;first.binding.confirmInitialization(r, { status: 'ready' });

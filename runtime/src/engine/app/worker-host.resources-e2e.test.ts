@@ -26,12 +26,19 @@ async function facts(name: string, report: object) {
 async function fixture(extra: object = {}) {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-host-')), app = join(dir, 'app.mjs');
     await linkPreactPeer(dir);
-    await capture(app, `import {h} from 'preact';import {createTUIApp,usePersistentState,View,useViewTypeTool} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let setter;
-function Operations(){const [Set]=useViewTypeTool('set',{description:'Set persisted value',isMutating:true,params:{value:{type:'number',required:true}}},async args=>{setter(args.value);return {success:true};});return h(Set);}
-function Root(){[,setter]=usePersistentState('value',0);return h(View,{id:'root',type:'Root'},h(Operations));}
+    await capture(app, `import {h} from 'preact';import Type from 'typebox';import {createTUIApp,defineViewTypeTool,usePersistentState,View,AppTools, ToolRef, defineToolSet} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let setter;
+
+
+const fixtureTools0 = defineToolSet({
+Set: defineViewTypeTool({viewType:'Root',name:'set',description:'Set persisted value',inputSchema:Type.Object({value:Type.Number()}, {additionalProperties:false}),})
+});
+function Tools(){const Set = fixtureTools0.Set;return h(AppTools, { definition: fixtureTools0, bindings: {
+Set: { execute: async args=>{setter(args.value);return {success:true};} }
+} }, h(ToolRef, { tool: Set }));}
+function Root(){[,setter]=usePersistentState('value',0);return h(View,{kind: 'instruction',id:'root',type:'Root'},h(Tools));}
 export default createTUIApp({app_name:'c1',component:Root});`);
     const host = new AppWorkerHost({ appId: 'app' as any, desktopId: 'd' as any, appModulePath: url(app), timeout: 2000,
-        workerScriptPath: join(repo, 'runtime/dist/worker-runtime/index.js'), config: { AOTUI_DATA_DIR: join(dir, 'data'), AOTUI_APP_NAME: 'c1' }, ...extra });
+        workerScriptPath: join(repo, 'runtime/dist/worker-runtime/index.js'), config: { AOTUI_DATA_DIR: join(dir, 'data'), AOTUI_APP_KEY: 'c1' }, ...extra });
     return { dir, host, record: join(dir, 'data/app-state/d/c1/value.json') };
 }
 async function setPersistedValue(host: AppWorkerHost, value: number) {

@@ -149,8 +149,8 @@ export class WorkerSandbox {
             });
             host.onUpdateRequest = () => { if (!this.intent && this.workerHost === host) this.onUpdateRequest?.(); };
             await host.start();current();await host.open();current();this._status = 'running';
-        }).then(() => { this.installSettled = true; }, () => {
-            this.installSettled = true;this.closeIssues.add('INSTALL_FAILED');this.beginCleanup('close');throw lifecycleError('INSTALL_FAILED');
+        }).then(() => { this.installSettled = true; }, error => {
+            this.installSettled = true;this.closeIssues.add('INSTALL_FAILED');this.beginCleanup('close');throw Object.defineProperty(lifecycleError('INSTALL_FAILED'), 'cause', { value: error });
         });
         void this.installPromise.catch(() => {});return this.installPromise;
     }

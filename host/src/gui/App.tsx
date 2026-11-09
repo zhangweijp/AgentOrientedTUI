@@ -396,7 +396,10 @@ export function App() {
             }
         };
 
-        const unsubscribe = bridge.subscribe((event: unknown) => {
+        const unsubscribe = bridge.subscribe((event) => {
+            if (event.type === 'snapshot_error' && event.topicId === bridge.getActiveTopicId()) {
+                showToast(`TUI preview failed: ${String(event.data)}`);
+            }
             updateTopics();
 
             const active = bridge.getActiveTopicId();
@@ -423,12 +426,16 @@ export function App() {
         updateTopics();
 
         return unsubscribe;
-    }, [bridge, currentProjectId]);
+    }, [bridge, currentProjectId, showToast]);
 
     useEffect(() => {
         if (viewMode !== 'tui' || !activeTopicId) return;
-        void bridge.requestSnapshot(activeTopicId);
-    }, [bridge, viewMode, activeTopicId]);
+        let current = true;
+        void bridge.requestSnapshot(activeTopicId).catch(error => {
+            if (current) showToast(`TUI preview failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+        return () => { current = false; };
+    }, [bridge, viewMode, activeTopicId, showToast]);
 
     useEffect(() => {
         if (viewMode !== 'tui') return;

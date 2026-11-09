@@ -2,12 +2,12 @@ import type { WorkerPool } from '../app/worker-pool.js';
 import type { IDesktop, DesktopID, AppID, UpdateSignal, AppState, DesktopStatus, ILLMOutputChannelService, IRuntimeContext, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
 import { createDesktopId } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
-import { SignalBus, type SignalOutputStream, type SignalListener } from './signal-bus.js';
+import { SignalBus, type SignalListener } from './signal-bus.js';
 import type { LLMOutputListener } from '../../spi/core/llm-output.js';
-import type { AppManagerCloseOperation, AppManagerCloseReport, DesktopCloseOptions, DesktopCloseOperation, DesktopCloseReport } from '../../spi/runtime/close.interface.js';
-import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseOperation, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from './close-operation.js';
+import type { AppManagerCloseHandle, AppManagerCloseReport, DesktopCloseOptions, DesktopCloseHandle, DesktopCloseReport } from '../../spi/runtime/close.interface.js';
+import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseHandle, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from './close-handle.js';
 import { DesktopLogger, type LogEntry } from './desktop-logger.js';
-import { AppManager } from '../app/index.js';
+import { AppManager } from '../app/manager.js';
 import { LLMOutputChannelService } from './llm-output-channel.js';
 import { RuntimeConfig, RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 import type { AppInteractionOptions, AppScopeResult } from '../../spi/runtime/app-interaction.interface.js';
@@ -49,17 +49,17 @@ export class Desktop implements IDesktop {
     private _status: DesktopStatus = 'active';
     private _disposed = false;
     private _isDraining = false;  // [RFC-014] Draining 状态标志
-    private closeOperation?: DesktopCloseOperation;
+    private closeHandle?: DesktopCloseHandle;
     private closePromise?: Promise<void>;
     private drainPromise?: Promise<void>;
-    private appClose?: AppManagerCloseOperation;
+    private appClose?: AppManagerCloseHandle;
     private appReport?: AppManagerCloseReport;
     private closeState = newCloseState('desktop');
     private closeIntent: 'close' | 'delete' = 'close';
     private selectedBeforeClose?: WeakRef<() => Promise<void>>;
     private readonly subscriptions = new Map<SignalListener, () => void>();
     private readonly llmSubscriptions = new Map<LLMOutputListener, () => void>();
-    private outputFacade?: SignalOutputStream;
+    private outputFacade?: IDesktop['output'];
     private llmFacade?: ILLMOutputChannelService;
 
     // Use injected SignalBus or create internal instance
@@ -87,8 +87,7 @@ export class Desktop implements IDesktop {
         this.signalBus = options?.signalBus ?? new SignalBus();
 
         this.logger = options?.logger || new DesktopLogger({
-            maxSystemLogs: this.config.logger.maxSystemLogs,
-            maxAppLogs: this.config.logger.maxAppLogs
+            maxSystemLogs: this.config.logger.maxSystemLogs
         });
 
         this.appManager = options?.appManager || new AppManager(this, { workerPool: options?.workerPool, runtimeConfig: this.config });
@@ -111,7 +110,7 @@ export class Desktop implements IDesktop {
 
 
     // Delegate to SignalBus
-    public get output(): SignalOutputStream {
+    public get output(): IDesktop['output'] {
         return this.outputFacade ??= Object.freeze({
             subscribe: (listener: SignalListener) => {
                 this.assertActive();if (this.subscriptions.has(listener)) return;
@@ -301,7 +300,6 @@ export class Desktop implements IDesktop {
     async suspend(): Promise<void> {
         this.assertActive();
         this._status = 'suspended';
-        this.signalBus.stopObserving(this.id);
 
         await this.appManager.pauseAll();
     }
@@ -349,24 +347,10 @@ export class Desktop implements IDesktop {
     }
 
     /**
-     * Get App Operation Logs (for <application> <info> area)
-     */
-    getAppOperationLogs(appId: AppID): LogEntry[] {
-        return this.logger.getAppLogs(this.id, appId);
-    }
-
-    /**
      * Log System Message
      */
     logSystem(message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
         if (!this._isDraining) this.logger.logSystem(this.id, message, level);
-    }
-
-    /**
-     * Log App Operation
-     */
-    logAppOperation(appId: AppID, message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
-        if (!this._isDraining) this.logger.logApp(this.id, appId, message, level);
     }
 
     /**
@@ -416,18 +400,18 @@ export class Desktop implements IDesktop {
         return freezeClose({ ...snapshotClose(state), scope: 'desktop' as const, intent: this.closeIntent, desktopId: displayCloseId(this.id), found: true });
     }
 
-    beginClose(options?: DesktopCloseOptions): DesktopCloseOperation {
+    beginClose(options?: DesktopCloseOptions): DesktopCloseHandle {
         const timeout = closeTimeout(options), intent = options?.intent ?? 'close', callback = options?.beforeClose;
         if (intent !== 'close' && intent !== 'delete' || callback !== undefined && typeof callback !== 'function') throw closeError('CLOSE_OPTIONS_INVALID');
-        if (this.closeOperation) {
+        if (this.closeHandle) {
             if (this.closeIntent === 'close' && intent === 'delete' || callback && callback !== this.selectedBeforeClose?.deref()) throw closeError('LIFECYCLE_CONFLICT');
-            return this.closeOperation;
+            return this.closeHandle;
         }
         if (this._isDraining && this.closeIntent === 'close' && intent === 'delete') throw closeError('LIFECYCLE_CONFLICT');
         this.selectedBeforeClose = callback ? new WeakRef(callback) : undefined;this.closeState.beforeClose = callback ? 'pending' : 'not-provided';
         let complete!: (report: DesktopCloseReport) => void;
         const completion = new Promise<DesktopCloseReport>(resolve => { complete = resolve; });
-        this.closeOperation = createCloseOperation(() => this.report(), completion);
+        this.closeHandle = createCloseHandle(() => this.report(), completion);
         // The eligibility deadline belongs to this full close, independently of observers.
         const deadline = performance.now() + timeout;
         let expired = false;
@@ -475,11 +459,11 @@ export class Desktop implements IDesktop {
             ];
             await Promise.allSettled(cleanups);this._disposed = true;this.closeState.state = 'settled';clearEligibility();complete(this.report());
         })();
-        return this.closeOperation;
+        return this.closeHandle;
     }
 
     delete(): Promise<void> {
-        try { const operation = this.beginClose({ intent: 'delete' });return this.closePromise ??= closeVoid(operation.completion, 'DESKTOP_CLOSE_FAILED'); }
+        try { const handle = this.beginClose({ intent: 'delete' });return this.closePromise ??= closeVoid(handle.completion, 'DESKTOP_CLOSE_FAILED'); }
         catch (error) { return Promise.reject(error); }
     }
     dispose(): Promise<void> { return this.closePromise ??= closeVoid(this.beginClose().completion, 'DESKTOP_CLOSE_FAILED'); }

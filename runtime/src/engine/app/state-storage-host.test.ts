@@ -7,8 +7,8 @@ import { createNodeStateStorage } from '../../adapters/storage/node-state-storag
 import { DEFAULT_STATE_TRANSPORT_LIMITS } from '../../adapters/storage/state-storage-protocol.js';
 import { stateIssue } from '../../core/persistence/state-storage.js';
 const defer = <T = void>() => { let resolve!: (v: T) => void;const promise = new Promise<T>(r => { resolve = r; });return { promise, resolve }; };
-const req = (sequence: number, operation = 'read', extra: object = {}) => ({ type: 'STATE_STORAGE_REQUEST', version: 1, instanceId: 'i', sequence, operation,
-    ...(operation === 'release' ? {} : { address: { namespace: '["d","a"]', key: 'k' } }), ...extra });
+const req = (sequence: number, action = 'read', extra: object = {}) => ({ type: 'STATE_STORAGE_REQUEST', version: 1, instanceId: 'i', sequence, action,
+    ...(action === 'release' ? {} : { address: { namespace: '["d","a"]', key: 'k' } }), ...extra });
 it('B03: no use means zero open; release is shared and closes admission synchronously', async () => {
     let calls = 0;const host = createStateStorageHost({ instanceId: 'i', desktopId: 'd', rootDirectory: '/unused', backend: { open: async () => { calls++;return { status: 'rejected', issue: stateIssue('IO_FAILED') }; } } });
     const release = host.release();expect(host.release()).toBe(release);expect((await release).status).toBe('released');
@@ -16,7 +16,7 @@ it('B03: no use means zero open; release is shared and closes admission synchron
 });
 it('B03/B15/B16: close waits for delayed open and admitted actual access; one owner is released once', async () => {
     const entered = defer(), opened = defer(), readEntered = defer(), finishRead = defer();let opens = 0, releases = 0;
-    const host = createStateStorageHost({ instanceId: 'i', desktopId: 'd', rootDirectory: '/unused', limits: { ...DEFAULT_STATE_TRANSPORT_LIMITS, maxPendingOperations: 1 },
+    const host = createStateStorageHost({ instanceId: 'i', desktopId: 'd', rootDirectory: '/unused', limits: { ...DEFAULT_STATE_TRANSPORT_LIMITS, maxPendingRequests: 1 },
         backend: { async open() { opens++;entered.resolve();await opened.promise;return { status: 'opened', storage: { owner: 'i',
             async read() { readEntered.resolve();await finishRead.promise;return { status: 'missing' }; },
             async replace() { return { status: 'applied' }; }, async remove() { return { status: 'applied' }; },

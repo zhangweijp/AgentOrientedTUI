@@ -18,6 +18,7 @@ import { importSkillZipToDirectory } from '../skills/skill-importer.js';
 import { buildMcpServerItemKey, buildMcpToolItemKey } from '../shared/source-control-keys.js';
 
 import type { GuiUpdateEvent } from '../core/host-manager-v2.js';
+import type { Session } from '../types/session.js';
 
 // ✅ V2: 使用 HostManager V2 的 GuiUpdateEvent 类型
 
@@ -210,19 +211,58 @@ const sessionRouter = router({
     events: publicProcedure
         .input(z.object({ id: z.string() }))
         .subscription(({ input, ctx }) => {
-            // ✅ V2: 订阅 HostManagerV2 的 gui-update 事件 (返回 AI SDK v6 ModelMessage)
             return observable<GuiUpdateEvent>((emit) => {
-                const handler = (event: GuiUpdateEvent) => {
-                    if (event.topicId === input.id) {
-                        emit.next(event);
+                const manager = ctx.hostManager.getSessionManager();
+                let session: Session | undefined;
+                let closed = false;
+                let unsubscribe: (() => void) | undefined;
+                const changed = () => {
+                    if (!closed && session && session.state !== 'destroyed' && manager?.getSession(input.id) === session) {
+                        emit.next({ topicId: input.id, type: 'snapshot' });
                     }
                 };
-
-                ctx.hostManager.onGuiUpdate(handler);
-
-                return () => {
-                    // TODO: 实现 unsubscribe
+                const unbindDesktop = () => {
+                    const previous = session;
+                    session = undefined;
+                    previous?.desktop.output.unsubscribe(changed);
                 };
+                const bindDesktop = () => {
+                    const next = manager?.getSession(input.id);
+                    if (next === session) return false;
+                    unbindDesktop();
+                    if (next && next.state !== 'destroyed') {
+                        session = next;
+                        try { next.desktop.output.subscribe(changed); }
+                        catch (error) { unbindDesktop(); throw error; }
+                    }
+                    return true;
+                };
+                const cleanup = () => {
+                    if (closed) return;
+                    closed = true;
+                    try { unbindDesktop(); } finally { unsubscribe?.(); }
+                };
+                try {
+                    bindDesktop();
+                    unsubscribe = ctx.hostManager.onGuiUpdate((event: GuiUpdateEvent) => {
+                        // getSession touches lastAccessTime: foreign traffic must not look up this Topic.
+                        if (closed || event.topicId !== input.id) return;
+                        try { if (bindDesktop() && event.type !== 'snapshot') changed(); }
+                        catch (error) {
+                            emit.next({ topicId: input.id, type: 'snapshot_error',
+                                error: error instanceof Error ? error.message : String(error) });
+                        }
+                        // Chat belongs to the Topic, not to the Session that first opened the stream.
+                        emit.next(event);
+                    });
+                    // Attach before the initial invalidation to close the query/subscription handoff window.
+                    if (session) changed();
+                    else emit.next({ topicId: input.id, type: 'snapshot_error', error: 'Session not available for preview' });
+                } catch (error) {
+                    cleanup();
+                    emit.error(error);
+                }
+                return cleanup;
             });
         }),
 

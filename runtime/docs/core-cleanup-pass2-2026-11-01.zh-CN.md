@@ -13,7 +13,7 @@
 | P2-S1 | SDK 不可达的 LLM Provider 分支和 `useLLMOutputHistory` | View/factory 没有提供者；保留 Host → Worker DOM 事件 → `useLLMOutputChannel` 的真实实时通道 | Luna SDK |
 | P2-S2 | `useAppEnv` 单键包装 | 直接读取现有 `useAppRuntimeContext().launchConfig`；迁移 Terminal、持久化 Hook 和 Agent 开发指导 | Luna SDK |
 | P2-S3 | `resolvePersistentAppName` 及其自测 | 没有生产调用；保留 Runtime 的真实持久化 namespace 和 hydration 行为 | Luna SDK |
-| P2-S4 | SDK 重复的 OperationError/OperationResult 定义 | 直接复用 Runtime SPI 类型；保留 SDK 参数声明与 handler 推断 | Luna SDK |
+| P2-S4 | SDK 重复的 操作错误／结果类型 定义 | 直接复用 Runtime SPI 类型；保留 SDK 参数声明与 handler 推断 | Luna SDK |
 | P2-C1 | Receiver 两个无消费者的转发方法 | 保留 Scope 内的来源捕获和 Ref 参数处理 | Luna Core |
 | P2-C2 | Interaction 四个全局计数镜像 | 从 State/ledger 汇总；上限只能调低，Scope 硬上限 16；关闭中工作仍留在集合并占位 | Luna Core |
 | P2-C3 | Observation 两个全局计数镜像 | 从 Scope Map 汇总；取消的 reservation 结算前继续占位，容量拒绝和释放不变 | Luna Core |
@@ -49,7 +49,7 @@
 | --- | --- |
 | Runtime 全量 | 125 个文件，2097 项通过，0 skip / todo |
 | SDK 全量 | 15 个文件，145 项通过，0 skip / todo |
-| SDK 公开类型 | 通过；OperationResult/OperationError 与 Runtime SPI 同源，handler 推断保留 |
+| SDK 公开类型 | 通过；操作结果／错误类型 与 Runtime SPI 同源，handler 推断保留 |
 | 两包 noUnusedLocals / noUnusedParameters | 均通过 |
 | 构建 | Driver、Runtime、SDK、IDE、Terminal、Lite Browser、Token Monitor、Planning、Host 共 9 项通过 |
 | 新包安装与身份 | 8 个本地 tar，离线安装、禁用安装脚本；745 个包文件逐一与 tar 比较一致，AOTUI 包目录均非 symlink |

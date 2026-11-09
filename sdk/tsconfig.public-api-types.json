@@ -2,8 +2,20 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": "."
+    "rootDir": ".",
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "skipLibCheck": false,
+    "lib": [
+      "ES2022",
+      "DOM"
+    ]
   },
-  "include": ["type-tests/public-api.ts"],
+  "include": [
+    "type-tests/public-api.ts",
+    "type-tests/view-type-tool.ts",
+    "type-tests/app-tools.tsx",
+    "type-tests/ref-parameters.ts"
+  ],
   "exclude": []
 }

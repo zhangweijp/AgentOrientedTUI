@@ -665,7 +665,7 @@ export function updateMessage(id: string, updates: Partial<Message>): void {
     if (db.getRowsModified() > 0) saveToDisk();
 }
 
-// ============ Batch Operations ============
+// ============ Batch Database Calls ============
 
 export function getAllMessagesGroupedByTopic(): Map<string, Message[]> {
     const messages = queryAll('SELECT * FROM messages ORDER BY timestamp ASC', [], (row: any) => ({

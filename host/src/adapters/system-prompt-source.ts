@@ -7,19 +7,16 @@
  * - 注入系统提示词，告诉 LLM 角色定位
  * - timestamp = 0，确保在所有消息之前
  * - 不提供 tools，不执行 toolCall
- * - 静态消息，无需更新通知
+ * - setSystemPrompt 更新后通知，已捕获正文保持
  * 
  * 设计特点:
  * - **最高优先级**: timestamp=0，确保系统提示词排在第一位
  * - **单一职责**: 只负责系统提示词注入
- * - **不可变性**: 系统提示词在创建后不可变
- * - **无副作用**: 不执行任何操作，不触发任何事件
+ * - **捕获**: 每轮返回独立消息对象
+ * - **执行**: 不提供工具执行器
  */
 
-import type { IDrivenSource, MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2';
-type StaticMessageWithTimestamp = MessageWithTimestamp & {
-    region?: 'static';
-};
+import type { ContextDrivenSource, DrivenSourceContext } from '@aotui/agent-driver-v2';
 
 /**
  * SystemPromptDrivenSource 配置
@@ -47,7 +44,7 @@ export interface SystemPromptConfig {
  * - Use AOTUI IDE for code editing
  * 
  * Guidelines:
- * - Always confirm before destructive operations
+ * - Always confirm before destructive actions
  * - Provide clear explanations
  * - Respect user privacy`,
  *   metadata: {
@@ -56,11 +53,11 @@ export interface SystemPromptConfig {
  *   },
  * });
  * 
- * const messages = await source.getMessages();
+ * const { messages } = await source.getContext();
  * // [{ role: 'system', content: '...', timestamp: 0 }]
  * ```
  */
-export class SystemPromptDrivenSource implements IDrivenSource {
+export class SystemPromptDrivenSource implements ContextDrivenSource {
     readonly name = 'SystemPrompt';
     
     private config: SystemPromptConfig;
@@ -85,15 +82,20 @@ export class SystemPromptDrivenSource implements IDrivenSource {
      * 
      * 返回单条系统消息，timestamp = 0
      * 
-     * @returns 系统提示词消息数组（长度为 1）
+     * @returns 本轮 Context，包含单条系统消息和空工具
      */
-    async getMessages(): Promise<MessageWithTimestamp[]> {
-        return [{
-            role: 'system',
-            content: this.config.systemPrompt,
-            timestamp: 0, // ✅ 确保第一位
-            region: 'static',
-        } as StaticMessageWithTimestamp];
+    async getContext(): Promise<DrivenSourceContext> {
+        try {
+            return { messages: [{
+                role: 'system',
+                content: this.config.systemPrompt,
+                timestamp: 0, // ✅ 确保第一位
+                region: 'static',
+            }], tools: {} };
+        } catch (error) {
+            console.error('Failed to capture context from SystemPrompt:', error);
+            return { messages: [], tools: {} };
+        }
     }
 
     /**
@@ -119,35 +121,9 @@ export class SystemPromptDrivenSource implements IDrivenSource {
     }
     
     /**
-     * 获取工具
-     * 
-     * SystemPrompt 不提供工具
-     * 
-     * @returns 空对象
-     */
-    async getTools(): Promise<Record<string, any>> {
-        return {}; // 不提供工具
-    }
-    
-    /**
-     * 执行工具
-     * 
-     * SystemPrompt 不执行工具
-     * 
-     * @returns undefined（表示不处理）
-     */
-    async executeTool(
-        _toolName: string,
-        _args: unknown,
-        _toolCallId: string
-    ): Promise<ToolResult | undefined> {
-        return undefined; // 不执行工具
-    }
-    
-    /**
      * 订阅更新
      * 
-     * SystemPrompt 是静态的，不会变化
+     * 订阅 setSystemPrompt 的变化
      * 
      * @returns 空的取消订阅函数
      */

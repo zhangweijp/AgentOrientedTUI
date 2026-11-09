@@ -1,0 +1,22 @@
+--- a/src/types/tool.ts
++++ b/src/types/tool.ts
+@@ -73,7 +73,7 @@
+ // 0 extends 1 & N checks for any
+ // [N] extends [never] checks for never
+ type NeverOptional<N, T> = 0 extends 1 & N
+-  ? Partial<T>
++  ? Partial<T> | Partial<Record<keyof T, undefined>>
+   : [N] extends [never]
+     ? Partial<Record<keyof T, undefined>>
+     : T;
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -1224,7 +1224,7 @@
+     experimental_context?: unknown;
+ }) => boolean | PromiseLike<boolean>;
+ type ToolExecuteFunction<INPUT, OUTPUT> = (input: INPUT, options: ToolExecutionOptions) => AsyncIterable<OUTPUT> | PromiseLike<OUTPUT> | OUTPUT;
+-type NeverOptional<N, T> = 0 extends 1 & N ? Partial<T> : [N] extends [never] ? Partial<Record<keyof T, undefined>> : T;
++type NeverOptional<N, T> = 0 extends 1 & N ? Partial<T> | Partial<Record<keyof T, undefined>> : [N] extends [never] ? Partial<Record<keyof T, undefined>> : T;
+ type ToolOutputProperties<INPUT, OUTPUT> = NeverOptional<OUTPUT, {
+     /**
+      * An async function that is called with the arguments from the tool call and produces a result.

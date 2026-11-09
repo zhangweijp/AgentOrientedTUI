@@ -1,0 +1,15 @@
+# Bounded Agent author evaluation
+
+This is a review fixture, not a production App or a second SDK. The project owner separately authorized nine isolated author trials on 2026-11-05. Production implementation stayed in the main coding chat.
+
+Three tasks are run three times each, in separate ephemeral model sessions. Fix the model and reasoning configuration, expose only the supplied tasks, public SDK documents and public declarations, allow at most two external repair turns, and retain every request, raw event log, source snapshot, diagnostic and result. Do not manually repair a model's source or change an evaluator after seeing its answer.
+
+The tasks exercise multiple same-type Views with explicit business selection, two App owners sharing one ToolSet, and a guided repair of duplicate declarations / incorrect Schema / missing bindings. Task 3 explicitly names its intended defects; this sample does not measure unguided defect discovery.
+
+`check.mjs` uses actual Preact commits and the Runtime public Registry, without private author APIs. It checks App isolation, stale qualifications, business rejection of closed objects, stable static catalogs, source data in Views rather than receipts, ownership and retained bytes. Task 2 runs the same controller from the pure entry. The trusted harness may use JSDOM for UI tasks; generated pure code must not load Preact or DOM.
+
+The initial model trials used SDK m4.1. The final m4.2 package changes no SDK JavaScript and no definition/controller declaration. Every generated source is then recompiled and executed against the final tar without modification. Original inputs/results and final rechecks remain separate. The one AppTools declaration difference merely spells the existing Preact VNode type by an import reference after removal of an unused type import.
+
+Nine trials with at least eight completed satisfy this plan's sample threshold only if every completed sample passes all critical identity/permission checks. Do not infer population-wide success rates, token savings or general superiority from nine samples. Follow the review report for the precise model/CLI/package hashes and current result. Re-running model generation needs an authenticated service and an explicit authorization for that experiment; ordinary deterministic consumers do not.
+
+2026-11-06 correction: original semantic programs passed 9/9, but input-content compliance is 6/9. Two pure-TS trials read the unexported SDK typebox-schema.d.ts and one repair trial received private Worker declarations. The generated programs have zero private API imports. These are separate axes; public imports cannot establish public-only inputs. Preserve every original event and source. Three fixed replacement cells require Owner review of a sealed-input plan before any new model call. The original G3 threshold is not met.

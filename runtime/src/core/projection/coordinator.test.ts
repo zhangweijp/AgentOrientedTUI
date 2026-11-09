@@ -2,6 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { SemanticProjectionCoordinator } from './coordinator.js';
 
 describe('M3 SemanticProjectionCoordinator (pure TypeScript)', () => {
+    it('joins nested commits without depending on their coalesced notification', async () => {
+        const c = new SemanticProjectionCoordinator(), owner = new AbortController();
+        c.beginCommit(); c.beginCommit(); c.recordMutation('ref');
+        let complete = false;
+        const waiting = c.whenCommitted(owner.signal).then(() => { complete = true; });
+        c.endCommit(); expect(complete).toBe(false);
+        c.endCommit(); await waiting;
+        expect(complete).toBe(true); expect((c as any).commits.size).toBe(0);
+        const token = c.token(); await c.whenCommitted(owner.signal); expect(c.token()).toEqual(token);
+    });
+
+    it('releases an aborted commit wait and refuses already closed owners', async () => {
+        const c = new SemanticProjectionCoordinator(), owner = new AbortController();
+        c.beginCommit(); const waiting = c.whenCommitted(owner.signal); owner.abort();
+        await expect(waiting).rejects.toMatchObject({ code: 'PROJECTION_CLOSED' });
+        expect((c as any).commits.size).toBe(0);
+        await expect(c.whenCommitted(owner.signal)).rejects.toMatchObject({ code: 'PROJECTION_CLOSED' });
+        c.endCommit();
+    });
     it('coalesces view, ref and tool changes inside explicit commit into one notification', async () => {
         const c = new SemanticProjectionCoordinator();
         const observed: Array<{ epoch: number; ready: boolean }> = [];

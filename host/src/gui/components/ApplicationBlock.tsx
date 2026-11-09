@@ -2,7 +2,7 @@
  * ApplicationBlock Component — macOS 26 Liquid Glass redesign
  *
  * Shows: app header (name / status) + view tabs (when >1 view) + active view content.
- * Removed: Recent Operations, View Tree.
+ * Removed: Recent activity, View Tree.
  *
  * @module system-chat/gui/components/ApplicationBlock
  */

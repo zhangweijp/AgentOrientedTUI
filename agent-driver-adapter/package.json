@@ -1,0 +1,38 @@
+{
+  "name": "@aotui/agent-driver-adapter",
+  "version": "0.4.0-srt.1",
+  "description": "Connect AOTUI Runtime observations to Agent Driver contexts.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc",
+    "test:run": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@aotui/runtime": "7.0.0-srt.1",
+    "@aotui/agent-driver-v2": "^0.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "7.0.2",
+    "vitest": "^3.2.4",
+    "@aotui/runtime": "link:../runtime",
+    "@aotui/agent-driver-v2": "link:../agent-driver-v2"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "typescriptVersion": "7.0.2",
+  "sourceCommit": "2bd066d87f5bafd315be9f40889d0a60b9e58e0b",
+  "upstreamPR": "https://github.com/microsoft/TypeScript/pull/64894",
+  "goVersion": "go1.26.2",
+  "platform": "darwin",
+  "arch": "arm64",
+  "sourceArchiveSHA256": "d7bc4e161638605cce59683e7719888a03d1f016dd47b6c545897261c3a37b3f",
+  "patchSHA256": "a4716f8b5062a10273fc0de51b8f6f50cd460167639c29e2d77a22029289812b",
+  "binarySHA256": "08202fcd2ce868584a03a2d650847f8ee903e45705348936b02879a6a4ecb677"
+}

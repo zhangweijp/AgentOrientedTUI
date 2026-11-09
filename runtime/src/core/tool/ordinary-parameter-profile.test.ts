@@ -28,6 +28,11 @@ describe('R01 ordinary-v2 declaration profile', () => {
     if (kind === 'integer') p.properties.a.type = 'integer';
     expect(compileOrdinaryProfile(p)).toBeNull();
   });
+  it('rejects patterns in canonical profiles instead of compiling them into a live validator', () => {
+    const p: any = JSON.parse(JSON.stringify(ordinaryParameterProfile(make())));
+    p.properties.query = { type: 'string', pattern: '^(a+)+$' };
+    expect(compileOrdinaryProfile(p)).toBeNull();
+  });
   it('accepts equivalent object key insertion order without broadening required order', () => {
     const p: any = ordinaryParameterProfile(make());
     const reordered = Object.fromEntries(Object.entries(p).reverse());

@@ -1,0 +1,20 @@
+import Type from 'typebox';
+import { defineToolSet, defineViewTypeTool, getToolCatalog } from '@aotui/sdk';
+import type { ArgsOf, SchemaOf, ToolSetMap } from '@aotui/sdk';
+import type { ArgsOf as PureArgsOf, SchemaOf as PureSchemaOf } from '@aotui/sdk/tools';
+import { edit, input, tools } from './producer.js';
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+type Assert<T extends true> = T;
+type IsAny<T> = 0 extends (1 & T) ? true : false;
+type Expected = { readonly filePath: string; readonly mode: 'append' | 'replace'; readonly tags: readonly number[]; readonly note?: string; readonly revision?: number };
+type _Schema = Assert<Equal<SchemaOf<typeof edit>, typeof input>>;
+type _PureSchema = Assert<Equal<PureSchemaOf<typeof edit>, typeof input>>;
+type _Args = Assert<Equal<ArgsOf<typeof edit>, Expected>>;
+type _PureArgs = Assert<Equal<PureArgsOf<typeof edit>, Expected>>;
+type _NotAny = Assert<Equal<IsAny<ArgsOf<typeof edit>>, false>>;
+type _Keys = Assert<Equal<keyof ToolSetMap<typeof tools>, 'edit'>>;
+export const rootSet = defineToolSet({ edit });
+export const catalog = getToolCatalog(tools);
+export const rootDefinition = defineViewTypeTool({ viewType: 'Root', name: 'open', description: 'Open.', inputSchema: Type.Object({ path: Type.String(), count: Type.Number() }) });
+type _RootArgs = Assert<Equal<PureArgsOf<typeof rootDefinition>, { readonly path: string; readonly count: number }>>;

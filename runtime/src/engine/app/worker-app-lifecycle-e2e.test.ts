@@ -18,13 +18,19 @@ async function facts(name: string, value: object) { const root = process.env.AOT
 it.each(['sync', 'async'] as const)('C2-18/20 actual SDK %s unmount failure is fixed and preserves confirmed flush', async mode => {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c2-unmount-')), app = join(dir, 'app.mjs');
     await linkPreactPeer(dir);
-    await capture(app, `import {h} from 'preact';import {createTUIApp,usePersistentState,View,useViewTypeTool} from ${JSON.stringify(url(join(repo,'sdk/dist/index.js')))};
-let set;function Tools(){const [Save]=useViewTypeTool('save',{description:'Save a value',isMutating:true,params:{value:{type:'number',required:true}}},async args=>{set(args.value);return {success:true};});return h(Save);}
-function Root(){[,set]=usePersistentState('value',0);return h(View,{id:'root',type:'Root'},h(Tools));}
+    await capture(app, `import {h} from 'preact';import Type from 'typebox';import {createTUIApp,defineViewTypeTool,usePersistentState,View,AppTools, ToolRef, defineToolSet} from ${JSON.stringify(url(join(repo,'sdk/dist/index.js')))};
+let set;
+
+const fixtureTools0 = defineToolSet({
+Save: defineViewTypeTool({viewType:'Root',name:'save',description:'Save a value',inputSchema:Type.Object({value:Type.Number()}, {additionalProperties:false}),})
+});
+function Root(){[,set]=usePersistentState('value',0);const Save = fixtureTools0.Save;return h(AppTools, { definition: fixtureTools0, bindings: {
+Save: { execute: async args=>{set(args.value);return {success:true};} }
+} }, h(View,{kind: 'instruction',id:'root',type:'Root'},h(ToolRef, { tool: Save })));}
 const factory=createTUIApp({app_name:'close',component:Root});
 const initialize=factory.initializeComponent.bind(factory);factory.initializeComponent=async(...args)=>{const renderer=await initialize(...args);return {...renderer,${mode === 'async' ? 'async ' : ''}unmount(){renderer.unmount();${mode === 'async' ? 'await Promise.resolve();' : ''}throw Error('private renderer detail');}};};export default factory;`);
     const sandbox = new WorkerSandbox({ appId: 'app', desktopId: 'd', appModulePath: url(app),
-        workerScriptPath: join(repo,'runtime/dist/worker-runtime/index.js'), runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 3000, pool: { initialSize: 0, maxSize: 1 } } }), config: { AOTUI_DATA_DIR: join(dir,'data'), AOTUI_APP_NAME: 'close' } });
+        workerScriptPath: join(repo,'runtime/dist/worker-runtime/index.js'), runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 3000, pool: { initialSize: 0, maxSize: 1 } } }), config: { AOTUI_DATA_DIR: join(dir,'data'), AOTUI_APP_KEY: 'close' } });
     try {
         await sandbox.installDynamic();await invokeObservedTool((sandbox as any).workerHost,'save',{value:7},'root');const worker = (sandbox as any).lease.worker;
         const close = sandbox.close();await expect(close).rejects.toHaveProperty('code','SANDBOX_CLOSE_FAILED');const report = await sandbox.disposeAsync();

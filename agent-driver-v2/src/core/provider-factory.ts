@@ -27,7 +27,7 @@ const ENV_KEY_MAP: Record<string, string> = {
     openrouter: 'OPENROUTER_API_KEY',
 };
 
-export function createLanguageModel(deps: ProviderFactoryDeps) {
+export function createLanguageModel(deps: ProviderFactoryDeps): ReturnType<ReturnType<typeof createProviderRegistry>['languageModel']> {
     const { config, target } = deps;
     const { providerId, modelName, registryModelId } = target;
 

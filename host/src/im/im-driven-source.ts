@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events'
-import type { MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2'
+import type { ContextDrivenSource, DrivenSourceContext, MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2'
 import type { ModelMessage } from 'ai'
-import { dynamicTool, jsonSchema } from 'ai'
+import { jsonSchema } from '@aotui/agent-driver-v2'
 type SessionMessageWithTimestamp = MessageWithTimestamp & {
   region?: 'session'
 }
@@ -325,7 +325,7 @@ function toCompactionSummary(messages: MessageWithTimestamp[]): string {
   ].join('\n')
 }
 
-export class IMDrivenSource {
+export class IMDrivenSource implements ContextDrivenSource {
   readonly name = 'IM'
 
   private readonly sessionKey: string
@@ -335,7 +335,7 @@ export class IMDrivenSource {
   private readonly replaceHistory?: (sessionKey: string, messages: MessageWithTimestamp[]) => void | Promise<void>
   private readonly eventEmitter = new EventEmitter()
 
-  private historyLoaded = false
+  private historyLoading?: Promise<void>
   private messages: MessageWithTimestamp[] = []
 
   constructor(options: IMDrivenSourceOptions) {
@@ -346,7 +346,17 @@ export class IMDrivenSource {
     this.replaceHistory = options.replaceHistory
   }
 
-  async getMessages(): Promise<MessageWithTimestamp[]> {
+  async getContext(): Promise<DrivenSourceContext> {
+    try {
+      const messages = await this.captureMessages()
+      return { messages, tools: this.createTools(), executeTool: (name, args, id) => this.executeCompaction(name, args, id) }
+    } catch (error) {
+      console.error('Failed to capture context from IM:', error)
+      return { messages: [], tools: {} }
+    }
+  }
+
+  private async captureMessages(): Promise<MessageWithTimestamp[]> {
     await this.ensureHistoryLoaded()
 
     return getActiveWindow(this.messages).map((message) => {
@@ -358,8 +368,8 @@ export class IMDrivenSource {
     })
   }
 
-  async getTools(): Promise<Record<string, any>> {
-    const compactTool = dynamicTool({
+  private createTools(): DrivenSourceContext['tools'] {
+    const compactTool: DrivenSourceContext['tools'][string] = {
       description: COMPACTION_TOOL_DESCRIPTION,
       inputSchema: jsonSchema({
         type: 'object',
@@ -391,17 +401,15 @@ export class IMDrivenSource {
         },
         required: ['summary'],
       }),
-      execute: async () => {
-        return 'Use AgentDriver executeTool routing for IM context compaction.'
-      },
-    })
+      type: 'dynamic',
+    }
 
     return {
       [COMPACTION_TOOL_NAME]: compactTool,
     }
   }
 
-  async executeTool(toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> {
+  private async executeCompaction(toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> {
     if (toolName !== COMPACTION_TOOL_NAME) {
       return undefined
     }
@@ -675,19 +683,21 @@ export class IMDrivenSource {
     this.eventEmitter.emit('update')
   }
 
-  private async ensureHistoryLoaded(): Promise<void> {
-    if (this.historyLoaded) {
-      return
+  private ensureHistoryLoaded(): Promise<void> {
+    if (!this.historyLoading) {
+      this.historyLoading = Promise.resolve()
+        .then(async () => {
+          const history = await this.loadHistory?.(this.sessionKey)
+          if (Array.isArray(history) && history.length > 0) {
+            this.messages = mergeMessages(this.messages, history)
+          }
+        })
+        .catch((error) => {
+          this.historyLoading = undefined
+          throw error
+        })
     }
 
-    this.historyLoaded = true
-    if (!this.loadHistory) {
-      return
-    }
-
-    const history = await this.loadHistory(this.sessionKey)
-    if (Array.isArray(history) && history.length > 0) {
-      this.messages = mergeMessages(this.messages, history)
-    }
+    return this.historyLoading
   }
 }

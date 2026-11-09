@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import { createSnapshotCore } from '../../core/snapshot/store.js';
 import { createScopedInteraction } from '../../core/invocation/scoped-interaction.js';
 import type { ExecutionResolver, InteractionAuthority, ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
@@ -24,6 +25,8 @@ export interface SemanticSnapshotReport {
 
 export type SnapshotAcceptance = CommitResult & Readonly<{ healthChanged: boolean }>;
 
+const monotonicNow = () => Math.floor(performance.timeOrigin + performance.now());
+
 /** Owns one App instance's committed source and the Scopes which refer to it. */
 export class SemanticSnapshotReceiver {
     private readonly core: ReturnType<typeof createSnapshotCore>;
@@ -42,7 +45,7 @@ export class SemanticSnapshotReceiver {
     private lastToolCount?: number;
     private stopped = false;
 
-    constructor(readonly appId: string, readonly instanceId: string, private readonly now: () => number = Date.now) {
+    constructor(readonly appId: string, readonly instanceId: string, private readonly now: () => number = monotonicNow) {
         this.core = createSnapshotCore({ now });
         this.core.lifecycle.startApp(appId, instanceId);
     }

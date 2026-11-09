@@ -17,7 +17,7 @@
  *     });
  *     
  *     return (
- *         <View id="chat" type="Chat" name="Chat">
+ *         <View kind="state" id="chat" type="Chat" name="Chat">
  *             {thoughts.map((t, i) => <p key={i}>💭 {t}</p>)}
  *         </View>
  *     );
@@ -66,11 +66,6 @@ export function useLLMOutputChannel(onText: LLMOutputListener): void {
     // Register before the first committed snapshot can notify the Host; a
     // passive effect could miss usage pushed immediately after initial mount.
     useLayoutEffect(() => {
-        // 包装 listener 以使用最新的回调
-        const handler: LLMOutputListener = (event) => {
-            callbackRef.current(event);
-        };
-
         // Worker mode receives the current event emitted by worker-runtime.
         // [RFC-020] 支持 reasoning 字段
         const domHandler = (e: Event) => {
@@ -88,7 +83,7 @@ export function useLLMOutputChannel(onText: LLMOutputListener): void {
                     timestamp: detail.timestamp || Date.now(),
                     meta: detail.meta
                 };
-                handler(event);
+                callbackRef.current(event);
             }
         };
 

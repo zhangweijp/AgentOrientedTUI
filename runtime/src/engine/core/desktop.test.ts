@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Desktop } from './index.js';
-import { createCloseOperation, freezeClose, newCloseState, snapshotClose } from './close-operation.js';
+import { Desktop } from './desktop.js';
+import { createCloseHandle, freezeClose, newCloseState, snapshotClose } from './close-handle.js';
 
 describe('Desktop', () => {
     let desktop: Desktop;
@@ -20,7 +20,7 @@ describe('Desktop', () => {
 
     it('does not expose the retired snapshot-fragment or dispatcher entry points', () => {
         expect(desktop).toHaveProperty('createAppScope');
-        for (const name of ['getSnapshotFragments', 'dispatchOperation', 'dismountView', 'hideView', 'showView', 'mountViewByLink', 'experimentalCreateAppScope']) {
+        for (const name of ['getSnapshotFragments', 'dismountView', 'hideView', 'showView', 'mountViewByLink', 'experimentalCreateAppScope']) {
             expect(desktop).not.toHaveProperty(name);
         }
     });
@@ -30,7 +30,7 @@ describe('Desktop', () => {
             beginClose: vi.fn(() => {
                 const state = newCloseState('app-manager');state.state = 'settled';
                 const report = () => freezeClose({ ...snapshotClose(state), scope: 'app-manager' as const });
-                return createCloseOperation(report, Promise.resolve(report()));
+                return createCloseHandle(report, Promise.resolve(report()));
             }),
             cleanupAsync: vi.fn(async () => undefined),
             reinitializeAll: vi.fn().mockResolvedValue({

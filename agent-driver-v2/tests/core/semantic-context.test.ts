@@ -30,6 +30,31 @@ const response = (toolNames: string[] = []) => ({
 });
 
 describe('atomic source contexts', () => {
+    it('stops capture on an atomic error and releases all prior contexts in reverse despite a release failure', async () => {
+        const events: string[] = [];
+        const source = (name: string, failRelease = false) => ({
+            name, onUpdate: () => () => {},
+            getContext: vi.fn(async () => {
+                events.push('capture-' + name);
+                return { messages: [], tools: {}, release: () => {
+                    events.push('release-' + name);
+                    if (failRelease) throw new Error('release failed');
+                } };
+            }),
+        });
+        const first = source('first'), second = source('second', true), later = source('later');
+        const failure = new Error('capture failed');
+        const failed = { name: 'failed', onUpdate: () => () => {}, getContext: vi.fn(async () => {
+            events.push('capture-failed'); throw failure;
+        }) };
+        const call = vi.fn(), onRunError = vi.fn();
+        const driver = makeDriver([first, second, failed, later], call, vi.fn(), onRunError);
+        await driver.trigger(); await driver['runInFlight'];
+        expect(events).toEqual(['capture-first', 'capture-second', 'capture-failed', 'release-second', 'release-first']);
+        expect(later.getContext).not.toHaveBeenCalled(); expect(call).not.toHaveBeenCalled();
+        expect(onRunError).toHaveBeenCalledExactlyOnceWith(failure);
+    });
+
     it('uses the captured messages, tools and executor even if another consumer observes again', async () => {
         const contexts: DrivenSourceContext[] = [];
         const getContext = vi.fn(async () => {

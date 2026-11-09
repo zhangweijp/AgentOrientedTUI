@@ -281,7 +281,7 @@ describe('IPC ModelRegistry Integration', () => {
             }
         });
 
-        it('should propagate errors from nested operations', async () => {
+        it('should propagate errors from nested calls', async () => {
             const error = new Error('Cache file corrupted');
             vi.mocked(mockModelRegistry.getCacheStatus).mockImplementation(() => {
                 throw error;
@@ -295,11 +295,11 @@ describe('IPC ModelRegistry Integration', () => {
         it('should handle async errors correctly', async () => {
             vi.mocked(mockModelRegistry.refresh).mockImplementation(async () => {
                 await new Promise(resolve => setTimeout(resolve, 10));
-                throw new Error('Async operation failed');
+                throw new Error('Async call failed');
             });
 
             await expect(caller.modelRegistry.refresh()).rejects.toThrow(
-                'Async operation failed'
+                'Async call failed'
             );
         });
     });

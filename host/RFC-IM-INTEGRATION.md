@@ -209,7 +209,7 @@ AgentDriverV2 (共享组件,不修改)
 AgentDriver 回调                        飞书 Card Kit API
   ├── onTextDelta ──────────────────→ FeishuStreamingSession.update()
   ├── onAssistantMessage ───────────→ 持久化 + streaming.close()
-  └── onToolResult ─────────────────→ Desktop.dispatchOperation()
+  └── onToolResult ─────────────────→ persist Tool Result receipt
 ```
 
 ---

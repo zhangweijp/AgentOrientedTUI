@@ -1,0 +1,2780 @@
+diff --git a/agent-driver-v2/src/core/interfaces.ts b/agent-driver-v2/src/core/interfaces.ts
+--- a/agent-driver-v2/src/core/interfaces.ts
++++ b/agent-driver-v2/src/core/interfaces.ts
+@@ -2,7 +2,7 @@
+  * @aotui/agent-driver-v2 - Core Interfaces
+  * 
+  * 定义 Agent Driver V2 的核心接口：
+- * - IDrivenSource: 数据驱动源接口
++ * - ContextDrivenSource: 本轮上下文驱动源接口
+  * - MessageWithTimestamp: 带时间戳的消息
+  * - ToolResult: 工具执行结果
+  * - AgentDriverV2Config: 配置接口
+@@ -80,99 +80,17 @@
+ }
+ 
+ /**
+- * IDrivenSource - 数据驱动源接口
+- * 
+- * 每个 Driven Source 代表一个独立的数据源，负责：
+- * 1. 提供消息（已去重，带时间戳）
+- * 2. 提供工具定义
+- * 3. 执行自己暴露的工具
+- * 4. 通知更新事件
+- * 
+- * 设计原则:
+- * - **单一职责**: 每个 DrivenSource 只负责自己的数据和工具
+- * - **依赖反转**: AgentDriver 依赖接口，不依赖具体实现
+- * - **职责下放**: 消息去重由 DrivenSource 负责，ToolCall 执行由 DrivenSource 负责
+- * 
+- * **实现位置**:
+- * - `IDrivenSource` 接口: agent-driver-v2/src/core/interfaces.ts (本文件)
+- * - `AOTUIDrivenSource`: runtime/src/adapters/aotui-driven-source.ts
+- * - `HostDrivenSource`: host/src/adapters/host-driven-source.ts
+- */
+-export interface IDrivenSource {
+-    /**
+-     * 数据源名称 (用于日志和调试)
+-     */
+-    readonly name: string;
+-
+-    /**
+-     * Atomically capture a model turn. If supplied, Driver does not separately
+-     * call getMessages/getTools for that turn, nor fall back after capture fails.
+-     */
+-    getContext?(): Promise<DrivenSourceContext>;
+-
+-    /**
+-     * 获取该源的所有消息
+-     * 
+-     * **责任**: DrivenSource 自己保证消息已去重
+-     * - AOTUI: 每个 App 只保留最新 Snapshot
+-     * - Host: 不重复
+-     * 
+-     * @returns 消息列表 (带时间戳，用于 AgentDriver 排序)
+-     */
+-    getMessages(): Promise<MessageWithTimestamp[]>;
+-
+-    /**
+-     * 获取该源提供的工具
+-     * 
+-     * @returns 工具定义对象 { toolName: Tool }
+-     */
+-    getTools(): Promise<Record<string, Tool>>;
+-
+-    /**
+-     * 执行工具调用
+-     * 
+-     * **责任**: 由暴露 Tool 的 DrivenSource 负责执行
+-     * - 如果 toolName 不属于该 source，返回 undefined
+-     * - AgentDriver 会遍历所有 sources，找到能执行的那个
+-     * 
+-     * @param toolName - 工具名称
+-     * @param args - 工具参数
+-     * @param toolCallId - ToolCall ID (用于构建 ToolResult)
+-     * @returns ToolResult 或 undefined (如果工具不属于该 source)
+-     */
+-    executeTool(
+-        toolName: string,
+-        args: unknown,
+-        toolCallId: string
+-    ): Promise<ToolResult | undefined>;
+-
+-    /**
+-     * 订阅更新事件
+-     * 
+-     * 当数据源有更新时（如 TUI App 更新、用户发送消息），
+-     * 触发回调函数，通知 AgentDriver 重新聚合数据。
+-     * 
+-     * @param callback - 更新回调函数
+-     * @returns unsubscribe 函数，用于取消订阅
+-     */
+-    onUpdate(callback: () => void): () => void;
+-}
+-
+-/**
+  * Atomic source contract. A model turn owns one captured set of messages, tools,
+  * and tool bindings, so callers do not need to implement split-read methods.
+  */
+ export interface ContextDrivenSource {
+     readonly name: string;
+     getContext(): Promise<DrivenSourceContext>;
+-    getMessages?: never;
+-    getTools?: never;
+-    executeTool?: never;
+     onUpdate(callback: () => void): () => void;
+ }
+ 
+-/** A Driver can combine atomic Context sources with existing split-read sources. */
+-export type DrivenSource = IDrivenSource | ContextDrivenSource;
++/** One captured context per source and model turn. */
++export type DrivenSource = ContextDrivenSource;
+ 
+ /**
+  * AgentDriverV2Config - 配置接口
+diff --git a/agent-driver-v2/src/index.ts b/agent-driver-v2/src/index.ts
+--- a/agent-driver-v2/src/index.ts
++++ b/agent-driver-v2/src/index.ts
+@@ -8,7 +8,6 @@
+ export { jsonSchema } from 'ai';
+ export type { Tool } from 'ai';
+ export type {
+-    IDrivenSource,
+     ContextDrivenSource,
+     DrivenSource,
+     DrivenSourceContext,
+diff --git a/agent-driver-v2/src/core/agent-driver-v2.ts b/agent-driver-v2/src/core/agent-driver-v2.ts
+--- a/agent-driver-v2/src/core/agent-driver-v2.ts
++++ b/agent-driver-v2/src/core/agent-driver-v2.ts
+@@ -8,7 +8,7 @@
+  * 4. 管理工作循环
+  * 
+  * 设计原则：
+- * - **依赖反转**: 依赖 IDrivenSource 接口，不依赖具体实现
++ * - **依赖反转**: 依赖 ContextDrivenSource 接口，不依赖具体实现
+  * - **职责清晰**: AgentDriver 只负责聚合和路由，不负责业务逻辑
+  * - **可扩展**: 易于添加新的 DrivenSource
+  */
+@@ -319,20 +319,13 @@
+     private async captureContexts(retained: CapturedSourceContext[]): Promise<void> {
+         for (const source of this.getActiveSources()) {
+             try {
+-                let context: DrivenSourceContext;
+-                if (typeof source.getContext === 'function') {
+-                    context = await source.getContext();
+-                } else if (typeof source.getMessages === 'function' && typeof source.getTools === 'function') {
+-                    context = { messages: await source.getMessages(), tools: await source.getTools() };
+-                } else {
+-                    throw new Error('DRIVEN_SOURCE_CONTEXT_UNAVAILABLE');
+-                }
++                const context = await source.getContext();
+                 retained.push({ source, context });
+             } catch (error) {
+                 this.logger.error(`Failed to capture context from ${source.name}:`, error);
+                 // An atomic source is part of the current working state. A failed
+                 // capture must fail the turn, not silently omit that state.
+-                if (typeof source.getContext === 'function') throw error;
++                throw error;
+             }
+         }
+     }
+@@ -372,8 +365,7 @@
+             }
+ 
+             if (source) {
+-                const execute = route?.executeTool ?? (typeof source.executeTool === 'function'
+-                    ? source.executeTool.bind(source) : undefined);
++                const execute = route.executeTool;
+                 if (!execute) {
+                     results.push({
+                         toolCallId: toolCall.toolCallId,
+@@ -577,9 +569,7 @@
+             const routes = new Map<string, ToolExecutionRoute>();
+             this.toolToSourceMap.clear();
+             for (const { source, context } of retained) {
+-                const executeTool = context.executeTool
+-                    ? context.executeTool.bind(context)
+-                    : typeof source.executeTool === 'function' ? source.executeTool.bind(source) : undefined;
++                const executeTool = context.executeTool?.bind(context);
+                 for (const [name, tool] of Object.entries(context.tools)) {
+                     tools[name] = tool;
+                     routes.set(name, { source, executeTool });
+diff --git a/host/src/adapters/system-prompt-source.ts b/host/src/adapters/system-prompt-source.ts
+--- a/host/src/adapters/system-prompt-source.ts
++++ b/host/src/adapters/system-prompt-source.ts
+@@ -7,19 +7,16 @@
+  * - 注入系统提示词，告诉 LLM 角色定位
+  * - timestamp = 0，确保在所有消息之前
+  * - 不提供 tools，不执行 toolCall
+- * - 静态消息，无需更新通知
++ * - setSystemPrompt 更新后通知，已捕获正文保持
+  * 
+  * 设计特点:
+  * - **最高优先级**: timestamp=0，确保系统提示词排在第一位
+  * - **单一职责**: 只负责系统提示词注入
+- * - **不可变性**: 系统提示词在创建后不可变
+- * - **无副作用**: 不执行任何操作，不触发任何事件
++ * - **捕获**: 每轮返回独立消息对象
++ * - **执行**: 不提供工具执行器
+  */
+ 
+-import type { IDrivenSource, MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2';
+-type StaticMessageWithTimestamp = MessageWithTimestamp & {
+-    region?: 'static';
+-};
++import type { ContextDrivenSource, DrivenSourceContext } from '@aotui/agent-driver-v2';
+ 
+ /**
+  * SystemPromptDrivenSource 配置
+@@ -56,11 +53,11 @@
+  *   },
+  * });
+  * 
+- * const messages = await source.getMessages();
++ * const { messages } = await source.getContext();
+  * // [{ role: 'system', content: '...', timestamp: 0 }]
+  * ```
+  */
+-export class SystemPromptDrivenSource implements IDrivenSource {
++export class SystemPromptDrivenSource implements ContextDrivenSource {
+     readonly name = 'SystemPrompt';
+     
+     private config: SystemPromptConfig;
+@@ -85,15 +82,20 @@
+      * 
+      * 返回单条系统消息，timestamp = 0
+      * 
+-     * @returns 系统提示词消息数组（长度为 1）
++     * @returns 本轮 Context，包含单条系统消息和空工具
+      */
+-    async getMessages(): Promise<MessageWithTimestamp[]> {
+-        return [{
+-            role: 'system',
+-            content: this.config.systemPrompt,
+-            timestamp: 0, // ✅ 确保第一位
+-            region: 'static',
+-        } as StaticMessageWithTimestamp];
++    async getContext(): Promise<DrivenSourceContext> {
++        try {
++            return { messages: [{
++                role: 'system',
++                content: this.config.systemPrompt,
++                timestamp: 0, // ✅ 确保第一位
++                region: 'static',
++            }], tools: {} };
++        } catch (error) {
++            console.error('Failed to capture context from SystemPrompt:', error);
++            return { messages: [], tools: {} };
++        }
+     }
+ 
+     /**
+@@ -119,35 +121,9 @@
+     }
+     
+     /**
+-     * 获取工具
+-     * 
+-     * SystemPrompt 不提供工具
+-     * 
+-     * @returns 空对象
+-     */
+-    async getTools(): Promise<Record<string, any>> {
+-        return {}; // 不提供工具
+-    }
+-    
+-    /**
+-     * 执行工具
+-     * 
+-     * SystemPrompt 不执行工具
+-     * 
+-     * @returns undefined（表示不处理）
+-     */
+-    async executeTool(
+-        _toolName: string,
+-        _args: unknown,
+-        _toolCallId: string
+-    ): Promise<ToolResult | undefined> {
+-        return undefined; // 不执行工具
+-    }
+-    
+-    /**
+      * 订阅更新
+      * 
+-     * SystemPrompt 是静态的，不会变化
++     * 订阅 setSystemPrompt 的变化
+      * 
+      * @returns 空的取消订阅函数
+      */
+diff --git a/host/src/adapters/host-driven-source.ts b/host/src/adapters/host-driven-source.ts
+--- a/host/src/adapters/host-driven-source.ts
++++ b/host/src/adapters/host-driven-source.ts
+@@ -9,26 +9,13 @@
+  * - ✅ Host 只负责存储和检索
+  */
+ 
+-import type { MessageWithTimestamp } from '@aotui/agent-driver-v2';
++import type { ContextDrivenSource, DrivenSourceContext, MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2';
+ import EventEmitter from 'events';
+ import type { MessageServiceV2 } from '../core/message-service-v2.js';
+-import { dynamicTool, jsonSchema } from 'ai';
++import { jsonSchema } from '@aotui/agent-driver-v2';
+ type SessionMessageWithTimestamp = MessageWithTimestamp & {
+     region?: 'session';
+ };
+-
+-/**
+- * Tool Result (临时定义，避免import问题)
+- */
+-interface ToolResult {
+-    toolCallId: string;
+-    toolName: string;
+-    result?: unknown;
+-    error?: {
+-        code: string;
+-        message: string;
+-    };
+-}
+ 
+ interface CompactionPolicyInput {
+     enabled?: boolean;
+@@ -39,20 +26,9 @@
+ }
+ 
+ /**
+- * IDrivenSource (临时定义，避免跨项目import)
+- */
+-interface IDrivenSource {
+-    readonly name: string;
+-    getMessages(): Promise<MessageWithTimestamp[]>;
+-    getTools(): Promise<Record<string, any>>;
+-    executeTool(toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined>;
+-    onUpdate(callback: () => void): () => void;
+-}
+-
+-/**
+  * HostDrivenSource V2 - 零转换版本
+  */
+-export class HostDrivenSourceV2 implements IDrivenSource {
++export class HostDrivenSourceV2 implements ContextDrivenSource {
+     readonly name = 'Host';
+     private static readonly COMPACTION_TOOL_NAME = 'context_compact';
+     private static readonly COMPACTION_TOOL_DESCRIPTION = [
+@@ -99,26 +75,24 @@
+         this.topicId = topicId;
+     }
+ 
+-    /**
+-     * 获取消息
+-     * 
+-     * ✅ 直接返回，零转换!
+-     */
+-    async getMessages(): Promise<MessageWithTimestamp[]> {
+-        const messages = await this.messageService.getMessagesForLLM(this.topicId);
+-        return messages.map((message) => ({
+-            ...message,
+-            region: message.region ?? 'session',
+-        } as SessionMessageWithTimestamp));
+-    }
+-
+-    /**
+-     * 获取工具
+-     * 
+-     * Host 不提供工具
+-     */
+-    async getTools(): Promise<Record<string, any>> {
+-        const compactTool = dynamicTool({
++    /** Capture messages and the compaction route for the current topic. */
++    async getContext(): Promise<DrivenSourceContext> {
++        const topicId = this.topicId;
++        try {
++            const messages = await this.messageService.getMessagesForLLM(topicId);
++            return {
++                messages: messages.map(message => ({ ...message, region: message.region ?? 'session' } as SessionMessageWithTimestamp)),
++                tools: this.createTools(),
++                executeTool: (name, args, id) => this.executeCompaction(topicId, name, args, id),
++            };
++        } catch (error) {
++            console.error('Failed to capture context from Host:', error);
++            return { messages: [], tools: {} };
++        }
++    }
++
++    private createTools(): DrivenSourceContext['tools'] {
++        const compactTool: DrivenSourceContext['tools'][string] = {
+             description: HostDrivenSourceV2.COMPACTION_TOOL_DESCRIPTION,
+             inputSchema: jsonSchema({
+                 type: 'object',
+@@ -150,10 +124,8 @@
+                 },
+                 required: ['summary'],
+             }),
+-            execute: async (_args: unknown) => {
+-                return 'Use AgentDriver executeTool routing for host context compaction.';
+-            },
+-        });
++            type: 'dynamic',
++        };
+ 
+         return {
+             [HostDrivenSourceV2.COMPACTION_TOOL_NAME]: compactTool,
+@@ -163,11 +135,15 @@
+     /**
+      * 执行工具调用
+      * 
+-     * Host 不执行工具
++     * Execute the captured topic compaction after its identity guard.
+      */
+-    async executeTool(toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> {
++    private async executeCompaction(topicId: string, toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> {
+         if (toolName !== HostDrivenSourceV2.COMPACTION_TOOL_NAME) {
+             return undefined;
++        }
++        if (this.topicId !== topicId) {
++            return { toolName, toolCallId, outcomeStatus: 'rejected',
++                error: { code: 'E_SOURCE_UNAVAILABLE', message: 'The captured topic is no longer active' } };
+         }
+ 
+         const input = (args || {}) as {
+@@ -200,7 +176,7 @@
+         const keepRecentMessages = Number.isInteger(input.keepRecentMessages) && (input.keepRecentMessages as number) > 0
+             ? (input.keepRecentMessages as number)
+             : undefined;
+-        const result = this.messageService.compactContext(this.topicId, {
++        const result = this.messageService.compactContext(topicId, {
+             trigger: 'agent',
+             reason,
+             summary,
+diff --git a/host/src/mcp/source.ts b/host/src/mcp/source.ts
+--- a/host/src/mcp/source.ts
++++ b/host/src/mcp/source.ts
+@@ -1,5 +1,4 @@
+-import { IDrivenSource, MessageWithTimestamp, ToolResult } from "@aotui/agent-driver-v2";
+-import { Tool } from "ai";
++import type { ContextDrivenSource, DrivenSourceContext } from "@aotui/agent-driver-v2";
+ import { MCP } from "./index.js";
+ import { Bus, BusEvent } from "./utils.js";
+ import { Log } from "./utils.js";
+@@ -7,10 +6,9 @@
+ 
+ const log = Log.create({ service: "mcp-driven-source" });
+ 
+-export class McpDrivenSource {
++export class McpDrivenSource implements ContextDrivenSource {
+     public readonly name = "mcp-driven-source";
+     private listeners: (() => void)[] = [];
+-    private toolsCache: Record<string, Tool> = {};
+     private sourceEnabled = true;
+     private disabledTools = new Set<string>();
+     private disabledServers = new Set<string>();
+@@ -80,64 +78,40 @@
+         };
+     }
+ 
+-    async getMessages(): Promise<MessageWithTimestamp[]> {
+-        return [];
+-    }
+-
+-    // @ts-ignore - AI SDK Tool schemas version mismatch
+-    async getTools(): Promise<Record<string, Tool>> {
++    async getContext(): Promise<DrivenSourceContext> {
+         log.info("Fetching tools from MCP manager");
+-        if (!this.sourceEnabled) {
+-            this.toolsCache = {};
+-            return {};
+-        }
++        if (!this.sourceEnabled) return { messages: [], tools: {} };
+         try {
+-            const allTools = await MCP.tools() as Record<string, Tool>;
+-            this.toolsCache = Object.fromEntries(
+-                Object.entries(allTools).filter(([name]) => this.isToolAllowed(name)),
+-            );
+-            return this.toolsCache as any;
+-        } catch (e) {
+-            log.error("Failed to fetch tools", e);
+-            return {};
+-        }
+-    }
+-
+-    async executeTool(toolName: string, args: any, toolCallId: string): Promise<ToolResult | undefined> {
+-        log.info("Executing MCP tool", toolName);
+-        if (!this.toolsCache[toolName]) {
+-            return undefined; // Not an MCP tool or not found
+-        }
+-
+-        try {
+-            const result = await this.toolsCache[toolName].execute!(args, {
+-                toolCallId,
+-                messages: []
+-            });
+-            
+-            // ✅ 关键修复: 工具执行完成后，主动触发更新信号
+-            // 这样 AgentDriver 会进入下一个循环，看到工具执行结果
+-            log.info(`MCP tool ${toolName} executed successfully, triggering update signal`);
+-            this.triggerUpdate();
+-            
++            const allTools: DrivenSourceContext['tools'] = await MCP.tools();
++            const tools = Object.fromEntries(Object.entries(allTools)
++                .filter(([name]) => this.sourceEnabled && this.isToolAllowed(name)));
++            // Binding fixes both the function and its original Tool receiver.
++            const executors = new Map(Object.entries(tools).map(([name, tool]) => [name, tool.execute?.bind(tool)]));
+             return {
+-                toolCallId,
+-                toolName,
+-                result: typeof result === 'string' ? result : JSON.stringify(result)
++                messages: [], tools,
++                executeTool: async (toolName, args, toolCallId) => {
++                    if (!Object.hasOwn(tools, toolName)) return undefined;
++                    if (!this.sourceEnabled || !this.isToolAllowed(toolName)) {
++                        return { toolName, toolCallId, outcomeStatus: 'rejected',
++                            error: { code: 'E_SOURCE_UNAVAILABLE', message: 'The MCP tool source is no longer active' } };
++                    }
++                    log.info("Executing MCP tool", toolName);
++                    try {
++                        const result = await executors.get(toolName)!(args, { toolCallId, messages: [] });
++                        log.info(`MCP tool ${toolName} executed successfully, triggering update signal`);
++                        this.triggerUpdate();
++                        return { toolCallId, toolName, result: typeof result === 'string' ? result : JSON.stringify(result) };
++                    } catch (error) {
++                        log.error(`Error executing MCP tool ${toolName}`, error);
++                        log.info(`MCP tool ${toolName} execution failed, triggering update signal with error`);
++                        this.triggerUpdate();
++                        return { toolCallId, toolName, result: `Error: ${(error as Error).message}` };
++                    }
++                },
+             };
+-        } catch (e: any) {
+-            log.error(`Error executing MCP tool ${toolName}`, e);
+-            
+-            // ✅ 即使工具执行失败，也需要触发更新信号
+-            // 这样 AgentDriver 能看到错误结果并继续处理
+-            log.info(`MCP tool ${toolName} execution failed, triggering update signal with error`);
+-            this.triggerUpdate();
+-            
+-            return {
+-                toolCallId,
+-                toolName,
+-                result: `Error: ${e.message}`
+-            };
++        } catch (error) {
++            log.error("Failed to fetch tools", error);
++            return { messages: [], tools: {} };
+         }
+     }
+ }
+diff --git a/host/src/skills/skill-driven-source.ts b/host/src/skills/skill-driven-source.ts
+--- a/host/src/skills/skill-driven-source.ts
++++ b/host/src/skills/skill-driven-source.ts
+@@ -1,5 +1,5 @@
+-import type { MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2';
+-import { dynamicTool, jsonSchema } from 'ai';
++import type { ContextDrivenSource, DrivenSourceContext, ToolResult } from '@aotui/agent-driver-v2';
++import { jsonSchema } from '@aotui/agent-driver-v2';
+ import { Logger } from '../utils/logger.js';
+ import { SkillCatalogService } from './skill-catalog-service.js';
+ 
+@@ -11,7 +11,7 @@
+     projectPath?: string;
+ }
+ 
+-export class SkillDrivenSource {
++export class SkillDrivenSource implements ContextDrivenSource {
+     readonly name = 'Skill';
+ 
+     private listeners = new Set<() => void>();
+@@ -22,10 +22,6 @@
+ 
+     constructor(options: SkillDrivenSourceOptions = {}) {
+         this.catalog = new SkillCatalogService({ projectPath: options.projectPath });
+-    }
+-
+-    async getMessages(): Promise<MessageWithTimestamp[]> {
+-        return [];
+     }
+ 
+     triggerUpdate(): void {
+@@ -55,13 +51,20 @@
+         };
+     }
+ 
+-    // @ts-ignore - AI SDK Tool schemas version mismatch across workspace packages
+-    async getTools(): Promise<Record<string, any>> {
+-        if (!this.sourceEnabled) {
+-            return {};
++    async getContext(): Promise<DrivenSourceContext> {
++        if (!this.sourceEnabled) return { messages: [], tools: {} };
++        const catalog = this.catalog;
++        try {
++            const skills = await catalog.listSkills();
++            return { messages: [], tools: this.createTools(skills),
++                executeTool: (name, args, id) => this.executeSkill(catalog, name, args, id) };
++        } catch (error) {
++            this.logger.error('Failed to capture skill context', error);
++            return { messages: [], tools: {} };
+         }
++    }
+ 
+-        const skills = await this.catalog.listSkills();
++    private createTools(skills: Awaited<ReturnType<SkillCatalogService['listSkills']>>): DrivenSourceContext['tools'] {
+         const enabledSkills = skills.filter((skill) => !this.disabledSkills.has(skill.name));
+         const description =
+             enabledSkills.length === 0
+@@ -71,7 +74,7 @@
+                     ...enabledSkills.map((skill) => `- ${skill.name}: ${skill.description}`),
+                 ].join('\n');
+ 
+-        const skillTool = dynamicTool({
++        const skillTool: DrivenSourceContext['tools'][string] = {
+             description,
+             inputSchema: jsonSchema({
+                 type: 'object',
+@@ -84,17 +87,15 @@
+                 },
+                 required: ['name'],
+             }),
+-            execute: async (_args: unknown) => {
+-                return 'Use AgentDriver executeTool routing for skill execution.';
+-            },
+-        });
++            type: 'dynamic',
++        };
+ 
+         return {
+             skill: skillTool,
+         };
+     }
+ 
+-    async executeTool(toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> {
++    private async executeSkill(catalog: SkillCatalogService, toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> {
+         if (toolName !== 'skill') {
+             return undefined;
+         }
+@@ -113,9 +114,9 @@
+             };
+         }
+ 
+-        const skill = await this.catalog.getSkill(requested);
++        const skill = await catalog.getSkill(requested);
+         if (!skill) {
+-            const available = (await this.catalog.listSkills()).map((x) => x.name).join(', ') || 'none';
++            const available = (await catalog.listSkills()).map((x) => x.name).join(', ') || 'none';
+             this.triggerUpdate();
+             return {
+                 toolCallId,
+diff --git a/host/src/im/im-driven-source.ts b/host/src/im/im-driven-source.ts
+--- a/host/src/im/im-driven-source.ts
++++ b/host/src/im/im-driven-source.ts
+@@ -1,7 +1,7 @@
+ import { EventEmitter } from 'events'
+-import type { MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2'
++import type { ContextDrivenSource, DrivenSourceContext, MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2'
+ import type { ModelMessage } from 'ai'
+-import { dynamicTool, jsonSchema } from 'ai'
++import { jsonSchema } from '@aotui/agent-driver-v2'
+ type SessionMessageWithTimestamp = MessageWithTimestamp & {
+   region?: 'session'
+ }
+@@ -325,7 +325,7 @@
+   ].join('\n')
+ }
+ 
+-export class IMDrivenSource {
++export class IMDrivenSource implements ContextDrivenSource {
+   readonly name = 'IM'
+ 
+   private readonly sessionKey: string
+@@ -346,7 +346,17 @@
+     this.replaceHistory = options.replaceHistory
+   }
+ 
+-  async getMessages(): Promise<MessageWithTimestamp[]> {
++  async getContext(): Promise<DrivenSourceContext> {
++    try {
++      const messages = await this.captureMessages()
++      return { messages, tools: this.createTools(), executeTool: (name, args, id) => this.executeCompaction(name, args, id) }
++    } catch (error) {
++      console.error('Failed to capture context from IM:', error)
++      return { messages: [], tools: {} }
++    }
++  }
++
++  private async captureMessages(): Promise<MessageWithTimestamp[]> {
+     await this.ensureHistoryLoaded()
+ 
+     return getActiveWindow(this.messages).map((message) => {
+@@ -358,8 +368,8 @@
+     })
+   }
+ 
+-  async getTools(): Promise<Record<string, any>> {
+-    const compactTool = dynamicTool({
++  private createTools(): DrivenSourceContext['tools'] {
++    const compactTool: DrivenSourceContext['tools'][string] = {
+       description: COMPACTION_TOOL_DESCRIPTION,
+       inputSchema: jsonSchema({
+         type: 'object',
+@@ -391,17 +401,15 @@
+         },
+         required: ['summary'],
+       }),
+-      execute: async () => {
+-        return 'Use AgentDriver executeTool routing for IM context compaction.'
+-      },
+-    })
++      type: 'dynamic',
++    }
+ 
+     return {
+       [COMPACTION_TOOL_NAME]: compactTool,
+     }
+   }
+ 
+-  async executeTool(toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> {
++  private async executeCompaction(toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> {
+     if (toolName !== COMPACTION_TOOL_NAME) {
+       return undefined
+     }
+diff --git a/host/src/core/session-manager-v3.ts b/host/src/core/session-manager-v3.ts
+--- a/host/src/core/session-manager-v3.ts
++++ b/host/src/core/session-manager-v3.ts
+@@ -383,7 +383,7 @@
+                 aotuiSource,        // timestamp=1 (instruction) + dynamic (state)
+                 hostSource,         // timestamp=now (user/assistant messages)
+                 skillDrivenSource,
+-                mcpDrivenSource as any,    // Custom MCP Tools
++                mcpDrivenSource,    // Custom MCP Tools
+             ],
+             llm: effectiveLLMConfig,
+             onAssistantMessage: (message) => {
+diff --git a/host/src/core/host-manager-v2.ts b/host/src/core/host-manager-v2.ts
+--- a/host/src/core/host-manager-v2.ts
++++ b/host/src/core/host-manager-v2.ts
+@@ -458,7 +458,7 @@
+                 aotuiSource,
+                 input.source,
+                 skillDrivenSource,
+-                mcpDrivenSource as any,
++                mcpDrivenSource,
+             ],
+             llm: llmConfig,
+             onAssistantMessage: (message) => {
+diff --git a/host/src/im/types.ts b/host/src/im/types.ts
+--- a/host/src/im/types.ts
++++ b/host/src/im/types.ts
+@@ -63,7 +63,6 @@
+ 
+ export interface IMDrivenSourceLike {
+   name: string
+-  getMessages: () => Promise<Array<{ role: string; content: unknown; timestamp: number }>>
+   addMessage: (message: ModelMessage, timestamp?: number) => unknown
+   notifyUpdate: () => void
+   getCompactionToolName?: () => string
+diff --git a/host/src/mcp/index.ts b/host/src/mcp/index.ts
+--- a/host/src/mcp/index.ts
++++ b/host/src/mcp/index.ts
+@@ -1,4 +1,5 @@
+-import { dynamicTool, type Tool, jsonSchema, type JSONSchema7 } from "ai"
++import type { JSONSchema7 } from "ai"
++import { jsonSchema, type Tool } from "@aotui/agent-driver-v2"
+ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
+@@ -97,7 +98,7 @@
+       additionalProperties: false,
+     }
+ 
+-    return dynamicTool({
++    return {
+       description: mcpTool.description ?? "",
+       inputSchema: jsonSchema(schema),
+       execute: async (args: unknown) => {
+@@ -113,7 +114,8 @@
+           },
+         )
+       },
+-    })
++      type: "dynamic",
++    }
+   }
+ 
+   // Store transports for OAuth servers to allow finishing auth
+diff --git a/agent-driver-v2/tests/core/agent-driver-v2.test.ts b/agent-driver-v2/tests/core/agent-driver-v2.test.ts
+--- a/agent-driver-v2/tests/core/agent-driver-v2.test.ts
++++ b/agent-driver-v2/tests/core/agent-driver-v2.test.ts
+@@ -11,7 +11,7 @@
+ import { jsonSchema, type Tool } from 'ai';
+ import { LLMClient } from '../../src/core/llm-client.js';
+ import { AgentDriverV2 } from '../../src/core/agent-driver-v2.js';
+-import type { AgentDriverV2Config, ContextDrivenSource, DrivenSourceContext, LLMResponse, IDrivenSource, MessageWithTimestamp, ToolResult } from '../../src/core/interfaces.js';
++import type { AgentDriverV2Config, ContextDrivenSource, DrivenSourceContext, LLMResponse, MessageWithTimestamp, ToolResult } from '../../src/core/interfaces.js';
+ 
+ 
+ const drivers = new Set<AgentDriverV2>();
+@@ -54,7 +54,7 @@
+ });
+ 
+ // Mock DrivenSource
+-class MockDrivenSource implements IDrivenSource {
++class MockDrivenSource implements ContextDrivenSource {
+     name: string;
+     private messages: MessageWithTimestamp[];
+     private tools: Record<string, any>;
+@@ -66,24 +66,14 @@
+         this.tools = tools;
+     }
+ 
+-    async getMessages(): Promise<MessageWithTimestamp[]> {
+-        return this.messages;
++    async getContext(): Promise<DrivenSourceContext> {
++        return { messages: this.messages, tools: this.tools, executeTool: this.invoke };
+     }
+ 
+-    async getTools(): Promise<Record<string, any>> {
+-        return this.tools;
+-    }
+-
+-    async executeTool(toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> {
+-        if (!this.tools[toolName]) {
+-            return undefined;
+-        }
+-        return {
+-            toolCallId,
+-            toolName,
+-            result: { success: true, data: args },
+-        };
+-    }
++    readonly invoke = vi.fn(async (toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> => {
++        if (!this.tools[toolName]) return undefined;
++        return { toolCallId, toolName, result: { success: true, data: args } };
++    });
+ 
+     onUpdate(callback: () => void): () => void {
+         this.updateCallback = callback;
+@@ -297,7 +287,8 @@
+     });
+ 
+     it('应该将 ToolCall 路由到正确的 DrivenSource', async () => {
+-        const first = vi.spyOn(source1, 'executeTool'), second = vi.spyOn(source2, 'executeTool');
++        const first = source1.invoke, second = source2.invoke;
++        const captureFirst = vi.spyOn(source1, 'getContext'), captureSecond = vi.spyOn(source2, 'getContext');
+         const toolCalls = [
+             { toolCallId: '1', toolName: 'tool1', args: { foo: 'bar' } },
+             { toolCallId: '2', toolName: 'tool2', args: { baz: 'qux' } },
+@@ -313,8 +304,8 @@
+         expect(results[1].output.value).toEqual({ success: true, data: { baz: 'qux' } });
+         expect(first).toHaveBeenCalledExactlyOnceWith('tool1', { foo: 'bar' }, '1');
+         expect(second).toHaveBeenCalledExactlyOnceWith('tool2', { baz: 'qux' }, '2');
+-        expect(first.mock.contexts[0]).toBe(source1);
+-        expect(second.mock.contexts[0]).toBe(source2);
++        expect(first.mock.contexts[0]).toBe(await captureFirst.mock.results[0].value);
++        expect(second.mock.contexts[0]).toBe(await captureSecond.mock.results[0].value);
+         expect(driver.getToolSource('tool1')).toBe(source1);
+         expect(driver.getToolSource('tool2')).toBe(source2);
+         expect(onToolResult).toHaveBeenCalledExactlyOnceWith({ role: 'tool', content: [
+@@ -389,17 +380,17 @@
+             name, getContext: vi.fn(async () => context), onUpdate: () => () => {},
+         });
+ 
+-        it('prefers atomic capture, reads split inputs once in order and retains original tool/Schema references', async () => {
++        it('captures each context once in source order, ignores legacy methods and retains original tool/Schema references', async () => {
+             let released = false;
+             const context: DrivenSourceContext = { messages, tools: { atomic: tool },
+                 release: vi.fn(async () => { await Promise.resolve(); released = true; }) };
+-            const atomic: IDrivenSource = {
++            const atomic = {
+                 name: 'atomic', getContext: vi.fn(async () => context),
+-                getMessages: vi.fn(async () => []), getTools: vi.fn(async () => ({})),
++                getMessages: vi.fn(async () => { throw new Error('legacy messages must not run'); }), getTools: vi.fn(async () => { throw new Error('legacy tools must not run'); }),
+                 executeTool: vi.fn(), onUpdate: () => () => {},
+             };
+             const split = new MockDrivenSource('split', [{ role: 'user', content: 'split', timestamp: 2 }], { split: tool });
+-            const readMessages = vi.spyOn(split, 'getMessages'), readTools = vi.spyOn(split, 'getTools');
++            const readContext = vi.spyOn(split, 'getContext');
+             const localDriver = createDriver({ sources: [atomic, split], llm: { model: 'gpt-4' } });
+ 
+             await runTurn(localDriver);
+@@ -407,9 +398,8 @@
+             expect(atomic.getContext).toHaveBeenCalledTimes(1);
+             expect(atomic.getMessages).not.toHaveBeenCalled();
+             expect(atomic.getTools).not.toHaveBeenCalled();
+-            expect(readMessages).toHaveBeenCalledTimes(1);
+-            expect(readTools).toHaveBeenCalledTimes(1);
+-            expect(readMessages.mock.invocationCallOrder[0]).toBeLessThan(readTools.mock.invocationCallOrder[0]);
++            expect(readContext).toHaveBeenCalledTimes(1);
++            expect(atomic.getContext.mock.invocationCallOrder[0]).toBeLessThan(readContext.mock.invocationCallOrder[0]);
+             expect(model).toHaveBeenCalledTimes(1);
+             expect(model.mock.calls[0][0]).toEqual([{ role: 'user', content: 'controlled turn' }, { role: 'user', content: 'split' }]);
+             expect(model.mock.calls[0][1].atomic).toBe(tool);
+@@ -417,25 +407,19 @@
+             expect(model.mock.calls[0][1].atomic.inputSchema).toBe(schema);
+             expect(localDriver.getToolSource('atomic')).toBe(atomic);
+             expect(localDriver.getToolSource('split')).toBe(split);
+-            expect(readTools).toHaveBeenCalledTimes(1); // Public lookup does not recapture.
++            expect(readContext).toHaveBeenCalledTimes(1); // Public lookup does not recapture.
+             expect(context.release).toHaveBeenCalledTimes(1);
+             expect(released).toBe(true);
+         });
+ 
+-        it.each(['messages', 'tools'])('omits the entire failed split context at %s and continues to the next source', async seam => {
+-            const bad = new MockDrivenSource('bad', [{ role: 'user', content: 'must be omitted', timestamp: 0 }], { bad: tool });
+-            const readMessages = vi.spyOn(bad, 'getMessages'), readTools = vi.spyOn(bad, 'getTools');
+-            if (seam === 'messages') readMessages.mockRejectedValue(new Error('messages failed'));
+-            else readTools.mockRejectedValue(new Error('tools failed'));
++        it('continues after a source returns its own degraded empty context', async () => {
++            const bad = contextSource('degraded', { messages: [], tools: {} });
+             const release = vi.fn();
+             const healthy = contextSource('healthy', { messages, tools: { healthy: tool }, release });
+             const onRunError = vi.fn();
+             const localDriver = createDriver({ sources: [bad, healthy], llm: { model: 'gpt-4' }, onRunError });
+-
+-            await runTurn(localDriver);
+-
+-            expect(readMessages).toHaveBeenCalledTimes(1);
+-            expect(readTools).toHaveBeenCalledTimes(seam === 'messages' ? 0 : 1);
++            await runTurn(localDriver);
++            expect(bad.getContext).toHaveBeenCalledTimes(1);
+             expect(model).toHaveBeenCalledTimes(1);
+             expect(model.mock.calls[0][0]).toEqual([{ role: 'user', content: 'controlled turn' }]);
+             expect(model.mock.calls[0][1]).toEqual({ healthy: tool });
+@@ -448,7 +432,7 @@
+         it('does not fall back to split reads after atomic capture fails, and releases previous captures', async () => {
+             const release = vi.fn(), failure = new Error('atomic failed');
+             const earlier = contextSource('earlier', { messages, tools: {}, release });
+-            const failed: IDrivenSource = {
++            const failed = {
+                 name: 'failed', getContext: vi.fn().mockRejectedValue(failure),
+                 getMessages: vi.fn(async () => messages), getTools: vi.fn(async () => ({ ignored: tool })),
+                 executeTool: vi.fn(), onUpdate: () => () => {},
+@@ -520,20 +504,20 @@
+             const result = vi.fn();
+             const localDriver = createDriver({ sources: [source], llm: { model: 'gpt-4' }, onToolResult: result });
+             model.mockImplementationOnce(async () => {
+-                // Exercise the existing execution-time Source fallback when no executor was captured.
++                // A later Source executor must never replace a missing Context executor.
+                 if (mode === 'late-source') Reflect.set(source, 'executeTool', execute);
+                 return response([{ toolCallId: 'selection-call', toolName: 'counter', args: { value: 9 } }]);
+             });
+ 
+             await runTurn(localDriver);
+ 
+-            expect(execute).toHaveBeenCalledTimes(mode === 'missing' ? 0 : 1);
++            expect(execute).toHaveBeenCalledTimes(mode === 'missing' || mode === 'late-source' ? 0 : 1);
+             expect(fallback).not.toHaveBeenCalled();
+-            if (mode !== 'missing') {
++            if (mode !== 'missing' && mode !== 'late-source') {
+                 expect(execute).toHaveBeenCalledWith('counter', { value: 9 }, 'selection-call');
+-                expect(execute.mock.contexts[0]).toBe(mode === 'late-source' ? source : context);
++                expect(execute.mock.contexts[0]).toBe(context);
+             }
+-            const output = mode === 'missing' ? { type: 'error-json', value: { code: 'E_SOURCE_UNAVAILABLE', message: 'The captured context has no executor for this tool.' } }
++            const output = mode === 'missing' || mode === 'late-source' ? { type: 'error-json', value: { code: 'E_SOURCE_UNAVAILABLE', message: 'The captured context has no executor for this tool.' } }
+                 : mode === 'undefined' ? { type: 'error-json', value: { code: 'E_TOOL_NOT_FOUND', message: 'Tool counter not found' } }
+                 : { type: 'json', value: { mode, args: { value: 9 } } };
+             expect(result).toHaveBeenCalledExactlyOnceWith({ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'selection-call', toolName: 'counter', output }] });
+diff --git a/agent-driver-v2/tests/core/state-machine.test.ts b/agent-driver-v2/tests/core/state-machine.test.ts
+--- a/agent-driver-v2/tests/core/state-machine.test.ts
++++ b/agent-driver-v2/tests/core/state-machine.test.ts
+@@ -4,7 +4,7 @@
+ 
+ import { describe, it, expect, vi, beforeEach } from 'vitest';
+ import { AgentDriverV2 } from '../../src/core/agent-driver-v2.js';
+-import type { IDrivenSource, AgentState } from '../../src/core/interfaces.js';
++import type { ContextDrivenSource, AgentState } from '../../src/core/interfaces.js';
+ 
+ function stubLlmCall(driver: AgentDriverV2) {
+     const call = vi.fn().mockResolvedValue({
+@@ -28,7 +28,7 @@
+ }
+ 
+ describe('AgentDriver State Machine', () => {
+-    let mockSource: IDrivenSource;
++    let mockSource: ContextDrivenSource;
+     let stateChangeLog: Array<{ old: AgentState; new: AgentState }>;
+ 
+     beforeEach(() => {
+@@ -36,15 +36,17 @@
+ 
+         mockSource = {
+             name: 'MockSource',
+-            getMessages: vi.fn().mockResolvedValue([
+-                {
+-                    role: 'user',
+-                    content: 'test message',
+-                    timestamp: Date.now(),
+-                },
+-            ]),
+-            getTools: vi.fn().mockResolvedValue({}),
+-            executeTool: vi.fn().mockResolvedValue(undefined),
++            getContext: vi.fn().mockResolvedValue({
++                messages: [
++                    {
++                        role: 'user',
++                        content: 'test message',
++                        timestamp: Date.now(),
++                    },
++                ],
++                tools: {},
++                executeTool: vi.fn().mockResolvedValue(undefined),
++            }),
+             onUpdate: vi.fn().mockReturnValue(() => { }),
+         };
+     });
+@@ -118,13 +120,13 @@
+         // 等待 run 完成
+         await waitForIdle(driver);
+         expect(call).toHaveBeenCalledTimes(1);
+-        expect(mockSource.getMessages).toHaveBeenCalledTimes(2);
++        expect(mockSource.getContext).toHaveBeenCalledTimes(2);
+         expect(driver.hasPendingUpdate()).toBe(false);
+     });
+ 
+     it('should dispose correctly', () => {
+         const unsubscribe = vi.fn();
+-        const mockSourceWithUnsubscribe: IDrivenSource = {
++        const mockSourceWithUnsubscribe: ContextDrivenSource = {
+             ...mockSource,
+             onUpdate: vi.fn().mockReturnValue(unsubscribe),
+         };
+@@ -142,33 +144,37 @@
+ 
+ describe('Tool Mapping', () => {
+     it('should build correct tool-to-source mapping', async () => {
+-        const source1: IDrivenSource = {
++        const source1: ContextDrivenSource = {
+             name: 'Source1',
+-            getMessages: vi.fn().mockResolvedValue([]),
+-            getTools: vi.fn().mockResolvedValue({
+-                tool1: {
+-                    description: 'Tool 1',
+-                    parameters: {},
+-                },
+-                tool2: {
+-                    description: 'Tool 2',
+-                    parameters: {},
+-                },
+-            }),
+-            executeTool: vi.fn().mockResolvedValue(undefined),
+-            onUpdate: vi.fn().mockReturnValue(() => { }),
+-        };
+-
+-        const source2: IDrivenSource = {
++            getContext: vi.fn().mockResolvedValue({
++                messages: [],
++                tools: {
++                    tool1: {
++                        description: 'Tool 1',
++                        parameters: {},
++                    },
++                    tool2: {
++                        description: 'Tool 2',
++                        parameters: {},
++                    },
++                },
++                executeTool: vi.fn().mockResolvedValue(undefined),
++            }),
++            onUpdate: vi.fn().mockReturnValue(() => { }),
++        };
++
++        const source2: ContextDrivenSource = {
+             name: 'Source2',
+-            getMessages: vi.fn().mockResolvedValue([]),
+-            getTools: vi.fn().mockResolvedValue({
+-                tool3: {
+-                    description: 'Tool 3',
+-                    parameters: {},
+-                },
+-            }),
+-            executeTool: vi.fn().mockResolvedValue(undefined),
++            getContext: vi.fn().mockResolvedValue({
++                messages: [],
++                tools: {
++                    tool3: {
++                        description: 'Tool 3',
++                        parameters: {},
++                    },
++                },
++                executeTool: vi.fn().mockResolvedValue(undefined),
++            }),
+             onUpdate: vi.fn().mockReturnValue(() => { }),
+         };
+ 
+@@ -196,16 +202,18 @@
+             result: { data: 'result' },
+         });
+ 
+-        const source: IDrivenSource = {
++        const source: ContextDrivenSource = {
+             name: 'TestSource',
+-            getMessages: vi.fn().mockResolvedValue([]),
+-            getTools: vi.fn().mockResolvedValue({
+-                search: {
+-                    description: 'Search tool',
+-                    parameters: {},
+-                },
+-            }),
+-            executeTool,
++            getContext: vi.fn().mockResolvedValue({
++                messages: [],
++                tools: {
++                    search: {
++                        description: 'Search tool',
++                        parameters: {},
++                    },
++                },
++                executeTool,
++            }),
+             onUpdate: vi.fn().mockReturnValue(() => { }),
+         };
+ 
+@@ -228,25 +236,29 @@
+ 
+ describe('Message Collection', () => {
+     it('should collect and sort messages by timestamp', async () => {
+-        const source1: IDrivenSource = {
++        const source1: ContextDrivenSource = {
+             name: 'Source1',
+-            getMessages: vi.fn().mockResolvedValue([
+-                { role: 'user', content: 'Message 2', timestamp: 200 },
+-                { role: 'user', content: 'Message 4', timestamp: 400 },
+-            ]),
+-            getTools: vi.fn().mockResolvedValue({}),
+-            executeTool: vi.fn().mockResolvedValue(undefined),
+-            onUpdate: vi.fn().mockReturnValue(() => { }),
+-        };
+-
+-        const source2: IDrivenSource = {
++            getContext: vi.fn().mockResolvedValue({
++                messages: [
++                    { role: 'user', content: 'Message 2', timestamp: 200 },
++                    { role: 'user', content: 'Message 4', timestamp: 400 },
++                ],
++                tools: {},
++                executeTool: vi.fn().mockResolvedValue(undefined),
++            }),
++            onUpdate: vi.fn().mockReturnValue(() => { }),
++        };
++
++        const source2: ContextDrivenSource = {
+             name: 'Source2',
+-            getMessages: vi.fn().mockResolvedValue([
+-                { role: 'user', content: 'Message 1', timestamp: 100 },
+-                { role: 'user', content: 'Message 3', timestamp: 300 },
+-            ]),
+-            getTools: vi.fn().mockResolvedValue({}),
+-            executeTool: vi.fn().mockResolvedValue(undefined),
++            getContext: vi.fn().mockResolvedValue({
++                messages: [
++                    { role: 'user', content: 'Message 1', timestamp: 100 },
++                    { role: 'user', content: 'Message 3', timestamp: 300 },
++                ],
++                tools: {},
++                executeTool: vi.fn().mockResolvedValue(undefined),
++            }),
+             onUpdate: vi.fn().mockReturnValue(() => { }),
+         };
+ 
+@@ -261,8 +273,8 @@
+         await waitForIdle(driver);
+ 
+         // 验证 getMessages 被调用
+-        expect(source1.getMessages).toHaveBeenCalled();
+-        expect(source2.getMessages).toHaveBeenCalled();
++        expect(source1.getContext).toHaveBeenCalled();
++        expect(source2.getContext).toHaveBeenCalled();
+ 
+         // 验证消息按时间戳排序 (这个需要访问私有方法，所以测试有限)
+     });
+diff --git a/agent-driver-v2/tests/core/semantic-context.test.ts b/agent-driver-v2/tests/core/semantic-context.test.ts
+--- a/agent-driver-v2/tests/core/semantic-context.test.ts
++++ b/agent-driver-v2/tests/core/semantic-context.test.ts
+@@ -30,6 +30,31 @@
+ });
+ 
+ describe('atomic source contexts', () => {
++    it('stops capture on an atomic error and releases all prior contexts in reverse despite a release failure', async () => {
++        const events: string[] = [];
++        const source = (name: string, failRelease = false) => ({
++            name, onUpdate: () => () => {},
++            getContext: vi.fn(async () => {
++                events.push('capture-' + name);
++                return { messages: [], tools: {}, release: () => {
++                    events.push('release-' + name);
++                    if (failRelease) throw new Error('release failed');
++                } };
++            }),
++        });
++        const first = source('first'), second = source('second', true), later = source('later');
++        const failure = new Error('capture failed');
++        const failed = { name: 'failed', onUpdate: () => () => {}, getContext: vi.fn(async () => {
++            events.push('capture-failed'); throw failure;
++        }) };
++        const call = vi.fn(), onRunError = vi.fn();
++        const driver = makeDriver([first, second, failed, later], call, vi.fn(), onRunError);
++        await driver.trigger(); await driver['runInFlight'];
++        expect(events).toEqual(['capture-first', 'capture-second', 'capture-failed', 'release-second', 'release-first']);
++        expect(later.getContext).not.toHaveBeenCalled(); expect(call).not.toHaveBeenCalled();
++        expect(onRunError).toHaveBeenCalledExactlyOnceWith(failure);
++    });
++
+     it('uses the captured messages, tools and executor even if another consumer observes again', async () => {
+         const contexts: DrivenSourceContext[] = [];
+         const getContext = vi.fn(async () => {
+diff --git a/host/test/host-driven-source.test.ts b/host/test/host-driven-source.test.ts
+--- a/host/test/host-driven-source.test.ts
++++ b/host/test/host-driven-source.test.ts
+@@ -1,4 +1,5 @@
+ import { describe, it, expect, vi, beforeEach } from 'vitest';
++import type { MessageServiceV2 } from '../src/core/message-service-v2.js';
+ import { HostDrivenSourceV2 } from '../src/adapters/host-driven-source.js';
+ 
+ describe('HostDrivenSourceV2', () => {
+@@ -24,7 +25,7 @@
+     });
+ 
+     it('should return LLM filtered messages from MessageService', async () => {
+-        const messages = await source.getMessages();
++        const messages = await source.getContext().then(context => context.messages);
+         expect(messageServiceMock.getMessagesForLLM).toHaveBeenCalledWith(topicId);
+         expect(messages).toHaveLength(1);
+         expect(messages[0]).toMatchObject({
+@@ -37,7 +38,7 @@
+     });
+ 
+     it('should expose context_compact tool', async () => {
+-        const tools = await source.getTools();
++        const tools = await source.getContext().then(context => context.tools);
+         expect(Object.keys(tools)).toContain('context_compact');
+         expect((tools as any).context_compact.description).toContain('## Goal');
+         expect((tools as any).context_compact.description).toContain('When to trigger compaction:');
+@@ -46,10 +47,10 @@
+     });
+ 
+     it('should route context_compact execution to MessageService with agent trigger', async () => {
+-        const result = await source.executeTool('context_compact', {
++        const result = await source.getContext().then(context => context.executeTool!('context_compact', {
+             reason: 'manual request',
+             summary: '## Goal\nmanual compact',
+-        }, 'tc_1');
++        }, 'tc_1'));
+ 
+         expect(messageServiceMock.compactContext).toHaveBeenCalledWith(topicId, {
+             trigger: 'agent',
+@@ -72,11 +73,11 @@
+     });
+ 
+     it('should allow force-triggering context_compact from agent tool call', async () => {
+-        await source.executeTool('context_compact', {
++        await source.getContext().then(context => context.executeTool!('context_compact', {
+             reason: 'force test',
+             summary: '## Goal\nforce compact',
+             force: true,
+-        }, 'tc_force');
++        }, 'tc_force'));
+ 
+         expect(messageServiceMock.compactContext).toHaveBeenCalledWith(topicId, {
+             trigger: 'agent',
+@@ -89,7 +90,7 @@
+     });
+ 
+     it('should reject context_compact call when summary is missing', async () => {
+-        const result = await source.executeTool('context_compact', { reason: 'missing summary' }, 'tc_missing');
++        const result = await source.getContext().then(context => context.executeTool!('context_compact', { reason: 'missing summary' }, 'tc_missing'));
+ 
+         expect(messageServiceMock.compactContext).not.toHaveBeenCalled();
+         expect(result).toEqual({
+@@ -107,11 +108,11 @@
+     });
+ 
+     it('should pass LLM-provided summary into context_compact call', async () => {
+-        await source.executeTool('context_compact', {
++        await source.getContext().then(context => context.executeTool!('context_compact', {
+             reason: 'llm summary path',
+             summary: '## Goal\ncompress now',
+             force: true,
+-        }, 'tc_summary');
++        }, 'tc_summary'));
+ 
+         expect(messageServiceMock.compactContext).toHaveBeenCalledWith(topicId, {
+             trigger: 'agent',
+@@ -171,3 +172,58 @@
+         expect(messageServiceMock.estimateContextTokens).not.toHaveBeenCalled();
+     });
+ });
++
++describe('Host topic scope proof', () => {
++  function makeHost() {
++    const service = {
++      getMessagesForLLM: vi.fn(async (topic: string) => [{ role: 'user' as const, content: topic, timestamp: 1 }]),
++      compactContext: vi.fn((topic: string) => ({ compacted: true, trigger: 'agent', summary: topic, compactedMessageCount: 2, cleanedToolResultCount: 1, syntheticMessages: [] })),
++    };
++    return { service, source: new HostDrivenSourceV2(service as unknown as MessageServiceV2, 'A') };
++  }
++  it('preserves same-topic messages, compaction and notification', async () => {
++    const { source, service } = makeHost(), update = vi.fn();
++    source.onUpdate(update);
++    const context = await source.getContext(), result = await context.executeTool?.('context_compact', { summary: 'Summary', force: true }, 'normal');
++    expect(context.messages).toEqual([{ role: 'user', content: 'A', timestamp: 1, region: 'session' }]);
++    expect(result).toEqual({ toolName: 'context_compact', toolCallId: 'normal', result: { success: true, trigger: 'agent', summary: 'A', compactedMessageCount: 2, cleanedToolResultCount: 1 } });
++    expect(update).toHaveBeenCalledTimes(1);
++  });
++  it.each(['Summary', ''] as const)('rejects the old topic before business input: %j', async summary => {
++    const { source, service } = makeHost(), context = await source.getContext(), update = vi.fn();
++    source.switchTopic('B'); source.onUpdate(update);
++    const result = await context.executeTool?.('context_compact', { summary }, 'stale');
++    expect(result).toMatchObject({ outcomeStatus: 'rejected', error: { code: 'E_SOURCE_UNAVAILABLE' } });
++    expect(service.compactContext).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled();
++  });
++  it('does not mix A messages with B executor across an awaited read', async () => {
++    const { source, service } = makeHost();
++    let finish!: (messages: Array<{ role: 'user'; content: string; timestamp: number }>) => void;
++    service.getMessagesForLLM.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
++    const pending = source.getContext();
++    expect(service.getMessagesForLLM).toHaveBeenCalledExactlyOnceWith('A');
++    source.switchTopic('B'); finish([{ role: 'user', content: 'A', timestamp: 1 }]);
++    const first = await pending, old = await first.executeTool?.('context_compact', { summary: 'Old' }, 'old');
++    const current = await source.getContext(), result = await current.executeTool?.('context_compact', { summary: 'New' }, 'new');
++    expect(first.messages[0].content).toBe('A');
++    expect(old).toMatchObject({ outcomeStatus: 'rejected', error: { code: 'E_SOURCE_UNAVAILABLE' } });
++    expect(service.compactContext).toHaveBeenCalledTimes(1);
++    expect(service.compactContext.mock.calls[0][0]).toBe('B');
++    expect(current.messages[0].content).toBe('B');
++  });
++});
++
++ it('returns a complete empty context after message failure, diagnoses it and retries next capture', async () => {
++    const failure = new Error('messages unavailable');
++    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
++    const read = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue([{ role: 'user', content: 'healthy', timestamp: 1 }]);
++    const source = new HostDrivenSourceV2({ getMessagesForLLM: read } as unknown as MessageServiceV2, 'topic');
++    try {
++      await expect(source.getContext()).resolves.toEqual({ messages: [], tools: {} });
++      expect(diagnostic).toHaveBeenCalledExactlyOnceWith('Failed to capture context from Host:', failure);
++      const recovered = await source.getContext();
++      expect(recovered.messages).toEqual([{ role: 'user', content: 'healthy', timestamp: 1, region: 'session' }]);
++      expect(recovered.tools).toHaveProperty('context_compact');
++      expect(read).toHaveBeenCalledTimes(2);
++    } finally { diagnostic.mockRestore(); }
++ });
+diff --git a/host/test/adapters/system-prompt-source.test.ts b/host/test/adapters/system-prompt-source.test.ts
+--- a/host/test/adapters/system-prompt-source.test.ts
++++ b/host/test/adapters/system-prompt-source.test.ts
+@@ -4,8 +4,9 @@
+  * 单元测试
+  */
+ 
+-import { describe, it, expect } from 'vitest';
+-import { SystemPromptDrivenSource } from '../src/adapters/system-prompt-source.js';
++import { describe, it, expect, vi } from 'vitest';
++import { AgentDriverV2, type ContextDrivenSource } from '@aotui/agent-driver-v2';
++import { SystemPromptDrivenSource } from '../../src/adapters/system-prompt-source.js';
+ 
+ describe('SystemPromptDrivenSource', () => {
+     describe('Constructor', () => {
+@@ -34,13 +35,13 @@
+         });
+     });
+     
+-    describe('getMessages', () => {
++    describe('getContext messages', () => {
+         it('should return system message with timestamp 0', async () => {
+             const source = new SystemPromptDrivenSource({
+                 systemPrompt: 'Test prompt',
+             });
+             
+-            const messages = await source.getMessages();
++            const messages = await source.getContext().then(context => context.messages);
+             
+             expect(messages).toHaveLength(1);
+             expect(messages[0]).toMatchObject({
+@@ -55,35 +56,80 @@
+                 systemPrompt: 'Test prompt',
+             });
+             
+-            const messages1 = await source.getMessages();
+-            const messages2 = await source.getMessages();
++            const messages1 = await source.getContext().then(context => context.messages);
++            const messages2 = await source.getContext().then(context => context.messages);
+             
+             expect(messages1).toEqual(messages2);
+         });
++
++        it('isolates a failed prompt read, continues the real Driver and recovers on the next capture', async () => {
++            const failure = new Error('Prompt provider temporarily unavailable');
++            let failRead = false;
++            const source = new SystemPromptDrivenSource({
++                get systemPrompt() {
++                    if (failRead) throw failure;
++                    return 'Recovered instructions';
++                },
++            });
++            const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
++            const capture = vi.spyOn(source, 'getContext');
++            const release = vi.fn(), onRunError = vi.fn();
++            const healthy: ContextDrivenSource = {
++                name: 'healthy',
++                getContext: vi.fn(async () => {
++                    driver.stop();
++                    return { messages: [], tools: {}, release };
++                }),
++                onUpdate: () => () => {},
++            };
++            const driver = new AgentDriverV2({
++                sources: [source, healthy], llm: { model: 'openai:controlled-prompt-read' }, onRunError,
++            });
++            try {
++                failRead = true;
++                await driver.trigger();
++                await driver['runInFlight'];
++                expect(healthy.getContext).toHaveBeenCalledTimes(1);
++                expect(onRunError).not.toHaveBeenCalled();
++                expect(release).toHaveBeenCalledTimes(1);
++                expect(capture).toHaveBeenCalledTimes(1);
++                await expect(capture.mock.results[0].value).resolves.toStrictEqual({ messages: [], tools: {} });
++                expect(diagnostic).toHaveBeenCalledExactlyOnceWith('Failed to capture context from SystemPrompt:', failure);
++                failRead = false;
++                await expect(source.getContext()).resolves.toStrictEqual({
++                    messages: [{ role: 'system', content: 'Recovered instructions', timestamp: 0, region: 'static' }], tools: {},
++                });
++                expect(diagnostic).toHaveBeenCalledTimes(1);
++                expect(() => source.setSystemPrompt('   ')).toThrow('systemPrompt cannot be empty');
++                expect(() => new SystemPromptDrivenSource({ get systemPrompt(): string { throw failure; } })).toThrow(failure);
++            } finally {
++                driver.stop();
++                await driver['runInFlight'];
++                driver.dispose();
++                capture.mockRestore();
++                diagnostic.mockRestore();
++            }
++        });
+     });
+     
+-    describe('getTools', () => {
++    describe('getContext tools', () => {
+         it('should return empty object', async () => {
+             const source = new SystemPromptDrivenSource({
+                 systemPrompt: 'Test',
+             });
+             
+-            const tools = await source.getTools();
++            const tools = await source.getContext().then(context => context.tools);
+             expect(Object.keys(tools)).toHaveLength(0);
+         });
+     });
+     
+-    describe('executeTool', () => {
++    describe('no executor', () => {
+         it('should return undefined', async () => {
+             const source = new SystemPromptDrivenSource({
+                 systemPrompt: 'Test',
+             });
+             
+-            const result = await source.executeTool(
+-                'any_tool',
+-                {},
+-                'call_123'
+-            );
++            const result = (await source.getContext()).executeTool;
+             
+             expect(result).toBeUndefined();
+         });
+@@ -102,21 +148,20 @@
+             unsubscribe();
+         });
+         
+-        it('should never call callback', (done) => {
+-            const source = new SystemPromptDrivenSource({
+-                systemPrompt: 'Test',
+-            });
+-            
+-            let called = false;
+-            source.onUpdate(() => {
+-                called = true;
+-            });
+-            
+-            // Wait and verify callback was never called
+-            setTimeout(() => {
+-                expect(called).toBe(false);
+-                done();
+-            }, 100);
++        it('does not notify for capture, but publishes prompt changes without altering old captures', async () => {
++            const source = new SystemPromptDrivenSource({ systemPrompt: 'Test' });
++            const changed = vi.fn();
++            const off = source.onUpdate(changed);
++            const first = await source.getContext();
++            expect(changed).not.toHaveBeenCalled();
++            source.setSystemPrompt('Updated');
++            const second = await source.getContext();
++            expect(first.messages).toEqual([{ role: 'system', content: 'Test', timestamp: 0, region: 'static' }]);
++            expect(second.messages).toEqual([{ role: 'system', content: 'Updated', timestamp: 0, region: 'static' }]);
++            expect(changed).toHaveBeenCalledTimes(1);
++            off();
++            source.setSystemPrompt('After unsubscribe');
++            expect(changed).toHaveBeenCalledTimes(1);
+         });
+     });
+     
+diff --git a/host/test/mcp-driven-source.test.ts b/host/test/mcp-driven-source.test.ts
+--- a/host/test/mcp-driven-source.test.ts
++++ b/host/test/mcp-driven-source.test.ts
+@@ -1,9 +1,8 @@
+-import { describe, it, expect, vi, beforeEach } from 'vitest';
++import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+ import { McpDrivenSource } from '../src/mcp/source.js';
+ import { MCP } from '../src/mcp/index.js';
+-import { AgentDriverV2, type ContextDrivenSource } from '@aotui/agent-driver-v2';
++import { AgentDriverV2, jsonSchema, type Tool, type ContextDrivenSource, type DrivenSourceContext } from '@aotui/agent-driver-v2';
+ import { LLMClient } from '@aotui/agent-driver-v2/dist/core/llm-client.js';
+-import { dynamicTool, jsonSchema } from 'ai';
+ import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
+ 
+ // Mock MCP Manager
+@@ -13,12 +12,16 @@
+     }
+ }));
+ 
++beforeEach(() => vi.mocked(MCP.tools).mockReset().mockResolvedValue({}));
++afterEach(() => vi.restoreAllMocks());
++
+ describe('McpDrivenSource', () => {
+     let source: McpDrivenSource;
+ 
+     beforeEach(() => {
+         vi.clearAllMocks();
+         source = new McpDrivenSource();
++        vi.mocked(MCP.tools).mockResolvedValue({});
+     });
+ 
+     it('should have the correct name', () => {
+@@ -26,24 +29,26 @@
+     });
+ 
+     it('should fetch tools correctly', async () => {
+-        const mockTool = {
++        const mockTool: Tool = {
++            inputSchema: jsonSchema({ type: 'object', properties: {} }),
+             execute: vi.fn().mockResolvedValue('tool_success_result')
+         };
+-        (MCP.tools as any).mockResolvedValue({ 'test-tool': mockTool });
+-
+-        const tools = await source.getTools();
++        vi.mocked(MCP.tools).mockResolvedValue({ 'test-tool': mockTool });
++
++        const tools = (await source.getContext()).tools;
+         expect(MCP.tools).toHaveBeenCalled();
+         expect(tools['test-tool']).toBe(mockTool);
+     });
+ 
+     it('should execute tool successfully', async () => {
+-        const mockTool = {
++        const mockTool: Tool = {
++            inputSchema: jsonSchema({ type: 'object', properties: {} }),
+             execute: vi.fn().mockResolvedValue('tool_success_result')
+         };
+-        (MCP.tools as any).mockResolvedValue({ 'test-tool': mockTool });
+-        await source.getTools(); // prime the cache
+-
+-        const result = await source.executeTool('test-tool', { arg1: 'value' }, 'call_123');
++        vi.mocked(MCP.tools).mockResolvedValue({ 'test-tool': mockTool });
++        const context = await source.getContext();
++
++        const result = await context.executeTool!('test-tool', { arg1: 'value' }, 'call_123');
+ 
+         expect(mockTool.execute).toHaveBeenCalledWith(
+             { arg1: 'value' },
+@@ -57,13 +62,14 @@
+     });
+ 
+     it('should handle tool execution errors', async () => {
+-        const mockTool = {
++        const mockTool: Tool = {
++            inputSchema: jsonSchema({ type: 'object', properties: {} }),
+             execute: vi.fn().mockRejectedValue(new Error('Tool failed'))
+         };
+-        (MCP.tools as any).mockResolvedValue({ 'error-tool': mockTool });
+-        await source.getTools(); // prime the cache
+-
+-        const result = await source.executeTool('error-tool', {}, 'call_456');
++        vi.mocked(MCP.tools).mockResolvedValue({ 'error-tool': mockTool });
++        const context = await source.getContext();
++
++        const result = await context.executeTool!('error-tool', {}, 'call_456');
+ 
+         expect(result).toEqual({
+             toolCallId: 'call_456',
+@@ -73,13 +79,13 @@
+     });
+ 
+     it('should handle missing tools gracefully', async () => {
+-        const result = await source.executeTool('non-existent-tool', {}, 'call_789');
++        const result = await (await source.getContext()).executeTool!('non-existent-tool', {}, 'call_789');
+         expect(result).toBeUndefined();
+     });
+ });
+ 
+ describe('McpDrivenSource through the current Driver and model SDK', () => {
+-    it.each(['success', 'effect-then-throw'] as const)('executes the cached Source tool once: %s', async mode => {
++    it.each(['success', 'effect-then-throw'] as const)('executes the captured Context tool once: %s', async mode => {
+         vi.useFakeTimers();
+         let effects = 0;
+         const execute = vi.fn(async (args: unknown) => {
+@@ -87,14 +93,21 @@
+             if (mode === 'effect-then-throw') throw new Error('after-effect');
+             return { count: effects, args };
+         });
+-        const original = Object.freeze(dynamicTool({
+-            description: 'Controlled MCP counter', execute,
++        const original = Object.freeze({
++            type: 'dynamic' as const, description: 'Controlled MCP counter', execute,
+             inputSchema: jsonSchema({ type: 'object', properties: { value: { type: 'number' } }, required: ['value'], additionalProperties: false }),
+-        }));
++        });
+         vi.mocked(MCP.tools).mockResolvedValue({ counter: original });
+         const source = new McpDrivenSource();
+-        const getTools = vi.spyOn(source, 'getTools');
+-        const route = vi.spyOn(source, 'executeTool');
++        const originalCapture = source.getContext.bind(source);
++        const route = vi.fn<NonNullable<DrivenSourceContext['executeTool']>>();
++        const getContext = vi.spyOn(source, 'getContext').mockImplementation(async () => {
++            const context = await originalCapture();
++            const invoke = context.executeTool;
++            if (!invoke) throw new Error('Expected the actual MCP context executor');
++            context.executeTool = route.mockImplementation((name, args, id) => invoke.call(context, name, args, id));
++            return context;
++        });
+         const release = vi.fn();
+         const instructions: ContextDrivenSource = {
+             name: 'controlled-instructions', onUpdate: () => () => {},
+@@ -108,21 +121,22 @@
+             { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+                 usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } } },
+         ]) }) });
+-        const provider = vi.spyOn(LLMClient.prototype as any, 'createProvider').mockReturnValue(model);
++        const provider = vi.spyOn(LLMClient.prototype as unknown as { createProvider: () => unknown }, 'createProvider').mockReturnValue(model);
+         const onAssistantMessage = vi.fn(), onToolResult = vi.fn(), onRunError = vi.fn();
+         const driver = new AgentDriverV2({
+             sources: [instructions, source], llm: { model: 'openai:controlled-mcp-owner', apiKey: 'unused-no-network' },
+             onAssistantMessage, onToolResult, onRunError,
+         });
+         try {
+-            await driver['run']();
++            await driver.trigger();
++            await driver['runInFlight'];
+ 
+             expect(execute).toHaveBeenCalledTimes(1);
+             expect(effects).toBe(1);
+             expect(execute).toHaveBeenCalledWith({ value: 1 }, { toolCallId: 'mcp-owner-call', messages: [] });
+             expect(route).toHaveBeenCalledExactlyOnceWith('counter', { value: 1 }, 'mcp-owner-call');
+-            expect(getTools).toHaveBeenCalledTimes(1);
+-            expect((await getTools.mock.results[0].value).counter).toBe(original);
++            expect(getContext).toHaveBeenCalledTimes(1);
++            expect((await getContext.mock.results[0].value).tools.counter).toBe(original);
+             expect(original.execute).toBe(execute);
+             expect(Object.isFrozen(original)).toBe(true);
+             expect(onAssistantMessage).toHaveBeenCalledExactlyOnceWith({
+@@ -141,10 +155,179 @@
+             await vi.runOnlyPendingTimersAsync();
+             vi.useRealTimers();
+             provider.mockRestore();
+-            getTools.mockRestore();
+-            route.mockRestore();
++            getContext.mockRestore();
+         }
+         expect(model.doStreamCalls).toHaveLength(1);
+         expect(onToolResult).toHaveBeenCalledTimes(1);
+     });
+ });
++
++const schema = () => jsonSchema({ type: 'object', properties: {}, additionalProperties: false });
++function barrier() {
++    let resolve!: () => void;
++    const promise = new Promise<void>(done => { resolve = done; });
++    return { promise, resolve };
++}
++
++describe('MCP capture failure and live controls', () => {
++    it('keeps the captured function and receiver while the real Driver awaits its model', async () => {
++        vi.useFakeTimers();
++        const calls: string[] = [];
++        const original = vi.fn(async function (this: { label: string }) { calls.push(this.label); return this.label; });
++        const a = { label: 'A', description: 'A descriptor', inputSchema: schema(), execute: original };
++        const b = { label: 'B', description: 'B descriptor', inputSchema: schema(), execute: vi.fn(async function (this: { label: string }) { calls.push(this.label); return this.label; }) };
++        vi.mocked(MCP.tools).mockResolvedValueOnce({ action: a }).mockResolvedValueOnce({ action: b });
++        const source = new McpDrivenSource();
++        let inspector: DrivenSourceContext | undefined;
++        const model = vi.spyOn(LLMClient.prototype, 'call').mockImplementation(async (_messages, tools) => {
++            expect(tools.action).toBe(a);
++            inspector = await source.getContext();
++            a.execute = vi.fn(async () => 'replacement');
++            return { text: '', finishReason: 'tool-calls', toolCalls: [{ toolName: 'action', toolCallId: 'captured', args: {} }] };
++        });
++        const result = vi.fn();
++        const driver = new AgentDriverV2({ sources: [source], llm: { model: 'openai:controlled-mcp-identity' }, onToolResult: result });
++        try {
++            await driver.trigger(); await driver['runInFlight'];
++            expect(calls).toEqual(['A']); expect(original.mock.contexts[0]).toBe(a);
++            expect(result).toHaveBeenCalledExactlyOnceWith({ role: 'tool', content: [{ type: 'tool-result', toolName: 'action', toolCallId: 'captured', output: { type: 'json', value: 'A' } }] });
++            expect(await inspector?.executeTool?.('action', {}, 'inspector')).toEqual({ toolName: 'action', toolCallId: 'inspector', result: 'B' });
++            expect(calls).toEqual(['A', 'B']); expect(a.execute).not.toHaveBeenCalled();
++            expect(model).toHaveBeenCalledTimes(1);
++        } finally {
++            driver.stop(); await driver['runInFlight']; driver.dispose();
++            await vi.runOnlyPendingTimersAsync(); vi.useRealTimers(); model.mockRestore();
++        }
++    });
++
++    it('returns a full empty context on list failure and never reuses prior executors', async () => {
++        const source = new McpDrivenSource(), failure = new Error('list failed');
++        const execute = vi.fn(async () => 'original');
++        vi.mocked(MCP.tools).mockResolvedValueOnce({ action: { inputSchema: schema(), execute } })
++            .mockRejectedValueOnce(failure).mockResolvedValueOnce({});
++        const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
++        try {
++            const first = await source.getContext();
++            await expect(source.getContext()).resolves.toEqual({ messages: [], tools: {} });
++            expect(diagnostic).toHaveBeenCalledWith('[mcp-driven-source]', 'Failed to fetch tools', failure);
++            expect((await source.getContext()).tools).toEqual({});
++            expect(await first.executeTool!('action', {}, 'original')).toEqual({ toolName: 'action', toolCallId: 'original', result: 'original' });
++            expect(execute).toHaveBeenCalledTimes(1);
++        } finally { diagnostic.mockRestore(); }
++    });
++
++    it.each(['source', 'tool', 'server'] as const)('observes %s disable while tools are being fetched', async control => {
++        let resolve!: (tools: Awaited<ReturnType<typeof MCP.tools>>) => void;
++        vi.mocked(MCP.tools).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
++        const source = new McpDrivenSource(), pending = source.getContext(), execute = vi.fn();
++        if (control === 'source') source.setEnabled(false);
++        if (control === 'tool') source.setToolEnabled('mcp-controlled-action', false);
++        if (control === 'server') source.setServerEnabled('controlled', false);
++        resolve({ 'mcp-controlled-action': { inputSchema: schema(), execute } });
++        expect((await pending).tools).toEqual({});
++        expect(execute).not.toHaveBeenCalled();
++    });
++
++    it.each([
++        ['model', 'source'], ['model', 'tool'], ['model', 'server'],
++        ['first-tool', 'source'], ['first-tool', 'tool'], ['first-tool', 'server'],
++    ] as const)('rechecks %s / %s through real Driver routing', async (phase, control) => {
++        vi.useFakeTimers();
++        const started = barrier(), proceed = barrier();
++        const source = new McpDrivenSource();
++        const disable = () => {
++            if (control === 'source') source.setEnabled(false);
++            if (control === 'tool') source.setToolEnabled('mcp-controlled-second', false);
++            if (control === 'server') source.setServerEnabled('controlled', false);
++        };
++        const first = vi.fn(async () => { disable(); return 'first finished'; });
++        const second = vi.fn(async () => 'must not enter');
++        vi.mocked(MCP.tools).mockResolvedValue({
++            'mcp-controlled-first': { inputSchema: schema(), execute: first },
++            'mcp-controlled-second': { inputSchema: schema(), execute: second },
++        });
++        const model = vi.spyOn(LLMClient.prototype, 'call').mockImplementation(async () => {
++            started.resolve();
++            if (phase === 'model') await proceed.promise;
++            const names = phase === 'model' ? ['mcp-controlled-second'] : ['mcp-controlled-first', 'mcp-controlled-second'];
++            return { text: '', finishReason: 'tool-calls', toolCalls: names.map((toolName, i) => ({ toolName, toolCallId: 'gate-' + i, args: {} })) };
++        });
++        const result = vi.fn(), error = vi.fn();
++        const driver = new AgentDriverV2({ sources: [source], llm: { model: 'openai:controlled-mcp-live' }, onToolResult: result, onRunError: error });
++        try {
++            await driver.trigger();
++            const work = driver['runInFlight'];
++            await started.promise;
++            if (phase === 'model') disable();
++            proceed.resolve(); await work;
++            expect(first).toHaveBeenCalledTimes(phase === 'first-tool' ? 1 : 0);
++            expect(second).not.toHaveBeenCalled();
++            expect(error).not.toHaveBeenCalled();
++            expect(model).toHaveBeenCalledTimes(1);
++            expect(result).toHaveBeenCalledTimes(1);
++            expect(result.mock.calls[0][0].content.at(-1).output).toEqual({ type: 'error-json', value: {
++                code: 'E_SOURCE_UNAVAILABLE', message: 'The MCP tool source is no longer active',
++            } });
++        } finally {
++            proceed.resolve(); driver.stop(); await driver['runInFlight']; driver.dispose();
++            await vi.runOnlyPendingTimersAsync(); vi.useRealTimers(); model.mockRestore();
++        }
++    });
++});
++
++describe('MCP identity scope proof', () => {
++  it.each(['text', 'object', 'throw'] as const)('preserves result and one update: %s', async mode => {
++    const execute = vi.fn(async () => {
++      if (mode === 'throw') throw new Error('effect may have happened');
++      return mode === 'text' ? 'original text' : { value: 7 };
++    });
++    vi.mocked(MCP.tools).mockResolvedValue({ action: { description: 'Original', inputSchema: schema(), execute } });
++    const source = new McpDrivenSource(), update = vi.fn();
++    source.onUpdate(update);
++    const context = await source.getContext();
++    const result = await context.executeTool?.('action', {}, 'call');
++    expect(result).toEqual({ toolName: 'action', toolCallId: 'call', result: mode === 'text' ? 'original text' : mode === 'object' ? '{"value":7}' : 'Error: effect may have happened' });
++    expect(execute).toHaveBeenCalledExactlyOnceWith({}, { toolCallId: 'call', messages: [] });
++    expect(update).toHaveBeenCalledTimes(1);
++  });
++
++  it('keeps A when another consumer captures same-name B', async () => {
++    const calls: string[] = [];
++    const a = { label: 'A', inputSchema: schema(), execute: vi.fn(async function (this: { label: string }) { calls.push(this.label); return this.label; }) };
++    const b = { label: 'B', inputSchema: schema(), execute: vi.fn(async function (this: { label: string }) { calls.push(this.label); return this.label; }) };
++    vi.mocked(MCP.tools).mockResolvedValueOnce({ action: a }).mockResolvedValueOnce({ action: b });
++    const source = new McpDrivenSource();
++    const first = await source.getContext(), second = await source.getContext();
++    const firstResult = await first.executeTool?.('action', {}, 'first');
++    const secondResult = await second.executeTool?.('action', {}, 'second');
++    expect(calls).toEqual(['A', 'B']);
++    expect(firstResult?.result).toBe('A'); expect(secondResult?.result).toBe('B');
++  });
++
++  it('pins the original function and its Tool receiver', async () => {
++    const calls: string[] = [];
++    const original = vi.fn(async function (this: { label: string }) { calls.push(this.label); return this.label; });
++    const tool = { label: 'original', inputSchema: schema(), execute: original };
++    vi.mocked(MCP.tools).mockResolvedValue({ action: tool });
++    const source = new McpDrivenSource(), context = await source.getContext();
++    tool.execute = vi.fn(async () => 'replacement');
++    const result = await context.executeTool?.('action', {}, 'pinned');
++    expect(result?.result).toBe('original'); expect(calls).toEqual(['original']);
++    expect(original).toHaveBeenCalledTimes(1); expect(tool.execute).not.toHaveBeenCalled();
++  });
++
++  it.each(['source', 'tool', 'server'] as const)('rechecks %s controls after capture', async control => {
++    const execute = vi.fn(async () => 'must not enter');
++    const key = 'mcp-controlled-action';
++    vi.mocked(MCP.tools).mockResolvedValue({ [key]: { inputSchema: schema(), execute } });
++    const source = new McpDrivenSource(), context = await source.getContext(), update = vi.fn();
++    source.onUpdate(update);
++    if (control === 'source') source.setEnabled(false);
++    if (control === 'tool') source.setToolEnabled(key, false);
++    if (control === 'server') source.setServerEnabled('controlled', false);
++    update.mockClear();
++    const result = await context.executeTool?.(key, {}, 'disabled');
++    expect(result).toMatchObject({ outcomeStatus: 'rejected', error: { code: 'E_SOURCE_UNAVAILABLE' } });
++    expect(execute).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled();
++  });
++});
+diff --git a/host/test/im/im-driven-source.test.ts b/host/test/im/im-driven-source.test.ts
+--- a/host/test/im/im-driven-source.test.ts
++++ b/host/test/im/im-driven-source.test.ts
+@@ -1,15 +1,17 @@
+-import { describe, expect, it, vi } from 'vitest'
++import { afterEach, describe, expect, it, vi } from 'vitest'
+ import type { ModelMessage } from 'ai'
+ import { setImmediate as nextTurn } from 'node:timers/promises'
+ import { AgentDriverV2, type MessageWithTimestamp } from '@aotui/agent-driver-v2'
+ import { LLMClient } from '@aotui/agent-driver-v2/dist/core/llm-client.js'
+-import { IMDrivenSource } from '../../src/im/im-driven-source'
++import { IMDrivenSource } from '../../src/im/im-driven-source.js'
++
++afterEach(() => vi.restoreAllMocks())
+ 
+ describe('IMDrivenSource', () => {
+   it('exposes stable source name', async () => {
+     const source = new IMDrivenSource({ sessionKey: 's1' })
+     expect(source.name).toBe('IM')
+-    const tools = await source.getTools()
++    const tools = await source.getContext().then(context => context.tools)
+     expect(tools).toHaveProperty('context_compact')
+     expect((tools as any).context_compact.description).toContain('## Goal')
+     expect((tools as any).context_compact.description).toContain('protocol continuity')
+@@ -18,7 +20,7 @@
+ 
+   it('returns empty messages by default', async () => {
+     const source = new IMDrivenSource({ sessionKey: 's1' })
+-    expect(await source.getMessages()).toEqual([])
++    expect(await source.getContext().then(context => context.messages)).toEqual([])
+   })
+ 
+   it('loads history once from loader', async () => {
+@@ -27,8 +29,8 @@
+     ])
+ 
+     const source = new IMDrivenSource({ sessionKey: 's1', loadHistory })
+-    const first = await source.getMessages()
+-    const second = await source.getMessages()
++    const first = await source.getContext().then(context => context.messages)
++    const second = await source.getContext().then(context => context.messages)
+ 
+     expect(first).toHaveLength(1)
+     expect(second).toHaveLength(1)
+@@ -53,7 +55,7 @@
+ 
+     source.addMessage({ role: 'user', content: 'hello' })
+ 
+-    await expect(source.getMessages()).resolves.toEqual([
++    await expect(source.getContext().then(context => context.messages)).resolves.toEqual([
+       { role: 'user', content: 'hello', timestamp: 2_000, region: 'session' },
+     ])
+   })
+@@ -64,7 +66,7 @@
+     const input: ModelMessage = { role: 'user', content: 'hello' }
+     source.addMessage(input)
+ 
+-    expect(await source.getMessages()).toEqual([
++    expect(await source.getContext().then(context => context.messages)).toEqual([
+       { role: 'user', content: 'hello', timestamp: 2_000, region: 'session' },
+     ])
+   })
+@@ -74,20 +76,20 @@
+ 
+     source.addMessage({ role: 'assistant', content: 'ok' }, 1_234)
+ 
+-    expect(await source.getMessages()).toEqual([
++    expect(await source.getContext().then(context => context.messages)).toEqual([
+       { role: 'assistant', content: 'ok', timestamp: 1_234, region: 'session' },
+     ])
+   })
+ 
+   it('executeTool returns undefined for unknown tools', async () => {
+     const source = new IMDrivenSource({ sessionKey: 's1' })
+-    await expect(source.executeTool('unknown', {}, 'tc1')).resolves.toBeUndefined()
++    await expect(source.getContext().then(context => context.executeTool!('unknown', {}, 'tc1'))).resolves.toBeUndefined()
+   })
+ 
+   it('context_compact requires a non-empty summary', async () => {
+     const source = new IMDrivenSource({ sessionKey: 's1' })
+ 
+-    await expect(source.executeTool('context_compact', {}, 'tc1')).resolves.toEqual({
++    await expect(source.getContext().then(context => context.executeTool!('context_compact', {}, 'tc1'))).resolves.toEqual({
+       toolCallId: 'tc1',
+       toolName: 'context_compact',
+       result: expect.objectContaining({
+@@ -111,11 +113,11 @@
+       ],
+     })
+ 
+-    const result = await source.executeTool('context_compact', {
++    const result = await source.getContext().then(context => context.executeTool!('context_compact', {
+       summary: 'Summarized prior IM work.',
+       minMessages: 1,
+       keepRecentMessages: 2,
+-    }, 'tc2')
++    }, 'tc2'))
+ 
+     expect(result).toEqual({
+       toolCallId: 'tc2',
+@@ -128,7 +130,7 @@
+       }),
+     })
+ 
+-    await expect(source.getMessages()).resolves.toEqual([
++    await expect(source.getContext().then(context => context.messages)).resolves.toEqual([
+       {
+         role: 'assistant',
+         content: [
+@@ -203,10 +205,10 @@
+       ],
+     })
+ 
+-    const result = await source.executeTool('context_compact', {
++    const result = await source.getContext().then(context => context.executeTool!('context_compact', {
+       summary: 'Keep going.',
+       minMessages: 2,
+-    }, 'tc3')
++    }, 'tc3'))
+ 
+     expect(result).toEqual({
+       toolCallId: 'tc3',
+@@ -243,13 +245,13 @@
+       ],
+     })
+ 
+-    await source.executeTool('context_compact', {
++    await source.getContext().then(context => context.executeTool!('context_compact', {
+       summary: '## Goal\nContinue after file search.',
+       minMessages: 1,
+       keepRecentMessages: 2,
+-    }, 'tc4')
+-
+-    const messages = await source.getMessages()
++    }, 'tc4'))
++
++    const messages = await source.getContext().then(context => context.messages)
+     expect(messages).toEqual([
+       expect.objectContaining({ role: 'assistant' }),
+       expect.objectContaining({ role: 'tool' }),
+@@ -297,7 +299,7 @@
+       ],
+     })
+ 
+-    await expect(source.getMessages()).resolves.toEqual([
++    await expect(source.getContext().then(context => context.messages)).resolves.toEqual([
+       {
+         role: 'assistant',
+         content: [
+@@ -393,7 +395,7 @@
+       cleanedToolResultCount: 0,
+     })
+     expect(replaceHistory).toHaveBeenCalledTimes(1)
+-    await expect(source.getMessages()).resolves.toEqual([
++    await expect(source.getContext().then(context => context.messages)).resolves.toEqual([
+       expect.objectContaining({ role: 'assistant' }),
+       expect.objectContaining({ role: 'tool' }),
+       { role: 'user', content: 'more context', timestamp: 1_200, region: 'session' },
+@@ -422,7 +424,7 @@
+     expect(result.compacted).toBe(true)
+     expect(result.currentTokens).toBeGreaterThan(50)
+     expect(result.syntheticMessages).toHaveLength(2)
+-    await expect(source.getMessages()).resolves.toEqual([
++    await expect(source.getContext().then(context => context.messages)).resolves.toEqual([
+       expect.objectContaining({ role: 'assistant' }),
+       expect.objectContaining({ role: 'tool' }),
+       { role: 'user', content: 'z'.repeat(600), timestamp: 1_200, region: 'session' },
+@@ -459,12 +461,12 @@
+     const updates = vi.fn()
+     const source = new IMDrivenSource({ sessionKey: 'pending', now: () => 3_000, loadHistory, persistMessage })
+     const unsubscribe = source.onUpdate(updates)
+-    const reads = [observe(source.getMessages())]
++    const reads = [observe(source.getContext().then(context => context.messages))]
+     try {
+       await entered.promise
+       const duplicate = source.addMessage({ role: 'user', content: 'duplicate' }, 2_000)
+       const appended = source.addMessage({ role: 'user', content: 'new while loading' })
+-      reads.push(observe(source.getMessages()))
++      reads.push(observe(source.getContext().then(context => context.messages)))
+       await nextTurn()
+ 
+       expect(loadHistory).toHaveBeenCalledExactlyOnceWith('pending')
+@@ -484,7 +486,7 @@
+       for (const result of await Promise.all(reads.map(read => read.done))) {
+         expect(result).toStrictEqual({ status: 'fulfilled', value: expected })
+       }
+-      await expect(source.getMessages()).resolves.toStrictEqual(expected)
++      await expect(source.getContext().then(context => context.messages)).resolves.toStrictEqual(expected)
+       expect(loadHistory).toHaveBeenCalledTimes(1)
+       expect(persistMessage).toHaveBeenCalledTimes(2)
+       expect(updates).not.toHaveBeenCalled()
+@@ -495,32 +497,27 @@
+     }
+   })
+ 
+-  it('rejects every waiter with the original failure and shares the next explicit retry', async () => {
+-    const firstGate = deferred<MessageWithTimestamp[]>()
+-    const retryGate = deferred<MessageWithTimestamp[]>()
+-    const entered = deferred<void>()
+-    const failure = new Error('history unavailable')
++  it('degrades every failed capture, diagnoses the original error and shares the next explicit retry', async () => {
++    const firstGate = deferred<MessageWithTimestamp[]>(), retryGate = deferred<MessageWithTimestamp[]>()
++    const entered = deferred<void>(), failure = new Error('history unavailable')
++    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+     const history: MessageWithTimestamp[] = [{ role: 'user', content: 'recovered', timestamp: 1_000 }]
+     let attempts = 0
+-    const loadHistory = vi.fn(() => {
+-      attempts += 1
+-      entered.resolve()
+-      return attempts === 1 ? firstGate.promise : retryGate.promise
+-    })
++    const loadHistory = vi.fn(() => { entered.resolve(); return ++attempts === 1 ? firstGate.promise : retryGate.promise })
+     const source = new IMDrivenSource({ sessionKey: 'retry', loadHistory })
+-    const reads = [observe(source.getMessages())]
++    const reads = [observe(source.getContext())]
+     try {
+       await entered.promise
+-      reads.push(observe(source.getMessages()))
++      reads.push(observe(source.getContext()))
+       firstGate.reject(failure)
+       for (const result of await Promise.all(reads.map(read => read.done))) {
+-        expect(result.status).toBe('rejected')
+-        if (result.status === 'rejected') expect(result.reason).toBe(failure)
++        expect(result).toStrictEqual({ status: 'fulfilled', value: { messages: [], tools: {} } })
+       }
++      expect(diagnostic).toHaveBeenCalledTimes(2)
++      expect(diagnostic).toHaveBeenCalledWith('Failed to capture context from IM:', failure)
+       await nextTurn()
+       expect(loadHistory).toHaveBeenCalledTimes(1)
+-
+-      const retries = [observe(source.getMessages()), observe(source.getMessages())]
++      const retries = [observe(source.getContext()), observe(source.getContext())]
+       reads.push(...retries)
+       await nextTurn()
+       expect(loadHistory).toHaveBeenCalledTimes(2)
+@@ -528,18 +525,22 @@
+       retryGate.resolve(history)
+       const expected = [{ ...history[0], region: 'session' }]
+       for (const result of await Promise.all(retries.map(read => read.done))) {
+-        expect(result).toStrictEqual({ status: 'fulfilled', value: expected })
++        expect(result.status).toBe('fulfilled')
++        if (result.status === 'fulfilled') {
++          expect(result.value.messages).toStrictEqual(expected)
++          expect(result.value.tools).toHaveProperty('context_compact')
++          expect(typeof result.value.executeTool).toBe('function')
++        }
+       }
+-      await expect(source.getMessages()).resolves.toStrictEqual(expected)
++      await expect(source.getContext().then(context => context.messages)).resolves.toStrictEqual(expected)
+       expect(loadHistory).toHaveBeenCalledTimes(2)
+     } finally {
+-      firstGate.resolve(history)
+-      retryGate.resolve(history)
++      firstGate.resolve(history); retryGate.resolve(history)
+       await Promise.all(reads.map(read => read.done))
+     }
+   })
+ 
+-  it('propagates a synchronous loader throw and retries only on the next call', async () => {
++  it('diagnoses a synchronous loader throw and retries only on the next capture', async () => {
+     const failure = new Error('synchronous history failure')
+     const history: MessageWithTimestamp[] = [{ role: 'user', content: 'after sync failure', timestamp: 1_000 }]
+     let attempts = 0
+@@ -549,11 +550,13 @@
+       return Promise.resolve(history)
+     })
+     const source = new IMDrivenSource({ sessionKey: 'sync', loadHistory })
+-    await expect(source.getMessages()).rejects.toBe(failure)
++    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
++    await expect(source.getContext()).resolves.toStrictEqual({ messages: [], tools: {} })
++    expect(diagnostic).toHaveBeenCalledExactlyOnceWith('Failed to capture context from IM:', failure)
+     await nextTurn()
+     expect(loadHistory).toHaveBeenCalledTimes(1)
+-    await expect(source.getMessages()).resolves.toStrictEqual([{ ...history[0], region: 'session' }])
+-    await source.getMessages()
++    await expect(source.getContext().then(context => context.messages)).resolves.toStrictEqual([{ ...history[0], region: 'session' }])
++    await source.getContext().then(context => context.messages)
+     expect(loadHistory).toHaveBeenCalledTimes(2)
+   })
+ 
+@@ -567,9 +570,11 @@
+     let attempts = 0
+     const loadHistory = vi.fn(() => Promise.resolve(++attempts === 1 ? [broken] : history))
+     const source = new IMDrivenSource({ sessionKey: 'merge', loadHistory })
+-    await expect(source.getMessages()).rejects.toBe(failure)
++    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
++    await expect(source.getContext()).resolves.toStrictEqual({ messages: [], tools: {} })
++    expect(diagnostic).toHaveBeenCalledExactlyOnceWith('Failed to capture context from IM:', failure)
+     expect(loadHistory).toHaveBeenCalledTimes(1)
+-    await expect(source.getMessages()).resolves.toStrictEqual([{ ...history[0], region: 'session' }])
++    await expect(source.getContext().then(context => context.messages)).resolves.toStrictEqual([{ ...history[0], region: 'session' }])
+     expect(loadHistory).toHaveBeenCalledTimes(2)
+   })
+ 
+@@ -579,23 +584,23 @@
+       sessionKey: mode,
+       loadHistory: mode === 'empty' ? loadHistory : undefined,
+     })
+-    await expect(Promise.all([source.getMessages(), source.getMessages()])).resolves.toEqual([[], []])
++    await expect(Promise.all([source.getContext().then(context => context.messages), source.getContext().then(context => context.messages)])).resolves.toEqual([[], []])
+     const record = source.addMessage({ role: 'user', content: 'later' }, 2_000)
+-    await expect(source.getMessages()).resolves.toStrictEqual([record])
++    await expect(source.getContext().then(context => context.messages)).resolves.toStrictEqual([record])
+     expect(loadHistory).toHaveBeenCalledTimes(mode === 'empty' ? 1 : 0)
+   })
+ 
+-  it('does not load history for tools discovery, an unknown tool or disabled compaction', async () => {
++  it('captures tools with restored messages while disabled compaction still short-circuits', async () => {
+     const loadHistory = vi.fn(async (): Promise<MessageWithTimestamp[]> => [])
+     const source = new IMDrivenSource({ sessionKey: 'short-circuit', loadHistory })
+-    expect(await source.getTools()).toHaveProperty('context_compact')
+-    await expect(source.executeTool('unknown', {}, 'unknown-call')).resolves.toBeUndefined()
+     await expect(source.maybeCompactByThreshold({ enabled: false, maxContextTokens: 50 })).resolves.toStrictEqual({
+       compacted: false, syntheticMessages: [], summary: '', compactedMessageCount: 0,
+       cleanedToolResultCount: 0, currentTokens: 0, thresholdTokens: 50,
+     })
+     expect(loadHistory).not.toHaveBeenCalled()
+-    await source.getMessages()
++    const context = await source.getContext()
++    expect(context.tools).toHaveProperty('context_compact')
++    await expect(context.executeTool!('unknown', {}, 'unknown-call')).resolves.toBeUndefined()
+     expect(loadHistory).toHaveBeenCalledTimes(1)
+   })
+ 
+@@ -613,14 +618,14 @@
+     const updates = vi.fn()
+     const source = new IMDrivenSource({ sessionKey: mode, loadHistory, replaceHistory })
+     const unsubscribe = source.onUpdate(updates)
+-    const initial = observe(source.getMessages())
++    const initial = observe(source.getContext().then(context => context.messages))
+     let compaction: ReturnType<typeof observe<unknown>> | undefined
+     try {
+       await entered.promise
+       compaction = observe<unknown>(mode === 'agent'
+-        ? source.executeTool('context_compact', {
++        ? source.getContext().then(context => context.executeTool!('context_compact', {
+           summary: 'Summary after history restoration.', reason: 'waiting test', minMessages: 4, keepRecentMessages: 2,
+-        }, 'compact-call')
++        }, 'compact-call'))
+         : mode === 'hard-fallback'
+           ? source.runHardFallbackCompaction('waiting test', { minMessages: 4, keepRecentMessages: 2 })
+           : source.maybeCompactByThreshold({ enabled: true, maxContextTokens: 1, minMessages: 4, keepRecentMessages: 2 }))
+@@ -638,7 +643,7 @@
+           ? { toolCallId: 'compact-call', toolName: 'context_compact', result: { success: true, compactedMessageCount: 2 } }
+           : { compacted: true, compactedMessageCount: 2 },
+       })
+-      const messages = await source.getMessages()
++      const messages = await source.getContext().then(context => context.messages)
+       expect(messages).toHaveLength(4)
+       expect(messages.slice(-2)).toStrictEqual(history.slice(-2).map(message => ({ ...message, region: 'session' })))
+       expect(replaceHistory).toHaveBeenCalledTimes(1)
+@@ -661,7 +666,7 @@
+     const history: MessageWithTimestamp[] = [{ role: 'user', content: 'restored request', timestamp: 1_000 }]
+     const loadHistory = vi.fn(() => { entered.resolve(); return gate.promise })
+     const source = new IMDrivenSource({ sessionKey: 'driver-history', loadHistory })
+-    const initial = observe(source.getMessages())
++    const initial = observe(source.getContext().then(context => context.messages))
+     const onAssistantMessage = vi.fn()
+     const onRunError = vi.fn()
+     const model = vi.spyOn(LLMClient.prototype, 'call').mockResolvedValue({
+diff --git a/host/test/im/im-session-manager.test.ts b/host/test/im/im-session-manager.test.ts
+--- a/host/test/im/im-session-manager.test.ts
++++ b/host/test/im/im-session-manager.test.ts
+@@ -1,5 +1,6 @@
+ import { describe, expect, it, vi } from 'vitest'
+-import { IMSessionManager } from '../../src/im/im-session-manager'
++import { IMDrivenSource } from '../../src/im/im-driven-source.js'
++import { IMSessionManager } from '../../src/im/im-session-manager.js'
+ 
+ function createManager() {
+   const createDesktop = vi.fn(async ({ sessionKey }: { sessionKey: string }) => ({
+@@ -126,8 +127,9 @@
+       timestamp: 1_234,
+     })
+ 
+-    await expect(session.source.getMessages()).resolves.toEqual([
+-      { role: 'user', content: 'hello from im', timestamp: 1_234 },
++    if (!(session.source instanceof IMDrivenSource)) throw new Error('Expected the real IM Source')
++    await expect(session.source.getContext().then(context => context.messages)).resolves.toEqual([
++      { role: 'user', content: 'hello from im', timestamp: 1_234, region: 'session' },
+     ])
+   })
+ 
+diff --git a/host/test/im/im-tool-result-continuation.test.ts b/host/test/im/im-tool-result-continuation.test.ts
+--- a/host/test/im/im-tool-result-continuation.test.ts
++++ b/host/test/im/im-tool-result-continuation.test.ts
+@@ -65,8 +65,7 @@
+     name = 'controlled-empty-skill';
+     setEnabled() {} setSkillEnabled() {}
+     onUpdate() { return () => {}; }
+-    async getMessages() { return []; }
+-    async getTools() { return {}; }
++    async getContext() { return { messages: [], tools: {} }; }
+   },
+ }));
+ vi.mock('../../src/mcp/index.js', () => ({ MCP: { tools: async () => fixture.mcpTools } }));
+@@ -217,7 +216,7 @@
+       if (!(actualMcp instanceof McpDrivenSource)) throw new Error('Expected real MCP Source');
+       offMcp = actualMcp.onUpdate(() => record('mcp-source-update'));
+       offIM = source.onUpdate(() => record('im-source-update'));
+-      const executeIM = vi.spyOn(source, 'executeTool');
++      const executeIM = vi.spyOn(source as unknown as { executeCompaction: NonNullable<DrivenSourceContext['executeTool']> }, 'executeCompaction');
+       offGui = host.onGuiUpdate(event => {
+         if (event.type === 'tool') {
+           fixture.toolMessages.push(structuredClone(event.message as Message));
+diff --git a/host/test/session-manager-v3.integration.test.ts b/host/test/session-manager-v3.integration.test.ts
+--- a/host/test/session-manager-v3.integration.test.ts
++++ b/host/test/session-manager-v3.integration.test.ts
+@@ -14,7 +14,9 @@
+ import { MessageServiceV2 } from '../src/core/message-service-v2.js';
+ import { LLMConfigService } from '../src/core/llm-config-service.js';
+ import type { IDesktop, IKernel } from '@aotui/runtime/spi';
+-import type { LLMConfig } from '@aotui/agent-driver-v2';
++import type { DesktopManager } from '../src/core/desktop-manager.js';
++import { LLMClient } from '@aotui/agent-driver-v2/dist/core/llm-client.js';
++import type { DrivenSourceContext, LLMConfig } from '@aotui/agent-driver-v2';
+ import type { ModelRegistry } from '../src/services/model-registry.js';
+ import * as dbV2 from '../src/db-v2.js';
+ 
+@@ -33,8 +35,32 @@
+ const mockMessages: any[] = [];
+ 
+ vi.mock('../src/db/index.js', () => ({
+-    getDb: () => mockDb
++    getDb: () => mockDb,
++    persistDatabase: vi.fn(),
++    getTopic: vi.fn(() => undefined),
++    updateTopic: vi.fn()
+ }));
++
++vi.mock('../src/config/config.js', () => ({ Config: { get: async () => ({
++    agents: { list: [] }, mcp: {}, experimental: { contextCompaction: { enabled: false } },
++}) } }));
++vi.mock('../src/mcp/index.js', () => ({ MCP: { tools: async () => ({}) } }));
++vi.mock('../src/skills/skill-driven-source.js', () => ({ SkillDrivenSource: class {
++    name = 'Skill'; setEnabled() {} setSkillEnabled() {}
++    onUpdate() { return () => {}; }
++    async getContext(): Promise<DrivenSourceContext> { return { messages: [], tools: {} }; }
++} }));
++vi.mock('@aotui/runtime/adapters', () => ({ SemanticAOTUIDrivenSource: class {
++    name = 'AOTUI'; setEnabled() {} setAppEnabled() {}
++    onUpdate() { return () => {}; }
++    async getContext(): Promise<DrivenSourceContext> { return {
++        messages: [
++            { role: 'system', content: 'AOTUI Instruction', timestamp: 1, region: 'static' },
++            { role: 'user', content: 'Desktop State', timestamp: 2, region: 'dynamic' },
++        ], tools: {}, release: vi.fn(),
++    }; }
++    async dispose() {}
++} }));
+ 
+ // Mock ModelRegistry
+ const createMockModelRegistry = (): ModelRegistry => ({
+@@ -52,45 +78,23 @@
+ } as any);
+ 
+ // Mock Kernel
+-const createMockKernel = (): IKernel => {
++const createMockKernel = () => {
+     const desktops = new Map<string, IDesktop>();
+-    
+     return {
+-        createDesktop: vi.fn(async (desktopId: any) => {
+-            if (!desktops.has(desktopId)) {
+-                const mockDesktop: IDesktop = {
+-                    id: desktopId,
+-                    output: {
+-                        subscribe: vi.fn(),
+-                        unsubscribe: vi.fn(),
+-                    } as any,
+-                    query: vi.fn().mockResolvedValue({}),
+-                    pull: vi.fn().mockResolvedValue(null),
+-                    lease: vi.fn().mockResolvedValue(null),
+-                    stop: vi.fn().mockResolvedValue(undefined),
+-                } as any;
+-                desktops.set(desktopId, mockDesktop);
+-            }
+-            return desktops.get(desktopId);
++        createDesktop: vi.fn(async (desktopId: string) => {
++            if (!desktops.has(desktopId)) desktops.set(desktopId, { id: desktopId } as IDesktop);
++            return desktops.get(desktopId)!;
+         }),
+-        getDesktop: vi.fn((desktopId: any) => desktops.get(desktopId)),
+-        destroyDesktop: vi.fn(async (desktopId: any) => {
+-            desktops.delete(desktopId);
+-        }),
+-        // ✅ Add acquireSnapshot and releaseSnapshot for AOTUIDrivenSource
+-        acquireSnapshot: vi.fn(() => ({
+-            state: { components: [] },
+-            timestamp: Date.now(),
+-        })),
+-        releaseSnapshot: vi.fn(),
+-    } as any;
++        getDesktop: vi.fn((desktopId: string) => desktops.get(desktopId)),
++        destroyDesktop: vi.fn(async (desktopId: string) => { desktops.delete(desktopId); }),
++    };
+ };
+ 
+ describe('SessionManager V3 Integration', () => {
+     let sessionManager: SessionManagerV3;
+     let messageService: MessageServiceV2;
+     let llmConfigService: LLMConfigService;
+-    let mockKernel: IKernel;
++    let mockKernel: ReturnType<typeof createMockKernel>;
+     let mockModelRegistry: ModelRegistry;
+ 
+     beforeEach(() => {
+@@ -116,24 +120,30 @@
+         // ✅ Mock getActiveLLMConfig to return a valid config
+         vi.spyOn(llmConfigService, 'getActiveLLMConfig').mockResolvedValue({
+             model: 'gpt-4',
+-            provider: 'openai',
++            provider: { id: 'openai' },
+             apiKey: 'test-key',
+         } as any);
+         
+         mockKernel = createMockKernel();
+ 
+         // Create SessionManager
++        const desktopManager = { createDesktop: vi.fn(async (id: string) => {
++            await mockKernel.createDesktop(id);
++            return { desktopId: id, thirdPartyAppCount: 0 };
++        }) };
++        vi.spyOn(LLMClient.prototype, 'call').mockResolvedValue({ text: '', toolCalls: [], finishReason: 'stop' });
+         sessionManager = new SessionManagerV3(
+-            mockKernel,
++            mockKernel as unknown as IKernel,
++            desktopManager as unknown as DesktopManager,
+             llmConfigService,
+             messageService
+         );
+     });
+ 
+-    afterEach(() => {
++    afterEach(async () => {
+         // Clean up
+         if (sessionManager) {
+-            sessionManager.cleanup();
++            await sessionManager.cleanup();
+         }
+     });
+ 
+@@ -142,7 +152,7 @@
+             const topicId = 'topic_test_1';
+ 
+             // Act
+-            const session = await sessionManager.getOrCreateSession(topicId);
++            const session = await sessionManager.ensureSession(topicId);
+ 
+             // Assert
+             expect(session).toBeDefined();
+@@ -157,8 +167,8 @@
+             const topicId = 'topic_test_2';
+ 
+             // Act
+-            const session1 = await sessionManager.getOrCreateSession(topicId);
+-            const session2 = await sessionManager.getOrCreateSession(topicId);
++            const session1 = await sessionManager.ensureSession(topicId);
++            const session2 = await sessionManager.ensureSession(topicId);
+ 
+             // Assert
+             expect(session1).toBe(session2);
+@@ -170,8 +180,8 @@
+             const topic2 = 'topic_test_3b';
+ 
+             // Act
+-            const session1 = await sessionManager.getOrCreateSession(topic1);
+-            const session2 = await sessionManager.getOrCreateSession(topic2);
++            const session1 = await sessionManager.ensureSession(topic1);
++            const session2 = await sessionManager.ensureSession(topic2);
+ 
+             // Assert
+             expect(session1).not.toBe(session2);
+@@ -185,7 +195,7 @@
+             const sessions: any[] = [];
+             for (let i = 0; i < 11; i++) {
+                 const topicId = `topic_test_limit_${i}`;
+-                const session = await sessionManager.getOrCreateSession(topicId);
++                const session = await sessionManager.ensureSession(topicId);
+                 sessions.push(session);
+             }
+ 
+@@ -200,7 +210,7 @@
+             const topicId = 'topic_test_message_1';
+ 
+             // Act
+-            await sessionManager.getOrCreateSession(topicId);
++            await sessionManager.ensureSession(topicId);
+             
+             // Get messages through DrivenSources
+             const session = (sessionManager as any).sessions.get(topicId);
+@@ -209,7 +219,7 @@
+             // Iterate over sources object properties
+             const sources = [session.sources.systemPrompt, session.sources.aotui, session.sources.host];
+             for (const source of sources) {
+-                const messages = await source.getMessages();
++                const messages = (await source.getContext()).messages;
+                 allMessages.push(...messages as ModelMessage[]);
+             }
+ 
+@@ -235,7 +245,7 @@
+             const content = 'Hello, AI!';
+ 
+             // Act
+-            await sessionManager.getOrCreateSession(topicId);
++            await sessionManager.ensureSession(topicId);
+             await sessionManager.sendMessage(topicId, content);
+ 
+             // Assert
+@@ -256,12 +266,12 @@
+             // Promise to wait for event
+             const eventPromise = new Promise<any>((resolve) => {
+                 sessionManager.on('message', (event) => {
+-                    resolve(event);
++                    if (event.type === 'user') resolve(event);
+                 });
+             });
+ 
+             // Act
+-            await sessionManager.getOrCreateSession(topicId);
++            await sessionManager.ensureSession(topicId);
+             await sessionManager.sendMessage(topicId, content);
+ 
+             // Wait for event with timeout
+@@ -283,7 +293,7 @@
+             const topicId = 'topic_test_cleanup_1';
+ 
+             // Act
+-            const session = await sessionManager.getOrCreateSession(topicId);
++            const session = await sessionManager.ensureSession(topicId);
+             await sessionManager.destroySession(topicId);
+ 
+             // Assert
+@@ -303,13 +313,15 @@
+     });
+ 
+     describe('Topic Switching', () => {
+-        it('should switch active topic and create session if needed', async () => {
++        it('should switch to sessions created through the current ensureSession entry', async () => {
+             const topic1 = 'topic_switch_1';
+             const topic2 = 'topic_switch_2';
+ 
+             // Act
+-            await sessionManager.switchTopic(topic1);
+-            await sessionManager.switchTopic(topic2);
++            const first = await sessionManager.ensureSession(topic1);
++            const second = await sessionManager.ensureSession(topic2);
++            expect(await sessionManager.switchTopic(topic1)).toBe(first);
++            expect(await sessionManager.switchTopic(topic2)).toBe(second);
+ 
+             // Assert
+             expect(mockKernel.createDesktop).toHaveBeenCalledWith(topic1);
+@@ -324,7 +336,7 @@
+ 
+             // Act - Create sessions concurrently
+             await Promise.all(
+-                topicIds.map(id => sessionManager.getOrCreateSession(id))
++                topicIds.map(id => sessionManager.ensureSession(id))
+             );
+ 
+             // Assert
+@@ -342,8 +354,8 @@
+             const message2 = 'Message for topic 2';
+ 
+             // Act
+-            await sessionManager.getOrCreateSession(topic1);
+-            await sessionManager.getOrCreateSession(topic2);
++            await sessionManager.ensureSession(topic1);
++            await sessionManager.ensureSession(topic2);
+             await sessionManager.sendMessage(topic1, message1);
+             await sessionManager.sendMessage(topic2, message2);
+ 
+diff --git a/host/test/skill-driven-source.test.ts b/host/test/skill-driven-source.test.ts
+new file mode 100644
+--- /dev/null
++++ b/host/test/skill-driven-source.test.ts
+@@ -0,0 +1,106 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
++import { SkillDrivenSource } from '../src/skills/skill-driven-source.js';
++import type { SkillInfo } from '../src/skills/types.js';
++
++const catalog = vi.hoisted(() => ({
++  listSkills: vi.fn<() => Promise<SkillInfo[]>>(),
++  getSkill: vi.fn<(name: string) => Promise<SkillInfo | undefined>>(),
++}));
++vi.mock('../src/skills/skill-catalog-service.js', () => ({
++  SkillCatalogService: class {
++    listSkills = catalog.listSkills;
++    getSkill = catalog.getSkill;
++  },
++}));
++const alpha: SkillInfo = { name: 'alpha', description: 'Alpha skill', content: 'Alpha body', location: '/controlled/alpha/SKILL.md', scope: 'project' };
++beforeEach(() => {
++  catalog.listSkills.mockReset().mockResolvedValue([alpha]);
++  catalog.getSkill.mockReset().mockImplementation(async name => name === alpha.name ? alpha : undefined);
++});
++afterEach(() => vi.restoreAllMocks());
++
++describe('SkillDrivenSource atomic context', () => {
++  it('captures its catalog, schema and load route without a model executor', async () => {
++    const source = new SkillDrivenSource(), update = vi.fn();
++    const off = source.onUpdate(update);
++    try {
++      const context = await source.getContext();
++      expect(context.messages).toEqual([]);
++      expect(context.tools.skill.description).toContain('- alpha: Alpha skill');
++      expect(context.tools.skill.execute).toBeUndefined();
++      expect(catalog.listSkills).toHaveBeenCalledTimes(1);
++      expect(await context.executeTool!('skill', { name: ' alpha ' }, 'load')).toEqual({
++        toolName: 'skill', toolCallId: 'load', result: '<skill_content name="alpha">\n# Skill: alpha\n\nAlpha body\n\nLocation: /controlled/alpha/SKILL.md\nScope: project\n</skill_content>',
++      });
++      expect(catalog.getSkill).toHaveBeenCalledExactlyOnceWith('alpha');
++      expect(update).toHaveBeenCalledTimes(1);
++      off(); source.setEnabled(false); expect(update).toHaveBeenCalledTimes(1);
++    } finally { off(); }
++  });
++
++  it('keeps Source enable and per-skill controls, including a disable after capture', async () => {
++    const source = new SkillDrivenSource(), update = vi.fn();
++    source.onUpdate(update);
++    source.setEnabled(false);
++    await expect(source.getContext()).resolves.toEqual({ messages: [], tools: {} });
++    expect(catalog.listSkills).not.toHaveBeenCalled();
++    source.setEnabled(true);
++    const context = await source.getContext();
++    source.setSkillEnabled('alpha', false); update.mockClear();
++    expect(await context.executeTool!('skill', { name: 'alpha' }, 'disabled')).toEqual({
++      toolName: 'skill', toolCallId: 'disabled', error: { code: 'E_SKILL_DISABLED', message: 'Skill "alpha" is temporarily disabled for this topic.' },
++    });
++    expect(update).toHaveBeenCalledTimes(1);
++    expect((await source.getContext()).tools.skill.description).toBe('Load a specialized skill. No skills are currently available.');
++    expect(source.getControlState()).toEqual({ enabled: true, disabledSkills: ['alpha'] });
++    source.setSkillEnabled('alpha', true);
++    expect((await source.getContext()).tools.skill.description).toContain('alpha');
++  });
++
++  it('preserves missing input, unknown name, unknown tool and notification results', async () => {
++    const source = new SkillDrivenSource(), update = vi.fn(), context = await source.getContext();
++    source.onUpdate(update);
++    expect(await context.executeTool!('other', {}, 'other')).toBeUndefined();
++    expect(await context.executeTool!('skill', {}, 'missing')).toEqual({
++      toolName: 'skill', toolCallId: 'missing', error: { code: 'E_INVALID_ARGS', message: 'Missing required field: name' },
++    });
++    expect(catalog.getSkill).not.toHaveBeenCalled();
++    expect(await context.executeTool!('skill', { name: 'absent' }, 'unknown')).toEqual({
++      toolName: 'skill', toolCallId: 'unknown', error: { code: 'E_SKILL_NOT_FOUND', message: 'Skill "absent" not found. Available skills: alpha' },
++    });
++    expect(update).toHaveBeenCalledTimes(2);
++  });
++
++  it('diagnoses capture failure, returns a full empty context, and retries next capture', async () => {
++    const failure = new Error('catalog unavailable'), source = new SkillDrivenSource();
++    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
++    catalog.listSkills.mockRejectedValueOnce(failure);
++    await expect(source.getContext()).resolves.toEqual({ messages: [], tools: {} });
++    expect(diagnostic).toHaveBeenCalledExactlyOnceWith('[SkillDrivenSource] Failed to capture skill context', failure);
++    expect((await source.getContext()).tools).toHaveProperty('skill');
++    expect(catalog.listSkills).toHaveBeenCalledTimes(2);
++  });
++
++  it('keeps execution read errors and does not retry or issue a completion update', async () => {
++    const failure = new Error('body read failed'), source = new SkillDrivenSource(), update = vi.fn();
++    const context = await source.getContext();
++    source.onUpdate(update); catalog.getSkill.mockRejectedValueOnce(failure);
++    await expect(context.executeTool!('skill', { name: 'alpha' }, 'failed')).rejects.toBe(failure);
++    expect(catalog.getSkill).toHaveBeenCalledTimes(1);
++    expect(update).not.toHaveBeenCalled();
++  });
++
++  it('uses the captured catalog instance rather than a later source catalog', async () => {
++    const source = new SkillDrivenSource(), first = await source.getContext();
++    const beta: SkillInfo = { ...alpha, name: 'beta', content: 'Beta body' };
++    const later = { listSkills: vi.fn(async () => [beta]), getSkill: vi.fn(async () => beta) };
++    Reflect.set(source, 'catalog', later);
++    const second = await source.getContext();
++    expect((await first.executeTool!('skill', { name: 'alpha' }, 'first'))?.result).toContain('Alpha body');
++    expect((await second.executeTool!('skill', { name: 'beta' }, 'second'))?.result).toContain('Beta body');
++    expect(catalog.getSkill).toHaveBeenCalledExactlyOnceWith('alpha');
++    expect(later.getSkill).toHaveBeenCalledExactlyOnceWith('beta');
++    expect(first.tools.skill.description).toContain('alpha');
++    expect(second.tools.skill.description).toContain('beta');
++  });
++});
+diff --git a/host/test/session-manager-v3.compaction.integration.test.ts b/host/test/session-manager-v3.compaction.integration.test.ts
+--- a/host/test/session-manager-v3.compaction.integration.test.ts
++++ b/host/test/session-manager-v3.compaction.integration.test.ts
+@@ -127,6 +127,7 @@
+         host: {
+           getCompactionToolName: () => 'context_compact',
+           markToolCompactionAnchor,
++          notifyNewMessage: vi.fn(),
+         },
+       },
+     });
+@@ -159,6 +160,7 @@
+         host: {
+           getCompactionToolName: () => 'context_compact',
+           markToolCompactionAnchor,
++          notifyNewMessage: vi.fn(),
+         },
+       },
+     });
+diff --git a/agent-driver-v2/README.md b/agent-driver-v2/README.md
+--- a/agent-driver-v2/README.md
++++ b/agent-driver-v2/README.md
+@@ -40,64 +40,72 @@
+ 
+ ## API
+ 
+-### IDrivenSource 接口
+-
+-每个 DrivenSource 需要实现以下接口：
+-
+-```typescript
+-interface IDrivenSource {
++### 唯一 getContext 接口
++
++```typescript
++import type { ContextDrivenSource, DrivenSourceContext } from '@aotui/agent-driver-v2';
++
++interface Source extends ContextDrivenSource {
+   readonly name: string;
+-  getMessages(): Promise<MessageWithTimestamp[]>;
+-  getTools(): Promise<Record<string, CoreTool>>;
+-  executeTool(toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined>;
++  getContext(): Promise<DrivenSourceContext>;
+   onUpdate(callback: () => void): () => void;
+ }
+-```
+-
+-工具业务由 Driver 按本轮路由调用 Context executor 或 Source 的 `executeTool`。LLMClient 交给模型 SDK 的浅层工具定义会移除 `execute`，原工具及其执行函数保留，供 Driver 路由调用；Schema、模型元数据和其他 SDK 工具回调保持原合同。此规则同时适用于流式与非流式调用。
++
++// DrivenSource 是 ContextDrivenSource 的同形别名。
++// DrivenSourceContext 返回：
++// messages: MessageWithTimestamp[]
++// tools: Record<string, Tool>
++// executeTool?: (name, args, toolCallId) => Promise<ToolResult | undefined>
++// release?: () => void | Promise<void>
++```
++
++Driver 每轮按 Source 顺序调用一次 getContext，用返回的消息、工具和执行器组装本轮输入与路由。同名工具由后一个 Source 覆盖；getToolSource 保留该轮来源查询。执行器以 Context 作为 this 调用，不会回读 Source 的执行方法。Source 如需使用自身状态，应在捕获时建立相应闭包。
++
++模型返回后，Driver 串行派发工具，并在每次调用前检查 stop / Source 禁用状态。无执行器与执行器返回 undefined 仍有不同错误。LLMClient 向模型 SDK 传递的浅层工具定义会移除 execute；Schema、模型元数据和其他 SDK 回调保留，原工具不被修改。流式与非流式均采用这一边界。
++
++Context 的持有期覆盖模型等待和全部真实工具工作，finally 逆序 release；一个 release 失败仍继续清理其余 Context。无保留资源的 Source 无需空 release，无工具 Source 无需假执行器。getContext 抛错会中止当前轮，后续 Source 不再捕获，之前的 Context 仍释放。可选来源若要降级，应自行记录真实失败并返回完整空 Context，不能让 Driver 通用吞错。当前五个 Host 来源在自己的边界保持原降级策略；Runtime 状态捕获失败仍中止本轮。
++
++MCP 的 Context 固定原 Tool 执行函数及接收者，执行前复核当前 Source/工具/服务器控制。Host compaction 固定捕获的 topicId，切换后旧调用拒绝，不转投新 topic。Skill 固定捕获的 catalog 实例；IM 继续共享历史加载 Promise。工具结果不代表可自动重试，unknown / accepted 的既有提示保持。Host/IM 接入负责保存新结果后发出现有更新信号，最终 assistant 不自行触发下一轮。
+ 
+ ### 实现位置
+ 
+-- `IDrivenSource` 接口: `agent-driver-v2/src/core/interfaces.ts`
+-- `AOTUIDrivenSource`: `runtime/src/adapters/aotui-driven-source.ts`
+-- `HostDrivenSource`: `host/src/adapters/host-driven-source.ts`
++- 公共合同：agent-driver-v2/src/core/interfaces.ts
++- SemanticAOTUIDrivenSource：runtime/src/adapters/semantic-aotui-driven-source.ts
++- Host / SystemPrompt：host/src/adapters/
++- MCP / Skill / IM：host/src/mcp/、host/src/skills/、host/src/im/
+ 
+ ## 使用示例
+ 
+-### 基本用法
+-
+-```typescript
+-import { AgentDriverV2 } from '@aotui/agent-driver-v2';
+-import { AOTUIDrivenSource } from '@aotui/runtime';
+-import { HostDrivenSource } from './host';
+-
++```typescript
++import { AgentDriverV2, type ContextDrivenSource } from '@aotui/agent-driver-v2';
++import { SemanticAOTUIDrivenSource } from '@aotui/runtime/adapters';
++
++// desktop、kernel 由宿主创建；会话消息与通知也由宿主管理。
++const conversation: ContextDrivenSource = {
++  name: 'conversation',
++  async getContext() {
++    return {
++      messages: [{ role: 'user', content: 'Inspect the current application.', timestamp: 1, region: 'session' }],
++      tools: {},
++    };
++  },
++  onUpdate() { return () => {}; },
++};
+ const driver = new AgentDriverV2({
+-  sources: [
+-    new AOTUIDrivenSource(desktop, kernel),
+-    new HostDrivenSource(messageRepo)
+-  ],
+-  llm: {
+-    model: 'openai:gpt-4',  // 格式: "providerId:modelId"
+-    apiKey: process.env.OPENAI_API_KEY,
+-    temperature: 0.7,
+-    maxSteps: 10
+-  },
+-  workLoop: {
+-    debounceMs: 300,
+-    toolCallTimeoutMs: 30000
+-  },
+-  onAssistantMessage: (message) => {
+-    console.log('LLM response:', message);
+-  },
+-  onToolResult: (message) => {
+-    console.log('Tool executed:', message);
+-  }
++  sources: [new SemanticAOTUIDrivenSource(desktop, kernel), conversation],
++  llm: { model: 'openai:gpt-4', apiKey: process.env.OPENAI_API_KEY },
++  onAssistantMessage: message => console.log(message),
++  onToolResult: message => console.log(message),
+ });
+-
+-// 运行工作循环（自动触发，当有更新信号时）
+-// 或手动触发
+ await driver.trigger();
+-```
++// 宿主结束会话时停止调度、等待其实际工作并 dispose 订阅。
++```
++
++### 从 split API 迁移
++
++IDrivenSource 及其导出已经退出。把原 getMessages/getTools 读取合并为 getContext，在这一捕获中确定执行目标，并返回该轮 executeTool；删除 Source 的旧公共 getMessages/getTools/executeTool，不保留兼容包装。不要把返回的执行器重新指向下一轮可变缓存。只返回消息或工具的旧对象不再满足 Source 类型。
++
++保留现有消息格式、timestamp/region、tool-call/result 读取及 compaction 行为；本次不迁移历史消息格式。需要降级的来源在自身捕获边界一次处理全部消息和工具，失败时不能返回半份状态；下一次显式捕获可重试。更新用已有 onUpdate 通知，不能为迁移新增自动业务重试。
+ 
+ ### LLM 配置格式
+ 
+@@ -200,7 +208,7 @@
+ 
+ // LLMConfigService 会自动从 ModelRegistry 获取配置
+ // 并转换为完整的 LLMConfig
+-hostManager.initAgentDriver(desktop, kernel);
++await hostManager.initAgentDriver(desktop, kernel, desktopManager);
+ ```
+ 
+ ## 环境变量
+@@ -217,9 +225,9 @@
+ ## 下一步
+ 
+ - [x] 实现完整的 LLM ReAct 循环 (streamText)
+-- [x] 添加 ToolCall 超时机制
++- [ ] ToolCall 超时配置尚无实际执行机制，本轮未实现
+ - [x] 添加单元测试
+-- [x] 实现 AOTUIDrivenSource (在 runtime 中)
++- [x] 实现 SemanticAOTUIDrivenSource (在 runtime 中)
+ - [x] 实现 HostDrivenSource (在 host 中)
+ - [x] 移除 ModelRegistry 依赖（迁移到 Host 主进程）
+ 

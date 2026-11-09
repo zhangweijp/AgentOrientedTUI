@@ -3,10 +3,10 @@ import type { StateSessionLimits, StateFlushReport, StateDisposeReport } from '.
 import { captureStateValue, rejectState, requireStateLimits, stateFields } from '../core/persistence/state-storage.js';
 import type { StateStorage, StateValue } from '../core/persistence/state-storage.js';
 import type { AppStatePersistence } from '../spi/runtime/state-persistence.interface.js';
-import { DEFAULT_STATE_SESSION_LIMITS } from '../adapters/storage/state-storage-protocol.js';
+import { DEFAULT_STATE_SESSION_LIMITS, STATE_SESSION_PROTOCOL } from '../adapters/storage/state-storage-protocol.js';
 
 export interface ManagedPersistenceReport {
-    readonly protocol: 'state-session-v1'; readonly instanceId: string;
+    readonly protocol: typeof STATE_SESSION_PROTOCOL; readonly instanceId: string;
     readonly ok: boolean; readonly unmount: 'pending' | 'completed' | 'failed';
     readonly flush?: StateFlushReport; readonly dispose?: StateDisposeReport;
 }
@@ -18,8 +18,8 @@ export function createAppStatePersistence(options: Readonly<{ instanceId: string
     let manual: Promise<StateFlushReport> | undefined, shutdownPromise: Promise<StateFlushReport> | undefined;
     let lastManual: StateFlushReport | undefined;
     let closePromise: Promise<ManagedPersistenceReport> | undefined;
-    let report: ManagedPersistenceReport = Object.freeze({ protocol: 'state-session-v1', instanceId: options.instanceId, ok: false, unmount: 'pending' });
-    const port: AppStatePersistence = Object.freeze({ protocol: 'state-session-v1', instanceId: options.instanceId,
+    let report: ManagedPersistenceReport = Object.freeze({ protocol: STATE_SESSION_PROTOCOL, instanceId: options.instanceId, ok: false, unmount: 'pending' });
+    const port: AppStatePersistence = Object.freeze({ protocol: STATE_SESSION_PROTOCOL, instanceId: options.instanceId,
         captureValue: (value: unknown) => captureStateValue(value, limits),
         bind(key: string, value: StateValue, input: Readonly<{ hydrate: boolean; storageKey?: string }>) {
             const f = stateFields(input);
@@ -54,7 +54,7 @@ export function createAppStatePersistence(options: Readonly<{ instanceId: string
             if (!initialFailure) { try { flush = await shutdown(); } catch { /* cleanup remains mandatory */ } }
             try { await unmount(); } catch { unmounted = false; }
             const dispose = await session.dispose();
-            report = Object.freeze({ protocol: 'state-session-v1', instanceId: options.instanceId,
+            report = Object.freeze({ protocol: STATE_SESSION_PROTOCOL, instanceId: options.instanceId,
                 ok: !initialFailure && !!flush?.ok && unmounted && dispose.release.status === 'released' && dispose.unsaved.length === 0,
                 unmount: unmounted ? 'completed' : 'failed', ...(flush ? { flush } : {}), dispose });
             return report;

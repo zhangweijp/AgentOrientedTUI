@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { migrateAgentAppReferences } from '../../src/config/app-reference-migration.js';
 
 const mockRef = vi.hoisted(() => ({
@@ -165,7 +165,6 @@ vi.mock('../../src/gui/components/WorkspaceHeader.js', () => ({ WorkspaceHeader:
 vi.mock('../../src/gui/components/ConnectionScreen.js', () => ({ ConnectionScreen: () => <div data-testid="connection-screen" /> }));
 vi.mock('../../src/gui/components/TuiDesktopViewer.js', () => ({ TuiDesktopViewer: () => <div data-testid="tui-viewer" /> }));
 vi.mock('../../src/gui/components/DeleteConfirmModal.js', () => ({ DeleteConfirmModal: () => null }));
-vi.mock('../../src/gui/components/Toast.js', () => ({ Toast: () => null }));
 vi.mock('../../src/gui/components/settings/SettingsPanel.js', () => ({ SettingsPanel: () => null }));
 
 import { App } from '../../src/gui/App.js';
@@ -221,4 +220,19 @@ describe('App agent flow around New Session', () => {
         const createTopicArgs = (mockRef.bridge.createTopic as any).mock.calls.at(-1);
         expect(createTopicArgs?.[2]?.agentId).toBe('agent_2');
     });
+    it('shows an active Topic preview error through the existing toast without switching pages', async () => {
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId('select-project')).toBeInTheDocument());
+        fireEvent.click(screen.getByTestId('select-project'));
+        await waitFor(() => expect(screen.getByTestId('open-legacy-topic')).toBeInTheDocument());
+        fireEvent.click(screen.getByTestId('open-legacy-topic'));
+        await waitFor(() => expect(mockRef.bridge.getActiveTopicId()).toBe('topic_legacy'));
+        const listener = mockRef.bridge.subscribe.mock.calls.at(-1)[0];
+        act(() => listener({ type: 'snapshot_error', topicId: 'another_topic', data: 'Other preview' }));
+        expect(screen.queryByText(/TUI preview failed:/)).toBeNull();
+        act(() => listener({ type: 'snapshot_error', topicId: 'topic_legacy', data: 'Controlled capture failure' }));
+        expect(screen.getByText('TUI preview failed: Controlled capture failure')).toBeInTheDocument();
+        expect(mockRef.bridge.getActiveTopicId()).toBe('topic_legacy');
+    });
+
 });

@@ -1,3 +1,6 @@
+import { VIEW_TYPE_TOOL_PROTOCOL } from '../runtime/app-type-tools.interface.js';
+import { APP_LIFECYCLE_PROTOCOL } from '../runtime/app-lifecycle.interface.js';
+import { STATE_SESSION_PROTOCOL } from '../runtime/state-persistence.interface.js';
 /** App module contract accepted by Runtime AppRegistry and Worker Runtime. */
 
 import type { ComponentFactory } from '../component-factory.interface.js';
@@ -11,8 +14,9 @@ import type { AppKernelConfig } from './app-kernel.interface.js';
 export interface TUIAppFactory extends ComponentFactory {
     readonly displayName: string;
     readonly kernelConfig: AppKernelConfig;
-    readonly persistenceSupport: 'state-session-v1';
-    readonly appLifecycleSupport: 'app-lifecycle-v2';
+    readonly toolAuthoringProtocol: typeof VIEW_TYPE_TOOL_PROTOCOL;
+    readonly persistenceSupport: typeof STATE_SESSION_PROTOCOL;
+    readonly appLifecycleSupport: typeof APP_LIFECYCLE_PROTOCOL;
 }
 
 /** Recognizes the component factory contract emitted by `createTUIApp`. */
@@ -29,8 +33,8 @@ export function isTUIAppFactory(value: unknown): value is TUIAppFactory {
             !kernelConfig || !('value' in kernelConfig) || typeof kernelConfig.value !== 'object' ||
             kernelConfig.value === null || Array.isArray(kernelConfig.value) ||
             !initializeComponent || !('value' in initializeComponent) || typeof initializeComponent.value !== 'function' ||
-            !persistenceSupport || !('value' in persistenceSupport) || persistenceSupport.value !== 'state-session-v1' ||
-            !appLifecycleSupport || !('value' in appLifecycleSupport) || appLifecycleSupport.value !== 'app-lifecycle-v2') {
+            !persistenceSupport || !('value' in persistenceSupport) || persistenceSupport.value !== STATE_SESSION_PROTOCOL ||
+            !appLifecycleSupport || !('value' in appLifecycleSupport) || appLifecycleSupport.value !== APP_LIFECYCLE_PROTOCOL) {
             return false;
         }
 
@@ -39,4 +43,13 @@ export function isTUIAppFactory(value: unknown): value is TUIAppFactory {
     } catch {
         return false;
     }
+}
+
+/** Factory authoring capability, captured without invoking an accessor. */
+export function hasViewTypeToolAuthoringProtocol(factory: unknown): boolean {
+    if (factory === null || typeof factory !== 'object' || Array.isArray(factory)) return false;
+    try {
+        const field = Object.getOwnPropertyDescriptor(factory, 'toolAuthoringProtocol');
+        return !!field && 'value' in field && field.value === VIEW_TYPE_TOOL_PROTOCOL;
+    } catch { return false; }
 }

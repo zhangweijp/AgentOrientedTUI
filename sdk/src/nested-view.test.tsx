@@ -6,7 +6,9 @@ import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel
 import { createTUIApp } from './app-factory/createTUIApp.js';
 import { View } from './components/View.js';
 import { useDataRef } from './hooks/useRef.js';
-import { useViewTypeTool } from './hooks/useViewTypeTool.js';
+import { AppTools, ToolRef } from './components/AppTools.js';
+import { defineViewTypeTool, defineToolSet } from './tools/view-type-tool.js';
+import Type from 'typebox';
 
 function setup(component: () => any) {
     const factory = createTUIApp({ app_name: 'nested_view_fixture', component });
@@ -23,8 +25,6 @@ function setup(component: () => any) {
             await act(async () => kernel.onOpen({
                 appId: 'nested_fixture' as any,
                 desktopId: 'desktop_nested' as any,
-                markDirty() {},
-                onRender() {},
             }, container));
         },
         async close() {
@@ -55,46 +55,39 @@ class ErrorBoundary extends Component<{
 
 const instances = (kernel: AppKernel) => kernel.getViewOwnedViewInstances().map(view => view.viewId).sort();
 const refs = (kernel: AppKernel) => kernel.getViewRefs().map(ref => `${ref.viewId}:${ref.refId}`).sort();
-const toolTargets = (kernel: AppKernel) => kernel.getViewOwnedToolDefinitions()
-    .flatMap(tool => tool.targets.map(target => `${tool.name}:${target.viewId}`)).sort();
 
 describe('View nesting boundary', () => {
     it.each(['direct', 'wrapped'] as const)('rejects %s nested Views before mounting child bindings and can recover', async kind => {
         let captured: unknown;
         let setNested!: (open: boolean) => void;
         let nestedPayloadRendered = false;
-        const nestedHandler = vi.fn(async () => ({ success: true }));
-        const recoveryHandler = vi.fn(async () => ({ success: true }));
-
         function NestedPayload() {
             nestedPayloadRendered = true;
             const value = useDataRef('nested_record', { value: 'nested' });
-            useViewTypeTool('nested_probe', { description: 'Nested probe', params: {} }, nestedHandler);
             return h('p', {}, value('Nested'));
         }
         function NestedWrapper() {
-            return h(View, { id: 'child' }, h(NestedPayload, {}));
+            return h(View, {kind: 'state', type: 'child', id: 'child' }, h(NestedPayload, {}));
         }
         function RecoveryPayload() {
             const value = useDataRef('recovered_record', { value: 'recovered' });
-            useViewTypeTool('recovery_probe', { description: 'Recovery probe', params: {} }, recoveryHandler);
             return h('p', {}, value('Recovered'));
         }
         function Root() {
             const [nested, update] = useState(true);
             setNested = update;
             const nestedAttempt = kind === 'direct'
-                ? h(View, { id: 'child' }, h(NestedPayload, {}))
+                ? h(View, {kind: 'state', type: 'child', id: 'child' }, h(NestedPayload, {}))
                 : h(NestedWrapper, {});
             return h('main', {}, [
-                h(View, { id: 'parent' }, h('section', {}, [
+                h(View, {kind: 'state', type: 'parent', id: 'parent' }, h('section', {}, [
                     h('p', {}, 'Ordinary component content'),
                     h(ErrorBoundary, {
                         key: nested ? 'attempt' : 'recovered',
                         onError(error) { captured = error; },
                     }, nested ? nestedAttempt : h('p', {}, 'Removed nested declaration')),
                 ])),
-                !nested ? h(View, { id: 'recovered' }, h(RecoveryPayload, {})) : null,
+                !nested ? h(View, {kind: 'state', type: 'recovered', id: 'recovered' }, h(RecoveryPayload, {})) : null,
             ]);
         }
 
@@ -112,14 +105,11 @@ describe('View nesting boundary', () => {
             expect(x.container.querySelector('[data-view-id="child"]')).toBeNull();
             expect(instances(x.kernel)).toEqual(['parent']);
             expect(refs(x.kernel)).toEqual([]);
-            expect(toolTargets(x.kernel)).toEqual([]);
-            expect(nestedHandler).not.toHaveBeenCalled();
 
             await act(async () => setNested(false));
             expect(x.container.querySelector('[data-view-id="recovered"]')).not.toBeNull();
             expect(instances(x.kernel)).toEqual(['parent', 'recovered']);
             expect(refs(x.kernel)).toEqual(['recovered:recovered_record']);
-            expect(toolTargets(x.kernel)).toEqual(['recovery_probe:recovered']);
             expect(x.container.textContent).toContain('Recovered');
         } finally {
             await x.close();
@@ -127,26 +117,23 @@ describe('View nesting boundary', () => {
 
         expect(instances(x.kernel)).toEqual([]);
         expect(refs(x.kernel)).toEqual([]);
-        expect(toolTargets(x.kernel)).toEqual([]);
     });
 
     it('rethrows an uncaught Preact render error without leaving View bindings behind', async () => {
         let nestedPayloadRendered = false;
         function ExistingPayload() {
             const value = useDataRef('existing_record', { value: 'existing' });
-            useViewTypeTool('existing_probe', { description: 'Existing probe', params: {} }, async () => ({ success: true }));
             return h('p', {}, value('Existing'));
         }
         function NestedPayload() {
             nestedPayloadRendered = true;
             const value = useDataRef('nested_record', { value: 'nested' });
-            useViewTypeTool('nested_probe', { description: 'Nested probe', params: {} }, async () => ({ success: true }));
             return h('p', {}, value('Nested'));
         }
         function Root() {
             return h('main', {}, [
-                h(View, { id: 'ready' }, h(ExistingPayload, {})),
-                h(View, { id: 'parent' }, h(View, { id: 'child' }, h(NestedPayload, {}))),
+                h(View, {kind: 'state', type: 'ready', id: 'ready' }, h(ExistingPayload, {})),
+                h(View, {kind: 'state', type: 'parent', id: 'parent' }, h(View, {kind: 'state', type: 'child', id: 'child' }, h(NestedPayload, {}))),
             ]);
         }
 
@@ -163,7 +150,6 @@ describe('View nesting boundary', () => {
             expect(registerRef.mock.calls.every(([viewId]) => viewId !== 'child')).toBe(true);
             expect(instances(x.kernel)).toEqual([]);
             expect(refs(x.kernel)).toEqual([]);
-            expect(toolTargets(x.kernel)).toEqual([]);
             expect(x.container.querySelectorAll('[data-view-id]')).toHaveLength(0);
         } finally {
             await x.close();
@@ -171,32 +157,33 @@ describe('View nesting boundary', () => {
 
         expect(instances(x.kernel)).toEqual([]);
         expect(refs(x.kernel)).toEqual([]);
-        expect(toolTargets(x.kernel)).toEqual([]);
     });
 
     it('allows ordinary component nesting and independently declared sibling Views through dynamic close and reopen', async () => {
         let setLeftOpen!: (open: boolean) => void;
-        const leftHandler = vi.fn(async () => ({ success: true }));
-        const rightHandler = vi.fn(async () => ({ success: true }));
-
-        function Content({ owner, handler }: { owner: string; handler: () => Promise<{ success: true }> }) {
+        const toolDefinition = defineViewTypeTool({
+            viewType: 'Card', name: 'inspect_card', description: 'Inspect the current Card.',
+            inputSchema: Type.Object({}),
+        });
+        function Content({ owner }: { owner: string }) {
             const value = useDataRef(`${owner}_record`, { owner });
-            useViewTypeTool(`${owner}_probe`, { description: `${owner} probe`, params: {} }, handler);
             return h('section', {}, h('p', {}, value(owner)));
         }
         function OrdinaryWrapper({ children }: { children?: ComponentChildren }) {
             return h('article', {}, children);
         }
+        const boundTools = defineToolSet({ tool: toolDefinition });
+
         function Root() {
             const [leftOpen, updateLeft] = useState(true);
             setLeftOpen = updateLeft;
-            return h('main', {}, [
+            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => ({ success: true }) } } }, h('main', {}, [
                 h('p', {}, 'Application content'),
-                leftOpen ? h(View, { id: 'left', key: 'left', type: 'Card' },
-                    h(OrdinaryWrapper, {}, h(Content, { owner: 'left', handler: leftHandler }))) : null,
-                h(View, { id: 'right', key: 'right', type: 'Card' },
-                    h(OrdinaryWrapper, {}, h(Content, { owner: 'right', handler: rightHandler }))),
-            ]);
+                leftOpen ? h(View, {kind: 'state', id: 'left', key: 'left', type: 'Card' },
+                    h(OrdinaryWrapper, {}, [h(Content, { owner: 'left' }), h(ToolRef, { tool: boundTools.tool }, 'Inspect left')])) : null,
+                h(View, {kind: 'state', id: 'right', key: 'right', type: 'Card' },
+                    h(OrdinaryWrapper, {}, [h(Content, { owner: 'right' }), h(ToolRef, { tool: boundTools.tool }, 'Inspect right')])),
+            ]));
         }
 
         const x = setup(Root);
@@ -204,25 +191,31 @@ describe('View nesting boundary', () => {
             await x.open();
             expect(instances(x.kernel)).toEqual(['left', 'right']);
             expect(refs(x.kernel)).toEqual(['left:left_record', 'right:right_record']);
-            expect(toolTargets(x.kernel)).toEqual(['left_probe:left', 'right_probe:right']);
+            const initialTool = x.kernel.getToolDefinitions().find(tool => tool.name === 'inspect_card')!;
+            expect(initialTool.execution.kind).toBe('view-type');
+            expect(initialTool.execution).not.toHaveProperty('targets');
+            expect(x.kernel.getToolDefinitions()).toHaveLength(1);
+            expect(x.container.querySelectorAll('tool-ref')).toHaveLength(2);
             expect(x.container.querySelectorAll('[data-view-id]')).toHaveLength(2);
             expect(x.container.textContent).toContain('Application content');
 
             await act(async () => setLeftOpen(false));
             expect(instances(x.kernel)).toEqual(['right']);
             expect(refs(x.kernel)).toEqual(['right:right_record']);
-            expect(toolTargets(x.kernel)).toEqual(['right_probe:right']);
+            expect(x.kernel.getToolDefinitions()).toHaveLength(1);
+            expect(x.kernel.getToolDefinitions()[0]!.execution).toEqual(initialTool.execution);
 
             await act(async () => setLeftOpen(true));
             expect(instances(x.kernel)).toEqual(['left', 'right']);
             expect(refs(x.kernel)).toEqual(['left:left_record', 'right:right_record']);
-            expect(toolTargets(x.kernel)).toEqual(['left_probe:left', 'right_probe:right']);
+            expect(x.kernel.getToolDefinitions()).toHaveLength(1);
+            expect(x.kernel.getToolDefinitions()[0]!.execution).toEqual(initialTool.execution);
         } finally {
             await x.close();
         }
 
         expect(instances(x.kernel)).toEqual([]);
         expect(refs(x.kernel)).toEqual([]);
-        expect(toolTargets(x.kernel)).toEqual([]);
+        expect(x.kernel.getToolDefinitions()).toEqual([]);
     });
 });

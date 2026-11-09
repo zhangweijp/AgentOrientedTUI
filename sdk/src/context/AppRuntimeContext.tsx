@@ -1,16 +1,16 @@
 /**
  * AOTUI SDK - App Runtime Context
  * 
- * [RFC-027] App层级的Runtime上下文,提供给View组件使用
+ * App-level Runtime context supplied to the full managed component tree.
  * 
- * Supplies app metadata and the Runtime-owned Ref/Tool ports to mounted Views.
+ * Supplies app metadata, App-owned Tool registration, View mount identities, and Ref publication ports.
  */
 
 import type { AppLifecyclePort } from '@aotui/runtime/spi';
 import type { AppStatePersistence } from '@aotui/runtime/spi';
 import { createContext } from 'preact';
 import { useContext, useMemo } from 'preact/hooks';
-import type { AppID, DesktopID, IRefExporter, IProjectionPort, IViewOwnedToolPort, AppLaunchConfig } from '@aotui/runtime/spi';
+import type { AppID, DesktopID, IRefExporter, IProjectionPort, IViewOwnedToolPort, IAppTypeToolPort, AppLaunchConfig } from '@aotui/runtime/spi';
 
 // ═══════════════════════════════════════════════════════════════
 //  Types
@@ -19,11 +19,11 @@ import type { AppID, DesktopID, IRefExporter, IProjectionPort, IViewOwnedToolPor
 /**
  * App Runtime Context Value
  * 
- * 由AppKernel在initializeFromComponent时创建并提供
+ * 由AppKernel在initializeFromComponent时创建并提供给App及其View组件树
  */
 interface AppRuntimeContextValue {
-    persistence?: AppStatePersistence;
-    appLifecycle?: AppLifecyclePort;
+    persistence?: AppStatePersistence | undefined;
+    appLifecycle?: AppLifecyclePort | undefined;
     /** App ID */
     appId: AppID;
 
@@ -31,7 +31,7 @@ interface AppRuntimeContextValue {
     desktopId: DesktopID;
 
     /** App 启动配置 */
-    launchConfig?: AppLaunchConfig;
+    launchConfig?: AppLaunchConfig | undefined;
 
     /**
      * RefExporter访问 (用于useRef/useArrayRef)
@@ -46,14 +46,23 @@ interface AppRuntimeContextValue {
     /** Semantic commit coordination supplied by Runtime. */
     projection: IProjectionPort;
 
-    /** View-instance-owned Tool port with Runtime-advertised capabilities. */
-    viewTools?: IViewOwnedToolPort;
+    /** SDK renderer retries only controller cleanups that have failed. */
+    toolCleanup?: Set<() => void> | undefined;
+
+    /** Managed renderer owns these callbacks even when Preact skips child cleanup. */
+    toolOwners?: { closed: boolean; active: Set<() => void> } | undefined;
+
+    /** View mount identities activate the App's shared ViewType Tools. */
+    viewTools?: IViewOwnedToolPort | undefined;
+
+    /** App-owned, ViewType-scoped ordinary Tool registration port. */
+    appTypeTools?: IAppTypeToolPort | undefined;
 }
 
 interface AppRuntimePublicContextValue {
     readonly appId: AppID;
     readonly desktopId: DesktopID;
-    readonly launchConfig?: AppLaunchConfig;
+    readonly launchConfig?: AppLaunchConfig | undefined;
     readonly persistence?: AppStatePersistence;
 }
 

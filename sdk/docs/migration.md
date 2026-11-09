@@ -1,127 +1,35 @@
-# 按能力迁移 SDK 调用
+# 迁移到当前作者入口
 
-普通读写、只读参数与单对象 Ref 都使用 `useViewTypeTool(name, options, handler, config?)`；只读工具显式设置 `isMutating: false`。实体 File 条件写入由应用自行维护。`createTUIApp` 默认协商正式 app-lifecycle-v2；需要清理外部资源的应用在长寿命组件中调用 `useAppLifecycle`，stop/close 回调各自可选。需要匹配产物；旧 wrapper 不自动升级。完整合同与 IDE 迁移见 [普通 Tool 与应用清理](tool-lifecycle.md) 和 IDE 的 SCOPED_IDE.md。
+当前只推荐 [静态声明 → App 绑定 → View 投影](view-type-tools.md) 这一流程。先按 [包使用说明](runtime-compatibility.md) 使用同次交付的 Runtime／SDK，再迁移应用；仅升级声明或能 import 并不证明 Worker 支持新合同。以下是当前替换方式，不提供旧入口兼容包装。
 
-以下完整应用对照历史 D5 SDK 的参数路径与新合同。迁移前示例只用于展示旧产物；旧 `defineParams` 不属于当前 SDK 根入口。迁移后的代码直接把参数对象传给 `useViewTypeTool`。旧 ViewType+ToolName 的 type-wide Hook 签名和 `typeTools` Context 已退出，不存在兼容重载。
+| 旧写法或职责 | 当前写法 |
+| --- | --- |
+| 每个 View 实例调用 useViewTypeTool／useViewSnapshotTool | module-scope `defineViewTypeTool` + `defineToolSet`；每个 App 一个 `AppTools`，普通 TS 用 `createToolBindings` |
+| definition 内含 execute | definition 只含 viewType、name、description、inputSchema；execute／enabled 放入 App bindings |
+| 重复维护 Schema、参数类型、注册和工具说明 | 一份 TypeBox Schema 推导 `ArgsOf`／`SchemaOf`、注册和参数合同；handler 参数递归只读 |
+| isMutating 分类 | 删除该字段；只读参数、授权、业务 effects 及调用终态各守原合同 |
+| Root／数据 View 重复序列化完整工具定义 | Root 用 `ToolCatalog` 按类型列工具名；完整描述与 Schema 只进入 Context Tools |
+| 用实例 id 猜 ViewType／扫描后代猜 kind | 显式 View `id`、`type`、`kind="instruction"` 或 `kind="state"`；同类型多个实例共享工具 |
+| App 自行包装 `<view>` 或预转义 XML | 只提交正文；最终消息边界包装并编码一次，文件／日志原文放 pre/code |
+| ToolResult 的 success/error/effects 任意组合 | 以 success 判别；失败提供 JSON error；成功不带 error/effects；无法确认副作用时不伪造 none |
+| Registry 为读名称 import App，或注册配置覆盖名称／说明 | 先构建生成 aoapp.json；Registry 只读静态输出，注册 key 使用 canonical app_name，说明仍只维护在工厂声明 |
+| AOTUI_APP_NAME 同时充当运行名称和状态 namespace | canonical app_name 由生成物核对；需要独立状态 namespace 的 Host 改传 AOTUI_APP_KEY，旧字段明确拒绝 |
+| ToolResult 携带完整文件正文或列表 | 返回短收据及必要提示；当前业务数据进入 View |
+| 让模型抄 plan_id／phase_id／task_id 选择已展示对象 | 发布对象／数组 Ref，参数用 `refParam`，App 从解析对象读取内部身份并校验当前状态 |
+| 把 Note:current／Note[]:notes 当作调用输入 | 这些是展示提示；调用使用 `detail.current`／`detail.notes`，以所属 View 实例 id 定位 |
+| getContext 后直接调用，或只预览就替换旧资格 | 可信消费者显式 `Context.adopt()`；Driver 自动采用；finally 释放该 Context |
+| 从 @aotui/runtime/adapters 导入 SemanticAOTUIDrivenSource | 从独立 `@aotui/agent-driver-adapter` 导入，Host 安装匹配 Runtime／Driver peer |
 
-## 迁移前：历史 D5 SDK 参数路径
+文件路径、标题、编辑内容和金额有独立业务意义时仍用普通参数；Ref 不是替代所有字符串的新类型系统。Ref 支持对象、整数组、元素、多个／可选与地址数组多选；使用方式及不支持的查询见 [Ref 指南](readonly-ref-v2.md)。
 
-```tsx
-import { h } from 'preact';
-import { createTUIApp, View, useState, defineParams, useViewTypeTool } from '@aotui/sdk';
+静态声明不捕获业务实例；完整映射一次绑定到 App。将同类页面中的重复注册合并到共同祖先的 AppTools。同类型最后一个 View 关闭后 activation 失效，重开不恢复旧资格；App 仍检查路径是否打开、对象归属、版本和权限。不要把共享工具改为隐式绑定某个页面或文件。
 
-function SummaryContent() {
-    const [last, setLast] = useState('No result');
-    useViewTypeTool('inspect', {
-        description: 'When to use: inspect the displayed summary. How to use: supply choice and a short text.',
-        isMutating: false,
-        params: defineParams({
-            choice: { type: 'enum', options: ['7', 'ok'], required: true },
-            text: { type: 'string', required: true, constraints: { maxLength: 1 } },
-            limit: { type: 'number', default: 2 },
-        }),
-    }, async (args) => {
-        setLast(JSON.stringify({ choice: args.choice, text: args.text }));
-        return { success: true, data: { view_id: 'summary', choice: args.choice, text: args.text,
-            has_extra: Object.hasOwn(args, 'extra'), has_limit: Object.hasOwn(args, 'limit') } };
-    });
-    return <p>{last}</p>;
-}
+`createToolBindings` 的 controller 对声明 Map 不变；不要把它强转成另一套 Schema。绑定提交、失败关闭和 cleanup 细节见 [普通 TS 绑定](binding-tools.md)，组件行为见 [AppTools](app-tools.md)。旧 ToolUI 不能授予权限；可选 ToolRef 只呈现局部能力标签，不承担注册。
 
-function AppRoot() {
-    return <>
-        <View id="root" type="Root" name="Root">
-            <h1>Summary Application Instruction</h1>
-            <h2>What Summary is</h2><p>Inspect the current summary.</p>
-            <h2>How to use Summary</h2><p>Call inspect and read the summary View.</p>
-            <h2>Views of Summary</h2><h3>Summary</h3>
-            <h4>Summary Instruction</h4><p>Shows the last inspection result.</p>
-            <h4>Summary Available Tools</h4><ul><li>inspect</li></ul>
-        </View>
-        <View id="summary" type="Summary" name="Summary"><SummaryContent /></View>
-    </>;
-}
+迁移后运行 [文件 App](examples/file-app.tsx)、[笔记 Ref App](examples/ref-app.tsx) 与现有包消费者检查。验证打开后能力出现、数据更新只呈现最新快照、关闭后旧资格失效、合法业务失败和资源释放。历史阶段方案及签收记录只说明当时产物，不作为当前推荐教程或本次验收结论。
 
-export default createTUIApp({ app_name: 'summary_legacy', component: AppRoot });
-```
+本次为 Breaking Change：匹配组合是 Runtime 7.0.0-srt.1、SDK 0.8.0-srt.1、可选 Adapter 0.4.0-srt.1 与 Driver 0.3.0。工厂和注册端口统一引用 Runtime 的 view-type-tools-v4 常量；旧 v3 及更早工厂／端口不会获得兼容执行。重新构建工厂及生成清单，不手动修改协议字符串。
 
-## 迁移后：通过 View-local Hook 声明普通只读参数
+Worker INIT 必须请求并确认 app-snapshot/v3；启用工具时还必须确认既有 view-tool-parameters-invoke/v4。缺失 Snapshot 支持或未确认全部请求能力时，在 OPEN/调用前拒绝。Snapshot 数据本身仍逐份独立校验，不以握手代替来源、参数、Ref 或预算检查。低层 ComponentFactory／纯 Core Producer 的身份与生命周期保持独立，普通 TS 的现有注册端口也使用同一个常量源。
 
-```tsx
-import { h } from 'preact';
-import { createTUIApp, View, useState, useViewTypeTool } from '@aotui/sdk';
-
-function SummaryContent() {
-    const [last, setLast] = useState('No result');
-    useViewTypeTool('inspect', {
-        description: 'When to use: inspect the displayed summary. How to use: supply a declared choice and one Unicode code point.',
-        isMutating: false,
-        params: {
-            choice: { type: 'enum', options: ['7', 'ok'], required: true },
-            text: { type: 'string', required: true, constraints: { maxLength: 1 } },
-            limit: { type: 'number', default: 2 },
-        },
-}, (args) => {
-        setLast(JSON.stringify({ choice: args.choice, text: args.text }));
-        return { success: true, data: { view_id: 'summary', choice: args.choice, text: args.text,
-            has_extra: Object.hasOwn(args, 'extra'), has_limit: Object.hasOwn(args, 'limit') } };
-    });
-    return <p>{last}</p>;
-}
-
-function AppRoot() {
-    return <>
-        <View id="root" type="Root" name="Root">
-            <h1>Summary Application Instruction</h1>
-            <h2>What Summary is</h2><p>Inspect the current summary.</p>
-            <h2>How to use Summary</h2><p>Call inspect and read the summary View.</p>
-            <h2>Views of Summary</h2><h3>Summary</h3>
-            <h4>Summary Instruction</h4><p>Shows the last inspection result.</p>
-            <h4>Summary Available Tools</h4><ul><li>inspect</li></ul>
-        </View>
-        <View id="summary" type="Summary" name="Summary"><SummaryContent /></View>
-    </>;
-}
-
-export default createTUIApp({ app_name: 'summary_contract', component: AppRoot });
-```
-
-## 已知行为变化
-
-| 输入 | 旧普通参数路径 | 新合同 |
-|---|---|---|
-| `{ choice: 'ok', text: 'a' }` | 正常执行 | 正常执行 |
-| choice=7，options 含字符串 '7' | enum 比较字符串形式，handler 仍收到原值 | 严格比较，拒绝数字，不做转换 |
-| text='😀'，maxLength=1 | 旧 UTF-16 长度判断拒绝 | 一个 Unicode code point，允许 |
-| 附加 extra | 保留额外字段 | 默认闭合，拒绝；开放需要声明 additionalProperties |
-| 缺席 limit，声明 default=2 | 不自动填充 | 不自动填充 |
-
-TypeScript 会提前阻止一部分错误 JS 输入，运行时仍需验证模型/JSON 调用。旧宽 `ParamDef`/`defineParams` 属于历史 API，当前 SDK 已移除该 helper。新普通规则只来自 Runtime B1，Ref 组合来自 B3B，SDK 不复制规则。
-
-## Ref V2 的条件
-
-单对象快照 Ref 完整应用见 [readonly-ref-v2](readonly-ref-v2.md)。它需要单个必填顶层 reference、`refSource: 'snapshot-value-v1'` provenance marker、同 View owner、`isMutating: false` 和匹配的 Runtime/Worker snapshot-value-v2 能力。该 marker 描述来源语义，不是旧 V1 transport。Core 来源模式、声明 profile、Wire mode 是不同职责；应用继续只写参数和 handler。无业务 refType 时保留真实 unknown，具体声明严格比较。Host 用 `interactionModes` 配置可用模式；省略时支持 ordinary-v2 与 snapshot-value-v2，执行仍须经过受信授权。
-
-文件创建与覆盖策略由应用自己的资源 adapter 实现。`useViewTypeTool` 仍通过 ordinary-v2 返回应用的 `OperationResult`：明确的 `effects: 'none' | 'partial'` 保留在终态；未声明副作用的失败继续表示 unknown，不会被 SDK 改写为“无副作用”。只读是行为声明，不能替代权限或来源检查。
-
-## 结果、环境与弃用项
-
-handler 返回应用的 `OperationResult`；Controller 另有来源、执行阶段、可见性和回执。可信 entered-returned 中的业务结果可以映射为 unknown，同时传输仍健康。不能用结果字符串判断 Worker 是否可复用；依据适用的 Runtime 能力合同和终态判断 Worker 是否可复用。
-
-`useAppEnv` 已删除；迁移为 `useAppRuntimeContext().launchConfig`，并按应用配置字段检查类型。该 Hook 只能在 Runtime 托管的 App Context 中调用；缺少 Context 时会抛错。SDK 根入口仍导出 `OperationResult` 与 `OperationError`，并直接复用 Runtime SPI 类型定义。
-
-旧 ViewType+ToolName Hook 调用不再有运行时兼容路径。将 Tool 声明放到目标 `<View>` 的子组件内，使用 `useViewTypeTool(name, options, handler, config?)`；每个已挂载实例拥有自己的 binding，跨实例调用仍需来源提供的目标选择与执行时授权。组件通过状态决定是否渲染 `<View>`，以挂载和卸载控制页面生命周期。`useLLMOutputChannel` 只接收实时输出 listener，并监听 Worker 派发的 `aotui:llm-text` 事件；事件桥不提供历史，SDK 不公开历史读取 Hook，也不承诺宿主提供历史 Provider。
-
-使用 `app_name` 字符串替代旧示例误写的 name。应用模块的 `default` 必须是唯一托管组件工厂；Runtime 通过 `initializeComponent` 初始化组件树。`createTUIApp` 总是声明 `app-lifecycle-v2`，清理 callbacks 可选，不再设置实验 opt-in。旧 `factory.create()`、callable factory 与 manifest/create 双模式已退出。
-
-C01 的 Breaking Changes：
-
-- 删除 `persistenceManager` 及其全局注册/保存类型。通常使用 `usePersistentState` 声明实例状态；需自行管理绑定与恢复的高级应用可用 `useAppRuntimeContext().persistence` 的 `AppStatePersistence` 端口，并检查 `flush()` 报告。
-- 删除 `useMountableViewRegistry/useDynamicViewRegistry`、对应类型以及组件 Context 中仅抛错的字段。通过组件状态挂载或卸载 `<View>`。
-- 删除 `useResourceRef` 过渡别名，数据引用统一使用 `useDataRef/useArrayRef`。根 `useRef` 仍是 Preact Hook。
-- 删除 `useSignalStore` 及其 `SignalStore` 类型，组件状态使用现有 `useState/useReducer`。
-- 删除根入口的 `assertValidOperationName/validateAppId/validateViewId/validateOperationName/validateFunctionName`。View 与 Runtime 必需的身份、输入和来源校验仍由各自正式契约执行。
-
-本轮另已删除 type-wide Tool 注册、IView/ViewFactory、InlineView 和旧 Factory 双模式。当前唯一 Tool Hook 使用 ordinary-v2 或 snapshot-value-v2；Host 以 `interactionModes` 限定可用集合，并通过 `createAppScope` 执行目标选择与受信授权。生命周期合同由 SDK 工厂默认声明。
-
-完整名称和条件见 [API 状态](api-status.md)，入口见 [SDK README](../README.md)。独立分发、关闭排空/flush、产品延迟/RSS和整体稳定承诺未由这一迁移授予。
+旧 Registry 的 package.json/index.js 回退不再用于发现应用；缺失或无效 aoapp.json 给 APP_MANIFEST_INVALID。直接 Runtime Worker 安装入口仍可使用明确的模块路径，Worker 核对工厂协议和调用／Snapshot 支持。现有 SDK 文件／Ref 示例属于这种直接安装场景，不需要为了运行示例先引入应用市场。

@@ -10,7 +10,6 @@ import { WorkerPool } from '../app/worker-pool.js';
 import type {
     IDesktopManager,
     DesktopID,
-    AppID,
     AppState,
     DesktopStatus,
     IDesktop,
@@ -18,8 +17,8 @@ import type {
 } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import { Desktop } from './desktop.js';
-import type { DesktopCloseOptions, DesktopCloseOperation, DesktopCloseReport, RuntimeCloseOperation, RuntimeCloseReport } from '../../spi/runtime/close.interface.js';
-import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseOperation, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from './close-operation.js';
+import type { DesktopCloseOptions, DesktopCloseHandle, DesktopCloseReport, RuntimeCloseHandle, RuntimeCloseReport } from '../../spi/runtime/close.interface.js';
+import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseHandle, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from './close-handle.js';
 
 // ============================================================================
 // Desktop Manager Implementation
@@ -35,7 +34,7 @@ import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseOperat
  * ```typescript
  * const manager = new DesktopManager();
  * const desktopId = await manager.create();
- * await manager.installDynamicWorkerApp(desktopId, myApp);
+ * const desktop = manager.get(desktopId);
  * ```
  */
 import { RuntimeConfig, RUNTIME_DEFAULTS } from '../../spi/config/index.js';
@@ -44,11 +43,11 @@ export class DesktopManager implements IDesktopManager {
     private desktops = new Map<DesktopID, Desktop>();
     private config: RuntimeConfig;
     private readonly workerPool: WorkerPool;
-    private closing?: RuntimeCloseOperation;
+    private closing?: RuntimeCloseHandle;
     private shutdownPromise?: Promise<void>;
     private phase: 'active' | 'closing' | 'settled' = 'active';
     private closeState = newCloseState('runtime');
-    private closeTargets?: Map<Desktop, DesktopCloseOperation>;
+    private closeTargets?: Map<Desktop, DesktopCloseHandle>;
     private readonly capturedClosures = new WeakSet<Desktop>();
     private readonly removing = new Set<Promise<void>>();
 
@@ -60,7 +59,7 @@ export class DesktopManager implements IDesktopManager {
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  IDesktopRepository 实现
+    //  Desktop 创建与持有
     // ─────────────────────────────────────────────────────────────
 
 
@@ -73,30 +72,26 @@ export class DesktopManager implements IDesktopManager {
         return desktop.id;
     }
 
-    beginDesktopShutdown(desktopId: DesktopID, options?: DesktopCloseOptions): DesktopCloseOperation {
+    beginDesktopShutdown(desktopId: DesktopID, options?: DesktopCloseOptions): DesktopCloseHandle {
         closeTimeout(options);
         const desktop = this.desktops.get(desktopId);
         if (!desktop) {
             const state = newCloseState('desktop', options?.intent ?? 'close');state.state = 'settled';
             const report: DesktopCloseReport = freezeClose({ ...snapshotClose(state), scope: 'desktop', intent: options?.intent ?? 'close', desktopId: displayCloseId(desktopId), found: false });
-            return createCloseOperation(() => report, Promise.resolve(report));
+            return createCloseHandle(() => report, Promise.resolve(report));
         }
-        const operation = desktop.beginClose(options);
+        const handle = desktop.beginClose(options);
         // Capture the actual object. A late completion can never remove a successor.
         if (!this.capturedClosures.has(desktop)) {
             this.capturedClosures.add(desktop);
-            const removing = operation.completion.then(report => {
+            const removing = handle.completion.then(report => {
                 if (report.resourcesReleased && this.desktops.get(desktopId) === desktop) {
                     this.desktops.delete(desktopId);
                 }
             }).catch(() => { addCloseFailure(this.closeState, 'manager', ['MANAGER_CLEANUP_FAILED'], { desktopId });this.closeState.resourcesReleased = false; });
             this.removing.add(removing);void removing.then(() => this.removing.delete(removing));
         }
-        return operation;
-    }
-
-    has(desktopId: DesktopID): boolean {
-        return this.desktops.has(desktopId);
+        return handle;
     }
 
     get(desktopId: DesktopID): IDesktop | undefined {
@@ -108,28 +103,7 @@ export class DesktopManager implements IDesktopManager {
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  IAppInstaller 实现
-    // ─────────────────────────────────────────────────────────────
-
-    /**
-     * [Worker-Only] 安装 App
-     */
-    async installDynamicWorkerApp(
-        desktopId: DesktopID,
-        appModulePath: string,
-        options?: {
-            workerScriptPath?: string;
-            appId?: string;
-            name?: string;
-            config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
-        }
-    ): Promise<AppID> {
-        const desktop = this.getDesktopOrThrow(desktopId);
-        return desktop.installDynamicWorkerApp(appModulePath, options) as Promise<AppID>;
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    //  IDesktopStateAccessor 实现
+    //  当前状态查询
     // ─────────────────────────────────────────────────────────────
 
     getAppStates(desktopId: DesktopID): AppState[] {
@@ -148,7 +122,7 @@ export class DesktopManager implements IDesktopManager {
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  IDesktopLifecycleController 实现
+    //  Desktop 生命周期
     // ─────────────────────────────────────────────────────────────
 
     async suspend(desktopId: DesktopID): Promise<void> {
@@ -163,18 +137,18 @@ export class DesktopManager implements IDesktopManager {
 
     private report(): RuntimeCloseReport {
         const state = structuredClone(this.closeState);state.state = this.phase;
-        for (const operation of this.closeTargets?.values() ?? []) mergeCloseReport(state, operation.inspect());
+        for (const handle of this.closeTargets?.values() ?? []) mergeCloseReport(state, handle.inspect());
         const pool = this.workerPool.getReport();state.pool = { ownership: 'owned', report: { ...pool, issues: [...pool.issues] } };
         state.resourcesReleased &&= pool.state === 'closed';
         addCloseFailure(state, 'pool', pool.issues);
         return freezeClose({ ...snapshotClose(state), scope: 'runtime' as const, intent: 'close' as const });
     }
-    beginShutdown(): RuntimeCloseOperation {
+    beginShutdown(): RuntimeCloseHandle {
         if (this.closing) return this.closing;
         this.phase = 'closing';this.closeTargets = new Map();
         let complete!: (report: RuntimeCloseReport) => void;
         const completion = new Promise<RuntimeCloseReport>(resolve => { complete = resolve; });
-        this.closing = createCloseOperation(() => this.report(), completion);
+        this.closing = createCloseHandle(() => this.report(), completion);
         const pool = this.workerPool.destroy();
         // Every Desktop is started synchronously before any completion is awaited.
         for (const [id, desktop] of this.desktops) {
@@ -185,7 +159,7 @@ export class DesktopManager implements IDesktopManager {
             await Promise.allSettled([pool, ...this.closeTargets!.values()].map(value => value instanceof Promise ? value : value.completion));
             await Promise.allSettled([...this.removing]);
             const folded = structuredClone(this.closeState);
-            for (const operation of this.closeTargets!.values()) mergeCloseReport(folded, operation.inspect());
+            for (const handle of this.closeTargets!.values()) mergeCloseReport(folded, handle.inspect());
             this.closeTargets = undefined;this.closeState = folded;
             this.phase = 'settled';complete(this.report());
         })();

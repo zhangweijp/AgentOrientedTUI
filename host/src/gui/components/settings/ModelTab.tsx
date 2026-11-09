@@ -30,7 +30,7 @@ import type { ProviderConfig, NewProviderConfig, ProviderUpdates, NewCustomProvi
  * ModelTab Component
  * 
  * Displays and manages provider and model configurations.
- * Handles provider selection, CRUD operations, and model selection.
+ * Handles provider selection, CRUD actions, and model selection.
  * 
  * Requirements: 2.1-2.6, 3.1-3.7, 4.1-4.4, 5.1-5.11, 6.1-6.11, 7.1-7.5, 8.1-8.5, 9.1-9.5
  */

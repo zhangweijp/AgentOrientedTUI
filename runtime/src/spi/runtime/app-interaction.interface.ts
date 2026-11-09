@@ -1,11 +1,12 @@
+import { VIEW_TYPE_PARAMETERS_MODE } from '../../core/tool/ordinary-parameter-contract.js';
 import type { DesktopID } from '../core/types.js';
 import type { InteractionAuthority, ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
 
-export type InteractionMode = 'ordinary-v2' | 'snapshot-value-v2';
+export type InteractionMode = typeof VIEW_TYPE_PARAMETERS_MODE;
 
 /** SDK interaction profiles supported by this Runtime. Selected by the trusted Host. */
 export const SEMANTIC_INTERACTION_MODES: readonly InteractionMode[] = Object.freeze([
-    'ordinary-v2', 'snapshot-value-v2',
+    VIEW_TYPE_PARAMETERS_MODE,
 ]);
 
 export interface AppInteractionOptions {

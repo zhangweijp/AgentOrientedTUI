@@ -2,17 +2,18 @@
 
 ## 当前 Runtime 入口
 
-- [Runtime package guide](../README.md)：Node Host 入口、纯 Core 子路径、Semantic Source 和接入文档导航。
+- [Runtime package guide](../README.md)：Node Host 入口、纯 Core 子路径、独立适配包与接入文档导航。
 - [Semantic Host integration](semantic-host-integration.zh-CN.md)：标准 Source 的 Context、Scope、Observation、Tool 和 Receipt 合同。
 - [Runtime App interaction](runtime-app-interaction.md)：`interactionModes`, `createAppScope`, `SemanticAOTUIDrivenSource.getContext()` 与 Context release。
-- [Tool lifecycle and cleanup](tool-lifecycle.md)：当前两种 Worker 模式、普通 Tool 结果与 managed App 生命周期。
+- [Tool lifecycle and cleanup](tool-lifecycle.md)：统一 ViewType Worker 参数模式、Tool 结果与 managed App 生命周期。
 - [Pure Core entry](core-public-entry.md)：从正式包名编译运行的无 DOM Producer / Host 示例。
+- [IDE local consumer](../../demo-apps/aotui-ide/SCOPED_IDE.md#local-terminal-from-exact-installed-packages)：在正常安装的匹配包中直接运行随包入口；旧的仓库 prepare/run/verify 启动包装已退出。
 
 ## Historical W09 / W10 distribution evidence
 
-The sections below preserve the W09 / D5 and W10 handover decisions, compatibility facts, performance budgets, and dated delivery references as they were recorded. They are evidence for those artifact sets, not a description of the current supported API or a claim that old compatibility paths remain supported. W10 package preparation, offline comparison, full workflow, resource, recovery, and product performance evidence were recorded under the dated decisions below. Initial delivery was `rfcs/sdk-runtime-delivery/w10-takeover-20261027T034501Z`; subsequent shutdown and type decisions were recorded in `w10-hardening-20261027T055450Z`, and local launch plus snapshot-cache work in `w10-operability-20261027T093500Z`. The Minimalist batch was `w10-minimalist-20261027T145418Z`. Use each batch's own D6 decision for its exact artifacts and acceptance scope; do not mix artifacts solely by version. `scripts/scoped-ide.mjs` prepares a local consumer from the tar, manifest, and lock associated with that delivery; the IDE's `SCOPED_IDE.md` records launch and data paths.
+The sections below preserve the W09 / D5 and W10 handover decisions, compatibility facts, performance budgets, and dated delivery references as they were recorded. They are evidence for those artifact sets, not a description of the current supported API or a claim that old compatibility paths remain supported. W10 package preparation, offline comparison, full workflow, resource, recovery, and product performance evidence were recorded under the dated decisions below. Initial delivery was `rfcs/sdk-runtime-delivery/w10-takeover-20261027T034501Z`; subsequent shutdown and type decisions were recorded in `w10-hardening-20261027T055450Z`, and local launch plus snapshot-cache work in `w10-operability-20261027T093500Z`. The Minimalist batch was `w10-minimalist-20261027T145418Z`. Use each batch's own D6 decision for its exact artifacts and acceptance scope; do not mix artifacts solely by version. For those historical deliveries, `scripts/scoped-ide.mjs` prepared a local consumer from their tar, manifest and lock. That wrapper is retired; the current IDE instructions linked above use the normally installed package entry.
 
-Runtime 的纯语义入口是 `@aotui/runtime/core` 和 `@aotui/runtime/adapters/memory-state-storage`。它们负责快照、身份、保留、选择、调用与内存状态存储，可在 ES2022、无 Node/DOM 类型的消费者中使用。普通 TypeScript Producer 可以从业务状态构造 V2 Draft，使用 `createSnapshotCore`、`createViewOwnedTools` 与 `createScopedInteraction`；它承担注册、稳定提交和停止生命周期，不必引入 Preact 或 Node Worker。完整示例见 [Core 公共入口](core-public-entry.md)。受限同 realm VM 是环境依赖检查，不等于完整 Browser/Edge 产品支持。
+Runtime 的纯语义入口是 `@aotui/runtime/core` 和 `@aotui/runtime/adapters/memory-state-storage`。它们负责快照、身份、保留、选择、调用与内存状态存储，可在 ES2022、无 Node/DOM 类型的消费者中使用。普通 TypeScript Producer 可以从业务状态构造 V3 Draft，使用 `createSnapshotCore`、`createViewOwnedTools` 与 `createScopedInteraction`；它承担注册、稳定提交和停止生命周期，不必引入 Preact 或 Node Worker。完整示例见 [Core 公共入口](core-public-entry.md)。受限同 realm VM 是环境依赖检查，不等于完整 Browser/Edge 产品支持。
 
 `@aotui/runtime` 根入口是 Node 宿主：负责 Worker、Desktop/App、传输、存储与实际资源完成。`@aotui/sdk` 负责 Preact 组件、View/Ref/Tool 声明和提交。SDK 不能授予权限；Host 的模式、Worker ACK、逐 Binding 的 Wrapper 资格、来源/授权复核必须同时成立。根入口依赖不能按纯 Core 的环境要求描述。真实应用示例见 [公共 App Scope](runtime-app-interaction.md)，SDK 边界见 [兼容说明](../../sdk/docs/runtime-compatibility.md)。
 
@@ -33,3 +34,7 @@ C-Q01 允许没有 legacy TypeTools 的 AppKernel 在 owned View 非空或本次
 上述 W09 / D5 批次不授权 Strict、Full M4、默认 Router 切换、完整 IDE/LSP、Agent Driver/Mobile 或 registry 发布。W10 在单独证据与决定下增加完整 IDE 显式入口及固定 TypeScript LSP profile；其余排除项保持。
 
 兼容 adapters 在 D5 时确有严格类型限制：该次实际安装的 `@ai-sdk/provider` 3.0.19、`ai` 6.0.315、TypeScript 5.9.3、`json-schema` 0.4.0 均未安装 `@types/json-schema`，`@aotui/runtime/adapters` 的声明链因此在 `skipLibCheck=false` 下产生两条 TS7016；B2/C 独立对照相同。历史决定见 [W09-C-Q02](../../rfcs/sdk-runtime-delivery/w09-c-q02-20261026T200614Z/DECISION.zh-CN.md)。该缺口 `D-LEGACY-ADAPTER-TYPES-01` 已在 W10 hardening 的精确依赖图中关闭：Runtime 正式携带 `@types/json-schema` 7.0.15，实际安装 tar 的 adapters 以 `skipLibCheck=false` 通过，纯 Core 仍以 ES2022-only / `types:[]` 单独通过；未用类型 shim 或关闭严格检查。证据与适用版本保存在 `w10-hardening-20261027T055450Z` 的公开包验证及 D6 决定；不能把这一结果推广至任意未来依赖组合。
+
+## 当前包边界
+
+Runtime 不依赖具体 Agent Driver。标准 Source 从独立 `@aotui/agent-driver-adapter` 导入，Host 安装其匹配 Runtime／Driver peer。SDK 复用 Runtime 参数合同。当前组合、构建、正常 tar 安装和作者示例命令统一维护在 [SDK 包使用说明](../../sdk/docs/runtime-compatibility.md)。上方历史批次只适用于各自记录的产物，不证明当前包已发布或所有第三方严格类型问题已解决。

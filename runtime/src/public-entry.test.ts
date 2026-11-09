@@ -22,13 +22,11 @@ type RootDoesNotExposeRetiredAppRuntime = AssertFalse<'AOAppRuntime' extends Pub
 type SpiDoesNotExposeRetiredAppRuntime = AssertFalse<'AOAppRuntime' extends PublicSPIKeys ? true : false>;
 type RootDoesNotExposeRetiredAppView = AssertFalse<'AOAppView' extends PublicRootKeys ? true : false>;
 type SpiDoesNotExposeRetiredAppView = AssertFalse<'AOAppView' extends PublicSPIKeys ? true : false>;
-type RootDoesNotExposeUnusedOperationHelpers = AssertFalse<'createOperationError' extends PublicRootKeys ? true : false>;
 type SpiDoesNotExposeUnusedIdGuards = AssertFalse<'isDesktopId' extends PublicSPIKeys ? true : false>;
 type SpiDoesNotExposeAppIdGuard = AssertFalse<'isAppId' extends PublicSPIKeys ? true : false>;
 type SpiDoesNotExposeViewIdGuard = AssertFalse<'isViewId' extends PublicSPIKeys ? true : false>;
 type AOTUIErrorInstanceKeys = keyof InstanceType<typeof spi.AOTUIError>;
 type AOTUIErrorStaticKeys = keyof typeof spi.AOTUIError;
-type AOTUIErrorDoesNotExposeOperationConversion = AssertFalse<'toOperationError' extends AOTUIErrorInstanceKeys ? true : false>;
 type AOTUIErrorDoesNotExposeTypeGuard = AssertFalse<'is' extends AOTUIErrorStaticKeys ? true : false>;
 type AOTUIErrorDoesNotExposeFromError = AssertFalse<'fromError' extends AOTUIErrorStaticKeys ? true : false>;
 
@@ -36,14 +34,13 @@ describe('Runtime public entry points', () => {
     it('exposes the host factory and supported host registration surface', () => {
         expect(runtime.createRuntime).toBeTypeOf('function');
         expect(runtime.AppRegistry).toBeTypeOf('function');
-        expect(runtime.SEMANTIC_INTERACTION_MODES).toEqual(['ordinary-v2', 'snapshot-value-v2']);
+        expect(runtime.SEMANTIC_INTERACTION_MODES).toEqual(['view-type-parameters-v1']);
         expect(runtime).not.toHaveProperty('AOAppManifest');
         expect(runtime).not.toHaveProperty('validateManifest');
         expect(runtime).not.toHaveProperty('isValidAppName');
         expect(runtime).not.toHaveProperty('AOAppEntry');
         expect(runtime).not.toHaveProperty('AOAppRuntime');
         expect(runtime).not.toHaveProperty('AOAppView');
-        expect(runtime).not.toHaveProperty('createOperationError');
         expect(runtime).not.toHaveProperty('failedResult');
         expect(runtime).not.toHaveProperty('isDesktopId');
     });
@@ -54,7 +51,6 @@ describe('Runtime public entry points', () => {
         expect(spi).not.toHaveProperty('AOAppManifest');
         expect(spi).not.toHaveProperty('validateManifest');
         expect(spi).not.toHaveProperty('AOAppEntry');
-        expect(spi).not.toHaveProperty('createOperationError');
         expect(spi).not.toHaveProperty('failedResult');
         expect(spi).not.toHaveProperty('isViewId');
         expect(spi).not.toHaveProperty('generateRequestId');

@@ -12,7 +12,7 @@ vi.mock('./worker-sandbox.js', () => ({ WorkerSandbox: class {
 } }));
 import { AppManager } from './manager.js';
 import { WorkerSandbox } from './worker-sandbox.js';
-const desktop = { id: 'd', logSystem() {}, logAppOperation() {}, emitSignal() {} } as any;
+const desktop = { id: 'd', logSystem() {}, emitSignal() {} } as any;
 beforeEach(() => { control.boxes = [];control.create = () => {};control.reinitialize = () => {}; });
 
 it('binds Semantic lifecycle controls to the observed Worker instance before accepting side effects', async () => {
@@ -73,21 +73,21 @@ it('keeps an accepted close attached to its captured Worker while cleanup is pen
     await manager.cleanupAsync();
 });
 
-it('C05 trusted V2 modes survive pending/open/reopen/reinitialize with independent metadata', async () => {
-    const manager = new AppManager(desktop), values: any[] = ['snapshot-value-v2', 'ordinary-v2'];
+it('C05 trusted qualified parameter mode survive pending/open/reopen/reinitialize with independent metadata', async () => {
+    const manager = new AppManager(desktop), values: any[] = ['view-type-parameters-v1'];
     const id = manager.registerPendingApp({ modulePath: '/app', interactionModes: values });values.length = 0;
     expect(manager.createAppScope(id, {} as any)).toMatchObject({ issue: { code: 'SCOPE_UNAVAILABLE' } });expect(control.boxes).toHaveLength(0);
-    const copy = manager.getInstalledApps()[0];expect(copy.interactionModes).toEqual(['ordinary-v2', 'snapshot-value-v2']);
-    expect(Object.isFrozen(copy.interactionModes)).toBe(true);expect(() => (copy.interactionModes as any).push('ordinary-v2')).toThrow();
-    (copy as any).interactionModes = [];await manager.openApp(id);expect(control.boxes[0].config.interactionModes).toEqual(['ordinary-v2', 'snapshot-value-v2']);
+    const copy = manager.getInstalledApps()[0];expect(copy.interactionModes).toEqual(['view-type-parameters-v1']);
+    expect(Object.isFrozen(copy.interactionModes)).toBe(true);expect(() => (copy.interactionModes as any).push('view-type-parameters-v1')).toThrow();
+    (copy as any).interactionModes = [];await manager.openApp(id);expect(control.boxes[0].config.interactionModes).toEqual(['view-type-parameters-v1']);
     const original = control.boxes[0];await manager.closeApp(id);await manager.openApp(id);await manager.reinitializeApp(id);
-    expect(control.boxes).toHaveLength(3);expect(control.boxes.every(box => JSON.stringify(box.config.interactionModes) === '["ordinary-v2","snapshot-value-v2"]')).toBe(true);
+    expect(control.boxes).toHaveLength(3);expect(control.boxes.every(box => JSON.stringify(box.config.interactionModes) === '["view-type-parameters-v1"]')).toBe(true);
     expect(control.boxes[2]).not.toBe(original);expect(manager.getAppStates()[0]).not.toHaveProperty('interactionModes');
     await manager.cleanupAsync();
 });
 
 it('B2 C11 collapsed is presentation while pending/paused/closed/current closing stop scope creation', async () => {
-    const manager = new AppManager(desktop), id = await manager.install('/app', { interactionModes: ['ordinary-v2'] });
+    const manager = new AppManager(desktop), id = await manager.install('/app', { interactionModes: ['view-type-parameters-v1'] });
     expect(manager.createAppScope(id, {} as any).status).toBe('opened');await manager.collapseApp(id);
     expect(manager.createAppScope(id, {} as any).status).toBe('opened');await manager.pauseAll();
     expect(manager.createAppScope(id, {} as any).status).toBe('rejected');await manager.resumeAll();
@@ -109,10 +109,10 @@ it.each(['meta', 'worker', 'close'] as const)('B2 C13 App factory revokes a retu
 });
 
 it('C05 immediate install capture precedes async startup, ID allocation and mutation', async () => {
-    const manager = new AppManager(desktop), input: any = { interactionModes: ['ordinary-v2'] };
-    const installing = manager.install('/app', input);input.interactionModes.push('snapshot-value-v2');input.interactionModes = [];
-    const id = await installing;expect(control.boxes[0].config.interactionModes).toEqual(['ordinary-v2']);
+    const manager = new AppManager(desktop), input: any = { interactionModes: ['view-type-parameters-v1'] };
+    const installing = manager.install('/app', input);input.interactionModes.push('view-type-parameters-v1');input.interactionModes = [];
+    const id = await installing;expect(control.boxes[0].config.interactionModes).toEqual(['view-type-parameters-v1']);
     await expect(manager.install('/bad', { interactionModes: ['bad'] as any })).rejects.toHaveProperty('code', 'INTERACTION_MODES_INVALID');
     expect(control.boxes).toHaveLength(1);expect(manager.registerPendingApp({ modulePath: '/next' })).toBe('app_1');
-    expect(manager.getInstalledApps().find(app => app.appId === id)?.interactionModes).toEqual(['ordinary-v2']);await manager.cleanupAsync();
+    expect(manager.getInstalledApps().find(app => app.appId === id)?.interactionModes).toEqual(['view-type-parameters-v1']);await manager.cleanupAsync();
 });

@@ -46,9 +46,9 @@ describe('R16/R17 SDK single-contract helper', () => {
   });
   it('awaits an actual asynchronous handler before returning success', async () => {
     let finish!: () => void, settled = false;
-    const operation = new Promise<void>(resolve => { finish = resolve; });
+    const pendingTask = new Promise<void>(resolve => { finish = resolve; });
     const pending = invokeOrdinaryParameterTool(compiled(), { e: '1' }, async () => {
-      await operation; return { success: true, data: { finished: true } };
+      await pendingTask; return { success: true, data: { finished: true } };
     });
     void pending.then(() => { settled = true; });
     await Promise.resolve(); expect(settled).toBe(false);

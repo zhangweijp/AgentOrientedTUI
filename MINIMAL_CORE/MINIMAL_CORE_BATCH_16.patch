@@ -1,0 +1,136 @@
+diff --git a/runtime/src/spi/app/public-types.ts b/runtime/src/spi/app/public-types.ts
+--- a/runtime/src/spi/app/public-types.ts
++++ b/runtime/src/spi/app/public-types.ts
+@@ -82,5 +82,5 @@
+      * @param refId - 引用 ID (View 内唯一)
+      * @param data - 绑定的数据对象
+      */
+-    registerRef(refId: string, data: object): IRefBinding;
++    registerRef(refId: string, data: object, refType?: string): IRefBinding;
+ }
+diff --git a/runtime/src/spi/app/ref-exporter.interface.ts b/runtime/src/spi/app/ref-exporter.interface.ts
+--- a/runtime/src/spi/app/ref-exporter.interface.ts
++++ b/runtime/src/spi/app/ref-exporter.interface.ts
+@@ -14,7 +14,7 @@
+      * @param refId The Ref ID (unique within the View)
+      * @param data The data object
+      */
+-    registerRef(viewId: string, refId: string, data: object): IRefBinding;
++    registerRef(viewId: string, refId: string, data: object, refType?: string): IRefBinding;
+ }
+ 
+ /** A Ref registration handle; only its owner can update or release it. */
+diff --git a/runtime/src/worker-runtime/app-kernel/AppKernel.ts b/runtime/src/worker-runtime/app-kernel/AppKernel.ts
+--- a/runtime/src/worker-runtime/app-kernel/AppKernel.ts
++++ b/runtime/src/worker-runtime/app-kernel/AppKernel.ts
+@@ -55,7 +55,7 @@
+     private container!: HTMLElement;
+ 
+     /** Ref entries carry their own identity so stale cleanup cannot affect a later owner. */
+-    private refRegistry = new Map<string, { value: object }>();
++    private refRegistry = new Map<string, { value: object; refType?: string }>();
+ 
+     /** A pure TypeScript semantic mutation clock, not a DOM observation. */
+     private readonly projection = new SemanticProjectionCoordinator();
+@@ -255,7 +255,7 @@
+         void this.deletePromise.catch(() => {});return this.deletePromise;
+     }
+ 
+-    public registerRef(viewId: string, refId: string, data: object): IRefBinding {
++    public registerRef(viewId: string, refId: string, data: object, refType?: string): IRefBinding {
+         this.assertActive();
+         const fullKey = `${viewId}:${refId}`;
+         if (this.refRegistry.has(fullKey)) {
+@@ -264,7 +264,7 @@
+             error.code = 'REF_ALREADY_REGISTERED';
+             throw error;
+         }
+-        const entry = { value: data };
++        const entry = { value: data, refType };
+         this.refRegistry.set(fullKey, entry);
+         this.projection.recordMutation('ref');
+         let released = false;
+@@ -290,10 +290,11 @@
+         };
+     }
+ 
+-    getViewRefs(): readonly { viewId: string; refId: string; value: object }[] {
++    getViewRefs(): readonly { viewId: string; refId: string; value: object; refType?: string }[] {
+         return [...this.refRegistry].map(([key, entry]) => {
+             const separator = key.indexOf(':');
+-            return { viewId: key.slice(0, separator), refId: key.slice(separator + 1), value: entry.value };
++            return { viewId: key.slice(0, separator), refId: key.slice(separator + 1), value: entry.value,
++                ...(entry.refType === undefined ? {} : { refType: entry.refType }) };
+         });
+     }
+ 
+diff --git a/runtime/src/worker-runtime/dom-snapshot-producer.ts b/runtime/src/worker-runtime/dom-snapshot-producer.ts
+--- a/runtime/src/worker-runtime/dom-snapshot-producer.ts
++++ b/runtime/src/worker-runtime/dom-snapshot-producer.ts
+@@ -6,7 +6,7 @@
+ export interface DomSnapshotSource {
+     getViewOwnedViewInstances(): readonly ViewInstance[];
+     getToolDefinitions(): readonly ToolDescriptorV3[];
+-    getViewRefs(): readonly { viewId: string; refId: string; value: object }[];
++    getViewRefs(): readonly { viewId: string; refId: string; value: object; refType?: string }[];
+ }
+ 
+ export interface DomCaptureInput {
+@@ -64,12 +64,12 @@
+     });
+ 
+     const refs: Record<string, RefDescriptorV2> = Object.create(null);
+-    for (const { viewId, refId: id, value } of input.kernel.getViewRefs()) {
++    for (const { viewId, refId: id, value, refType } of input.kernel.getViewRefs()) {
+         const view = byId.get(viewId);
+         if (!view) throw new Error('V3 Ref owner is not mounted');
+         refs[refKey(viewId, view.viewInstanceId, id)] = {
+             id, ownerViewId: viewId, ownerViewInstanceId: view.viewInstanceId,
+-            refType: 'unknown',
++            refType: typeof refType === 'string' && refType.trim() ? refType : 'unknown',
+             target: projectedRefTarget(value),
+         };
+     }
+diff --git a/sdk/src/components/View.tsx b/sdk/src/components/View.tsx
+--- a/sdk/src/components/View.tsx
++++ b/sdk/src/components/View.tsx
+@@ -157,8 +157,8 @@
+     },
+     viewGeneration: generationRef.current!,
+     refs: {
+-      registerRef: (refId: string, data: object) => {
+-        return appContext.refExporter.registerRef(viewId, refId, data);
++      registerRef: (refId: string, data: object, refType?: string) => {
++        return appContext.refExporter.registerRef(viewId, refId, data, refType);
+       },
+     },
+     viewTools: viewToolsPort ? {
+diff --git a/sdk/src/hooks/useArrayRef.ts b/sdk/src/hooks/useArrayRef.ts
+--- a/sdk/src/hooks/useArrayRef.ts
++++ b/sdk/src/hooks/useArrayRef.ts
+@@ -48,6 +48,7 @@
+    * 如果提供，生成的 Ref 链接和 Registry Key 将包含类型信息：
+    * - List: `(Type[]:id)`
+    * - Item: `(Type:id[index])`
++   * 同一业务种类也传入列表和元素的 Ref 注册记录。
+    */
+   itemType?: string;
+ }
+@@ -85,7 +86,7 @@
+     const registered: Binding[] = [];
+     try {
+       for (const { id, value } of entriesFor(data)) {
+-        const binding = registerRef(id, value);
++        const binding = registerRef(id, value, itemType);
+         registered.push(binding);
+         current.set(id, { binding, value });
+       }
+@@ -108,7 +109,7 @@
+     try {
+       for (const { id, value } of desired) {
+         if (current.has(id)) continue;
+-        const binding = registerRef(id, value);
++        const binding = registerRef(id, value, itemType);
+         added.push({ id, binding });
+         current.set(id, { binding, value });
+       }

@@ -12,17 +12,17 @@
  * 
  * ### For Types (SPI Layer)
  * ```typescript
- * import type { IKernel, OperationResult } from '@aotui/runtime';
+ * import type { IKernel, ToolResult } from '@aotui/runtime';
  * ```
  * 
  * ### For Integration (Adapters Layer)
  * ```typescript
- * import { SemanticAOTUIDrivenSource } from '@aotui/runtime/adapters';
+ * import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
  * ```
  * 
  * ## ⚠️ Internal APIs
- * Engine layer exports (Desktop, ViewTree, Registry, etc.) are for framework
- * contributors only. They may change without notice.
+ * Engine implementations stay internal. Use the explicit package exports
+ * below and the pure semantic contracts from `@aotui/runtime/core`.
  * 
  * @module @aotui/runtime
  */
@@ -32,7 +32,8 @@
 // Keep this list explicit so internal SPI/Engine additions do not become public
 // accidentally.
 // ============================================================================
-export { createRuntime, type RuntimeConfig, type RuntimeConfigInput, defineRuntimeConfig } from './facades/index.js';
+export { createRuntime, type RuntimeConfig } from './facades/facades.js';
+export { defineRuntimeConfig, type RuntimeConfigInput } from './spi/config/index.js';
 export { Kernel } from './kernel/index.js';
 
 export {
@@ -52,9 +53,9 @@ export type {
     AppScopeResult,
     AppState,
     AppStatePersistence,
-    CloseOperation,
+    CloseHandle,
     CloseReport,
-    DesktopCloseOperation,
+    DesktopCloseHandle,
     DesktopCloseOptions,
     DesktopCloseReport,
     DesktopID,
@@ -69,11 +70,11 @@ export type {
     LLMOutputEvent,
     LLMOutputEventMeta,
     LLMOutputListener,
-    OperationError,
-    OperationResult,
+    ToolError,
+    ToolResult,
     ReinitializeDesktopAppsOptions,
     ReinitializeDesktopAppsResult,
-    RuntimeCloseOperation,
+    RuntimeCloseHandle,
     RuntimeCloseReport,
     RuntimeCloseReporting,
     RuntimeInteractionAccess,
@@ -86,8 +87,9 @@ export type {
 // 🟢 Public: App Registry (Third-Party App Management)
 // Used by Product Layer to load and manage third-party TUI apps
 // ============================================================================
-export { AppRegistry } from './engine/app/index.js';
-export type { LoadedApp, AppRegistryEntry, AppRegistryOptions, AppRegistryInstallOptions, TUIConfig, AppConfigEntry } from './engine/app/index.js';
+export { AppRegistry } from './engine/app/registry.js';
+export type { LoadedApp, AppRegistryEntry, AppRegistryOptions, AppRegistryInstallOptions } from './engine/app/registry.js';
+export type { TUIConfig, AppConfigEntry } from './engine/app/config.js';
 
 // ============================================================================
 // 🟢 Public: App Distribution Helpers
@@ -109,16 +111,3 @@ export {
     installNpmPackage,
 } from './cli/npm-installer.js';
 
-// ============================================================================
-// 🔴 REMOVED: Engine Layer Exports
-//
-// [方案 B] Engine internals are no longer exported to external consumers.
-// Component View implementation is internal to Worker Runtime (AppKernel).
-//
-// For Runtime internal use (tests), import directly via relative paths:
-//   import { ViewTree } from './engine/view/tree.js';
-//
-// If you need functionality that was previously exported, consider:
-// 1. Is there an SPI interface you should use instead?
-// 2. Should this functionality be exposed through the SDK layer?
-// ============================================================================

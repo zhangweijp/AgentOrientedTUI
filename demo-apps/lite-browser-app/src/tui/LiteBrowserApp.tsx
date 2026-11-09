@@ -1,4 +1,4 @@
-import { createTUIApp, View, useCallback, useState } from '@aotui/sdk';
+import { createTUIApp, View, useCallback, useState, AppTools, ToolRef } from '@aotui/sdk';
 import { runWebFetch } from '../core/webfetch.js';
 import { runWebSearch } from '../core/websearch.js';
 import type { FetchFormat, PageState, SearchQuery, SearchState } from '../types.js';
@@ -6,7 +6,15 @@ import { PageView } from './PageView.js';
 import { ResultListView } from './ResultListView.js';
 import { RootView } from './RootView.js';
 import { SearchView } from './SearchView.js';
-import { SearchToolSection, ResultListToolSection, PageToolSection } from './BrowserTools.js';
+import {
+    browserTools,
+    createClearResultsBinding,
+    createClosePageBinding,
+    createFetchUrlBinding,
+    createOpenResultBinding,
+    createSearchWebBinding,
+    ToolSection,
+} from './BrowserTools.js';
 
 function LiteBrowserRoot() {
     const [searchState, setSearchState] = useState<SearchState>({
@@ -73,38 +81,48 @@ function LiteBrowserRoot() {
         setPageState({ status: 'idle' });
     }, []);
 
+    const bindings = {
+        searchWeb: createSearchWebBinding(handleSearch),
+        fetchUrl: createFetchUrlBinding(handleFetch),
+        openResult: createOpenResultBinding(searchState.results, handleOpenResult),
+        clearResults: createClearResultsBinding(handleClearResults),
+        closePage: createClosePageBinding(handleClosePage),
+    };
+
     const hasResults = searchState.results.length > 0;
     const hasPage = pageState.status !== 'idle';
 
     return (
-        <>
-            <View id="root" type="Root" name="Root">
-                <RootView onFetch={handleFetch} />
+        <AppTools definition={browserTools} bindings={bindings}>
+            <View kind="instruction" id="root" type="Root" name="Root">
+                <RootView><ToolRef tool={browserTools.fetchUrl} /></RootView>
             </View>
-            <View id="search" type="Search" name="Search">
+            <View kind="state" id="search" type="Search" name="Search">
                 <SearchView state={searchState} />
-                <SearchToolSection onSearch={handleSearch} />
+                <ToolSection><ToolRef tool={browserTools.searchWeb} /></ToolSection>
             </View>
             {hasResults ? (
-                <View key={searchState.updatedAt} id="results" type="ResultList" name="Result List">
+                <View kind="state" key={searchState.updatedAt} id="results" type="ResultList" name="Result List">
                     <ResultListView results={searchState.results} />
-                    <ResultListToolSection results={searchState.results} onOpenResult={handleOpenResult} onClearResults={handleClearResults} />
+                    <ToolSection><ToolRef tool={browserTools.openResult} /><ToolRef tool={browserTools.clearResults} /></ToolSection>
                 </View>
             ) : null}
             {hasPage ? (
-                <View key={pageState.document?.url ?? 'error'} id="page" type="Page" name="Page">
+                <View kind="state" key={pageState.document?.url ?? 'error'} id="page" type="Page" name="Page">
                     <PageView state={pageState} />
-                    <PageToolSection onClosePage={handleClosePage} />
+                    <ToolSection><ToolRef tool={browserTools.closePage} /></ToolSection>
                 </View>
             ) : null}
-        </>
+        </AppTools>
     );
 }
 
-export default createTUIApp({
+const browserApp: ReturnType<typeof createTUIApp> = createTUIApp({
     app_name: 'lite_browser',
     whatItIs: 'A lightweight TUI browser that runs web searches and fetches URL content into structured views for LLM workflows.',
     whenToUse: 'Use Lite Browser when you need to search the web for current information and fetch specific URLs into a readable format.',
     component: LiteBrowserRoot,
     signalPolicy: 'auto'
 });
+
+export default browserApp;

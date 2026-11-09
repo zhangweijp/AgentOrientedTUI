@@ -1,37 +1,39 @@
 {
-    "name": "@aotui/system-lite-browser",
-    "version": "0.1.0",
-    "description": "AOTUI Lite Browser App - web search and fetch views for LLM workflows",
-    "type": "module",
-    "main": "dist/index.js",
-    "types": "dist/index.d.ts",
-    "scripts": {
-        "build": "tsc && node ../../scripts/generate-aoapp.mjs .",
-        "test": "vitest",
-        "test:run": "vitest run"
-    },
-    "dependencies": {
-        "@aotui/sdk": "^0.2.0",
-        "preact": "^10.25.4"
-    },
-    "devDependencies": {
-        "@types/node": "^22.15.21",
-        "typescript": "^5.9.3",
-        "vitest": "^3.2.4"
-    },
-    "peerDependencies": {},
+  "name": "@aotui/system-lite-browser",
+  "version": "0.1.0",
+  "description": "AOTUI Lite Browser App - web search and fetch views for LLM workflows",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc && node ../../scripts/generate-aoapp.mjs .",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "dependencies": {
+    "@aotui/sdk": "0.8.0-srt.1",
+    "preact": "^10.25.4",
+    "typebox": "1.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "7.0.2",
+    "vitest": "^3.2.4"
+  },
+  "peerDependencies": {},
+  "overrides": {
+    "picomatch@4.0.3": "4.0.4",
+    "rollup": "^4.60.1"
+  },
+  "pnpm": {
     "overrides": {
-        "picomatch@4.0.3": "4.0.4",
-        "rollup": "^4.60.1"
-    },
-    "pnpm": {
-        "overrides": {
-            "picomatch@4.0.3": "4.0.4",
-            "rollup": "^4.60.1"
-        }
-    },
-    "files": [
-        "dist",
-        "aoapp.json"
-    ]
+      "@aotui/sdk": "link:../../sdk",
+      "picomatch@4.0.3": "4.0.4",
+      "rollup": "^4.60.1"
+    }
+  },
+  "files": [
+    "dist",
+    "aoapp.json"
+  ]
 }

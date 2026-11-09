@@ -1,9 +1,12 @@
 {
   "app_name": "terminal",
-  "version": "1.0.2",
   "description": "AOTUI Terminal Application - Multi-terminal command execution for LLM workflows",
   "whatItIs": "A multi-terminal shell application with command history, working directory tracking, and output tailing for LLM workflows.",
   "whenToUse": "Run shell commands in the project workspace, manage terminal sessions, and inspect command status and output.",
+  "toolAuthoringProtocol": "view-type-tools-v4",
+  "persistenceSupport": "state-session-v1",
+  "appLifecycleSupport": "app-lifecycle-v2",
+  "version": "1.0.2",
   "entry": {
     "main": "dist/index.js",
     "types": "dist/index.d.ts"

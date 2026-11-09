@@ -8,17 +8,39 @@ function fixture(ids: string[] = []) {
     const views = ids.map(viewId => ({ viewId, viewInstanceId: 'instance-' + viewId, viewType: 'File' }));
     for (const view of views) { const node = document.createElement('section');node.setAttribute('data-view-id', view.viewId);node.setAttribute('data-view-instance-id', view.viewInstanceId);container.appendChild(node); }
     return { document, container, views, input: { appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 0, container,
-        fragments: ids.map(viewId => ({ viewId: viewId as any, viewType: 'File', markup: 'stable', kind: 'view-state' as const })),
-        kernel: { getViewOwnedViewInstances: () => views, getViewOwnedToolDefinitions: () => [], getViewRefs: () => [] } } };
+        fragments: ids.map(viewId => ({ viewId: viewId as any, viewType: 'File', markup: 'stable', kind: 'state' as const })),
+        kernel: { getViewOwnedViewInstances: () => views, getToolDefinitions: () => [], getViewRefs: () => [] } } };
 }
 const capture = (input: any) => captureDOMSnapshot(input);
 
-it('C04 explicit empty owned inventories produce a legal empty V2 with no targets', () => {
-    const f = fixture(), draft = capture(f.input);expect(draft).toMatchObject({ schemaVersion: 2, views: [], refs: {}, tools: {} });
+it('C04 explicit empty owned inventories produce a legal V3 snapshot with no tools', () => {
+    const f = fixture(), draft = capture(f.input);expect(draft).toMatchObject({ schemaVersion: 3, views: [], refs: {}, tools: {} });
     const core = createSnapshotCore();core.lifecycle.startApp('app', 'run');expect(core.committer.accept(draft).status).toBe('published');core.lifecycle.dispose();
 });
 
-it.each(['getViewOwnedViewInstances', 'getViewOwnedToolDefinitions', 'getViewRefs'])('C06 missing or noncallable %s never means empty inventory', method => {
+it('retains an empty-body View beside its healthy sibling and publishes the complete set', () => {
+    const f = fixture(['healthy', 'empty']);
+    const fragments = f.input.fragments.map(fragment => ({
+        ...fragment,
+        markup: fragment.viewId === 'empty' ? '' : 'HEALTHY_BODY',
+    }));
+    const draft = capture({ ...f.input, fragments });
+    expect(draft.views.map(view => [view.id, view.content.value])).toEqual([
+        ['healthy', 'HEALTHY_BODY'],
+        ['empty', ''],
+    ]);
+
+    const core = createSnapshotCore();
+    core.lifecycle.startApp('app', 'run');
+    expect(core.committer.accept(draft).status).toBe('published');
+    expect(core.store.readLatest('app')).toMatchObject({
+        status: 'ready',
+        snapshot: { views: [{ id: 'healthy' }, { id: 'empty', content: { value: '' } }] },
+    });
+    core.lifecycle.dispose();
+});
+
+it.each(['getViewOwnedViewInstances', 'getToolDefinitions', 'getViewRefs'])('C06 missing or noncallable %s never means empty inventory', method => {
     for (const value of [undefined, null, [], {}]) { const f = fixture(['a']);(f.input.kernel as any)[method] = value;expect(() => capture(f.input)).toThrow(); }
     const f = fixture();expect(() => capture({ ...f.input, kernel: null })).toThrow();
 });
@@ -42,6 +64,7 @@ it('C06 existing duplicate DOM, duplicate owned IDs, wrong instance/type, Ref ow
     node.setAttribute('data-view-instance-id', 'wrong');expect(() => capture(f.input)).toThrow(/identity/);node.setAttribute('data-view-instance-id', f.views[0].viewInstanceId);
     expect(() => capture({ ...f.input, fragments: [{ ...f.input.fragments[0], viewType: 'Wrong' }] })).toThrow(/identity/);
     expect(() => capture({ ...f.input, kernel: { ...f.input.kernel, getViewRefs: () => [{ viewId: 'missing', refId: 'file', value: { text: 'x' } }] } })).toThrow(/owner/);
-    expect(() => capture({ ...f.input, kernel: { ...f.input.kernel, getViewOwnedToolDefinitions: () => [{ appId: 'app', appInstanceId: 'run', id: 'tool', viewType: 'File',
-        targets: [{ viewId: 'a', viewInstanceId: 'wrong', bindingVersion: 1 }] }] } })).toThrow(/unmounted/);
+    expect(() => capture({ ...f.input, kernel: { ...f.input.kernel, getToolDefinitions: () => [{ id: 'tool', name: 'read', viewType: 'Missing',
+        description: 'Read', inputSchema: { type: 'object', properties: {} }, 
+        execution: { kind: 'view-type', activationId: 'active' } }] } })).toThrow(/no live matching View/);
 });

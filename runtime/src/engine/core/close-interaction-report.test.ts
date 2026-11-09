@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { mergeCloseReport, newCloseState, sandboxCloseReport, snapshotClose } from './close-operation.js';
+import { mergeCloseReport, newCloseState, sandboxCloseReport, snapshotClose } from './close-handle.js';
 
 function host(...values: unknown[]) {
     const interactions = values.length ? values[0] : { closed: true, retainedScopes: 0, retainedBytes: 0 };

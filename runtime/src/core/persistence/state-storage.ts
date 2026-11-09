@@ -1,3 +1,4 @@
+export const STATE_RECORD_VERSION = 1 as const;
 import { canonicalJson, copyJson, SnapshotDataError, utf8Size } from '../snapshot/json.js';
 import type { JsonValue } from '../snapshot/types.js';
 
@@ -16,7 +17,7 @@ const messages = {
     INVALID_INPUT: 'Invalid persistence input or configuration',
     CAPACITY_EXCEEDED: 'Persistence capacity exceeded',
     PERMISSION_DENIED: 'Storage permission denied',
-    IO_FAILED: 'Storage operation failed',
+    IO_FAILED: 'Storage I/O failed',
     NAMESPACE_BUSY: 'Namespace belongs to another active owner',
     OWNER_BUSY: 'Instance already has an active storage owner',
     OWNER_RELEASED: 'Storage owner was released',
@@ -105,7 +106,7 @@ export function decodeStateRecord(text: string, limits: StateValueLimits): Decod
     try { parsed = JSON.parse(text); } catch { return rejectState('CORRUPT'); }
     const fields = stateFields(parsed);
     if (!fields || Object.keys(fields).length !== 3 || ['version', 'updatedAt', 'value'].some(k => !Object.hasOwn(fields, k))) return rejectState('UNSUPPORTED_FORMAT');
-    if (fields.version!.value !== 1) return rejectState('UNSUPPORTED_FORMAT');
+    if (fields.version!.value !== STATE_RECORD_VERSION) return rejectState('UNSUPPORTED_FORMAT');
     if (typeof fields.updatedAt!.value !== 'number' || !Number.isFinite(fields.updatedAt!.value)) return rejectState('CORRUPT');
     const value = fields.value!.value;
     const captured = captureStateValue(value, limits);
@@ -113,7 +114,7 @@ export function decodeStateRecord(text: string, limits: StateValueLimits): Decod
 }
 export function encodeStateRecord(snapshot: CapturedStateValue, updatedAt: number, limits: StateValueLimits): Readonly<{ status: 'encoded'; text: string; bytes: number }> | Rejected {
     if (typeof updatedAt !== 'number' || !Number.isFinite(updatedAt)) return rejectState('CLOCK_INVALID');
-    const text = canonicalJson({ version: 1, updatedAt, value: snapshot.value }), bytes = utf8Size(text);
+    const text = canonicalJson({ version: STATE_RECORD_VERSION, updatedAt, value: snapshot.value }), bytes = utf8Size(text);
     return bytes > limits.maxRecordBytes ? rejectState('CAPACITY_EXCEEDED') : Object.freeze({ status: 'encoded', text, bytes });
 }
 const receiptIssue = (input: unknown): StateIssue | null => {

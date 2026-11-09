@@ -1,3 +1,6 @@
+import { SNAPSHOT_SCHEMA_VERSION } from '../../core/snapshot/types.js';
+export const SNAPSHOT_CAPABILITY = `app-snapshot/v${SNAPSHOT_SCHEMA_VERSION}` as const;
+export const PARAMETERS_V4_CAPABILITY = 'view-tool-parameters-invoke/v4' as const;
 /**
  * Worker Protocol - Type Definitions
  * 
@@ -8,13 +11,13 @@
  * @module @aotui/runtime/spi/worker-protocol
  */
 
-import type { AppID, DesktopID, ViewID, DataPayload } from '../core/index.js';
+import type { AppID, DesktopID, ViewID } from '../core/types.js';
 
 // ============================================================================
 // Re-export core types for convenience
 // ============================================================================
 
-export type { AppID, DesktopID, ViewID, DataPayload };
+export type { AppID, DesktopID, ViewID };
 
 export type RequestID = string;
 

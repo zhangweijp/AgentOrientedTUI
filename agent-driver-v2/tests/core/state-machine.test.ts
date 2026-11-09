@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AgentDriverV2 } from '../../src/core/agent-driver-v2.js';
-import type { IDrivenSource, AgentState } from '../../src/core/interfaces.js';
+import type { ContextDrivenSource, AgentState } from '../../src/core/interfaces.js';
 
 function stubLlmCall(driver: AgentDriverV2) {
     const call = vi.fn().mockResolvedValue({
@@ -28,7 +28,7 @@ async function waitForIdle(driver: AgentDriverV2): Promise<void> {
 }
 
 describe('AgentDriver State Machine', () => {
-    let mockSource: IDrivenSource;
+    let mockSource: ContextDrivenSource;
     let stateChangeLog: Array<{ old: AgentState; new: AgentState }>;
 
     beforeEach(() => {
@@ -36,15 +36,17 @@ describe('AgentDriver State Machine', () => {
 
         mockSource = {
             name: 'MockSource',
-            getMessages: vi.fn().mockResolvedValue([
-                {
-                    role: 'user',
-                    content: 'test message',
-                    timestamp: Date.now(),
-                },
-            ]),
-            getTools: vi.fn().mockResolvedValue({}),
-            executeTool: vi.fn().mockResolvedValue(undefined),
+            getContext: vi.fn().mockResolvedValue({
+                messages: [
+                    {
+                        role: 'user',
+                        content: 'test message',
+                        timestamp: Date.now(),
+                    },
+                ],
+                tools: {},
+                executeTool: vi.fn().mockResolvedValue(undefined),
+            }),
             onUpdate: vi.fn().mockReturnValue(() => { }),
         };
     });
@@ -118,13 +120,13 @@ describe('AgentDriver State Machine', () => {
         // 等待 run 完成
         await waitForIdle(driver);
         expect(call).toHaveBeenCalledTimes(1);
-        expect(mockSource.getMessages).toHaveBeenCalledTimes(2);
+        expect(mockSource.getContext).toHaveBeenCalledTimes(2);
         expect(driver.hasPendingUpdate()).toBe(false);
     });
 
     it('should dispose correctly', () => {
         const unsubscribe = vi.fn();
-        const mockSourceWithUnsubscribe: IDrivenSource = {
+        const mockSourceWithUnsubscribe: ContextDrivenSource = {
             ...mockSource,
             onUpdate: vi.fn().mockReturnValue(unsubscribe),
         };
@@ -142,33 +144,37 @@ describe('AgentDriver State Machine', () => {
 
 describe('Tool Mapping', () => {
     it('should build correct tool-to-source mapping', async () => {
-        const source1: IDrivenSource = {
+        const source1: ContextDrivenSource = {
             name: 'Source1',
-            getMessages: vi.fn().mockResolvedValue([]),
-            getTools: vi.fn().mockResolvedValue({
-                tool1: {
-                    description: 'Tool 1',
-                    parameters: {},
+            getContext: vi.fn().mockResolvedValue({
+                messages: [],
+                tools: {
+                    tool1: {
+                        description: 'Tool 1',
+                        parameters: {},
+                    },
+                    tool2: {
+                        description: 'Tool 2',
+                        parameters: {},
+                    },
                 },
-                tool2: {
-                    description: 'Tool 2',
-                    parameters: {},
-                },
+                executeTool: vi.fn().mockResolvedValue(undefined),
             }),
-            executeTool: vi.fn().mockResolvedValue(undefined),
             onUpdate: vi.fn().mockReturnValue(() => { }),
         };
 
-        const source2: IDrivenSource = {
+        const source2: ContextDrivenSource = {
             name: 'Source2',
-            getMessages: vi.fn().mockResolvedValue([]),
-            getTools: vi.fn().mockResolvedValue({
-                tool3: {
-                    description: 'Tool 3',
-                    parameters: {},
+            getContext: vi.fn().mockResolvedValue({
+                messages: [],
+                tools: {
+                    tool3: {
+                        description: 'Tool 3',
+                        parameters: {},
+                    },
                 },
+                executeTool: vi.fn().mockResolvedValue(undefined),
             }),
-            executeTool: vi.fn().mockResolvedValue(undefined),
             onUpdate: vi.fn().mockReturnValue(() => { }),
         };
 
@@ -196,16 +202,18 @@ describe('Tool Mapping', () => {
             result: { data: 'result' },
         });
 
-        const source: IDrivenSource = {
+        const source: ContextDrivenSource = {
             name: 'TestSource',
-            getMessages: vi.fn().mockResolvedValue([]),
-            getTools: vi.fn().mockResolvedValue({
-                search: {
-                    description: 'Search tool',
-                    parameters: {},
+            getContext: vi.fn().mockResolvedValue({
+                messages: [],
+                tools: {
+                    search: {
+                        description: 'Search tool',
+                        parameters: {},
+                    },
                 },
+                executeTool,
             }),
-            executeTool,
             onUpdate: vi.fn().mockReturnValue(() => { }),
         };
 
@@ -228,25 +236,29 @@ describe('Tool Mapping', () => {
 
 describe('Message Collection', () => {
     it('should collect and sort messages by timestamp', async () => {
-        const source1: IDrivenSource = {
+        const source1: ContextDrivenSource = {
             name: 'Source1',
-            getMessages: vi.fn().mockResolvedValue([
-                { role: 'user', content: 'Message 2', timestamp: 200 },
-                { role: 'user', content: 'Message 4', timestamp: 400 },
-            ]),
-            getTools: vi.fn().mockResolvedValue({}),
-            executeTool: vi.fn().mockResolvedValue(undefined),
+            getContext: vi.fn().mockResolvedValue({
+                messages: [
+                    { role: 'user', content: 'Message 2', timestamp: 200 },
+                    { role: 'user', content: 'Message 4', timestamp: 400 },
+                ],
+                tools: {},
+                executeTool: vi.fn().mockResolvedValue(undefined),
+            }),
             onUpdate: vi.fn().mockReturnValue(() => { }),
         };
 
-        const source2: IDrivenSource = {
+        const source2: ContextDrivenSource = {
             name: 'Source2',
-            getMessages: vi.fn().mockResolvedValue([
-                { role: 'user', content: 'Message 1', timestamp: 100 },
-                { role: 'user', content: 'Message 3', timestamp: 300 },
-            ]),
-            getTools: vi.fn().mockResolvedValue({}),
-            executeTool: vi.fn().mockResolvedValue(undefined),
+            getContext: vi.fn().mockResolvedValue({
+                messages: [
+                    { role: 'user', content: 'Message 1', timestamp: 100 },
+                    { role: 'user', content: 'Message 3', timestamp: 300 },
+                ],
+                tools: {},
+                executeTool: vi.fn().mockResolvedValue(undefined),
+            }),
             onUpdate: vi.fn().mockReturnValue(() => { }),
         };
 
@@ -261,8 +273,8 @@ describe('Message Collection', () => {
         await waitForIdle(driver);
 
         // 验证 getMessages 被调用
-        expect(source1.getMessages).toHaveBeenCalled();
-        expect(source2.getMessages).toHaveBeenCalled();
+        expect(source1.getContext).toHaveBeenCalled();
+        expect(source2.getContext).toHaveBeenCalled();
 
         // 验证消息按时间戳排序 (这个需要访问私有方法，所以测试有限)
     });

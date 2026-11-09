@@ -21,6 +21,7 @@ function fixture(fault?: (request: any, response: any) => any) {
                 ...(request.type === 'INIT' ? {
                     appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: host.appInstanceId },
                     persistence: { protocol: 'state-session-v1', version: 1, instanceId: host.appInstanceId },
+                    acceptedCapabilities: request.requestedCapabilities,
                 } : ['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE'].includes(request.type) ? {
                     appCleanup: report,
                     ...(request.type === 'APP_SHUTDOWN' || request.type === 'APP_CLOSE' ? { persistence: {
@@ -33,7 +34,7 @@ function fixture(fault?: (request: any, response: any) => any) {
             if (request.type === 'APP_CLOSE') {
                 this.pendingCloseResponse = fault ? fault(request, response) : response;
                 queueMicrotask(() => this.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1, instanceId: host.appInstanceId,
-                    sequence: 1, operation: 'release', }));return;
+                    sequence: 1, action: 'release', }));return;
             }
             queueMicrotask(() => this.emit('message', fault ? fault(request, response) : response));
         }
@@ -52,12 +53,13 @@ it('accepts the callback result without owner counts or resource-proof fields', 
     expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true); await x.worker.terminate();
 });
 
-it.each(['wrong-type', 'wrong-instance', 'wrong-version', 'missing-lifecycle-ack', 'missing-persistence-ack'])('rejects %s INIT and never transfers it as legacy', async fault => {
+it.each(['wrong-type', 'wrong-instance', 'wrong-protocol', 'wrong-version', 'missing-lifecycle-ack', 'missing-persistence-ack'])('rejects %s INIT and never transfers it as legacy', async fault => {
     const x = fixture((request, response) => request.type !== 'INIT' ? response : fault === 'wrong-type'
         ? { requestId: response.requestId, type: 'VIEW_TOOL_INVOKE_RESPONSE', success: true }
         : fault === 'missing-lifecycle-ack' ? (({ appLifecycle, ...missing }) => missing)(response)
         : fault === 'missing-persistence-ack' ? (({ persistence, ...missing }) => missing)(response)
-        : { ...response, appLifecycle: { ...response.appLifecycle, ...(fault === 'wrong-instance' ? { instanceId: 'other' } : { version: 1 }) } });
+        : { ...response, appLifecycle: { ...response.appLifecycle, ...(fault === 'wrong-instance' ? { instanceId: 'other' }
+            : fault === 'wrong-protocol' ? { protocol: 'app-lifecycle-v3' } : { version: 1 }) } });
     await expect(x.host.start()).rejects.toThrow();
     expect(x.host.getResourceReport().appCleanup?.support).toBe(fault === 'missing-persistence-ack' ? 'managed' : 'rejected');
     expect(await x.host.releaseWorker()).toBeNull(); expect(x.worker.messages.some(message => message.type === 'RESET')).toBe(false);
@@ -86,9 +88,9 @@ it('classifies a completed app cleanup and failed persistence flush as a persist
     const x = fixture((request, response) => request.type === 'APP_CLOSE' ? { ...response, success: false,
         persistence: { ...response.persistence, ok: false,
             flush: { status: 'completed', ok: false, entries: [{ address: { namespace: 'd/app', key: 'state' },
-                revision: 1, status: 'failed', issue: { code: 'IO_FAILED', message: 'Storage operation failed' } }] },
+                revision: 1, status: 'failed', issue: { code: 'IO_FAILED', message: 'Storage I/O failed' } }] },
             dispose: { status: 'disposed', unsaved: [{ address: { namespace: 'd/app', key: 'state' },
-                revision: 1, status: 'failed', issue: { code: 'IO_FAILED', message: 'Storage operation failed' } }],
+                revision: 1, status: 'failed', issue: { code: 'IO_FAILED', message: 'Storage I/O failed' } }],
                 release: { status: 'released' } } } } : response);
     await x.host.start(); await x.host.open();
 

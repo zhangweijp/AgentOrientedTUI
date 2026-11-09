@@ -1,11 +1,8 @@
 /**
- * HTML Visitor (Fallback)
- * 
- * Handles generic HTML elements not matched by other visitors.
- * Converts standard HTML tags to Markdown.
+ * Converts standard HTML tags to Markdown after the View-root check.
  */
 
-import type { IElementVisitor, ChildrenTraverser, ElementTraverser } from './interface.js';
+type ElementTraverser = (el: Element) => string;
 
 // ============ List Helper Functions ============
 
@@ -81,117 +78,113 @@ function transformListItem(
     return result;
 }
 
-// ============ HTML Visitor ============
+export function transformHtml(
+    el: Element,
+    children: (el: Element) => string[],
+    traverseElement: ElementTraverser,
+): string {
+    const tagName = el.tagName.toLowerCase();
 
-export const htmlVisitor: IElementVisitor = {
-    name: 'html-fallback',
-    priority: 100, // Lowest priority
+    // Skip specialized internal tags
+    if (tagName === 'param') return '';
 
-    matches(): boolean {
-        return true;
-    },
+    // Handle line breaks
+    if (tagName === 'br') return '\n';
 
-    transform(
-        el: Element,
-        children: ChildrenTraverser,
-        traverseElement?: ElementTraverser
-    ): string {
-        const tagName = el.tagName.toLowerCase();
+    const childTexts = children(el);
 
-        // Skip specialized internal tags
-        if (tagName === 'param') return '';
+    // G. Handle standard HTML elements integration from pure.ts
+    if (/^h[1-6]$/.test(tagName)) {
+        const level = '#'.repeat(parseInt(tagName[1]));
+        return `\n${level} ${childTexts.join(' ')}\n`;
+    }
 
-        // Handle line breaks
-        if (tagName === 'br') return '\n';
+    if (tagName === 'p') {
+        const content = childTexts.join(' ').trim();
+        return content ? `\n${content}\n` : '';
+    }
 
-        const childTexts = children(el);
+    if (tagName === 'strong' || tagName === 'b') {
+        return `**${childTexts.join(' ')}**`;
+    }
 
-        // G. Handle standard HTML elements integration from pure.ts
-        if (/^h[1-6]$/.test(tagName)) {
-            const level = '#'.repeat(parseInt(tagName[1]));
-            return `\n${level} ${childTexts.join(' ')}\n`;
+    if (tagName === 'em' || tagName === 'i') {
+        return `*${childTexts.join(' ')}*`;
+    }
+
+    if (tagName === 'code' && el.parentElement?.tagName.toLowerCase() !== 'pre') {
+        const code = el.textContent || '';
+        let length = 1;
+        for (const match of code.matchAll(/`+/g)) length = Math.max(length, match[0].length + 1);
+        const fence = '`'.repeat(length);
+        const pad = code.startsWith('`') || code.endsWith('`') ||
+            (code.startsWith(' ') && code.endsWith(' ') && code.trim().length > 0) ? ' ' : '';
+        return `${fence}${pad}${code}${pad}${fence}`;
+    }
+
+    if (tagName === 'pre') {
+        const codeEl = el.querySelector('code');
+        const lang = codeEl?.getAttribute('class')?.replace('language-', '') || '';
+        const codeContent = codeEl ? (codeEl.textContent || '') : (el.textContent || '');
+        let fenceLength = 3;
+        for (const match of codeContent.matchAll(/`+/g)) {
+            fenceLength = Math.max(fenceLength, match[0].length + 1);
         }
+        const fence = '`'.repeat(fenceLength);
+        const separator = codeContent.endsWith('\n') ? '' : '\n';
+        return `\n${fence}${lang}\n${codeContent}${separator}${fence}\n`;
+    }
 
-        if (tagName === 'p') {
-            const content = childTexts.join(' ').trim();
-            return content ? `\n${content}\n` : '';
-        }
+    if (tagName === 'a') {
+        const href = el.getAttribute('href') || '';
+        const text = childTexts.join(' ').trim() || href;
+        return `[${text}](${href})`;
+    }
 
-        if (tagName === 'strong' || tagName === 'b') {
-            return `**${childTexts.join(' ')}**`;
-        }
+    if (tagName === 'blockquote') {
+        const quoted = childTexts.join(' ').trim()
+            .split('\n')
+            .map(line => `> ${line}`)
+            .join('\n');
+        return `\n${quoted}\n`;
+    }
 
-        if (tagName === 'em' || tagName === 'i') {
-            return `*${childTexts.join(' ')}*`;
-        }
+    if (tagName === 'hr') {
+        return '\n---\n';
+    }
 
-        if (tagName === 'code' && el.parentElement?.tagName.toLowerCase() !== 'pre') {
-            return `\`${childTexts.join('')}\``;
-        }
+    // Handle lists (ul, ol)
+    if (tagName === 'ul' || tagName === 'ol') {
+        const items: string[] = [];
+        const listChildren = el.children;
 
-        if (tagName === 'pre') {
-            const codeEl = el.querySelector('code');
-            const lang = codeEl?.getAttribute('class')?.replace('language-', '') || '';
-            const codeContent = codeEl ? (codeEl.textContent || '') : childTexts.join('\n');
-            return `\n\`\`\`${lang}\n${codeContent.trim()}\n\`\`\`\n`;
-        }
+        let liIndex = 0;
+        for (let i = 0; i < listChildren.length; i++) {
+            const child = listChildren[i];
+            const childTag = child.tagName.toLowerCase();
 
-        if (tagName === 'a') {
-            const href = el.getAttribute('href') || '';
-            const text = childTexts.join(' ').trim() || href;
-            return `[${text}](${href})`;
-        }
-
-        if (tagName === 'blockquote') {
-            const quoted = childTexts.join(' ').trim()
-                .split('\n')
-                .map(line => `> ${line}`)
-                .join('\n');
-            return `\n${quoted}\n`;
-        }
-
-        if (tagName === 'hr') {
-            return '\n---\n';
-        }
-
-        // Handle lists (ul, ol)
-        if (tagName === 'ul' || tagName === 'ol') {
-            const items: string[] = [];
-            const listChildren = el.children;
-
-            // Use ElementTraverser for nested list elements.
-            const singleTraverse: ElementTraverser = traverseElement
-                ? traverseElement
-                : childEl => children(childEl).join(' '); // Fallback
-
-            let liIndex = 0;
-            for (let i = 0; i < listChildren.length; i++) {
-                const child = listChildren[i];
-                const childTag = child.tagName.toLowerCase();
-
-                if (childTag === 'li') {
-                    // Standard list item
-                    const prefix = tagName === 'ol' ? `${++liIndex}. ` : '- ';
-                    const liContent = transformListItem(child, prefix, singleTraverse);
-                    items.push(liContent);
-                } else {
-                    // Use ElementTraverser for non-list children.
-                    const childOutput = singleTraverse(child);
-                    if (childOutput.trim()) {
-                        items.push(childOutput.trim());
-                    }
+            if (childTag === 'li') {
+                // Standard list item
+                const prefix = tagName === 'ol' ? `${++liIndex}. ` : '- ';
+                const liContent = transformListItem(child, prefix, traverseElement);
+                items.push(liContent);
+            } else {
+                // Use ElementTraverser for non-list children.
+                const childOutput = traverseElement(child);
+                if (childOutput.trim()) {
+                    items.push(childOutput.trim());
                 }
             }
-
-            return '\n' + items.join('\n') + '\n';
         }
 
-        // Handle orphan li (shouldn't happen normally)
-        if (tagName === 'li') {
-            return childTexts.join(' ');
-        }
+        return '\n' + items.join('\n') + '\n';
+    }
 
-        // Default: Join children
+    // Handle orphan li (shouldn't happen normally)
+    if (tagName === 'li') {
         return childTexts.join(' ');
     }
-};
+
+    // Default: Join children
+    return childTexts.join(' ');
+}

@@ -1,4 +1,4 @@
-import type { AppRegistry } from './engine/app/index.js';
+import type { AppRegistry } from './engine/app/registry.js';
 import type { TUIConfig } from './engine/app/config.js';
 
 export function renderInstalledAppLines(
@@ -24,7 +24,7 @@ export function renderInstalledAppLines(
         const autoStartStatus = (entry.autoStart ?? true) ? '🚀' : '⏸️';
 
         if (loadedApp) {
-            const version = entry.distribution?.resolvedVersion ?? entry.version ?? 'N/A';
+            const version = entry.distribution?.resolvedVersion ?? 'N/A';
             lines.push(`  ${enabledStatus}${autoStartStatus} ${name}`);
             lines.push(`     Version: ${version}`);
         } else {

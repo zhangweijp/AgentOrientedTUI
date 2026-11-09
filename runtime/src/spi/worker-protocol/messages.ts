@@ -1,3 +1,4 @@
+import { VIEW_TYPE_PARAMETERS_MODE } from '../../core/tool/ordinary-parameter-contract.js';
 import type { AppLifecycleAck } from '../../adapters/app-lifecycle-protocol.js';
 import type { AppCleanupReport } from '../runtime/app-lifecycle.interface.js';
 import type { StatePersistenceOffer, StatePersistenceAck, StateStorageRequest, StateStorageResponse } from '../../adapters/storage/state-storage-protocol.js';
@@ -22,9 +23,9 @@ import type { ManagedPersistenceReport } from '../../worker-runtime/state-persis
  * @module @aotui/runtime/spi/worker-protocol
  */
 
-import type { RequestID, AppID, DesktopID, ViewID, DataPayload } from './types.js';
+import type { RequestID, AppID, DesktopID, ViewID } from './types.js';
 import type { AppLaunchConfig } from '../app/app-config.interface.js';
-import type { ToolDescriptorV2, ToolTargetV2 } from '../../core/snapshot/types.js';
+import type { ObservedToolExecutionV3, ToolDescriptorV3 } from '../../core/snapshot/types.js';
 import type { SnapshotValueRefSource } from '../../core/tool/snapshot-value-arguments.js';
 import type { LLMOutputEventMeta } from '../core/llm-output.js';
 
@@ -45,6 +46,8 @@ export interface InitMessage {
     desktopId: DesktopID;
     /** App 模块路径 (动态 import) */
     appModulePath: string;
+    /** Canonical registered name, never an alias or an App execution identity. */
+    appName?: string;
     /** 应用启动配置 (Configuration Injection) */
     config?: AppLaunchConfig;
     /** M2: Runtime-generated logical App execution instance token. */
@@ -62,33 +65,22 @@ export interface AppLifecycleMessage {
 }
 
 export type { InteractionMode } from '../runtime/app-interaction.interface.js';
-export type { SnapshotValueParameterContract } from '../../core/tool/snapshot-value-parameter-contract.js';
-export interface ViewToolInvokeRefV2Message {
-    type: 'VIEW_TOOL_INVOKE_REF_V2';
-    requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string;
-    tool: ToolDescriptorV2; target: ToolTargetV2; argumentMode: 'snapshot-value-v2';
-    rawArgs: Readonly<Record<string, unknown>>; effectiveArgs: Readonly<Record<string, unknown>>;
-    refSources: readonly SnapshotValueRefSource[];
-}
-export interface ViewToolInvokeRefV2Response {
-    type: 'VIEW_TOOL_INVOKE_REF_V2_RESPONSE'; requestId: RequestID; appId: AppID; instanceId: string;
-    argumentMode: 'snapshot-value-v2'; success: true; terminal: ViewToolInvocationTerminal;
-}
 export type { OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
 import type { ViewToolInvocationTerminal } from '../../core/tool/invocation-terminal.js';
 export type { ViewToolInvocationTerminal } from '../../core/tool/invocation-terminal.js';
 
-export interface ViewToolInvokeOrdinaryV2Message {
-    type: 'VIEW_TOOL_INVOKE_ORDINARY_V2';
-    requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string;
-    tool: ToolDescriptorV2; target: ToolTargetV2; argumentMode: 'ordinary-v2';
-    args: Readonly<Record<string, unknown>>;
-}
-export interface ViewToolInvokeOrdinaryV2Response {
-    type: 'VIEW_TOOL_INVOKE_ORDINARY_V2_RESPONSE';
-    requestId: RequestID; appId: AppID; instanceId: string; argumentMode: 'ordinary-v2';
-    success: true; terminal: ViewToolInvocationTerminal;
-}
+/** Qualified parameters retain ViewType execution and separate Snapshot Ref provenance. */
+export type ViewToolInvokeV4Message = Readonly<{
+    type: 'VIEW_TOOL_INVOKE_V4'; requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string;
+    tool: ToolDescriptorV3; argumentMode: typeof VIEW_TYPE_PARAMETERS_MODE;
+    execution: Extract<ObservedToolExecutionV3, { kind: 'view-type' }>;
+    rawArgs: Readonly<Record<string, unknown>>; effectiveArgs: Readonly<Record<string, unknown>>;
+    refSources: readonly SnapshotValueRefSource[];
+}>;
+export type ViewToolInvokeV4Response = Readonly<{
+    type: 'VIEW_TOOL_INVOKE_V4_RESPONSE'; requestId: RequestID; appId: AppID; instanceId: string;
+    argumentMode: typeof VIEW_TYPE_PARAMETERS_MODE; success: true; terminal: ViewToolInvocationTerminal;
+}>;
 
 /**
  * 外部事件消息
@@ -98,7 +90,7 @@ export interface ExternalEventMessage {
     requestId: RequestID;
     viewId: ViewID;
     eventType: string;
-    data: DataPayload;
+    data: Record<string, unknown>;
 }
 
 
@@ -138,11 +130,11 @@ export interface LLMOutputPushMessage {
  * 主线程 → Worker 消息联合类型
  */
 export type MainToWorkerMessage =
-    | ViewToolInvokeOrdinaryV2Message
+    | Readonly<{ type: 'FLUSH_PROJECTION'; requestId: RequestID }>
+    | ViewToolInvokeV4Message
     | StateStorageResponse
     | InitMessage
     | AppLifecycleMessage
-    | ViewToolInvokeRefV2Message
     | ExternalEventMessage
     | TerminateMessage
     | ResetMessage
@@ -152,12 +144,19 @@ export type MainToWorkerMessage =
 // Worker → Main Messages
 // ============================================================================
 
-/**
- * 错误信息结构
- */
+/** Developer-only installation details, never part of ToolResult or close summaries. */
+export interface WorkerInitializationDiagnostic {
+    readonly phase: 'INIT' | 'OPEN';
+    readonly name: string;
+    readonly message: string;
+    readonly stack?: string;
+    readonly truncated?: true;
+}
+
 export interface WorkerError {
     code: string;
     message: string;
+    diagnostic?: WorkerInitializationDiagnostic;
 }
 
 /**
@@ -186,6 +185,7 @@ export interface LifecycleResponse extends ResponseBase {
     type: 'LIFECYCLE_RESPONSE';
     persistence?: ManagedPersistenceReport;
     appCleanup?: AppCleanupReport;
+    error?: WorkerError;
 }
 
 /**
@@ -211,6 +211,7 @@ export interface UpdateRequest {
  */
 export interface SnapshotPreparedPush {
     type: 'SNAPSHOT_PREPARED';
+    requestId?: RequestID;
     draft: unknown;
     suppressSignal: boolean;
 }
@@ -218,6 +219,7 @@ export interface SnapshotPreparedPush {
 /** Worker could not prepare or transport a Semantic Draft. */
 export interface SnapshotPrepareFailedPush {
     type: 'SNAPSHOT_PREPARE_FAILED';
+    requestId?: RequestID;
     appId: AppID;
     instanceId: string;
     producerSeq: number;
@@ -238,8 +240,7 @@ export interface ResetResponse extends ResponseBase {
  */
 export type WorkerToMainMessage =
     | StateStorageRequest
-    | ViewToolInvokeOrdinaryV2Response
-    | ViewToolInvokeRefV2Response
+    | ViewToolInvokeV4Response
     | InitResponse
     | LifecycleResponse
     | ErrorResponse

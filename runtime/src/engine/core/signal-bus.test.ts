@@ -28,7 +28,7 @@ describe('SignalBus', () => {
             expect(bus).toBeInstanceOf(SignalBus);
         });
 
-        it('默认 catchErrors 为 true', () => {
+        it('failing subscribers do not interrupt other listeners', () => {
             // 通过行为验证：listener 抛出错误不应该影响其他 listener
             const errorListener = vi.fn(() => { throw new Error('test error'); });
             const normalListener = vi.fn();
@@ -43,16 +43,7 @@ describe('SignalBus', () => {
             expect(normalListener).toHaveBeenCalled();
         });
 
-        it('可配置 catchErrors 为 false', () => {
-            const busNoCatch = new SignalBus({ catchErrors: false });
-            const errorListener = vi.fn(() => { throw new Error('test error'); });
-
-            busNoCatch.subscribe(desktopId, errorListener);
-
-            expect(() => {
-                busNoCatch.emitSignal(desktopId, 'dom_mutation');
-            }).toThrow('test error');
-        });
+        
     });
 
     // ════════════════════════════════════════════════════════════════
@@ -94,29 +85,7 @@ describe('SignalBus', () => {
         });
     });
 
-    describe('unsubscribe', () => {
-        it('移除指定 listener', () => {
-            const listener = vi.fn();
-            bus.subscribe(desktopId, listener);
-            bus.unsubscribe(desktopId, listener);
-
-            expect(bus.getListenerCount(desktopId)).toBe(0);
-        });
-
-        it('移除不存在的 listener 不抛出错误', () => {
-            const listener = vi.fn();
-            expect(() => {
-                bus.unsubscribe(desktopId, listener);
-            }).not.toThrow();
-        });
-
-        it('移除不存在 desktop 的 listener 不抛出错误', () => {
-            const listener = vi.fn();
-            expect(() => {
-                bus.unsubscribe('nonexistent' as DesktopID, listener);
-            }).not.toThrow();
-        });
-    });
+    
 
     // ════════════════════════════════════════════════════════════════
     // 信号发布
@@ -185,35 +154,6 @@ describe('SignalBus', () => {
             const signal = listener.mock.calls[0][0] as UpdateSignal;
             expect(signal.timestamp).toBeGreaterThanOrEqual(before);
             expect(signal.timestamp).toBeLessThanOrEqual(after);
-        });
-    });
-
-    // ════════════════════════════════════════════════════════════════
-    // DOM 观察
-    // ════════════════════════════════════════════════════════════════
-
-    describe('observeDOM', () => {
-        it('当 window 没有 MutationObserver 时不抛出错误', () => {
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => { });
-            expect(() => {
-                bus.observeDOM(desktopId, {});
-            }).not.toThrow();
-            consoleSpy.mockRestore();
-        });
-
-        it('打印日志当 MutationObserver 不可用', () => {
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => { });
-            bus.observeDOM(desktopId, {});
-            expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('MutationObserver not available'));
-            consoleSpy.mockRestore();
-        });
-    });
-
-    describe('stopObserving', () => {
-        it('对未观察的 desktop 不抛出错误', () => {
-            expect(() => {
-                bus.stopObserving(desktopId);
-            }).not.toThrow();
         });
     });
 

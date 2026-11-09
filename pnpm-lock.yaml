@@ -14,14 +14,33 @@ overrides:
   picomatch@4.0.3: 4.0.4
   preact: ^10.29.1
   rollup: ^4.60.1
+  '@aotui/agent-driver-adapter': link:./agent-driver-adapter
+  '@aotui/runtime': link:./runtime
+  '@aotui/sdk': link:./sdk
+  '@aotui/agent-driver-v2': link:./agent-driver-v2
 
 importers:
 
   .:
     devDependencies:
+      '@aotui/agent-driver-adapter':
+        specifier: link:agent-driver-adapter
+        version: link:./agent-driver-adapter
+      '@aotui/agent-driver-v2':
+        specifier: link:agent-driver-v2
+        version: link:./agent-driver-v2
+      '@aotui/runtime':
+        specifier: link:runtime
+        version: link:./runtime
+      '@aotui/sdk':
+        specifier: link:sdk
+        version: link:./sdk
       '@vitejs/plugin-react':
         specifier: ^5.1.3
         version: 5.2.0(vite@7.3.2(@types/node@25.5.2)(lightningcss@1.32.0)(terser@5.46.1)(yaml@2.8.3))
+      esbuild:
+        specifier: ^0.27.2
+        version: 0.27.7
       happy-dom:
         specifier: ^20.8.9
         version: 20.8.9

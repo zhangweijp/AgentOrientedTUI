@@ -127,6 +127,7 @@ describe('SessionManagerV3 compaction integration', () => {
         host: {
           getCompactionToolName: () => 'context_compact',
           markToolCompactionAnchor,
+          notifyNewMessage: vi.fn(),
         },
       },
     });
@@ -159,6 +160,7 @@ describe('SessionManagerV3 compaction integration', () => {
         host: {
           getCompactionToolName: () => 'context_compact',
           markToolCompactionAnchor,
+          notifyNewMessage: vi.fn(),
         },
       },
     });

@@ -85,7 +85,7 @@ export interface Topic {
     //  Chat App Enhancement Fields
     // ─────────────────────────────────────────────────────────────
 
-    /** Agent-defined topic summary (set via update_topic operation) */
+    /** Agent-defined topic summary (set via the update_topic Tool) */
     summary?: string;
     /** Agent-defined conversation stage (e.g., "需求澄清", "任务执行", "交付确认") */
     stage?: string;
@@ -133,7 +133,7 @@ export interface UserMessageEvent {
 }
 
 /**
- * Operation parameter types
+ * Input parameter types
  */
 export interface SendMessageArgs {
     /** Message content to send */

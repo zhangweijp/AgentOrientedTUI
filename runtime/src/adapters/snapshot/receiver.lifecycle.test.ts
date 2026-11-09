@@ -1,39 +1,95 @@
 import { expect, it, vi } from 'vitest';
+import { performance } from 'node:perf_hooks';
 import { SemanticSnapshotReceiver } from './receiver.js';
 import { createViewOwnedTools } from '../../core/tool/view-owned-tools.js';
 import { compileOrdinaryParams } from '../../core/tool/ordinary-parameter-contract.js';
-import { ordinaryParameterProfile } from '../../core/tool/ordinary-parameter-profile.js';
 import type { SnapshotCore } from '../../core/snapshot/types.js';
 import type { ExecutionBinding, ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
 
 function defer<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }
-function fixture(instance = 'i', stage?: 'authorize' | 'execute') {
-    const r = new SemanticSnapshotReceiver('a', instance, () => 0), core: SnapshotCore = (r as any).core;
+function fixture(instance = 'i', stage?: 'authorize' | 'execute', now?: () => number) {
+    const r = now ? new SemanticSnapshotReceiver('a', instance, now) : new SemanticSnapshotReceiver('a', instance), core: SnapshotCore = (r as any).core;
     const registry = createViewOwnedTools('a', instance), view = registry.mount('v', 'T');
     const contract = compileOrdinaryParams({}, { additionalProperties: false });
     if (!contract.ok) throw Error('Fixture ordinary-v2 contract');
     const handler = async () => ({ success: true });
-    const safe = async () => ({ phase: 'entered-returned' as const, result: await handler() });
-    registry.registerTool(view.viewInstanceId, { name: 'read', description: 'Read', inputSchema: ordinaryParameterProfile(contract.contract), isMutating: false },
-        handler, { safeOrdinaryParametersInvocationMode: 'ordinary-v2' }, safe);
-    const tool = registry.listTools()[0], { appId: _app, appInstanceId: _instance, ...descriptor } = tool;
-    r.acceptPrepared({ schemaVersion: 2, appId: 'a', instanceId: instance, producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+    registry.registerTypeTool({ viewType: 'T', name: 'read', description: 'Read', inputSchema: contract.contract.schema }, {
+        safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+        createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: await handler() }),
+    });
+    const tool = registry.listTools()[0]!;
+    r.acceptPrepared({ schemaVersion: 3, appId: 'a', instanceId: instance, producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
         views: [{ id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: 'View', kind: 'state', content: { format: 'markdown-v1', value: 'value' } }],
-        refs: {}, tools: { [tool.id]: descriptor } });
+        refs: {}, tools: { [tool.id]: tool } });
     expect(r.report().health).toBe('ready');
     const entered = defer<void>(), gate = defer<void>(); let handlers = 0, completed = 0;
     const binding: ExecutionBinding = { identity: {}, mode: 'ordinary-v2', validateInput: (_source, input) => ({ ok: true, value: input }),
-        isLive: source => ({ ok: registry.validateOrdinaryParametersBinding(tool, source.target).success }),
+        isLive: source => ({ ok: registry.validateTypeToolBinding(tool, source.execution).success }),
         execute: async () => { handlers++; if (stage === 'execute') { entered.resolve(); await gate.promise; } completed++;
-            return { kind: 'action', phase: 'entered-returned', outcome: { status: 'succeeded', value: 19 } }; } };
-    const policy: ScopePolicy = { project: () => ({ views: [{ viewId: 'v', viewInstanceId: view.viewInstanceId }], refs: [], targets: [{ toolId: tool.id, target: tool.targets[0] }], content: [] }),
+            return { kind: 'tool-result', phase: 'entered-returned', result: { success: true, data: { value: 19 } } }; } };
+    const policy: ScopePolicy = { project: () => ({ views: [{ viewId: 'v', viewInstanceId: view.viewInstanceId }], refs: [], toolBindings: [{ toolId: tool.id, execution: tool.execution }], content: [] }),
         authorize: async () => { if (stage === 'authorize') { entered.resolve(); await gate.promise; } return true; }, canReadReceipt: () => true };
     const opened = r.createInteractionScope(policy, { resolve: () => binding }); expect(opened.status).toBe('opened');
     const client = opened.status === 'opened' ? opened.client : (() => { throw Error(); })();
-    async function observe() { const o = await client.observe({ viewIds: ['v'] }); expect(o.status).toBe('observed'); if (o.status !== 'observed') throw Error();
+    async function observe() { const o = await client.observe({ viewIds: ['v'] }); if (o.status !== 'observed') throw Error(JSON.stringify(o));
+        expect(client.adoptObservation(o.observation.observationId)).toEqual({ status: 'adopted' });
         return { invocationId: 'call', observationId: o.observation.observationId, bindingId: o.observation.bindings[0].bindingId, input: {} }; }
     return { r, core, client, observe, entered, gate, counts: () => ({ handlers, completed }) };
 }
+
+it('uses one integer monotonic default clock for snapshots and interactions when wall time moves backward', async () => {
+    let elapsed = 10.25, wallTime = 10_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
+    vi.spyOn(Date, 'now').mockImplementation(() => wallTime);
+    const f = fixture('monotonic-default');
+    let releaseShortLease: (() => void) | undefined;
+    try {
+        const first = await f.observe();
+        const activeLeases = f.core.store.inspect().activeLeases;
+        const snapshotId = f.r.report().snapshotId!;
+        const shortLease = f.core.store.acquire(snapshotId, 5);
+        expect(shortLease.status).toBe('acquired');
+        if (shortLease.status !== 'acquired') throw new Error('Snapshot lease unavailable');
+        releaseShortLease = shortLease.lease.release;
+        expect(Number.isSafeInteger(shortLease.lease.expiresAt)).toBe(true);
+        elapsed = 20.75;
+        wallTime = 1;
+        const second = await f.observe();
+        expect(f.core.store.inspect().activeLeases).toBe(activeLeases); // The new adoption replaced the old owner; the short timed lease expired.
+        elapsed = 30.5;
+        const result = await f.client.invoke({ ...second, invocationId: 'monotonic-call' });
+        expect(result.kind).toBe('receipt');
+        if (result.kind !== 'receipt') return;
+        expect(Number.isSafeInteger(result.receipt.completedAt)).toBe(true);
+        expect(Number.isSafeInteger(result.receipt.expiresAt)).toBe(true);
+        expect(result.receipt.expiresAt - result.receipt.completedAt).toBe(60_000);
+        expect(second.observationId).not.toBe(first.observationId);
+    } finally {
+        releaseShortLease?.();
+        f.r.close();
+        vi.restoreAllMocks();
+    }
+    expect(f.r.getInteractionStats()).toMatchObject({ closed: true, scopes: 0, combinedBytes: 0 });
+    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', appRecords: 0, activeLeases: 0, currentBytes: 0 });
+});
+
+it('recovers observation and invocation after a rejected injected clock rollback without replacing the App', async () => {
+    let time = 10;
+    const f = fixture('clock-recovery', undefined, () => time);
+    try {
+        const first = await f.observe();
+        time = 9;
+        expect(await f.client.observe({ viewIds: ['v'] })).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_INTERNAL_ERROR' } });
+        expect(f.counts().handlers).toBe(0);
+        time = 10;
+        const recovered = await f.observe();
+        expect(recovered.observationId).not.toBe(first.observationId);
+        expect(await f.client.invoke({ ...recovered, invocationId: 'after-clock-recovery' })).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
+        expect(f.counts()).toEqual({ handlers: 1, completed: 1 });
+    } finally { f.r.close(); }
+    expect(f.r.getInteractionStats()).toMatchObject({ closed: true, scopes: 0, combinedBytes: 0 });
+    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', appRecords: 0, activeLeases: 0, currentBytes: 0 });
+});
 
 it('A16 closes authority before disposing Core and retains stopped state and resource facts', async () => {
     const f = fixture(); await f.observe();

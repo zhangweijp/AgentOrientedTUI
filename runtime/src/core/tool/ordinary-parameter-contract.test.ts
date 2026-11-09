@@ -8,10 +8,17 @@ function contract(result: CompileResult) {
 }
 function json(value: unknown) { return JSON.parse(JSON.stringify(value)); }
 function invalid(result: CompileResult, unsupported = false) {
-  expect(result).toEqual({ ok: false, issue: {
-    code: unsupported ? 'PARAMETER_DECLARATION_UNSUPPORTED' : 'PARAMETER_DECLARATION_INVALID',
-    message: expect.any(String),
-  } });
+  expect(result.ok).toBe(false);
+  if (result.ok) throw Error('Expected an invalid declaration');
+  expect(result.issue.code).toBe(unsupported ? 'PARAMETER_DECLARATION_UNSUPPORTED' : 'PARAMETER_DECLARATION_INVALID');
+  expect(typeof result.issue.message).toBe('string');
+  expect(typeof result.issue.path).toBe('string');
+  expect(result.issue.path.length).toBeLessThanOrEqual(512);
+}
+function unsupportedAt(result: CompileResult, path: string) {
+  invalid(result, true);
+  if (result.ok) return;
+  expect(result.issue.path).toBe(path);
 }
 const schema = (properties: object, extra: object = {}) => ({ type: 'object', properties, ...extra });
 const both = (params: unknown, properties: object, extra: { required?: string[]; additionalProperties?: boolean } = {}) => [
@@ -22,8 +29,8 @@ const both = (params: unknown, properties: object, extra: { required?: string[];
 describe('W07-B1 ordinary parameter contract', () => {
   it('P01 normalizes both frontends to an independently written full subset', () => {
     const params = {
-      s: { type: 'string', required: true, desc: 'Text', default: 'a😀', constraints: { minLength: 1, maxLength: 4, pattern: 'a' } },
-      e: { type: 'enum', options: ['a', 'ab'], default: 'a', constraints: { minLength: 1, maxLength: 2, pattern: '^a' } },
+      s: { type: 'string', required: true, desc: 'Text', default: 'a😀', constraints: { minLength: 1, maxLength: 4 } },
+      e: { type: 'enum', options: ['a', 'ab'], default: 'a', constraints: { minLength: 1, maxLength: 2 } },
       n: { type: 'number', required: true, constraints: { min: -1.5, max: 3 }, default: 0 },
       b: { type: 'boolean', default: false, constraints: {} },
       o: { type: 'object', default: { nested: [null, 1] } },
@@ -36,12 +43,12 @@ describe('W07-B1 ordinary parameter contract', () => {
       type: 'object', required: ['n', 's'], additionalProperties: false, properties: {
         b: { type: 'boolean', default: false },
         booleans: { type: 'array', items: { type: 'boolean' } },
-        e: { type: 'string', enum: ['a', 'ab'], default: 'a', minLength: 1, maxLength: 2, pattern: '^a' },
+        e: { type: 'string', enum: ['a', 'ab'], default: 'a', minLength: 1, maxLength: 2 },
         n: { type: 'number', minimum: -1.5, maximum: 3, default: 0 },
         numbers: { type: 'array', items: { type: 'number' } },
         o: { type: 'object', default: { nested: [null, 1] } },
         objects: { type: 'array', items: { type: 'object' } },
-        s: { type: 'string', description: 'Text', default: 'a😀', minLength: 1, maxLength: 4, pattern: 'a' },
+        s: { type: 'string', description: 'Text', default: 'a😀', minLength: 1, maxLength: 4 },
         strings: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 2, default: [''] },
       },
     };
@@ -113,18 +120,40 @@ describe('W07-B1 ordinary parameter contract', () => {
     invalid(compileOrdinarySchema(schema({ a: { type: 'array' } })));
   });
 
-  it('P05 counts code points and keeps unanchored flagless RegExp semantics', () => {
+  it('P05 counts string code points against supported length bounds', () => {
     for (const c of both({ s: { type: 'string', constraints: { minLength: 1, maxLength: 1 } } },
       { s: { type: 'string', minLength: 1, maxLength: 1 } })) {
       for (const s of ['a', '😀', '\ud800']) expect(c.validate({ s }).ok).toBe(true);
       for (const s of ['', 'ab', 'e\u0301']) expect(c.validate({ s }).ok).toBe(false);
     }
-    const c = contract(compileOrdinaryParams({ s: { type: 'string', constraints: { pattern: 'a' } } }));
-    for (let i = 0; i < 3; i++) expect(c.validate({ s: 'cat' }).ok).toBe(true);
-    expect(c.validate({ s: 'CAT' }).ok).toBe(false);
-    const e = contract(compileOrdinaryParams({ e: { type: 'enum', options: ['abc', 'xbc'], constraints: { pattern: '^a', maxLength: 3 } } }));
+    const c = contract(compileOrdinaryParams({ s: { type: 'string', constraints: { minLength: 1, maxLength: 3 } } }));
+    expect(c.validate({ s: 'cat' }).ok).toBe(true);
+    expect(c.validate({ s: '😀' }).ok).toBe(true);
+    expect(c.validate({ s: '' }).ok).toBe(false);
+    expect(c.validate({ s: 'cats' }).ok).toBe(false);
+    const e = contract(compileOrdinaryParams({ e: { type: 'enum', options: ['abc', 'xbc'], constraints: { maxLength: 3 } } }));
     expect(e.validate({ e: 'abc' }).ok).toBe(true);
-    expect(e.validate({ e: 'xbc' }).ok).toBe(false);
+    expect(e.validate({ e: 'xbc' }).ok).toBe(true);
+    expect(e.validate({ e: 'other' }).ok).toBe(false);
+  });
+
+  it.each([
+    ['params.constraints.pattern', () => compileOrdinaryParams({ title: { type: 'string', constraints: { pattern: '^(a+)+$' } } }), '$params.title.constraints.pattern'],
+    ['JSON Schema pattern', () => compileOrdinarySchema(schema({ title: { type: 'string', pattern: '^(a+)+$' } })), '$.properties.title.pattern'],
+  ] as const)('P05 rejects arbitrary regex at declaration time: %s', (_label, compile, path) => {
+    unsupportedAt(compile(), path);
+  });
+  it('P05 rejects malformed pattern strings as unsupported vocabulary', () => {
+    unsupportedAt(compileOrdinaryParams({ title: { type: 'string', constraints: { pattern: '[' } } }),
+      '$params.title.constraints.pattern');
+    unsupportedAt(compileOrdinarySchema(schema({ title: { type: 'string', pattern: '[' } })),
+      '$.properties.title.pattern');
+  });
+  it('P05 keeps an ordinary parameter named pattern as string data', () => {
+    for (const c of both({ pattern: { type: 'string', constraints: { minLength: 1 } } },
+      { pattern: { type: 'string', minLength: 1 } })) {
+      expect(c.validate({ pattern: 'file-*.ts' }).ok).toBe(true);
+    }
   });
 
   it('P06 includes numeric boundaries without conversion', () => {
@@ -141,8 +170,6 @@ describe('W07-B1 ordinary parameter contract', () => {
     [{ type: 'string', constraints: { minLength: -1 } }, { type: 'string', minLength: -1 }],
     [{ type: 'string', constraints: { maxLength: 1.5 } }, { type: 'string', maxLength: 1.5 }],
     [{ type: 'string', constraints: { minLength: 2, maxLength: 1 } }, { type: 'string', minLength: 2, maxLength: 1 }],
-    [{ type: 'string', constraints: { pattern: '[' } }, { type: 'string', pattern: '[' }],
-    [{ type: 'string', constraints: { pattern: 1 } }, { type: 'string', pattern: 1 }],
     [{ type: 'array', itemType: 'object', constraints: { minLength: 2, maxLength: 1 } }, { type: 'array', items: { type: 'object' }, minItems: 2, maxItems: 1 }],
   ])('P06 rejects malformed declarations in both frontends %#', (dsl, field) => {
     invalid(compileOrdinaryParams({ v: dsl }));
@@ -174,7 +201,7 @@ describe('W07-B1 ordinary parameter contract', () => {
   it.each([
     { type: 'number', default: '1' }, { type: 'number', constraints: { min: 2 }, default: 1 },
     { type: 'string', default: null }, { type: 'string', constraints: { maxLength: 1 }, default: 'ab' },
-    { type: 'enum', options: ['a'], default: 'b' }, { type: 'string', constraints: { pattern: '^a$' }, default: 'b' },
+    { type: 'enum', options: ['a'], default: 'b' },
     { type: 'array', itemType: 'number', default: ['1'] }, { type: 'boolean', default: 0 },
     { type: 'object', default: [] },
   ])('P07 rejects invalid defaults %#', field => invalid(compileOrdinaryParams({ v: field })));
@@ -329,6 +356,45 @@ describe('W07-B1 ordinary parameter contract', () => {
   it.each([
     { $ref: '#' }, { patternProperties: {} }, { additionalProperties: {} }, { 'x-aotui-mode': 'anything' },
   ])('P11 rejects unsupported root vocabulary %#', extra => invalid(compileOrdinarySchema(schema({}, extra)), true));
+  it('P11 reports a bounded JSON Schema path for unsupported vocabulary', () => {
+    const result = compileOrdinarySchema(schema({ content: { type: 'string', format: 'markdown' } }));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('Expected an unsupported declaration');
+    expect(result.issue.path).toBe('$.properties.content.format');
+    expect(result.issue.path!.length).toBeLessThanOrEqual(512);
+  });
+  it.each([
+    [{ title: { type: 'string', minLength: -1 } }, '$.properties.title.minLength'],
+    [{ title: { type: 'string', default: 7 } }, '$.properties.title.default'],
+    [{ title: { type: 'string', enum: [] } }, '$.properties.title.enum'],
+    [{ count: { type: 'number', minimum: 3, maximum: 2 } }, '$.properties.count.maximum'],
+  ])('P11 points invalid field keywords to their JSON Schema paths %#', (properties, expectedPath) => {
+    const result = compileOrdinarySchema(schema(properties));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('Expected an invalid declaration');
+    expect(result.issue.path).toBe(expectedPath);
+  });
+  it('P11 points malformed required declarations at the root required keyword', () => {
+    const result = compileOrdinarySchema(schema({ title: { type: 'string' } }, { required: ['missing'] }));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('Expected an invalid declaration');
+    expect(result.issue.path).toBe('$.required');
+  });
+  it('P11 always returns a bounded path for capture failures without exposing exception text', () => {
+    const result = compileOrdinarySchema(schema({ title: { type: 'string', default: 1n } }));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('Expected invalid JSON input');
+    expect(result.issue.path).toBe('$["properties"]["title"]["default"]');
+    expect(result.issue.path.length).toBeLessThanOrEqual(512);
+    expect(JSON.stringify(result)).not.toMatch(/BigInt|Cannot serialize/);
+  });
+  it('P11 bounds paths even when a property name is very long', () => {
+    const result = compileOrdinarySchema(schema({ ['property_' + 'x'.repeat(2_000)]: { type: 'string', default: 1 } }));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('Expected an invalid declaration');
+    expect(result.issue.path).toBeDefined();
+    expect(result.issue.path!.length).toBeLessThanOrEqual(512);
+  });
   it.each([
     { required: ['x', 'x'] }, { required: ['missing'] }, { required: 'x' }, { required: [1] },
     { properties: [] }, { description: 1 }, { additionalProperties: null },

@@ -1,4 +1,5 @@
-import { dynamicTool, type Tool, jsonSchema, type JSONSchema7 } from "ai"
+import type { JSONSchema7 } from "ai"
+import { jsonSchema, type Tool } from "@aotui/agent-driver-v2"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
@@ -97,7 +98,7 @@ export namespace MCP {
       additionalProperties: false,
     }
 
-    return dynamicTool({
+    return {
       description: mcpTool.description ?? "",
       inputSchema: jsonSchema(schema),
       execute: async (args: unknown) => {
@@ -113,7 +114,8 @@ export namespace MCP {
           },
         )
       },
-    })
+      type: "dynamic",
+    }
   }
 
   // Store transports for OAuth servers to allow finishing auth

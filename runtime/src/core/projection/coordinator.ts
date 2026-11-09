@@ -13,6 +13,7 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
     private pendingNotice = false;
     private queuedNotice = false;
     private readonly listeners = new Set<(token: ProjectionToken) => void>();
+    private readonly commits = new Set<() => void>();
 
     beginCommit(): void {
         this.commitDepth++;
@@ -23,7 +24,22 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
             throw new Error('Projection commit end without begin');
         }
         this.commitDepth--;
-        if (this.commitDepth === 0) this.scheduleNotice();
+        if (this.commitDepth === 0) {
+            for (const complete of [...this.commits]) complete();
+            this.scheduleNotice();
+        }
+    }
+
+    whenCommitted(signal: AbortSignal): Promise<void> {
+        if (signal.aborted) return Promise.reject(Object.assign(new Error('Projection owner closed'), { code: 'PROJECTION_CLOSED' }));
+        if (this.commitDepth === 0) return Promise.resolve();
+        return new Promise((resolve, reject) => {
+            const cleanup = () => { this.commits.delete(complete); signal.removeEventListener('abort', abort); };
+            const complete = () => { cleanup(); resolve(); };
+            const abort = () => { cleanup(); reject(Object.assign(new Error('Projection owner closed'), { code: 'PROJECTION_CLOSED' })); };
+            this.commits.add(complete);
+            signal.addEventListener('abort', abort, { once: true });
+        });
     }
 
     recordMutation(_kind: ProjectionChange): number {

@@ -9,7 +9,7 @@ import { AppWorkerHost, type WorkerStatus } from './worker-host.js';
 const methods = ['start', 'open', 'pause', 'resume', 'reinitialize'] as const;
 type Request = { type: string; requestId?: string };
 const managedInstances = new WeakMap<EventEmitter, string>();
-const settle = (operation: Promise<void>) => operation.then(
+const settle = (task: Promise<void>) => task.then(
     () => ({ status: 'fulfilled' as const }),
     (error: Error) => ({ status: 'rejected' as const, message: error.message }),
 );
@@ -167,7 +167,7 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
             if (message.type === 'APP_CLOSE') {
                 waitingForRelease = message;
                 queueMicrotask(() => worker.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1,
-                    instanceId: managedInstances.get(worker), sequence: 1, operation: 'release' }));
+                    instanceId: managedInstances.get(worker), sequence: 1, action: 'release' }));
             } else if (message.type === 'STATE_STORAGE_RESPONSE' && waitingForRelease) {
                 const request = waitingForRelease;waitingForRelease = undefined;queueMicrotask(() => respond(worker, request));
             } else if (message.type !== 'TERMINATE') queueMicrotask(() => respond(worker, message));

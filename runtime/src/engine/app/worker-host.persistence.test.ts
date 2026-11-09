@@ -14,6 +14,7 @@ class TestWorker extends EventEmitter {
         queueMicrotask(() => {
             if (message.type === 'INIT') this.emit('message', { type: 'INIT_RESPONSE', requestId: message.requestId, success: true,
                 appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: message.appInstanceId },
+                acceptedCapabilities: message.requestedCapabilities,
                 ...(this.ack === 'missing' ? {} : { persistence: { protocol: 'state-session-v1', version: 1, instanceId: this.ack === 'invalid' ? 'other' : message.appInstanceId } }) });
             else if (message.type === 'APP_OPEN' && this.openFailed) {
                 const instanceId = this.sent[0].appInstanceId;
@@ -39,7 +40,7 @@ class TestWorker extends EventEmitter {
                         ...(closing ? { dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } : {}) } } : {}) };
                 if (message.type === 'APP_CLOSE') {
                     this.pendingCloseResponse = response;
-                    this.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1, instanceId, sequence: 1, operation: 'release' });
+                    this.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1, instanceId, sequence: 1, action: 'release' });
                 } else this.emit('message', response);
             }
         });

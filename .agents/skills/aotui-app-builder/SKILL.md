@@ -1,224 +1,84 @@
 ---
 name: aotui-app-builder
-description: This skill should be used when designing or implementing an AOTUI TUI application with @aotui/sdk, especially when defining Root View instructions, View-local Tools, and progressive disclosure behavior for LLM-facing markdown UI.
+description: Use when designing or implementing an AOTUI application with @aotui/sdk, especially Root instructions, App-level ViewType Tools, typed Ref/ArrayRef selection, and progressive disclosure.
 ---
 
 # AOTUI App Builder
 
-## Overview
+Build applications for Agent use. Views present current state; Tools return concise receipts and update that state. Read the matching package's [author guide](../../../sdk/docs/view-type-tools.md), [Ref guide](../../../sdk/docs/readonly-ref-v2.md), and [API status](../../../sdk/docs/api-status.md). Use the [matching package guide](../../../sdk/docs/runtime-compatibility.md); an older installed package does not acquire current capabilities from newer docs.
 
-Design and implement an AOTUI TUI application using `@aotui/sdk`. View-local Tools describe and perform app operations; Views present the current business state and useful outcomes.
+## One declaration and one App binding
 
-## When To Use
+Declare metadata and the TypeBox Schema once with `defineViewTypeTool`, normally inside a module-level `defineToolSet`. Static definitions never have `execute`. Bind handlers once per App instance through one `AppTools` at a common ancestor; ordinary TypeScript uses the same controller through `createToolBindings` from `@aotui/sdk/tools`.
 
-Apply this skill when building, redesigning, or extending an AOTUI TUI app, or when defining Root View instructions, View-local Tool contracts, or progressive disclosure by active Views.
+If a local capability label is useful, `ToolRef tool={tools.member}` may be placed inside a matching View. It presents a capability; it neither registers nor grants permission. Multiple Views of one type share a registration. Omitting ToolRef does not disable a bound Tool; use binding `enabled` and retain business checks. `ToolCatalog definition={tools}` lists only names grouped by ViewType in Root; it is not an active-tool or permission list. Full descriptions and schemas belong only in Context Tools. Do not serialize catalog descriptors into any View. Planning data Views show state and Refs without repeated tool lists.
 
-## Workflow
+Do not restore `useViewTypeTool`, `useViewSnapshotTool`, static `definition.execute`, dedicated Snapshot Tool parameters, hidden per-Tool registration components, or a second Hook/Provider authoring flow. Run the [complete AppTools example](../../../sdk/docs/examples/file-app.tsx); a plain TypeScript Producer uses the [file controller](../../../sdk/docs/examples/file-controller.ts) and supplies its existing port/publication boundary. The controller does not create a Host or private AppKernel.
 
-1. Identify data models and ownership first
-   - Locate SDK View and View-local Tool contracts.
-   - Keep domain validation, file identity, concurrency, and resource effects in the app or its resource adapter.
-   - Map user-visible state to Views and action inputs/results to Tool contracts.
-2. Define the View system
-   - List all View types and decide which are fixed vs dynamic.
-   - Define each View’s responsibility as result presentation, not tool execution.
-3. Design Root View instruction structure
-   - Define App Instruction and per-View Instruction sections.
-   - Add Available Tools only for View types that are currently mounted.
-4. Define Tool contracts
-   - Call `useViewTypeTool(name, options, handler, config?)` inside a component rendered under the owning `<View>`. It binds to that mounted View instance; it is not a type-wide registration.
-   - Ordinary parameters, including empty and read-only parameters, use the negotiated `ordinary-v2` contract and can support reads or mutations.
-   - A snapshot Ref parameter must be required and read-only, set `refSource: 'snapshot-value-v1'`, and use `isMutating: false`. This is provenance metadata; the trusted Host enables execution through `snapshot-value-v2`.
-   - Put actionable “When to use” and “How to use” guidance in the Tool description.
-5. Implement Views and tool handlers
-   - Render only markdown-friendly HTML tags.
-   - Return an `OperationResult` with concise receipt data; put the current business state in its View.
-6. Verify progressive disclosure
-   - Ensure Root View only shows sections for mounted View types.
-   - Ensure reads and mutations present business data through the current View; Tool results remain concise receipts.
+## App metadata and result records
 
-## Root View Specification
+Keep author metadata in createTUIApp once. The repository's existing generate-aoapp script derives the distribution manifest from the built factory and package metadata. Build before installing a package through Registry; do not hand-maintain or reverse-import aoapp.json. Registry reads that static output without executing the App. Its canonical key must match app_name; Runtime owns the separate App/instance identities. Do not handwrite protocol markers or use state namespaces as execution IDs.
 
-Produce a Root View that is a single source of instruction for the app. Keep the language in English and structure it as follows:
+ToolResult is discriminated by success. A successful short receipt has success:true and optional JSON object data, without error/effects. A failure requires a plain JSON error record containing code and message, with optional JSON context and short recovery data. Use effects:'none' or 'partial' only when known; omit it when effects are uncertain. Do not return Error instances, stack/cause, functions or undefined. An unknown outcome is not permission to replay a business command. The current View remains the source of business data, separate from the receipt.
 
-```
-# <APP NAME> Application Instruction
-## What <APP NAME> is
-## How to use <APP NAME>
-## Views of <APP NAME>
-### <View Type A>
-#### <View Type A> Instruction
-#### <View Type A> Available Tools
-### <View Type B>
-#### <View Type B> Instruction
-#### <View Type B> Available Tools
+For the standard native Tool adapter choose ASCII letters, digits and underscores for Tool/ViewType names and keep the composed app-name/type/tool alias within 64 characters; the framework creates that alias. Do not parse it to route calls. Internal structured identities and Ref addresses retain their own contracts.
+
+## Select published objects through Ref
+
+For a business object already published as a Ref, show a meaningful description and its typed local Ref marker. The model passes view_id.local_ref without the display type prefix instead of copying internal plan_id, phase_id, task_id or uploading a payload. Runtime resolves against the invocation's adopted Observation; the handler receives recursively readonly business values. IDs can remain inside App state and Ref payloads.
+
+Publish a single object with `useDataRef('current', value, { refType: 'Note' })`. Publish a list and its elements with `useArrayRef('notes', values, { itemType: 'Note' })`. Display names are `Note:current`, `Note[]:notes`, and `Note:notes[0]`; all have explicit metadata type Note. The payload Schema distinguishes the whole list from an element. A name prefix does not establish its type. These prefixes remain in display links; Tool input uses the containing View id plus the local name, e.g. notes_view.notes[0], without Note:.
+
+```ts
+import Type from 'typebox';
+import { defineToolSet, defineViewTypeTool, refParam } from '@aotui/sdk/tools';
+
+const Note = Type.Object({ id: Type.String(), title: Type.String() });
+export const tools = defineToolSet({
+  inspect: defineViewTypeTool({
+    viewType: 'Notes', name: 'inspect', description: 'Inspect selected Notes; read Notes View.',
+    inputSchema: Type.Object({
+      selected: Type.Array(refParam('Note', Note), { maxItems: 50 }),
+      whole: Type.Optional(refParam('Note', Type.Array(Note))),
+      message: Type.Optional(Type.String()),
+    }, { additionalProperties: false }),
+  }),
+});
+// In View id=notes_view; model: { selected: ['notes_view.notes[1]', 'notes_view.notes[0]'], whole: 'notes_view.notes' }
+// Binding handler: selected is an ordered readonly array of Note objects;
+// whole is the original readonly list if supplied, and absent otherwise.
 ```
 
-Apply progressive disclosure so that each View Type section is rendered only when at least one View instance of that type is mounted.
+- `refParam(type, ObjectSchema)` selects one object, including a natural ArrayRef element.
+- `refParam(type, Type.Array(ObjectSchema))` selects one complete list Ref; its model input is one string.
+- `Type.Array(refParam(...))` selects several complete Ref names; its model input is an array of strings. Order and duplicates remain; [] is a provided empty selection.
+- `Type.Optional(...)` leaves omitted fields absent. Null, undefined, unknown or wrong-type Refs are not absence and reject the call.
 
-## Root View Generator
+Multiple, optional and selection fields compose at the Tool parameter root. Ref payloads support objects and object lists; nested Ref queries and primitive payloads are outside this profile. Normal parameter budgets apply to the complete resolved arguments and provenance, not separately to each selection. Multi-selection does not grant a business transaction or automatic deduplication.
 
-Use the template below to generate a Root View instruction block and a View/Tool skeleton. Fill only the sections that correspond to mounted View types.
+The App still checks that resolved objects exist, belong to the intended current business context, and are permitted. Ref does not replace those checks or freeze the App's live data. Meaningful paths, titles, edit contents and amounts can remain ordinary fields. Readonly argument values do not constrain App business effects; authorization and current-state checks remain independent.
 
-Root View template:
+## Views and instructions
 
-```
-# <APP NAME> Application Instruction
-## What <APP NAME> is
-<one paragraph>
-## How to use <APP NAME>
-<bulleted usage steps>
-## Views of <APP NAME>
-### <View Type A>
-#### <View Type A> Instruction
-<what the view shows and how it updates>
-#### <View Type A> Available Tools
-- <tool_name_a>
-- <tool_name_b>
-### <View Type B>
-#### <View Type B> Instruction
-<what the view shows and how it updates>
-#### <View Type B> Available Tools
-- <tool_name_c>
-```
+A View is an independent Agent work page. Always declare id, type, and kind="instruction" or kind="state" explicitly; instance ID does not determine type, and descendants do not determine kind. Never nest View inside View; declare related Views as siblings. Ordinary Preact components and DOM elements can nest within one View. Use semantic text tags rather than CSS or layout-only markup to convey meaning.
 
-View and tool skeleton:
+Submit an unwrapped, unescaped Markdown body; the final Runtime message boundary encodes XML text exactly once, including CR/CRLF, and Host preview decodes once. Use pre/code for exact file, patch and log text; do not trim or XML-escape it yourself. See the [View contract](../../../sdk/docs/views.md).
 
-```tsx
-function ViewTools() {
-  useViewTypeTool('<tool_name>', {
-    description: `<When to use: ...>
-<How to use: ...>`,
-    params: {
-      ...
-    },
-    isMutating: true,
-  }, async (args) => ({
-    success: true,
-    data: { message: 'Operation completed' },
-  }))
-  return null
-}
+Keep Root instructions in English unless the application requires another language. Explain:
 
-function WorkspaceView() {
-  return (
-    <View id="<view_id>" type="<View Type>" name="<Display Name>">
-      <ViewContent />
-      <ViewTools />
-    </View>
-  )
-}
-```
+- What the application does and the normal workflow.
+- Which ViewTypes are currently relevant and which Tools apply to each.
+- The containing View id and local Ref names used to select existing objects and how to recover after an invalid choice.
+- Where to inspect the resulting current state after a receipt.
 
-## Root View Generator Example
+Keep the Schema, handler, rendered references and recovery guidance in agreement. Do not hide IDs in text while still requiring them as model inputs. Keep business data in View instead of duplicating its current contents in a receipt.
 
-Generate an AOTUI IDE style skeleton when requested.
+## Submission, observation and checks
 
-```
-# AOTUI IDE Application Instruction
-## What AOTUI IDE is
-Provide a TUI workspace for browsing, searching, and inspecting files.
-## How to use AOTUI IDE
-- Start in Workspace to browse files and open details.
-- Use Search Result to navigate matches.
-## Views of AOTUI IDE
-### Workspace View
-#### Workspace Instruction
-Show file tree and allow file open/close actions.
-#### Workspace Available Tools
-- open_file
-- search_files_by_pattern
-### File Detail View
-#### File Detail Instruction
-Show file content and analysis results.
-#### File Detail Available Tools
-- lsp_hover
-- lsp_goto_definition
-### Search Result View
-#### Search Result Instruction
-Show query results and navigation links.
-#### Search Result Available Tools
-- close_search_view
-```
+Render captures candidate bindings; AppTools commits through the shared controller and projection boundary. Do not update the Registry or committed handler during render. A Tool receipt alone is not a claim that an unfinished App update is visible.
 
-## Tool And View Principles
+Trusted Host consumers prepare an Observation, explicitly adopt it, then invoke its binding. Adoption of a new Observation revokes the previous calling eligibility; publication and diagnostic preview alone do not adopt. Independent Scope holders retain their own qualification. Apps do not manufacture observationId/bindingId or implement a private Ref resolver.
 
-1. Keep operation receipts separate from current business state
-   - Return success or failure plus concise recovery information.
-   - Show changed business data through the current View; do not duplicate its full content in Tool results.
-2. Put operational guidance in tool descriptions
-   - Include “When to use” and “How to use” inside the tool description.
-   - Avoid repeating tool descriptions in the Root View; list tool names only.
-3. Use markdown-friendly HTML tags only
-   - Prefer h1–h6, p, ul, ol, li, table, tr, th, td, pre, code, strong, em, blockquote.
-   - Avoid CSS and avoid layout-only tags for content.
+Verify first/last matching View activation, disabled/re-enabled Tools, correct and invalid Ref selections, optional absence, ordering and duplicates, business membership checks, updated View state and final resource release. Test through the matching actual SDK/Runtime packages; visibility or matching version strings alone do not prove compatibility.
 
-## Progressive Disclosure Pattern
-
-Implement Root View sections based on mounted View types. Use the active view state to decide visibility.
-
-Example logic guidance:
-- If no SearchResult view exists, omit the SearchResult section from Root View.
-- If multiple FileDetail views exist, show a single FileDetail section and list available view ids.
-
-## Progressive Disclosure For SDK API
-
-Reveal SDK guidance in layers based on task scope, and only load deeper details when needed.
-
-1. Core layer
-   - createTUIApp, View, Root View instruction layout.
-2. View layer
-   - View id/type rules, `useViewContext`, and view-local state.
-3. Tool layer
-   - the View-local `useViewTypeTool` Hook, parameter schema, and receipt result shape.
-4. Data layer
-   - View data rendering and change propagation patterns.
-5. Advanced layer
-   - multiple dynamic views, cross-view eventing, performance controls.
-
-For exact exported names or migration details, consult the SDK's [API status](../../../sdk/docs/api-status.md) and [migration guide](../../../sdk/docs/migration.md) when the task requires them.
-
-## SDK Implementation Outline
-
-1. Create the app factory with createTUIApp.
-2. Render a Root View and domain Views.
-3. Declare each domain Tool inside the component rendered by its owning View.
-4. Update the app's business state after a successful mutation so the current View presents the result.
-
-Example outline:
-
-```tsx
-import { createTUIApp, View, useState, useMemo, useEffect } from '@aotui/sdk'
-
-function AppRoot() {
-  const [items, setItems] = useState([])
-  return (
-    <>
-      <View id="root" type="Root" name="Root">
-        <RootView items={items} />
-      </View>
-      <View id="workspace" type="Workspace" name="Workspace">
-        <WorkspaceView items={items} />
-      </View>
-    </>
-  )
-}
-
-export default createTUIApp({
-  app_name: 'my_aotui_app',
-  component: AppRoot
-})
-```
-
-`createTUIApp` returns the managed `app-lifecycle-v2` factory by default. A component that owns resources can register `useAppLifecycle({ stop?, close? })`; apps without owned cleanup do not need the hook or a lifecycle config flag.
-
-## App Template Reference
-
-Use this repository's [ScopedIDEApp](../../../demo-apps/aotui-ide/src/tui/ScopedIDEApp.tsx) as a current multi-view example. It shows the managed package default, Root View instructions, progressive disclosure, FileDetail target selectors, View-local Tools, and the formal app lifecycle hook.
-
-## Output Checklist
-
-- Provide Root View instruction structure in English.
-- Ensure tools return concise status plus the target View for details.
-- For each mutating Tool, ensure the resulting business state is reflected in the current View.
-- Ensure only markdown-friendly HTML tags are used.
+The [complete Notes example](../../../sdk/docs/examples/ref-app.tsx) demonstrates object, whole-list, element, multiple, optional and ordered repeated selection inputs. Note and NoteDetail are example business names, not framework concepts. Keep complete runnable code in these example files rather than duplicating another tutorial implementation.

@@ -11,15 +11,17 @@
  * @module @aotui/runtime/engine/app-registry
  */
 
-import type { IDesktop, AppID, TUIAppFactory } from '../../spi/index.js';
-import { isTUIAppFactory } from '../../spi/index.js';
+import type { IDesktop, AppID } from '../../spi/index.js';
+import { captureAppMetadata, APP_LIFECYCLE_PROTOCOL, STATE_SESSION_PROTOCOL } from '../../spi/index.js';
+import type { AppMetadata } from '../../spi/index.js';
+import { hasViewTypeToolAuthoringProtocol } from '../../spi/app/app-factory.interface.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import type { TUIConfig, AppConfigEntry } from './config.js';
 import type { AppLaunchConfig } from '../../spi/app/app-config.interface.js';
 import type { AppInteractionOptions } from '../../spi/runtime/app-interaction.interface.js';
 import { captureInteractionModes } from './interaction-config.js';
 import { createDefaultConfig, validateConfig } from './config.js';
-// [Option C] ESM-compatible imports for file system operations
+// [Option C] ESM-compatible imports for file system access
 import * as fs from 'fs';
 import * as pathModule from 'path';
 import * as os from 'os';
@@ -31,12 +33,11 @@ export type { TUIConfig, AppConfigEntry } from './config.js';
  * 已加载的 App 信息
  */
 export interface LoadedApp {
-    /** Canonical name from the component factory's Kernel config. */
-    name: string;
-    /** 工厂对象 */
-    factory: TUIAppFactory;
-    /** 来源 */
-    source: string;
+    /** Canonical name from the generated static manifest; never a registry alias. */
+    readonly name: string;
+    readonly metadata: AppMetadata;
+    readonly modulePath: string;
+    readonly source: string;
 }
 
 export interface AppRegistryEntry extends AppConfigEntry {
@@ -135,22 +136,20 @@ export class AppRegistry {
         source: string,
         options?: {
             force?: boolean;
-            alias?: string;
             enabled?: boolean;
             autoStart?: boolean;
             originalSource?: string;
             distribution?: AppConfigEntry['distribution'];
         }
     ): Promise<string> {
-        // 加载工厂
-        const factory = await this.loadFactory(source);
-
-        const name = this.resolveRegistrationName(source, factory);
+        if (options && Object.hasOwn(options, 'alias')) throw new AOTUIError('CONFIG_INVALID', { reason: 'Registry aliases are not supported; use the generated canonical app_name' });
+        const loaded = this.readManifest(source);
+        const name = loaded.name;
 
         // 检查名称冲突
         if (this.config.apps[name] && !options?.force) {
-            throw new AOTUIError('OPERATION_DUPLICATE', {
-                operationName: name,
+            throw new AOTUIError('APP_ALREADY_REGISTERED', {
+                appName: name,
                 reason: `App already exists from ${this.config.apps[name].source}. Use --force to replace it.`
             });
         }
@@ -167,11 +166,7 @@ export class AppRegistry {
         this.entryConfigs.set(name, { ...this.config.apps[name] });
 
         // 添加到内存
-        this.apps.set(name, {
-            name,
-            factory,
-            source
-        });
+        this.apps.set(name, loaded);
 
         // 保存配置
         await this.saveConfig();
@@ -185,23 +180,18 @@ export class AppRegistry {
      * 用于开发环境自动发现或运行时动态添加
      */
     async registerTransient(source: string): Promise<string> {
-        // 加载工厂
-        const factory = await this.loadFactory(source);
-
-        const name = this.resolveRegistrationName(source, factory);
+        const loaded = this.readManifest(source);
+        const name = loaded.name;
 
         // 检查名称冲突 (仅检查内存中)
         if (this.apps.has(name)) {
+            if (this.apps.get(name)!.modulePath !== loaded.modulePath) throw new AOTUIError('APP_ALREADY_REGISTERED', { appName: name });
             console.log(`[AppRegistry] Transient app "${name}" already loaded from ${this.apps.get(name)?.source}`);
             return name;
         }
 
         // 添加到内存
-        this.apps.set(name, {
-            name,
-            factory,
-            source
-        });
+        this.apps.set(name, loaded);
         this.entryConfigs.set(name, {
             source,
             enabled: true,
@@ -256,13 +246,6 @@ export class AppRegistry {
         return Object.fromEntries(
             Array.from(this.entryConfigs.entries()).map(([name, entry]) => [name, { ...entry }])
         );
-    }
-
-    /**
-     * 检查 App 是否已安装
-     */
-    has(name: string): boolean {
-        return this.apps.has(name);
     }
 
     /**
@@ -350,69 +333,42 @@ export class AppRegistry {
 
 
 
-    /**
-     * 解析模块路径
-     * 
-     * [Fix] Now properly resolves directory paths to their entry points
-     * by checking aoapp.json, package.json, or defaulting to index.js
-     */
-    public resolveModulePath(source: string): string | null {
-        // local:/path/to/module -> /path/to/module (with entry point resolution)
-        if (source.startsWith('local:')) {
-            let localPath = source.slice(6);
+    /** Resolve the generated entry without importing any App code. */
+    public resolveModulePath(source: string): string {
+        return this.readManifest(source).modulePath;
+    }
 
-            if (!pathModule.isAbsolute(localPath)) {
-                localPath = pathModule.resolve(process.cwd(), localPath);
-            }
-
-            // If it's a directory, resolve entry point
-            if (fs.existsSync(localPath) && fs.statSync(localPath).isDirectory()) {
-                // Try to find entry point from aoapp.json or package.json
-                const aoappPath = pathModule.join(localPath, 'aoapp.json');
-                const pkgPath = pathModule.join(localPath, 'package.json');
-
-                if (fs.existsSync(aoappPath)) {
-                    try {
-                        const aoapp = JSON.parse(fs.readFileSync(aoappPath, 'utf-8'));
-                        if (aoapp.entry?.main) {
-                            localPath = pathModule.join(localPath, aoapp.entry.main);
-                        }
-                    } catch (e) {
-                        console.warn(`[AppRegistry] Failed to parse aoapp.json at ${aoappPath}:`, e);
-                    }
-                }
-                
-                // Fallback to package.json if no aoapp entry or failed
-                if (fs.existsSync(pkgPath) && (!fs.existsSync(aoappPath) || localPath === source.slice(6))) {
-                    try {
-                        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-                        if (pkg.main) {
-                            localPath = pathModule.join(localPath, pkg.main);
-                        }
-                    } catch (e) {
-                         console.warn(`[AppRegistry] Failed to parse package.json at ${pkgPath}:`, e);
-                    }
-                }
-                
-                // If still directory, default to index.js or dist/index.js check
-                if (fs.existsSync(localPath) && fs.statSync(localPath).isDirectory()) {
-                     const distIndex = pathModule.join(localPath, 'dist/index.js');
-                     const srcIndex = pathModule.join(localPath, 'index.js');
-                     if (fs.existsSync(distIndex)) {
-                         localPath = distIndex;
-                     } else if (fs.existsSync(srcIndex)) {
-                         localPath = srcIndex;
-                     }
-                }
-            }
-
-            return localPath;
+    private readManifest(source: string): LoadedApp {
+        if (!source.startsWith('local:')) throw new AOTUIError('CONFIG_NOT_SUPPORTED', { feature: 'Registry sources must resolve to a local installed package directory' });
+        const target = pathModule.resolve(source.slice(6));
+        if (!fs.existsSync(target)) throw new AOTUIError('APP_MANIFEST_INVALID', {
+            path: target, reason: 'Local source does not exist; check the path or build the App before registering it',
+        });
+        const targetInfo = fs.statSync(target);
+        let directory = targetInfo.isDirectory() ? target : pathModule.dirname(target);
+        while (!fs.existsSync(pathModule.join(directory, 'aoapp.json')) &&
+            !fs.existsSync(pathModule.join(directory, 'package.json')) && pathModule.dirname(directory) !== directory) {
+            directory = pathModule.dirname(directory);
         }
-        // npm:package-name -> 需要进一步解析，暂不支持
-        if (source.startsWith('npm:')) {
-            throw new AOTUIError('CONFIG_NOT_SUPPORTED', { feature: 'npm sources in Worker mode' });
+        const manifestPath = pathModule.join(directory, 'aoapp.json');
+        try {
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+            const metadata = captureAppMetadata(manifest);
+            if (typeof manifest.version !== 'string' || !manifest.version || typeof manifest.entry?.main !== 'string' || !manifest.entry.main)
+                throw new TypeError('version and entry.main are required; build the App to regenerate aoapp.json');
+            if (!hasViewTypeToolAuthoringProtocol(manifest)) throw Object.assign(new Error('The generated manifest declares an unsupported authoring protocol; rebuild with the matching SDK'), { code: 'APP_AUTHORING_PROTOCOL_UNSUPPORTED' });
+            if (manifest.persistenceSupport !== STATE_SESSION_PROTOCOL || manifest.appLifecycleSupport !== APP_LIFECYCLE_PROTOCOL)
+                throw new TypeError('The generated manifest requires the current persistence and lifecycle contracts');
+            const modulePath = pathModule.resolve(directory, manifest.entry.main);
+            if (targetInfo.isFile() && target !== modulePath)
+                throw new AOTUIError('APP_IDENTITY_MISMATCH', { expected: modulePath, actual: target, path: 'manifest.entry.main' });
+            if (!fs.existsSync(modulePath) || !fs.statSync(modulePath).isFile()) throw new TypeError('The generated entry.main file does not exist; build the App first');
+            return Object.freeze({ name: metadata.app_name, metadata, modulePath, source });
+        } catch (error) {
+            if (error instanceof AOTUIError || Object.getOwnPropertyDescriptor(error ?? {}, 'code')?.value === 'APP_AUTHORING_PROTOCOL_UNSUPPORTED') throw error;
+            throw new AOTUIError('APP_MANIFEST_INVALID', { path: manifestPath,
+                reason: error instanceof Error ? error.message : 'Build the App to generate aoapp.json' });
         }
-        return null;
     }
 
     /**
@@ -473,12 +429,11 @@ export class AppRegistry {
         }
 
         try {
-            const factory = await this.loadFactory(entry.source);
-            this.apps.set(name, {
-                name,
-                factory,
-                source: entry.source
-            });
+            const loaded = this.readManifest(entry.source);
+            if (name !== loaded.name) throw new AOTUIError('APP_IDENTITY_MISMATCH', { expected: loaded.name, actual: name, path: 'registry.key' });
+            const override = ['alias', 'description', 'whatItIs', 'whenToUse'].find(key => Object.hasOwn(entry, key));
+            if (override) throw new AOTUIError('CONFIG_INVALID', { reason: `${override} is App metadata, not a registration override; remove it and rebuild the App manifest` });
+            this.apps.set(name, loaded);
             console.log(`[AppRegistry] Loaded app: ${name}`);
         } catch (error) {
             console.error(`[AppRegistry] Failed to load app "${name}":`, error);
@@ -500,27 +455,17 @@ export class AppRegistry {
 
             const configEntry = this.entryConfigs.get(name) ?? this.config.apps[name];
             const dynamicConfig: AppLaunchConfig = { ...(options.dynamicConfig ?? {}) };
-            if (dynamicConfig.AOTUI_APP_NAME === undefined) {
-                dynamicConfig.AOTUI_APP_NAME = name;
-            }
+            if (Object.hasOwn(dynamicConfig, 'AOTUI_APP_NAME')) throw new AOTUIError('CONFIG_INVALID', {
+                reason: 'AOTUI_APP_NAME mixed registration identity with persistence. Use AOTUI_APP_KEY for a Host-owned state namespace; registration uses the generated app_name',
+            });
+            if (dynamicConfig.AOTUI_APP_KEY === undefined) dynamicConfig.AOTUI_APP_KEY = name;
 
             const autoStart = configEntry?.autoStart ?? true;
-            const modulePath = this.resolveModulePath(app.source);
-            if (!modulePath) {
-                console.warn(`[AppRegistry] Skipped "${name}": cannot resolve module path from source: ${app.source}`);
-                continue;
-            }
-
+            const modulePath = app.modulePath;
             const workerScript = configEntry?.workerScript ?? options.defaultWorkerScript;
 
             try {
-                const kernelConfig = app.factory.kernelConfig;
-                const whatItIs = configEntry?.whatItIs
-                    ?? kernelConfig.whatItIs
-                    ?? configEntry?.description
-                    ?? kernelConfig.description;
-                const whenToUse = configEntry?.whenToUse
-                    ?? kernelConfig.whenToUse;
+                const { description, whatItIs, whenToUse } = app.metadata;
 
                 if (autoStart) {
                     const appId = await desktop.installDynamicWorkerApp(
@@ -528,7 +473,7 @@ export class AppRegistry {
                         {
                             workerScriptPath: workerScript,
                             name,
-                            description: configEntry?.description ?? kernelConfig.description,
+                            description,
                             whatItIs,
                             whenToUse,
                             config: dynamicConfig,
@@ -540,7 +485,7 @@ export class AppRegistry {
                 } else {
                     const appId = await desktop.registerPendingApp({
                         name,
-                        description: configEntry?.description ?? kernelConfig.description,
+                        description,
                         whatItIs,
                         whenToUse,
                         modulePath,
@@ -584,16 +529,6 @@ export class AppRegistry {
         const fsPromises = await import('fs/promises');
         await fsPromises.rm(normalizedInstallRoot, { recursive: true, force: true });
         await this.pruneEmptyParentDirs(pathModule.dirname(normalizedInstallRoot), normalizedAllowedRoot);
-    }
-
-    private resolveRegistrationName(source: string, factory: TUIAppFactory): string {
-        if (factory.kernelConfig.appName) {
-            return factory.kernelConfig.appName;
-        }
-
-        throw new AOTUIError('CONFIG_INVALID', {
-            reason: `App source ${source} does not expose a canonical app_name`
-        });
     }
 
     private resolveNpmInstallRoot(entry: AppConfigEntry): string | null {
@@ -648,30 +583,7 @@ export class AppRegistry {
         }
     }
 
-    private async loadFactory(source: string): Promise<TUIAppFactory> {
-        let modulePath: string;
 
-        if (source.startsWith('npm:')) {
-            // npm 包: npm:@scope/name 或 npm:name
-            modulePath = source.slice(4);
-        } else if (source.startsWith('local:')) {
-            modulePath = this.resolveModulePath(source)!;
-        } else if (source.startsWith('git:')) {
-            throw new AOTUIError('CONFIG_NOT_SUPPORTED', { feature: 'Git source' });
-        } else {
-            throw new AOTUIError('CONFIG_INVALID', { reason: `Unknown source format: ${source}` });
-        }
-
-        // 动态导入模块
-        const module = await import(modulePath);
-
-        const factory = module.default;
-        if (!isTUIAppFactory(factory)) {
-            throw new AOTUIError('APP_INVALID_EXPORT', { modulePath });
-        }
-
-        return factory;
-    }
 }
 
 export type { TUIAppFactory } from '../../spi/index.js';

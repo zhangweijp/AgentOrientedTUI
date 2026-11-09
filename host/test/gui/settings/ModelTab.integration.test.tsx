@@ -2,7 +2,7 @@
  * Settings Panel - ModelTab Integration Tests (V2)
  * 
  * Integration tests for ModelTab component
- * Tests provider selection, search filtering, and CRUD operations
+ * Tests provider selection, search filtering, and CRUD actions
  * 
  * Requirements: 2.1-2.6, 3.1-3.7, 4.1-4.4, 5.1-5.11, 6.1-6.11, 8.1-8.5
  */

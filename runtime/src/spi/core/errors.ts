@@ -28,11 +28,13 @@ export const ERROR_CODES = {
     // ─────────────────────────────────────────────────────────────
     APP_NOT_FOUND: 'APP_NOT_FOUND',
     APP_INVALID_EXPORT: 'APP_INVALID_EXPORT',
+    APP_MANIFEST_INVALID: 'APP_MANIFEST_INVALID',
+    APP_IDENTITY_MISMATCH: 'APP_IDENTITY_MISMATCH',
 
     // ─────────────────────────────────────────────────────────────
-    //  Operation Domain
+    //  App Domain
     // ─────────────────────────────────────────────────────────────
-    OPERATION_DUPLICATE: 'OPERATION_DUPLICATE',
+    APP_ALREADY_REGISTERED: 'APP_ALREADY_REGISTERED',
 
     // ─────────────────────────────────────────────────────────────
     //  Worker Domain
@@ -77,8 +79,11 @@ const ERROR_MESSAGES: Record<ErrorCode, MessageFormatter> = {
     APP_NOT_FOUND: (c) => `App '${c.appId ?? 'unknown'}' not found${c.desktopId ? ` in Desktop '${c.desktopId}'` : ''}`,
     APP_INVALID_EXPORT: (c) => `App module '${c.modulePath ?? 'unknown'}' must default-export a managed TUIAppFactory component factory`,
 
-    // Operation
-    OPERATION_DUPLICATE: (c) => `Operation '${c.operationName ?? 'unknown'}' is already registered`,
+    APP_MANIFEST_INVALID: (c) => `Invalid App manifest at '${c.path ?? 'unknown'}': ${c.reason ?? 'expected generated aoapp.json'}`,
+    APP_IDENTITY_MISMATCH: (c) => `App identity mismatch: expected '${c.expected ?? 'unknown'}', received '${c.actual ?? 'unknown'}' (${c.path ?? 'registration'})`,
+
+    // App
+    APP_ALREADY_REGISTERED: (c) => `App '${c.appName ?? 'unknown'}' is already registered. Choose a different App name or remove it before registering again.`,
 
     // Worker
     WORKER_NOT_STARTED: (c) => `Worker '${c.appId ?? 'unknown'}' not started`,

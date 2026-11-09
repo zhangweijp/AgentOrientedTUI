@@ -16,7 +16,7 @@
  * }
  * ```
  */
-import { useLayoutEffect } from 'preact/hooks';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 import { useRefRegistry } from './useViewContext.js';
 
 /**
@@ -45,9 +45,10 @@ export interface UseArrayRefOptions {
   /**
    * 列表项类型名称 (如 "Message")
    *
-   * 如果提供，生成的 Ref 链接和 Registry Key 将包含类型信息：
+   * 如果提供，生成的 Ref 展示链接包含类型信息，注册名仍为 View 内的局部 ID：
    * - List: `(Type[]:id)`
    * - Item: `(Type:id[index])`
+   * 同一业务种类也传入列表和元素的 Ref 注册记录。
    */
   itemType?: string;
 }
@@ -65,31 +66,74 @@ export function useArrayRef(
   data: object[],
   options?: UseArrayRefOptions,
 ): ArrayRefHandle {
-  const { registerRef, unregisterRef } = useRefRegistry();
+  const { registerRef } = useRefRegistry();
   const itemType = options?.itemType;
+  type Binding = ReturnType<typeof registerRef>;
+  type BoundValue = { binding: Binding; value: object };
+  const bindings = useRef<Map<string, BoundValue> | null>(null);
+  const entriesFor = (values: object[]) => [
+    { id: refId, value: values },
+    ...values.map((value, index) => ({
+      id: `${refId}[${index}]`,
+      value,
+    })),
+  ];
 
-  // Lists are real Ref targets; capacity limits belong to Core.
+  // A publisher keeps its handles while updating values; cleanup only releases
+  // the handles it acquired.
   useLayoutEffect(() => {
-    const registered: string[] = [];
-    const add = (id: string, value: object) => {
-      registerRef(id, value);
-      registered.push(id);
-    };
-
+    const current = new Map<string, BoundValue>();
     try {
-      add(itemType ? `${itemType}[]:${refId}` : refId, data);
-      data.forEach((item, idx) => {
-        const itemId = `${refId}[${idx}]`;
-        add(itemType ? `${itemType}:${itemId}` : itemId, item);
-      });
+      for (const { id, value } of entriesFor(data)) {
+        const binding = registerRef(id, value, itemType);
+        current.set(id, { binding, value });
+      }
     } catch (error) {
-      for (const id of registered.reverse()) unregisterRef(id);
+      for (const { binding } of [...current.values()].reverse()) binding.release();
       throw error;
     }
+    bindings.current = current;
     return () => {
-      for (const id of registered) unregisterRef(id);
+      for (const { binding } of [...current.values()].reverse()) binding.release();
+      if (bindings.current === current) bindings.current = null;
     };
-  }, [refId, data, itemType, registerRef, unregisterRef]);
+  }, [refId, itemType, registerRef]);
+
+  useLayoutEffect(() => {
+    const current = bindings.current;
+    if (!current) return;
+    const desired = entriesFor(data);
+    const added: Array<{ id: string; binding: Binding }> = [];
+    try {
+      for (const { id, value } of desired) {
+        if (current.has(id)) continue;
+        const binding = registerRef(id, value, itemType);
+        added.push({ id, binding });
+        current.set(id, { binding, value });
+      }
+    } catch (error) {
+      for (const { id, binding } of added.reverse()) {
+        binding.release();
+        current.delete(id);
+      }
+      throw error;
+    }
+
+    const desiredIds = new Set(desired.map(entry => entry.id));
+    for (const { id, value } of desired) {
+      const existing = current.get(id)!;
+      if (existing.value !== value) {
+        existing.binding.update(value);
+        existing.value = value;
+      }
+    }
+    for (const [id, existing] of current) {
+      if (!desiredIds.has(id)) {
+        existing.binding.release();
+        current.delete(id);
+      }
+    }
+  }, [data]);
 
   // 列表标题格式化函数
   const listRef: ListRefFormatter = (content: string): string => {

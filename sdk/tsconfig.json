@@ -1,42 +1,44 @@
 {
-    "compilerOptions": {
-        "target": "ES2022",
-        "module": "NodeNext",
-        "moduleResolution": "NodeNext",
-        "lib": [
-            "ES2022"
-        ],
-        "declaration": true,
-        "declarationMap": true,
-        "sourceMap": true,
-        "outDir": "./dist",
-        "rootDir": "./src",
-        "baseUrl": ".",
-        "paths": {
-            "@aotui/runtime": [
-                "../runtime/dist/index.d.ts"
-            ],
-            "@aotui/runtime/spi": [
-                "../runtime/dist/spi/index.d.ts"
-            ],
-            "@aotui/runtime/*": [
-                "../runtime/dist/*"
-            ]
-        },
-        "strict": true,
-        "esModuleInterop": true,
-        "skipLibCheck": true,
-        "forceConsistentCasingInFileNames": true,
-        "jsx": "react-jsx",
-        "jsxImportSource": "preact"
-    },
-    "include": [
-        "src/**/*"
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": [
+      "ES2022"
     ],
-    "exclude": [
-        "node_modules",
-        "dist",
-        "**/*.test.ts",
-        "**/*.test.tsx"
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "paths": {
+      "@aotui/runtime": [
+        "../runtime/dist/index.d.ts"
+      ],
+      "@aotui/runtime/spi": [
+        "../runtime/dist/spi/index.d.ts"
+      ],
+      "@aotui/runtime/*": [
+        "../runtime/dist/*"
+      ]
+    },
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+    "types": [
+      "node"
     ]
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "**/*.test.tsx"
+  ]
 }

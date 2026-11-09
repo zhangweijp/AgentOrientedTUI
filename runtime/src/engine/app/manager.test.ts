@@ -7,7 +7,7 @@
  * 我们使用 mock 来隔离 Worker 线程依赖。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AppManager, type InstalledApp } from './index.js';
+import { AppManager, type InstalledApp } from './manager.js';
 import type { AppID } from '../../spi/index.js';
 import { WorkerSandbox } from './worker-sandbox.js';
 
@@ -19,7 +19,6 @@ function createMockDesktop() {
         id: 'dt_test' as any,
         emitSignal: vi.fn(),
         logSystem: vi.fn(),
-        logAppOperation: vi.fn(),
     };
 }
 

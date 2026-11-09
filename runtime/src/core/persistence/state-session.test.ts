@@ -5,7 +5,7 @@ import { failedMutation, stateIssue } from './state-storage.js';
 import type { StateBinding, StateRecovery, StateSessionLimits } from './state-session.js';
 import type { StateAddress, StateStorage, StateValue } from './state-storage.js';
 
-const limits: StateSessionLimits = { maxKeys: 8, maxDepth: 10, maxNodes: 200, maxValueBytes: 512, maxRecordBytes: 1024, maxAddressBytes: 128, maxRetainedBytes: 8192, maxPendingOperations: 8, maxConcurrentOperations: 4, maxRevision: 1000 };
+const limits: StateSessionLimits = { maxKeys: 8, maxDepth: 10, maxNodes: 200, maxValueBytes: 512, maxRecordBytes: 1024, maxAddressBytes: 128, maxRetainedBytes: 8192, maxPendingRequests: 8, maxConcurrentRequests: 4, maxRevision: 1000 };
 const a = (key = 'a', namespace = 'n'): StateAddress => ({ namespace, key });
 const v1Record = (value: StateValue): string => JSON.stringify({ version: 1, updatedAt: 1, value })!;
 const defer = <T = void>() => { let resolve!: (v: T) => void;const promise = new Promise<T>(r => { resolve = r; });return { promise, resolve }; };
@@ -227,20 +227,20 @@ describe('seal, disposal and bounded resources (A12, A14–A17)', () => {
         const old = f.bind();await confirm(old);old.update(7);const clearing = old.clear();await entered.promise;old.reportUpdateFailure();gate.resolve();await clearing;old.release();const next = f.bind('a', 9), r = await next.recovery;
         expect(r.status).toBe('missing');next.confirmInitialization(r, { status: 'ready' });expect((await f.session.flush()).ok).toBe(false);expect(f.calls.replace).toBe(0);next.update(8);expect((await f.session.flush()).ok).toBe(true);await f.session.dispose();
     });
-    it.each(['read', 'replace', 'remove'].flatMap(operation => [0, 1, 2, 3, 4, 5].map(microtasks => ({ operation, microtasks }))))('F03: actual entry and disposal linearize: %j', async ({ operation, microtasks }) => {
-        const gate = defer<any>();const f = fixture([], { [operation]: async () => gate.promise });
+    it.each(['read', 'replace', 'remove'].flatMap(action => [0, 1, 2, 3, 4, 5].map(microtasks => ({ action, microtasks }))))('F03: actual entry and disposal linearize: %j', async ({ action, microtasks }) => {
+        const gate = defer<any>();const f = fixture([], { [action]: async () => gate.promise });
         const b = f.bind();let mutation: Promise<unknown>;
-        if (operation === 'read') mutation = b.recovery;
-        else { await confirm(b);mutation = operation === 'replace' ? f.session.flush() : b.clear(); }
+        if (action === 'read') mutation = b.recovery;
+        else { await confirm(b);mutation = action === 'replace' ? f.session.flush() : b.clear(); }
         for (let tick = 0; tick < microtasks; tick++) await Promise.resolve();
-        const before = f.calls[operation as 'read' | 'replace' | 'remove'], disposal = f.session.dispose();
+        const before = f.calls[action as 'read' | 'replace' | 'remove'], disposal = f.session.dispose();
         expect(f.session.getStats().activeIO).toBe(before);
         if (before) { expect(f.calls.release).toBe(0);expect(f.session.getStats().ownerRetained).toBe(true); }
         for (let tick = 0; tick < 6; tick++) await Promise.resolve();
-        expect(f.calls[operation as 'read' | 'replace' | 'remove']).toBe(before);if (before) expect(f.calls.release).toBe(0);
-        gate.resolve(operation === 'read' ? { status: 'missing' } : { status: 'applied' });await mutation;const report = await disposal;
-        expect(report.release.status).toBe('released');expect(f.calls[operation as 'read' | 'replace' | 'remove']).toBe(before);expect(f.calls.release).toBe(1);
-        expect(f.session.getStats()).toMatchObject({ retainedKeys: 0, retainedBytes: 0, activeIO: 0, pendingOperations: 0, pendingInitializations: 0, ownerRetained: false });
+        expect(f.calls[action as 'read' | 'replace' | 'remove']).toBe(before);if (before) expect(f.calls.release).toBe(0);
+        gate.resolve(action === 'read' ? { status: 'missing' } : { status: 'applied' });await mutation;const report = await disposal;
+        expect(report.release.status).toBe('released');expect(f.calls[action as 'read' | 'replace' | 'remove']).toBe(before);expect(f.calls.release).toBe(1);
+        expect(f.session.getStats()).toMatchObject({ retainedKeys: 0, retainedBytes: 0, activeIO: 0, pendingRequests: 0, pendingInitializations: 0, ownerRetained: false });
     });
     it('F03: already-entered adapter may dispose reentrantly and is still tracked to actual completion', async () => {
         const entered = defer(), gate = defer();let disposing: ReturnType<ReturnType<typeof fixture>['session']['dispose']> | undefined;
@@ -274,7 +274,7 @@ describe('seal, disposal and bounded resources (A12, A14–A17)', () => {
         const entered = defer(), gate = defer();const f = fixture([{ address: a(), text: v1Record(0) }], { remove: async address => { entered.resolve();await gate.promise;return f.base.remove(address); } });
         const b = f.bind();await confirm(b);const saving = f.session.flush(), clearing = b.clear();b.release();await entered.promise;expect(f.session.getStats().retainedKeys).toBe(1);gate.resolve();await clearing;await saving;
         expect(f.session.getStats()).toMatchObject({ retainedKeys: 1, retainedBytes: new TextEncoder().encode(JSON.stringify(['n', 'a'])).length });expect(f.calls.replace).toBe(0);
-        const final = f.session.flush(), disposal = f.session.dispose();await final;await disposal;expect(f.session.getStats()).toMatchObject({ retainedKeys: 0, retainedBytes: 0, pendingOperations: 0 });
+        const final = f.session.flush(), disposal = f.session.dispose();await final;await disposal;expect(f.session.getStats()).toMatchObject({ retainedKeys: 0, retainedBytes: 0, pendingRequests: 0 });
     });
     it.each(['read-pending', 'ack-pending'].flatMap(phase => [true, false].flatMap(hydrate => [true, false].flatMap(update => [true, false].map(beforeRelease => ({ phase, hydrate, update, beforeRelease }))))))('F01: release cannot confer eligibility: %j', async ({ phase, hydrate, update, beforeRelease }) => {
         const entered = defer(), gate = defer();const original = phase === 'read-pending' ? '{BROKEN' : '{"version":1,"updatedAt":1,"value":{"original":7}}';
@@ -308,12 +308,12 @@ describe('seal, disposal and bounded resources (A12, A14–A17)', () => {
         expect((await f.session.flush()).entries[0]).toMatchObject({ revision: 2, status: 'saved' });await f.session.dispose();
     });
     it('dispose invalidates immediately, cancels queued work, waits for active I/O and shares completion', async () => {
-        const started = defer(), gate = defer();const f = fixture([], { replace: async (address, text) => { started.resolve();await gate.promise;return f.base.replace(address, text); } }, { maxConcurrentOperations: 1 });
+        const started = defer(), gate = defer();const f = fixture([], { replace: async (address, text) => { started.resolve();await gate.promise;return f.base.replace(address, text); } }, { maxConcurrentRequests: 1 });
         const one = f.bind('a', 1), two = f.bind('b', 2);await Promise.all([confirm(one), confirm(two)]);const saving = f.session.flush();await started.promise;
-        expect(f.session.getStats()).toMatchObject({ activeIO: 1, queuedOperations: 1 });const disposal = f.session.dispose();expect(f.session.dispose()).toBe(disposal);expect(one.update(3).status).toBe('rejected');expect(one.release()).toBe(false);
+        expect(f.session.getStats()).toMatchObject({ activeIO: 1, queuedRequests: 1 });const disposal = f.session.dispose();expect(f.session.dispose()).toBe(disposal);expect(one.update(3).status).toBe('rejected');expect(one.release()).toBe(false);
         expect(f.session.getStats()).toMatchObject({ activeBindings: 0, activeIO: 1, ownerRetained: true });expect(f.calls.release).toBe(0);expect(f.backend.open('app').status).toBe('rejected');
         gate.resolve();expect((await saving).ok).toBe(false);const report = await disposal;expect(report.release.status).toBe('released');expect(report.unsaved.map(e => e.address.key)).toEqual(['b']);expect(f.calls.replace).toBe(1);
-        expect(f.session.getStats()).toMatchObject({ retainedKeys: 0, retainedBytes: 0, pendingInitializations: 0, activeIO: 0, queuedOperations: 0, releasePending: 0, ownerRetained: false });
+        expect(f.session.getStats()).toMatchObject({ retainedKeys: 0, retainedBytes: 0, pendingInitializations: 0, activeIO: 0, queuedRequests: 0, releasePending: 0, ownerRetained: false });
     });
     it('dispose cancels unacknowledged initialization without pretending to flush', async () => {
         const f = fixture(), b = f.bind(), r = await b.recovery;expect(f.session.getStats().pendingInitializations).toBe(1);const disposal = f.session.dispose();expect(b.confirmInitialization(r, { status: 'ready' }).status).toBe('rejected');
@@ -344,11 +344,11 @@ describe('seal, disposal and bounded resources (A12, A14–A17)', () => {
         const during = f.session.getStats().retainedBytes;expect(during).toBeGreaterThan(base);b.update(2);expect(f.session.getStats().retainedBytes).toBe(during + 1);
         gate.resolve();await saving;expect(f.session.getStats().retainedBytes).toBe(base);await f.session.flush();await f.session.dispose();
     });
-    it.each([1, 2, 3])('respects explicit concurrent limit %s with queued buffers accounted', async maxConcurrentOperations => {
+    it.each([1, 2, 3])('respects explicit concurrent limit %s with queued buffers accounted', async maxConcurrentRequests => {
         const entered = defer(), gate = defer();let started = 0;
-        const f = fixture([], { replace: async (address, text) => { if (++started === maxConcurrentOperations) entered.resolve();await gate.promise;return f.base.replace(address, text); } }, { maxConcurrentOperations });
+        const f = fixture([], { replace: async (address, text) => { if (++started === maxConcurrentRequests) entered.resolve();await gate.promise;return f.base.replace(address, text); } }, { maxConcurrentRequests });
         const bindings = ['a', 'b', 'c'].map(k => f.bind(k));await Promise.all(bindings.map(b => confirm(b)));const saving = f.session.flush();await entered.promise;
-        expect(f.session.getStats()).toMatchObject({ activeIO: maxConcurrentOperations, queuedOperations: 3 - maxConcurrentOperations, pendingOperations: 3 });
+        expect(f.session.getStats()).toMatchObject({ activeIO: maxConcurrentRequests, queuedRequests: 3 - maxConcurrentRequests, pendingRequests: 3 });
         const addressAndValues = 3 * (new TextEncoder().encode(JSON.stringify(['n', 'a'])).length + 1), encoded = new TextEncoder().encode('{"updatedAt":17,"value":0,"version":1}').length;
         expect(f.session.getStats().retainedBytes).toBe(addressAndValues + 3 * encoded);gate.resolve();expect((await saving).ok).toBe(true);expect(started).toBe(3);await f.session.dispose();
     });
@@ -378,9 +378,9 @@ describe('seal, disposal and bounded resources (A12, A14–A17)', () => {
         expect(f.calls.release).toBe(1);
     });
     it('bounds maxKeys / pending / concurrency without evicting unsaved keys', async () => {
-        const started = defer(), gate = defer();const f = fixture([], { read: async () => { started.resolve();await gate.promise;return { status: 'missing' }; } }, { maxKeys: 2, maxPendingOperations: 1, maxConcurrentOperations: 1 });
+        const started = defer(), gate = defer();const f = fixture([], { read: async () => { started.resolve();await gate.promise;return { status: 'missing' }; } }, { maxKeys: 2, maxPendingRequests: 1, maxConcurrentRequests: 1 });
         const first = f.bind();await started.promise;expect(f.session.bind(a('b'), 0, { hydrate: true })).toMatchObject({ status: 'rejected', issue: { code: 'CAPACITY_EXCEEDED' } });
-        expect(f.session.getStats()).toMatchObject({ retainedKeys: 1, pendingOperations: 1, activeIO: 1 });gate.resolve();await confirm(first);first.release();
+        expect(f.session.getStats()).toMatchObject({ retainedKeys: 1, pendingRequests: 1, activeIO: 1 });gate.resolve();await confirm(first);first.release();
         const second = f.bind('b');await confirm(second);expect(f.session.bind(a('c'), 0, { hydrate: true }).status).toBe('rejected');expect(f.session.getStats().retainedKeys).toBe(2);await f.session.dispose();
     });
     it('checks exact retained-byte boundaries at bind and retains old snapshots on failed update', async () => {

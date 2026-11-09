@@ -10,7 +10,7 @@ const { values } = parseArgs({ options: {
 } });
 if (values.help) {
     console.log('Local scoped IDE: --project <directory> --data <directory> [--session <key>]\n'
-        + 'Send JSON lines with op: views, observe, invoke, receipt, release, or exit.\n'
+        + 'Send JSON lines with op: views, observe, adopt, invoke, release, or exit.\n'
         + 'Commands run with the local operator\'s permissions. Structured replies start with AOTUI_IDE.');
 } else {
     if (!values.project || !values.data) throw new Error('--project and --data are required');
@@ -56,7 +56,7 @@ if (values.help) {
         if (!closing) {
             const appId = await (startup = runtime.installDynamicWorkerApp(desktopId, import.meta.resolve('@agentina/aotui-ide'), {
                 appId: 'local-ide',
-                interactionModes: ['ordinary-v2', 'snapshot-value-v2'],
+                interactionModes: ['view-type-parameters-v1'],
                 config: { projectPath: project, ideSessionKey: session,
                     ideHistoryPath: path.join(data, 'history.json'), AOTUI_DATA_DIR: path.join(data, 'state'),
                     enableDiagnosticsRead: true, enableWorkspaceCreate: true },
@@ -68,9 +68,11 @@ if (values.help) {
                         const ids = new Set(selection.viewIds), selected = source.views.filter(view => ids.has(view.id));
                         return {
                             views: selected.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-                            refs: [],
-                            targets: Object.values(source.tools).flatMap(tool => tool.targets.filter(target => ids.has(target.viewId))
-                                .map(target => ({ toolId: tool.id, target }))),
+                            refs: Object.values(source.refs).filter(ref => ids.has(ref.ownerViewId))
+                                .map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
+                            toolBindings: Object.values(source.tools)
+                                .filter(tool => selected.some(view => view.type === tool.viewType))
+                                .map(tool => ({ toolId: tool.id, execution: tool.execution })),
                             content: selected.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' })),
                         };
                     },
@@ -112,16 +114,21 @@ if (values.help) {
                         if (command.op === 'exit') break;
                         let value;
                         switch (command.op) {
-                            case 'views':
-                                value = await client.observe({ all: true });
-                                if (value.status === 'observed') value = value.observation.views
-                                    .map(({ id, type, name }) => ({ viewId: id, viewType: type, viewName: name }));
-                                else throw new Error('Could not observe the current Views: ' + value.issue.code);
+                            case 'views': {
+                                const observed = await client.observe({ all: true });
+                                if (observed.status !== 'observed') throw new Error('Could not observe the current Views: ' + observed.issue.code);
+                                try {
+                                    value = observed.observation.views
+                                        .map(({ id, type, name }) => ({ viewId: id, viewType: type, viewName: name }));
+                                } finally {
+                                    client.releaseObservation(observed.observation.observationId);
+                                }
                                 break;
+                            }
                             case 'observe': value = await client.observe({ viewIds: command.viewIds }); break;
+                            case 'adopt': value = client.adoptObservation(command.observationId); break;
                             case 'invoke': value = await client.invoke({ invocationId: command.invocationId ?? randomUUID(),
                                 observationId: command.observationId, bindingId: command.bindingId, input: command.input }); break;
-                            case 'receipt': value = await client.readReceipt(command.invocationId); break;
                             case 'release': client.releaseObservation(command.observationId); value = { released: true }; break;
                             default: throw new Error('Unknown op: ' + command.op);
                         }

@@ -53,7 +53,7 @@ async function readRegularFile(file: string, maxBytes = MAX_BYTES) {
 
 /**
  * A version is a content checksum, not an authorization token or a file lock.
- * Both operations require the caller to name an existing trusted workspace.
+ * Both write paths require the caller to name an existing trusted workspace.
  */
 export async function readVersionedFile(workspaceRoot: string, filePath: string) {
     return readRegularFile(await inWorkspace(workspaceRoot, filePath));
@@ -125,7 +125,7 @@ export async function replaceFileIfVersion(
         lock = await fs.open(lockPath, 'wx', 0o600);
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-            throw new Error('RESOURCE_BUSY: another versioned file operation is in progress');
+            throw new Error('RESOURCE_BUSY: another versioned file write is in progress');
         }
         throw error;
     }

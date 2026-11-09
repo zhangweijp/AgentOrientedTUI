@@ -47,7 +47,7 @@ it('forwards provider/model metadata to the Worker DOM event without mutating ca
                         return h('p', {}, 'Listening for LLM output');
                     }
                     function Root() {
-                        return h(View, { id: 'root', type: 'Root' }, h(Content, {}));
+                        return h(View, {kind: 'instruction', id: 'root', type: 'Root' }, h(Content, {}));
                     }
                     export default createTUIApp({ app_name: 'llm_output_test', component: Root });
                 `,

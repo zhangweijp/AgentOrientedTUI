@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createSnapshotCore } from './store.js';
 import { refKey } from './snapshot-support.js';
-import { validatePreparedV2Draft } from './v2-validator.js';
+import { validatePreparedV3Draft } from './v3-validator.js';
 import { canonicalJson, utf8Size } from './json.js';
 import type { JsonValue, SnapshotStoreOptions } from './types.js';
 
 function draft(appId = 'a', instanceId = 'i', seq = 1, value = 'old') {
-    return { schemaVersion: 2 as const, appId, instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 0,
+    return { schemaVersion: 3 as const, appId, instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 0,
         views: [{ id: 'v', viewInstanceId: 'g', type: 'Detail', name: value, kind: 'state' as const,
             content: { format: 'markdown-v1' as const, value } }],
         refs: { [refKey('v', 'g', 'r')]: { id: 'r', ownerViewId: 'v', ownerViewInstanceId: 'g', refType: 'Value',
@@ -21,6 +21,24 @@ function published(c: ReturnType<typeof createSnapshotCore>, d = draft()) {
 const caps = { maxAppRecords: 1024, maxInstanceIds: 65536, maxIdentityBytes: 8 * 1024 * 1024, maxCurrentBytes: 32 * 1024 * 1024 };
 
 describe('W09-A Snapshot finite retention', () => {
+    it('releases retired payload immediately when publication leaves it without a holder', () => {
+        const c = createSnapshotCore({ now: () => 0 }); c.lifecycle.startApp('a', 'i');
+        const old = published(c), next = published(c, draft('a', 'i', 2, 'new'));
+        expect(c.store.getById(old.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
+        expect(c.store.inspect()).toMatchObject({ historicalSnapshots: 0, historicalBytes: 0 });
+        expect(c.store.getById(next.id).status).toBe('found'); c.lifecycle.dispose();
+    });
+    it('drops the retired snapshot on the last release while preserving a second holder and current data', () => {
+        const c = createSnapshotCore({ now: () => 0 }); c.lifecycle.startApp('a', 'i');
+        const old = published(c), a = c.store.acquire(old.id, { lifetime: 'owner' }), b = c.store.acquire(old.id, { lifetime: 'owner' });
+        if (a.status !== 'acquired' || b.status !== 'acquired') throw Error('holders');
+        const next = published(c, draft('a', 'i', 2, 'new'));
+        a.lease.release(); expect(c.store.getById(old.id).status).toBe('found');
+        b.lease.release(); b.lease.release();
+        expect(c.store.getById(old.id).status).toBe('rejected');
+        expect(c.store.inspect()).toMatchObject({ historicalSnapshots: 0, historicalBytes: 0, currentSnapshots: 1, activeLeases: 0 });
+        expect(c.store.getById(next.id).status).toBe('found'); c.lifecycle.dispose();
+    });
     it.each(Object.entries(caps))('A01 captures %s with zero, lowered and hard upper boundary', (key, hard) => {
         for (const value of [0, 1, hard]) expect(() => createSnapshotCore({ [key]: value })).not.toThrow();
         for (const value of [NaN, Infinity, -1, 0.5, hard + 1]) expect(() => createSnapshotCore({ [key]: value })).toThrow(RangeError);
@@ -138,7 +156,7 @@ describe('W09-A Snapshot finite retention', () => {
         expect(utf8Size(r.issue.path ?? '')).toBeLessThanOrEqual(512); expect(utf8Size(r.issue.message)).toBeLessThanOrEqual(512);
         expect(c.store.inspect().diagnosticBytes).toBeGreaterThan(0);
         expect(c.committer.accept(draft('a', 'i', 3)).status).toBe('unchanged'); expect(c.store.inspect().diagnosticBytes).toBe(0);
-        expect(validatePreparedV2Draft(draft()).ok).toBe(true);
+        expect(validatePreparedV3Draft(draft()).ok).toBe(true);
     });
     it.each([false, true])('A08/A09 permanent disposal works with failing clock=%s without reading hostile input', broken => {
         let badClock = false, reads = 0;

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { IMSessionManager } from '../../src/im/im-session-manager'
+import { IMDrivenSource } from '../../src/im/im-driven-source.js'
+import { IMSessionManager } from '../../src/im/im-session-manager.js'
 
 function createManager() {
   const createDesktop = vi.fn(async ({ sessionKey }: { sessionKey: string }) => ({
@@ -126,8 +127,9 @@ describe('IMSessionManager', () => {
       timestamp: 1_234,
     })
 
-    await expect(session.source.getMessages()).resolves.toEqual([
-      { role: 'user', content: 'hello from im', timestamp: 1_234 },
+    if (!(session.source instanceof IMDrivenSource)) throw new Error('Expected the real IM Source')
+    await expect(session.source.getContext().then(context => context.messages)).resolves.toEqual([
+      { role: 'user', content: 'hello from im', timestamp: 1_234, region: 'session' },
     ])
   })
 

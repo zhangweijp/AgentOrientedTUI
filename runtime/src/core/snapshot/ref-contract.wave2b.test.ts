@@ -3,11 +3,12 @@ import { parseHTML } from 'linkedom';
 import { canonicalJson, copyJson, utf8Size } from './json.js';
 import { createSnapshotCore } from './store.js';
 import { refKey } from './snapshot-support.js';
-import { validatePreparedV2Draft } from './v2-validator.js';
-import type { JsonValue, PreparedAppSnapshotDraftV2, SnapshotCore } from './types.js';
+import { validatePreparedV3Draft } from './v3-validator.js';
+import type { JsonValue, PreparedAppSnapshotDraftV3, SnapshotCore } from './types.js';
 import type { ViewID } from '../../spi/index.js';
 import { acquireToolSource } from '../tool/source-binding.js';
-import { compileSnapshotValueParams } from '../tool/snapshot-value-parameter-contract.js';
+import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
+import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
 import { captureDOMSnapshot } from '../../worker-runtime/dom-snapshot-producer.js';
 
 // Evidence of CURRENT Core/DOM-adapter behavior, not a proposed Ref executor.
@@ -18,13 +19,12 @@ const mountA = 'fixture-mount-A';
 const mountB = 'fixture-mount-B';
 const toolId = JSON.stringify([appId, 'FileDetail', 'inspect']);
 const argsLimits = { maxDepth: 24, maxNodes: 10_000, maxApproxBytes: 128 * 1024 };
-const refParameters = compileSnapshotValueParams({ file: { type: 'reference', required: true,
-    refSource: 'snapshot-value-v1', refType: 'File' } });
-if (!refParameters.ok) throw new Error('Invalid Ref V2 fixture');
+const refParameters = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: true }, 'view-type-parameters-v1');
+if (!refParameters.ok) throw new Error('Invalid Ref V3 fixture');
 
-function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): PreparedAppSnapshotDraftV2 {
+function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): PreparedAppSnapshotDraftV3 {
     return {
-        schemaVersion: 2, appId, instanceId,
+        schemaVersion: 3, appId, instanceId,
         producerSeq: sequence, sourceEpoch: sequence, capturedAt: sequence,
         views: [['fd_A', a], ['fd_B', mountB]].map(([id, viewInstanceId]) => ({
             id, viewInstanceId, type: 'FileDetail', name: id, kind: 'state',
@@ -42,12 +42,8 @@ function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): Pr
         },
         tools: { [toolId]: {
             id: toolId, name: 'inspect', viewType: 'FileDetail', description: 'Inspect',
-            inputSchema: refParameters.contract.schema,
-            isMutating: false,
-            targets: [
-                { viewId: 'fd_A', viewInstanceId: a, bindingVersion: 1 },
-                { viewId: 'fd_B', viewInstanceId: mountB, bindingVersion: 2 },
-            ],
+            inputSchema: ordinaryParameterProfile(refParameters.contract),
+            execution: { kind: 'view-type', activationId: 'active-1' },
         } },
     };
 }
@@ -59,14 +55,16 @@ function start(options: Parameters<typeof createSnapshotCore>[0] = {}) {
 function publish(core: SnapshotCore, input = draft()) {
     const result = core.committer.accept(input);
     expect(result.status).toBe('published');
-    if (result.status !== 'published' || result.snapshot.schemaVersion !== 2) throw new Error('Expected V2');
+    if (result.status !== 'published' || result.snapshot.schemaVersion !== 3) throw new Error('Expected V3');
     return result.snapshot;
 }
 function selector(snapshotId: string, viewId = 'fd_A', viewInstanceId = mountA, refId = 'file') {
     return { snapshotId, appId, instanceId, viewId, viewInstanceId, refId };
 }
 function select(core: SnapshotCore, snapshotId: string, viewId = 'fd_A') {
-    return acquireToolSource(core.store, { snapshotId, appId, instanceId, toolId, viewId });
+    const source = core.store.getTool({ snapshotId, appId, instanceId, toolId });
+    if (source.status !== 'found') return { status: 'rejected' as const, issue: source.issue };
+    return acquireToolSource(core.store, { snapshotId, appId, instanceId, toolId, execution: source.tool.execution });
 }
 
 describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', () => {
@@ -84,13 +82,13 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
             appId, instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 1, container,
             fragments: fixture.views.map(view => ({
                 viewId: view.id as ViewID, viewType: view.type, viewName: view.name,
-                kind: 'view-state', markup: '[File](file)',
+                kind: 'state', markup: '[File](file)',
             })),
             kernel: {
                 getViewOwnedViewInstances: () => fixture.views.map(view => ({
                     viewId: view.id, viewType: view.type, viewInstanceId: view.viewInstanceId,
                 })),
-                getViewOwnedToolDefinitions: () => [],
+                getToolDefinitions: () => [],
                 getViewRefs: () => [
                     { viewId: 'fd_A', refId: 'file', value: { value: 'A' } },
                     { viewId: 'fd_B', refId: 'file', value: { $aotuiEntityRefV1: { entityType: 'File', entityId: 'B', entityVersion: 'v1' } } },
@@ -105,7 +103,7 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
                 $aotuiEntityRefV1: { entityType: 'File', entityId: 'B', entityVersion: 'v1' },
             } },
         });
-        expect(validatePreparedV2Draft(captured).ok).toBe(true);
+        expect(validatePreparedV3Draft(captured).ok).toBe(true);
     });
 
     it('resolves two same-named Refs by exact source owner, without suffix fallback', () => {
@@ -124,6 +122,7 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
     it('Ref-only A to B publishes a new immutable value while old source and Tool stay usable', () => {
         const core = start(); const originalValue = { nested: { value: 'A' } };
         const old = publish(core, draft(1, originalValue));
+        const held = core.store.acquire(old.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
         originalValue.nested.value = 'caller mutation';
         const fresh = publish(core, draft(2, { nested: { value: 'B' } }));
         expect(fresh.id).not.toBe(old.id);
@@ -141,10 +140,12 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
         const selection = select(core, old.id);
         expect(selection.status).toBe('found');
         if (selection.status === 'found') selection.release();
+        held.lease.release(); expect(core.store.inspect().activeLeases).toBe(0);
     });
 
-    it('remount never maps an old selector to a new instance; retained data is not a live Tool source', () => {
+    it('remount never retargets an old Ref while another same-type View keeps the shared Tool active', () => {
         const core = start(); const old = publish(core);
+        const held = core.store.acquire(old.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
         const fresh = publish(core, draft(2, { value: 'replacement' }, 'fixture-new-A'));
         expect(core.store.resolveRef(selector(old.id))).toMatchObject({
             status: 'resolved', target: { payload: { value: 'A' } },
@@ -155,7 +156,9 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
         expect(core.store.resolveRef(selector(old.id, 'fd_A', 'fixture-new-A'))).toMatchObject({
             status: 'rejected', issue: { code: 'VIEW_INSTANCE_REVOKED' },
         });
-        expect(select(core, old.id)).toMatchObject({ status: 'rejected', issue: { code: 'VIEW_INSTANCE_REVOKED' } });
+        const retainedTool = select(core, old.id); expect(retainedTool.status).toBe('found');
+        if (retainedTool.status === 'found') retainedTool.release();
+        held.lease.release(); expect(core.store.inspect().activeLeases).toBe(0);
     });
 
     it('a missing Ref in A cannot resolve to B even though B owns a Ref with the same id', () => {
@@ -198,10 +201,10 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
             { ...input.refs[key], ownerViewInstanceId: mountB },
             { ...input.refs[key], target: { kind: 'resource', payload: {} } },
             { ...input.refs[key], extraAuthority: true },
-        ]) expect(validatePreparedV2Draft({ ...input, refs: { ...input.refs, [key]: ref } })).toMatchObject({
+        ]) expect(validatePreparedV3Draft({ ...input, refs: { ...input.refs, [key]: ref } })).toMatchObject({
             ok: false, issue: { code: 'SNAPSHOT_INVALID' },
         });
-        expect(validatePreparedV2Draft({ ...input, tools: {
+        expect(validatePreparedV3Draft({ ...input, tools: {
             [toolId]: { ...input.tools[toolId], refParams: { file: 'File' } },
         } })).toMatchObject({ ok: false, issue: { code: 'SNAPSHOT_INVALID' } });
     });
@@ -222,9 +225,11 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
 
     it('stopping App prevents Tool acquisition without pretending historical Ref data was erased', () => {
         const core = start(); const source = publish(core);
+        const held = core.store.acquire(source.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
         core.lifecycle.stopApp(appId, instanceId);
         expect(core.store.resolveRef(selector(source.id)).status).toBe('resolved');
         expect(select(core, source.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_UNREADY' } });
+        held.lease.release(); expect(core.store.inspect().activeLeases).toBe(0);
     });
 });
 
@@ -251,7 +256,7 @@ describe('Wave 2B: current JSON budgets at prospective expansion boundaries (no 
         let value: JsonValue = 'leaf';
         for (let n = 0; n < 24; n++) value = { child: value };
         expect(() => copyJson(value, argsLimits)).not.toThrow();
-        expect(validatePreparedV2Draft(draft(1, value)).ok).toBe(true);
+        expect(validatePreparedV3Draft(draft(1, value)).ok).toBe(true);
         expect(() => copyJson({ file: value }, argsLimits)).toThrow('Depth budget');
     });
 

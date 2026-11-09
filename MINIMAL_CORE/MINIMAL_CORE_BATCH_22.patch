@@ -1,0 +1,864 @@
+--- a/runtime/src/adapters/app-authoring-protocol.ts
++++ b/runtime/src/adapters/app-authoring-protocol.ts
+@@ -1,4 +1,4 @@
+-export const VIEW_TYPE_TOOL_AUTHORING_PROTOCOL = 'view-type-tools-v1' as const;
++export const VIEW_TYPE_TOOL_AUTHORING_PROTOCOL = 'view-type-tools-v2' as const;
+ 
+ /** Read the SDK factory marker without invoking accessors on an untrusted export. */
+ export function hasViewTypeToolAuthoringProtocol(factory: unknown): boolean {
+--- a/runtime/src/adapters/ordinary-invocation-v2.ts
++++ b/runtime/src/adapters/ordinary-invocation-v2.ts
+@@ -1,99 +1,70 @@
+-import { copyJson } from '../core/snapshot/json.js';
++import { canonicalJson } from '../core/snapshot/json.js';
+ import { compileOrdinaryProfile } from '../core/tool/ordinary-parameter-profile.js';
+-import {
+-  captureInvocationJson,
+-  captureInvocationTerminal,
+-  ORDINARY_V3_CAPABILITY,
+-  executionMatchesTool,
+-  exact,
+-  invocationExecution,
+-  invocationObject,
+-  invocationToolDescriptorV3,
+-  text,
+-} from './worker-message-capture.js';
+-import type { ViewToolInvokeV3Message, ViewToolInvokeV3Response, ViewToolInvocationTerminal } from '../spi/worker-protocol/messages.js';
+-import type { ObservedToolExecutionV3, ToolDescriptorV3 } from '../core/snapshot/types.js';
++import { SNAPSHOT_VALUE_ARGUMENT_LIMITS, SNAPSHOT_VALUE_ENVELOPE_LIMITS } from '../core/tool/snapshot-value-arguments.js';
++import { captureInvocationJson, captureInvocationTerminal, PARAMETERS_V4_CAPABILITY, executionMatchesTool,
++  exact, invocationExecution, invocationObject, invocationToolDescriptorV3, text } from './worker-message-capture.js';
++import type { ViewToolInvokeV4Message, ViewToolInvokeV4Response, ViewToolInvocationTerminal } from '../spi/worker-protocol/messages.js';
++import type { ToolDescriptorV3, ObservedToolExecutionV3, JsonValue } from '../core/snapshot/types.js';
++import type { ToolResult } from '../spi/core/tool-result.js';
+ 
+-export type OrdinaryV2Invocation = Extract<ViewToolInvokeV3Message, { argumentMode: 'ordinary-v2' }>;
+-export type OrdinaryV2InvocationResponse = Extract<ViewToolInvokeV3Response, { argumentMode: 'ordinary-v2' }>;
++export const PARAMETERS_MODE = 'view-type-parameters-v1';
++export { PARAMETERS_V4_CAPABILITY };
++export function captureTypeParametersRequest(input: unknown): ViewToolInvokeV4Message {
++  const value = captureInvocationJson(input);
++  if (!invocationObject(value) || !exact(value, ['type', 'requestId', 'appId', 'instanceId', 'snapshotId', 'tool',
++      'argumentMode', 'execution', 'rawArgs', 'effectiveArgs', 'refSources']) || value.type !== 'VIEW_TOOL_INVOKE_V4' ||
++      value.argumentMode !== PARAMETERS_MODE || !['requestId', 'appId', 'instanceId', 'snapshotId'].every(k => text(value[k])) ||
++      !invocationToolDescriptorV3(value.tool) || !invocationExecution(value.execution) ||
++      !invocationObject(value.rawArgs) || !invocationObject(value.effectiveArgs) || !Array.isArray(value.refSources)) throw new Error('Invalid parameter request');
++  const tool = value.tool as unknown as ToolDescriptorV3, execution = value.execution as unknown as ObservedToolExecutionV3;
++  if (tool.execution.kind !== 'view-type' || execution.kind !== 'view-type' || !executionMatchesTool(tool, execution))
++    throw new Error('Invalid ViewType execution identity');
++  captureInvocationJson(value.rawArgs, SNAPSHOT_VALUE_ARGUMENT_LIMITS);
++  captureInvocationJson(value.effectiveArgs, SNAPSHOT_VALUE_ARGUMENT_LIMITS);
++  return value as unknown as ViewToolInvokeV4Message;
++}
+ 
+-export const ORDINARY_V2_MODE = 'ordinary-v2';
+-export { ORDINARY_V3_CAPABILITY };
+-export function captureOrdinaryV2Request(input: unknown): OrdinaryV2Invocation {
+-  const value = captureInvocationJson(input);
+-  if (!invocationObject(value) || !exact(value, [
+-      'type',
+-      'requestId',
+-      'appId',
+-      'instanceId',
+-      'snapshotId',
+-      'tool',
+-      'argumentMode',
+-      'execution',
+-      'args',
+-    ]) || value.type !== 'VIEW_TOOL_INVOKE_V3' || value.argumentMode !== ORDINARY_V2_MODE ||
+-    !['requestId', 'appId', 'instanceId', 'snapshotId'].every((k) => text(value[k])))
+-    throw new Error('Invalid ordinary request');
+-  if (!invocationToolDescriptorV3(value.tool) || !invocationExecution(value.execution) || !invocationObject(value.args))
+-    throw new Error('Invalid ordinary request');
+-  const tool = value.tool as unknown as ToolDescriptorV3;
+-  const execution = value.execution as unknown as ObservedToolExecutionV3;
+-  if (tool.execution.kind !== 'view-type' || execution.kind !== 'view-type' || !executionMatchesTool(tool, execution))
+-    throw new Error('Invalid ordinary request');
+-  copyJson(
+-    {
+-      name: tool.name,
+-      description: tool.description,
+-      inputSchema: tool.inputSchema,
+-      isMutating: tool.isMutating,
+-    },
+-    { maxDepth: 48, maxNodes: 10_000, maxApproxBytes: 128 * 1024 }
+-  );
+-  captureInvocationJson(value.args, { maxDepth: 24, maxNodes: 10_000,
+-    maxApproxBytes: 128 * 1024, maxCanonicalBytes: 128 * 1024 });
+-  return value as unknown as OrdinaryV2Invocation;
++/** Captured request after the current registered binding has been verified. */
++export function validateTypeParameters(message: ViewToolInvokeV4Message): ToolResult {
++  const invalid = (code = 'E_INVALID_ARGS'): ToolResult => ({ success: false, error: { code, message: 'Parameters or Ref provenance do not match the registered contract' } });
++  const contract = compileOrdinaryProfile(message.tool.inputSchema);
++  if (!contract || contract.revision !== PARAMETERS_MODE) return invalid('REF_CONTRACT_UNSUPPORTED');
++  try {
++    const raw = message.rawArgs, effective = message.effectiveArgs;
++    if (!invocationObject(raw) || !invocationObject(effective)) return invalid();
++    if (!(contract.validateModelInput ?? contract.validate)(raw).ok || !(contract.validateResolvedInput ?? contract.validate)(effective).ok) return invalid();
++    const fields = contract.schema.properties as Readonly<Record<string, JsonValue>>;
++    const slots = Object.entries(fields).filter(([, field]) => invocationObject(field) && Object.hasOwn(field, 'x-aotui-ref-value'));
++    if (message.refSources.length !== slots.length) return invalid();
++    const expected = { ...raw };
++    for (let i = 0; i < slots.length; i++) {
++      const [param, field] = slots[i]!, source = message.refSources[i];
++      if (!invocationObject(source as unknown as JsonValue) || !exact(source as unknown as Readonly<Record<string, JsonValue>>,
++          ['param', 'refId', 'kind', 'refType', 'snapshotId', 'viewId', 'viewInstanceId']) ||
++          source!.param !== param || source!.refId !== raw[param] || source!.kind !== 'snapshot-value' ||
++          source!.refType !== (field as Readonly<Record<string, JsonValue>>)['x-aotui-ref-kind'] || source!.snapshotId !== message.snapshotId ||
++          !text(source!.viewId) || !text(source!.viewInstanceId)) return invalid();
++      expected[param] = effective[param]!;
++    }
++    if (canonicalJson(expected) !== canonicalJson(effective)) return invalid();
++    captureInvocationJson({ source: { appId: message.appId, instanceId: message.instanceId, snapshotId: message.snapshotId,
++      toolId: message.tool.id, activationId: message.execution.activationId }, effectiveArgs: effective, refSources: message.refSources }, SNAPSHOT_VALUE_ENVELOPE_LIMITS);
++    return { success: true };
++  } catch { return invalid('REF_ARGUMENT_BUDGET_EXCEEDED'); }
+ }
+-export function validOrdinaryV2Arguments(message: OrdinaryV2Invocation): boolean {
+-  const contract = compileOrdinaryProfile(message.tool.inputSchema);
+-  return contract !== null && contract.validate(message.args).ok;
++export function captureTypeParametersTerminal(input: unknown, expected: Readonly<{ requestId: string; appId: string; instanceId: string }>) {
++  return captureInvocationTerminal(input, expected, 'VIEW_TOOL_INVOKE_V4_RESPONSE', PARAMETERS_MODE);
+ }
+-export function captureOrdinaryV2Terminal(
+-  input: unknown,
+-  expected: Readonly<{ requestId: string; appId: string; instanceId: string }>
+-) {
+-  return captureInvocationTerminal(
+-    input,
+-    expected,
+-    'VIEW_TOOL_INVOKE_V3_RESPONSE',
+-    ORDINARY_V2_MODE
+-  );
+-}
+-export function ordinaryV2Response(
+-  input: unknown,
+-  terminal: ViewToolInvocationTerminal
+-): OrdinaryV2InvocationResponse | null {
++export function typeParametersResponse(input: unknown, terminal: ViewToolInvocationTerminal): ViewToolInvokeV4Response | null {
+   try {
+     if (!invocationObject(input)) return null;
+     const header: Record<string, string> = {};
+     for (const key of ['requestId', 'appId', 'instanceId']) {
+-      const d = Object.getOwnPropertyDescriptor(input, key);
+-      if (!d || !('value' in d) || !text(d.value)) return null;
+-      header[key] = d.value;
++      const field = Object.getOwnPropertyDescriptor(input, key);
++      if (!field || !('value' in field) || !text(field.value)) return null;
++      header[key] = field.value;
+     }
+-    const response = captureInvocationJson({
+-      ...header,
+-      type: 'VIEW_TOOL_INVOKE_V3_RESPONSE',
+-      argumentMode: ORDINARY_V2_MODE,
+-      success: true,
+-      terminal,
+-    });
+-    return captureOrdinaryV2Terminal(
+-      response,
+-      header as { requestId: string; appId: string; instanceId: string }
+-    )
+-      ? (response as unknown as OrdinaryV2InvocationResponse)
+-      : null;
+-  } catch {
+-    return null;
+-  }
++    const response = captureInvocationJson({ ...header, type: 'VIEW_TOOL_INVOKE_V4_RESPONSE', argumentMode: PARAMETERS_MODE, success: true, terminal });
++    return captureTypeParametersTerminal(response, header as { requestId: string; appId: string; instanceId: string }) ? response as unknown as ViewToolInvokeV4Response : null;
++  } catch { return null; }
+ }
+--- a/runtime/src/adapters/worker-message-capture.ts
++++ b/runtime/src/adapters/worker-message-capture.ts
+@@ -10,6 +10,7 @@
+     maxCanonicalBytes: 512 * 1024,
+ });
+ 
++export const PARAMETERS_V4_CAPABILITY = 'view-tool-parameters-invoke/v4';
+ export const ORDINARY_V3_CAPABILITY = 'view-tool-ordinary-invoke/v3';
+ export const REF_V3_CAPABILITY = 'view-tool-ref-invoke/v3';
+ const LEGACY_VIEW_TOOL_CAPABILITIES = new Set(['view-tool-ordinary-invoke/v2', 'view-tool-ref-invoke/v2']);
+@@ -61,7 +62,7 @@
+     if (capabilities.some(capability => LEGACY_VIEW_TOOL_CAPABILITIES.has(capability))) {
+         return Object.freeze({ ok: false, code: 'WORKER_PROTOCOL_V3_REQUIRED' });
+     }
+-    if (capabilities.some(capability => capability !== ORDINARY_V3_CAPABILITY && capability !== REF_V3_CAPABILITY)) {
++    if (capabilities.some(capability => capability !== PARAMETERS_V4_CAPABILITY && capability !== REF_V3_CAPABILITY)) {
+         return Object.freeze({ ok: false, code: 'WORKER_CAPABILITY_UNSUPPORTED' });
+     }
+     return Object.freeze({ ok: true, capabilities });
+--- a/runtime/src/core/invocation/observation-registry.ts
++++ b/runtime/src/core/invocation/observation-registry.ts
+@@ -418,7 +418,7 @@
+                             r.viewInstanceId === execution.target.viewInstanceId).map(r => r.refId))
+                         : Object.freeze([] as string[]);
+                     return Object.freeze({ status: 'found' as const, sourceRequest, tool: selected.tool,
+-                        execution: selected.execution, visibleRefIds });
++                        execution: selected.execution, visibleRefIds, visibleRefs: value.metadata.refs });
+                 } finally { selected.release(); }
+             } catch (error) { return rejected(error); }
+         },
+--- a/runtime/src/core/invocation/scoped-interaction-types.ts
++++ b/runtime/src/core/invocation/scoped-interaction-types.ts
+@@ -77,7 +77,7 @@
+   isLive(source:InvocationSource):LiveCheck;
+   execute(context:InvocationContext):ExecutionFact|Promise<ExecutionFact>;
+ }
+-export type ExecutionBinding = ExecutionBindingBase & Readonly<{mode:'ordinary-v2'|'snapshot-value-v2'}>;
++export type ExecutionBinding = ExecutionBindingBase & Readonly<{mode:'ordinary-v2'|'snapshot-value-v2'|'view-type-parameters-v1'}>;
+ export interface ExecutionResolver {
+   /** Stable identity/function references for one live registered callable. */
+   resolve(source:InvocationSource):ExecutionBinding|null;
+--- a/runtime/src/core/invocation/scoped-interaction.ts
++++ b/runtime/src/core/invocation/scoped-interaction.ts
+@@ -1,7 +1,7 @@
+ import { canonicalJson, utf8Size } from '../snapshot/json.js';
+ import type { AppIdentityReader, AppSnapshotV3, JsonValue, SnapshotStore } from '../snapshot/types.js';
+ import { validateVersionedToolRefDeclarations } from '../tool/versioned-ref-declarations.js';
+-import { prepareSnapshotValueArguments } from '../tool/snapshot-value-arguments.js';
++import { prepareSnapshotValueArguments, prepareViewTypeParameters } from '../tool/snapshot-value-arguments.js';
+ import { createObservationOperations, DEFAULT_OBSERVATION_REGISTRY_LIMITS, type ObservationState } from './observation-registry.js';
+ import type { ObservationJsonLimits } from './observation-types.js';
+ import { captureBoundedJson, exactFields, jsonObject, mapExecutionFact, unknownOutcome, type ExecutionMapping } from './invocation-outcome.js';
+@@ -45,7 +45,7 @@
+     try {
+         const data = dataProperties(raw, ['identity', 'mode', 'validateInput', 'isLive', 'execute']);
+         if (!data.identity || !['object', 'function'].includes(typeof data.identity) ||
+-            !['ordinary-v2', 'snapshot-value-v2'].includes(data.mode as string) ||
++            !['ordinary-v2', 'snapshot-value-v2', 'view-type-parameters-v1'].includes(data.mode as string) ||
+             ['validateInput', 'isLive', 'execute'].some(key => typeof data[key] !== 'function')) throw 0;
+         return Object.freeze(data) as unknown as Binding;
+     } catch { return fail('EXECUTION_BINDING_FAILED'); }
+@@ -239,7 +239,16 @@
+             const initial = resolve(state, source);
+             let rawInput = request.input, effectiveInput = request.input;
+             let refSources: InvocationContext['refSources'] = Object.freeze([]), firstRefCanonical: string | undefined;
+-            if (initial.mode === 'snapshot-value-v2') {
++            if (initial.mode === 'view-type-parameters-v1') {
++                if (source.execution.kind !== 'view-type') fail('REF_CONTRACT_UNSUPPORTED');
++                if (!declared) rawInput = capture<InvocationContext['rawInput']>(request.input, limits.ordinaryInput, 'ACTION_INPUT_INVALID').value;
++                const prepared = prepareViewTypeParameters(store, state, { snapshotId: snapshot.id, toolId: source.tool.id,
++                    execution: source.execution, args: rawInput }, selected.visibleRefs);
++                if (prepared.status === 'rejected') fail(prepared.issue.code);
++                try { rawInput = prepared.rawArgs; effectiveInput = prepared.effectiveArgs; refSources = prepared.refSources;
++                    firstRefCanonical = canonicalJson({ effectiveInput, refSources } as unknown as JsonValue); }
++                finally { prepared.release(); }
++            } else if (initial.mode === 'snapshot-value-v2') {
+                 if (source.tool.isMutating || !declared) fail('REF_CONTRACT_UNSUPPORTED');
+                 if (source.execution.kind !== 'view-instance') fail('REF_CONTRACT_UNSUPPORTED');
+                 const schema = source.tool.inputSchema;
+@@ -261,7 +270,13 @@
+             }
+             function recheck(): void {
+                 const current = sourceFor(state, request);
+-                if (initial.mode === 'snapshot-value-v2') {
++                if (initial.mode === 'view-type-parameters-v1') {
++                    const checked = prepareViewTypeParameters(store, state, { snapshotId: snapshot.id, toolId: source.tool.id,
++                        execution: source.execution, args: rawInput }, current.visibleRefs);
++                    if (checked.status === 'rejected') fail(checked.issue.code);
++                    try { if (canonicalJson({ effectiveInput: checked.effectiveArgs, refSources: checked.refSources } as unknown as JsonValue) !== firstRefCanonical) fail('REF_ARGUMENT_CHANGED'); }
++                    finally { checked.release(); }
++                } else if (initial.mode === 'snapshot-value-v2') {
+                     if (!refSources.every(ref => current.visibleRefIds.includes(ref.refId))) fail('REF_NOT_VISIBLE');
+                     if (source.execution.kind !== 'view-instance') fail('REF_CONTRACT_UNSUPPORTED');
+                     const checked = prepareSnapshotValueArguments(store, state, { snapshotId: snapshot.id, toolId: source.tool.id,
+@@ -282,7 +297,7 @@
+             if (!jsonObject(validation) || typeof validation.ok !== 'boolean' || !exactFields(validation, validation.ok ? ['ok', 'value'] : ['ok'])) fail('INPUT_VALIDATOR_FAILED');
+             if (!validation.ok) fail('ACTION_INPUT_INVALID');
+             if (!jsonObject(validation.value)) fail('INPUT_VALIDATOR_FAILED');
+-            if (initial.mode === 'snapshot-value-v2') {
++            if (initial.mode === 'snapshot-value-v2' || initial.mode === 'view-type-parameters-v1') {
+                 if (canonicalJson(validation.value) !== canonicalJson(effectiveInput)) fail('REF_ARGUMENT_CHANGED');
+             } else effectiveInput = capture<InvocationContext['effectiveInput']>(validation.value, limits.ordinaryInput, 'ACTION_INPUT_INVALID').value;
+             const context: InvocationContext = Object.freeze({ scopeId: state.id, invocationId: request.invocationId,
+--- a/runtime/src/core/tool/ordinary-parameter-contract.ts
++++ b/runtime/src/core/tool/ordinary-parameter-contract.ts
+@@ -8,7 +8,7 @@
+   | Readonly<{ ok: true; value: JsonObject }>
+   | Readonly<{ ok: false; code: 'PARAMETER_INPUT_INVALID'; diagnostics: readonly ParameterDiagnostic[] }>;
+ export interface OrdinaryParameterContract {
+-  readonly revision: 'ordinary-params-v1' | 'ref-value-specimen';
++  readonly revision: 'ordinary-params-v1' | 'ref-value-specimen' | 'view-type-parameters-v1';
+   readonly schema: JsonObject;
+   readonly fingerprint: string;
+   validate(input: unknown): OrdinaryValidation;
+@@ -174,7 +174,7 @@
+   };
+ }
+ 
+-function finish(root: JsonObject, allowRef = false): CompileResult {
++function finish(root: JsonObject, allowRef = false, qualified = false): CompileResult {
+   const schema = bounded(normalizeObject(root, '$', false, allowRef), DECLARATION) as JsonObject;
+   const fields = Object.entries(schema.properties as JsonObject);
+   const requiredNames = new Set(schema.required as readonly string[]);
+@@ -182,6 +182,12 @@
+     const specification = field as JsonObject;
+     return has(specification, REF_VALUE) || object(specification.items) && has(specification.items, REF_VALUE);
+   });
++  if (qualified) {
++    const refs = fields.filter(([, field]) => object(field) && has(field, REF_VALUE));
++    if (refs.length > 1 || fields.some(([, field]) => object(field) && object(field.items) && has(field.items, REF_VALUE))) unsupported('$.properties');
++    if (refs.some(([name, field]) => !requiredNames.has(name) || !object((field as JsonObject)[REF_VALUE]) ||
++        ((field as JsonObject)[REF_VALUE] as JsonObject).type !== 'object')) unsupported('$.properties');
++  }
+   const check = (input: unknown, resolved: boolean): OrdinaryValidation => {
+     const diagnostics: ParameterDiagnostic[] = [];
+     const add = (message: string, parameter?: string) => {
+@@ -214,15 +220,15 @@
+   const validate = hasRefs ? (_input: unknown): OrdinaryValidation => Object.freeze({ ok: false, code: 'PARAMETER_INPUT_INVALID',
+     diagnostics: Object.freeze([Object.freeze({ message: 'Ref parameters require qualified resolution; this is not an ordinary execution contract.' })]) })
+     : (input: unknown) => check(input, false);
+-  const revision = hasRefs ? 'ref-value-specimen' : 'ordinary-params-v1';
++  const revision = qualified ? 'view-type-parameters-v1' : hasRefs ? 'ref-value-specimen' : 'ordinary-params-v1';
+   return Object.freeze({ ok: true, contract: Object.freeze({
+     revision, schema, fingerprint: canonicalJson({ revision, schema }), validate,
+     ...(hasRefs ? { validateModelInput: (input: unknown) => check(input, false), validateResolvedInput: (input: unknown) => check(input, true) } : {}),
+   }) });
+ }
+ 
+-function compile(input: unknown, convert: (captured: JsonValue) => JsonObject, allowRef = false): CompileResult {
+-  try { return finish(convert(copyJson(input, DECLARATION)), allowRef); }
++function compile(input: unknown, convert: (captured: JsonValue) => JsonObject, allowRef = false, qualified = false): CompileResult {
++  try { return finish(convert(copyJson(input, DECLARATION)), allowRef, qualified); }
+   catch (error) {
+     const declaration = error instanceof DeclarationError ? error : undefined;
+     const path = declaration?.path ?? (error instanceof SnapshotDataError ? error.path : '$');
+@@ -235,8 +241,8 @@
+ }
+ 
+ /** Internal semantics only; this module neither grants execution eligibility nor changes a transport. */
+-export function compileOrdinarySchema(schema: unknown, specimen?: 'ref-value-specimen'): CompileResult {
+-  return compile(schema, captured => { if (!object(captured)) invalid(); return captured; }, specimen === 'ref-value-specimen');
++export function compileOrdinarySchema(schema: unknown, profile?: 'ref-value-specimen' | 'view-type-parameters-v1'): CompileResult {
++  return compile(schema, captured => { if (!object(captured)) invalid(); return captured; }, profile === 'ref-value-specimen' || profile === 'view-type-parameters-v1', profile === 'view-type-parameters-v1');
+ }
+ 
+ export function compileOrdinaryParams(params: unknown, options?: { additionalProperties?: boolean }): CompileResult {
+--- a/runtime/src/core/tool/ordinary-parameter-profile.ts
++++ b/runtime/src/core/tool/ordinary-parameter-profile.ts
+@@ -12,11 +12,13 @@
+   try {
+     const captured = copyJson(input, { maxDepth: 48, maxNodes: 10_000, maxApproxBytes: 128 * 1024 });
+     if (!captured || typeof captured !== 'object' || Array.isArray(captured) ||
+-        !Object.hasOwn(captured, ORDINARY_PARAMETER_MARKER) ||
+-        (captured as Record<string, JsonValue>)[ORDINARY_PARAMETER_MARKER] !== 'ordinary-params-v1') return null;
++        !Object.hasOwn(captured, ORDINARY_PARAMETER_MARKER)) return null;
++    const marker = (captured as Record<string, JsonValue>)[ORDINARY_PARAMETER_MARKER];
++    if (marker !== 'ordinary-params-v1' && marker !== 'view-type-parameters-v1') return null;
+     const schema = { ...captured } as Record<string, JsonValue>;
++    const qualified = marker === 'view-type-parameters-v1';
+     delete schema[ORDINARY_PARAMETER_MARKER];
+-    const compiled = compileOrdinarySchema(schema);
++    const compiled = compileOrdinarySchema(schema, qualified ? 'view-type-parameters-v1' : undefined);
+     return compiled.ok && canonicalJson(schema) === canonicalJson(compiled.contract.schema) ? compiled.contract : null;
+   } catch { return null; }
+ }
+--- a/runtime/src/core/tool/snapshot-value-arguments.ts
++++ b/runtime/src/core/tool/snapshot-value-arguments.ts
+@@ -1,11 +1,12 @@
+ import { canonicalJson, copyJson, SnapshotDataError, utf8Size, type JsonCopyLimits } from '../snapshot/json.js';
+ import type { JsonValue, ObservedToolExecutionV3, SnapshotIssueCode, SnapshotStore, ToolDescriptorV3, ToolTargetV3 } from '../snapshot/types.js';
++import { compileOrdinaryProfile } from './ordinary-parameter-profile.js';
+ import { validateVersionedToolRefDeclarations } from './versioned-ref-declarations.js';
+ import { acquireToolSource, type ToolSourceRequest } from './source-binding.js';
+ 
+ type JsonObject = Readonly<Record<string, JsonValue>>;
+ type ArgumentIssueCode = SnapshotIssueCode | 'TOOL_INVALID_ARGS' | 'TOOL_PERMISSION_DENIED'
+-    | 'REF_TARGET_UNSUPPORTED' | 'REF_TYPE_MISMATCH' | 'REF_VALUE_UNSUPPORTED'
++    | 'REF_NOT_VISIBLE' | 'REF_TARGET_UNSUPPORTED' | 'REF_TYPE_MISMATCH' | 'REF_VALUE_UNSUPPORTED'
+     | 'REF_ARGUMENT_BUDGET_EXCEEDED';
+ 
+ export interface SnapshotValueRefSource {
+@@ -40,6 +41,65 @@
+ const ARGUMENTS: Limits = Object.freeze({ maxDepth: 24, maxNodes: 10_000, maxApproxBytes: 128 * 1024, maxCanonicalBytes: 128 * 1024 });
+ const ENVELOPE: Limits = Object.freeze({ maxDepth: 26, maxNodes: 11_000, maxApproxBytes: 136 * 1024, maxCanonicalBytes: 136 * 1024 });
+ export { ARGUMENTS as SNAPSHOT_VALUE_ARGUMENT_LIMITS, ENVELOPE as SNAPSHOT_VALUE_ENVELOPE_LIMITS };
++
++/** Resolve only from the original granted Snapshot; execution remains ViewType-owned. */
++export function prepareViewTypeParameters(
++    store: SnapshotStore, context: Readonly<{ appId: string; instanceId: string }>,
++    callerRequest: unknown, visibleRefs: readonly Readonly<{ refId: string; viewId: string; viewInstanceId: string }>[],
++): Readonly<{ status: 'rejected'; issue: Readonly<{ code: ArgumentIssueCode; message: string }> }> | Readonly<{
++    status: 'prepared'; rawArgs: JsonObject; effectiveArgs: JsonObject;
++    refSources: readonly SnapshotValueRefSource[]; release(): void;
++}> {
++    let request: JsonObject;
++    try {
++        const value = bounded(callerRequest, REQUEST);
++        if (!object(value) || Object.keys(value).length !== 4 || !object(value.execution) || value.execution.kind !== 'view-type' ||
++            typeof value.snapshotId !== 'string' || typeof value.toolId !== 'string' || !object(value.args))
++            return rejected('TOOL_INVALID_ARGS', 'Expected qualified ViewType parameters');
++        request = value;
++    } catch { return rejected('TOOL_INVALID_ARGS', 'Expected bounded ViewType parameters'); }
++    const selected = acquireToolSource(store, { appId: context.appId, instanceId: context.instanceId,
++        snapshotId: request.snapshotId as string, toolId: request.toolId as string,
++        execution: request.execution as unknown as ObservedToolExecutionV3 });
++    if (selected.status === 'rejected') return rejected(selected.issue.code, 'Tool source is unavailable');
++    let retained = false;
++    try {
++        if (selected.execution.kind !== 'view-type') return rejected('REF_CONTRACT_UNSUPPORTED', 'Expected ViewType execution');
++        const contract = compileOrdinaryProfile(selected.tool.inputSchema);
++        if (!contract || contract.revision !== 'view-type-parameters-v1') return rejected('REF_CONTRACT_UNSUPPORTED', 'Expected the ViewType parameter profile');
++        const rawArgs = bounded(request.args, ARGUMENTS) as JsonObject;
++        if (!(contract.validateModelInput ?? contract.validate)(rawArgs).ok) return rejected('TOOL_INVALID_ARGS', 'Invalid model parameters');
++        const fields = contract.schema.properties as JsonObject;
++        const slots = Object.entries(fields).filter(([, field]) => object(field) && Object.hasOwn(field, 'x-aotui-ref-value'));
++        let effectiveArgs = rawArgs;
++        const refSources: SnapshotValueRefSource[] = [];
++        for (const [param, field] of slots) {
++            const refId = rawArgs[param];
++            if (typeof refId !== 'string') return rejected('TOOL_INVALID_ARGS', 'Expected a Ref name');
++            const matches = visibleRefs.filter(ref => ref.refId === refId);
++            if (matches.length === 0) return rejected('REF_NOT_VISIBLE', 'Ref is not granted in this observation');
++            if (matches.length !== 1) return rejected('REF_TARGET_UNSUPPORTED', 'Expected one unambiguous Ref');
++            const owner = matches[0]!;
++            const resolved = store.resolveRef({ appId: context.appId, instanceId: context.instanceId,
++                snapshotId: request.snapshotId as string, refId: owner.refId, viewId: owner.viewId, viewInstanceId: owner.viewInstanceId });
++            if (resolved.status === 'rejected') return rejected(resolved.issue.code, 'Original Ref source is unavailable');
++            if (resolved.target.kind !== 'snapshot-value') return rejected('REF_TARGET_UNSUPPORTED', 'Expected a Snapshot value');
++            if (resolved.ref.refType !== (field as JsonObject)['x-aotui-ref-kind']) return rejected('REF_TYPE_MISMATCH', 'Ref type does not match the parameter');
++            if (!object(resolved.target.payload)) return rejected('REF_VALUE_UNSUPPORTED', 'Expected one object Ref');
++            effectiveArgs = bounded({ ...rawArgs, [param]: resolved.target.payload }, ARGUMENTS) as JsonObject;
++            refSources.push({ param, refId, kind: 'snapshot-value', refType: resolved.ref.refType,
++                snapshotId: request.snapshotId as string, viewId: owner.viewId, viewInstanceId: owner.viewInstanceId });
++        }
++        if (!(contract.validateResolvedInput ?? contract.validate)(effectiveArgs).ok) return rejected('TOOL_INVALID_ARGS', 'Resolved parameters do not match the contract');
++        const envelope = bounded({ source: { appId: context.appId, instanceId: context.instanceId,
++            snapshotId: request.snapshotId, toolId: request.toolId, activationId: selected.execution.activationId },
++            effectiveArgs, refSources }, ENVELOPE) as JsonObject;
++        retained = true;
++        return Object.freeze({ status: 'prepared', rawArgs,
++            effectiveArgs: envelope.effectiveArgs as JsonObject, refSources: envelope.refSources as unknown as readonly SnapshotValueRefSource[], release: selected.release });
++    } catch { return rejected('REF_ARGUMENT_BUDGET_EXCEEDED', 'Parameters exceed the existing budget'); }
++    finally { if (!retained) selected.release(); }
++}
+ 
+ function object(value: JsonValue | undefined): value is JsonObject {
+     return value !== null && typeof value === 'object' && !Array.isArray(value);
+--- a/runtime/src/core/tool/versioned-ref-declarations.ts
++++ b/runtime/src/core/tool/versioned-ref-declarations.ts
+@@ -1,6 +1,6 @@
+ import { SnapshotDataError } from '../snapshot/json.js';
+ import type { JsonValue } from '../snapshot/types.js';
+-import { ORDINARY_PARAMETER_MARKER } from './ordinary-parameter-profile.js';
++import { ORDINARY_PARAMETER_MARKER, compileOrdinaryProfile } from './ordinary-parameter-profile.js';
+ import { validateToolRefDeclarations } from './ref-declarations.js';
+ import { compileSnapshotValueProfile } from './snapshot-value-parameter-contract.js';
+ 
+@@ -8,6 +8,12 @@
+ export function validateVersionedToolRefDeclarations(
+     schema: JsonValue, isMutating: boolean, viewOwned = true, path = '$.inputSchema',
+ ): boolean {
++    if (schema && typeof schema === 'object' && !Array.isArray(schema) && (schema as Readonly<Record<string, JsonValue>>)[ORDINARY_PARAMETER_MARKER] === 'view-type-parameters-v1') {
++        const compiled = compileOrdinaryProfile(schema);
++        if (!compiled) throw new SnapshotDataError('REF_CONTRACT_UNSUPPORTED', path, 'Invalid ViewType parameter profile');
++        return Object.values(compiled.schema.properties as Readonly<Record<string, JsonValue>>)
++            .some(field => field !== null && typeof field === 'object' && !Array.isArray(field) && Object.hasOwn(field, 'x-aotui-ref-value'));
++    }
+     if (schema && typeof schema === 'object' && !Array.isArray(schema) &&
+         Object.hasOwn(schema, ORDINARY_PARAMETER_MARKER) && (schema as Readonly<Record<string, JsonValue>>)[ORDINARY_PARAMETER_MARKER] === 'snapshot-value-params-v1') {
+         const compiled = compileSnapshotValueProfile(schema);
+--- a/runtime/src/core/tool/view-owned-tools.ts
++++ b/runtime/src/core/tool/view-owned-tools.ts
+@@ -310,7 +310,7 @@
+     }
+ 
+     return Object.freeze({
+-        protocol: 'view-type-tools-v1' as const,
++        protocol: 'view-type-tools-v2' as const,
+         dispose(): void {
+             if (disposed) return;
+             disposed = true;
+@@ -360,7 +360,7 @@
+             if (optionFields.safeOrdinaryParametersInvocationMode !== 'ordinary-v2' ||
+                 typeof optionFields.createSafeOrdinaryParametersInvoker !== 'function')
+                 throw new ViewToolContractError('TOOL_INVALID', 'Invalid trusted ViewType Tool registration options');
+-            const compiled = compileOrdinarySchema(copied.inputSchema);
++            const compiled = compileOrdinarySchema(copied.inputSchema, 'view-type-parameters-v1');
+             if (!compiled.ok) throw new ViewToolContractError(compiled.issue.code, compiled.issue.message, compiled.issue.path);
+             const inputSchema = ordinaryParameterProfile(compiled.contract);
+             const publicDefinition = Object.freeze({ viewType: copied.viewType, name: copied.name, description: copied.description,
+--- a/runtime/src/engine/app/worker-host.ts
++++ b/runtime/src/engine/app/worker-host.ts
+@@ -22,7 +22,7 @@
+ import { SEMANTIC_INTERACTION_MODES } from '../../spi/runtime/app-interaction.interface.js';
+ import { captureInteractionModes } from './interaction-config.js';
+ import { compileOrdinaryProfile, ORDINARY_PARAMETER_MARKER } from '../../core/tool/ordinary-parameter-profile.js';
+-import { captureOrdinaryV2Request, captureOrdinaryV2Terminal, ORDINARY_V3_CAPABILITY, ORDINARY_V2_MODE } from '../../adapters/ordinary-invocation-v2.js';
++import { captureTypeParametersRequest, captureTypeParametersTerminal, PARAMETERS_V4_CAPABILITY, PARAMETERS_MODE } from '../../adapters/ordinary-invocation-v2.js';
+ import { Worker } from 'worker_threads';
+ import { randomUUID } from 'node:crypto';
+ import { SemanticSnapshotReceiver, type SemanticSnapshotReport } from '../../adapters/snapshot/receiver.js';
+@@ -215,7 +215,7 @@
+     }
+ 
+     hasOrdinaryParametersCapability(): boolean {
+-        return !this.interactionsClosed && this.interactionModes.includes('ordinary-v2') && this.ordinaryParametersCapability?.worker === this.worker &&
++        return !this.interactionsClosed && this.interactionModes.includes(PARAMETERS_MODE) && this.ordinaryParametersCapability?.worker === this.worker &&
+             this.ordinaryParametersCapability?.version === this.lifecycleContextVersion;
+     }
+ 
+@@ -250,7 +250,7 @@
+         const core = this.snapshotReceiver?.getInteractionStats();
+         return core ? Object.freeze({
+             mode: 'scoped' as const,
+-            negotiatedModes: Object.freeze(this.interactionModes.filter(mode => mode === 'ordinary-v2' ? this.hasOrdinaryParametersCapability() : this.hasSnapshotValueParametersCapability())),
++            negotiatedModes: Object.freeze(this.interactionModes.filter(mode => mode === PARAMETERS_MODE ? this.hasOrdinaryParametersCapability() : this.hasSnapshotValueParametersCapability())),
+             transportUncertain: this.interactionTransportUncertain, core,
+         }) : null;
+     }
+@@ -268,18 +268,19 @@
+         if (source.execution.kind === 'view-type') {
+             if (!marked || !this.hasOrdinaryParametersCapability()) return null;
+             const parameters = compileOrdinaryProfile(source.tool.inputSchema);
+-            if (!parameters) return null;
++            if (!parameters || parameters.revision !== PARAMETERS_MODE) return null;
+             const execution = source.execution;
+             const isLive = live(() => this.hasOrdinaryParametersCapability());
+-            const binding: ExecutionBinding = Object.freeze({ identity: Object.freeze({}), mode: 'ordinary-v2',
++            const binding: ExecutionBinding = Object.freeze({ identity: Object.freeze({}), mode: PARAMETERS_MODE,
+                 validateInput: (_source: InvocationSource, input: Readonly<Record<string, JsonValue>>) => {
+-                    const result = parameters.validate(input);
++                    const result = (parameters.validateResolvedInput ?? parameters.validate)(input);
+                     return result.ok ? { ok: true as const, value: result.value } : { ok: false as const };
+                 },
+                 isLive: () => ({ ok: isLive() }),
+-                execute: (context: InvocationContext) => this.sendRequest<ExecutionFact>({ type: 'VIEW_TOOL_INVOKE_V3', requestId: generateRequestId(),
++                execute: (context: InvocationContext) => this.sendRequest<ExecutionFact>({ type: 'VIEW_TOOL_INVOKE_V4', requestId: generateRequestId(),
+                     appId: source.appId as AppID, instanceId: source.instanceId, snapshotId: source.snapshotId,
+-                    tool: source.tool, argumentMode: ORDINARY_V2_MODE, execution, args: context.effectiveInput,
++                    tool: source.tool, argumentMode: PARAMETERS_MODE, execution, rawArgs: context.rawInput,
++                    effectiveArgs: context.effectiveInput, refSources: context.refSources,
+                 }, { worker, version, signal: context.signal }),
+             });
+             this.interactionBindings.set(source, binding);
+@@ -374,7 +375,7 @@
+                     limits: DEFAULT_STATE_SESSION_LIMITS, transport: { ...DEFAULT_STATE_TRANSPORT_LIMITS, timeoutMs: this.timeout } },
+                 appInstanceId: this.appInstanceId,
+                 appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: this.appInstanceId },
+-                requestedCapabilities: this.interactionModes.map(mode => mode === 'ordinary-v2' ? ORDINARY_V3_CAPABILITY : REF_V3_CAPABILITY),
++                requestedCapabilities: this.interactionModes.map(mode => mode === PARAMETERS_MODE ? PARAMETERS_V4_CAPABILITY : REF_V3_CAPABILITY),
+             }, 'ready');
+         } catch (error) {
+             if (this.snapshotReceiver) {
+@@ -739,7 +740,7 @@
+             this.revokeRefCapability();
+         }
+         const snapshotParameters = message.type === 'VIEW_TOOL_INVOKE_V3' && message.argumentMode === REF_V2_MODE;
+-        const ref = message.type === 'VIEW_TOOL_INVOKE_V3';
++        const ref = message.type === 'VIEW_TOOL_INVOKE_V3' || message.type === 'VIEW_TOOL_INVOKE_V4';
+         const requestedCapture = message.type === 'INIT' ? captureViewToolCapabilities(message.requestedCapabilities) : null;
+         if (requestedCapture && !requestedCapture.ok) return Promise.reject(new Error(requestedCapture.code));
+         return new Promise((resolve, reject) => {
+@@ -762,8 +763,9 @@
+             if (!requestId) { reject(new Error('Message missing requestId')); return; }
+             if (ref) {
+                 try {
+-                    if (message.type !== 'VIEW_TOOL_INVOKE_V3') throw new Error('Invalid Tool message');
+-                    message = message.argumentMode === REF_V2_MODE ? captureRefV2Request(message) : captureOrdinaryV2Request(message);
++                    if (message.type === 'VIEW_TOOL_INVOKE_V4') message = captureTypeParametersRequest(message);
++                    else if (message.type === 'VIEW_TOOL_INVOKE_V3') message = captureRefV2Request(message);
++                    else throw new Error('Invalid Tool message');
+                 }
+                 catch {
+                     resolve(refused('REF_ARGUMENT_BUDGET_EXCEEDED', 'Complete Ref request exceeds the transport budget') as T);
+@@ -780,7 +782,7 @@
+                 ...(message.type === 'APP_OPEN' ? { initialOpen: true as const } : {}),
+                 ...(this.appLifecycleSupport === 'managed' && (message.type === 'APP_STOP' || message.type === 'APP_SHUTDOWN' || message.type === 'APP_CLOSE') ? { appCleanup: message.type } : {}),
+                 ...(this.persistenceSupport === 'managed' && (message.type === 'APP_SHUTDOWN' || message.type === 'APP_CLOSE') ? { persistence: message.type } : {}),
+-                ...(ref ? { ref: { worker, version: this.lifecycleContextVersion, mode: snapshotParameters ? REF_V2_MODE : ORDINARY_V2_MODE, ...(scoped ? { scoped: true } : {}) } } : {}),
++                ...(ref ? { ref: { worker, version: this.lifecycleContextVersion, mode: snapshotParameters ? REF_V2_MODE : PARAMETERS_MODE, ...(scoped ? { scoped: true } : {}) } } : {}),
+                 ...(message.type === 'INIT' ? { init: { worker, version: this.lifecycleContextVersion,
+                     requested: requestedCapture?.ok ? requestedCapture.capabilities : [] } } : {}),
+             });
+@@ -812,7 +814,7 @@
+         const refPending = typeof id === 'string' ? this.pendingRequests.get(id) : undefined;
+         if (refPending?.ref) {
+             const terminal = refPending.ref.worker === this.worker && refPending.ref.version === this.lifecycleContextVersion
+-                ? (refPending.ref.mode === REF_V2_MODE ? captureRefV2Terminal : captureOrdinaryV2Terminal)(msg, { requestId: id, appId: String(this.appId), instanceId: this.appInstanceId }) : null;
++                ? (refPending.ref.mode === REF_V2_MODE ? captureRefV2Terminal : captureTypeParametersTerminal)(msg, { requestId: id, appId: String(this.appId), instanceId: this.appInstanceId }) : null;
+             clearTimeout(refPending.timeout);
+             this.pendingRequests.delete(id);
+             refPending.resolve(refPending.ref.scoped ? terminal ? { kind: 'tool-result', phase: terminal.phase,
+@@ -820,7 +822,7 @@
+                 ...(terminal.phase === 'entered-returned' && terminal.failureEffects !== undefined ? { failureEffects: terminal.failureEffects } : {}) } : this.unknownRef(true) : terminal?.result ?? this.unknownRef(false));
+             return;
+         }
+-        if (msg?.type === 'VIEW_TOOL_INVOKE_V3_RESPONSE') return;
++        if (msg?.type === 'VIEW_TOOL_INVOKE_V3_RESPONSE' || msg?.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE') return;
+ 
+         // 处理响应消息
+         if (isResponse(msg)) {
+@@ -897,7 +899,7 @@
+                         this.status !== 'closing' && this.status !== 'closed' && !this.closePromise && !this.releasePromise &&
+                         instance === this.appInstanceId && accepted !== null) {
+                         this.snapshotValueParametersCapability = accepted.includes(REF_V3_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
+-                        this.ordinaryParametersCapability = accepted.includes(ORDINARY_V3_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
++                        this.ordinaryParametersCapability = accepted.includes(PARAMETERS_V4_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
+                     }
+                 }
+                 if (pending.initialOpen && msg.success !== true) {
+--- a/runtime/src/spi/app/app-factory.interface.ts
++++ b/runtime/src/spi/app/app-factory.interface.ts
+@@ -11,7 +11,7 @@
+ export interface TUIAppFactory extends ComponentFactory {
+     readonly displayName: string;
+     readonly kernelConfig: AppKernelConfig;
+-    readonly toolAuthoringProtocol: 'view-type-tools-v1';
++    readonly toolAuthoringProtocol: 'view-type-tools-v2';
+     readonly persistenceSupport: 'state-session-v1';
+     readonly appLifecycleSupport: 'app-lifecycle-v2';
+ }
+--- a/runtime/src/spi/runtime/app-interaction.interface.ts
++++ b/runtime/src/spi/runtime/app-interaction.interface.ts
+@@ -1,11 +1,11 @@
+ import type { DesktopID } from '../core/types.js';
+ import type { InteractionAuthority, ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
+ 
+-export type InteractionMode = 'ordinary-v2' | 'snapshot-value-v2';
++export type InteractionMode = 'view-type-parameters-v1' | 'snapshot-value-v2';
+ 
+ /** SDK interaction profiles supported by this Runtime. Selected by the trusted Host. */
+ export const SEMANTIC_INTERACTION_MODES: readonly InteractionMode[] = Object.freeze([
+-    'ordinary-v2', 'snapshot-value-v2',
++    'view-type-parameters-v1', 'snapshot-value-v2',
+ ]);
+ 
+ export interface AppInteractionOptions {
+--- a/runtime/src/spi/runtime/app-type-tools.interface.ts
++++ b/runtime/src/spi/runtime/app-type-tools.interface.ts
+@@ -18,6 +18,6 @@
+ 
+ /** App-level registration for the ordinary, type-scoped Tool execution path. */
+ export interface IAppTypeToolPort {
+-    readonly protocol: 'view-type-tools-v1';
++    readonly protocol: 'view-type-tools-v2';
+     registerTypeTool(definition: AppTypeToolDefinition, options: AppTypeToolRegistrationOptions): () => void;
+ }
+--- a/runtime/src/spi/worker-protocol/messages.ts
++++ b/runtime/src/spi/worker-protocol/messages.ts
+@@ -102,6 +102,19 @@
+     | (ViewToolInvokeV3ResponseBase & Readonly<{ argumentMode: 'ordinary-v2' }>)
+     | (ViewToolInvokeV3ResponseBase & Readonly<{ argumentMode: 'snapshot-value-v2' }>);
+ 
++/** Qualified parameters retain ViewType execution and separate Snapshot Ref provenance. */
++export type ViewToolInvokeV4Message = Readonly<{
++    type: 'VIEW_TOOL_INVOKE_V4'; requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string;
++    tool: ToolDescriptorV3; argumentMode: 'view-type-parameters-v1';
++    execution: Extract<ObservedToolExecutionV3, { kind: 'view-type' }>;
++    rawArgs: Readonly<Record<string, unknown>>; effectiveArgs: Readonly<Record<string, unknown>>;
++    refSources: readonly SnapshotValueRefSource[];
++}>;
++export type ViewToolInvokeV4Response = Readonly<{
++    type: 'VIEW_TOOL_INVOKE_V4_RESPONSE'; requestId: RequestID; appId: AppID; instanceId: string;
++    argumentMode: 'view-type-parameters-v1'; success: true; terminal: ViewToolInvocationTerminal;
++}>;
++
+ /**
+  * 外部事件消息
+  */
+@@ -151,6 +164,7 @@
+  */
+ export type MainToWorkerMessage =
+     | ViewToolInvokeV3Message
++    | ViewToolInvokeV4Message
+     | StateStorageResponse
+     | InitMessage
+     | AppLifecycleMessage
+@@ -250,6 +264,7 @@
+ export type WorkerToMainMessage =
+     | StateStorageRequest
+     | ViewToolInvokeV3Response
++    | ViewToolInvokeV4Response
+     | InitResponse
+     | LifecycleResponse
+     | ErrorResponse
+--- a/runtime/src/worker-runtime/app-kernel/AppKernel.ts
++++ b/runtime/src/worker-runtime/app-kernel/AppKernel.ts
+@@ -416,7 +416,7 @@
+                 },
+             },
+             appTypeTools: {
+-                protocol: 'view-type-tools-v1' as const,
++                protocol: 'view-type-tools-v2' as const,
+                 registerTypeTool: (definition: AppTypeToolDefinition, options: AppTypeToolRegistrationOptions) => {
+                     this.assertActive();
+                     if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
+--- a/runtime/src/worker-runtime/index.ts
++++ b/runtime/src/worker-runtime/index.ts
+@@ -49,8 +49,8 @@
+ // [方案 B] AppKernel from worker-runtime
+ import { AppKernel } from './app-kernel/index.js';
+ import { captureViewToolCapabilities } from '../adapters/worker-message-capture.js';
+-import { ORDINARY_V3_CAPABILITY } from '../adapters/ordinary-invocation-v2.js';
+-import { invokeOrdinaryInvocationV2 } from './ordinary-invocation-v2.js';
++import { PARAMETERS_V4_CAPABILITY } from '../adapters/ordinary-invocation-v2.js';
++import { invokeTypeParameters } from './ordinary-invocation-v2.js';
+ import type { LLMOutputEventMeta } from '../spi/core/llm-output.js';
+ 
+ // [RFC-002] Global Ref Registry from SDK -> REMOVED
+@@ -135,21 +135,31 @@
+ 
+ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
+     if (msg.type === 'STATE_STORAGE_RESPONSE') { persistenceRecord?.proxy.receive(msg);return; }
+-    if (msg.type === 'VIEW_TOOL_INVOKE_V3') {
++    if (msg.type === 'VIEW_TOOL_INVOKE_V4') {
+         try {
+             const kernel = app instanceof AppKernel ? app : null;
+-            const response = msg.argumentMode === 'ordinary-v2'
+-                ? await invokeOrdinaryInvocationV2(msg, { appId, instanceId: appInstanceId,
+-                    negotiated: ordinaryParametersNegotiatedApp !== null && ordinaryParametersNegotiatedApp === app,
+-                    ...(kernel ? { validateBinding: (tool, execution) => kernel.validateBoundTypeTool(tool, execution),
+-                        invokeBinding: (tool, execution, args) => kernel.invokeBoundTypeTool(tool, execution, args) } : {}),
+-                })
+-                : await invokeRefInvocationV2(msg, { appId, instanceId: appInstanceId,
+-                    negotiated: refV2NegotiatedApp !== null && refV2NegotiatedApp === app,
+-                    ...(kernel ? { validateBinding: (tool, target) => kernel.validateBoundSnapshotValueTool(tool, target),
+-                        validateWrapper: (tool, target) => kernel.validateBoundSnapshotValueParametersViewTool(tool, target),
+-                        invokeBinding: (tool, target, args) => kernel.invokeBoundSnapshotValueParametersViewTool(tool, target, args) } : {}),
+-                });
++            const response = await invokeTypeParameters(msg, { appId, instanceId: appInstanceId,
++                negotiated: ordinaryParametersNegotiatedApp !== null && ordinaryParametersNegotiatedApp === app,
++                ...(kernel ? { validateBinding: (tool, execution) => kernel.validateBoundTypeTool(tool, execution),
++                    invokeBinding: (tool, execution, args) => kernel.invokeBoundTypeTool(tool, execution, args) } : {}),
++            });
++            if (response) { await flushInteractionProjection(); parentPort?.postMessage(response); }
++        } catch { /* No trusted terminal: Host records unknown. */ }
++        return;
++    }
++    if (msg.type === 'VIEW_TOOL_INVOKE_V3') {
++        if (msg.argumentMode === 'ordinary-v2') {
++            sendError(msg.requestId, 'WORKER_CAPABILITY_UNSUPPORTED', 'Ordinary Tools require qualified V4 parameters');
++            return;
++        }
++        try {
++            const kernel = app instanceof AppKernel ? app : null;
++            const response = await invokeRefInvocationV2(msg, { appId, instanceId: appInstanceId,
++                negotiated: refV2NegotiatedApp !== null && refV2NegotiatedApp === app,
++                ...(kernel ? { validateBinding: (tool, target) => kernel.validateBoundSnapshotValueTool(tool, target),
++                    validateWrapper: (tool, target) => kernel.validateBoundSnapshotValueParametersViewTool(tool, target),
++                    invokeBinding: (tool, target, args) => kernel.invokeBoundSnapshotValueParametersViewTool(tool, target, args) } : {}),
++            });
+             if (response) { await flushInteractionProjection(); parentPort?.postMessage(response); }
+         } catch { /* No trusted terminal: Host records unknown. */ }
+         return;
+@@ -329,7 +339,7 @@
+         }
+         if (!hasViewTypeToolAuthoringProtocol(factory)) {
+             sendError(msg.requestId, 'APP_AUTHORING_PROTOCOL_UNSUPPORTED',
+-                'This Runtime requires a TUIAppFactory using view-type-tools-v1');
++                'This Runtime requires a TUIAppFactory using view-type-tools-v2');
+             return;
+         }
+         const managedFactory = factory;
+@@ -377,11 +387,10 @@
+         appContainer.id = `app-root-${appId}`;
+         document.body.appendChild(appContainer as unknown as Node);
+ 
+-        const refV3Accepted = requested.capabilities.includes(REF_V3_CAPABILITY) && app instanceof AppKernel;
+-        refV2NegotiatedApp = refV3Accepted ? app : null;
+-        const parametersAccepted = requested.capabilities.includes(ORDINARY_V3_CAPABILITY) && app instanceof AppKernel;
++        refV2NegotiatedApp = requested.capabilities.includes(REF_V3_CAPABILITY) && app instanceof AppKernel ? app : null;
++        const parametersAccepted = requested.capabilities.includes(PARAMETERS_V4_CAPABILITY) && app instanceof AppKernel;
+         ordinaryParametersNegotiatedApp = parametersAccepted ? app : null;
+-        const capabilities = [...(refV3Accepted ? [REF_V3_CAPABILITY] : []), ...(parametersAccepted ? [ORDINARY_V3_CAPABILITY] : [])];
++        const capabilities = [...(refV2NegotiatedApp ? [REF_V3_CAPABILITY] : []), ...(parametersAccepted ? [PARAMETERS_V4_CAPABILITY] : [])];
+         const initializedPersistence = persistenceRecord;
+         if (!initializedPersistence) throw new Error('PERSISTENCE_INIT_FAILED');
+         parentPort?.postMessage({ type: 'INIT_RESPONSE', requestId: msg.requestId, success: true,
+--- a/runtime/src/worker-runtime/ordinary-invocation-v2.ts
++++ b/runtime/src/worker-runtime/ordinary-invocation-v2.ts
+@@ -1,13 +1,13 @@
+ import {
+-  captureOrdinaryV2Request,
+-  ordinaryV2Response,
+-  validOrdinaryV2Arguments,
++  captureTypeParametersRequest,
++  typeParametersResponse,
++  validateTypeParameters,
+ } from '../adapters/ordinary-invocation-v2.js';
+ import type { ToolResult } from '../spi/core/tool-result.js';
+ import type { ToolDescriptorV3, ObservedToolExecutionV3 } from '../core/snapshot/types.js';
+ import type { ViewToolInvocationTerminal } from '../spi/worker-protocol/messages.js';
+ 
+-export async function invokeOrdinaryInvocationV2(
++export async function invokeTypeParameters(
+   input: unknown,
+   context: Readonly<{
+     appId: string;
+@@ -28,7 +28,7 @@
+   });
+   let result: ToolResult;
+   try {
+-    message = captureOrdinaryV2Request(input);
++    message = captureTypeParametersRequest(input);
+     if (!context.negotiated)
+       result = failure(
+         'TOOL_EXECUTION_UNAVAILABLE',
+@@ -40,17 +40,13 @@
+       result = failure('TOOL_EXECUTION_UNAVAILABLE', 'Current App has no safe ordinary registry');
+     else {
+       result = context.validateBinding(message.tool, message.execution);
+-      if (result.success && !validOrdinaryV2Arguments(message))
+-        result = failure(
+-          'E_INVALID_ARGS',
+-          'Expected valid ordinary-v2 Tool parameters'
+-        );
++      if (result.success) result = validateTypeParameters(message);
+       if (result.success) {
+         // All final checks and callable entry are synchronous. A throw after entry is unknown.
+         try {
+-          return ordinaryV2Response(
++          return typeParametersResponse(
+             message,
+-            await context.invokeBinding(message.tool, message.execution, message.args)
++            await context.invokeBinding(message.tool, message.execution, message.effectiveArgs)
+           );
+         } catch {
+           return null;
+@@ -60,5 +56,5 @@
+   } catch {
+     result = failure('E_INVALID_ARGS', 'Expected a bounded ordinary request');
+   }
+-  return ordinaryV2Response(message ?? input, { phase: 'not-entered', result });
++  return typeParametersResponse(message ?? input, { phase: 'not-entered', result });
+ }
+--- a/sdk/src/app-factory/createTUIApp.ts
++++ b/sdk/src/app-factory/createTUIApp.ts
+@@ -116,7 +116,7 @@
+     const factory: TUIAppFactory = {
+         displayName: config.app_name,
+         kernelConfig,
+-        toolAuthoringProtocol: 'view-type-tools-v1',
++        toolAuthoringProtocol: 'view-type-tools-v2',
+         persistenceSupport: 'state-session-v1',
+         appLifecycleSupport: 'app-lifecycle-v2',
+ 
+--- a/sdk/src/tools/view-type-tool.ts
++++ b/sdk/src/tools/view-type-tool.ts
+@@ -392,7 +392,7 @@
+     const entries = definition !== null && typeof definition === 'object' ? toolSets.get(definition) : undefined;
+     if (!entries) fail('TOOL_SET_INVALID', 'definition must be created with defineToolSet');
+     if (port === null || typeof port !== 'object' || Array.isArray(port) ||
+-        diagnosticData(port, 'protocol') !== 'view-type-tools-v1') throw bindingFailure('TOOL_BINDING_PORT_INVALID');
++        diagnosticData(port, 'protocol') !== 'view-type-tools-v2') throw bindingFailure('TOOL_BINDING_PORT_INVALID');
+     const register = diagnosticData(port, 'registerTypeTool');
+     if (typeof register !== 'function') throw bindingFailure('TOOL_BINDING_PORT_INVALID');
+     const appPort = port as IAppTypeToolPort;
+--- a/sdk/src/utils/ordinary-parameter-tool.ts
++++ b/sdk/src/utils/ordinary-parameter-tool.ts
+@@ -3,13 +3,13 @@
+ 
+ /** Runtime-captured ordinary validation or the same Ref contract's effective validation, supplied by its trusted factory. */
+ export async function invokeOrdinaryParameterTool(
+-  contract: Pick<OrdinaryParameterContract, 'validate'>,
++  contract: Pick<OrdinaryParameterContract, 'validate' | 'validateResolvedInput'>,
+   input: unknown,
+   handler: (args: Readonly<Record<string, unknown>>) => ToolResult | Promise<ToolResult>,
+   canEnter?: () => boolean,
+ ): Promise<ViewToolInvocationTerminal> {
+   let validated;
+-  try { validated = contract.validate(input); }
++  try { validated = (contract.validateResolvedInput ?? contract.validate)(input); }
+   catch { return { phase: 'not-entered', result: { success: false, error: {
+     code: 'E_INVALID_ARGS', message: 'Tool arguments could not be validated',
+   } } }; }

@@ -9,7 +9,7 @@ import { IDEHistory, readLegacyIDE } from '../dist/core/ide-history.js';
 import { ScopedSearch } from '../dist/core/scoped-search.js';
 import { ScopedLSP } from '../dist/core/scoped-lsp.js';
 import { readObservedFile, directoryIdentity } from '../dist/core/versioned-file-write.js';
-import { createFileWithParents, replaceObservedFile, renameObservedFile, deleteObservedFile } from '../dist/core/observed-file-operations.js';
+import { createFileWithParents, replaceObservedFile, renameObservedFile, deleteObservedFile } from '../dist/core/observed-file-actions.js';
 import { boundedJSON, closeDirectory, IDEError } from '../dist/core/ide-errors.js';
 import { createMemoryStateStorage } from '../../../runtime/dist/adapters/storage/memory-state-storage.js';
 import { createAppStatePersistence } from '../../../runtime/dist/worker-runtime/state-persistence.js';
@@ -35,7 +35,7 @@ async function session(root, options = {}) {
     return { owner, managed, backend, storage: opened.storage, namespace, call, close };
 }
 const sessionRecords = (sessionKey, values) => Object.entries(values).map(([key, value]) => ({
-    address: { namespace: JSON.stringify(['test', sessionKey]), key }, text: JSON.stringify(value),
+    address: { namespace: JSON.stringify(['test', sessionKey]), key }, text: JSON.stringify({ version: 1, updatedAt: 1, value }),
 }));
 async function savedValue(x, key) {
     const receipt = await x.storage.read({ namespace: x.namespace, key }); assert.equal(receipt.status, 'found');
@@ -372,7 +372,8 @@ try {
         const imported = JSON.parse(await fs.readFile(historyPath, 'utf8')); assert.equal(imported.migration.phase, 'completed'); assert.equal(imported.workspaces[root][0].path, path.join(root, 'new'));
         const prior = hash(await fs.readFile(historyPath)); const z = await session(undefined, { backend: x.backend, sessionKey, legacy: source, historyPath }); await z.owner.start(); await z.close(); assert.equal(hash(await fs.readFile(historyPath)), prior);
         assert.equal(hash(await fs.readFile(source)), hash(bytes));
-        const existingKey = 'existing', initial = [{ address: { namespace: JSON.stringify(['test', existingKey]), key: 'workspaceFolders' }, text: JSON.stringify([other]) }];
+        const existingKey = 'existing', initial = [{ address: { namespace: JSON.stringify(['test', existingKey]), key: 'workspaceFolders' },
+            text: JSON.stringify({ version: 1, updatedAt: 1, value: [other] }) }];
         const existing = await session(undefined, { initial, sessionKey: existingKey, legacy: source, historyPath }); await existing.owner.start(); assert.deepEqual(existing.owner.roots.map(item => item.path), [other]); await existing.close();
         await fs.appendFile(source, ' '); const changed = new IDEHistory(historyPath); await assert.rejects(changed.importHistory(await readLegacyIDE(source)), code('IMPORT_SOURCE_CONFLICT')); await changed.close();
     });

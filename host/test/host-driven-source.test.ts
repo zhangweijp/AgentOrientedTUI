@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { MessageServiceV2 } from '../src/core/message-service-v2.js';
 import { HostDrivenSourceV2 } from '../src/adapters/host-driven-source.js';
 
 describe('HostDrivenSourceV2', () => {
@@ -24,7 +25,7 @@ describe('HostDrivenSourceV2', () => {
     });
 
     it('should return LLM filtered messages from MessageService', async () => {
-        const messages = await source.getMessages();
+        const messages = await source.getContext().then(context => context.messages);
         expect(messageServiceMock.getMessagesForLLM).toHaveBeenCalledWith(topicId);
         expect(messages).toHaveLength(1);
         expect(messages[0]).toMatchObject({
@@ -37,7 +38,7 @@ describe('HostDrivenSourceV2', () => {
     });
 
     it('should expose context_compact tool', async () => {
-        const tools = await source.getTools();
+        const tools = await source.getContext().then(context => context.tools);
         expect(Object.keys(tools)).toContain('context_compact');
         expect((tools as any).context_compact.description).toContain('## Goal');
         expect((tools as any).context_compact.description).toContain('When to trigger compaction:');
@@ -46,10 +47,10 @@ describe('HostDrivenSourceV2', () => {
     });
 
     it('should route context_compact execution to MessageService with agent trigger', async () => {
-        const result = await source.executeTool('context_compact', {
+        const result = await source.getContext().then(context => context.executeTool!('context_compact', {
             reason: 'manual request',
             summary: '## Goal\nmanual compact',
-        }, 'tc_1');
+        }, 'tc_1'));
 
         expect(messageServiceMock.compactContext).toHaveBeenCalledWith(topicId, {
             trigger: 'agent',
@@ -72,11 +73,11 @@ describe('HostDrivenSourceV2', () => {
     });
 
     it('should allow force-triggering context_compact from agent tool call', async () => {
-        await source.executeTool('context_compact', {
+        await source.getContext().then(context => context.executeTool!('context_compact', {
             reason: 'force test',
             summary: '## Goal\nforce compact',
             force: true,
-        }, 'tc_force');
+        }, 'tc_force'));
 
         expect(messageServiceMock.compactContext).toHaveBeenCalledWith(topicId, {
             trigger: 'agent',
@@ -89,7 +90,7 @@ describe('HostDrivenSourceV2', () => {
     });
 
     it('should reject context_compact call when summary is missing', async () => {
-        const result = await source.executeTool('context_compact', { reason: 'missing summary' }, 'tc_missing');
+        const result = await source.getContext().then(context => context.executeTool!('context_compact', { reason: 'missing summary' }, 'tc_missing'));
 
         expect(messageServiceMock.compactContext).not.toHaveBeenCalled();
         expect(result).toEqual({
@@ -107,11 +108,11 @@ describe('HostDrivenSourceV2', () => {
     });
 
     it('should pass LLM-provided summary into context_compact call', async () => {
-        await source.executeTool('context_compact', {
+        await source.getContext().then(context => context.executeTool!('context_compact', {
             reason: 'llm summary path',
             summary: '## Goal\ncompress now',
             force: true,
-        }, 'tc_summary');
+        }, 'tc_summary'));
 
         expect(messageServiceMock.compactContext).toHaveBeenCalledWith(topicId, {
             trigger: 'agent',
@@ -171,3 +172,58 @@ describe('HostDrivenSourceV2', () => {
         expect(messageServiceMock.estimateContextTokens).not.toHaveBeenCalled();
     });
 });
+
+describe('Host topic scope proof', () => {
+  function makeHost() {
+    const service = {
+      getMessagesForLLM: vi.fn(async (topic: string) => [{ role: 'user' as const, content: topic, timestamp: 1 }]),
+      compactContext: vi.fn((topic: string) => ({ compacted: true, trigger: 'agent', summary: topic, compactedMessageCount: 2, cleanedToolResultCount: 1, syntheticMessages: [] })),
+    };
+    return { service, source: new HostDrivenSourceV2(service as unknown as MessageServiceV2, 'A') };
+  }
+  it('preserves same-topic messages, compaction and notification', async () => {
+    const { source, service } = makeHost(), update = vi.fn();
+    source.onUpdate(update);
+    const context = await source.getContext(), result = await context.executeTool?.('context_compact', { summary: 'Summary', force: true }, 'normal');
+    expect(context.messages).toEqual([{ role: 'user', content: 'A', timestamp: 1, region: 'session' }]);
+    expect(result).toEqual({ toolName: 'context_compact', toolCallId: 'normal', result: { success: true, trigger: 'agent', summary: 'A', compactedMessageCount: 2, cleanedToolResultCount: 1 } });
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+  it.each(['Summary', ''] as const)('rejects the old topic before business input: %j', async summary => {
+    const { source, service } = makeHost(), context = await source.getContext(), update = vi.fn();
+    source.switchTopic('B'); source.onUpdate(update);
+    const result = await context.executeTool?.('context_compact', { summary }, 'stale');
+    expect(result).toMatchObject({ outcomeStatus: 'rejected', error: { code: 'E_SOURCE_UNAVAILABLE' } });
+    expect(service.compactContext).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled();
+  });
+  it('does not mix A messages with B executor across an awaited read', async () => {
+    const { source, service } = makeHost();
+    let finish!: (messages: Array<{ role: 'user'; content: string; timestamp: number }>) => void;
+    service.getMessagesForLLM.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const pending = source.getContext();
+    expect(service.getMessagesForLLM).toHaveBeenCalledExactlyOnceWith('A');
+    source.switchTopic('B'); finish([{ role: 'user', content: 'A', timestamp: 1 }]);
+    const first = await pending, old = await first.executeTool?.('context_compact', { summary: 'Old' }, 'old');
+    const current = await source.getContext(), result = await current.executeTool?.('context_compact', { summary: 'New' }, 'new');
+    expect(first.messages[0].content).toBe('A');
+    expect(old).toMatchObject({ outcomeStatus: 'rejected', error: { code: 'E_SOURCE_UNAVAILABLE' } });
+    expect(service.compactContext).toHaveBeenCalledTimes(1);
+    expect(service.compactContext.mock.calls[0][0]).toBe('B');
+    expect(current.messages[0].content).toBe('B');
+  });
+});
+
+ it('returns a complete empty context after message failure, diagnoses it and retries next capture', async () => {
+    const failure = new Error('messages unavailable');
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const read = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue([{ role: 'user', content: 'healthy', timestamp: 1 }]);
+    const source = new HostDrivenSourceV2({ getMessagesForLLM: read } as unknown as MessageServiceV2, 'topic');
+    try {
+      await expect(source.getContext()).resolves.toEqual({ messages: [], tools: {} });
+      expect(diagnostic).toHaveBeenCalledExactlyOnceWith('Failed to capture context from Host:', failure);
+      const recovered = await source.getContext();
+      expect(recovered.messages).toEqual([{ role: 'user', content: 'healthy', timestamp: 1, region: 'session' }]);
+      expect(recovered.tools).toHaveProperty('context_compact');
+      expect(read).toHaveBeenCalledTimes(2);
+    } finally { diagnostic.mockRestore(); }
+ });

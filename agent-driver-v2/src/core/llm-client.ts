@@ -170,7 +170,10 @@ export class LLMClient {
             const shouldDisableTools =
                 this.config.modelCapabilities?.toolCall === false &&
                 Object.keys(tools).length > 0;
-            const effectiveTools = shouldDisableTools ? {} : tools;
+            // Driver owns Source execution; the model SDK only receives the definition.
+            const effectiveTools = shouldDisableTools ? {} : Object.fromEntries(
+                Object.entries(tools).map(([name, { execute: _execute, ...definition }]) => [name, definition])
+            );
 
             if (shouldDisableTools) {
                 this.logger.warn('Tool calls disabled by model capability metadata', {

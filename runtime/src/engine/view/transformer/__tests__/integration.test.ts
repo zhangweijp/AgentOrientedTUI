@@ -10,7 +10,7 @@ describe('Transformer Integration', () => {
             <div view="chat-view" id="chat-view">
                 <h1>Chat History</h1>
                 <ul><li>Hello</li><li>World</li></ul>
-                <button operation="send_message" desc="Send a text">Send Message</button>
+                <button data-action="send_message" desc="Send a text">Send Message</button>
                 <a view-target="settings" desc="Go to Settings">Settings</a>
             </div>
         </div>`;
@@ -20,8 +20,8 @@ describe('Transformer Integration', () => {
 
         const m = result.markup;
 
-        // View
-        expect(m).toContain('<view id="chat-view" name="chat-view">');
+        // The transform emits body content; message metadata is added at the boundary.
+        expect(m).not.toContain('<view');
 
         // Header (HTML)
         expect(m).toContain('# Chat History');

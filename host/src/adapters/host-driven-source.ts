@@ -9,26 +9,13 @@
  * - ✅ Host 只负责存储和检索
  */
 
-import type { MessageWithTimestamp } from '@aotui/agent-driver-v2';
+import type { ContextDrivenSource, DrivenSourceContext, MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2';
 import EventEmitter from 'events';
 import type { MessageServiceV2 } from '../core/message-service-v2.js';
-import { dynamicTool, jsonSchema } from 'ai';
+import { jsonSchema } from '@aotui/agent-driver-v2';
 type SessionMessageWithTimestamp = MessageWithTimestamp & {
     region?: 'session';
 };
-
-/**
- * Tool Result (临时定义，避免import问题)
- */
-interface ToolResult {
-    toolCallId: string;
-    toolName: string;
-    result?: unknown;
-    error?: {
-        code: string;
-        message: string;
-    };
-}
 
 interface CompactionPolicyInput {
     enabled?: boolean;
@@ -39,20 +26,9 @@ interface CompactionPolicyInput {
 }
 
 /**
- * IDrivenSource (临时定义，避免跨项目import)
- */
-interface IDrivenSource {
-    readonly name: string;
-    getMessages(): Promise<MessageWithTimestamp[]>;
-    getTools(): Promise<Record<string, any>>;
-    executeTool(toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined>;
-    onUpdate(callback: () => void): () => void;
-}
-
-/**
  * HostDrivenSource V2 - 零转换版本
  */
-export class HostDrivenSourceV2 implements IDrivenSource {
+export class HostDrivenSourceV2 implements ContextDrivenSource {
     readonly name = 'Host';
     private static readonly COMPACTION_TOOL_NAME = 'context_compact';
     private static readonly COMPACTION_TOOL_DESCRIPTION = [
@@ -99,26 +75,24 @@ export class HostDrivenSourceV2 implements IDrivenSource {
         this.topicId = topicId;
     }
 
-    /**
-     * 获取消息
-     * 
-     * ✅ 直接返回，零转换!
-     */
-    async getMessages(): Promise<MessageWithTimestamp[]> {
-        const messages = await this.messageService.getMessagesForLLM(this.topicId);
-        return messages.map((message) => ({
-            ...message,
-            region: message.region ?? 'session',
-        } as SessionMessageWithTimestamp));
+    /** Capture messages and the compaction route for the current topic. */
+    async getContext(): Promise<DrivenSourceContext> {
+        const topicId = this.topicId;
+        try {
+            const messages = await this.messageService.getMessagesForLLM(topicId);
+            return {
+                messages: messages.map(message => ({ ...message, region: message.region ?? 'session' } as SessionMessageWithTimestamp)),
+                tools: this.createTools(),
+                executeTool: (name, args, id) => this.executeCompaction(topicId, name, args, id),
+            };
+        } catch (error) {
+            console.error('Failed to capture context from Host:', error);
+            return { messages: [], tools: {} };
+        }
     }
 
-    /**
-     * 获取工具
-     * 
-     * Host 不提供工具
-     */
-    async getTools(): Promise<Record<string, any>> {
-        const compactTool = dynamicTool({
+    private createTools(): DrivenSourceContext['tools'] {
+        const compactTool: DrivenSourceContext['tools'][string] = {
             description: HostDrivenSourceV2.COMPACTION_TOOL_DESCRIPTION,
             inputSchema: jsonSchema({
                 type: 'object',
@@ -150,10 +124,8 @@ export class HostDrivenSourceV2 implements IDrivenSource {
                 },
                 required: ['summary'],
             }),
-            execute: async (_args: unknown) => {
-                return 'Use AgentDriver executeTool routing for host context compaction.';
-            },
-        });
+            type: 'dynamic',
+        };
 
         return {
             [HostDrivenSourceV2.COMPACTION_TOOL_NAME]: compactTool,
@@ -163,11 +135,15 @@ export class HostDrivenSourceV2 implements IDrivenSource {
     /**
      * 执行工具调用
      * 
-     * Host 不执行工具
+     * Execute the captured topic compaction after its identity guard.
      */
-    async executeTool(toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> {
+    private async executeCompaction(topicId: string, toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> {
         if (toolName !== HostDrivenSourceV2.COMPACTION_TOOL_NAME) {
             return undefined;
+        }
+        if (this.topicId !== topicId) {
+            return { toolName, toolCallId, outcomeStatus: 'rejected',
+                error: { code: 'E_SOURCE_UNAVAILABLE', message: 'The captured topic is no longer active' } };
         }
 
         const input = (args || {}) as {
@@ -200,7 +176,7 @@ export class HostDrivenSourceV2 implements IDrivenSource {
         const keepRecentMessages = Number.isInteger(input.keepRecentMessages) && (input.keepRecentMessages as number) > 0
             ? (input.keepRecentMessages as number)
             : undefined;
-        const result = this.messageService.compactContext(this.topicId, {
+        const result = this.messageService.compactContext(topicId, {
             trigger: 'agent',
             reason,
             summary,

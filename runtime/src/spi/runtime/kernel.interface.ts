@@ -9,10 +9,9 @@ import type {
     AppID,
     DesktopState
 } from '../core/types.js';
-// [C1 FIX] Command type removed - unified to Operation
 import type { UpdateSignal } from '../core/signals.js';
 import type { IRuntimeContext } from './context.interface.js'; // New
-import type { ShutdownOptions, DesktopCloseOptions, DesktopCloseOperation, RuntimeCloseOperation } from './close.interface.js';
+import type { ShutdownOptions, DesktopCloseOptions, DesktopCloseHandle, RuntimeCloseHandle } from './close.interface.js';
 export type { ShutdownOptions } from './close.interface.js';
 import type { AppInteractionOptions, RuntimeInteractionAccess, DesktopInteractionAccess } from './app-interaction.interface.js';
 
@@ -55,7 +54,7 @@ export interface AppDiscoveryInfo {
 
 export interface IDesktop {
     createAppScope: DesktopInteractionAccess['createAppScope'];
-    beginClose(options?: DesktopCloseOptions): DesktopCloseOperation;
+    beginClose(options?: DesktopCloseOptions): DesktopCloseHandle;
     id: DesktopID;
 
     /** Installed application catalog used by Semantic context and lifecycle controls. */
@@ -137,8 +136,8 @@ export interface IDesktop {
  */
 export interface IKernel {
     createAppScope: RuntimeInteractionAccess['createAppScope'];
-    beginShutdown(reason?: string): RuntimeCloseOperation;
-    beginDesktopShutdown(id: DesktopID, options?: ShutdownOptions): DesktopCloseOperation;
+    beginShutdown(reason?: string): RuntimeCloseHandle;
+    beginDesktopShutdown(id: DesktopID, options?: ShutdownOptions): DesktopCloseHandle;
     createDesktop(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID>;
     // [M1 FIX] Changed from void to Promise<void> to match implementation
     destroyDesktop(desktopId: DesktopID): Promise<void>;
