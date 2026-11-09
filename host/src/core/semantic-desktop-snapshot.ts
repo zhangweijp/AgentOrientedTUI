@@ -1,5 +1,5 @@
 import type { IDesktop, IKernel } from '@aotui/runtime';
-import { SemanticAOTUIDrivenSource } from '@aotui/runtime/adapters';
+import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 
 /** GUI inspection owns a separate short-lived observation; it cannot replace an in-flight Agent context. */
 export async function readSemanticDesktopSnapshot(desktop: IDesktop, kernel: IKernel): Promise<{ markup: string }> {

@@ -1,4 +1,4 @@
-import type { SemanticAOTUIDrivenSource } from '@aotui/runtime/adapters';
+import type { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import type { McpDrivenSource } from '../mcp/source.js';
 import type { SkillDrivenSource } from '../skills/skill-driven-source.js';
 import {

@@ -13,12 +13,14 @@ import { isIMSessionKey } from '../im/routing.js';
 
 // Event types for subscribers
 export interface ChatUpdateEvent {
-    type: 'message' | 'topic' | 'snapshot' | 'agent_state' | 'agent_thought' | 'agent_reasoning' | 'agent_paused' | 'agent_resumed' | 'desktop_destroyed' | 'init' | 'message_update';
+    type: 'message' | 'topic' | 'snapshot' | 'snapshot_error' | 'agent_state' | 'agent_thought' | 'agent_reasoning' | 'agent_paused' | 'agent_resumed' | 'desktop_destroyed' | 'init' | 'message_update';
     topicId?: string;
     data?: unknown;
 }
 
 export type ChatSubscriber = (event: ChatUpdateEvent) => void;
+
+type SessionSubscription = { subscription?: Unsubscribable; snapshotRead?: Promise<void>; snapshotDirty?: boolean };
 
 // ============ ChatBridge ============
 
@@ -27,7 +29,7 @@ export class ChatBridge {
 
     // Connections
     private trpcClient: ReturnType<typeof createTRPCProxyClient<AppRouter>> | null = null;
-    private trpcSubscriptions: Map<string, Unsubscribable> = new Map();
+    private trpcSubscriptions: Map<string, SessionSubscription> = new Map();
 
     // State
     private projects: Project[] = []; // [RFC-025]
@@ -246,6 +248,7 @@ export class ChatBridge {
                 break;
 
             case 'desktop_destroyed':
+                this.releaseSessionSubscription(msg.desktopId);
                 this.snapshots.delete(msg.desktopId);
                 this.agentStates.delete(msg.desktopId);
                 this.agentPaused.delete(msg.desktopId);
@@ -344,12 +347,35 @@ export class ChatBridge {
     // ============ API - Snapshots ============
 
     async requestSnapshot(topicId: string): Promise<void> {
+        let owner = this.trpcSubscriptions.get(topicId);
+        if (!owner) { owner = {}; this.trpcSubscriptions.set(topicId, owner); }
         await this.ensureSessionReady(topicId, true);
-        const snapshot = await this.getTrpcClient().session.snapshot.query({ id: topicId });
-        if (snapshot) {
-            this.snapshots.set(topicId, (snapshot as any)?.markup ?? null);
-            this.notify({ type: 'snapshot', topicId });
-        }
+        if (this.trpcSubscriptions.get(topicId) === owner) await this.refreshSnapshot(topicId, owner);
+    }
+
+    private refreshSnapshot(topicId: string, owner: SessionSubscription): Promise<void> {
+        owner.snapshotDirty = true;
+        if (owner.snapshotRead) return owner.snapshotRead;
+        // One read per connection; invalidations during a read request the latest state again.
+        owner.snapshotRead = Promise.resolve().then(async () => {
+            try {
+                while (owner.snapshotDirty && this.trpcSubscriptions.get(topicId) === owner) {
+                    owner.snapshotDirty = false;
+                    try {
+                        const snapshot = await this.getTrpcClient().session.snapshot.query({ id: topicId });
+                        if (this.trpcSubscriptions.get(topicId) !== owner) return;
+                        if (owner.snapshotDirty) continue;
+                        if (typeof snapshot?.markup !== 'string') throw new Error('Preview snapshot unavailable');
+                        this.snapshots.set(topicId, snapshot.markup);
+                        this.notify({ type: 'snapshot', topicId });
+                    } catch (error) {
+                        if (this.trpcSubscriptions.get(topicId) !== owner) return;
+                        if (!owner.snapshotDirty) throw error;
+                    }
+                }
+            } finally { owner.snapshotRead = undefined; }
+        });
+        return owner.snapshotRead;
     }
 
     // ============ [RFC-014] Agent Lifecycle Control ============
@@ -365,10 +391,10 @@ export class ChatBridge {
     }
 
     async destroyDesktop(topicId: string): Promise<void> {
+        this.releaseSessionSubscription(topicId);
+        this.snapshots.delete(topicId);
+        this.notify({ type: 'snapshot', topicId });
         await this.getTrpcClient().session.destroy.mutate({ id: topicId });
-        const subscription = this.trpcSubscriptions.get(topicId);
-        subscription?.unsubscribe();
-        this.trpcSubscriptions.delete(topicId);
     }
 
     // ============ [RFC-025] Project Management ============
@@ -402,11 +428,15 @@ export class ChatBridge {
 
     // [RFC-015] Shutdown: 关机但保留数据
     async shutdownDesktop(topicId: string): Promise<void> {
+        this.releaseSessionSubscription(topicId);
+        this.snapshots.delete(topicId);
+        this.notify({ type: 'snapshot', topicId });
         await this.getTrpcClient().session.shutdown.mutate({ id: topicId });
     }
 
     async deleteTopic(topicId: string): Promise<void> {
         try {
+            this.releaseSessionSubscription(topicId);
             await this.getTrpcClient().db.deleteTopic.mutate({ id: topicId });
             this.topics.delete(topicId);
             this.messages.delete(topicId);
@@ -531,23 +561,20 @@ export class ChatBridge {
      * Explicitly activate the desktop connection
      */
     async activateDesktop(topicId: string): Promise<void> {
-        await this.ensureSessionReady(topicId, true);
-
-        // Check if we already have a snapshot (proxy for "is active")
-        if (!this.snapshots.has(topicId)) {
-            const snapshot = await this.getTrpcClient().session.snapshot.query({ id: topicId });
-            if (snapshot) {
-                this.snapshots.set(topicId, (snapshot as any)?.markup ?? null);
-                this.notify({ type: 'snapshot', topicId });
-            }
-        }
+        if (!this.snapshots.has(topicId)) await this.requestSnapshot(topicId);
+        else await this.ensureSessionReady(topicId, true);
     }
 
     // ============ Subscription ============
 
     subscribe(callback: ChatSubscriber): () => void {
         this.subscribers.add(callback);
-        return () => this.subscribers.delete(callback);
+        return () => {
+            this.subscribers.delete(callback);
+            if (this.subscribers.size === 0) {
+                for (const topicId of this.trpcSubscriptions.keys()) this.releaseSessionSubscription(topicId);
+            }
+        };
     }
 
     private notify(event: ChatUpdateEvent): void {
@@ -574,8 +601,10 @@ export class ChatBridge {
     }
 
     private async ensureSessionReady(topicId: string, lazy: boolean): Promise<void> {
+        let owner = this.trpcSubscriptions.get(topicId);
+        if (!owner) { owner = {}; this.trpcSubscriptions.set(topicId, owner); }
         await this.getTrpcClient().session.create.mutate({ id: topicId, lazy });
-        this.ensureSessionSubscription(topicId);
+        if (this.trpcSubscriptions.get(topicId) === owner) this.ensureSessionSubscription(topicId, owner);
     }
 
     /**
@@ -984,24 +1013,48 @@ export class ChatBridge {
         };
     }
 
-    private ensureSessionSubscription(topicId: string): void {
-        if (this.trpcSubscriptions.has(topicId)) {
-            return;
+    private releaseSessionSubscription(topicId: string): void {
+        const owner = this.trpcSubscriptions.get(topicId);
+        this.trpcSubscriptions.delete(topicId);
+        owner?.subscription?.unsubscribe();
+    }
+
+    private ensureSessionSubscription(topicId: string, owner: SessionSubscription): void {
+        if (owner.subscription) return;
+        let active = true;
+        let transport: Unsubscribable | undefined;
+        const subscription = { unsubscribe: () => {
+            if (!active) return;
+            active = false;
+            if (owner.subscription === subscription) owner.subscription = undefined;
+            transport?.unsubscribe();
+        } };
+        // Reserve before subscribe: errors or data can be delivered synchronously.
+        owner.subscription = subscription;
+        try {
+            transport = this.getTrpcClient().session.events.subscribe(
+                { id: topicId },
+                {
+                    onData: (event: unknown) => {
+                        if (!active || this.trpcSubscriptions.get(topicId) !== owner) return;
+                        const update = event as Record<string, unknown>;
+                        if (update.topicId !== undefined && update.topicId !== topicId) return;
+                        this.handleSessionEvent(update, topicId);
+                    },
+                    onError: (error: unknown) => {
+                        if (!active || this.trpcSubscriptions.get(topicId) !== owner) return;
+                        subscription.unsubscribe();
+                        console.error('[ChatBridge] tRPC session events error:', error);
+                        this.handleSessionEvent({ type: 'snapshot_error', topicId,
+                            error: error instanceof Error ? error.message : String(error) }, topicId);
+                    },
+                }
+            );
+            if (!active || this.trpcSubscriptions.get(topicId) !== owner) transport.unsubscribe();
+        } catch (error) {
+            subscription.unsubscribe();
+            throw error;
         }
-        const subscription = this.getTrpcClient().session.events.subscribe(
-            { id: topicId },
-            {
-                onData: (event: unknown) => {
-                    // [Fix] Inject topicId into the event context because some broadcast events 
-                    // (like message_delta) do not carry desktopId/sessionId payload.
-                    this.handleSessionEvent(event as Record<string, unknown>, topicId);
-                },
-                onError: (error: unknown) => {
-                    console.error('[ChatBridge] tRPC session events error:', error);
-                },
-            }
-        );
-        this.trpcSubscriptions.set(topicId, subscription);
     }
 
     private handleSessionEvent(event: Record<string, unknown>, contextTopicId?: string): void {
@@ -1019,6 +1072,23 @@ export class ChatBridge {
                 ? message.content.map((part: any) => part?.type).filter(Boolean)
                 : undefined,
         });
+
+        if (eventType === 'snapshot' && topicId) {
+            const owner = this.trpcSubscriptions.get(topicId);
+            if (owner?.snapshotRead) owner.snapshotDirty = true;
+            else if (owner) void this.refreshSnapshot(topicId, owner).catch(error => {
+                if (this.trpcSubscriptions.get(topicId) === owner) this.handleSessionEvent({
+                    type: 'snapshot_error', topicId, error: error instanceof Error ? error.message : String(error),
+                }, topicId);
+            });
+            return;
+        }
+
+        if (eventType === 'snapshot_error' && topicId) {
+            console.error('[ChatBridge] Preview error:', event.error);
+            this.notify({ type: 'snapshot_error', topicId, data: event.error });
+            return;
+        }
 
         // Handle AI SDK v6 GuiUpdateEvent (from SessionManagerV3 → HostManagerV2)
         if (eventType === 'agent_state' && topicId) {

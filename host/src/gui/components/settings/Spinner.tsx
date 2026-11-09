@@ -1,7 +1,7 @@
 /**
  * Spinner Component
  * 
- * Loading spinner for async operations
+ * Loading spinner for async work
  */
 
 import React from 'react';

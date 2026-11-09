@@ -146,7 +146,7 @@ describe('ModelRegistry Service', () => {
         registry = new ModelRegistry();
         vi.clearAllMocks();
         
-        // Default mock for fs operations
+        // Default mock for fs calls
         vi.mocked(fs.mkdir).mockResolvedValue(undefined);
         vi.mocked(fs.writeFile).mockResolvedValue(undefined);
         vi.mocked(fs.readFile).mockRejectedValue(new Error('File not found'));

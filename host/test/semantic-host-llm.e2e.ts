@@ -232,7 +232,7 @@ try {
     delete process.env.AOTUI_HOST_SEMANTIC_DATA;
 
     const { createRuntime, AppRegistry } = await import('@aotui/runtime');
-    const { SemanticAOTUIDrivenSource } = await import('@aotui/runtime/adapters');
+    const { SemanticAOTUIDrivenSource } = await import('@aotui/agent-driver-adapter');
     const { AgentDriverV2 } = await import('@aotui/agent-driver-v2');
     const { DesktopManager, desktopManager: moduleDesktopManager, desktopManagerReady } = await import('../src/core/desktop-manager.js');
     moduleRuntime = moduleDesktopManager.getKernel();

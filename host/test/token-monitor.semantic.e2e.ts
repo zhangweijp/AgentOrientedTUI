@@ -122,7 +122,7 @@ try {
     // this Worker-only fetch fixture before the default Runtime creates workers;
     // every other URL fails closed so the test cannot reach the network.
     const { createRuntime, AppRegistry } = await import('@aotui/runtime');
-    const { SemanticAOTUIDrivenSource } = await import('@aotui/runtime/adapters');
+    const { SemanticAOTUIDrivenSource } = await import('@aotui/agent-driver-adapter');
     const { DesktopManager } = await import('../src/core/desktop-manager.js');
     runtime = createRuntime();
     const registry = new AppRegistry({ configPath: path.join(work, 'registry.json') });

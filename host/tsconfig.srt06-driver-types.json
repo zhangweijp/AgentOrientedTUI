@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "skipLibCheck": false,
+    "types": [
+      "node"
+    ],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "noEmit": true
+  },
+  "files": [
+    "./tests/srt06-driver-types/positive.ts",
+    "./tests/srt06-driver-types/handoff.ts"
+  ]
+}

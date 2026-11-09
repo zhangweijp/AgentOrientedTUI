@@ -99,7 +99,7 @@ describe('LLMConfigService Integration Tests', () => {
         cacheDir = path.join(os.homedir(), '.aotui', 'cache');
         cacheFile = path.join(cacheDir, 'models-dev.json');
 
-        // Mock database operations
+        // Mock database calls
         vi.spyOn(llmConfigDb, 'createLLMConfig').mockImplementation((db, input) => {
             const record = {
                 id: mockConfigs.length + 1,

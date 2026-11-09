@@ -62,7 +62,7 @@ describe('ConfigForm - Property-Based Tests', () => {
      * Feature: settings-panel, Property 6: Configuration Update Preservation
      * Validates: Requirements 4.3
      * 
-     * For any configuration update operation, all fields not explicitly modified
+     * For any configuration update call, all fields not explicitly modified
      * should retain their original values.
      */
     it('Property 6: Configuration Update Preservation - unmodified fields retain original values', () => {

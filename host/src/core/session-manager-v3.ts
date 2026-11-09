@@ -16,7 +16,7 @@
  */
 
 import type { IKernel, IDesktop } from '@aotui/runtime';
-import { SemanticAOTUIDrivenSource } from '@aotui/runtime/adapters';
+import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { AgentDriverV2 } from '@aotui/agent-driver-v2';
 import type { ModelMessage } from 'ai';
 import { EventEmitter } from 'events';
@@ -383,7 +383,7 @@ export class SessionManagerV3 extends EventEmitter {
                 aotuiSource,        // timestamp=1 (instruction) + dynamic (state)
                 hostSource,         // timestamp=now (user/assistant messages)
                 skillDrivenSource,
-                mcpDrivenSource as any,    // Custom MCP Tools
+                mcpDrivenSource,    // Custom MCP Tools
             ],
             llm: effectiveLLMConfig,
             onAssistantMessage: (message) => {
@@ -1070,8 +1070,8 @@ export class SessionManagerV3 extends EventEmitter {
         }
 
         // A persisted tool receipt is new conversation input, even when a read-only
-        // operation did not change a View. Schedule observation of that result;
-        // this does not replay the operation. Final assistant text is not a trigger.
+        // call did not change a View. Schedule observation of that result;
+        // this does not replay the Tool call. Final assistant text is not a trigger.
         if (type === 'tool') {
             session?.sources.host.notifyNewMessage();
         }
@@ -1183,7 +1183,7 @@ Your capabilities:
 - Maintain conversation context across multiple sessions
 
 Guidelines:
-- Always confirm before destructive operations
+- Always confirm before destructive actions
 - Provide clear explanations of your actions
 - Use appropriate tools for each task
 - Respect user privacy and data security

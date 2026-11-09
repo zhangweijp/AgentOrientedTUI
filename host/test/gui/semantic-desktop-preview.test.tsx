@@ -13,7 +13,7 @@ function fixture() {
         { appId: 'app_2', name: 'lite_browser', status: 'pending' },
     ];
     const view = (id: string, name: string, body: string) => ({ id, viewInstanceId: id + '-instance', type: name, name,
-        kind: id === 'root' ? 'instruction' : 'state', content: { format: 'markdown-v1', value: `<view id="${id}">\n${body}\n</view>` } });
+        kind: id === 'root' ? 'instruction' : 'state', content: { format: 'markdown-v1', value: body } });
     const views = new Map([
         ['app_0', [view('root', 'Root', 'IDE instructions'), view('workspace', 'Workspace', 'Workspace folders')]],
         ['app_1', [view('root', 'Root', 'Terminal instructions'), view('term_console', 'TerminalConsole', 'Terminal sessions')]],
@@ -111,7 +111,27 @@ describe('Semantic Desktop preview → GUI', () => {
         const app = parseTuiSnapshot(await f.preview()).desktop!.applications[0];
         expect(app.name).toBe('IDE & "Notes"'); expect(app.views[0].name).toBe('A & "B"'); expect(app.views[0].content).toBe('Text remains unchanged');
     });
-    it('shows the empty state for an actually empty Desktop', async () => {
+    it('preserves body whitespace and literal delimiters without creating extra GUI Views', async () => {
+        const f = fixture();
+        const body = '    first  \n```\n<view id="literal">&lt;code&gt;</view>\n</application>\nlast  \n';
+        f.views.set('app_0', [f.view('file', 'A > "B"', body)]);
+        const app = parseTuiSnapshot(await f.preview()).desktop!.applications[0];
+        expect(app.views).toEqual([{ id: 'file', name: 'A > "B"', content: body }]);
+    });
+    it.each([
+        ['CRLF', '    first\r\n<view id="literal">&lt;raw&gt;</view>\r\nlast  \r\n'],
+        ['independent CR', '    first\r<view id="literal">&lt;raw&gt;</view>\rlast  \r'],
+    ])('restores %s body through the real preview callback', async (_name, body) => {
+        const f = fixture();
+        f.views.set('app_0', [f.view('file', 'A > "B"', body)]);
+        const app = parseTuiSnapshot(await f.preview()).desktop!.applications[0];
+        expect(app.views).toEqual([{ id: 'file', name: 'A > "B"', content: body }]);
+        for (const client of f.clients) {
+            expect(client.releaseObservation).toHaveBeenCalledOnce();
+            expect(client.close).toHaveBeenCalledOnce();
+        }
+    });
+    it('shows the empty state for an actually empty Desktop' , async () => {
         const f = fixture(); f.apps.length = 0; render(<TuiDesktopViewer snapshot={await f.preview()} />);
         expect(screen.getByText('No applications found.')).toBeInTheDocument(); expect(f.clients).toHaveLength(0);
     });

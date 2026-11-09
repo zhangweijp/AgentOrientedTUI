@@ -20,7 +20,7 @@ import type { ModelMessage } from 'ai';
 import { AgentDriverV2, type LLMConfig } from '@aotui/agent-driver-v2';
 import type { AppConfigEntry } from '@aotui/runtime';
 import type { IDesktop, IKernel } from '@aotui/runtime/spi';
-import { SemanticAOTUIDrivenSource } from '@aotui/runtime/adapters';
+import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { readSemanticDesktopSnapshot } from './semantic-desktop-snapshot.js';
 import { MessageServiceV2 } from './message-service-v2.js';
 import { Logger } from '../utils/logger.js';
@@ -249,7 +249,10 @@ export class HostManagerV2 {
             throw new Error('SessionManager not initialized. Call initAgentDriver first.');
         }
         
-        await this.sessionManager.ensureSession(topicId);
+        const previous = this.sessionManager.getSession(topicId);
+        const session = await this.sessionManager.ensureSession(topicId);
+        // The Topic stream can outlive an idle/evicted Session; announce a replacement only after creation settles.
+        if (session !== previous) this.emitGuiUpdate({ topicId, type: 'snapshot' });
         this.logger.info('Session initialized for topic', { topicId });
     }
 
@@ -324,9 +327,12 @@ export class HostManagerV2 {
             throw new Error('SessionManager not initialized. Call initAgentDriver first.');
         }
 
-        await this.sessionManager.ensureSession(topicId);
-
-        return readSemanticDesktopSnapshot(this.kernel.getDesktop(topicId as any), this.kernel);
+        // Creation belongs to session.create; a late preview must not reopen a closed Topic.
+        const session = this.sessionManager.getSession(topicId);
+        if (!session || session.state === 'destroyed') {
+            throw new Error(`Session not available for preview: ${topicId}`);
+        }
+        return readSemanticDesktopSnapshot(session.desktop, this.kernel);
     }
 
     /**
@@ -458,7 +464,7 @@ export class HostManagerV2 {
                 aotuiSource,
                 input.source,
                 skillDrivenSource,
-                mcpDrivenSource as any,
+                mcpDrivenSource,
             ],
             llm: llmConfig,
             onAssistantMessage: (message) => {
@@ -471,6 +477,9 @@ export class HostManagerV2 {
             },
             onToolResult: (message) => {
                 input.source.addMessage(message);
+                if (!agentDriver.hasPendingUpdate()) {
+                    input.source.notifyUpdate();
+                }
                 this.emitGuiUpdate({
                     topicId: input.sessionKey,
                     type: 'tool',
@@ -719,7 +728,7 @@ Your capabilities:
 - Maintain conversation context across multiple sessions
 
 Guidelines:
-- Always confirm before destructive operations
+- Always confirm before destructive actions
 - Provide clear explanations of your actions
 - Use appropriate tools for each task
 - Respect user privacy and data security

@@ -26,7 +26,7 @@ delete process.env.AOTUI_HOST_SEMANTIC_PROJECT;
 delete process.env.AOTUI_HOST_SEMANTIC_DATA;
 
 const { createRuntime, AppRegistry } = await import('@aotui/runtime');
-const { SemanticAOTUIDrivenSource } = await import('@aotui/runtime/adapters');
+const { SemanticAOTUIDrivenSource } = await import('@aotui/agent-driver-adapter');
 const { DesktopManager } = await import('../src/core/desktop-manager.js');
 const runtime = createRuntime();
 const registry = new AppRegistry({ configPath: path.join(work, 'registry.json') });

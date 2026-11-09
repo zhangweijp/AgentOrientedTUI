@@ -1,7 +1,7 @@
 /**
  * useCustomProviders Hook
  *
- * Manages CRUD operations for user-defined custom LLM providers.
+ * Manages CRUD actions for user-defined custom LLM providers.
  * Custom providers are stored in ~/.aotui/config/custom-providers.json
  * via the CustomProviderStore backend service.
  */

@@ -4,8 +4,9 @@
  * 单元测试
  */
 
-import { describe, it, expect } from 'vitest';
-import { SystemPromptDrivenSource } from '../src/adapters/system-prompt-source.js';
+import { describe, it, expect, vi } from 'vitest';
+import { AgentDriverV2, type ContextDrivenSource } from '@aotui/agent-driver-v2';
+import { SystemPromptDrivenSource } from '../../src/adapters/system-prompt-source.js';
 
 describe('SystemPromptDrivenSource', () => {
     describe('Constructor', () => {
@@ -34,13 +35,13 @@ describe('SystemPromptDrivenSource', () => {
         });
     });
     
-    describe('getMessages', () => {
+    describe('getContext messages', () => {
         it('should return system message with timestamp 0', async () => {
             const source = new SystemPromptDrivenSource({
                 systemPrompt: 'Test prompt',
             });
             
-            const messages = await source.getMessages();
+            const messages = await source.getContext().then(context => context.messages);
             
             expect(messages).toHaveLength(1);
             expect(messages[0]).toMatchObject({
@@ -55,35 +56,80 @@ describe('SystemPromptDrivenSource', () => {
                 systemPrompt: 'Test prompt',
             });
             
-            const messages1 = await source.getMessages();
-            const messages2 = await source.getMessages();
+            const messages1 = await source.getContext().then(context => context.messages);
+            const messages2 = await source.getContext().then(context => context.messages);
             
             expect(messages1).toEqual(messages2);
         });
+
+        it('isolates a failed prompt read, continues the real Driver and recovers on the next capture', async () => {
+            const failure = new Error('Prompt provider temporarily unavailable');
+            let failRead = false;
+            const source = new SystemPromptDrivenSource({
+                get systemPrompt() {
+                    if (failRead) throw failure;
+                    return 'Recovered instructions';
+                },
+            });
+            const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const capture = vi.spyOn(source, 'getContext');
+            const release = vi.fn(), onRunError = vi.fn();
+            const healthy: ContextDrivenSource = {
+                name: 'healthy',
+                getContext: vi.fn(async () => {
+                    driver.stop();
+                    return { messages: [], tools: {}, release };
+                }),
+                onUpdate: () => () => {},
+            };
+            const driver = new AgentDriverV2({
+                sources: [source, healthy], llm: { model: 'openai:controlled-prompt-read' }, onRunError,
+            });
+            try {
+                failRead = true;
+                await driver.trigger();
+                await driver['runInFlight'];
+                expect(healthy.getContext).toHaveBeenCalledTimes(1);
+                expect(onRunError).not.toHaveBeenCalled();
+                expect(release).toHaveBeenCalledTimes(1);
+                expect(capture).toHaveBeenCalledTimes(1);
+                await expect(capture.mock.results[0].value).resolves.toStrictEqual({ messages: [], tools: {} });
+                expect(diagnostic).toHaveBeenCalledExactlyOnceWith('Failed to capture context from SystemPrompt:', failure);
+                failRead = false;
+                await expect(source.getContext()).resolves.toStrictEqual({
+                    messages: [{ role: 'system', content: 'Recovered instructions', timestamp: 0, region: 'static' }], tools: {},
+                });
+                expect(diagnostic).toHaveBeenCalledTimes(1);
+                expect(() => source.setSystemPrompt('   ')).toThrow('systemPrompt cannot be empty');
+                expect(() => new SystemPromptDrivenSource({ get systemPrompt(): string { throw failure; } })).toThrow(failure);
+            } finally {
+                driver.stop();
+                await driver['runInFlight'];
+                driver.dispose();
+                capture.mockRestore();
+                diagnostic.mockRestore();
+            }
+        });
     });
     
-    describe('getTools', () => {
+    describe('getContext tools', () => {
         it('should return empty object', async () => {
             const source = new SystemPromptDrivenSource({
                 systemPrompt: 'Test',
             });
             
-            const tools = await source.getTools();
+            const tools = await source.getContext().then(context => context.tools);
             expect(Object.keys(tools)).toHaveLength(0);
         });
     });
     
-    describe('executeTool', () => {
+    describe('no executor', () => {
         it('should return undefined', async () => {
             const source = new SystemPromptDrivenSource({
                 systemPrompt: 'Test',
             });
             
-            const result = await source.executeTool(
-                'any_tool',
-                {},
-                'call_123'
-            );
+            const result = (await source.getContext()).executeTool;
             
             expect(result).toBeUndefined();
         });
@@ -102,21 +148,20 @@ describe('SystemPromptDrivenSource', () => {
             unsubscribe();
         });
         
-        it('should never call callback', (done) => {
-            const source = new SystemPromptDrivenSource({
-                systemPrompt: 'Test',
-            });
-            
-            let called = false;
-            source.onUpdate(() => {
-                called = true;
-            });
-            
-            // Wait and verify callback was never called
-            setTimeout(() => {
-                expect(called).toBe(false);
-                done();
-            }, 100);
+        it('does not notify for capture, but publishes prompt changes without altering old captures', async () => {
+            const source = new SystemPromptDrivenSource({ systemPrompt: 'Test' });
+            const changed = vi.fn();
+            const off = source.onUpdate(changed);
+            const first = await source.getContext();
+            expect(changed).not.toHaveBeenCalled();
+            source.setSystemPrompt('Updated');
+            const second = await source.getContext();
+            expect(first.messages).toEqual([{ role: 'system', content: 'Test', timestamp: 0, region: 'static' }]);
+            expect(second.messages).toEqual([{ role: 'system', content: 'Updated', timestamp: 0, region: 'static' }]);
+            expect(changed).toHaveBeenCalledTimes(1);
+            off();
+            source.setSystemPrompt('After unsubscribe');
+            expect(changed).toHaveBeenCalledTimes(1);
         });
     });
     

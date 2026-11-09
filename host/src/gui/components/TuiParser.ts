@@ -36,9 +36,10 @@ export interface ParsedTuiSnapshot {
 
 // ============ Parser Functions ============
 
-function decodeAttribute(value: string): string {
+function decodeXmlText(value: string): string {
     const entities: Record<string, string> = { amp: '&', quot: '"', lt: '<', gt: '>', apos: "'" };
-    return value.replace(/&(amp|quot|lt|gt|apos);/g, (_match, name: string) => entities[name]);
+    return value.replace(/&(amp|quot|lt|gt|apos|#9|#10|#13);/g, (_match, name: string) =>
+        name.startsWith('#') ? String.fromCharCode(Number(name.slice(1))) : entities[name]);
 }
 
 /**
@@ -100,8 +101,8 @@ function parseApplications(content: string): TuiApplication[] {
         const [, attrText, appContent] = match;
         const idMatch = attrText.match(/\bid="([^"]+)"/);
         const nameMatch = attrText.match(/\bname="([^"]*)"/);
-        const id = idMatch && decodeAttribute(idMatch[1]);
-        const name = decodeAttribute(nameMatch?.[1] ?? idMatch?.[1] ?? '');
+        const id = idMatch && decodeXmlText(idMatch[1]);
+        const name = decodeXmlText(nameMatch?.[1] ?? idMatch?.[1] ?? '');
         const status = attrText.match(/\bstatus="(pending|running|paused|closed|collapsed)"/)?.[1] as TuiApplication['status'];
         if (!id) continue;
 
@@ -142,14 +143,15 @@ function parseViews(content: string): TuiView[] {
         const [, attrText, viewContent] = match;
         const idMatch = attrText.match(/\bid="([^"]+)"/);
         const nameMatch = attrText.match(/\bname="([^"]*)"/);
-        const id = idMatch && decodeAttribute(idMatch[1]);
-        const name = decodeAttribute(nameMatch?.[1] ?? idMatch?.[1] ?? '');
+        const id = idMatch && decodeXmlText(idMatch[1]);
+        const name = decodeXmlText(nameMatch?.[1] ?? idMatch?.[1] ?? '');
         if (!id) continue;
 
         views.push({
             id,
             name,
-            content: viewContent.trim()
+            // Remove only the framing newlines, never whitespace belonging to the body.
+            content: decodeXmlText(viewContent.replace(/^\n|\n$/g, ''))
         });
     }
 
@@ -165,21 +167,6 @@ export function extractStatus(infoContent: string): 'running' | 'closed' | 'coll
     if (infoContent.toLowerCase().includes('running')) return 'running';
     if (infoContent.toLowerCase().includes('closed')) return 'closed';
     return 'running'; // Default
-}
-
-/**
- * Extract recent operations from application info
- */
-export function extractRecentOperations(infoContent: string): string[] {
-    const operations: string[] = [];
-    const opSection = infoContent.match(/## Recent Operations([\s\S]*?)(?=##|$)/);
-
-    if (opSection) {
-        const lines = opSection[1].split('\n').filter(line => line.trim().startsWith('-'));
-        operations.push(...lines.map(l => l.replace(/^-\s*/, '').trim()));
-    }
-
-    return operations;
 }
 
 /**

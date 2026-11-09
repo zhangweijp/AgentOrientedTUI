@@ -1,7 +1,7 @@
 /**
  * Unit Tests for useModelConfigs Hook
  * 
- * Tests specific examples, loading states, error handling, and CRUD operations
+ * Tests specific examples, loading states, error handling, and CRUD actions
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -168,7 +168,7 @@ describe('useModelConfigs - Unit Tests', () => {
         });
     });
 
-    describe('CRUD Operations', () => {
+    describe('CRUD actions', () => {
         it('should create a new configuration', async () => {
             vi.mocked(llmConfigService.getAllConfigs).mockReturnValue(mockConfigs);
             vi.mocked(llmConfigService.getActiveLLMConfigRecord).mockReturnValue(mockConfigs[0]);

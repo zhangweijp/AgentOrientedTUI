@@ -37,7 +37,7 @@ export interface UseModelConfigsReturn {
 /**
  * useModelConfigs Hook
  * 
- * Provides CRUD operations for LLM model configurations
+ * Provides CRUD actions for LLM model configurations
  * Handles loading and error states
  */
 export function useModelConfigs(): UseModelConfigsReturn {

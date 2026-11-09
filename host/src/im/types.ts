@@ -63,7 +63,6 @@ export interface IMAgentDriverLike {
 
 export interface IMDrivenSourceLike {
   name: string
-  getMessages: () => Promise<Array<{ role: string; content: unknown; timestamp: number }>>
   addMessage: (message: ModelMessage, timestamp?: number) => unknown
   notifyUpdate: () => void
   getCompactionToolName?: () => string

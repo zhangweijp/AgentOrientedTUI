@@ -1,5 +1,5 @@
-import type { MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2';
-import { dynamicTool, jsonSchema } from 'ai';
+import type { ContextDrivenSource, DrivenSourceContext, ToolResult } from '@aotui/agent-driver-v2';
+import { jsonSchema } from '@aotui/agent-driver-v2';
 import { Logger } from '../utils/logger.js';
 import { SkillCatalogService } from './skill-catalog-service.js';
 
@@ -11,7 +11,7 @@ export interface SkillDrivenSourceOptions {
     projectPath?: string;
 }
 
-export class SkillDrivenSource {
+export class SkillDrivenSource implements ContextDrivenSource {
     readonly name = 'Skill';
 
     private listeners = new Set<() => void>();
@@ -22,10 +22,6 @@ export class SkillDrivenSource {
 
     constructor(options: SkillDrivenSourceOptions = {}) {
         this.catalog = new SkillCatalogService({ projectPath: options.projectPath });
-    }
-
-    async getMessages(): Promise<MessageWithTimestamp[]> {
-        return [];
     }
 
     triggerUpdate(): void {
@@ -55,13 +51,20 @@ export class SkillDrivenSource {
         };
     }
 
-    // @ts-ignore - AI SDK Tool schemas version mismatch across workspace packages
-    async getTools(): Promise<Record<string, any>> {
-        if (!this.sourceEnabled) {
-            return {};
+    async getContext(): Promise<DrivenSourceContext> {
+        if (!this.sourceEnabled) return { messages: [], tools: {} };
+        const catalog = this.catalog;
+        try {
+            const skills = await catalog.listSkills();
+            return { messages: [], tools: this.createTools(skills),
+                executeTool: (name, args, id) => this.executeSkill(catalog, name, args, id) };
+        } catch (error) {
+            this.logger.error('Failed to capture skill context', error);
+            return { messages: [], tools: {} };
         }
+    }
 
-        const skills = await this.catalog.listSkills();
+    private createTools(skills: Awaited<ReturnType<SkillCatalogService['listSkills']>>): DrivenSourceContext['tools'] {
         const enabledSkills = skills.filter((skill) => !this.disabledSkills.has(skill.name));
         const description =
             enabledSkills.length === 0
@@ -71,7 +74,7 @@ export class SkillDrivenSource {
                     ...enabledSkills.map((skill) => `- ${skill.name}: ${skill.description}`),
                 ].join('\n');
 
-        const skillTool = dynamicTool({
+        const skillTool: DrivenSourceContext['tools'][string] = {
             description,
             inputSchema: jsonSchema({
                 type: 'object',
@@ -84,17 +87,15 @@ export class SkillDrivenSource {
                 },
                 required: ['name'],
             }),
-            execute: async (_args: unknown) => {
-                return 'Use AgentDriver executeTool routing for skill execution.';
-            },
-        });
+            type: 'dynamic',
+        };
 
         return {
             skill: skillTool,
         };
     }
 
-    async executeTool(toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> {
+    private async executeSkill(catalog: SkillCatalogService, toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined> {
         if (toolName !== 'skill') {
             return undefined;
         }
@@ -113,9 +114,9 @@ export class SkillDrivenSource {
             };
         }
 
-        const skill = await this.catalog.getSkill(requested);
+        const skill = await catalog.getSkill(requested);
         if (!skill) {
-            const available = (await this.catalog.listSkills()).map((x) => x.name).join(', ') || 'none';
+            const available = (await catalog.listSkills()).map((x) => x.name).join(', ') || 'none';
             this.triggerUpdate();
             return {
                 toolCallId,
