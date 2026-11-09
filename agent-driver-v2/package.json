@@ -1,49 +1,62 @@
 {
-    "name": "@aotui/agent-driver-v2",
-    "version": "0.2.2",
-    "description": "AOTUI Agent Driver V2 - Multi-source message aggregator for LLM",
-    "type": "module",
-    "main": "./dist/index.js",
-    "types": "./dist/index.d.ts",
-    "scripts": {
-        "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc",
-        "dev": "tsc --watch",
-        "test": "vitest",
-        "test:coverage": "vitest --coverage",
-        "prepublishOnly": "npm run build"
-    },
-    "dependencies": {
-        "@ai-sdk/anthropic": "^3.0.39",
-        "@ai-sdk/deepseek": "^1.0.4",
-        "@ai-sdk/google": "^3.0.22",
-        "@ai-sdk/openai": "^3.0.26",
-        "@ai-sdk/openai-compatible": "^2.0.28",
-        "@ai-sdk/xai": "^3.0.48",
-        "@openrouter/ai-sdk-provider": "^2.2.3",
-        "ai": "^6.0.77",
-        "zod-to-json-schema": "^3.25.1"
-    },
-    "devDependencies": {
-        "@types/node": "^20.0.0",
-        "typescript": "^5.3.0",
-        "vitest": "^3.2.4"
-    },
+  "name": "@aotui/agent-driver-v2",
+  "version": "0.3.0",
+  "description": "AOTUI Agent Driver V2 - Multi-source message aggregator for LLM",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.39",
+    "@ai-sdk/deepseek": "^1.0.4",
+    "@ai-sdk/google": "^3.0.22",
+    "@ai-sdk/openai": "^3.0.26",
+    "@ai-sdk/openai-compatible": "^2.0.28",
+    "@ai-sdk/xai": "^3.0.48",
+    "@openrouter/ai-sdk-provider": "^2.2.3",
+    "ai": "6.0.326",
+    "zod-to-json-schema": "^3.25.1",
+    "@ai-sdk/provider-utils": "4.0.65"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "7.0.2",
+    "vitest": "^3.2.4",
+    "zod": "3.25.76"
+  },
+  "overrides": {
+    "esbuild": "^0.25.11",
+    "rollup": "^4.60.1"
+  },
+  "pnpm": {
     "overrides": {
-        "esbuild": "^0.25.11",
-        "rollup": "^4.60.1"
+      "esbuild": "^0.25.11",
+      "rollup": "^4.60.1"
     },
-    "pnpm": {
-        "overrides": {
-            "esbuild": "^0.25.11",
-            "rollup": "^4.60.1"
-        }
-    },
-    "files": [
-        "dist"
-    ],
-    "keywords": ["aotui", "agent", "llm", "ai-sdk", "tool-call"],
-    "license": "Apache-2.0",
-    "publishConfig": {
-        "access": "public"
+    "patchedDependencies": {
+      "@ai-sdk/provider-utils@4.0.65": "patches/provider-utils-4.0.65.patch"
     }
+  },
+  "files": [
+    "dist",
+    "patches",
+    "STRICT_TYPES.md"
+  ],
+  "keywords": [
+    "aotui",
+    "agent",
+    "llm",
+    "ai-sdk",
+    "tool-call"
+  ],
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  }
 }

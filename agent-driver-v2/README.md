@@ -24,7 +24,7 @@
 │                                     │
 │  ┌───────────────────────────────┐ │
 │  │  Tools                        │ │
-│  │  - AOTUI Operations           │ │
+│  │  - AOTUI Tools                │ │
 │  │  - (Future: Other Tools)      │ │
 │  └───────────────────────────────┘ │
 │                                     │
@@ -40,62 +40,72 @@
 
 ## API
 
-### IDrivenSource 接口
-
-每个 DrivenSource 需要实现以下接口：
+### 唯一 getContext 接口
 
 ```typescript
-interface IDrivenSource {
+import type { ContextDrivenSource, DrivenSourceContext } from '@aotui/agent-driver-v2';
+
+interface Source extends ContextDrivenSource {
   readonly name: string;
-  getMessages(): Promise<MessageWithTimestamp[]>;
-  getTools(): Promise<Record<string, CoreTool>>;
-  executeTool(toolName: string, args: unknown, toolCallId: string): Promise<ToolResult | undefined>;
+  getContext(): Promise<DrivenSourceContext>;
   onUpdate(callback: () => void): () => void;
 }
+
+// DrivenSource 是 ContextDrivenSource 的同形别名。
+// DrivenSourceContext 返回：
+// messages: MessageWithTimestamp[]
+// tools: Record<string, Tool>
+// executeTool?: (name, args, toolCallId) => Promise<ToolResult | undefined>
+// release?: () => void | Promise<void>
 ```
+
+Driver 每轮按 Source 顺序调用一次 getContext，用返回的消息、工具和执行器组装本轮输入与路由。同名工具由后一个 Source 覆盖；getToolSource 保留该轮来源查询。执行器以 Context 作为 this 调用，不会回读 Source 的执行方法。Source 如需使用自身状态，应在捕获时建立相应闭包。
+
+模型返回后，Driver 串行派发工具，并在每次调用前检查 stop / Source 禁用状态。无执行器与执行器返回 undefined 仍有不同错误。LLMClient 向模型 SDK 传递的浅层工具定义会移除 execute；Schema、模型元数据和其他 SDK 回调保留，原工具不被修改。流式与非流式均采用这一边界。
+
+Context 的持有期覆盖模型等待和全部真实工具工作，finally 逆序 release；一个 release 失败仍继续清理其余 Context。无保留资源的 Source 无需空 release，无工具 Source 无需假执行器。getContext 抛错会中止当前轮，后续 Source 不再捕获，之前的 Context 仍释放。可选来源若要降级，应自行记录真实失败并返回完整空 Context，不能让 Driver 通用吞错。当前五个 Host 来源在自己的边界保持原降级策略；Runtime 状态捕获失败仍中止本轮。
+
+MCP 的 Context 固定原 Tool 执行函数及接收者，执行前复核当前 Source/工具/服务器控制。Host compaction 固定捕获的 topicId，切换后旧调用拒绝，不转投新 topic。Skill 固定捕获的 catalog 实例；IM 继续共享历史加载 Promise。工具结果不代表可自动重试，unknown / accepted 的既有提示保持。Host/IM 接入负责保存新结果后发出现有更新信号，最终 assistant 不自行触发下一轮。
 
 ### 实现位置
 
-- `IDrivenSource` 接口: `agent-driver-v2/src/core/interfaces.ts`
-- `AOTUIDrivenSource`: `runtime/src/adapters/aotui-driven-source.ts`
-- `HostDrivenSource`: `host/src/adapters/host-driven-source.ts`
+- 公共合同：agent-driver-v2/src/core/interfaces.ts
+- SemanticAOTUIDrivenSource：agent-driver-adapter/src/semantic-aotui-driven-source.ts
+- Host / SystemPrompt：host/src/adapters/
+- MCP / Skill / IM：host/src/mcp/、host/src/skills/、host/src/im/
 
 ## 使用示例
 
-### 基本用法
-
 ```typescript
-import { AgentDriverV2 } from '@aotui/agent-driver-v2';
-import { AOTUIDrivenSource } from '@aotui/runtime';
-import { HostDrivenSource } from './host';
+import { AgentDriverV2, type ContextDrivenSource } from '@aotui/agent-driver-v2';
+import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 
+// desktop、kernel 由宿主创建；会话消息与通知也由宿主管理。
+const conversation: ContextDrivenSource = {
+  name: 'conversation',
+  async getContext() {
+    return {
+      messages: [{ role: 'user', content: 'Inspect the current application.', timestamp: 1, region: 'session' }],
+      tools: {},
+    };
+  },
+  onUpdate() { return () => {}; },
+};
 const driver = new AgentDriverV2({
-  sources: [
-    new AOTUIDrivenSource(desktop, kernel),
-    new HostDrivenSource(messageRepo)
-  ],
-  llm: {
-    model: 'openai:gpt-4',  // 格式: "providerId:modelId"
-    apiKey: process.env.OPENAI_API_KEY,
-    temperature: 0.7,
-    maxSteps: 10
-  },
-  workLoop: {
-    debounceMs: 300,
-    toolCallTimeoutMs: 30000
-  },
-  onAssistantMessage: (message) => {
-    console.log('LLM response:', message);
-  },
-  onToolResult: (message) => {
-    console.log('Tool executed:', message);
-  }
+  sources: [new SemanticAOTUIDrivenSource(desktop, kernel), conversation],
+  llm: { model: 'openai:gpt-4', apiKey: process.env.OPENAI_API_KEY },
+  onAssistantMessage: message => console.log(message),
+  onToolResult: message => console.log(message),
 });
-
-// 运行工作循环（自动触发，当有更新信号时）
-// 或手动触发
 await driver.trigger();
+// 宿主结束会话时停止调度、等待其实际工作并 dispose 订阅。
 ```
+
+### 从 split API 迁移
+
+IDrivenSource 及其导出已经退出。把原 getMessages/getTools 读取合并为 getContext，在这一捕获中确定执行目标，并返回该轮 executeTool；删除 Source 的旧公共 getMessages/getTools/executeTool，不保留兼容包装。不要把返回的执行器重新指向下一轮可变缓存。只返回消息或工具的旧对象不再满足 Source 类型。
+
+保留现有消息格式、timestamp/region、tool-call/result 读取及 compaction 行为；本次不迁移历史消息格式。需要降级的来源在自身捕获边界一次处理全部消息和工具，失败时不能返回半份状态；下一次显式捕获可重试。更新用已有 onUpdate 通知，不能为迁移新增自动业务重试。
 
 ### LLM 配置格式
 
@@ -198,7 +208,7 @@ const hostManager = new HostManagerV2(topicId, modelRegistry);
 
 // LLMConfigService 会自动从 ModelRegistry 获取配置
 // 并转换为完整的 LLMConfig
-hostManager.initAgentDriver(desktop, kernel);
+await hostManager.initAgentDriver(desktop, kernel, desktopManager);
 ```
 
 ## 环境变量
@@ -215,9 +225,13 @@ AgentDriverV2 支持从环境变量自动读取 API Key：
 ## 下一步
 
 - [x] 实现完整的 LLM ReAct 循环 (streamText)
-- [x] 添加 ToolCall 超时机制
+- [ ] ToolCall 超时配置尚无实际执行机制，本轮未实现
 - [x] 添加单元测试
-- [x] 实现 AOTUIDrivenSource (在 runtime 中)
+- [x] 实现 SemanticAOTUIDrivenSource (在 runtime 中)
 - [x] 实现 HostDrivenSource (在 host 中)
 - [x] 移除 ModelRegistry 依赖（迁移到 Host 主进程）
 
+
+## AOTUI Runtime integration
+
+Hosts connecting this Driver to AOTUI Runtime use the separate `@aotui/agent-driver-adapter` package. It provides `SemanticAOTUIDrivenSource` and requires matching Runtime and Driver peers. The Driver itself does not depend on Runtime. The SRT-06 candidate package versions are unpublished; see the adapter README for the exact pairing.

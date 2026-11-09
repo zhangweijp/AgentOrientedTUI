@@ -2,7 +2,7 @@
  * @aotui/agent-driver-v2 - Core Interfaces
  * 
  * 定义 Agent Driver V2 的核心接口：
- * - IDrivenSource: 数据驱动源接口
+ * - ContextDrivenSource: 本轮上下文驱动源接口
  * - MessageWithTimestamp: 带时间戳的消息
  * - ToolResult: 工具执行结果
  * - AgentDriverV2Config: 配置接口
@@ -56,7 +56,7 @@ export interface ToolResult {
     toolName: string;
     /** Internal execution classification for metrics; never a model-facing result envelope. */
     outcomeStatus?: ToolOutcomeStatus;
-    /** Public operation data or recovery details. Core receipts belong to the source. */
+    /** Tool output or recovery details. Core receipts belong to the source. */
     result?: unknown;
     /** 受控错误信息；配合 outcomeStatus 区分拒绝、失败和未知。 */
     error?: {
@@ -69,6 +69,8 @@ export interface ToolResult {
 export interface DrivenSourceContext {
     messages: MessageWithTimestamp[];
     tools: Record<string, Tool>;
+    /** Adopt this prepared context for a model turn; diagnostic reads do not call it. */
+    adopt?: () => void | Promise<void>;
     /** Uses the bindings captured with this context, rather than a later source read. */
     executeTool?: (
         toolName: string,
@@ -80,99 +82,17 @@ export interface DrivenSourceContext {
 }
 
 /**
- * IDrivenSource - 数据驱动源接口
- * 
- * 每个 Driven Source 代表一个独立的数据源，负责：
- * 1. 提供消息（已去重，带时间戳）
- * 2. 提供工具定义
- * 3. 执行自己暴露的工具
- * 4. 通知更新事件
- * 
- * 设计原则:
- * - **单一职责**: 每个 DrivenSource 只负责自己的数据和工具
- * - **依赖反转**: AgentDriver 依赖接口，不依赖具体实现
- * - **职责下放**: 消息去重由 DrivenSource 负责，ToolCall 执行由 DrivenSource 负责
- * 
- * **实现位置**:
- * - `IDrivenSource` 接口: agent-driver-v2/src/core/interfaces.ts (本文件)
- * - `AOTUIDrivenSource`: runtime/src/adapters/aotui-driven-source.ts
- * - `HostDrivenSource`: host/src/adapters/host-driven-source.ts
- */
-export interface IDrivenSource {
-    /**
-     * 数据源名称 (用于日志和调试)
-     */
-    readonly name: string;
-
-    /**
-     * Atomically capture a model turn. If supplied, Driver does not separately
-     * call getMessages/getTools for that turn, nor fall back after capture fails.
-     */
-    getContext?(): Promise<DrivenSourceContext>;
-
-    /**
-     * 获取该源的所有消息
-     * 
-     * **责任**: DrivenSource 自己保证消息已去重
-     * - AOTUI: 每个 App 只保留最新 Snapshot
-     * - Host: 不重复
-     * 
-     * @returns 消息列表 (带时间戳，用于 AgentDriver 排序)
-     */
-    getMessages(): Promise<MessageWithTimestamp[]>;
-
-    /**
-     * 获取该源提供的工具
-     * 
-     * @returns 工具定义对象 { toolName: Tool }
-     */
-    getTools(): Promise<Record<string, Tool>>;
-
-    /**
-     * 执行工具调用
-     * 
-     * **责任**: 由暴露 Tool 的 DrivenSource 负责执行
-     * - 如果 toolName 不属于该 source，返回 undefined
-     * - AgentDriver 会遍历所有 sources，找到能执行的那个
-     * 
-     * @param toolName - 工具名称
-     * @param args - 工具参数
-     * @param toolCallId - ToolCall ID (用于构建 ToolResult)
-     * @returns ToolResult 或 undefined (如果工具不属于该 source)
-     */
-    executeTool(
-        toolName: string,
-        args: unknown,
-        toolCallId: string
-    ): Promise<ToolResult | undefined>;
-
-    /**
-     * 订阅更新事件
-     * 
-     * 当数据源有更新时（如 TUI App 更新、用户发送消息），
-     * 触发回调函数，通知 AgentDriver 重新聚合数据。
-     * 
-     * @param callback - 更新回调函数
-     * @returns unsubscribe 函数，用于取消订阅
-     */
-    onUpdate(callback: () => void): () => void;
-}
-
-/**
  * Atomic source contract. A model turn owns one captured set of messages, tools,
  * and tool bindings, so callers do not need to implement split-read methods.
  */
 export interface ContextDrivenSource {
     readonly name: string;
     getContext(): Promise<DrivenSourceContext>;
-    getMessages?: never;
-    getTools?: never;
-    executeTool?: never;
     onUpdate(callback: () => void): () => void;
 }
 
-/** A Driver can combine atomic Context sources with existing split-read sources. */
-export type DrivenSource = IDrivenSource | ContextDrivenSource;
+/** One captured context per source and model turn. */
+export type DrivenSource = ContextDrivenSource;
 
 /**
  * AgentDriverV2Config - 配置接口

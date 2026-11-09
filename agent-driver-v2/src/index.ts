@@ -8,7 +8,6 @@ export { createLanguageModel } from './core/provider-factory.js';
 export { jsonSchema } from 'ai';
 export type { Tool } from 'ai';
 export type {
-    IDrivenSource,
     ContextDrivenSource,
     DrivenSource,
     DrivenSourceContext,
