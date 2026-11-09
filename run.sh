@@ -9,6 +9,7 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$REPO_ROOT"
 DEMO_APP_DIRS=(
     "demo-apps/aotui-ide"
+    "demo-apps/planning-app"
     "demo-apps/terminal-app"
     "demo-apps/lite-browser-app"
 )
@@ -28,6 +29,9 @@ force_local_package_link() {
     mkdir -p "$scope_dir"
     rm -rf "$scope_dir/$package_name"
     ln -sfn "$source_path" "$scope_dir/$package_name"
+    if [ "$package_name" = "sdk" ]; then
+        node "$REPO_ROOT/scripts/link-local-preact.mjs" "$REPO_ROOT/$target"
+    fi
 }
 
 link_local_core_deps() {
@@ -42,12 +46,20 @@ link_local_core_deps() {
 
     case "$target_name" in
         "runtime")
+            local old_driver_link="$REPO_ROOT/$target/node_modules/@aotui/agent-driver-v2"
+            if [ -L "$old_driver_link" ] && [ "$(readlink "$old_driver_link")" = "$REPO_ROOT/agent-driver-v2" ]; then
+                rm "$old_driver_link"
+            fi
+            ;;
+        "agent-driver-adapter")
+            force_local_package_link "$target" "runtime" "runtime"
             force_local_package_link "$target" "agent-driver-v2" "agent-driver-v2"
             ;;
         "sdk")
             force_local_package_link "$target" "runtime" "runtime"
             ;;
         "host")
+            force_local_package_link "$target" "agent-driver-adapter" "agent-driver-adapter"
             force_local_package_link "$target" "agent-driver-v2" "agent-driver-v2"
             force_local_package_link "$target" "runtime" "runtime"
             force_local_package_link "$target" "sdk" "sdk"
@@ -63,7 +75,7 @@ link_local_core_deps() {
 }
 
 # Check if setup has been run
-if [ ! -d "node_modules" ]; then
+if [ ! -d "node_modules" ] || [ ! -d "agent-driver-adapter/node_modules" ]; then
     echo "⚠️  Dependencies not installed!"
     echo "🔧 Running setup first..."
     echo ""
@@ -78,6 +90,7 @@ echo "----------------------------------------------"
 link_targets=(
     "runtime"
     "sdk"
+    "agent-driver-adapter"
     "host"
     "${DEMO_APP_DIRS[@]}"
 )
@@ -95,6 +108,9 @@ pnpm -C runtime build
 
 echo "📦 Building SDK..."
 pnpm -C sdk build
+
+echo "📦 Building Agent Driver adapter..."
+pnpm -C agent-driver-adapter build
 
 # Build apps
 apps=("${DEMO_APP_DIRS[@]}")

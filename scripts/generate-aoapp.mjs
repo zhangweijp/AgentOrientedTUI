@@ -1,3 +1,4 @@
+import { isTUIAppFactory, hasViewTypeToolAuthoringProtocol, captureAppMetadata } from '@aotui/runtime/spi';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -10,57 +11,37 @@ async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, 'utf-8'));
 }
 
-async function loadBuiltModule(appDir) {
-  const entryPath = path.join(appDir, 'dist', 'index.js');
+async function loadBuiltModule(appDir, main) {
+  const entryPath = path.resolve(appDir, main);
   return import(`${pathToFileURL(entryPath).href}?t=${Date.now()}`);
 }
 
-function resolveCanonicalAppName(factory) {
-  if (typeof factory !== 'object' || factory === null || Array.isArray(factory)) {
-    throw new Error('Built app must export the createTUIApp component factory');
-  }
-
-  const factoryFields = Object.getOwnPropertyDescriptors(factory);
-  const displayName = factoryFields.displayName;
-  const kernelConfig = factoryFields.kernelConfig;
-  const initializeComponent = factoryFields.initializeComponent;
-  if (!displayName || !('value' in displayName) || typeof displayName.value !== 'string' || displayName.value.length === 0 ||
-      !kernelConfig || !('value' in kernelConfig) || typeof kernelConfig.value !== 'object' ||
-      kernelConfig.value === null || Array.isArray(kernelConfig.value) ||
-      !initializeComponent || !('value' in initializeComponent) || typeof initializeComponent.value !== 'function') {
-    throw new Error('Built app must export the createTUIApp component factory');
-  }
-
-  const appNameField = Object.getOwnPropertyDescriptor(kernelConfig.value, 'appName');
-  const appName = appNameField && 'value' in appNameField ? appNameField.value : undefined;
-
-  if (!isNonEmptyString(appName)) {
-    throw new Error('Unable to resolve app_name from built app metadata');
-  }
-
-  return appName;
-}
-
 export async function buildAoappManifest(appDir) {
-  const [pkg, moduleNamespace] = await Promise.all([
-    readJson(path.join(appDir, 'package.json')),
-    loadBuiltModule(appDir),
-  ]);
+  const pkg = await readJson(path.join(appDir, 'package.json'));
+  const main = pkg.main ?? './dist/index.js';
+  if (!isNonEmptyString(main)) throw Object.assign(new TypeError('package.json main must name the built App entry'), { code: 'APP_MANIFEST_INVALID' });
+  const moduleNamespace = await loadBuiltModule(appDir, main);
 
   const factory = moduleNamespace.default;
-  const appName = resolveCanonicalAppName(factory);
-  const kernelConfig = factory?.kernelConfig ?? {};
+  if (!isTUIAppFactory(factory)) throw Object.assign(new TypeError('Built app must export the createTUIApp component factory'), { code: 'APP_INVALID_EXPORT' });
+  if (!hasViewTypeToolAuthoringProtocol(factory)) throw Object.assign(new TypeError('Build with the matching SDK authoring contract'), { code: 'APP_AUTHORING_PROTOCOL_UNSUPPORTED' });
+  const kernelConfig = factory.kernelConfig;
+  const metadata = captureAppMetadata({ app_name: kernelConfig.appName,
+    ...((kernelConfig.description ?? pkg.description) === undefined ? {} : { description: kernelConfig.description ?? pkg.description }),
+    ...(kernelConfig.whatItIs === undefined ? {} : { whatItIs: kernelConfig.whatItIs }),
+    ...(kernelConfig.whenToUse === undefined ? {} : { whenToUse: kernelConfig.whenToUse }),
+  });
 
   const result = {
-    app_name: appName,
+    ...metadata,
+    toolAuthoringProtocol: Object.getOwnPropertyDescriptor(factory, 'toolAuthoringProtocol')?.value,
+    persistenceSupport: Object.getOwnPropertyDescriptor(factory, 'persistenceSupport')?.value,
+    appLifecycleSupport: Object.getOwnPropertyDescriptor(factory, 'appLifecycleSupport')?.value,
     version: pkg.version ?? '0.1.0',
-    description: kernelConfig.description ?? pkg.description,
-    whatItIs: kernelConfig.whatItIs,
-    whenToUse: kernelConfig.whenToUse,
     author: pkg.author,
     license: pkg.license,
     entry: {
-      main: pkg.main ?? './dist/index.js',
+      main,
       types: pkg.types,
     },
   };

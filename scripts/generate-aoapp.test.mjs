@@ -6,7 +6,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 
 import { buildAoappManifest, writeAoappManifest } from './generate-aoapp.mjs';
 
-test('buildAoappManifest derives aoapp.json from the built app metadata', async () => {
+test('buildAoappManifest derives aoapp.json from the configured built entry and its metadata', async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
 
   try {
@@ -19,7 +19,7 @@ test('buildAoappManifest derives aoapp.json from the built app metadata', async 
           name: '@agentina/system-ide',
           version: '1.2.3',
           description: 'IDE app',
-          main: './dist/index.js',
+          main: './dist/custom.js',
           types: './dist/index.d.ts',
         },
         null,
@@ -28,9 +28,10 @@ test('buildAoappManifest derives aoapp.json from the built app metadata', async 
     );
 
     await writeFile(
-      path.join(tempDir, 'dist/index.js'),
+      path.join(tempDir, 'dist/custom.js'),
       `
       export default {
+        toolAuthoringProtocol: 'view-type-tools-v4',
         displayName: 'system_ide',
         persistenceSupport: 'state-session-v1',
         appLifecycleSupport: 'app-lifecycle-v2',
@@ -51,7 +52,7 @@ test('buildAoappManifest derives aoapp.json from the built app metadata', async 
     assert.equal(manifest.version, '1.2.3');
     assert.equal(manifest.description, 'IDE app');
     assert.deepEqual(manifest.entry, {
-      main: './dist/index.js',
+      main: './dist/custom.js',
       types: './dist/index.d.ts',
     });
     assert.equal('name' in manifest, false);
@@ -91,7 +92,7 @@ test('buildAoappManifest rejects a kernelConfig-shaped non-factory export', asyn
     await writeFile(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'incomplete-app' }));
     await writeFile(
       path.join(tempDir, 'dist/index.js'),
-      `export default { displayName: 'incomplete_app', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', kernelConfig: { appName: 'incomplete_app' } };`,
+      `export default { displayName: 'incomplete_app', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'incomplete_app' } };`,
     );
 
     await assert.rejects(buildAoappManifest(tempDir), /createTUIApp component factory/);
@@ -102,8 +103,8 @@ test('buildAoappManifest rejects a kernelConfig-shaped non-factory export', asyn
 
 test('buildAoappManifest rejects named and nested factories instead of resolving a fallback export', async () => {
   for (const source of [
-      `const f = { displayName: 'named_app', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', kernelConfig: { appName: 'named_app' }, initializeComponent() {} }; export const factory = f;`,
-    `export default { factory: { displayName: 'nested_app', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', kernelConfig: { appName: 'nested_app' }, initializeComponent() {} } };`,
+      `const f = { displayName: 'named_app', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'named_app' }, initializeComponent() {} }; export const factory = f;`,
+    `export default { factory: { displayName: 'nested_app', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'nested_app' }, initializeComponent() {} } };`,
   ]) {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
 
@@ -122,7 +123,7 @@ test('buildAoappManifest rejects named and nested factories instead of resolving
 test('buildAoappManifest requires a nonempty displayName and appName on the default factory', async () => {
   for (const [displayName, appName, expectedError] of [
     ['', 'missing_display', /createTUIApp component factory/],
-    ['missing_app', '', /app_name/],
+    ['missing_app', '', /createTUIApp component factory/],
   ]) {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
 
@@ -130,7 +131,7 @@ test('buildAoappManifest requires a nonempty displayName and appName on the defa
       await mkdir(path.join(tempDir, 'dist'), { recursive: true });
       await writeFile(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'invalid-metadata' }));
       await writeFile(path.join(tempDir, 'dist/index.js'),
-      `export default { displayName: ${JSON.stringify(displayName)}, persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', kernelConfig: { appName: ${JSON.stringify(appName)} }, initializeComponent() {} };`);
+      `export default { displayName: ${JSON.stringify(displayName)}, persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: ${JSON.stringify(appName)} }, initializeComponent() {} };`);
 
       await assert.rejects(buildAoappManifest(tempDir), expectedError);
     } finally {

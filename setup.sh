@@ -8,6 +8,7 @@ set -e  # Exit on error
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 DEMO_APP_DIRS=(
     "demo-apps/aotui-ide"
+    "demo-apps/planning-app"
     "demo-apps/terminal-app"
     "demo-apps/lite-browser-app"
 )
@@ -41,6 +42,9 @@ force_local_package_link() {
     mkdir -p "$scope_dir"
     rm -rf "$scope_dir/$package_name"
     ln -sfn "$source_path" "$scope_dir/$package_name"
+    if [ "$package_name" = "sdk" ]; then
+        node "$REPO_ROOT/scripts/link-local-preact.mjs" "$REPO_ROOT/$target"
+    fi
 }
 
 link_local_core_deps() {
@@ -55,12 +59,20 @@ link_local_core_deps() {
 
     case "$target_name" in
         "runtime")
+            local old_driver_link="$REPO_ROOT/$target/node_modules/@aotui/agent-driver-v2"
+            if [ -L "$old_driver_link" ] && [ "$(readlink "$old_driver_link")" = "$REPO_ROOT/agent-driver-v2" ]; then
+                rm "$old_driver_link"
+            fi
+            ;;
+        "agent-driver-adapter")
+            force_local_package_link "$target" "runtime" "runtime"
             force_local_package_link "$target" "agent-driver-v2" "agent-driver-v2"
             ;;
         "sdk")
             force_local_package_link "$target" "runtime" "runtime"
             ;;
         "host")
+            force_local_package_link "$target" "agent-driver-adapter" "agent-driver-adapter"
             force_local_package_link "$target" "agent-driver-v2" "agent-driver-v2"
             force_local_package_link "$target" "runtime" "runtime"
             force_local_package_link "$target" "sdk" "sdk"
@@ -93,6 +105,20 @@ install_electron_binary() {
     ELECTRON_MIRROR="$default_mirror" node "$install_script"
 }
 
+registered_app_name_from_link_output() {
+    local link_output="$1"
+    local registered_app_name
+    registered_app_name="$(printf '%s\n' "$link_output" | sed -n "s/.*App '\([^']*\)' is already registered.*/\1/p" | head -n 1)"
+    [ -n "$registered_app_name" ] || return 1
+    printf '%s\n' "$registered_app_name"
+}
+
+link_output_is_app_already_registered() {
+    local link_output="$1"
+    [[ "$link_output" == *APP_ALREADY_REGISTERED* ]] || \
+        printf '%s\n' "$link_output" | grep -Eq "App '[^']+' is already registered"
+}
+
 # Install root dependencies
 echo "📦 Installing root dependencies..."
 pnpm install --ignore-workspace
@@ -102,6 +128,7 @@ install_targets=(
     "agent-driver-v2"
     "runtime"
     "sdk"
+    "agent-driver-adapter"
     "host"
     "${DEMO_APP_DIRS[@]}"
 )
@@ -115,7 +142,7 @@ for target in "${install_targets[@]}"; do
         link_local_core_deps "$target"
 
         # Build local packages immediately so downstream file: dependencies can resolve dist/types
-        if [ "$target" = "agent-driver-v2" ] || [ "$target" = "runtime" ] || [ "$target" = "sdk" ]; then
+        if [ "$target" = "agent-driver-v2" ] || [ "$target" = "runtime" ] || [ "$target" = "sdk" ] || [ "$target" = "agent-driver-adapter" ]; then
             echo "🔨 Pre-building $target for local file: dependency consumers..."
             pnpm -C "$target" build
         fi
@@ -134,7 +161,7 @@ echo ""
 echo "✅ All dependencies installed successfully!"
 echo ""
 
-# Build order: agent-driver-v2 -> runtime -> sdk -> host -> apps
+# Build order: agent-driver-v2 -> runtime -> sdk -> agent-driver-adapter -> host -> apps
 echo "🔨 Building packages in correct order..."
 echo "----------------------------------------------"
 
@@ -146,6 +173,9 @@ pnpm -C runtime build
 
 echo "📦 Building SDK..."
 pnpm -C sdk build
+
+echo "📦 Building Agent Driver adapter..."
+pnpm -C agent-driver-adapter build
 
 echo "📦 Building host..."
 pnpm -C host build
@@ -200,9 +230,8 @@ for app in "${apps[@]}"; do
 
             # Link current app directory to agentina (idempotent on reruns)
             if ! link_output=$(agentina link . 2>&1); then
-                if echo "$link_output" | grep -q "already registered"; then
-                    registered_app_name=$(echo "$link_output" | sed -n "s/.*Operation '\(.*\)' is already registered.*/\1/p")
-                    if [ -n "$registered_app_name" ]; then
+                if link_output_is_app_already_registered "$link_output"; then
+                    if registered_app_name=$(registered_app_name_from_link_output "$link_output"); then
                         echo "ℹ️  App '$registered_app_name' is already registered, replacing link..."
                         agentina remove "$registered_app_name"
                         agentina link .
