@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { captureInvocationJson, captureInvocationTerminal, captureWorkerCapabilities, exact, invocationObject, text } from './worker-message-capture.js';
+import { captureInvocationJson, captureInvocationTerminal, captureViewToolCapabilities, captureWorkerCapabilities, exact, invocationObject, text } from './worker-message-capture.js';
 
 describe('bounded Worker message capture', () => {
     it('captures detached frozen JSON without invoking accessors and enforces the canonical byte ceiling', () => {
@@ -18,13 +18,13 @@ describe('bounded Worker message capture', () => {
     it('accepts only an exact, identity-correlated bounded invocation terminal', () => {
         const expected = { requestId: 'r', appId: 'a', instanceId: 'i' };
         const response = {
-            type: 'VIEW_TOOL_INVOKE_ORDINARY_V2_RESPONSE', requestId: 'r', appId: 'a', instanceId: 'i',
-            argumentMode: 'ordinary-v2', success: true,
+            type: 'VIEW_TOOL_INVOKE_V4_RESPONSE', requestId: 'r', appId: 'a', instanceId: 'i',
+            argumentMode: 'view-type-parameters-v1', success: true,
             terminal: { phase: 'entered-returned', result: { success: true, data: {} } },
         };
-        expect(captureInvocationTerminal(response, expected, response.type, 'ordinary-v2')).toEqual(response.terminal);
-        expect(captureInvocationTerminal({ ...response, requestId: 'other' }, expected, response.type, 'ordinary-v2')).toBeNull();
-        expect(captureInvocationTerminal({ ...response, extra: true }, expected, response.type, 'ordinary-v2')).toBeNull();
+        expect(captureInvocationTerminal(response, expected, response.type, 'view-type-parameters-v1')).toEqual(response.terminal);
+        expect(captureInvocationTerminal({ ...response, requestId: 'other' }, expected, response.type, 'view-type-parameters-v1')).toBeNull();
+        expect(captureInvocationTerminal({ ...response, extra: true }, expected, response.type, 'view-type-parameters-v1')).toBeNull();
         expect(invocationObject(response)).toBe(true);
         expect(exact(response, ['type', 'requestId', 'appId', 'instanceId', 'argumentMode', 'success', 'terminal'])).toBe(true);
         expect(text('x')).toBe(true);
@@ -33,12 +33,33 @@ describe('bounded Worker message capture', () => {
 
     it('bounds the negotiated capability list and rejects duplicates and accessors', () => {
         expect(captureWorkerCapabilities(undefined)).toEqual([]);
-        expect(captureWorkerCapabilities(['ordinary-v2', 'snapshot-value-v2'])).toEqual(['ordinary-v2', 'snapshot-value-v2']);
-        expect(captureWorkerCapabilities(['ordinary-v2', 'ordinary-v2'])).toBeNull();
-        expect(captureWorkerCapabilities(['ordinary-v2', 'snapshot-value-v2', 'future'])).toBeNull();
+        expect(captureWorkerCapabilities(['view-tool-ordinary-invoke/v3', 'view-tool-ref-invoke/v3']))
+            .toEqual(['view-tool-ordinary-invoke/v3', 'view-tool-ref-invoke/v3']);
+        expect(captureWorkerCapabilities(['view-tool-ordinary-invoke/v3', 'view-tool-ordinary-invoke/v3'])).toBeNull();
+        expect(captureWorkerCapabilities(['view-tool-ordinary-invoke/v3', 'view-tool-ref-invoke/v3', 'future'])).toBeNull();
         let reads = 0;
-        const accessor = Object.defineProperty([], '0', { enumerable: true, get() { reads++; return 'ordinary-v2'; } });
+        const accessor = Object.defineProperty([], '0', { enumerable: true, get() { reads++; return 'view-tool-ordinary-invoke/v3'; } });
         expect(captureWorkerCapabilities(accessor)).toBeNull();
+        expect(reads).toBe(0);
+    });
+
+    it('accepts empty and qualified V4 sets but explicitly rejects legacy and unknown Worker protocols', () => {
+        expect(captureViewToolCapabilities([])).toEqual({ ok: true, capabilities: [] });
+        expect(captureViewToolCapabilities(['view-tool-parameters-invoke/v4'])).toEqual({
+            ok: true, capabilities: ['view-tool-parameters-invoke/v4'],
+        });
+        for (const capability of ['view-tool-ordinary-invoke/v3', 'view-tool-ref-invoke/v3'])
+            expect(captureViewToolCapabilities([capability])).toEqual({ ok: false, code: 'WORKER_CAPABILITY_UNSUPPORTED' });
+        expect(captureViewToolCapabilities(['view-tool-ordinary-invoke/v2'])).toEqual({
+            ok: false, code: 'WORKER_PROTOCOL_V3_REQUIRED',
+        });
+        expect(captureViewToolCapabilities(['future/v9'])).toEqual({ ok: false, code: 'WORKER_CAPABILITY_UNSUPPORTED' });
+        expect(captureViewToolCapabilities(['view-tool-ordinary-invoke/v3', 'view-tool-ordinary-invoke/v3']))
+            .toEqual({ ok: false, code: 'WORKER_CAPABILITY_INVALID' });
+        expect(captureViewToolCapabilities({})).toEqual({ ok: false, code: 'WORKER_CAPABILITY_INVALID' });
+        let reads = 0;
+        const accessor = Object.defineProperty([], '0', { enumerable: true, get() { reads++; return 'view-tool-ordinary-invoke/v3'; } });
+        expect(captureViewToolCapabilities(accessor)).toEqual({ ok: false, code: 'WORKER_CAPABILITY_INVALID' });
         expect(reads).toBe(0);
     });
 });

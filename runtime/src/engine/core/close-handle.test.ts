@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { RuntimeCloseReport } from '../../spi/runtime/close.interface.js';
-import { closeTimeout, closeVoid, createCloseOperation, sandboxCloseReport, newCloseState, mergeCloseReport, addCloseFailure, snapshotClose, displayCloseId } from './close-operation.js';
+import { closeTimeout, closeVoid, createCloseHandle, sandboxCloseReport, newCloseState, mergeCloseReport, addCloseFailure, snapshotClose, displayCloseId } from './close-handle.js';
 import { createMemoryStateStorage } from '../../adapters/storage/memory-state-storage.js';
 import { createAppStatePersistence } from '../../worker-runtime/state-persistence.js';
 import { failedMutation, unknownMutation } from '../../core/persistence/state-storage.js';
@@ -10,7 +10,7 @@ function fixture() {
     const report: RuntimeCloseReport = {
         scope: 'runtime', state: 'closing', intent: 'close', ok: false, hasFailures: false, resourcesReleased: false, verification: 'managed',
         apps: { accepted: 0, settled: 0, pending: 0, notVerifiedReleased: 0 }, desktops: { accepted: 0, settled: 0, pending: 0, notVerifiedReleased: 0 },
-        pendingOperations: 0, unverifiedParticipants: 0,
+        pendingTasks: 0, unverifiedParticipants: 0,
         persistence: { managedApps: 0, unnegotiatedApps: 0, notUsedApps: 0, closeReceipts: 0, missingCloseReceipts: 0, confirmedFlushes: 0, failedFlushes: 0, absentFlushes: 0, unknownApps: 0, unsavedKeys: 0 },
         resources: { retainedStorageOwners: 0, storageActualIO: 0, openingStorageOwners: 0 },
         pool: { ownership: 'not-owned', report: null }, beforeClose: 'not-provided',
@@ -18,42 +18,42 @@ function fixture() {
         failures: [], failureCount: 0, samplesTruncated: false,
     };
     const completion = new Promise<RuntimeCloseReport>(resolve => { finish = resolve; });
-    const operation = createCloseOperation(() => report, completion);
+    const handle = createCloseHandle(() => report, completion);
     const settled = (extra = {}) => ({ ...report, state: 'settled' as const, ok: true, resourcesReleased: true, ...extra });
-    return { report, operation, finish: (extra = {}) => finish(settled(extra)) };
+    return { report, handle, finish: (extra = {}) => finish(settled(extra)) };
 }
 afterEach(() => { vi.useRealTimers();vi.restoreAllMocks(); });
-it('C2-01/03 independent frozen snapshots and deadlines never settle the actual operation', async () => {
-    vi.useFakeTimers();const f = fixture(), before = f.operation.inspect();
-    expect(Object.isFrozen(f.operation)).toBe(true);expect(Object.isFrozen(before.resources)).toBe(true);expect(f.operation.inspect()).not.toBe(before);
-    const deadline = f.operation.wait({ timeoutMs: 1 });await vi.advanceTimersByTimeAsync(1);expect(await deadline).toMatchObject({ status: 'deadline', report: { state: 'closing', resourcesReleased: false } });
-    expect(vi.getTimerCount()).toBe(0);const second = f.operation.wait({ timeoutMs: 300000 });f.finish();expect((await second).status).toBe('settled');
-    expect(await f.operation.completion).toMatchObject({ state: 'settled', ok: true });expect(before.state).toBe('closing');expect(before.resourcesReleased).toBe(false);expect(vi.getTimerCount()).toBe(0);
+it('C2-01/03 independent frozen snapshots and deadlines never settle the actual handle', async () => {
+    vi.useFakeTimers();const f = fixture(), before = f.handle.inspect();
+    expect(Object.isFrozen(f.handle)).toBe(true);expect(Object.isFrozen(before.resources)).toBe(true);expect(f.handle.inspect()).not.toBe(before);
+    const deadline = f.handle.wait({ timeoutMs: 1 });await vi.advanceTimersByTimeAsync(1);expect(await deadline).toMatchObject({ status: 'deadline', report: { state: 'closing', resourcesReleased: false } });
+    expect(vi.getTimerCount()).toBe(0);const second = f.handle.wait({ timeoutMs: 300000 });f.finish();expect((await second).status).toBe('settled');
+    expect(await f.handle.completion).toMatchObject({ state: 'settled', ok: true });expect(before.state).toBe('closing');expect(before.resourcesReleased).toBe(false);expect(vi.getTimerCount()).toBe(0);
 });
 it('C2-02 invalid options are rejected before timers and the seventeenth observer cannot allocate', async () => {
     vi.useFakeTimers();const f = fixture();expect(closeTimeout()).toBe(30000);
-    for (const timeoutMs of [0, -1, NaN, Infinity, 0.5, 300001, Number.MAX_SAFE_INTEGER, null, '1']) await expect(f.operation.wait({ timeoutMs } as any)).rejects.toHaveProperty('code', 'CLOSE_OPTIONS_INVALID');
-    await expect(f.operation.wait(Object.defineProperty({}, 'timeoutMs', { get() { throw Error('private getter'); } }))).rejects.toMatchObject({ code: 'CLOSE_OPTIONS_INVALID', message: 'CLOSE_OPTIONS_INVALID' });
-    expect(vi.getTimerCount()).toBe(0);const waits = Array.from({ length: 16 }, () => f.operation.wait());expect(vi.getTimerCount()).toBe(16);
-    await expect(f.operation.wait()).rejects.toHaveProperty('code', 'CLOSE_OBSERVER_LIMIT');expect(vi.getTimerCount()).toBe(16);f.finish();await Promise.all(waits);expect(vi.getTimerCount()).toBe(0);
-    for (let i = 0; i < 20; i++) expect((await f.operation.wait({ timeoutMs: 1 })).status).toBe('settled');expect(vi.getTimerCount()).toBe(0);
+    for (const timeoutMs of [0, -1, NaN, Infinity, 0.5, 300001, Number.MAX_SAFE_INTEGER, null, '1']) await expect(f.handle.wait({ timeoutMs } as any)).rejects.toHaveProperty('code', 'CLOSE_OPTIONS_INVALID');
+    await expect(f.handle.wait(Object.defineProperty({}, 'timeoutMs', { get() { throw Error('private getter'); } }))).rejects.toMatchObject({ code: 'CLOSE_OPTIONS_INVALID', message: 'CLOSE_OPTIONS_INVALID' });
+    expect(vi.getTimerCount()).toBe(0);const waits = Array.from({ length: 16 }, () => f.handle.wait());expect(vi.getTimerCount()).toBe(16);
+    await expect(f.handle.wait()).rejects.toHaveProperty('code', 'CLOSE_OBSERVER_LIMIT');expect(vi.getTimerCount()).toBe(16);f.finish();await Promise.all(waits);expect(vi.getTimerCount()).toBe(0);
+    for (let i = 0; i < 20; i++) expect((await f.handle.wait({ timeoutMs: 1 })).status).toBe('settled');expect(vi.getTimerCount()).toBe(0);
 });
 it('C2-02 repeated expired observers do not attach unbounded completion callbacks', async () => {
-    vi.useFakeTimers();const f = fixture(), then = vi.spyOn(f.operation.completion, 'then');
-    for (let i = 0; i < 100; i++) { const wait = f.operation.wait({ timeoutMs: 1 });await vi.advanceTimersByTimeAsync(1);expect((await wait).status).toBe('deadline'); }
-    expect(then).not.toHaveBeenCalled();expect(vi.getTimerCount()).toBe(0);f.finish();await f.operation.completion;
+    vi.useFakeTimers();const f = fixture(), then = vi.spyOn(f.handle.completion, 'then');
+    for (let i = 0; i < 100; i++) { const wait = f.handle.wait({ timeoutMs: 1 });await vi.advanceTimersByTimeAsync(1);expect((await wait).status).toBe('deadline'); }
+    expect(then).not.toHaveBeenCalled();expect(vi.getTimerCount()).toBe(0);f.finish();await f.handle.completion;
 });
 it('labels a rejected close completion without the retired legacy name', async () => {
     const failure = Error('private completion failure');
-    const operation = createCloseOperation(() => fixture().report, Promise.reject(failure));
-    const waiting = operation.wait();
+    const handle = createCloseHandle(() => fixture().report, Promise.reject(failure));
+    const waiting = handle.wait();
     await expect(waiting).rejects.toHaveProperty('code', 'CLOSE_COMPLETION_FAILED');
-    await expect(operation.completion).rejects.toBe(failure);
+    await expect(handle.completion).rejects.toBe(failure);
 });
 it('C2-01 failed reports keep old void wrappers rejected, while mere unverified preserves compatibility', async () => {
-    const f = fixture(), failed = closeVoid(f.operation.completion, 'RUNTIME_CLOSE_FAILED');f.finish({ ok: false, hasFailures: true });
+    const f = fixture(), failed = closeVoid(f.handle.completion, 'RUNTIME_CLOSE_FAILED');f.finish({ ok: false, hasFailures: true });
     await expect(failed).rejects.toMatchObject({ code: 'RUNTIME_CLOSE_FAILED', report: { hasFailures: true } });await expect(failed).rejects.toHaveProperty('code', 'RUNTIME_CLOSE_FAILED');
-    const old = fixture(), compatible = closeVoid(old.operation.completion, 'RUNTIME_CLOSE_FAILED');old.finish({ ok: false, verification: 'unverified', resourcesReleased: false });await compatible;
+    const old = fixture(), compatible = closeVoid(old.handle.completion, 'RUNTIME_CLOSE_FAILED');old.finish({ ok: false, verification: 'unverified', resourcesReleased: false });await compatible;
 });
 function envelope(lifecycle: any, extra: any = {}) {
     return { state: 'closing', intent: 'close', ok: false, resourcesReleased: false, issues: [],

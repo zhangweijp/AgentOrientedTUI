@@ -1,12 +1,14 @@
+import { MARKDOWN_VIEW_FORMAT } from '../core/snapshot/types.js';
+import { SNAPSHOT_SCHEMA_VERSION } from '../core/snapshot/types.js';
 import { refKey } from '../core/snapshot/snapshot-support.js';
-import type { JsonValue, RefTarget, PreparedAppSnapshotDraftV2, ViewSnapshotV2, RefDescriptorV2, ToolDescriptorV2 } from '../core/snapshot/types.js';
+import type { JsonValue, RefTarget, PreparedAppSnapshotDraftV3, ViewSnapshotV2, RefDescriptorV2, ToolDescriptorV3 } from '../core/snapshot/types.js';
 import type { WorkerRuntimeViewFragment } from './view-fragment-extractor.js';
-import type { AggregatedViewTool, ViewInstance } from '../core/tool/view-owned-tools.js';
+import type { ViewInstance } from '../core/tool/view-owned-tools.js';
 
 export interface DomSnapshotSource {
     getViewOwnedViewInstances(): readonly ViewInstance[];
-    getViewOwnedToolDefinitions(): readonly AggregatedViewTool[];
-    getViewRefs(): readonly { viewId: string; refId: string; value: object }[];
+    getToolDefinitions(): readonly ToolDescriptorV3[];
+    getViewRefs(): readonly { viewId: string; refId: string; value: object; refType?: string }[];
 }
 
 export interface DomCaptureInput {
@@ -26,12 +28,12 @@ function projectedRefTarget(payload: unknown): RefTarget {
 }
 
 
-export function captureDOMSnapshot(input: DomCaptureInput): PreparedAppSnapshotDraftV2 {
+export function captureDOMSnapshot(input: DomCaptureInput): PreparedAppSnapshotDraftV3 {
     if (typeof input.kernel?.getViewOwnedViewInstances !== 'function' ||
-        typeof input.kernel.getViewOwnedToolDefinitions !== 'function' ||
-        typeof input.kernel.getViewRefs !== 'function') throw new Error('V2 requires Runtime-owned inventory interfaces');
+        typeof input.kernel.getToolDefinitions !== 'function' ||
+        typeof input.kernel.getViewRefs !== 'function') throw new Error('V3 requires Runtime-owned inventory interfaces');
     const registeredViews = input.kernel.getViewOwnedViewInstances();
-    const definitions = input.kernel.getViewOwnedToolDefinitions();
+    const definitions = input.kernel.getToolDefinitions();
     const byId = new Map(registeredViews.map(view => [view.viewId, view]));
     if (byId.size !== registeredViews.length) throw new Error('Duplicate Runtime View ID');
 
@@ -51,55 +53,44 @@ export function captureDOMSnapshot(input: DomCaptureInput): PreparedAppSnapshotD
         if (!view || !node ||
             node.getAttribute('data-view-instance-id') !== view.viewInstanceId ||
             view.viewType !== fragment.viewType) {
-            throw new Error('V2 View identity is not bound to the mounted Runtime View');
+            throw new Error('V3 View identity is not bound to the mounted Runtime View');
         }
         return {
             id: fragment.viewId,
             viewInstanceId: view.viewInstanceId,
             type: fragment.viewType,
             name: fragment.viewName || fragment.viewId,
-            kind: fragment.kind === 'application-instruction' ? 'instruction' : 'state',
-            content: { format: 'markdown-v1', value: fragment.markup },
+            kind: fragment.kind,
+            content: { format: MARKDOWN_VIEW_FORMAT, value: fragment.markup },
         };
     });
 
     const refs: Record<string, RefDescriptorV2> = Object.create(null);
-    for (const { viewId, refId: id, value } of input.kernel.getViewRefs()) {
+    for (const { viewId, refId: id, value, refType } of input.kernel.getViewRefs()) {
         const view = byId.get(viewId);
-        if (!view) throw new Error('V2 Ref owner is not mounted');
+        if (!view) throw new Error('V3 Ref owner is not mounted');
         refs[refKey(viewId, view.viewInstanceId, id)] = {
             id, ownerViewId: viewId, ownerViewInstanceId: view.viewInstanceId,
-            refType: 'unknown',
+            refType: typeof refType === 'string' && refType.trim() ? refType : 'unknown',
             target: projectedRefTarget(value),
         };
     }
 
-    const tools: Record<string, ToolDescriptorV2> = Object.create(null);
+    const tools: Record<string, ToolDescriptorV3> = Object.create(null);
     for (const def of definitions) {
-        if (def.appId !== input.appId || def.appInstanceId !== input.instanceId) {
-            throw new Error('V2 Tool definition from another Runtime App instance');
-        }
-        if (Object.hasOwn(tools, def.id)) throw new Error('Duplicate V2 Tool definition');
-        for (const target of def.targets) {
-            const bound = byId.get(target.viewId);
-            if (!bound || bound.viewInstanceId !== target.viewInstanceId ||
-                bound.viewType !== def.viewType) {
-                throw new Error('V2 Tool references an unmounted View instance');
-            }
+        if (Object.hasOwn(tools, def.id)) throw new Error('Duplicate V3 Tool definition');
+        if (def.execution.kind !== 'view-type') throw new Error('Unsupported Tool execution kind');
+        if (!def.execution.activationId || !registeredViews.some(view => view.viewType === def.viewType)) {
+            throw new Error('V3 ViewType Tool has no live matching View or activation identity');
         }
         tools[def.id] = {
             id: def.id, name: def.name, viewType: def.viewType,
             description: def.description, inputSchema: def.inputSchema,
-            isMutating: def.isMutating,
-            targets: def.targets.map(target => ({
-                viewId: target.viewId, viewInstanceId: target.viewInstanceId,
-                bindingVersion: target.bindingVersion,
-                ...(target.selector ? { selector: target.selector } : {}),
-            })),
+            execution: { kind: 'view-type', activationId: def.execution.activationId },
         };
     }
     return {
-        schemaVersion: 2,
+        schemaVersion: SNAPSHOT_SCHEMA_VERSION,
         appId: input.appId,
         instanceId: input.instanceId,
         producerSeq: input.producerSeq,

@@ -18,8 +18,8 @@
  * @module @aotui/cli
  */
 
-import { AppRegistry } from './engine/app/index.js';
-import { createRuntime } from './facades/index.js';
+import { AppRegistry } from './engine/app/registry.js';
+import { createRuntime } from './facades/facades.js';
 import type { AppID } from './spi/core/types.js';
 import type { ScopeClient } from './core/invocation/scoped-interaction-types.js';
 import * as readline from 'readline';
@@ -333,12 +333,22 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
         const opened = runtime.createAppScope(desktopId, appId, {
             project({ source, selection }) {
                 const selected = source.views.filter(view => selection.viewIds.includes(view.id));
+                const toolBindings = [];
+                for (const tool of Object.values(source.tools)) {
+                    if (tool.execution.kind === 'view-type') {
+                        if (selected.some(view => view.type === tool.viewType)) {
+                            toolBindings.push({ toolId: tool.id, execution: {
+                                kind: 'view-type' as const, activationId: tool.execution.activationId,
+                            } });
+                        }
+                        continue;
+                    }
+                }
                 return {
                     views: selected.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
                     refs: Object.values(source.refs).filter(ref => selection.viewIds.includes(ref.ownerViewId))
                         .map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
-                    targets: Object.values(source.tools).flatMap(tool => tool.targets
-                        .filter(target => selection.viewIds.includes(target.viewId)).map(target => ({ toolId: tool.id, target }))),
+                    toolBindings,
                     content: selected.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' as const })),
                 };
             },
@@ -356,11 +366,15 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
                 console.error(`[TUI] Could not observe ${appId}: ${result.issue.code}`);
                 continue;
             }
-            console.log(`--- App ${appId} ---`);
-            for (const view of result.observation.views) {
-                console.log(`<view id="${view.id}" type="${view.type}">`);
-                console.log(view.content?.value ?? '');
-                console.log('</view>');
+            try {
+                console.log(`--- App ${appId} ---`);
+                for (const view of result.observation.views) {
+                    console.log(`<view id="${view.id}" type="${view.type}">`);
+                    console.log(view.content?.value ?? '');
+                    console.log('</view>');
+                }
+            } finally {
+                client.releaseObservation(result.observation.observationId);
             }
         }
     }

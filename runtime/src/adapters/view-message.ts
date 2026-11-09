@@ -1,21 +1,22 @@
-/** Normalize the existing DOM envelope or wrap a plain Producer body once. */
+import type { ViewSnapshotV2 } from '../core/snapshot/types.js';
+
+/** XML text encoding happens once here; Producers supply an unwrapped Markdown body. */
 export function buildViewMessageMarkup(view: {
-    appId?: string;
-    appName?: string;
-    viewId?: string;
-    viewType?: string;
+    appId: string;
+    appName: string;
+    viewId: string;
+    viewType: string;
+    kind: ViewSnapshotV2['kind'];
     viewName?: string;
     markup: string;
     suffix?: string;
 }): string {
-    const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\r/g, '&#13;');
     const attrs = Object.entries({
-        id: view.viewId || 'unknown', type: view.viewType || 'Unknown',
-        name: view.viewName || view.viewType || view.viewId || 'Unknown',
-        app_id: view.appId || 'unknown', app_name: view.appName || 'unknown',
-    }).map(([name, value]) => `${name}="${escape(value)}"`).join(' ');
-    const raw = String(view.markup || '').trim();
-    const envelope = /^<view\b[^>]*>([\s\S]*)<\/view>$/i.exec(raw);
-    if (envelope) return `<view ${attrs}>${envelope[1]}${view.suffix || ''}</view>`;
-    return `<view ${attrs}>\n${raw}${view.suffix || ''}\n</view>`;
+        id: view.viewId, type: view.viewType, kind: view.kind,
+        name: view.viewName ?? view.viewType,
+        app_id: view.appId, app_name: view.appName,
+    }).map(([name, value]) => `${name}="${escape(value).replace(/"/g, '&quot;')
+        .replace(/[\r\n\t]/g, char => `&#${char.charCodeAt(0)};`)}"`).join(' ');
+    return `<view ${attrs}>\n${escape(view.markup + (view.suffix ?? ''))}\n</view>`;
 }

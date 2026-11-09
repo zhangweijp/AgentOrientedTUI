@@ -11,8 +11,8 @@ import type {
 } from '../spi/index.js';
 
 import { AOTUIError } from '../spi/core/errors.js';
-import type { DesktopCloseOptions, DesktopCloseOperation, RuntimeCloseOperation, RuntimeCloseReport, ShutdownOptions } from '../spi/runtime/close.interface.js';
-import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseOperation, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from '../engine/core/close-operation.js';
+import type { DesktopCloseOptions, DesktopCloseHandle, RuntimeCloseHandle, RuntimeCloseReport, ShutdownOptions } from '../spi/runtime/close.interface.js';
+import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseHandle, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from '../engine/core/close-handle.js';
 import { captureInteractionModes } from '../engine/app/interaction-config.js';
 import type { AppScopeResult } from '../spi/runtime/app-interaction.interface.js';
 import type { ScopePolicy } from '../core/invocation/scoped-interaction-types.js';
@@ -30,11 +30,11 @@ export class Kernel implements IKernel {
     private shutdownReason?: string;
     private shutdownPromise: Promise<void> | null = null;
     private isShutdownComplete = false;
-    private closing?: RuntimeCloseOperation;
+    private closing?: RuntimeCloseHandle;
     private readonly inFlight = new Set<Promise<unknown>>();
-    private managerClose?: RuntimeCloseOperation;
+    private managerClose?: RuntimeCloseHandle;
     private managerReport?: RuntimeCloseReport;
-    private readonly lateDesktopCloses = new Set<DesktopCloseOperation>();
+    private readonly lateDesktopCloses = new Set<DesktopCloseHandle>();
     private shutdownDesktopIds?: Set<DesktopID>;
     private readonly closingDesktops = new WeakSet<IDesktop>();
     private closeState = newCloseState('runtime');
@@ -88,16 +88,16 @@ export class Kernel implements IKernel {
         this.assertRuntimeAvailable();
         const id = await this.desktopManager.create(desktopId, context);
         if (this.closing) {
-            const operation = this.beginDesktopShutdown(id);
-            if (!this.shutdownDesktopIds?.has(id)) this.lateDesktopCloses.add(operation);
-            await operation.completion;throw new AOTUIError('RUNTIME_SHUTDOWN');
+            const handle = this.beginDesktopShutdown(id);
+            if (!this.shutdownDesktopIds?.has(id)) this.lateDesktopCloses.add(handle);
+            await handle.completion;throw new AOTUIError('RUNTIME_SHUTDOWN');
         }
         return id;
     }
 
     /**
      * Destroys a Desktop and releases all associated resources.
-     * This operation is idempotent - calling with non-existent ID is safe.
+     * This method is idempotent - calling with non-existent ID is safe.
      * 
      * @param desktopId - The ID of the Desktop to destroy
      */
@@ -216,8 +216,8 @@ export class Kernel implements IKernel {
      * @param options - 关闭选项
      */
     async gracefulShutdown(desktopId: DesktopID, options?: ShutdownOptions): Promise<void> {
-        const operation = this.beginDesktopShutdown(desktopId, options);
-        const result = await operation.wait(options);
+        const handle = this.beginDesktopShutdown(desktopId, options);
+        const result = await handle.wait(options);
         if (result.status === 'deadline') throw closeError('CLOSE_DEADLINE_EXCEEDED', result.report);
         if (result.report.hasFailures) throw closeError('DESKTOP_CLOSE_FAILED', result.report);
     }
@@ -227,9 +227,9 @@ export class Kernel implements IKernel {
         catch (error) { return Promise.reject(error); }
     }
 
-    beginDesktopShutdown(desktopId: DesktopID, options?: ShutdownOptions): DesktopCloseOperation { return this.beginDesktopClose(desktopId, options); }
+    beginDesktopShutdown(desktopId: DesktopID, options?: ShutdownOptions): DesktopCloseHandle { return this.beginDesktopClose(desktopId, options); }
 
-    private beginDesktopClose(desktopId: DesktopID, options?: DesktopCloseOptions): DesktopCloseOperation {
+    private beginDesktopClose(desktopId: DesktopID, options?: DesktopCloseOptions): DesktopCloseHandle {
         closeTimeout(options);const callback = options?.beforeClose, intent = options?.intent ?? 'close';
         if (intent !== 'close' && intent !== 'delete' || callback !== undefined && typeof callback !== 'function') throw closeError('CLOSE_OPTIONS_INVALID');
         const captured = this.desktopManager.get(desktopId);if (captured) this.closingDesktops.add(captured);
@@ -239,18 +239,18 @@ export class Kernel implements IKernel {
     private report(): RuntimeCloseReport {
         const state = structuredClone(this.closeState), manager = this.managerClose?.inspect() ?? this.managerReport;
         if (manager) { mergeCloseReport(state, manager);state.pool = { ownership: manager.pool.ownership, report: manager.pool.report ? { ...manager.pool.report, issues: [...manager.pool.report.issues] } : null }; }
-        for (const operation of this.lateDesktopCloses) mergeCloseReport(state, operation.inspect());
-        state.pendingOperations = this.inFlight.size;
-        if (state.pendingOperations) state.resourcesReleased = false;
+        for (const handle of this.lateDesktopCloses) mergeCloseReport(state, handle.inspect());
+        state.pendingTasks = this.inFlight.size;
+        if (state.pendingTasks) state.resourcesReleased = false;
         return freezeClose({ ...snapshotClose(state), scope: 'runtime' as const, intent: 'close' as const });
     }
 
-    beginShutdown(_reason?: string): RuntimeCloseOperation {
+    beginShutdown(_reason?: string): RuntimeCloseHandle {
         if (this.closing) return this.closing;
         this.shutdownDesktopIds = new Set(this.desktopManager.listDesktopIds());
         let complete!: (value: RuntimeCloseReport) => void;
         const completion = new Promise<RuntimeCloseReport>(resolve => { complete = resolve; });
-        this.closing = createCloseOperation(() => this.report(), completion);
+        this.closing = createCloseHandle(() => this.report(), completion);
         // Snapshot accepted calls after synchronously stopping admission.
         const accepted = [...this.inFlight];
         const managerTask = (async () => {

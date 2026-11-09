@@ -20,7 +20,7 @@ describe('Semantic view HTML projection', () => {
         </body></html>`);
         const { markup } = transformElement(document.body);
 
-        expect(markup).toContain('<view id="view_0" name="Conversations">');
+        expect(markup).not.toContain('<view');
         expect(markup).toContain('## Conversations');
         expect(markup).toContain('**AOTUI Chat**');
         expect(markup).toContain('`read_file`');
@@ -29,10 +29,10 @@ describe('Semantic view HTML projection', () => {
         expect(markup).toContain('[Documentation](https://example.com)');
     });
 
-    it('keeps display text without interpreting retired operation or ViewLink attributes', () => {
+    it('keeps display text without interpreting retired action-marker or ViewLink attributes', () => {
         const { document } = parseHTML(`<!DOCTYPE html><html><body>
             <div id="view_0" view="Detail">
-                <button operation="edit_file" desc="Edit this file">Edit file</button>
+                <button data-action="edit_file" desc="Edit this file">Edit file</button>
                 <a view-target="Other" desc="Open another view">Other view</a>
             </div>
         </body></html>`);
@@ -52,13 +52,17 @@ describe('Semantic view HTML projection', () => {
             '../../../../demo-apps/terminal-app/src/tui/RootView.tsx',
         ];
 
+        for (const app of ['planning-app', 'lite-browser-app', 'terminal-app', 'aotui-ide']) {
+            const file = app === 'aotui-ide' ? 'ScopedIDEApp' : app === 'planning-app' ? 'PlanningApp' : app === 'terminal-app' ? 'TerminalApp' : 'LiteBrowserApp';
+            const source = readFileSync(new URL(`../../../../demo-apps/${app}/src/tui/${file}.tsx`, import.meta.url), 'utf-8');
+            expect(source.match(/<View\b[^>]*\bid=['"]root['"][^>]*>/)?.[0]).toMatch(/\bkind=['"]instruction['"]/);
+        }
+
         for (const relativePath of demoRootViews) {
             const source = readFileSync(new URL(relativePath, import.meta.url), 'utf-8');
-            expect(source).toContain('data-role="application-instruction"');
             expect(source).toContain('What it is');
             expect(source).toContain('How to use');
             expect(source).toContain('Views');
-            expect(source).toContain('Tool Preconditions');
             expect(source).not.toContain('Current State');
         }
     });

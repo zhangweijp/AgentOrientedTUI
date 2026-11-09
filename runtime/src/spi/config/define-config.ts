@@ -91,9 +91,7 @@ function validateRuntimeConfig(config: RuntimeConfig): void {
     if (!(typeof logger.maxSystemLogs === 'number' && logger.maxSystemLogs >= 10 && logger.maxSystemLogs <= 10_000)) {
         errors.push('[logger.maxSystemLogs] logger.maxSystemLogs must be a number between 10 and 10000');
     }
-    if (!(typeof logger.maxAppLogs === 'number' && logger.maxAppLogs >= 10 && logger.maxAppLogs <= 10_000)) {
-        errors.push('[logger.maxAppLogs] logger.maxAppLogs must be a number between 10 and 10000');
-    }
+
 
     if (errors.length > 0) {
         throw new AOTUIError('CONFIG_INVALID', { reason: errors.join('; ') });

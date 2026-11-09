@@ -8,7 +8,7 @@ describe('Desktop lifetime-bound channels', () => {
     it('caches output; duplicate listener is idempotent and old unsubscribe cannot touch a successor', async () => {
         const bus = new SignalBus(), first = new Desktop('same', { signalBus: bus }), listener = vi.fn(), output = first.output;
         expect(first.output).toBe(output);output.subscribe(listener);output.subscribe(listener);expect(bus.getListenerCount('same')).toBe(1);
-        const operation = first.beginClose();expect(() => output.subscribe(listener)).toThrowError(expect.objectContaining({ code: 'DESKTOP_DISPOSED' }));await operation.completion;
+        const handle = first.beginClose();expect(() => output.subscribe(listener)).toThrowError(expect.objectContaining({ code: 'DESKTOP_DISPOSED' }));await handle.completion;
         const successor = new Desktop('same', { signalBus: bus });successor.output.subscribe(listener);output.unsubscribe(listener);
         successor.emitSignal('manual_refresh');expect(listener).toHaveBeenCalledOnce();expect(bus.getListenerCount('same')).toBe(1);await successor.dispose();
     });
@@ -44,7 +44,7 @@ describe('Desktop lifetime-bound channels', () => {
     it('late log/emit diagnostics create no successor records', async () => {
         const bus = new SignalBus(), logger = new DesktopLogger(), old = new Desktop('x:y', { signalBus: bus, logger });
         await old.dispose();const next = new Desktop('x:y', { signalBus: bus, logger });const listen = vi.fn();next.output.subscribe(listen);
-        const before = next.getSystemLogs();old.logSystem('late');old.logAppOperation('z', 'late');old.emitSignal('manual_refresh');
-        expect(next.getSystemLogs()).toEqual(before);expect(next.getAppOperationLogs('z')).toEqual([]);expect(listen).not.toHaveBeenCalled();await next.dispose();
+        const before = next.getSystemLogs();old.logSystem('late');old.emitSignal('manual_refresh');
+        expect(next.getSystemLogs()).toEqual(before);expect(listen).not.toHaveBeenCalled();await next.dispose();
     });
 });

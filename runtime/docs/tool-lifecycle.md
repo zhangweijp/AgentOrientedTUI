@@ -1,16 +1,14 @@
-# View Tools and app cleanup
+# ViewType Tools, Ref parameters, and app cleanup
 
-The current Worker interaction modes are `ordinary-v2` and `snapshot-value-v2`. A trusted Host selects them through `interactionModes`; omitting the option enables both supported modes, while an explicit list selects a subset. The Runtime and Worker must negotiate the selected mode before a Tool is exposed or invoked.
+The supported Worker interaction mode is `view-type-parameters-v1`. The trusted Host selects it through interactionModes; omission enables it, while [] disables execution. Host/Worker negotiation and per-binding qualification remain mandatory. Retired modes are explicitly rejected, not reinterpreted as new calls.
 
-`ordinary-v2` carries an app-declared parameter schema and supports both read and mutating handlers. `snapshot-value-v2` carries a required, read-only Ref resolved from the invocation's captured observation. A Ref declaration must set `isMutating: false`. Neither mode removes the app's responsibility for business validation, file identity, concurrency, or actual resource effects.
+Declare each Tool once per App/ViewType with defineViewTypeTool/defineToolSet, then bind its execute/enabled map through AppTools or createToolBindings. Matching Views activate one shared type Tool; the Observation pins its App instance, descriptor and activation. Opening multiple same-type Views does not duplicate the Tool or choose its business object.
 
-## Tool execution
+Ordinary parameters retain their business meaning. `refParam` declares top-level object or object-list Refs alongside those fields. This candidate admits multiple and optional Ref fields and arrays of Ref names; absent optional fields stay absent and invalid present fields reject the whole call. Runtime resolves the complete name from granted Ref owners in the invocation's original Observation, checks actual refType and payload Schema, and supplies recursively frozen effectiveInput to authorization and execution. View/Ref identities remain; there is no separate instance-owned Ref Tool or implicit selector.
 
-Apps declare View-local Tools with `useViewTypeTool(toolName, options, handler)`. An ordinary handler returns `OperationResult` after its work finishes. The Runtime captures the mounted View instance and Tool binding, validates the input, checks the current source and authorization, then dispatches through the negotiated Worker wrapper.
+Ref data being readonly does not restrict App business effects. The App uses internal IDs from the resolved value and rechecks existence, parent/state/permission or file conflicts. Meaningful paths/text remain ordinary parameters. If one file closes while another same-type View remains active, the shared Tool may still reach the App; its guard must reject a closed business target. Releasing an Observation and revoking a type activation are distinct actions.
 
-A failure can declare `effects: 'none' | 'partial'` only when the app knows that fact. If effects are omitted, Core retains its unknown outcome. Throwing, losing a response, aborting a waiter, or closing a Scope does not prove that a business effect did not happen. The Runtime does not add automatic retries.
-
-The outer Tool description and parameter schema provide discovery and input validation. They do not grant permission by themselves. A tool observed earlier remains tied to the captured App, View incarnation, Observation, and Binding; the Runtime refuses it when the relevant identity or execution qualification has changed.
+A failure may declare effects:none or partial only when the App knows that fact. Omitted effects, thrown handlers or lost responses do not prove that no business effect occurred. Closing a Scope or aborting a waiter does not undo work. Runtime does not retry unknown writes. Return a short receipt and put current data in Views; handler completion is distinct from projection publication.
 
 ## App lifecycle
 

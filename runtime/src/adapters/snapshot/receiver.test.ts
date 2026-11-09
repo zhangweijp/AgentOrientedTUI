@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { SemanticSnapshotReceiver } from './receiver.js';
 
 function draft(seq: number, text = 'current') {
-    return { schemaVersion: 2, appId: 'app', instanceId: 'instance',
+    return { schemaVersion: 3, appId: 'app', instanceId: 'instance',
         producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
         views: [{ id: 'file', viewInstanceId: 'file-instance', type: 'File', name: 'File', kind: 'state',
             content: { format: 'markdown-v1', value: text } }], refs: {}, tools: {} };
 }
 
 const policy = {
-    project: () => ({ views: [{ viewId: 'file', viewInstanceId: 'file-instance' }], refs: [], targets: [], content: [] }),
+    project: () => ({ views: [{ viewId: 'file', viewInstanceId: 'file-instance' }], refs: [], toolBindings: [], content: [] }),
     authorize: () => true, canReadReceipt: () => true,
 };
 const execution = { resolve: () => null };

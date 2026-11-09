@@ -1,6 +1,7 @@
 
 import { describe, it, expect } from 'vitest';
-import { createRuntime, defineRuntimeConfig } from '../../../src/facades/index.js'; // Use facades which exports everything now
+import { createRuntime } from '../../../src/facades/facades.js';
+import { defineRuntimeConfig } from '../../../src/spi/config/index.js';
 import { DesktopManager } from '../../../src/engine/core/manager.js';
 
 // Mock dependencies if needed, but we want to test propagation

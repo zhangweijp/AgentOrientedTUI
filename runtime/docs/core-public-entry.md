@@ -1,161 +1,203 @@
 # 从正式包入口使用纯 Core
 
-`@aotui/runtime/core` 公开明确的快照、View-owned 工具、参数合同、Scoped interaction 和 StateSession API；`@aotui/runtime/adapters/memory-state-storage` 单独提供内存存储。已提交快照使用唯一类型名 `AppSnapshotV2`；工具注册表和 StateSession 的返回类型由工厂推断，失败 envelope 与 Snapshot Health 保持 Core 内部。它们复用 Runtime 中的同一实现。根包、SPI 大入口和其他 adapter 保持原环境要求，不因这两个子路径可纯消费而全部成为无 DOM 模块。
+`@aotui/runtime/core` 提供 V3 Snapshot、App/ViewType Tool、Observation/Scope、参数合同与 StateSession；`@aotui/runtime/adapters/memory-state-storage` 提供内存存储。Core 不加载 DOM、Worker、Node 或模型 SDK。业务规则和外部副作用仍由 App/Host 负责。
 
-这是可信 Producer/Host 的低层装配 API：装配者管理 AppInstance、View 注册、稳定 execution binding、policy、存储 owner 和关闭顺序。它不是应用代码自行伪造来源或跳过授权的通道。Core `registerTool` 的签名为 `(viewInstanceId, spec, handler, options?, safeInvoker?)`；旧的 `enabled` 参数和 `setEnabled` 方法已移除。条件能力通过调用注册返回的 release 函数后重新注册表达；新 binding 使用新版本，旧观察不能转而调用它。实际 Runtime/App 的公共 Scope 桥接、父级关闭等待和资源报告已接入，见 [Runtime/App 公共交互](runtime-app-interaction.md)。
+本例面向自建 Host／Producer 的低层装配者。普通 App 作者先读 [SDK 指南](../../sdk/README.md)，不需复制这里的绑定、授权或资源接线。本例只依赖 Runtime 的纯 Core 与内存存储入口；Agent Driver 用户通过独立 `@aotui/agent-driver-adapter` 接入。安装版本和 tar 身份以同次交付为准，版本号不能替代联合验证。
 
-下面的主示例会在交付检查中逐字提取，使用实际 tar 内容从包名编译、执行，并在同 realm VM 中再次运行。没有源码路径别名、workspace symlink、DOM/Node 类型 shim 或模型 SDK。示例只用 ES 语言能力；运行 Core 的环境还需标准 `TextEncoder` 与 `AbortController`。示例里的固定 ID 仅用于一次隔离运行；生产装配必须为新生命周期提供全新 AppInstance 和 authority namespace。
+两个 Tool 都注册一次到 `Note` ViewType，统一使用正式 `view-type-parameters-v1` profile。`add` 接收普通数值；`read` 接收一个必填 Note 对象 Ref。Note 是本例的内存业务数据，不是文件定位。下面的 JSON 注解与 SDK TypeBox `refParam` 对应，低层装配者不另造 Ref parser。Core 从原观察解析参数，授权与执行使用同一 effectiveInput。
+
+正文只在 View 中呈现；Tool 返回完成收据，测试见证独立记录旧/新 Ref 的冻结值。b1 标记中的正文由真实新包消费者逐字提取、以 ES2022-only/types:[] 严格编译后执行，不能用另写的等价示例代替。
 
 <!-- b1-example:start -->
 ```ts
 import {
   createSnapshotCore, createViewOwnedTools, createScopedInteraction, refKey,
-  compileOrdinaryParams, ordinaryParameterProfile, compileSnapshotValueParams,
-  createStateSession,
-  type AggregatedViewTool, type ExecutionBinding, type ExecutionFact,
-  type Observation, type JsonValue, type OperationResult,
-  type SafeOrdinaryInvoker, type SafeRefInvoker, type StateSessionLimits,
+  compileOrdinarySchema, createStateSession,
+  type ExecutionBinding, type ExecutionFact, type JsonValue, type ToolResult,
+  type OrdinaryParameterContract, type StateSessionLimits, type ObservationGrant,
 } from '@aotui/runtime/core';
 import { createMemoryStateStorage } from '@aotui/runtime/adapters/memory-state-storage';
 
 function check(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
 }
+
 const appId = 'notes', instanceId = 'tutorial-run-1';
 const snapshots = createSnapshotCore({ now: () => 0 });
 snapshots.lifecycle.startApp(appId, instanceId);
 const registry = createViewOwnedTools(appId, instanceId);
 const view = registry.mount('detail', 'Note');
-const ordinary = compileOrdinaryParams({ n: { type: 'number', required: true } }, { additionalProperties: false });
-const reference = compileSnapshotValueParams({
-  file: { type: 'reference', required: true, refSource: 'snapshot-value-v1', refType: 'File' },
-  suffix: { type: 'string', required: true },
-}, { additionalProperties: false });
-check(ordinary.ok && reference.ok, 'Parameter declarations must compile');
-const ordinaryContract = ordinary.contract, refContract = reference.contract;
-let addCalls = 0, readCalls = 0;
-async function add(args: Readonly<Record<string, unknown>>): Promise<OperationResult> {
-  check(typeof args.n === 'number', 'Expected validated number');
-  addCalls++;
-  return { success: true, data: { value: args.n + 1 } };
-}
-async function read(args: Readonly<Record<string, unknown>>): Promise<OperationResult> {
-  const file = args.file;
-  check(file !== null && typeof file === 'object' && 'text' in file && typeof file.text === 'string', 'Expected snapshot payload');
-  check(typeof args.suffix === 'string', 'Expected validated suffix');
-  readCalls++;
-  return { success: true, data: { value: file.text + args.suffix } };
-}
-const safeAdd: SafeOrdinaryInvoker = async args => {
-  const valid = ordinaryContract.validate(args);
-  if (!valid.ok) return { phase: 'not-entered', result: { success: false, error: { code: valid.code, message: 'Invalid parameters' } } };
-  return { phase: 'entered-returned', result: await add(valid.value) };
-};
-const safeRead: SafeRefInvoker = async args => {
-  const valid = refContract.validateEffective(args);
-  if (!valid.ok) return { phase: 'not-entered', result: { success: false, error: { code: valid.code, message: 'Invalid effective parameters' } } };
-  return { phase: 'entered-returned', result: await read(valid.value) };
-};
-function registerAdd() {
-  return registry.registerTool(view.viewInstanceId, { name: 'add', description: 'Add one', inputSchema: ordinaryParameterProfile(ordinaryContract), isMutating: false },
-    add, { safeOrdinaryParametersInvocationMode: 'ordinary-v2' }, safeAdd);
-}
-const releaseAdd = registerAdd();
-registry.registerTool(view.viewInstanceId, { name: 'read', description: 'Read the source Note', inputSchema: refContract.schema, isMutating: false },
-  read, { safeSnapshotValueParametersInvocationMode: 'snapshot-value-v2' }, safeRead);
-
+const contracts = new Map<string, OrdinaryParameterContract>();
 const bindings = new Map<string, ExecutionBinding>();
-const bindingKey = (toolId: string, target: { viewInstanceId: string; bindingVersion: number }) =>
-  JSON.stringify([toolId, target.viewInstanceId, target.bindingVersion]);
-function installBinding(tool: AggregatedViewTool) {
-  const target = tool.targets[0], isRef = tool.name === 'read';
-  const binding: ExecutionBinding = {
-    identity: {}, mode: isRef ? 'snapshot-value-v2' : 'ordinary-v2',
-    validateInput: (_source, input) => {
-      const result = isRef ? refContract.validateEffective(input) : ordinaryContract.validate(input);
-      return result.ok ? { ok: true, value: result.value } : { ok: false };
+const bindingKey = (toolId: string, execution: unknown) => JSON.stringify([toolId, execution]);
+
+const addSchema = {
+  type: 'object', properties: { n: { type: 'number' } },
+  required: ['n'], additionalProperties: false,
+};
+// This is the JSON annotation produced by SDK refParam('Note', NoteSchema).
+const readSchema = {
+  type: 'object', properties: {
+    note: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'Note',
+      'x-aotui-ref-value': { type: 'object', properties: { text: { type: 'string' } },
+        required: ['text'], additionalProperties: false } },
+    suffix: { type: 'string' },
+  }, required: ['note', 'suffix'], additionalProperties: false,
+};
+check(compileOrdinarySchema(addSchema, 'view-type-parameters-v1').ok, 'Add Schema');
+check(compileOrdinarySchema(readSchema, 'view-type-parameters-v1').ok, 'Ref Schema');
+
+let count = 1, noteText = 'old', seq = 0, handlerEntries = 0;
+const witness: Array<{ text: string; frozen: boolean }> = [];
+async function add(args: Readonly<Record<string, unknown>>): Promise<ToolResult> {
+  check(typeof args.n === 'number', 'Expected validated number');
+  handlerEntries++; count += args.n; publish(noteText);
+  return { success: true, data: { completed: true } };
+}
+async function read(args: Readonly<Record<string, unknown>>): Promise<ToolResult> {
+  const note = args.note;
+  check(note !== null && typeof note === 'object' && 'text' in note && typeof note.text === 'string', 'Resolved Note');
+  check(typeof args.suffix === 'string' && Object.isFrozen(note), 'Validated frozen Ref');
+  handlerEntries++; witness.push({ text: note.text + args.suffix, frozen: Object.isFrozen(note) });
+  // Business text is already in the View; the receipt does not duplicate it.
+  return { success: true, data: { completed: true } };
+}
+function register(name: string, schema: Readonly<Record<string, unknown>>,
+  execute: (args: Readonly<Record<string, unknown>>) => Promise<ToolResult>) {
+  return registry.registerTypeTool({ viewType: 'Note', name, description: name === 'add' ? 'Add to the counter' : 'Inspect a displayed Note',
+    inputSchema: schema }, {
+    safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+    createSafeOrdinaryParametersInvoker: contract => {
+      contracts.set(name, contract);
+      return async args => {
+        const result = await execute(args);
+        if (result.success) return { phase: 'entered-returned', result };
+        const { effects, ...data } = result;
+        return { phase: 'entered-returned', result: data,
+          ...(effects === undefined ? {} : { failureEffects: effects }) };
+      };
     },
-    isLive: source => ({ ok: (isRef ? registry.validateSnapshotValueParametersBinding(tool, source.target)
-      : registry.validateOrdinaryParametersBinding(tool, source.target)).success }),
+  });
+}
+let releaseAdd = register('add', addSchema, add);
+const releaseRead = register('read', readSchema, read);
+function installBinding(tool: ReturnType<typeof registry.listTools>[number]) {
+  check(tool.execution.kind === 'view-type', 'One type-level execution identity');
+  const contract = contracts.get(tool.name); check(contract, 'Captured registration contract');
+  const binding: ExecutionBinding = {
+    identity: {}, mode: 'view-type-parameters-v1',
+    validateInput: (_source, input) => {
+      const checked = (contract.validateResolvedInput ?? contract.validate)(input);
+      return checked.ok ? { ok: true, value: checked.value as Readonly<Record<string, JsonValue>> } : { ok: false };
+    },
+    isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.execution).success }),
     execute: async context => {
-      const terminal = await (isRef ? registry.invokeSnapshotValueParameters(tool, context.source.target, context.effectiveInput)
-        : registry.invokeOrdinaryParameters(tool, context.source.target, context.effectiveInput));
-      const result = terminal.result, value = result.data?.value;
-      if (!result.success) return { kind: 'operation-result', phase: terminal.phase,
-        result: { success: false, error: { code: result.error?.code ?? 'BUSINESS', message: result.error?.message ?? 'Business failure' } }, failureEffects: 'none' };
-      check(typeof value === 'number' || typeof value === 'string', 'Expected the demo business value');
-      return { kind: 'action', phase: terminal.phase, outcome: { status: 'succeeded', value } } satisfies ExecutionFact;
+      const terminal = await registry.invokeTypeTool(context.source.tool, context.source.execution, context.effectiveInput);
+      if (terminal.result.success) {
+        check(terminal.result.data?.completed === true, 'Expected a concise completion receipt');
+        return { kind: 'tool-result', phase: terminal.phase,
+          result: { success: true, data: { completed: true } } } satisfies ExecutionFact;
+      }
+      return { kind: 'tool-result', phase: terminal.phase,
+        result: { success: false, error: { code: terminal.result.error?.code ?? 'BUSINESS',
+          message: terminal.result.error?.message ?? 'Business failure' } },
+        ...(terminal.phase === 'entered-returned' && terminal.failureEffects !== undefined
+          ? { failureEffects: terminal.failureEffects } : {}) } satisfies ExecutionFact;
     },
   };
-  bindings.set(bindingKey(tool.id, target), binding);
-  return binding;
+  bindings.set(bindingKey(tool.id, tool.execution), binding);
 }
 registry.listTools().forEach(installBinding);
-let seq = 0;
 function publish(text: string) {
-  const tools = Object.fromEntries(registry.listTools().map(t => [t.id, {
-    id: t.id, name: t.name, viewType: t.viewType, description: t.description,
-    inputSchema: t.inputSchema, isMutating: t.isMutating, targets: t.targets,
-  }]));
-  const result = snapshots.committer.accept({ schemaVersion: 2, appId, instanceId, producerSeq: ++seq, sourceEpoch: seq, capturedAt: 0,
-    views: [{ id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: 'Note', kind: 'state', content: { format: 'markdown-v1', value: text } }],
-    refs: { [refKey(view.viewId, view.viewInstanceId, 'selected')]: { id: 'selected', ownerViewId: view.viewId, ownerViewInstanceId: view.viewInstanceId,
-      refType: 'File', target: { kind: 'snapshot-value', payload: { text } } } }, tools });
+  noteText = text;
+  const tools = Object.fromEntries(registry.listTools().map(tool => [tool.id, tool]));
+  const result = snapshots.committer.accept({ schemaVersion: 3, appId, instanceId, producerSeq: ++seq, sourceEpoch: seq, capturedAt: 0,
+    views: [{ id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: 'Note', kind: 'state',
+      content: { format: 'markdown-v1', value: `Counter: ${count}\nNote: ${text}` } }],
+    refs: { [refKey(view.viewId, view.viewInstanceId, 'selected')]: { id: 'selected', ownerViewId: view.viewId,
+      ownerViewInstanceId: view.viewInstanceId, refType: 'Note', target: { kind: 'snapshot-value', payload: { text } } } }, tools });
   check(result.status === 'published', 'Expected a new source version');
-  return result.snapshot;
 }
 publish('old');
+
 let authorizations = 0;
 const authority = createScopedInteraction(snapshots.store, { namespace: 'tutorial:tutorial-run-1', now: () => 0 });
 const opened = authority.createScope({ appId, instanceId, policy: {
-  project: ({ source }) => ({ views: source.views.map(v => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
-    refs: Object.values(source.refs).map(r => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })),
-    targets: Object.values(source.tools).flatMap(t => t.targets.map(target => ({ toolId: t.id, target }))), content: [] }),
+  project: ({ source }): ObservationGrant => ({
+    views: source.views.map(item => ({ viewId: item.id, viewInstanceId: item.viewInstanceId })),
+    refs: Object.values(source.refs).map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
+    toolBindings: Object.values(source.tools).map(tool => ({ toolId: tool.id, execution: tool.execution })),
+    content: source.views.map(item => ({ view: { viewId: item.id, viewInstanceId: item.viewInstanceId }, decision: 'retain' as const })),
+  }),
   authorize: () => { authorizations++; return true; }, canReadReceipt: () => true,
-}, execution: { resolve: source => bindings.get(bindingKey(source.tool.id, source.target)) ?? null } });
+}, execution: { resolve: source => bindings.get(bindingKey(source.tool.id, source.execution)) ?? null } });
 check(opened.status === 'opened', 'Expected a Scope');
 const client = opened.client;
-async function observe(): Promise<Observation> {
+async function observe() {
   const result = await client.observe({ viewIds: [view.viewId] });
-  check(result.status === 'observed', 'Expected an observation'); return result.observation;
+  check(result.status === 'observed', 'Expected an observation');
+  check(client.adoptObservation(result.observation.observationId).status === 'adopted', 'Expected adoption');
+  return result.observation;
 }
-function request(source: Observation, name: string, invocationId: string, input: Readonly<Record<string, JsonValue>>) {
-  const tool = source.tools.find(t => t.name === name), binding = source.bindings.find(b => b.toolId === tool?.id);
-  check(binding, 'Expected a visible tool binding');
-  return { invocationId, observationId: source.observationId, bindingId: binding.bindingId, input };
+function request(observation: Awaited<ReturnType<typeof observe>>, name: string, invocationId: string,
+  input: Readonly<Record<string, JsonValue>>) {
+  const tool = observation.tools.find(item => item.name === name);
+  const binding = observation.bindings.find(item => item.toolId === tool?.id);
+  check(binding, 'Expected a visible type binding');
+  return { invocationId, observationId: observation.observationId, bindingId: binding.bindingId, input };
 }
-async function value(source: Observation, name: string, invocationId: string, input: Readonly<Record<string, JsonValue>>) {
-  const result = await client.invoke(request(source, name, invocationId, input));
+async function completed(observation: Awaited<ReturnType<typeof observe>>, name: string, id: string,
+  input: Readonly<Record<string, JsonValue>>) {
+  const result = await client.invoke(request(observation, name, id, input));
   check(result.kind === 'receipt' && result.receipt.outcome.status === 'succeeded', 'Expected business success');
-  return result.receipt.outcome.value;
+  const value = result.receipt.outcome.value;
+  check(value !== null && typeof value === 'object' && 'success' in value && value.success === true && 'data' in value,
+    'Expected a ToolResult receipt');
+  const data = value.data;
+  check(data !== null && typeof data === 'object' && 'completed' in data && data.completed === true && Object.keys(data).length === 1,
+    'Receipt contains completion, not the Note text or counter');
 }
-const old = await observe();
-check(await value(old, 'add', 'add-1', { n: 2 }) === 3, 'ordinary-v2 dispatch');
-const beforeInvalid = addCalls;
-const invalid = await client.invoke(request(old, 'add', 'invalid', { n: 'wrong' }));
-check(invalid.kind === 'receipt' && invalid.receipt.outcome.status === 'rejected' && addCalls === beforeInvalid, 'Invalid input cannot enter handler');
-publish('new');
-check(await value(old, 'read', 'old-ref', { file: 'selected', suffix: '!' }) === 'old!', 'Pinned old Ref must keep old value');
-const fresh = await observe();
-check(await value(fresh, 'read', 'new-ref', { file: 'selected', suffix: '!' }) === 'new!', 'New source must read new value');
-const oldAdd = registry.listTools().find(t => t.name === 'add'); check(oldAdd, 'Expected add');
-const oldKey = bindingKey(oldAdd.id, oldAdd.targets[0]), oldBinding = bindings.get(oldKey);
-releaseAdd(); registerAdd(); bindings.delete(oldKey);
-const newAdd = registry.listTools().find(t => t.name === 'add'); check(newAdd, 'Expected replacement');
-const newBinding = installBinding(newAdd);
-check(newBinding !== oldBinding && bindingKey(newAdd.id, newAdd.targets[0]) !== oldKey, 'New registration needs a fresh binding identity');
-const beforeStale = addCalls, stale = await client.invoke(request(old, 'add', 'old-binding', { n: 2 }));
-check(stale.kind === 'receipt' && stale.receipt.outcome.status === 'rejected' && addCalls === beforeStale, 'Old binding cannot redirect');
-const beforeClosed = authorizations;
-authority.close(); await authority.whenClosed();
-check((await client.invoke(request(fresh, 'read', 'closed', { file: 'selected', suffix: '!' }))).kind === 'refused', 'Closed Client must reject');
-check(authorizations === beforeClosed && authority.inspect().combinedBytes === 0, 'Closed authority cannot reauthorize');
-registry.dispose(); snapshots.lifecycle.dispose();
+let beforeClosed = 0;
+try {
+  const old = await observe();
+  await completed(old, 'add', 'add-1', { n: 2 });
+  check(count === 3, 'Ordinary dispatch changed business state once');
+  publish('new');
+  await completed(old, 'read', 'old-ref', { note: 'detail.selected', suffix: '!' });
+  const fresh = await observe();
+  await completed(fresh, 'read', 'new-ref', { note: 'detail.selected', suffix: '!' });
+  check(witness.length === 2 && witness[0]?.text === 'old!' && witness[1]?.text === 'new!' && witness.every(item => item.frozen),
+    'Independent witness confirms original frozen values');
+  const current = fresh.views[0]?.content;
+  check(current?.format === 'markdown-v1' && current.value === 'Counter: 3\nNote: new', 'Current data is presented in the View');
+
+  const oldAdd = fresh.tools.find(tool => tool.name === 'add'); check(oldAdd, 'Observed add');
+  const oldKey = bindingKey(oldAdd.id, oldAdd.execution), oldBinding = bindings.get(oldKey);
+  releaseAdd(); releaseAdd = register('add', addSchema, add);
+  const newAdd = registry.listTools().find(tool => tool.name === 'add'); check(newAdd, 'Replacement add'); installBinding(newAdd);
+  const newKey = bindingKey(newAdd.id, newAdd.execution);
+  check(newKey !== oldKey && bindings.get(newKey) !== oldBinding, 'New registration has a new activation');
+  const stale = await client.invoke(request(fresh, 'add', 'old-binding', { n: 2 }));
+  check(stale.kind === 'receipt' && stale.receipt.outcome.status === 'rejected' && handlerEntries === 3, 'Old activation cannot enter or redirect');
+
+  beforeClosed = authorizations;
+  authority.close(); await authority.whenClosed();
+  check((await client.invoke(request(fresh, 'read', 'closed', { note: 'detail.selected', suffix: '!' }))).kind === 'refused', 'Closed Client rejects');
+  check(authorizations === beforeClosed && handlerEntries === 3, 'Closed authority does not authorize or enter handlers');
+  check(authority.inspect().scopes === 0 && authority.inspect().closingScopes === 0 &&
+    authority.inspect().combinedBytes === 0 && snapshots.store.inspect().activeLeases === 0,
+    'Scopes, logical bytes and leases really released');
+} finally {
+  authority.close(); await authority.whenClosed();
+  releaseAdd(); releaseRead(); registry.dispose(); snapshots.lifecycle.dispose();
+  bindings.clear(); contracts.clear();
+}
+check(registry.inspect().bindings === 0 && snapshots.store.inspect().activeLeases === 0, 'Registry and Snapshot cleanup');
 
 const memory = createMemoryStateStorage({ maxStoredKeys: 16, maxStoredBytes: 65536, maxRecordBytes: 16384, maxAddressBytes: 512,
   maxActiveOwners: 2, maxClaimedNamespaces: 4 });
 const limits: StateSessionLimits = { maxDepth: 16, maxNodes: 1000, maxValueBytes: 8192, maxRecordBytes: 16384, maxAddressBytes: 512,
-  maxKeys: 8, maxRetainedBytes: 65536, maxPendingOperations: 8, maxConcurrentOperations: 2, maxRevision: 1000 };
+  maxKeys: 8, maxRetainedBytes: 65536, maxPendingRequests: 8, maxConcurrentRequests: 2, maxRevision: 1000 };
 const address = { namespace: 'notes-data', key: 'count' }, first = memory.open('data-owner-1'); check(first.status === 'opened', 'Storage owner');
 const session = createStateSession({ instanceId: 'data-owner-1', storage: first.storage, limits, now: () => 0 });
 const bound = session.bind(address, 0, { hydrate: true }); check(bound.status === 'bound', 'State binding');
@@ -167,22 +209,19 @@ check(memory.getStats().activeOwners === 0 && memory.getStats().storedKeys === 1
 const second = memory.open('data-owner-2'); check(second.status === 'opened', 'Fresh owner');
 const restored = createStateSession({ instanceId: 'data-owner-2', storage: second.storage, limits, now: () => 0 });
 const next = restored.bind(address, 0, { hydrate: true }); check(next.status === 'bound', 'Fresh binding');
-const recovery = await next.binding.recovery; check(recovery.status === 'found' && recovery.value === 41, 'New owner reads persisted value');
+const recovery = await next.binding.recovery; check(recovery.status === 'found' && recovery.value === 41, 'New owner restores persisted value');
 check(next.binding.confirmInitialization(recovery, { status: 'ready', value: recovery.value }).status === 'accepted', 'Restored acknowledgment');
 check((await restored.dispose()).release.status === 'released' && memory.getStats().activeOwners === 0, 'Final owner release');
-export const demoFacts = Object.freeze({ ordinaryValue: 3, oldRefValue: 'old!', newRefValue: 'new!', persistedValue: 41,
-  addCalls, readCalls, authorizations, closed: true, storedKeys: memory.getStats().storedKeys, activeOwners: memory.getStats().activeOwners });
+
+export const coreTutorialFacts = { handlerEntries, authorizations: beforeClosed, witness,
+  scopes: authority.inspect().scopes, logicalBytes: authority.inspect().combinedBytes,
+  leases: snapshots.store.inspect().activeLeases, bindings: registry.inspect().bindings,
+  restoredValue: recovery.value, stateOwners: memory.getStats().activeOwners, storedKeys: memory.getStats().storedKeys };
 ```
 <!-- b1-example:end -->
 
-存储为空时，初值已经由 `bind` 提供，初始化确认只传 `{status: 'ready'}`；恢复到持久值时，确认才携带实际恢复后的 `value`。示例同时实际运行这两条路径。
+低层注册 SPI 的 `safeOrdinaryParametersInvocationMode: 'ordinary-v2'` 是既有可信 invoker 工厂字段；执行绑定、参数 profile 和 Host/Worker mode 使用 `view-type-parameters-v1`，不能把前者当作仍支持旧 Worker mode 的依据。
 
-`ExecutionBinding` 的 identity 和函数引用必须对同一注册保持稳定，重注册使用新身份。参数声明中的 `refSource: 'snapshot-value-v1'` 标识 Ref 的来源语义；执行 Binding 与参数合同使用 `snapshot-value-v2`。普通参数的执行 Binding 使用 `ordinary-v2`。声明、实际 callable 资格与来源校验仍分别生效。
+View 与 Ref 仍有实例/原快照来源身份，Tool 只有 App/ViewType activation；关闭最后一个匹配 View或替换注册会拒绝旧 activation。Ref 参数不把 Tool 隐式绑定某个文件。App 检查对象是否仍存在、当前业务权限和父子归属；有业务意义的路径/标题/内容不必包装成 Ref。当前合同同时支持多个顶层对象／对象列表 Ref 和可选 Ref；缺席字段保持缺席，出现的字段必须有效，整个参数与来源 envelope 共享既有预算。Type.Array(refParam(...)) 表达 Ref 名数组，多选按输入顺序解析；重复选择保留，空选择不触发解析。新观察先准备，再由显式 adopt 撤销旧资格；单纯 observe 不会换掉当前观察。
 
-`authority.close()` 同步永久撤销并返回原统计；`whenClosed()` 始终返回同一个 Promise，只在显式 close 后、Core 接纳的 project、验证、授权、执行、回执读取和实际 provider.query 都完成 finally 清理后结算。它不依赖成功时钟，不提供期限、取消或强制终止。无限挂起的用户 Promise 仍可能令关闭一直 pending，受原 Scope/调用/费用额度约束。调用者自己挂在 Promise 上的回调属于调用者持有，不由框架代为删除。
-
-业务返回 accepted operation ID 不等于把后台任务 Promise 交给了 Core。`whenClosed()` 会等实际在途的 provider.query，却不能证明外部 accepted 任务已停止。通过公共 Runtime/App 桥接使用时，此信号参与父级关闭等待与资源报告；具体行为见 [Runtime/App 公共交互](runtime-app-interaction.md)。
-
-新 Core/Registry/authority 必须使用新的可信身份域，不能 reset 旧域或用旧客户端重新授权。Memory adapter 的所有权释放与业务数据保留是两件事；示例的 storedKeys=1、activeOwners=0 是预期结果。持久化到真实文件和 SDK 的已有回归另行运行。
-
-本页示例保留 B1 阶段的独立验收边界：精确 tar 内容的两个纯入口、ES2022-only 声明和受限 VM 闭环。整包消费、双 Producer、版本兼容、资源曲线及完整 IDE 显式迁移的当前状态见 [实施及验收总计划](../../rfcs/sdk-runtime-delivery/README.zh-CN.md) 和 [分发与边界](sdk-runtime-distribution.md)。这些验收仍不保证任意 Browser/Edge/Worker Host。
+StateSession owner 释放和持久值保留分别验证：第一 owner flush 并释放后，第二 owner 仍恢复 41，再确认最终 owner 归零。关闭必须等真实调用/读取责任结算后再 dispose Registry/Core；不以删除 Map、abort 或返回超时替代真实结束。正式存储与外部资源由具体适配器负责。

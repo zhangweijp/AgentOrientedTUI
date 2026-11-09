@@ -9,10 +9,10 @@ import { captureStateReadResult, captureStateMutationResult, captureStateRelease
 import type { StateStorage, StateReleaseResult, StateIssueCode } from '../../core/persistence/state-storage.js';
 
 export const DEFAULT_NODE_STATE_LIMITS: NodeStateStorageLimits = Object.freeze({ maxActiveOwners: 64, maxRoots: 16,
-    maxClaimedNamespaces: 512, maxPendingOperations: 256, maxRecordBytes: 262272, maxAddressBytes: 1024,
+    maxClaimedNamespaces: 512, maxPendingRequests: 256, maxRecordBytes: 262272, maxAddressBytes: 1024,
     maxPathBytes: 4096, maxSegmentBytes: 128, maxDirectoryEntries: 4096, maxBufferedBytes: 16777216 });
 export type StateStorageBackend = Pick<ReturnType<typeof createNodeStateStorage>, 'open'>;
-// Construction performs no filesystem operation. All default Hosts share this exact backend.
+// Construction performs no filesystem access. All default Hosts share this exact backend.
 export const defaultStateStorageBackend = createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS);
 export function resolveStateDirectory(config: Readonly<Record<string, unknown>> | undefined, cwd = process.cwd()): string {
     const value = config?.AOTUI_DATA_DIR;
@@ -60,40 +60,40 @@ export function createStateStorageHost(options: Readonly<{ instanceId: string; d
         return releasePromise;
     }
     const denied = (request: StateStorageRequest, code: StateIssueCode): StateStorageResponse => ({ type: 'STATE_STORAGE_RESPONSE', version: 1,
-        instanceId, sequence: request.sequence, operation: request.operation,
-        result: request.operation === 'read' ? failedRead(code) : request.operation === 'release' ? { status: 'failed', issue: stateIssue(code) } : failedMutation(code) });
+        instanceId, sequence: request.sequence, action: request.action,
+        result: request.action === 'read' ? failedRead(code) : request.action === 'release' ? { status: 'failed', issue: stateIssue(code) } : failedMutation(code) });
     function accept(input: unknown): Promise<StateStorageResponse> | null {
         const request = captureStorageRequest(input, limits);
         if (!request || request.instanceId !== instanceId) return null;
         if (request.sequence <= highWater) return Promise.resolve(denied(request, 'INVALID_INPUT'));
         highWater = request.sequence; // Before any await, including opening the owner.
-        if (request.operation === 'release') return release().then(result => ({ type: 'STATE_STORAGE_RESPONSE', version: 1, instanceId,
-            sequence: request.sequence, operation: request.operation, result }));
+        if (request.action === 'release') return release().then(result => ({ type: 'STATE_STORAGE_RESPONSE', version: 1, instanceId,
+            sequence: request.sequence, action: request.action, result }));
         if (closing) return Promise.resolve(denied(request, 'OWNER_RELEASED'));
-        if (uncertain && request.operation !== 'read') return Promise.resolve(denied(request, 'UNKNOWN_OUTCOME'));
+        if (uncertain && request.action !== 'read') return Promise.resolve(denied(request, 'UNKNOWN_OUTCOME'));
         let namespace: unknown;
         try { namespace = JSON.parse(request.address!.namespace); } catch { return Promise.resolve(denied(request, 'ADDRESS_UNSUPPORTED')); }
         if (!Array.isArray(namespace) || namespace.length !== 2 || namespace[0] !== desktopId || typeof namespace[1] !== 'string' ||
             JSON.stringify(namespace) !== request.address!.namespace) return Promise.resolve(denied(request, 'ADDRESS_UNSUPPORTED'));
-        if (active.size >= limits.maxPendingOperations) return Promise.resolve(denied(request, 'CAPACITY_EXCEEDED'));
+        if (active.size >= limits.maxPendingRequests) return Promise.resolve(denied(request, 'CAPACITY_EXCEEDED'));
         const bytes = request.text ? Buffer.byteLength(request.text, 'utf8') : 0;
         bufferedBytes += bytes;
         // Register synchronously; a release/disconnect in this turn must wait for this admitted access.
-        const operation = Promise.resolve().then(async (): Promise<StateStorageResponse> => {
+        const task = Promise.resolve().then(async (): Promise<StateStorageResponse> => {
             const opened = await open();
             if (opened.status !== 'opened') return denied(request, opened.issue.code);
             let result: StateStorageResponse['result'];
             try {
-                if (request.operation === 'read') result = captureStateReadResult(await opened.storage.read(request.address!), limits.maxRecordBytes);
-                else if (request.operation === 'replace') result = captureStateMutationResult(await opened.storage.replace(request.address!, request.text!));
+                if (request.action === 'read') result = captureStateReadResult(await opened.storage.read(request.address!), limits.maxRecordBytes);
+                else if (request.action === 'replace') result = captureStateMutationResult(await opened.storage.replace(request.address!, request.text!));
                 else result = captureStateMutationResult(await opened.storage.remove(request.address!));
-            } catch { result = request.operation === 'read' ? failedRead('IO_FAILED') : unknownMutation(); }
+            } catch { result = request.action === 'read' ? failedRead('IO_FAILED') : unknownMutation(); }
             if (result.status === 'unknown') uncertain = true;
-            return { type: 'STATE_STORAGE_RESPONSE', version: 1, instanceId, sequence: request.sequence, operation: request.operation, result };
+            return { type: 'STATE_STORAGE_RESPONSE', version: 1, instanceId, sequence: request.sequence, action: request.action, result };
         });
-        active.add(operation);
-        void operation.finally(() => { active.delete(operation);bufferedBytes -= bytes; });
-        return operation;
+        active.add(task);
+        void task.finally(() => { active.delete(task);bufferedBytes -= bytes; });
+        return task;
     }
     return Object.freeze({ accept, release, disconnect: release,
         markTransportUncertain: () => { uncertain = true; },

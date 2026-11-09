@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
 
-describe('Semantic WorkerHost View identity and SDK local Tool', () => {
-    it('publishes trusted View identity and local Tool bindings across physical Worker reuse', async () => {
+describe('Semantic WorkerHost View identity and App-level ViewType Tool', () => {
+    it('publishes trusted View identity and a fresh type activation across physical Worker reuse', async () => {
         const temp = await mkdtemp(join(tmpdir(), 'aotui-m4-viewowned-'));
         const root = resolve(process.cwd());
         const workerScript = join(temp, 'worker.mjs');
@@ -16,6 +16,7 @@ describe('Semantic WorkerHost View identity and SDK local Tool', () => {
             const modules = join(temp, 'node_modules');
             await mkdir(join(modules, '@aotui'), { recursive: true });
             await symlink(join(root, 'node_modules/preact'), join(modules, 'preact'), 'dir');
+            await symlink(join(root, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
             await symlink(join(root, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
             await symlink(root, join(modules, '@aotui/runtime'), 'dir');
 
@@ -27,27 +28,36 @@ describe('Semantic WorkerHost View identity and SDK local Tool', () => {
             });
             const fixture = `
                 import { h } from 'preact';
+                import Type from 'typebox';
                 import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
                 import { View } from './sdk/src/components/View.tsx';
-                import { useViewTypeTool } from './sdk/src/hooks/useViewTypeTool.ts';
+                import { AppTools, ToolRef } from './sdk/src/components/AppTools.tsx';
+                import { defineToolSet, defineViewTypeTool } from './sdk/src/tools/view-type-tool.ts';
 
-                function Detail({ label }) {
-                    const [InspectUI] = useViewTypeTool('inspect', {
-                        description: 'Inspect the selected file',
-                        params: {}
-                    }, async () => ({ success: true, data: { file: label } }));
+                function Detail({ label, InspectUI }) {
                     return h('section', {}, [
                         h('p', {key:'info'}, label),
-                        h(InspectUI, {key:'tool'}, 'Inspect')
+                        h(ToolRef, { tool: InspectUI, ...({key:'tool'}) }, 'Inspect')
                     ]);
                 }
-                function App() {
-                    return h('main', {}, [
-                        h(View, {id:'fd_0',type:'FileDetail',key:'a'},
-                            h(Detail, {label:'App.tsx'})),
-                        h(View, {id:'fd_1',type:'FileDetail',key:'b'},
-                            h(Detail, {label:'package.json'}))
-                    ]);
+
+const fixtureTools0 = defineToolSet({
+InspectUI: defineViewTypeTool({
+                        viewType: 'FileDetail', name: 'inspect',
+                        description: 'Inspect the selected file',
+                        inputSchema: Type.Object({filePath:Type.String()}, {additionalProperties:false}),
+                        })
+});
+function App() {
+                    const InspectUI = fixtureTools0.InspectUI;
+                    return h(AppTools, { definition: fixtureTools0, bindings: {
+InspectUI: { execute: async args => ({ success: true, data: { file: args.filePath } }) }
+} }, h('main', {}, [
+                        h(View, {kind: 'state',id:'fd_0',type:'FileDetail',key:'a'},
+                            h(Detail, {label:'App.tsx', InspectUI})),
+                        h(View, {kind: 'state',id:'fd_1',type:'FileDetail',key:'b'},
+                            h(Detail, {label:'package.json', InspectUI}))
+                    ]));
                 }
                 export default createTUIApp({app_name:'m4_fixture',component:App});
             `;
@@ -90,12 +100,9 @@ describe('Semantic WorkerHost View identity and SDK local Tool', () => {
                 expect(view.content.value).not.toContain(view.viewInstanceId);
             }
             const inspect = Object.values(first.tools).find((tool: any) => tool.name === 'inspect') as any;
-            expect(inspect.targets).toHaveLength(2);
-            expect(inspect.targets.map((target: any) => target.viewId).sort()).toEqual(['fd_0', 'fd_1']);
-            for (const target of inspect.targets) {
-                expect(firstViewsById.get(target.viewId).viewInstanceId).toBe(target.viewInstanceId);
-                expect(target.bindingVersion).toBeGreaterThan(0);
-            }
+            expect(inspect.execution).toMatchObject({ kind: 'view-type', activationId: expect.any(String) });
+            expect(inspect).not.toHaveProperty('targets');
+            const firstActivationId = inspect.execution.activationId;
 
             // A managed close ends this port; remounting requires RESET and a new Host.
             const physical = (host as any).worker;
@@ -133,18 +140,14 @@ describe('Semantic WorkerHost View identity and SDK local Tool', () => {
                 }
             }, { timeout: 3_000 });
             const current = readSnapshot(host);
-            const currentViewsById = new Map(current.views.map((view: any) => [view.id, view]));
             for (const view of current.views) {
                 expect(view.viewInstanceId).not.toBe(firstViewsById.get(view.id).viewInstanceId);
                 expect(view.content.value).not.toContain(view.viewInstanceId);
             }
             const currentInspect = Object.values(current.tools).find((tool: any) => tool.name === 'inspect') as any;
-            expect(currentInspect.targets).toHaveLength(2);
-            for (const target of currentInspect.targets) {
-                expect(target.viewInstanceId).toContain(host!.appInstanceId);
-                expect(currentViewsById.get(target.viewId).viewInstanceId).toBe(target.viewInstanceId);
-                expect(target.bindingVersion).toBeGreaterThan(0);
-            }
+            expect(currentInspect.execution).toMatchObject({ kind: 'view-type', activationId: expect.any(String) });
+            expect(currentInspect.execution.activationId).not.toBe(firstActivationId);
+            expect(currentInspect).not.toHaveProperty('targets');
         } finally {
             host?.terminate();
             await rm(temp, { recursive: true, force: true });

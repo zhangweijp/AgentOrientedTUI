@@ -1,5 +1,8 @@
+import { isToolResultData } from '../spi/core/tool-result.js';
+import { SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY } from '../spi/worker-protocol/types.js';
+export { SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY };
 import { canonicalJson, copyJson, utf8Size, type JsonCopyLimits } from '../core/snapshot/json.js';
-import type { JsonValue } from '../core/snapshot/types.js';
+import type { JsonValue, ObservedToolExecutionV3, ToolDescriptorV3 } from '../core/snapshot/types.js';
 import type { ViewToolInvocationTerminal } from '../spi/worker-protocol/messages.js';
 
 /** Shared hard ceiling for bounded Worker IPC JSON envelopes. */
@@ -9,6 +12,8 @@ export const WORKER_MESSAGE_LIMITS = Object.freeze({
     maxApproxBytes: 512 * 1024,
     maxCanonicalBytes: 512 * 1024,
 });
+
+const LEGACY_VIEW_TOOL_CAPABILITIES = new Set(['view-tool-ordinary-invoke/v2', 'view-tool-ref-invoke/v2']);
 
 type JsonObject = Readonly<Record<string, JsonValue>>;
 
@@ -46,13 +51,45 @@ export function captureWorkerCapabilities(input: unknown): readonly string[] | n
     } catch { return null; }
 }
 
-export function invocationTarget(value: JsonValue | undefined): boolean {
-    return invocationObject(value) &&
-        exact(value, ['viewId', 'viewInstanceId', 'bindingVersion', ...(Object.hasOwn(value, 'selector') ? ['selector'] : [])]) &&
-        (!Object.hasOwn(value, 'selector') || (invocationObject(value.selector) && exact(value.selector, ['param', 'value']) &&
-            text(value.selector.param) && text(value.selector.value))) &&
-        text(value.viewId) && text(value.viewInstanceId) &&
-        Number.isSafeInteger(value.bindingVersion) && (value.bindingVersion as number) > 0;
+export type ViewToolCapabilityCapture =
+    | Readonly<{ ok: true; capabilities: readonly string[] }>
+    | Readonly<{ ok: false; code: 'WORKER_PROTOCOL_V3_REQUIRED' | 'WORKER_CAPABILITY_UNSUPPORTED' | 'WORKER_CAPABILITY_INVALID' }>;
+
+/** Validate the V4 Worker handshake; retired capabilities cannot negotiate execution. */
+export function captureViewToolCapabilities(input: unknown): ViewToolCapabilityCapture {
+    const capabilities = captureWorkerCapabilities(input);
+    if (!capabilities) return Object.freeze({ ok: false, code: 'WORKER_CAPABILITY_INVALID' });
+    if (capabilities.some(capability => LEGACY_VIEW_TOOL_CAPABILITIES.has(capability))) {
+        return Object.freeze({ ok: false, code: 'WORKER_PROTOCOL_V3_REQUIRED' });
+    }
+    if (capabilities.some(capability => capability !== PARAMETERS_V4_CAPABILITY && capability !== SNAPSHOT_CAPABILITY)) {
+        return Object.freeze({ ok: false, code: 'WORKER_CAPABILITY_UNSUPPORTED' });
+    }
+    return Object.freeze({ ok: true, capabilities });
+}
+
+/** Validate the observed execution branch without accepting extra transport fields. */
+export function invocationExecution(value: JsonValue | undefined): boolean {
+    if (!invocationObject(value)) return false;
+    if (value.kind === 'view-type') return exact(value, ['kind', 'activationId']) && text(value.activationId);
+    return false;
+}
+
+/** Strict data shape for the V3 public Tool descriptor carried over Worker IPC. */
+export function invocationToolDescriptorV3(value: JsonValue | undefined): boolean {
+    if (!invocationObject(value) || !exact(value, ['id', 'name', 'viewType', 'description', 'inputSchema', 'execution']) ||
+        !['id', 'name', 'viewType', 'description'].every(key => text(value[key])) ||
+        !invocationObject(value.inputSchema) || value.inputSchema.type !== 'object' || !invocationObject(value.execution)) return false;
+    const execution = value.execution;
+    if (execution.kind === 'view-type') return exact(execution, ['kind', 'activationId']) && text(execution.activationId);
+    return false;
+}
+
+/** A wire caller may only send an execution identity present in the descriptor. */
+export function executionMatchesTool(tool: ToolDescriptorV3, execution: ObservedToolExecutionV3): boolean {
+    if (tool.execution.kind !== execution.kind) return false;
+    if (execution.kind === 'view-type') return tool.execution.kind === 'view-type' && tool.execution.activationId === execution.activationId;
+    return false;
 }
 
 /** Capture and correlate a bounded invocation terminal without trusting Worker payloads. */
@@ -73,15 +110,10 @@ export function captureInvocationTerminal(
             return null;
         }
         const { phase, result, failureEffects } = value.terminal;
-        if (!['not-entered', 'entered-returned'].includes(phase as string) || !invocationObject(result) ||
-            typeof result.success !== 'boolean' || Object.keys(result).some(key => !['success', 'data', 'error'].includes(key)) ||
+        if (!['not-entered', 'entered-returned'].includes(phase as string) || !isToolResultData(result) ||
             phase === 'not-entered' && result.success !== false ||
             Object.hasOwn(value.terminal, 'failureEffects') &&
-                (phase !== 'entered-returned' || result.success !== false || failureEffects !== 'none' && failureEffects !== 'partial') ||
-            Object.hasOwn(result, 'data') && !invocationObject(result.data) ||
-            Object.hasOwn(result, 'error') && (!invocationObject(result.error) || !text(result.error.code) ||
-                typeof result.error.message !== 'string' || Object.keys(result.error).some(key => !['code', 'message', 'context'].includes(key)) ||
-                Object.hasOwn(result.error, 'context') && !invocationObject(result.error.context))) {
+                (phase !== 'entered-returned' || result.success !== false || failureEffects !== 'none' && failureEffects !== 'partial')) {
             return null;
         }
         return value.terminal as unknown as ViewToolInvocationTerminal;

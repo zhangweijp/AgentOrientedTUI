@@ -1,18 +1,14 @@
 import { expect, it } from 'vitest';
 import { DesktopLogger } from './desktop-logger.js';
-it('C2-23 colon-bearing Desktop/App tuples never collide or prefix-delete each other', () => {
+it('Desktop cleanup preserves another literal Desktop ID', () => {
     const logger = new DesktopLogger(), first = 'desk' as any, next = 'desk:a' as any;
-    logger.logApp(first, 'a:b' as any, 'one');logger.logApp(next, 'b' as any, 'two');logger.logSystem(next, 'system');
-    expect(logger.getAppLogs(first, 'a:b' as any).map(x => x.message)).toEqual(['one']);
-    expect(logger.getAppLogs(next, 'b' as any).map(x => x.message)).toEqual(['two']);
-    expect(logger.getStats(first).appCounts).toEqual({ 'a:b': 1 });logger.cleanup(first);
-    expect(logger.getAppLogs(next, 'b' as any)).toHaveLength(1);expect(logger.getSystemLogs(next)).toHaveLength(1);expect(logger.getStats(first)).toEqual({ systemCount: 0, appCounts: {} });
-    logger.cleanupApp(next, 'b' as any);expect(logger.getStats(next)).toEqual({ systemCount: 1, appCounts: {} });
+    logger.logSystem(first, 'one');logger.logSystem(next, 'two');logger.cleanup(first);
+    expect(logger.getSystemLogs(first)).toEqual([]);
+    expect(logger.getSystemLogs(next).map(x => x.message)).toEqual(['two']);
 });
-it('C2-23 exact tuple cleanup preserves logging API, bounded buffers, and arbitrary literal IDs', () => {
-    const logger = new DesktopLogger({ maxAppLogs: 1, maxSystemLogs: 1 }), d = 'd' as any, app = '__proto__' as any;
-    logger.logApp(d, app, 'old');logger.logApp(d, app, 'new', 'warn');logger.logSystem(d, 'old');logger.logSystem(d, 'new');
-    expect(logger.getAppLogs(d, app)).toEqual([{ timestamp: expect.any(Number), message: 'new', level: 'warn' }]);
-    expect(Object.hasOwn(logger.getStats(d).appCounts, '__proto__')).toBe(true);expect(logger.getStats(d).appCounts.__proto__).toBe(1);
-    expect(logger.getSystemLogs(d)).toHaveLength(1);logger.cleanup(d);expect(logger.getStats(d)).toEqual({ systemCount: 0, appCounts: {} });
+it('bounded system buffers support arbitrary literal Desktop IDs and exact cleanup', () => {
+    const logger = new DesktopLogger({ maxSystemLogs: 1 }), id = '__proto__' as any;
+    logger.logSystem(id, 'old');logger.logSystem(id, 'new', 'warn');
+    expect(logger.getSystemLogs(id)).toEqual([{ timestamp: expect.any(Number), message: 'new', level: 'warn' }]);
+    logger.cleanup(id);expect(logger.getSystemLogs(id)).toEqual([]);
 });

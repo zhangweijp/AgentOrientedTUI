@@ -31,7 +31,7 @@ class ControlledWorker extends EventEmitter {
             });
             if (message.type === 'APP_CLOSE') {
                 this.pendingCloseResponse = response;
-                this.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1, instanceId, sequence: 1, operation: 'release' });
+                this.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1, instanceId, sequence: 1, action: 'release' });
                 return;
             }
             this.emit('message', response);

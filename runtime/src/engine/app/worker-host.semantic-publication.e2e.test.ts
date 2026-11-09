@@ -1,5 +1,5 @@
 import { Worker } from 'node:worker_threads';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
@@ -28,8 +28,9 @@ function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, f
     const policy = signalPolicy ? `signalPolicy: '${signalPolicy}',` : '';
     return `
         import { h } from 'preact';
+        import Type from 'typebox';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
-        import { createTUIApp, View, useDataRef, useViewTypeTool } from '@aotui/sdk';
+        import { createTUIApp, defineViewTypeTool, View, useDataRef, AppTools, ToolRef, defineToolSet } from '@aotui/sdk';
 
         Date.now = () => 1700000000000;
         let businessCalls = 0;
@@ -39,42 +40,30 @@ function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, f
                 ? { value: () => 'not cloneable' }
                 : { value: state.refValue }, [state.invalidRef, state.refValue]);
             const ref = useDataRef('selection', selection);
-            useViewTypeTool('refresh', {
-                description: 'Refresh the current view',
-                isMutating: false,
-                params: { query: { type: 'string', required: true } },
-            }, async () => {
-                businessCalls++;
-                return { success: true, data: { calls: businessCalls } };
-            }, { enabled: state.toolEnabled });
-            useViewTypeTool('extra', {
-                description: 'Additional view action',
-                isMutating: false,
-                params: { selector: { type: 'string', required: true } },
-            }, async () => ({ success: true }), { enabled: state.extraToolEnabled });
-            ${faultTools ? `
-            useViewTypeTool('fault_after_commit', {
-                description: 'Commit the fixture business change',
-                params: { reason: { type: 'string', required: true } },
-            }, async () => {
-                businessCalls++;
-                setState(current => ({ ...current, invalidRef: true }));
-                return { success: true, data: { calls: businessCalls } };
-            });
-            useViewTypeTool('stats', {
-                description: 'Read fixture business calls',
-                isMutating: false,
-                params: { query: { type: 'string', required: true } },
-            }, async () => ({ success: true, data: { calls: businessCalls } }));
-            ` : ''}
             return h('section', {}, h('p', {}, state.text + ' ' + ref('Selection')));
         }
 
-        function Root() {
+
+const fixtureTools0 = defineToolSet({
+RefreshUI: defineViewTypeTool({
+                viewType: 'Workspace', name: 'refresh', description: 'Refresh the current view',
+                inputSchema: Type.Object({ query: Type.String() }, { additionalProperties: false }),
+            }),
+ExtraUI: defineViewTypeTool({
+                viewType: 'Workspace', name: 'extra', description: 'Additional view action',
+                inputSchema: Type.Object({ selector: Type.String() }, { additionalProperties: false }),
+            }),
+Fault: defineViewTypeTool({viewType: 'Workspace', name: 'fault_after_commit', description: 'Commit the fixture business change', inputSchema: Type.Object({reason: Type.String()}, {additionalProperties:false})}),
+Stats: defineViewTypeTool({viewType: 'Workspace', name: 'stats', description: 'Read fixture business calls', inputSchema: Type.Object({query: Type.String()}, {additionalProperties:false})})
+});
+function Root() {
             const [state, setState] = useState({
                 open: ${initiallyOpen}, text: 'initial', refValue: 'seed',
                 toolEnabled: true, extraToolEnabled: false, invalidRef: false,
             });
+            const RefreshUI = fixtureTools0.RefreshUI;
+            const ExtraUI = fixtureTools0.ExtraUI;
+            void RefreshUI; void ExtraUI;
             useLayoutEffect(() => {
                 const onExternalEvent = event => {
                     const detail = event.detail || {};
@@ -94,9 +83,17 @@ function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, f
                 document.addEventListener('aotui:external-event', onExternalEvent);
                 return () => document.removeEventListener('aotui:external-event', onExternalEvent);
             }, []);
-            return state.open
-                ? h(View, { id: 'workspace', type: 'Workspace', name: 'Workspace' }, h(Workspace, { state, setState }))
-                : null;
+            return h(AppTools, { definition: fixtureTools0, bindings: {
+RefreshUI: { execute: async () => {
+                    businessCalls++;
+                    return { success: true, data: { calls: businessCalls } };
+                }, enabled: state.toolEnabled },
+ExtraUI: { execute: async () => ({ success: true }), enabled: state.extraToolEnabled },
+Fault: {enabled: ${faultTools}, execute: async () => {businessCalls++; setState(current => ({...current, invalidRef: true})); return {success:true, data:{calls:businessCalls}};}},
+Stats: {enabled: ${faultTools}, execute: async () => ({success:true, data:{calls:businessCalls}})}
+} }, state.open
+                ? h(View, {kind: 'state', id: 'workspace', type: 'Workspace', name: 'Workspace' }, h(Workspace, { state, setState }))
+                : null);
         }
 
         export default createTUIApp({ app_name: 'publication_fixture', component: Root, ${policy} });
@@ -123,7 +120,11 @@ async function compileApplication(name: string, signalPolicy: SignalPolicy, init
 beforeAll(async () => {
     const runtime = resolve(process.cwd());
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'aotui-semantic-publication-'));
-    await symlink(join(runtime, 'node_modules'), join(temporaryDirectory, 'node_modules'), 'dir');
+    const modules = join(temporaryDirectory, 'node_modules');
+    await mkdir(modules, { recursive: true });
+    await symlink(join(runtime, 'node_modules/preact'), join(modules, 'preact'), 'dir');
+    await symlink(join(runtime, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+    await symlink(join(runtime, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
     workerScriptPath = join(temporaryDirectory, 'worker-runtime.mjs');
     await build({
         entryPoints: [join(runtime, 'src/worker-runtime/index.ts')],
@@ -144,6 +145,7 @@ afterEach(async () => {
         expect(item.messages.some(message => message?.type === 'SNAPSHOT_FRAGMENT')).toBe(false);
         item.host.terminate();
         await item.worker.terminate();
+        await item.host.waitForResourceRelease();
     }
 });
 
@@ -159,6 +161,7 @@ async function start(name: string, options: Record<string, unknown> = {}) {
         appModulePath: appModules.get(name)!,
         workerScriptPath,
         existingWorker: worker,
+        config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR! },
         ...options,
     });
     const captures: Capture[] = [];
@@ -228,8 +231,8 @@ function allViewsPolicy(): ScopePolicy {
                 views: views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
                 refs: Object.values(source.refs).filter(ref => ids.has(ref.ownerViewId))
                     .map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
-                targets: Object.values(source.tools).flatMap(tool => tool.targets
-                    .filter(target => ids.has(target.viewId)).map(target => ({ toolId: tool.id, target }))),
+                toolBindings: Object.values(source.tools).flatMap(tool => 
+                    views.some(view => view.type === tool.viewType) ? [{ toolId: tool.id, execution: tool.execution }] : []),
                 content: views.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' as const })),
             };
         },
@@ -243,6 +246,7 @@ async function createToolCaller(host: AppWorkerHost, name: string, input: Record
     expect(scope.status).toBe('opened');
     if (scope.status !== 'opened') throw new Error(scope.issue.code);
     const observed = await scope.client.observe({ viewIds: ['workspace'] });
+    if (observed.status === 'observed') expect(scope.client.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
     expect(observed.status).toBe('observed');
     if (observed.status !== 'observed') throw new Error(observed.issue.code);
     const tool = observed.observation.tools.find(candidate => candidate.name === name);
@@ -343,7 +347,7 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
 
     it('manual ignores automatic DOM/Ref/Tool changes until a valid current Tool commits the projection', async () => {
         const manual = await start('manual-open', {
-            interactionModes: ['ordinary-v2'],
+            interactionModes: ['view-type-parameters-v1'],
         });
         await manual.host.open();
         expect(viewCount(manual.host)).toBe(1);
@@ -377,7 +381,7 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
     });
 
     it('auto reports a failed projection after a successful mutation and recovers from external state repair', async () => {
-        const x = await start('auto-fault', { interactionModes: ['ordinary-v2'] });
+        const x = await start('auto-fault', { interactionModes: ['view-type-parameters-v1'] });
         await x.host.open();
         expect(x.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', published: 1, lastViewCount: 1 });
         const fault = await createToolCaller(x.host, 'fault_after_commit', { reason: 'commit then fail to present' });
@@ -445,6 +449,7 @@ async function startOnWorker(worker: Worker, name: string) {
         appModulePath: appModules.get(name)!,
         workerScriptPath,
         existingWorker: worker,
+        config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR! },
     });
     const captures: Capture[] = [];
     const updates: any[] = [];

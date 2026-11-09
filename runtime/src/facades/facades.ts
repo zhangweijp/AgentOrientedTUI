@@ -8,17 +8,16 @@ import type { RuntimeInteractionAccess } from '../spi/runtime/app-interaction.in
  * 
  */
 
-import { DesktopManager } from '../engine/core/index.js';
+import { DesktopManager } from '../engine/core/manager.js';
 import { Kernel } from '../kernel/index.js';
 import type { IKernel } from '../spi/index.js';
 import {
-    RUNTIME_DEFAULTS,
     type RuntimeConfig,
     type RuntimeConfigInput,
     defineRuntimeConfig
 } from '../spi/config/index.js';
 
-export { RUNTIME_DEFAULTS, type RuntimeConfig, type RuntimeConfigInput, defineRuntimeConfig };
+export type { RuntimeConfig };
 
 // ============================================================================
 // Runtime factory
@@ -43,7 +42,7 @@ export { RUNTIME_DEFAULTS, type RuntimeConfig, type RuntimeConfigInput, defineRu
  * const runtime = createRuntime(config);
  * 
  * const desktopId = await runtime.createDesktop();
- * await runtime.installDynamicApp(desktopId, new MyChatApp());
+ * await runtime.installDynamicWorkerApp(desktopId, '/absolute/path/to/app.mjs');
  * ```
  */
 export function createRuntime(input: RuntimeConfigInput = {}): IKernel & RuntimeCloseReporting & RuntimeInteractionAccess {

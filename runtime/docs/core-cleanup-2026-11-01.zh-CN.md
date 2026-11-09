@@ -1,5 +1,7 @@
 # SDK / Runtime 核心清理：2026-11-01
 
+> 后续变更（2026-11-03）：本文保留 11 月 1 日清理批次的历史判断。项目所有者随后授权清理重复结果和通用任务查询机制；当前已移除 `ActionOutcome`、`OperationProvider` / `TaskProgressProvider` 与 `readReceipt`，公共示例已迁移到 `ToolResult`。Ref 和 Ref Tool 按所有者最新要求继续保留。当前调用合同见 [Semantic Host 接入](semantic-host-integration.zh-CN.md#4-receipt-描述调用事实不承诺持久查询或跨轮-exactly-once)。
+
 这是第一轮的历史交付记录。后续删除项及其验证见 [第二轮清理记录](core-cleanup-pass2-2026-11-01.zh-CN.md)；例如第一轮保留的 `useAppEnv` 已在第二轮收敛。
 
 ## 基线与范围
@@ -48,7 +50,7 @@
 | C01 | 删除 AppSnapshot 同义 alias、ViewOwnedTools / StateSession ReturnType alias | 统一 AppSnapshotV2；同步真实签名、类型测试、纯 TS 示例 | Core |
 | C02 | 收回 SnapshotDraftEnvelope / SnapshotHealth 公共导出，删除内部 snapshot barrel | 内部失败来源跟踪、健康状态与直接导入保留 | Core |
 | C03 | 删除 legacy-raw 存储解码回退 | 只接受正式 envelope；旧文件不改写、不删除，恢复报告不支持；合法 envelope 与业务 value 字段应正常工作 | Core |
-| C04 | 删除 Memory storage 恒零统计和未使用导入 | 保留 owner / namespace / operation 资源隔离与未知结果语义 | Core |
+| C04 | 删除 Memory storage 恒零统计和未使用导入 | 保留 owner / namespace / I/O 资源隔离与未知结果语义 | Core |
 
 所有组必须同步删除项的当前文档、类型、精确导出断言和调用方；历史交付报告保留为历史事实，不改写成当前验收。
 

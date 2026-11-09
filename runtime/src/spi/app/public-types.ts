@@ -14,6 +14,8 @@
  * @module @aotui/runtime/spi/app/public-types
  */
 
+import type { IRefBinding } from './ref-exporter.interface.js';
+
 
 // ============================================================================
 // IViewMeta - View 元数据 (App 开发者可见)
@@ -43,9 +45,8 @@ export interface IViewMeta {
     /**
      * 当前View的类型 (用于Tool聚合)
      * 
-     * @optional
      */
-    readonly viewType?: string;
+    readonly viewType: string;
 
     /** 父 App 的唯一标识符 */
     readonly appId: string;
@@ -80,12 +81,5 @@ export interface IRefRegistry {
      * @param refId - 引用 ID (View 内唯一)
      * @param data - 绑定的数据对象
      */
-    registerRef(refId: string, data: object): void;
-
-    /**
-     * 注销数据引用
-     *
-     * @param refId - 要注销的引用 ID
-     */
-    unregisterRef(refId: string): void;
+    registerRef(refId: string, data: object, refType?: string): IRefBinding;
 }

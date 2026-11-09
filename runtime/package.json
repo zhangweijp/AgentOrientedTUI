@@ -1,6 +1,6 @@
 {
   "name": "@aotui/runtime",
-  "version": "2.0.0",
+  "version": "7.0.0-srt.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -45,7 +45,7 @@
   ],
   "author": "AOTUI",
   "license": "Apache-2.0",
-  "description": "AOTUI Core Runtime - Worker isolation, TUI snapshot engine, and operation dispatch",
+  "description": "AOTUI Core Runtime - Worker isolation, TUI snapshot engine, and Tool invocation",
   "publishConfig": {
     "access": "public"
   },
@@ -66,12 +66,11 @@
     "madge": "^8.0.0",
     "preact": "^10.29.1",
     "prettier": "^3.7.4",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.9.3",
+    "typebox": "1.4.3",
+    "typescript": "7.0.2",
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@aotui/agent-driver-v2": "^0.2.1",
     "@types/json-schema": "^7.0.15",
     "linkedom": "^0.18.12"
   },

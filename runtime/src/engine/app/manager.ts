@@ -18,8 +18,8 @@
 import type { AppID, AppState, DesktopID, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
 import { createAppId } from '../../spi/index.js';
 import type { SandboxCloseReport } from './worker-sandbox.js';
-import type { AppManagerCloseReport, AppManagerCloseOperation } from '../../spi/runtime/close.interface.js';
-import { closeError, createCloseOperation, newCloseState, mergeCloseReport, sandboxCloseReport, addCloseFailure, snapshotClose, freezeClose, type CloseState } from '../core/close-operation.js';
+import type { AppManagerCloseReport, AppManagerCloseHandle } from '../../spi/runtime/close.interface.js';
+import { closeError, createCloseHandle, newCloseState, mergeCloseReport, sandboxCloseReport, addCloseFailure, snapshotClose, freezeClose, type CloseState } from '../core/close-handle.js';
 import { WorkerSandbox } from './worker-sandbox.js';
 import { WorkerPool } from './worker-pool.js';
 import { RUNTIME_DEFAULTS } from '../../spi/config/index.js';
@@ -83,7 +83,6 @@ interface IDesktopInternal {
     readonly id: DesktopID;
     emitSignal(reason: string): void;
     logSystem(message: string, level?: 'info' | 'warn' | 'error'): void;
-    logAppOperation(appId: AppID, message: string, level?: 'info' | 'warn' | 'error'): void;
 }
 
 type InstallOptions = AppInteractionOptions & {
@@ -135,8 +134,8 @@ export class AppManager {
     private readonly ownsWorkerPool: boolean;
     private readonly details = new WeakMap<WorkerSandbox, OwnedSandbox>();
     private readonly inFlight = new Set<Promise<unknown>>();
-    private readonly appOperations = new Map<AppID, { kind: string; promise: Promise<unknown> }>();
-    private closing?: AppManagerCloseOperation;
+    private readonly appTasks = new Map<AppID, { kind: string; promise: Promise<unknown> }>();
+    private closing?: AppManagerCloseHandle;
     private cleanupPromise?: Promise<AppManagerCloseReport>;
     private phase: 'active' | 'closing' | 'settled' = 'active';
     private intent: 'close' | 'delete' | null = null;
@@ -158,7 +157,7 @@ export class AppManager {
         while (!this.idsExhausted) {
             const id = createAppId(this.appIdCounter);
             if (this.appIdCounter === Number.MAX_SAFE_INTEGER) this.idsExhausted = true;else this.appIdCounter++;
-            if (!this.installedApps.has(id) && !this.workers.has(id) && !this.appOperations.has(id)) return id;
+            if (!this.installedApps.has(id) && !this.workers.has(id) && !this.appTasks.has(id)) return id;
         }
         throw closeError('LIFECYCLE_CAPACITY_EXCEEDED');
     }
@@ -169,14 +168,14 @@ export class AppManager {
     }
     private track<T>(id: AppID, kind: string, run: () => Promise<T>): Promise<T> {
         try {
-            this.assertActive();const previous = this.appOperations.get(id);
+            this.assertActive();const previous = this.appTasks.get(id);
             if (previous) return previous.kind === kind && kind !== 'install' ? previous.promise as Promise<T> : Promise.reject(closeError('APP_ALREADY_EXISTS'));
             this.capacity();
         } catch (error) { return Promise.reject(error); }
         let resolve!: (value: T) => void, reject!: (reason: unknown) => void;
         const promise = new Promise<T>((yes, no) => { resolve = yes;reject = no; });
-        const token = { kind, promise };this.appOperations.set(id, token);this.inFlight.add(promise);
-        const release = () => { this.inFlight.delete(promise);if (this.appOperations.get(id) === token) this.appOperations.delete(id); };
+        const token = { kind, promise };this.appTasks.set(id, token);this.inFlight.add(promise);
+        const release = () => { this.inFlight.delete(promise);if (this.appTasks.get(id) === token) this.appTasks.delete(id); };
         try { void run().then(value => { release();resolve(value); }, error => { release();reject(error); }); }
         catch (error) { release();reject(error); }
         void promise.catch(() => {});return promise;
@@ -208,7 +207,7 @@ export class AppManager {
             const interactionModes = captureInteractionModes(options);
             options = { ...options, interactionModes };
             this.capacity();id = options?.appId ?? this.allocateId();
-            if (this.installedApps.has(id) || this.workers.has(id) || this.appOperations.has(id)) throw closeError('APP_ALREADY_EXISTS');
+            if (this.installedApps.has(id) || this.workers.has(id) || this.appTasks.has(id)) throw closeError('APP_ALREADY_EXISTS');
         } catch (error) { return Promise.reject(error); }
         return this.track(id, 'install', async () => {
             const meta: InstalledApp = { appId: id, name: options?.name, description: options?.description, whatItIs: options?.whatItIs,
@@ -232,7 +231,7 @@ export class AppManager {
             this.current(meta, worker);if (record.stopReopen) throw closeError('APP_MANAGER_CLOSED');meta.status = 'running';
             this.desktop.logSystem(options?.lifecycleMessage ?? `Installed app: ${meta.appId}`);
             if (options?.emitLifecycleSignal !== false) this.desktop.emitSignal('app_installed');
-        } catch {
+        } catch (error) {
             if (record) {
                 record.codes.add('INSTALL_FAILED');const report = await this.clean(record, 'close', false);
                 if (this.phase === 'active' && report.resourcesReleased) {
@@ -240,13 +239,13 @@ export class AppManager {
                     if (this.installedApps.get(meta.appId) === meta && !this.workers.has(meta.appId)) meta.status = 'closed';
                 }
             } else if (this.installedApps.get(meta.appId) === meta) this.installedApps.delete(meta.appId);
-            throw closeError('INSTALL_FAILED');
+            throw Object.defineProperty(closeError('INSTALL_FAILED'), 'cause', { value: error });
         }
     }
     registerPendingApp(options: PendingOptions): AppID {
         const interactionModes = captureInteractionModes(options);
         this.assertActive();const id = options.appId ?? this.allocateId();
-        if (this.installedApps.has(id) || this.workers.has(id) || this.appOperations.has(id)) throw closeError('APP_ALREADY_EXISTS');
+        if (this.installedApps.has(id) || this.workers.has(id) || this.appTasks.has(id)) throw closeError('APP_ALREADY_EXISTS');
         this.installedApps.set(id, { appId: id, name: options.name, description: options.description, whatItIs: options.whatItIs, whenToUse: options.whenToUse,
             status: 'pending', installedAt: Date.now(), modulePath: options.modulePath, workerScript: options.workerScriptPath,
             config: options.config, runtimeConfig: options.runtimeConfig,
@@ -316,7 +315,7 @@ export class AppManager {
     }
     private report(): AppManagerCloseReport {
         const state = this.folded ? structuredClone(this.folded) : newCloseState('app-manager', this.intent);
-        state.state = this.phase;state.intent = this.intent;state.pendingOperations = this.inFlight.size;
+        state.state = this.phase;state.intent = this.intent;state.pendingTasks = this.inFlight.size;
         for (const record of this.targets ?? (this.folded ? [] : [...this.workers].map(([id, worker]) => this.owned(id, worker)))) mergeCloseReport(state, this.contribution(record));
         if (this.inFlight.size) state.resourcesReleased = false;
         if (this.ownsWorkerPool) {
@@ -327,13 +326,13 @@ export class AppManager {
         return freezeClose({ ...snapshotClose(state), scope: 'app-manager' as const });
     }
     getCloseReport(): AppManagerCloseReport { return this.closing ? this.closing.inspect() : this.report(); }
-    beginClose(intent: 'close' | 'delete' = 'close'): AppManagerCloseOperation {
+    beginClose(intent: 'close' | 'delete' = 'close'): AppManagerCloseHandle {
         if (this.closing) { if (this.intent === 'close' && intent === 'delete') throw closeError('LIFECYCLE_CONFLICT');return this.closing; }
         this.phase = 'closing';this.intent = intent;this.targets = [...this.workers].map(([id, worker]) => this.owned(id, worker));
         for (const record of this.targets) record.stopReopen = true;
         let complete!: (report: AppManagerCloseReport) => void;
         const completion = new Promise<AppManagerCloseReport>(resolve => { complete = resolve; });
-        this.closing = createCloseOperation(() => this.report(), completion);
+        this.closing = createCloseHandle(() => this.report(), completion);
         const ownedPool = this.ownsWorkerPool ? this.workerPool.destroy() : undefined;
         const tasks = this.targets.map(record => this.clean(record, intent, true));
         void Promise.resolve().then(async () => {
@@ -361,14 +360,14 @@ export class AppManager {
         this.assertActive();const meta = this.installedApps.get(id);
         if (meta && (meta.status === 'pending' || meta.status === 'closed')) { await this.startPendingApp(id);return; }
         if (!this.workers.has(id)) { console.warn(`App ${id} not found.`);return; }
-        if (meta) meta.status = 'running';this.desktop.logSystem(`Opened application: ${id}`);this.desktop.logAppOperation(id, 'Application opened.');this.desktop.emitSignal('app_opened');
+        if (meta) meta.status = 'running';this.desktop.logSystem(`Opened application: ${id}`);this.desktop.emitSignal('app_opened');
     }
     async closeApp(id: AppID, expectedInstanceId?: string): Promise<void> {
         this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const record = this.owned(id, worker);record.stopReopen = true;
-        const accepted = this.appOperations.get(id)?.promise;const report = await this.clean(record, 'close', true);
+        const accepted = this.appTasks.get(id)?.promise;const report = await this.clean(record, 'close', true);
         if (accepted) await accepted.catch(() => {});this.releaseRecord(record, true);
         const mapped = this.contribution(record);if (mapped.hasFailures || !report.resourcesReleased) throw closeError('APP_CLOSE_FAILED', mapped);
-        this.desktop.logSystem(`Closed application: ${id}`);this.desktop.logAppOperation(id, 'Application closed.');this.desktop.emitSignal('dom_mutation');
+        this.desktop.logSystem(`Closed application: ${id}`);this.desktop.emitSignal('dom_mutation');
     }
     async pauseAll(): Promise<void> {
         this.assertActive();for (const [id, worker] of this.workers) if (worker.status === 'running') {
@@ -380,8 +379,8 @@ export class AppManager {
             const meta = this.installedApps.get(id);await worker.resume();this.assertActive();if (this.workers.get(id) === worker && this.installedApps.get(id) === meta && meta) meta.status = 'running';
         }
     }
-    async collapseApp(id: AppID, expectedInstanceId?: string): Promise<void> { this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'collapsed';this.desktop.logAppOperation(id, 'Application collapsed.');this.desktop.emitSignal('dom_mutation'); }
-    async showApp(id: AppID, expectedInstanceId?: string): Promise<void> { this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'running';this.desktop.logAppOperation(id, 'Application shown.');this.desktop.emitSignal('dom_mutation'); }
+    async collapseApp(id: AppID, expectedInstanceId?: string): Promise<void> { this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'collapsed';this.desktop.logSystem(`Collapsed application: ${id}`);this.desktop.emitSignal('dom_mutation'); }
+    async showApp(id: AppID, expectedInstanceId?: string): Promise<void> { this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'running';this.desktop.logSystem(`Shown application: ${id}`);this.desktop.emitSignal('dom_mutation'); }
     getInstalledApps(): Array<InstalledApp & { readonly appInstanceId?: string }> {
         return [...this.installedApps.values()].map(app => {
             const appInstanceId = this.workers.get(app.appId)?.appInstanceId;

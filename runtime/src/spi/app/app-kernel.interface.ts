@@ -47,8 +47,7 @@ export interface AppKernelConfig {
     appName: string;
 
     /**
-     * App 名称
-     * 语义化命名，用于日志和调试
+     * 派生的日志／调试标签；不用于注册、Ref 解析或调用定位
      */
     name: string;
 

@@ -1,3 +1,6 @@
+export const MARKDOWN_VIEW_FORMAT = 'markdown-v1' as const;
+export const SEMANTIC_VIEW_FORMAT = 'semantic-v1' as const;
+export const SNAPSHOT_SCHEMA_VERSION = 3 as const;
 /**
  * Runtime Core semantic snapshot types.
  *
@@ -12,8 +15,8 @@ export type JsonValue =
     | Readonly<{ [key: string]: JsonValue }>;
 
 export type ViewContent =
-    | Readonly<{ format: 'markdown-v1'; value: string }>
-    | Readonly<{ format: 'semantic-v1'; value: JsonValue }>;
+    | Readonly<{ format: typeof MARKDOWN_VIEW_FORMAT; value: string }>
+    | Readonly<{ format: typeof SEMANTIC_VIEW_FORMAT; value: JsonValue }>;
 
 export type RefTarget =
     | Readonly<{ kind: 'snapshot-value'; payload: JsonValue }>
@@ -25,8 +28,9 @@ export type RefTarget =
       }>;
 
 /**
- * M4 Stage 2: versioned source-bound observation.
- * Snapshot schema version 2 is the sole supported publication contract.
+ * Semantic snapshots present the currently active ViewType capabilities alongside
+ * data References owned by real View instances. Normal View content changes do not replace
+ * the Runtime-issued type-tool activation identity.
  */
 export interface ViewSnapshotV2 {
     readonly id: string;
@@ -43,25 +47,18 @@ export interface RefDescriptorV2 {
     readonly refType: string;
     readonly target: RefTarget;
 }
-export interface ToolTargetV2 {
-    readonly viewId: string;
-    readonly viewInstanceId: string;
-    readonly bindingVersion: number;
-    /** App-declared, existing input parameter selecting this observed target. */
-    readonly selector?: ToolTargetSelector;
-}
-export interface ToolTargetSelector { readonly param: string; readonly value: string }
-export interface ToolDescriptorV2 {
+export type ToolExecutionV3 = Readonly<{ kind: 'view-type'; activationId: string }>;
+export interface ToolDescriptorV3 {
     readonly id: string;
     readonly name: string;
     readonly viewType: string;
     readonly description: string;
     readonly inputSchema: JsonValue;
-    readonly isMutating: boolean;
-    readonly targets: readonly ToolTargetV2[];
+    readonly execution: ToolExecutionV3;
 }
-export interface PreparedAppSnapshotDraftV2 {
-    readonly schemaVersion: 2;
+export type ObservedToolExecutionV3 = ToolExecutionV3;
+export interface PreparedAppSnapshotDraftV3 {
+    readonly schemaVersion: typeof SNAPSHOT_SCHEMA_VERSION;
     readonly appId: string;
     readonly instanceId: string;
     readonly producerSeq: number;
@@ -69,10 +66,10 @@ export interface PreparedAppSnapshotDraftV2 {
     readonly capturedAt: number;
     readonly views: readonly ViewSnapshotV2[];
     readonly refs: Readonly<Record<string, RefDescriptorV2>>;
-    readonly tools: Readonly<Record<string, ToolDescriptorV2>>;
+    readonly tools: Readonly<Record<string, ToolDescriptorV3>>;
 }
-export interface AppSnapshotV2 {
-    readonly schemaVersion: 2;
+export interface AppSnapshotV3 {
+    readonly schemaVersion: typeof SNAPSHOT_SCHEMA_VERSION;
     readonly id: string;
     readonly appId: string;
     readonly instanceId: string;
@@ -80,7 +77,7 @@ export interface AppSnapshotV2 {
     readonly createdAt: number;
     readonly views: readonly ViewSnapshotV2[];
     readonly refs: Readonly<Record<string, RefDescriptorV2>>;
-    readonly tools: Readonly<Record<string, ToolDescriptorV2>>;
+    readonly tools: Readonly<Record<string, ToolDescriptorV3>>;
     readonly contentDigest: string;
 }
 export type SnapshotDraftEnvelope = Readonly<{
@@ -108,6 +105,7 @@ export type SnapshotIssueCode =
     | 'VIEW_INSTANCE_REVOKED'
     | 'TOOL_UNAVAILABLE'
     | 'TOOL_SOURCE_STALE'
+    | 'TOOL_SOURCE_CONFLICT'
     | 'REF_DECLARATION_INVALID'
     | 'REF_CONTRACT_UNSUPPORTED';
 
@@ -121,21 +119,21 @@ export interface SnapshotIssue {
 }
 
 export type CommitResult =
-    | Readonly<{ status: 'published' | 'unchanged'; snapshot: AppSnapshotV2 }>
+    | Readonly<{ status: 'published' | 'unchanged'; snapshot: AppSnapshotV3 }>
     | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
 
 export type SnapshotRead =
-    | Readonly<{ status: 'ready'; snapshot: AppSnapshotV2 }>
+    | Readonly<{ status: 'ready'; snapshot: AppSnapshotV3 }>
     | Readonly<{ status: 'unready' }>
-    | Readonly<{ status: 'degraded'; lastGood?: AppSnapshotV2; issue: SnapshotIssue }>
+    | Readonly<{ status: 'degraded'; lastGood?: AppSnapshotV3; issue: SnapshotIssue }>
     | Readonly<{ status: 'stopped' }>;
 
 export type SnapshotLookup =
-    | Readonly<{ status: 'found'; snapshot: AppSnapshotV2 }>
+    | Readonly<{ status: 'found'; snapshot: AppSnapshotV3 }>
     | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
 
 export interface SnapshotLease {
-    readonly snapshot: AppSnapshotV2;
+    readonly snapshot: AppSnapshotV3;
     /** null means retained by an explicit owner until release/dispose. */
     readonly expiresAt: number | null;
     release(): void;
@@ -150,7 +148,7 @@ export type RefLookup =
     | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
 
 export type ToolLookup =
-    | Readonly<{ status: 'found'; tool: ToolDescriptorV2 }>
+    | Readonly<{ status: 'found'; tool: ToolDescriptorV3 }>
     | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
 
 export interface RefSelector {

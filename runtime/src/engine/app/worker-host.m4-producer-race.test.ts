@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
 
-/** A real SDK/Worker race injected AFTER the producer epoch check and DURING V2 draft preparation. */
-describe('Semantic producer regression: a mutation during V2 preparation cannot publish a torn Draft', () => {
+/** A real SDK/Worker race injected AFTER the producer epoch check and DURING V3 draft preparation. */
+describe('Semantic producer regression: a mutation during V3 preparation cannot publish a torn Draft', () => {
     it('rejects the inconsistent prepare and recovers at a later stable epoch', async () => {
         const temporary = await mkdtemp(join(tmpdir(), 'aotui-v2-prepare-race-'));
         const root = resolve(process.cwd());
@@ -18,6 +18,7 @@ describe('Semantic producer regression: a mutation during V2 preparation cannot 
             const modules = join(temporary, 'node_modules');
             await mkdir(join(modules, '@aotui'), { recursive: true });
             await symlink(join(root, 'node_modules/preact'), join(modules, 'preact'), 'dir');
+            await symlink(join(root, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
             await symlink(join(root, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
             await symlink(root, join(modules, '@aotui/runtime'), 'dir');
             await build({
@@ -29,19 +30,35 @@ describe('Semantic producer regression: a mutation during V2 preparation cannot 
             const fixture = `
                 import { writeFileSync } from 'node:fs';
                 import { h } from 'preact';
+                import Type from 'typebox';
                 import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
                 import { View } from './sdk/src/components/View.tsx';
-                import { useViewTypeTool } from './sdk/src/hooks/useViewTypeTool.ts';
+                import { AppTools, ToolRef } from './sdk/src/components/AppTools.tsx';
+                import { defineToolSet, defineViewTypeTool } from './sdk/src/tools/view-type-tool.ts';
 
-                function Detail() {
-                    useViewTypeTool('inspect', {
-                        description:'Read the current file metadata', params:{}, isMutating:false,
-                    }, async () => ({success:true,data:{file:'App.tsx'}}));
-                    return h('p',{},'Stable FileDetail');
+                function Detail({ InspectUI }) {
+                    return h('section',{},[
+                        h('p',{},'Stable FileDetail'),
+                        h(ToolRef,{ tool: InspectUI },'Inspect'),
+                    ]);
+                }
+
+const fixtureTools0 = defineToolSet({
+InspectUI: defineViewTypeTool({
+                        viewType:'FileDetail', name:'inspect',
+                        description:'Read the current file metadata',
+                        inputSchema:Type.Object({}, {additionalProperties:false}),
+                        })
+});
+function App() {
+                    const InspectUI = fixtureTools0.InspectUI;
+                    return h(AppTools, { definition: fixtureTools0, bindings: {
+InspectUI: { execute: async () => ({success:true,data:{file:'App.tsx'}}) }
+} }, h(View,{kind: 'state',id:'fd_0',type:'FileDetail'},h(Detail,{InspectUI})));
                 }
                 const factory = createTUIApp({
                     app_name:'m4_epoch_race',
-                    component:()=>h(View,{id:'fd_0',type:'FileDetail'},h(Detail,{})),
+                    component:App,
                 });
                 const initialize = factory.initializeComponent.bind(factory);
                 factory.initializeComponent = async (container, ctx) => {
@@ -53,18 +70,18 @@ describe('Semantic producer regression: a mutation during V2 preparation cannot 
                     view.getAttribute = ((name: string) => {
                         const value = getAttribute(name);
                         // captureDOMSnapshot reads this exact mounted identity only
-                        // after it has copied the Tool inventory for the draft.
+                        // after it has copied the App-level Tool inventory for the draft.
                         if (!mutated && name === 'data-view-instance-id' && value) {
                             mutated = true;
                             const before = ctx.projection.token();
                             const handler = async () => ({ success: true, data: { file: 'App.tsx' } });
-                            const release = ctx.viewTools.registerTool(value, 'late_inspect', {
+                            const release = ctx.appTypeTools.registerTypeTool({
+                                viewType: 'FileDetail',
+                                name: 'late_inspect',
                                 description: 'Inspect after a concurrent registration',
-                                params: {}, isMutating: false,
-                                handler,
-                            }, {
+                                inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+                                }, {
                                 safeOrdinaryParametersInvocationMode: 'ordinary-v2',
-                                additionalProperties: false,
                                 createSafeOrdinaryParametersInvoker: contract => async args => {
                                     const checked = contract.validate(args);
                                     return checked.ok
@@ -120,7 +137,7 @@ describe('Semantic producer regression: a mutation during V2 preparation cannot 
             expect(report.lastIssueCode).toBeUndefined();
             const lookup = (host as any).snapshotReceiver.core.store.getById(report.snapshotId);
             expect(lookup).toMatchObject({ status:'found', snapshot:{
-                schemaVersion:2, views:[{id:'fd_0', content:{value: expect.stringContaining('Stable FileDetail')}}],
+                schemaVersion:3, views:[{id:'fd_0', content:{value: expect.stringContaining('Stable FileDetail')}}],
             }});
             if (lookup.status === 'found') {
                 expect(lookup.snapshot.revision).toBe(1);
@@ -129,6 +146,7 @@ describe('Semantic producer regression: a mutation during V2 preparation cannot 
             }
         } finally {
             host?.terminate();
+            await host?.waitForResourceRelease();
             await rm(temporary, { recursive: true, force: true });
         }
     }, 12_000);

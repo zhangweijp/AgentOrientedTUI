@@ -1,3 +1,4 @@
+import { APP_LIFECYCLE_PROTOCOL } from '../spi/index.js';
 import type { AppCleanupReport, AppLifecycleCallbacks, AppLifecyclePort } from '../spi/runtime/app-lifecycle.interface.js';
 
 export function createAppLifecycle(instanceId: string) {
@@ -32,7 +33,7 @@ export function createAppLifecycle(instanceId: string) {
         void completion.catch(() => {});
         return completion;
     }
-    const port: AppLifecyclePort = Object.freeze({ protocol: 'app-lifecycle-v2', register(callbacks: AppLifecycleCallbacks) {
+    const port: AppLifecyclePort = Object.freeze({ protocol: APP_LIFECYCLE_PROTOCOL, register(callbacks: AppLifecycleCallbacks) {
         // APP_STOP may arrive while initializeComponent is awaiting. Retain a
         // late committed owner and stop it synchronously; close runs only after
         // AppKernel has joined initialization. Never admit owners after close.
@@ -47,7 +48,7 @@ export function createAppLifecycle(instanceId: string) {
         return () => { stop(); void close().catch(() => {}); };
     } });
     return Object.freeze({ port, stop, close, getReport: (): AppCleanupReport => Object.freeze({
-        protocol: 'app-lifecycle-v2', instanceId, state,
+        protocol: APP_LIFECYCLE_PROTOCOL, instanceId, state,
         issues: Object.freeze([...issues]),
     }) });
 }

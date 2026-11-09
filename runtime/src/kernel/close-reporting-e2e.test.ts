@@ -24,13 +24,24 @@ async function fixture(scenario='normal'){
     const dir=await mkdtemp(join(tmpdir(),'aotui-c2-kernel-')),app=join(dir,'app.mjs'),entered=join(dir,'entered'),release=join(dir,'release');
     await mkdir(join(dir,'node_modules'),{recursive:true});
     await symlink(join(repo,'sdk/node_modules/preact'),join(dir,'node_modules/preact'),'dir');
+    await symlink(join(repo,'sdk/node_modules/typebox'),join(dir,'node_modules/typebox'),'dir');
     const body=`import {writeFile} from 'node:fs/promises';import {existsSync} from 'node:fs';
-import {h} from 'preact';import {createTUIApp,View,useViewTypeTool,usePersistentState,useAppRuntimeContext} from ${JSON.stringify(url(sdkDist))};
-let setter,value,port;function Detail(){
-useViewTypeTool('set',{description:'Set persisted value',params:{value:{type:'number',required:true}}},async args=>{setter(args.value);return {success:true,data:{value:args.value}};});
-useViewTypeTool('flush',{description:'Flush persisted state',params:{}},async()=>({success:true,data:await port.flush()}));
-return h('p',{},String(value));}
-function Root(){[value,setter]=usePersistentState('value',0);port=useAppRuntimeContext().persistence;return h(View,{id:'detail',type:'Detail'},h(Detail,{}));}
+import {h} from 'preact';import {Type} from 'typebox';import {createTUIApp,View,defineViewTypeTool,AppTools, ToolRef, defineToolSet,usePersistentState,useAppRuntimeContext} from ${JSON.stringify(url(sdkDist))};
+let setter,value,port;function Detail({Set,Flush}){
+return h('section',{},h('p',{},String(value)),h(ToolRef,{ tool: Set },'Set'),h(ToolRef,{ tool: Flush },'Flush'));}
+
+const fixtureTools0 = defineToolSet({
+Set: defineViewTypeTool({viewType:'Detail',name:'set',description:'Set persisted value',inputSchema:Type.Object({value:Type.Number()},{additionalProperties:false}),}),
+Flush: defineViewTypeTool({viewType:'Detail',name:'flush',description:'Flush persisted state',inputSchema:Type.Object({},{additionalProperties:false}),})
+});
+function Root(){
+[value,setter]=usePersistentState('value',0);port=useAppRuntimeContext().persistence;
+const Set = fixtureTools0.Set;
+const Flush = fixtureTools0.Flush;
+return h(AppTools, { definition: fixtureTools0, bindings: {
+Set: { execute: async args=>{setter(args.value);return {success:true,data:{value:args.value}};} },
+Flush: { execute: async()=>({success:true,data:await port.flush()}) }
+} }, h(View,{kind: 'state',id:'detail',type:'Detail'},h(Detail,{Set,Flush})));}
 const factory=createTUIApp({app_name:'close',component:Root});
 ${scenario==='async-unmount'||scenario==='failed-unmount'?`const initialize=factory.initializeComponent.bind(factory);factory.initializeComponent=async(...args)=>{const renderer=await initialize(...args);return {...renderer,async unmount(){${scenario==='async-unmount'?`await writeFile(${JSON.stringify(entered)},'entered');while(!existsSync(${JSON.stringify(release)}))await new Promise(resolve=>setTimeout(resolve,5));`:''}renderer.unmount();${scenario==='failed-unmount'?"throw Error('private unmount detail');":''}}};};`:''}
 export default factory;`;
@@ -39,21 +50,24 @@ export default factory;`;
 const makeRuntime=()=>createRuntime({worker:{timeoutMs:4000,pool:{initialSize:0,maxSize:4}}});
 function sandbox(runtime:any,id='d',app='app'):any{return (runtime.getDesktop(id) as any).appManager.getWorkerSandbox(app);}
 async function install(runtime:any,f:Awaited<ReturnType<typeof fixture>>,id='d',app='app',extra={}){
-    if(!(runtime as any).desktopManager.has(id))await runtime.createDesktop(id);
+    if(!(runtime as any).desktopManager.get(id))await runtime.createDesktop(id);
     // Vitest loads the parent from src; the actual Node Worker must consume built JS.
-    return runtime.installDynamicWorkerApp(id,url(f.app),{appId:app,workerScriptPath:join(runtimeDist,'worker-runtime/index.js'),config:{AOTUI_DATA_DIR:f.data,AOTUI_APP_NAME:'close'},...extra});
+    return runtime.installDynamicWorkerApp(id,url(f.app),{appId:app,workerScriptPath:join(runtimeDist,'worker-runtime/index.js'),config:{AOTUI_DATA_DIR:f.data,AOTUI_APP_KEY:'close'},...extra});
 }
 async function invoke(runtime:any,id='d',app='app',name='set',input={value:1}){
     const opened=runtime.createAppScope(id,app,{project({source,selection}:any){const views=source.views.filter((view:any)=>selection.viewIds.includes(view.id));return {
         views:views.map((view:any)=>({viewId:view.id,viewInstanceId:view.viewInstanceId})),
         refs:Object.values(source.refs).filter((ref:any)=>selection.viewIds.includes(ref.ownerViewId)).map((ref:any)=>({viewId:ref.ownerViewId,viewInstanceId:ref.ownerViewInstanceId,refId:ref.id})),
-        targets:Object.values(source.tools).flatMap((tool:any)=>tool.targets.filter((target:any)=>selection.viewIds.includes(target.viewId)).map((target:any)=>({toolId:tool.id,target}))),
+        toolBindings:Object.values(source.tools).flatMap((tool:any)=>tool.execution.kind==='view-type'
+            ? views.some((view:any)=>view.type===tool.viewType)?[{toolId:tool.id,execution:tool.execution}]:[]
+            : tool.execution.targets.filter((target:any)=>selection.viewIds.includes(target.viewId)).map((target:any)=>({toolId:tool.id,execution:{kind:'view-instance',target}}))),
         content:views.map((view:any)=>({view:{viewId:view.id,viewInstanceId:view.viewInstanceId},decision:'retain'})),
     };},authorize:()=>true,canReadReceipt:()=>true});
     if(opened.status!=='opened')throw new Error(opened.issue.code);const client=opened.client;
     try{
         let observation:any;await vi.waitFor(async()=>{const result=await client.observe({all:true});expect(result.status).toBe('observed');if(result.status==='observed')observation=result.observation;},{timeout:6000});
-        const tool=observation.tools.find((item:any)=>item.name===name),binding=observation.bindings.find((item:any)=>item.toolId===tool?.id&&item.target.viewId==='detail');
+        expect(client.adoptObservation(observation.observationId)).toEqual({status:'adopted'});
+        const tool=observation.tools.find((item:any)=>item.name===name),binding=observation.bindings.find((item:any)=>item.toolId===tool?.id&&item.execution.kind==='view-type');
         if(!binding)throw new Error('Missing Semantic Tool binding '+name);
         const result=await client.invoke({invocationId:randomUUID(),observationId:observation.observationId,bindingId:binding.bindingId,input});
         if(result.kind!=='receipt'||result.receipt.outcome.status!=='succeeded')return {success:false};
@@ -110,14 +124,14 @@ it.each(['open','replace'] as const)('C2-27 real Node storage %s crosses a calle
         const box=sandbox(runtime),worker=box.lease.worker,closing=runtime.beginShutdown();if(held==='replace')await entered.promise;
         const deadline=await closing.wait({timeoutMs:5}),before=deadline.report;expect(deadline.status).toBe('deadline');
         expect(before).toMatchObject({state:'closing',resourcesReleased:false,resources:{storageActualIO:1,retainedStorageOwners:held==='open'?0:1}});expect(backend.getStats().ownerSlots).toBe(1);
-        if(held==='open')expect(before.resources.openingStorageOwners).toBe(1);expect(worker.threadId).toBeGreaterThan(0);expect((runtime as any).desktopManager.has('d')).toBe(true);
+        if(held==='open')expect(before.resources.openingStorageOwners).toBe(1);expect(worker.threadId).toBeGreaterThan(0);expect((runtime as any).desktopManager.get('d')).toBeDefined();
         finish.resolve();const report=await closing.completion;const result=await observedInstall;
         expect(report.resourcesReleased).toBe(true);expect(report.state).toBe('settled');expect(worker.threadId).toBe(-1);expect(backend.getStats().ownerSlots).toBe(0);expect(before.resources.storageActualIO).toBe(1);
         if(held==='replace'){expect(report.ok).toBe(true);expect(JSON.parse(await readFile(f.record(),'utf8')).value).toBe(41);}else{
             // SDK OPEN may already have acknowledged before hydration requests this open.
             // If admission is still pending it must fail safely; either outcome leaves no owner.
             if(result instanceof Error){expect((result as any).code).toBe('INSTALL_FAILED');expect(report.hasFailures).toBe(true);}else expect(result).toBe('app');
-            expect((runtime as any).desktopManager.has('d')).toBe(false);
+            expect((runtime as any).desktopManager.get('d')).toBeUndefined();
         }
         await facts('held-storage-'+held,{before,report,backend:backend.getStats(),physicalThreadId:worker.threadId,installOutcome:result instanceof Error?(result as any).code:result,barrier:'controlled adapter around real Node backend'});
     }finally{finish.resolve();await installing?.catch(()=>{});await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
@@ -127,7 +141,7 @@ it('C2-28 two Runtime pools / two Desktop IDs / two script paths are isolated',a
     const f=await fixture(),alternate=join(f.dir,'alternate-worker.mjs');await capture(alternate,`import ${JSON.stringify(url(join(runtimeDist,'worker-runtime/index.js')))};`);
     const a=makeRuntime(),b=makeRuntime();
     try{
-        for(const runtime of [a,b]){await install(runtime,f,'one','app',{config:{AOTUI_DATA_DIR:join(f.dir,runtime===a?'a':'b'),AOTUI_APP_NAME:'close'}});await install(runtime,f,'two','app',{workerScriptPath:alternate,config:{AOTUI_DATA_DIR:join(f.dir,runtime===a?'a':'b'),AOTUI_APP_NAME:'close'}});}
+        for(const runtime of [a,b]){await install(runtime,f,'one','app',{config:{AOTUI_DATA_DIR:join(f.dir,runtime===a?'a':'b'),AOTUI_APP_KEY:'close'}});await install(runtime,f,'two','app',{workerScriptPath:alternate,config:{AOTUI_DATA_DIR:join(f.dir,runtime===a?'a':'b'),AOTUI_APP_KEY:'close'}});}
         const aWorkers=['one','two'].map(id=>sandbox(a,id).lease.worker),bWorkers=['one','two'].map(id=>sandbox(b,id).lease.worker);expect(new Set([...aWorkers,...bWorkers]).size).toBe(4);
         const aReport=await a.beginShutdown().completion;expect(aReport.ok).toBe(true);expect(aWorkers.every(worker=>worker.threadId===-1)).toBe(true);expect(bWorkers.every(worker=>worker.threadId>0)).toBe(true);
         for(const id of ['one','two'])expect((await invoke(b,id,'app','set',{value:52})).success).toBe(true);
@@ -158,17 +172,18 @@ it('C2-29 emitted createRuntime + real SDK naturally exits a fresh Node child',a
         `import {createRuntime} from ${JSON.stringify(url(join(runtimeDist,'index.js')))};`,
         "const runtime=createRuntime({worker:{timeoutMs:4000,pool:{initialSize:0,maxSize:1}}});",
         "await runtime.createDesktop('d');",
-        `await runtime.installDynamicWorkerApp('d',${JSON.stringify(url(f.app))},{appId:'app',workerScriptPath:${JSON.stringify(join(runtimeDist,'worker-runtime/index.js'))},config:{AOTUI_DATA_DIR:${JSON.stringify(f.data)},AOTUI_APP_NAME:'close'}});`,
+        `await runtime.installDynamicWorkerApp('d',${JSON.stringify(url(f.app))},{appId:'app',workerScriptPath:${JSON.stringify(join(runtimeDist,'worker-runtime/index.js'))},config:{AOTUI_DATA_DIR:${JSON.stringify(f.data)},AOTUI_APP_KEY:'close'}});`,
         "const desktop=runtime.getDesktop('d'),box=desktop.appManager.getWorkerSandbox('app'),worker=box.lease.worker;",
         "const opened=runtime.createAppScope('d','app',{project({source,selection}){",
         "const views=source.views.filter(view=>selection.viewIds.includes(view.id));",
         "return {views:views.map(view=>({viewId:view.id,viewInstanceId:view.viewInstanceId})),refs:[],",
-        "targets:Object.values(source.tools).flatMap(tool=>tool.targets.filter(target=>selection.viewIds.includes(target.viewId)).map(target=>({toolId:tool.id,target}))),",
+        "toolBindings:Object.values(source.tools).flatMap(tool=>tool.execution.kind==='view-type'?(views.some(view=>view.type===tool.viewType)?[{toolId:tool.id,execution:tool.execution}]:[]):tool.execution.targets.filter(target=>selection.viewIds.includes(target.viewId)).map(target=>({toolId:tool.id,execution:{kind:'view-instance',target}}))),",
         "content:views.map(view=>({view:{viewId:view.id,viewInstanceId:view.viewInstanceId},decision:'retain'}))};",
         "},authorize(){return true;},canReadReceipt(){return true;}});",
         "assert.equal(opened.status,'opened');",
         "const observed=await opened.client.observe({all:true});assert.equal(observed.status,'observed');",
-        "const observation=observed.observation,tool=observation.tools.find(item=>item.name==='set'),binding=observation.bindings.find(item=>item.toolId===tool.id&&item.target.viewId==='detail');assert.ok(binding);",
+        "assert.equal(opened.client.adoptObservation(observed.observation.observationId).status,'adopted');",
+        "const observation=observed.observation,tool=observation.tools.find(item=>item.name==='set'),binding=observation.bindings.find(item=>item.toolId===tool.id&&item.execution.kind==='view-type');assert.ok(binding);",
         "const result=await opened.client.invoke({invocationId:'child-call',observationId:observation.observationId,bindingId:binding.bindingId,input:{value:74}});",
         "assert.equal(result.kind,'receipt');assert.equal(result.receipt.outcome.status,'succeeded');opened.client.close();",
         "await runtime.shutdown();const report=await runtime.beginShutdown().completion;",

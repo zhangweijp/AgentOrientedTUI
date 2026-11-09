@@ -1,41 +1,55 @@
 import { describe, expect, it } from 'vitest';
 import { createSnapshotCore } from './store.js';
-import { validatePreparedV2Draft } from './v2-validator.js';
+import { validatePreparedV3Draft } from './v3-validator.js';
 import { canonicalJson } from './json.js';
+import { compileOrdinaryParams } from '../tool/ordinary-parameter-contract.js';
+import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
 
 const text = '中文😀\n"\\\ud800';
 const refId = '["view","mount","ref"]';
 const toolId = '["app","Type","read"]';
+const empty = compileOrdinaryParams({});
+if (!empty.ok) throw new Error('Fixture Tool schema must compile');
+const emptySchema = ordinaryParameterProfile(empty.contract);
 const expected = {
     canonicalContent: canonicalJson({
-        schemaVersion: 2,
+        schemaVersion: 3,
         views: [{ id: 'view', viewInstanceId: 'mount', type: 'Type', name: 'View', kind: 'state',
             content: { format: 'markdown-v1', value: text } }],
         refs: { [refId]: { id: 'ref', ownerViewId: 'view', ownerViewInstanceId: 'mount', refType: 'Value',
             target: { kind: 'snapshot-value', payload: { text } } } },
         tools: { [toolId]: { id: toolId, name: 'read', viewType: 'Type', description: 'Read value',
-            inputSchema: { type: 'object', properties: {} }, isMutating: false,
-            targets: [{ viewId: 'view', viewInstanceId: 'mount', bindingVersion: 1 }] } },
+            inputSchema: emptySchema, 
+            execution: { kind: 'view-type', activationId: 'ta:v1:["instance",1]' } } },
     } as any),
-    contentDigest: 'fnv1a64:93b4f1ffe53e7634',
-    bytes: 742,
-    emptyCanonicalContent: '{"refs":{},"schemaVersion":2,"tools":{},"views":[]}',
-    emptyContentDigest: 'fnv1a64:d4ca7693eab7f0ed',
+    contentDigest: 'fnv1a64:dcccf17c487a9edd',
+    bytes: 814,
+    emptyCanonicalContent: '{"refs":{},"schemaVersion":3,"tools":{},"views":[]}',
+    emptyContentDigest: 'fnv1a64:adb8bb3e2428af24',
     emptyBytes: 136,
 };
 
 function fixture() {
     return {
-        schemaVersion: 2 as const, appId: 'app', instanceId: 'instance',
+        schemaVersion: 3 as const, appId: 'app', instanceId: 'instance',
         producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
         views: [{ id: 'view', viewInstanceId: 'mount', type: 'Type', name: 'View', kind: 'state',
             content: { format: 'markdown-v1', value: text } }],
         refs: { [refId]: { id: 'ref', ownerViewId: 'view', ownerViewInstanceId: 'mount', refType: 'Value',
             target: { kind: 'snapshot-value', payload: { text } } } },
         tools: { [toolId]: { id: toolId, name: 'read', viewType: 'Type', description: 'Read value',
-            inputSchema: { type: 'object', properties: {} }, isMutating: false,
-            targets: [{ viewId: 'view', viewInstanceId: 'mount', bindingVersion: 1 }] } },
+            inputSchema: emptySchema, 
+            execution: { kind: 'view-type' as const, activationId: 'ta:v1:["instance",1]' } } },
     };
+}
+
+function boundaryFixture() {
+    const input = fixture();
+    input.refs[refId]!.target.payload.text = 'x'.repeat(20_000);
+    return input;
+}
+function canonicalBytes(value: unknown): number {
+    return new TextEncoder().encode(canonicalJson(value as any)).byteLength;
 }
 
 function frozenData(value: unknown): void {
@@ -50,11 +64,11 @@ function frozenData(value: unknown): void {
     }
 }
 
-describe('V2 complete metadata boundary', () => {
+describe('V3 complete metadata boundary', () => {
     it('keeps complete metadata, escaped Unicode data, and detached frozen maps', () => {
         const input = fixture();
         const original = structuredClone(input);
-        const checked = validatePreparedV2Draft(input);
+        const checked = validatePreparedV3Draft(input);
         expect(checked.ok).toBe(true);
         if (!checked.ok) throw new Error('Expected a valid fixture');
         expect(checked.value).toEqual({
@@ -77,7 +91,7 @@ describe('V2 complete metadata boundary', () => {
         Object.defineProperty(input.views[0].content, 'value', {
             enumerable: true, configurable: true, get() { calls++; return text; },
         });
-        const checked = validatePreparedV2Draft(input);
+        const checked = validatePreparedV3Draft(input);
         expect(checked.ok).toBe(false);
         if (checked.ok) throw new Error('Expected accessor rejection');
         expect(checked.issue.code).toBe('SNAPSHOT_SERIALIZATION_ERROR');
@@ -87,21 +101,22 @@ describe('V2 complete metadata boundary', () => {
     });
 
     it('keeps strict field rejection ahead of invalid identity', () => {
-        const checked = validatePreparedV2Draft({ ...fixture(), appId: '', extra: true });
+        const checked = validatePreparedV3Draft({ ...fixture(), appId: '', extra: true });
         expect(checked).toEqual({ ok: false, issue: {
-            code: 'SNAPSHOT_INVALID', path: '$.extra', message: 'Unknown V2 field',
+            code: 'SNAPSHOT_INVALID', path: '$.extra', message: 'Unknown V3 field',
         } });
         expect(Reflect.ownKeys(checked)).toEqual(['ok', 'issue']);
         expect(Object.isFrozen(checked)).toBe(true);
     });
 
     it.each([-1, 0, 1])('keeps the final byte boundary at the fixed size %+i', delta => {
-        const checked = validatePreparedV2Draft(fixture(), { maxSnapshotBytes: expected.bytes + delta });
+        const input = boundaryFixture(), bytes = canonicalBytes(input);
+        const checked = validatePreparedV3Draft(input, { maxSnapshotBytes: bytes + delta });
         expect(checked.ok).toBe(delta >= 0);
         if (!checked.ok) expect(checked).toEqual({ ok: false, issue: {
-            code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$', message: 'V2 Snapshot byte budget exceeded',
+            code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$', message: 'V3 Snapshot byte budget exceeded',
         }, envelope: { appId: 'app', instanceId: 'instance', producerSeq: 1, sourceEpoch: 1 } });
-        else expect(checked.value.bytes).toBe(expected.bytes);
+        else expect(checked.value.bytes).toBe(bytes);
     });
 
     it('preserves unchanged identity, degraded lastGood, and recovery revision', () => {
@@ -128,23 +143,24 @@ describe('V2 complete metadata boundary', () => {
             const recovered = core.committer.accept(repair);
             if (recovered.status !== 'published') throw new Error('Expected recovery');
             expect(recovered.snapshot.revision).toBe(2);
-            expect(core.store.inspect().historicalSnapshots).toBe(1);
+            expect(core.store.inspect().historicalSnapshots).toBe(0);
         } finally { core.lifecycle.dispose(); }
     });
 });
 
-it('retains complete metadata for a legal empty V2 application', () => {
+it('retains complete metadata for a legal empty V3 application', () => {
     const input = { ...fixture(), views: [], refs: {}, tools: {} };
-    const checked = validatePreparedV2Draft(input);
-    if (!checked.ok) throw new Error('Expected legal empty V2');
+    const checked = validatePreparedV3Draft(input);
+    if (!checked.ok) throw new Error('Expected legal empty V3');
     expect(checked.value).toEqual({ draft: input, canonicalContent: expected.emptyCanonicalContent,
         contentDigest: expected.emptyContentDigest, bytes: expected.emptyBytes });
     frozenData(checked.value.draft);
 });
 
-it('enforces the V2 whole-envelope byte limit directly', () => {
-    const checked = validatePreparedV2Draft(fixture(), { maxSnapshotBytes: expected.bytes - 1 });
+it('enforces the V3 whole-envelope byte limit directly', () => {
+    const input = boundaryFixture();
+    const checked = validatePreparedV3Draft(input, { maxSnapshotBytes: canonicalBytes(input) - 1 });
     expect(checked).toMatchObject({ ok: false, issue: {
-        code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$', message: 'V2 Snapshot byte budget exceeded',
+        code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$', message: 'V3 Snapshot byte budget exceeded',
     } });
 });

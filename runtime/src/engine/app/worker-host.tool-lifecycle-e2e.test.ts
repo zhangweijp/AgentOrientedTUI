@@ -45,7 +45,7 @@ async function start(id = 'app', options: { holdInitialization?: boolean; existi
     const root = await mkdtemp(join(tmpdir(), 'aotui-tool-'));
     const host = new AppWorkerHost({ appId: id as any, desktopId: 'd' as any,
         appModulePath: pathToFileURL(join(consumer, 'app.mjs')).href,
-        workerScriptPath: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), interactionModes: ['ordinary-v2'], timeout: 5000,
+        workerScriptPath: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), interactionModes: ['view-type-parameters-v1'], timeout: 5000,
         existingWorker: options.existingWorker,
         config: { AOTUI_DATA_DIR: join(root, 'state'), testFile: join(root, 'resource'), holdInitialization: !!options.holdInitialization },
     });
@@ -60,18 +60,22 @@ function scope(x: any) {
     const opened = x.host.createInteractionScope({
         project: ({ source, selection }: any) => {
             const ids = new Set(selection.viewIds);
-            return { views: source.views.filter((v: any) => ids.has(v.id)).map((v: any) => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
+            const views = source.views.filter((v: any) => ids.has(v.id));
+            return { views: views.map((v: any) => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
                 refs: [],
-                targets: Object.values(source.tools).flatMap((t: any) => t.targets.filter((v: any) => ids.has(v.viewId)).map((target: any) => ({ toolId: t.id, target }))), content: [] };
+                toolBindings: Object.values(source.tools).flatMap((tool: any) => 
+                    views.some((view: any) => view.type === tool.viewType) ? [{ toolId: tool.id, execution: tool.execution }] : []),
+                content: [] };
         }, authorize: (c: any) => controls.authorize(c), canReadReceipt: () => true,
     });
     expect(opened.status).toBe('opened'); if (opened.status !== 'opened') throw Error(opened.issue.code);
     return { ...opened.client, controls, async observeCounter() {
         const observed = await opened.client.observe({ viewIds: ['counter'] });
+        if (observed.status === 'observed') expect(opened.client.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
         expect(observed.status).toBe('observed'); return observed.observation;
     } };
 }
-const request = (observation: any, input: Record<string, unknown> = { amount: 1 }) => ({ invocationId: 'invoke-' + ++sequence,
+const request = (observation: any, input: Record<string, unknown> = { view_id: 'counter', amount: 1 }) => ({ invocationId: 'invoke-' + ++sequence,
     observationId: observation.observationId, bindingId: observation.bindings[0].bindingId, input });
 function outcome(result: any) { expect(result.kind).toBe('receipt'); return result.receipt.outcome; }
 async function close(x: any, fail = false, transfer = false) {
@@ -108,7 +112,7 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
     it('stops through Sandbox before held installation settles and retains the leased Worker', async () => {
         const root = await mkdtemp(join(tmpdir(), 'aotui-tool-sandbox-'));
         const sandbox = new WorkerSandbox({ appId: 'sandbox' as any, desktopId: 'd' as any, appModulePath: pathToFileURL(join(consumer, 'app.mjs')).href,
-            workerScriptPath: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), interactionModes: ['ordinary-v2'], runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 5000, pool: { initialSize: 0, maxSize: 1 } } }),
+            workerScriptPath: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), interactionModes: ['view-type-parameters-v1'], runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 5000, pool: { initialSize: 0, maxSize: 1 } } }),
             config: { AOTUI_DATA_DIR: join(root, 'state'), testFile: join(root, 'resource'), holdInitialization: true } });
         const install = sandbox.installDynamic(); void install.catch(() => {});
         let worker: Worker | undefined;
@@ -126,15 +130,24 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         await wait(x, m => m.type === 'TEST_RESOURCE_CLOSED');
         expect(worker!.threadId).toBe(-1); x.closed = true;
     }, 15000);
-    it.each(['rebind', 'disable', 'remount'])('revokes the old binding during %s before handler entry', async action => {
+    it.each(['rebind', 'disable'])('revokes the old binding during %s before handler entry', async action => {
         const x = await start('binding-' + action), s = scope(x), old = await s.observeCounter(), from = x.messages.length;
         await control(x, action); await wait(x, m => m.type === 'SNAPSHOT_PREPARED', from);
         expect(outcome(await s.invoke(request(old))).status).toBe('rejected'); expect((await control(x, 'inspect')).entries).toBe(0);
         if (action === 'disable') { const at = x.messages.length; await control(x, 'enable'); await wait(x, m => m.type === 'SNAPSHOT_PREPARED', at); }
         expect(outcome(await s.invoke(request(await s.observeCounter()))).status).toBe('succeeded'); await close(x);
     }, 15000);
+    it('keeps the type-level binding across a View remount and invokes the current App handler', async () => {
+        const x = await start('binding-remount'), s = scope(x), old = await s.observeCounter(), from = x.messages.length;
+        await control(x, 'remount'); await wait(x, m => m.type === 'SNAPSHOT_PREPARED', from);
+        expect(outcome(await s.invoke(request(old))).status).toBe('succeeded');
+        expect((await control(x, 'inspect'))).toMatchObject({ value: 1, entries: 1 });
+        expect(outcome(await s.invoke(request(await s.observeCounter()))).status).toBe('succeeded');
+        expect((await control(x, 'inspect'))).toMatchObject({ value: 2, entries: 2 });
+        await close(x);
+    }, 15000);
     it.each(['none', 'partial', 'undeclared', 'throw'])('reports %s application failure effects and never executes a replay twice', async failure => {
-        const x = await start('effect-' + failure), s = scope(x), req = request(await s.observeCounter(), { amount: 2, failure });
+        const x = await start('effect-' + failure), s = scope(x), req = request(await s.observeCounter(), { view_id: 'counter', amount: 2, failure });
         const first = outcome(await s.invoke(req));
         expect(first.status).toBe(failure === 'none' || failure === 'partial' ? 'failed' : 'unknown');
         if (failure === 'none' || failure === 'partial') expect(first.effects).toBe(failure);
@@ -170,29 +183,32 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         expect(outcome(await sb.invoke(request(oa))).status).toBe('rejected'); expect((await control(b, 'inspect')).entries).toBe(0);
         expect(outcome(await sa.invoke(request(oa))).status).toBe('succeeded');
         expect((await control(a, 'inspect')).value).toBe(1); expect((await control(b, 'inspect')).value).toBe(0);
-        // A value/render change is not a Runtime business-version precondition.
+        // The type-level capability stays live across a View replacement; its handler is App-owned.
         expect(outcome(await sa.invoke(request(oa))).status).toBe('succeeded');
         expect((await control(a, 'inspect')).entries).toBe(2);
         const from = a.messages.length; await control(a, 'remount');
         await wait(a, m => m.type === 'SNAPSHOT_PREPARED', from);
         const current = await sa.observeCounter(), authorized = gate(), reached = gate();
         sa.controls.authorize = () => { reached.resolve(true); return authorized.promise; };
-        const pending = sa.invoke(request(current)); await reached.promise;
-        const changed = a.messages.length; await control(a, 'remount'); await wait(a, m => m.type === 'SNAPSHOT_PREPARED', changed);
-        authorized.resolve(true); expect(outcome(await pending).status).toBe('rejected');
-        expect((await control(a, 'inspect')).entries).toBe(2);
+        const pending = sa.invoke(request(current));
+        try {
+            await reached.promise;
+            const changed = a.messages.length; await control(a, 'remount'); await wait(a, m => m.type === 'SNAPSHOT_PREPARED', changed);
+            authorized.resolve(true); expect(outcome(await pending).status).toBe('succeeded');
+            expect((await control(a, 'inspect')).entries).toBe(3);
+        } finally { authorized.resolve(true); await pending.catch(() => undefined); }
         expect(outcome(await sb.invoke(request(ob))).status).toBe('succeeded');
         await close(a); await close(b);
-        expect(JSON.parse(await readFile(join(a.root, 'state/app-state/d/a/counter.json'), 'utf8')).value).toBe(2);
+        expect(JSON.parse(await readFile(join(a.root, 'state/app-state/d/a/counter.json'), 'utf8')).value).toBe(3);
     }, 20000);
     it('checks the current View at Worker entry and lets the App cancel a held handler on stop', async () => {
         const x = await start(), s = scope(x), observation = await s.observeCounter();
         const send = x.worker.postMessage.bind(x.worker);
-        x.worker.postMessage = (message: any) => send(message.type === 'VIEW_TOOL_INVOKE_ORDINARY_V2'
-            ? { ...message, target: { ...message.target, viewInstanceId: 'missing' } } : message);
+        x.worker.postMessage = (message: any) => send(message.type === 'VIEW_TOOL_INVOKE_V4' && message.argumentMode === 'view-type-parameters-v1'
+            ? { ...message, execution: { kind: 'view-type', activationId: 'stale-activation' } } : message);
         expect(outcome(await s.invoke(request(observation))).status).toBe('rejected');
         expect((await control(x, 'inspect')).entries).toBe(0); x.worker.postMessage = send;
-        const pending = s.invoke(request(observation, { amount: 1, hold: true }));
+        const pending = s.invoke(request(observation, { view_id: 'counter', amount: 1, hold: true }));
         await wait(x, m => m.type === 'TEST_ENTERED'); const closed = x.host.close();
         await wait(x, m => m.type === 'TEST_STOPPED'); await control(x, 'release-handler');
         // Closing revokes this Scope, including receipt access. It must not

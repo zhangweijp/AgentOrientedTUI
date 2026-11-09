@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AppRegistry } from './index.js';
+import { AppRegistry } from './registry.js';
 import { isTUIAppFactory } from '../../spi/app/app-factory.interface.js';
 import { SEMANTIC_INTERACTION_MODES } from '../../spi/runtime/app-interaction.interface.js';
 import type { TUIAppFactory } from '../../spi/app/app-factory.interface.js';
@@ -16,7 +16,8 @@ function createMockFactory(name: string): TUIAppFactory {
     return {
         persistenceSupport: 'state-session-v1',
         appLifecycleSupport: 'app-lifecycle-v2',
-        displayName: `${name} App`,
+        displayName: name,
+        toolAuthoringProtocol: 'view-type-tools-v4',
         kernelConfig: {
             appName: name,
             name,
@@ -31,6 +32,21 @@ describe('AppRegistry', () => {
     let tempDir: string;
     let configPath: string;
 
+    async function writeApp(name: string, directory = name, patch: Record<string, unknown> = {}) {
+        const appDir = path.join(tempDir, directory);
+        await fs.mkdir(path.join(appDir, 'dist'), { recursive: true });
+        await fs.writeFile(path.join(appDir, 'package.json'), JSON.stringify({ type: 'module' }));
+        await fs.writeFile(path.join(appDir, 'dist/index.mjs'), 'throw new Error("REGISTRY_MUST_NOT_IMPORT_APP");');
+        await fs.writeFile(path.join(appDir, 'aoapp.json'), JSON.stringify({ app_name: name, version: '1.0.0',
+            description: `${name} App`, whatItIs: 'Static metadata', whenToUse: 'Unit fixture',
+            toolAuthoringProtocol: 'view-type-tools-v4', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
+            entry: { main: './dist/index.mjs' }, ...patch }));
+        return appDir;
+    }
+    const loaded = (name: string, description = `${name} App`) => ({
+        name, source: 'local:/mock', modulePath: '/mock/module/path', metadata: { app_name: name, description },
+    });
+
     beforeEach(async () => {
         // 创建临时目录
         tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tui-test-'));
@@ -38,6 +54,7 @@ describe('AppRegistry', () => {
     });
 
     afterEach(async () => {
+        vi.restoreAllMocks();
         // 清理临时目录
         await fs.rm(tempDir, { recursive: true, force: true });
     });
@@ -58,7 +75,7 @@ describe('AppRegistry', () => {
             const testConfig = {
                 version: 1,
                 apps: {
-                    'test-app': {
+                    'test_app': {
                         source: 'npm:@test/app',
                         enabled: false
                     }
@@ -71,8 +88,8 @@ describe('AppRegistry', () => {
             await registry.loadFromConfig();
 
             const config = registry.getConfig();
-            expect(config.apps['test-app']).toBeDefined();
-            expect(config.apps['test-app'].enabled).toBe(false);
+            expect(config.apps['test_app']).toBeDefined();
+            expect(config.apps['test_app'].enabled).toBe(false);
         });
     });
 
@@ -88,42 +105,44 @@ describe('AppRegistry', () => {
             const registry = new AppRegistry({ configPath });
             await registry.loadFromConfig();
 
-            expect(registry.has('non-existent')).toBe(false);
+            expect(registry.get('non-existent')).toBeUndefined();
         });
 
-        it('uses the non-empty appName from component Kernel metadata without format checks', async () => {
+        it('reads generated metadata without executing the App or imposing an arbitrary name-length allocation', async () => {
             const registry = new AppRegistry({ configPath });
-            await registry.loadFromConfig();
-            const canonicalName = 'a'.repeat(51);
-
-            const factoryWithoutManifestName = {
-                persistenceSupport: 'state-session-v1',
-                appLifecycleSupport: 'app-lifecycle-v2',
-                kernelConfig: {
-                    appName: canonicalName,
-                    name: canonicalName,
-                    component: {},
-                },
-                displayName: canonicalName,
-                initializeComponent: vi.fn(async () => ({ render: vi.fn(), unmount: vi.fn() })),
-            } as unknown as TUIAppFactory;
-
-            // @ts-ignore
-            registry.loadFactory = vi.fn().mockResolvedValue(factoryWithoutManifestName);
-
-            const name = await registry.add('local:/tmp/cache/node_modules/@agentina/aotui-ide');
-            expect(name).toBe(canonicalName);
-            expect(registry.getConfig().apps[canonicalName]).toBeDefined();
+            const canonicalName = 'a'.repeat(51), appDir = await writeApp(canonicalName);
+            expect(await registry.add(`local:${appDir}`)).toBe(canonicalName);
+            expect(registry.get(canonicalName)).toMatchObject({ metadata: { app_name: canonicalName } });
+            expect(registry.get(canonicalName)).not.toHaveProperty('factory');
         });
 
-        it('rejects an empty appName from component Kernel metadata', async () => {
-            const registry = new AppRegistry({ configPath });
-            await registry.loadFromConfig();
-            registry.loadFactory = vi.fn().mockResolvedValue(createMockFactory(''));
+        it('rejects empty metadata names before changing registration', async () => {
+            const registry = new AppRegistry({ configPath }), appDir = await writeApp('', 'unnamed');
+            await expect(registry.add(`local:${appDir}`)).rejects.toMatchObject({ code: 'APP_MANIFEST_INVALID' });
+            expect(registry.list()).toEqual([]);
+        });
 
-            await expect(registry.add('local:/tmp/unnamed-app')).rejects.toMatchObject({
-                code: 'CONFIG_INVALID',
-            });
+        it('reports duplicate canonical names instead of inventing a registration alias', async () => {
+            const registry = new AppRegistry({ configPath });
+            const first = await writeApp('duplicate', 'first'), second = await writeApp('duplicate', 'second');
+            await registry.add(`local:${first}`);
+            await expect(registry.add(`local:${second}`)).rejects.toMatchObject({ code: 'APP_ALREADY_REGISTERED', context: { appName: 'duplicate' } });
+            await expect(registry.registerTransient(`local:${second}`)).rejects.toMatchObject({ code: 'APP_ALREADY_REGISTERED' });
+            expect(registry.get('duplicate')?.modulePath).toBe(path.join(first, 'dist/index.mjs'));
+        });
+
+        it('rejects registry identity and metadata overrides per App while loading healthy entries', async () => {
+            const registry = new AppRegistry({ configPath }), appDir = await writeApp('canonical'), healthy = await writeApp('healthy');
+            const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+            await registry.loadFromEntries([
+                { name: 'wrong', source: `local:${appDir}`, enabled: true },
+                { name: 'healthy', source: `local:${healthy}`, enabled: true },
+            ]);
+            expect(registry.get('wrong')).toBeUndefined();expect(registry.get('healthy')).toBeDefined();
+            expect(errors.mock.calls[0]?.[1]).toMatchObject({ code: 'APP_IDENTITY_MISMATCH' });
+            await registry.loadFromEntries([{ name: 'canonical', source: `local:${appDir}`, enabled: true, description: 'second source' } as never]);
+            expect(registry.get('canonical')).toBeUndefined();
+            expect(errors.mock.calls.at(-1)?.[1]).toMatchObject({ code: 'CONFIG_INVALID' });
         });
 
         it('should delete managed npm install artifacts on remove', async () => {
@@ -131,12 +150,12 @@ describe('AppRegistry', () => {
             await registry.loadFromConfig();
 
             const installRoot = path.join(tempDir, '.agentina', 'apps', 'npm', 'scope-agentina__aotui-ide', 'latest');
-            const installedPath = path.join(installRoot, 'node_modules', '@agentina', 'aotui-ide');
+            const installedPath = path.join(installRoot, 'node_modules', '@agentina', 'aotui_ide');
             await fs.mkdir(installedPath, { recursive: true });
             await fs.writeFile(path.join(installRoot, 'package.json'), JSON.stringify({ name: 'agentina-app-cache', private: true }));
 
             // @ts-ignore
-            registry['config'].apps['aotui-ide'] = {
+            registry['config'].apps['aotui_ide'] = {
                 source: `local:${installedPath}`,
                 enabled: true,
                 originalSource: 'npm:@agentina/aotui-ide',
@@ -147,18 +166,18 @@ describe('AppRegistry', () => {
                 }
             };
             // @ts-ignore
-            registry['apps'].set('aotui-ide', {
-                name: 'aotui-ide',
+            registry['apps'].set('aotui_ide', {
+                name: 'aotui_ide',
                 source: `local:${installedPath}`,
-                factory: createMockFactory('aotui-ide'),
+                modulePath: '/mock/module/path', metadata: { app_name: 'aotui_ide', description: 'aotui_ide App' },
             });
             // @ts-ignore
             registry.getDefaultNpmCacheRoot = vi.fn().mockReturnValue(path.join(tempDir, '.agentina', 'apps', 'npm'));
 
-            await registry.remove('aotui-ide');
+            await registry.remove('aotui_ide');
 
             await expect(fs.stat(installRoot)).rejects.toThrow();
-            expect(registry.getConfig().apps['aotui-ide']).toBeUndefined();
+            expect(registry.getConfig().apps['aotui_ide']).toBeUndefined();
         });
 
         it('should not delete npm artifacts outside managed root on remove', async () => {
@@ -166,11 +185,11 @@ describe('AppRegistry', () => {
             await registry.loadFromConfig();
 
             const installRoot = path.join(tempDir, 'external-cache', 'latest');
-            const installedPath = path.join(installRoot, 'node_modules', '@agentina', 'aotui-ide');
+            const installedPath = path.join(installRoot, 'node_modules', '@agentina', 'aotui_ide');
             await fs.mkdir(installedPath, { recursive: true });
 
             // @ts-ignore
-            registry['config'].apps['aotui-ide'] = {
+            registry['config'].apps['aotui_ide'] = {
                 source: `local:${installedPath}`,
                 enabled: true,
                 originalSource: 'npm:@agentina/aotui-ide',
@@ -182,46 +201,50 @@ describe('AppRegistry', () => {
                 }
             };
             // @ts-ignore
-            registry['apps'].set('aotui-ide', {
-                name: 'aotui-ide',
+            registry['apps'].set('aotui_ide', {
+                name: 'aotui_ide',
                 source: `local:${installedPath}`,
-                factory: createMockFactory('aotui-ide'),
+                modulePath: '/mock/module/path', metadata: { app_name: 'aotui_ide', description: 'aotui_ide App' },
             });
             // @ts-ignore
             registry.getDefaultNpmCacheRoot = vi.fn().mockReturnValue(path.join(tempDir, '.agentina', 'apps', 'npm'));
 
-            await registry.remove('aotui-ide');
+            await registry.remove('aotui_ide');
 
             expect(await fs.stat(installRoot)).toBeDefined();
         });
     });
 
-    it('resolves aoapp.json entry.main relative to its app directory', async () => {
-        const appDir = path.join(tempDir, 'manifest-app');
-        await fs.mkdir(appDir);
-        await fs.writeFile(path.join(appDir, 'aoapp.json'), JSON.stringify({ entry: { main: './dist/entry.mjs' } }));
-
-        const registry = new AppRegistry({ configPath });
-        expect(registry.resolveModulePath(`local:${appDir}`)).toBe(path.join(appDir, 'dist/entry.mjs'));
+    it('resolves the generated entry relative to its package, for both directory and explicit entry sources', async () => {
+        const appDir = await writeApp('manifest_app'), registry = new AppRegistry({ configPath });
+        const entry = path.join(appDir, 'dist/index.mjs');
+        expect(registry.resolveModulePath(`local:${appDir}`)).toBe(entry);
+        expect(registry.resolveModulePath(`local:${entry}`)).toBe(entry);
     });
 
-    it('falls back to package.json main for local directories without aoapp.json', async () => {
-        const appDir = path.join(tempDir, 'package-app');
-        await fs.mkdir(appDir);
-        await fs.writeFile(path.join(appDir, 'package.json'), JSON.stringify({ main: './lib/index.mjs' }));
-
-        const registry = new AppRegistry({ configPath });
-        expect(registry.resolveModulePath(`local:${appDir}`)).toBe(path.join(appDir, 'lib/index.mjs'));
+    it('rejects a missing explicit local source without substituting the package entry or registering an App', async () => {
+        const appDir = await writeApp('manifest_app'), registry = new AppRegistry({ configPath });
+        const missing = path.join(appDir, 'missing.mjs');
+        expect(() => registry.resolveModulePath(`local:${missing}`)).toThrow(expect.objectContaining({
+            code: 'APP_MANIFEST_INVALID', context: expect.objectContaining({ path: missing }),
+        }));
+        await expect(registry.add(`local:${missing}`)).rejects.toMatchObject({ code: 'APP_MANIFEST_INVALID' });
+        expect(registry.list()).toEqual([]);
+        expect(registry.getConfig().apps).toEqual({});
     });
 
-    it('prefers aoapp.json entry.main to package.json main', async () => {
-        const appDir = path.join(tempDir, 'manifest-package-app');
-        await fs.mkdir(appDir);
-        await fs.writeFile(path.join(appDir, 'aoapp.json'), JSON.stringify({ entry: { main: './semantic/main.mjs' } }));
-        await fs.writeFile(path.join(appDir, 'package.json'), JSON.stringify({ main: './package/main.mjs' }));
-
+    it('requires generated metadata instead of importing a package.json fallback to discover names', async () => {
+        const appDir = path.join(tempDir, 'package-app');await fs.mkdir(appDir);
+        await fs.writeFile(path.join(appDir, 'package.json'), JSON.stringify({ main: './index.mjs' }));
         const registry = new AppRegistry({ configPath });
-        expect(registry.resolveModulePath(`local:${appDir}`)).toBe(path.join(appDir, 'semantic/main.mjs'));
+        expect(() => registry.resolveModulePath(`local:${appDir}`)).toThrow(expect.objectContaining({ code: 'APP_MANIFEST_INVALID' }));
+    });
+
+    it('uses the generated entry and rejects a different explicit module under the same manifest', async () => {
+        const appDir = await writeApp('manifest_app'), other = path.join(appDir, 'other.mjs');
+        await fs.writeFile(other, 'throw Error("must not import")');
+        const registry = new AppRegistry({ configPath });
+        expect(() => registry.resolveModulePath(`local:${other}`)).toThrow(expect.objectContaining({ code: 'APP_IDENTITY_MISMATCH' }));
     });
 
     describe('Component factory detection', () => {
@@ -244,30 +267,6 @@ describe('AppRegistry', () => {
             expect(isTUIAppFactory(accessorMarker)).toBe(false);
         });
 
-        it('loads only the module default as the managed component factory', async () => {
-            const registry = new AppRegistry({ configPath });
-            await registry.loadFromConfig();
-            const defaultPath = path.join(tempDir, 'default-factory.mjs');
-            await fs.writeFile(defaultPath, `export default { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', displayName: 'default_app', kernelConfig: { appName: 'default_app' }, initializeComponent() {} };`);
-            await expect((registry as any).loadFactory(`local:${defaultPath}`)).resolves.toMatchObject({ displayName: 'default_app' });
-        });
-
-        it.each([
-            ['named factory', `const f = { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', displayName: 'named_app', kernelConfig: { appName: 'named_app' }, initializeComponent() {} }; export const factory = f;`],
-            ['other named factory', `const f = { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', displayName: 'named_app', kernelConfig: { appName: 'named_app' }, initializeComponent() {} }; export const componentFactory = f;`],
-            ['factory nested under default', `export default { factory: { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', displayName: 'nested_app', kernelConfig: { appName: 'nested_app' }, initializeComponent() {} } };`],
-            ['missing appName', `export default { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', displayName: 'nameless_app', kernelConfig: {}, initializeComponent() {} };`],
-            ['missing persistence marker', `export default { appLifecycleSupport: 'app-lifecycle-v2', displayName: 'missing_persistence', kernelConfig: { appName: 'missing_persistence' }, initializeComponent() {} };`],
-            ['wrong persistence marker', `export default { persistenceSupport: 'state-session-v0', appLifecycleSupport: 'app-lifecycle-v2', displayName: 'wrong_persistence', kernelConfig: { appName: 'wrong_persistence' }, initializeComponent() {} };`],
-            ['missing lifecycle marker', `export default { persistenceSupport: 'state-session-v1', displayName: 'missing_lifecycle', kernelConfig: { appName: 'missing_lifecycle' }, initializeComponent() {} };`],
-            ['wrong lifecycle marker', `export default { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v1', displayName: 'wrong_lifecycle', kernelConfig: { appName: 'wrong_lifecycle' }, initializeComponent() {} };`],
-        ])('rejects %s as a module default factory', async (_kind, source) => {
-            const registry = new AppRegistry({ configPath });
-            await registry.loadFromConfig();
-            const modulePath = path.join(tempDir, 'invalid-factory.mjs');
-            await fs.writeFile(modulePath, source);
-            await expect((registry as any).loadFactory(`local:${modulePath}`)).rejects.toMatchObject({ code: 'APP_INVALID_EXPORT' });
-        });
     });
 
     describe('Installation (AppRegistry)', () => {
@@ -292,10 +291,10 @@ describe('AppRegistry', () => {
         });
 
         it.each([true, false])('negotiates Semantic capabilities and preserves launch config for autoStart=%s', async autoStart => {
-            registry['apps'].set('semantic-app', {
-                name: 'semantic-app', source: 'local:/semantic', factory: createMockFactory('semantic-app'),
+            registry['apps'].set('semantic_app', {
+                name: 'semantic_app', source: 'local:/semantic', modulePath: '/mock/module/path', metadata: { app_name: 'semantic_app', description: 'semantic_app App' },
             });
-            registry['config'].apps['semantic-app'] = { source: 'local:/semantic', enabled: true, autoStart };
+            registry['config'].apps['semantic_app'] = { source: 'local:/semantic', enabled: true, autoStart };
             await registry.installAll(mockDesktop, {
                 dynamicConfig: { projectPath: '/test/workspace', AOTUI_DATA_DIR: '/test/data' },
                 interactionModes: SEMANTIC_INTERACTION_MODES,
@@ -304,15 +303,15 @@ describe('AppRegistry', () => {
                 : mockDesktop.registerPendingApp.mock.calls[0][0];
             expect(options.interactionModes).toEqual(SEMANTIC_INTERACTION_MODES);
             expect(options.config).toMatchObject({
-                projectPath: '/test/workspace', AOTUI_DATA_DIR: '/test/data', AOTUI_APP_NAME: 'semantic-app',
+                projectPath: '/test/workspace', AOTUI_DATA_DIR: '/test/data', AOTUI_APP_KEY: 'semantic_app',
             });
         });
 
         it('does not accept capability negotiation from app launch data and rejects invalid Host modes before installation', async () => {
-            registry['apps'].set('semantic-app', {
-                name: 'semantic-app', source: 'local:/semantic', factory: createMockFactory('semantic-app'),
+            registry['apps'].set('semantic_app', {
+                name: 'semantic_app', source: 'local:/semantic', modulePath: '/mock/module/path', metadata: { app_name: 'semantic_app', description: 'semantic_app App' },
             });
-            await registry.installAll(mockDesktop, { dynamicConfig: { interactionModes: ['ordinary-v2'] } });
+            await registry.installAll(mockDesktop, { dynamicConfig: { interactionModes: ['view-type-parameters-v1'] } });
             expect(mockDesktop.installDynamicWorkerApp.mock.calls[0][1].interactionModes).toBeUndefined();
             mockDesktop.installDynamicWorkerApp.mockClear();
             await expect(registry.installAll(mockDesktop, { interactionModes: ['unsupported'] as any }))
@@ -320,38 +319,46 @@ describe('AppRegistry', () => {
             expect(mockDesktop.installDynamicWorkerApp).not.toHaveBeenCalled();
         });
 
+        it('rejects the retired state namespace key before installing an App', async () => {
+            registry['apps'].set('worker_app', loaded('worker_app'));
+            await expect(registry.installAll(mockDesktop, { dynamicConfig: { AOTUI_APP_NAME: 'old_key' } }))
+                .rejects.toMatchObject({ code: 'CONFIG_INVALID' });
+            expect(mockDesktop.installDynamicWorkerApp).not.toHaveBeenCalled();
+            await registry.installAll(mockDesktop, { dynamicConfig: { AOTUI_APP_KEY: 'separate_state' } });
+            expect(mockDesktop.installDynamicWorkerApp.mock.calls[0][1].config.AOTUI_APP_KEY).toBe('separate_state');
+        });
+
         it('should install autoStart=true apps immediately', async () => {
             // Setup: Add app with autoStart=true
             // @ts-ignore
-            registry['apps'].set('worker-app', {
-                name: 'worker-app',
+            registry['apps'].set('worker_app', {
+                name: 'worker_app',
                 source: 'local:/mock',
-                factory: createMockFactory('worker-app'),
+                modulePath: '/mock/module/path', metadata: { app_name: 'worker_app', description: 'Worker App' },
             });
             // config defaults to autoStart=true if not present, or we can explicit set it
-            registry['config'].apps['worker-app'] = {
+            registry['config'].apps['worker_app'] = {
                 source: 'local:/mock',
                 enabled: true,
                 autoStart: true,
-                description: 'Worker App',
             };
 
             await registry.installAll(mockDesktop);
 
             expect(mockDesktop.installDynamicWorkerApp).toHaveBeenCalledWith('/mock/module/path', expect.objectContaining({
-                name: 'worker-app',
+                name: 'worker_app',
                 description: 'Worker App'
             }));
             expect(mockDesktop.registerPendingApp).not.toHaveBeenCalled();
         });
 
-        it('should inject only canonical AOTUI_APP_NAME into launch config', async () => {
-            registry['apps'].set('worker-app', {
-                name: 'worker-app',
+        it('should inject only canonical AOTUI_APP_KEY into launch config', async () => {
+            registry['apps'].set('worker_app', {
+                name: 'worker_app',
                 source: 'local:/mock',
-                factory: createMockFactory('worker-app'),
+                modulePath: '/mock/module/path', metadata: { app_name: 'worker_app', description: 'Worker App' },
             });
-            registry['config'].apps['worker-app'] = {
+            registry['config'].apps['worker_app'] = {
                 source: 'local:/mock',
                 enabled: true,
                 autoStart: true
@@ -363,113 +370,104 @@ describe('AppRegistry', () => {
                 '/mock/module/path',
                 expect.objectContaining({
                     config: expect.objectContaining({
-                        AOTUI_APP_NAME: 'worker-app',
+                        AOTUI_APP_KEY: 'worker_app',
                     }),
                 })
             );
 
             const installOptions = mockDesktop.installDynamicWorkerApp.mock.calls[0]?.[1];
-            expect(installOptions?.config?.AOTUI_APP_KEY).toBeUndefined();
+            expect(installOptions?.config?.AOTUI_APP_NAME).toBeUndefined();
         });
 
         it('should register autoStart=false apps as pending', async () => {
             // Setup: Add app with autoStart=false
             // @ts-ignore
-            registry['apps'].set('pending-app', {
-                name: 'pending-app',
+            registry['apps'].set('pending_app', {
+                name: 'pending_app',
                 source: 'local:/mock',
-                factory: createMockFactory('pending-app'),
+                modulePath: '/mock/module/path', metadata: { app_name: 'pending_app', description: 'Pending App' },
             });
-            registry['config'].apps['pending-app'] = {
+            registry['config'].apps['pending_app'] = {
                 source: 'local:/mock',
                 enabled: true,
                 autoStart: false,
-                description: 'Pending App',
             };
 
             await registry.installAll(mockDesktop);
 
             expect(mockDesktop.registerPendingApp).toHaveBeenCalledWith(expect.objectContaining({
-                name: 'pending-app',
-                description: 'Pending App',
+                name: 'pending_app',
                 modulePath: '/mock/module/path'
             }));
             expect(mockDesktop.installDynamicWorkerApp).not.toHaveBeenCalled();
         });
 
         it('should install only selected explicit entries without consulting config apps', async () => {
-            const configDrivenFactory = createMockFactory('config-app');
-            const explicitFactory = createMockFactory('explicit-app');
+            const explicit = await writeApp('explicit_app');
 
-            registry['config'].apps['config-app'] = {
+            registry['config'].apps['config_app'] = {
                 source: 'local:/config-app',
                 enabled: true,
                 autoStart: true,
             };
-            registry['entryConfigs'].set('config-app', { ...registry['config'].apps['config-app'] });
-            registry['apps'].set('config-app', {
-                name: 'config-app',
+            registry['entryConfigs'].set('config_app', { ...registry['config'].apps['config_app'] });
+            registry['apps'].set('config_app', {
+                name: 'config_app',
                 source: 'local:/config-app',
-                factory: configDrivenFactory,
+                modulePath: '/mock/module/path', metadata: { app_name: 'config_app' },
             });
 
             registry['apps'].clear();
             registry['entryConfigs'].clear();
-            registry['loadFactory'] = vi.fn().mockResolvedValue(explicitFactory);
 
             await registry.loadFromEntries([
                 {
-                    name: 'explicit-app',
-                    source: 'local:/explicit-app',
+                    name: 'explicit_app',
+                    source: `local:${explicit}`,
                     enabled: true,
                     autoStart: true,
                 }
             ]);
 
-            expect(registry.has('config-app')).toBe(false);
-            expect(registry.has('explicit-app')).toBe(true);
+            expect(registry.get('config_app')).toBeUndefined();
+            expect(registry.get('explicit_app')).toBeDefined();
 
-            await registry.installSelected(mockDesktop, ['explicit-app']);
+            await registry.installSelected(mockDesktop, ['explicit_app']);
 
             expect(mockDesktop.installDynamicWorkerApp).toHaveBeenCalledTimes(1);
             expect(mockDesktop.installDynamicWorkerApp).toHaveBeenCalledWith(
-                '/mock/module/path',
+                path.join(explicit, 'dist/index.mjs'),
                 expect.objectContaining({
-                    name: 'explicit-app'
+                    name: 'explicit_app'
                 })
             );
         });
 
         it('should keep non-selected explicit entries out of installation', async () => {
-            const alphaFactory = createMockFactory('alpha-app');
-            const betaFactory = createMockFactory('beta-app');
-
-            registry['loadFactory'] = vi.fn()
-                .mockResolvedValueOnce(alphaFactory)
-                .mockResolvedValueOnce(betaFactory);
+            const alpha = await writeApp('alpha_app'), beta = await writeApp('beta_app');
 
             await registry.loadFromEntries([
                 {
-                    name: 'alpha-app',
-                    source: 'local:/alpha-app',
+                    name: 'alpha_app',
+                    source: `local:${alpha}`,
                     enabled: true,
                     autoStart: true,
                 },
                 {
-                    name: 'beta-app',
-                    source: 'local:/beta-app',
+                    name: 'beta_app',
+                    source: `local:${beta}`,
                     enabled: true,
                     autoStart: true,
                 }
             ]);
 
-            await registry.installSelected(mockDesktop, ['beta-app']);
+            await registry.installSelected(mockDesktop, ['beta_app']);
 
             expect(mockDesktop.installDynamicWorkerApp).toHaveBeenCalledTimes(1);
             expect(mockDesktop.installDynamicWorkerApp).toHaveBeenCalledWith(
-                '/mock/module/path',
+                path.join(beta, 'dist/index.mjs'),
                 expect.objectContaining({
-                    name: 'beta-app'
+                    name: 'beta_app'
                 })
             );
         });

@@ -27,24 +27,40 @@ async function facts(name: string, value: object) {
 async function fixture(scenario = 'normal') {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-sandbox-')), app = join(dir, 'app.mjs');
     await linkPreactPeer(dir);
-    const body = `import {h} from 'preact';import {createTUIApp,usePersistentState,useAppRuntimeContext,View,useViewTypeTool} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};
-let setter,value,port;const old=new Map();
-function Operations(){
-const [Set]=useViewTypeTool('set',{description:'Set persisted value',isMutating:true,params:{value:{type:'number',required:true}}},async args=>{setter(args.value);return {success:true};});
-const [Flush]=useViewTypeTool('flush',{description:'Flush persisted state',isMutating:false,params:{}},async()=>({success:true,data:await port.flush()}));
-const [Old]=useViewTypeTool('old',{description:'Check previous setter',isMutating:false,params:{}},async()=>{try{[...old.values()][0](()=>{throw Error('stale updater executed');});return {success:true,data:{code:'BAD'}};}catch(error){return {success:true,data:{code:error.code}};}});
-const [Inspect]=useViewTypeTool('inspect',{description:'Inspect persisted state',isMutating:false,params:{}},async()=>({success:true,data:{value}}));
-return h('section',{},[h(Set,{key:'set'}),h(Flush,{key:'flush'}),h(Old,{key:'old'}),h(Inspect,{key:'inspect'})]);}
-function Root(){${scenario === 'initial-failure' ? "usePersistentState('value',0);" : ''}[value,setter]=usePersistentState('value',0);port=useAppRuntimeContext().persistence;if(port&&!old.has(port.instanceId))old.set(port.instanceId,setter);return h(View,{id:'root',type:'Root'},h(Operations));}
+    const body = `import {h} from 'preact';import Type from 'typebox';import {createTUIApp,defineViewTypeTool,usePersistentState,useAppRuntimeContext,View,AppTools, ToolRef, defineToolSet} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};
+let setter,value,port;const old=new Map();const noArgs=Type.Object({}, {additionalProperties:false});
+
+
+
+
+
+const fixtureTools0 = defineToolSet({
+Set: defineViewTypeTool({viewType:'Root',name:'set',description:'Set persisted value',inputSchema:Type.Object({value:Type.Number()}, {additionalProperties:false}),}),
+Flush: defineViewTypeTool({viewType:'Root',name:'flush',description:'Flush persisted state',inputSchema:noArgs,}),
+Old: defineViewTypeTool({viewType:'Root',name:'old',description:'Check previous setter',inputSchema:noArgs,}),
+Inspect: defineViewTypeTool({viewType:'Root',name:'inspect',description:'Inspect persisted state',inputSchema:noArgs,})
+});
+function Tools(){
+const Set = fixtureTools0.Set;
+const Flush = fixtureTools0.Flush;
+const Old = fixtureTools0.Old;
+const Inspect = fixtureTools0.Inspect;
+return h(AppTools, { definition: fixtureTools0, bindings: {
+Set: { execute: async args=>{setter(args.value);return {success:true};} },
+Flush: { execute: async()=>({success:true,data:await port.flush()}) },
+Old: { execute: async()=>{try{[...old.values()][0](()=>{throw Error('stale updater executed');});return {success:true,data:{code:'BAD'}};}catch(error){return {success:true,data:{code:error.code}};}} },
+Inspect: { execute: async()=>({success:true,data:{value}}) }
+} }, h('section',{},[h(ToolRef,{ tool: Set, ...({key:'set'}) }),h(ToolRef,{ tool: Flush, ...({key:'flush'}) }),h(ToolRef,{ tool: Old, ...({key:'old'}) }),h(ToolRef,{ tool: Inspect, ...({key:'inspect'}) })]));}
+function Root(){${scenario === 'initial-failure' ? "usePersistentState('value',0);" : ''}[value,setter]=usePersistentState('value',0);port=useAppRuntimeContext().persistence;if(port&&!old.has(port.instanceId))old.set(port.instanceId,setter);return h(View,{kind: 'instruction',id:'root',type:'Root'},h(Tools));}
 const factory=createTUIApp({app_name:'c1',component:Root});
 ${scenario === 'unmount-failure' ? "const initialize=factory.initializeComponent.bind(factory);factory.initializeComponent=async(...args)=>{const renderer=await initialize(...args);return {...renderer,unmount(){renderer.unmount();throw Error('private unmount failure');}};};" : ''}
 export default factory;`;
     await capture(app, body);
     const options = { appId: 'app' as any, desktopId: 'd' as any, appModulePath: url(app), workerScriptPath: join(repo, 'runtime/dist/worker-runtime/index.js'),
-        runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 1500, pool: { initialSize: 0, maxSize: 1 } } }), config: { AOTUI_DATA_DIR: join(dir, 'data'), AOTUI_APP_NAME: 'c1' } };
+        runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 1500, pool: { initialSize: 0, maxSize: 1 } } }), config: { AOTUI_DATA_DIR: join(dir, 'data'), AOTUI_APP_KEY: 'c1' } };
     return { dir, app, options, record: join(dir, 'data/app-state/d/c1/value.json') };
 }
-async function operation(sandbox: WorkerSandbox, name: string, args: Record<string, unknown> = {}) {
+async function invokeTool(sandbox: WorkerSandbox, name: string, args: Record<string, unknown> = {}) {
     const result = await invokeObservedTool((sandbox as any).workerHost, name, args, 'root');
     if (result?.kind === 'receipt' && result.receipt.outcome.status === 'succeeded') return result.receipt.outcome.value;
     throw new Error(result?.kind === 'receipt' ? result.receipt.outcome.status : result?.code ?? 'Tool invocation failed');
@@ -54,17 +70,17 @@ it('C1-09/16/17 actual SDK two Host rounds use one physical leased Worker', asyn
     try {
         const a = new WorkerSandbox({ ...f.options, workerPool: pool });sandboxes.push(a);await a.installDynamic();
         await expect(a.installDynamic()).rejects.toHaveProperty('code', 'SANDBOX_ALREADY_INSTALLED');const worker = (a as any).lease.worker, firstHost = (a as any).workerHost;
-        await operation(a, 'set', { value: 1 });await a.close();const first = await a.disposeAsync();
+        await invokeTool(a, 'set', { value: 1 });await a.close();const first = await a.disposeAsync();
         expect(first).toMatchObject({ ok: true, resourcesReleased: true, host: { worker: 'transferred', storage: { support: 'managed', lifecycle: { ok: true } } }, lease: { disposition: 'pooled' } });
         expect(pool.getReport()).toMatchObject({ total: 1, idle: 1 });expect(worker.threadId).toBeGreaterThan(0);
         const b = new WorkerSandbox({ ...f.options, workerPool: pool });sandboxes.push(b);await b.installDynamic();
         expect((b as any).lease.worker).toBe(worker);expect((b as any).workerHost.appInstanceId).not.toBe(firstHost.appInstanceId);
-        const flush: any = await operation(b, 'flush');expect(flush.data.ok).toBe(true);
-        expect((await operation(b, 'inspect') as any).data.value).toBe(1);
-        expect(['STALE_BINDING', 'DISPOSED']).toContain((await operation(b, 'old') as any).data.code);
+        const flush: any = await invokeTool(b, 'flush');expect(flush.data.ok).toBe(true);
+        expect((await invokeTool(b, 'inspect') as any).data.value).toBe(1);
+        expect(['STALE_BINDING', 'DISPOSED']).toContain((await invokeTool(b, 'old') as any).data.code);
         await (a as any).lease.release(false);await a.disposeAsync();firstHost.terminate();expect(pool.getReport().leased).toBe(1);
-        expect((await operation(b, 'inspect') as any).success).toBe(true);
-        await operation(b, 'set', { value: 2 });await b.close();const second = await b.disposeAsync();
+        expect((await invokeTool(b, 'inspect') as any).success).toBe(true);
+        await invokeTool(b, 'set', { value: 2 });await b.close();const second = await b.disposeAsync();
         expect(JSON.parse(await readFile(f.record, 'utf8')).value).toBe(2);expect(second.ok).toBe(true);await pool.destroy();expect(worker.threadId).toBe(-1);
         await facts('sandbox-reuse', { first, second, staleLeaseAndHostHarmless: true, samePhysicalWorker: true, closedPool: pool.getReport() });
     } finally { for (const s of sandboxes) await s.disposeAsync();await pool.destroy();await rm(f.dir, { recursive: true, force: true }); }
@@ -78,8 +94,8 @@ it.each(['save-failure', 'lost-reply', 'unmount-failure', 'initial-failure'])('C
     try {
         if (scenario === 'initial-failure') await expect(sandbox.installDynamic()).rejects.toHaveProperty('code', 'INSTALL_FAILED');
         else {
-            await sandbox.installDynamic();await operation(sandbox, 'set', { value: 7 });
-            if (scenario === 'lost-reply') { const worker = (sandbox as any).lease.worker, post = worker.postMessage.bind(worker);worker.postMessage = (message: any) => { if (message.type !== 'STATE_STORAGE_RESPONSE' || message.operation !== 'replace') post(message); }; }
+            await sandbox.installDynamic();await invokeTool(sandbox, 'set', { value: 7 });
+            if (scenario === 'lost-reply') { const worker = (sandbox as any).lease.worker, post = worker.postMessage.bind(worker);worker.postMessage = (message: any) => { if (message.type !== 'STATE_STORAGE_RESPONSE' || message.action !== 'replace') post(message); }; }
         }
         const worker = (sandbox as any).lease.worker, reportPromise = sandbox.disposeAsync();expect(sandbox.disposeAsync()).toBe(reportPromise);
         await expect(sandbox.close()).rejects.toHaveProperty('code', 'SANDBOX_CLOSE_FAILED');const report = await reportPromise;
@@ -98,7 +114,7 @@ it('C1-12 actual Sandbox keeps the Host owner while final save is held; healthy 
             async replace(address: any, text: string) { entered.resolve();await finish.promise;return result.storage.replace(address, text); } } };
     } } } as any);
     try {
-        await sandbox.installDynamic();await operation(sandbox, 'set', { value: 9 });const closing = sandbox.disposeAsync();await entered.promise;
+        await sandbox.installDynamic();await invokeTool(sandbox, 'set', { value: 9 });const closing = sandbox.disposeAsync();await entered.promise;
         const before = sandbox.getCloseReport();expect(before).toMatchObject({ state: 'closing', resourcesReleased: false, host: { storage: { actualIO: 1, ownerRetained: true } } });
         expect(pool.getReport()).toMatchObject({ total: 1, leased: 1 });expect(backend.getStats().ownerSlots).toBe(1);
         finish.resolve();const report = await closing;expect(report).toMatchObject({ ok: true, resourcesReleased: true, lease: { disposition: 'pooled' } });

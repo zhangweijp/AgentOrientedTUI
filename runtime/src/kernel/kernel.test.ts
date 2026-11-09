@@ -10,7 +10,7 @@ describe('Kernel lifecycle entry points', () => {
 
         expect(kernel.getDesktop(id).id).toBe(id);
         await kernel.destroyDesktop(id);
-        expect(manager.has(id)).toBe(false);
+        expect(manager.get(id)).toBeUndefined();
         await kernel.shutdown();
     });
 

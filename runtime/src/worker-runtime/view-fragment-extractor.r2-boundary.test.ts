@@ -16,10 +16,10 @@ function fragment(fragments: ReturnType<typeof extractViewFragments>, viewId: st
 describe('R2 View projection boundaries', () => {
     it('rejects data-view-id descendants at any depth with both View identities', () => {
         const container = createContainer(`
-            <div data-view-id="parent_view_123" data-view-type="Parent">
+            <div data-view-id="parent_view_123" data-view-type="Parent" data-view-kind="state">
                 <section>
-                    <div data-view-id="child_view_1234" data-view-type="Child">
-                        <div data-view-id="grandchild" data-view-type="Grandchild">Private content</div>
+                    <div data-view-id="child_view_1234" data-view-type="Child" data-view-kind="state">
+                        <div data-view-id="grandchild" data-view-type="Grandchild" data-view-kind="state">Private content</div>
                     </div>
                 </section>
             </div>
@@ -43,10 +43,10 @@ describe('R2 View projection boundaries', () => {
 
     it('accepts sibling Views and ordinary nested DOM within each View', () => {
         const container = createContainer(`
-            <div data-view-id="parent" data-view-type="Parent">
+            <div data-view-id="parent" data-view-type="Parent" data-view-kind="state">
                 <section><article>Ordinary parent content</article></section>
             </div>
-            <div data-view-id="sibling" data-view-type="Sibling">
+            <div data-view-id="sibling" data-view-type="Sibling" data-view-kind="state">
                 <section><article>Ordinary sibling content</article></section>
             </div>
         `);
@@ -62,8 +62,8 @@ describe('R2 View projection boundaries', () => {
         const parentId = 'p'.repeat(300);
         const childId = 'c'.repeat(300);
         const container = createContainer(`
-            <div data-view-id="${parentId}">
-                <div data-view-id="${childId}">Raw nested content</div>
+            <div data-view-id="${parentId}" data-view-kind="state" data-view-type="FixtureView">
+                <div data-view-id="${childId}" data-view-kind="state" data-view-type="FixtureView">Raw nested content</div>
             </div>
         `);
 
@@ -84,13 +84,13 @@ describe('R2 View projection boundaries', () => {
 
     it('preflights nested DOM before extracting any View and recovers after correction', () => {
         const container = createContainer(`
-            <div data-view-id="parent" data-view-type="Parent">Parent stable</div>
-            <div data-view-id="sibling" data-view-type="Sibling">Sibling stable</div>
+            <div data-view-id="parent" data-view-type="Parent" data-view-kind="state">Parent stable</div>
+            <div data-view-id="sibling" data-view-type="Sibling" data-view-kind="state">Sibling stable</div>
         `);
         const first = extractViewFragments(container);
         const parent = container.querySelector('[data-view-id="parent"]')!;
         const sibling = container.querySelector('[data-view-id="sibling"]')!;
-        parent.innerHTML = 'Parent invalid edit <div data-view-id="rogue">RAW_NESTED_VIEW</div>';
+        parent.innerHTML = 'Parent invalid edit <div data-view-id="rogue" data-view-kind="state" data-view-type="FixtureView">RAW_NESTED_VIEW</div>';
         sibling.textContent = 'Sibling invalid edit';
 
         let rejection: unknown;

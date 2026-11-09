@@ -12,8 +12,6 @@ describe('AppKernel - Component Mode', () => {
         mockContext = {
             appId: 'test-app' as any,
             desktopId: 'test-desktop' as any,
-            onRender: vi.fn(),
-            markDirty: vi.fn(),
         };
 
         // Create mock DOM elements
@@ -68,10 +66,6 @@ describe('AppKernel - Component Mode', () => {
         appKernel.setId('app_0' as any);
     });
 
-    it('has no legacy Operation router; component Views own the only Tool route', () => {
-        expect((appKernel as any).onOperation).toBeUndefined();
-    });
-
         it('should invoke onReinitialize hook with reason', async () => {
             const onReinitialize = vi.fn().mockResolvedValue(undefined);
             const appKernelWithHook = new AppKernel({
@@ -88,7 +82,7 @@ describe('AppKernel - Component Mode', () => {
                     },
                 },
             });
-            appKernelWithHook.setId('app_0' as any);
+            appKernelWithHook.setId(mockContext.appId);
 
             await appKernelWithHook.onOpen(mockContext, mockContainer);
             await appKernelWithHook.onReinitialize({
@@ -139,7 +133,7 @@ describe('AppKernel - Component Mode', () => {
                     },
                 },
             });
-            appKernelWithLaunchConfig.setId('app_0' as any);
+            appKernelWithLaunchConfig.setId(mockContext.appId);
 
             await appKernelWithLaunchConfig.onOpen(mockContext, mockContainer);
 

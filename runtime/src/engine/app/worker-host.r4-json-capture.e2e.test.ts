@@ -1,5 +1,5 @@
 import { Worker } from 'node:worker_threads';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
@@ -15,7 +15,8 @@ function appSource(): string {
     return `
         import { h } from 'preact';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
-        import { createTUIApp, View, useDataRef, useViewTypeTool } from '@aotui/sdk';
+        import Type from 'typebox';
+        import { createTUIApp, defineViewTypeTool, View, useDataRef, AppTools, ToolRef, defineToolSet } from '@aotui/sdk';
 
         let getterCalls = 0;
         const getterData = {};
@@ -25,19 +26,26 @@ function appSource(): string {
         });
         const oversizedData = { payload: 'x'.repeat(9 * 1024 * 1024) };
 
-        function Detail({ state }) {
+        function Detail({ state, StatsUI }) {
             const data = useMemo(() => state.mode === 'getter'
                 ? getterData
                 : state.mode === 'oversized' ? oversizedData : { value: 'valid' }, [state.mode]);
             const ref = useDataRef('payload', data);
-            useViewTypeTool('stats', {
-                description: 'Read the getter counter', isMutating: false, params: {},
-            }, async () => ({ success: true, data: { getterCalls } }));
-            return h('p', {}, [state.mode, ref('payload')]);
+            return h('section', {}, [
+                h('p', {}, [state.mode, ref('payload')]),
+                h(ToolRef, { tool: StatsUI }, 'Read getter counter'),
+            ]);
         }
 
-        function Root() {
+
+const fixtureTools0 = defineToolSet({
+StatsUI: defineViewTypeTool({
+                viewType: 'Detail', name: 'stats', description: 'Read the getter counter',
+                inputSchema: Type.Object({}, {additionalProperties:false}), })
+});
+function Root() {
             const [state, setState] = useState({ mode: 'valid' });
+            const StatsUI = fixtureTools0.StatsUI;
             useLayoutEffect(() => {
                 const onExternalEvent = event => {
                     const mode = event.detail?.type;
@@ -48,7 +56,9 @@ function appSource(): string {
                 document.addEventListener('aotui:external-event', onExternalEvent);
                 return () => document.removeEventListener('aotui:external-event', onExternalEvent);
             }, []);
-            return h(View, { id: 'detail', type: 'Detail' }, h(Detail, { state }));
+            return h(AppTools, { definition: fixtureTools0, bindings: {
+StatsUI: { execute: async () => ({ success: true, data: { getterCalls } }) }
+} }, h(View, {kind: 'state', id: 'detail', type: 'Detail' }, h(Detail, { state, StatsUI })));
         }
 
         export default createTUIApp({ app_name: 'strict_json_capture', component: Root });
@@ -57,7 +67,11 @@ function appSource(): string {
 
 async function buildFixture(directory: string): Promise<{ app: string; workerScript: string }> {
     const runtime = resolve(process.cwd());
-    await symlink(join(runtime, 'node_modules'), join(directory, 'node_modules'), 'dir');
+    const modules = join(directory, 'node_modules');
+    await mkdir(modules, { recursive: true });
+    await symlink(join(runtime, 'node_modules/preact'), join(modules, 'preact'), 'dir');
+    await symlink(join(runtime, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+    await symlink(join(runtime, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
     const appSourcePath = join(directory, 'app.mjs');
     const app = join(directory, 'app.bundle.mjs');
     const workerScript = join(directory, 'worker-runtime.mjs');
@@ -113,8 +127,8 @@ function policyForSelection(): ScopePolicy {
                 views: views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
                 refs: Object.values(source.refs).filter(ref => selected.has(ref.ownerViewId))
                     .map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
-                targets: Object.values(source.tools).flatMap(tool => tool.targets
-                    .filter(target => selected.has(target.viewId)).map(target => ({ toolId: tool.id, target }))),
+                toolBindings: Object.values(source.tools).flatMap(tool => 
+                    views.some(view => view.type === tool.viewType) ? [{ toolId: tool.id, execution: tool.execution }] : []),
                 content: views.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' as const })),
             };
         },
@@ -138,7 +152,7 @@ describe('R4 strict JSON capture in a real Worker', () => {
                 workerScriptPath: workerScript,
                 existingWorker: worker,
                 config: { AOTUI_DATA_DIR: directory },
-                interactionModes: ['ordinary-v2'],
+                interactionModes: ['view-type-parameters-v1'],
             });
             const captures: Capture[] = [];
             const healthNotifications: Array<string | undefined> = [];
@@ -190,6 +204,7 @@ describe('R4 strict JSON capture in a real Worker', () => {
             const observed = await openedScope.client.observe({ viewIds: ['detail'] });
             expect(observed.status).toBe('observed');
             if (observed.status !== 'observed') throw new Error(observed.issue.code);
+            expect(openedScope.client.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
             const stats = observed.observation.tools.find(tool => tool.name === 'stats');
             expect(stats).toBeDefined();
             const binding = observed.observation.bindings.find(candidate => candidate.toolId === stats?.id);

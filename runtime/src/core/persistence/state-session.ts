@@ -14,8 +14,8 @@ export interface StateSessionLimits extends StateValueLimits {
     /** Address tuples, owned canonical values and live encoded records; not heap/RSS. */
     readonly maxRetainedBytes: number;
     /** Includes queued and executing adapter calls. Initialization acknowledgments are counted separately. */
-    readonly maxPendingOperations: number;
-    readonly maxConcurrentOperations: number;
+    readonly maxPendingRequests: number;
+    readonly maxConcurrentRequests: number;
     /** Logical revision and binding-generation ceilings, never clocks or wrapping counters. */
     readonly maxRevision: number;
 }
@@ -50,7 +50,7 @@ export interface StateBinding {
     clear(): Promise<StateMutationResult>;
     release(): boolean;
 }
-const limitNames = ['maxDepth', 'maxNodes', 'maxValueBytes', 'maxRecordBytes', 'maxAddressBytes', 'maxKeys', 'maxRetainedBytes', 'maxPendingOperations', 'maxConcurrentOperations', 'maxRevision'] as const;
+const limitNames = ['maxDepth', 'maxNodes', 'maxValueBytes', 'maxRecordBytes', 'maxAddressBytes', 'maxKeys', 'maxRetainedBytes', 'maxPendingRequests', 'maxConcurrentRequests', 'maxRevision'] as const;
 const deferred = <T>() => {
     let resolve!: (value: T) => void;
     const promise = new Promise<T>(done => { resolve = done; });
@@ -118,7 +118,7 @@ export function createStateSession(options: Readonly<{ instanceId: string; stora
     function notifyIdle() { if (!pending) for (const resolve of idleWaiters.splice(0)) resolve(); }
     function pump() {
         if (phase === 'disposed') return;
-        for (let index = 0; index < queue.length && activeIO < limits.maxConcurrentOperations;) {
+        for (let index = 0; index < queue.length && activeIO < limits.maxConcurrentRequests;) {
             const job = queue[index]!;
             if (job.entry.activeIO) { index++;continue; }
             queue.splice(index, 1);
@@ -127,10 +127,10 @@ export function createStateSession(options: Readonly<{ instanceId: string; stora
             // pump itself is deferred until completion Promises are installed.
             // Selection and actual port entry are one synchronous step: dispose
             // cannot leave a selected-but-not-entered mutation behind.
-            let operation: Promise<unknown>;
-            try { operation = job.invoke(); }
+            let requestPromise: Promise<unknown>;
+            try { requestPromise = job.invoke(); }
             catch { finish(job, job.kind === 'read' ? failedRead('IO_FAILED') : unknownMutation(), true);continue; }
-            Promise.resolve(operation).then(
+            Promise.resolve(requestPromise).then(
                 raw => finish(job, job.kind === 'read' ? captureStateReadResult(raw, limits.maxRecordBytes) : captureStateMutationResult(raw), true),
                 () => finish(job, job.kind === 'read' ? failedRead('IO_FAILED') : unknownMutation(), true),
             );
@@ -138,14 +138,14 @@ export function createStateSession(options: Readonly<{ instanceId: string; stora
     }
     function finish(job: Job, receipt: StateReadResult | StateMutationResult, started: boolean) {
         if (job.kind === 'mutation' && receipt.status === 'unknown') job.entry.unknown = true;
-        // Apply receipt effects before starting the next operation at this address.
+        // Apply the request result before starting the next request at this address.
         job.settle(receipt);
         pending--;job.entry.jobs--;
         if (started) { activeIO--;job.entry.activeIO = false; }
         evict(job.entry);notifyIdle();void Promise.resolve().then(pump);
     }
     function enqueue(e: Entry, kind: Job['kind'], invoke: Job['invoke'], settle: Job['settle']): boolean {
-        if (phase === 'disposed' || pending >= limits.maxPendingOperations) return false;
+        if (phase === 'disposed' || pending >= limits.maxPendingRequests) return false;
         pending++;e.jobs++;queue.push({ entry: e, kind, invoke, settle });void Promise.resolve().then(pump);return true;
     }
     const blocker = (e: Entry, rev: number): StateFlushEntry | undefined => e.unknown ? result(e, rev, 'unknown', stateIssue('UNKNOWN_OUTCOME')) : e.block ? result(e, rev, 'blocked', e.block) : undefined;
@@ -256,7 +256,7 @@ export function createStateSession(options: Readonly<{ instanceId: string; stora
         const life = lifecycleIssue();if (life) return Promise.resolve(failedMutation(life));
         const e = current(id, gen);if (!e) return Promise.resolve(failedMutation('STALE_BINDING'));
         if (e.unknown) return Promise.resolve(unknownMutation());
-        if (pending >= limits.maxPendingOperations) return Promise.resolve(failedMutation('CAPACITY_EXCEEDED'));
+        if (pending >= limits.maxPendingRequests) return Promise.resolve(failedMutation('CAPACITY_EXCEEDED'));
         const rev = nextRevision();if (!rev) return Promise.resolve(failedMutation('REVISION_EXHAUSTED'));
         const completion = deferred<StateMutationResult>();
         const record: NonNullable<Entry['clear']> = { revision: rev, promise: completion.promise };
@@ -281,7 +281,7 @@ export function createStateSession(options: Readonly<{ instanceId: string; stora
         if (e?.active) return rejectState('OWNER_BUSY');
         if (generation >= limits.maxRevision || revision >= limits.maxRevision) return rejectState('REVISION_EXHAUSTED');
         const checkedSession = !!e?.initialized && (e.action === 'value' || e.clear?.result?.status === 'applied');
-        if (!checkedSession && pending >= limits.maxPendingOperations || !e && entries.size >= limits.maxKeys) return rejectState('CAPACITY_EXCEEDED');
+        if (!checkedSession && pending >= limits.maxPendingRequests || !e && entries.size >= limits.maxKeys) return rejectState('CAPACITY_EXCEEDED');
         const captured = captureStateValue(initialValue, limits);if (captured.status === 'rejected') return captured;
         if (retainedBytes + captured.snapshot.bytes + (e ? 0 : address.bytes) > limits.maxRetainedBytes) return rejectState('CAPACITY_EXCEEDED');
         if (!e) {
@@ -343,7 +343,7 @@ export function createStateSession(options: Readonly<{ instanceId: string; stora
         let time: number;try { time = now!(); } catch { return result(e, item.revision, 'failed', stateIssue('CLOCK_INVALID')); }
         const encoded = encodeStateRecord(item.value.snapshot, time, limits);
         if (encoded.status === 'rejected') return result(e, item.revision, 'failed', encoded.issue);
-        if (retainedBytes + encoded.bytes > limits.maxRetainedBytes || pending >= limits.maxPendingOperations) return result(e, item.revision, 'failed', stateIssue('CAPACITY_EXCEEDED'));
+        if (retainedBytes + encoded.bytes > limits.maxRetainedBytes || pending >= limits.maxPendingRequests) return result(e, item.revision, 'failed', stateIssue('CAPACITY_EXCEEDED'));
         retainedBytes += encoded.bytes;
         const completion = deferred<StateMutationResult>();
         const accepted = enqueue(e, 'mutation', () => storage!.replace(e.address, encoded.text), raw => {
@@ -416,7 +416,7 @@ export function createStateSession(options: Readonly<{ instanceId: string; stora
     }
     return Object.freeze({ bind, flush, seal: () => { if (phase === 'open') phase = 'sealed';return phase; }, dispose,
         getStats: () => Object.freeze({ phase, activeBindings: [...entries.values()].filter(e => e.active).length, retainedKeys: entries.size, retainedBytes,
-            queuedOperations: queue.length, activeIO, pendingOperations: pending, pendingInitializations: [...entries.values()].filter(e => e.initialization).length,
+            queuedRequests: queue.length, activeIO, pendingRequests: pending, pendingInitializations: [...entries.values()].filter(e => e.initialization).length,
             unknownAddresses: [...entries.values()].filter(e => e.unknown).length, dirtyKeys: [...entries.values()].filter(e => e.action === 'clear' ? e.clear?.result?.status !== 'applied' : !e.initialized || e.savedRevision !== e.revision || !!e.attemptIssue || !!e.block).length,
             releasePending, ownerRetained: storage !== undefined }),
     });

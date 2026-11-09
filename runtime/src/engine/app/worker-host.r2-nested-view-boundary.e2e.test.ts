@@ -1,5 +1,5 @@
 import { Worker } from 'node:worker_threads';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
@@ -15,17 +15,16 @@ function appSource(): string {
     return `
         import { h } from 'preact';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
-        import { createTUIApp, View, useDataRef, useViewTypeTool } from '@aotui/sdk';
+        import Type from 'typebox';
+        import { createTUIApp, defineViewTypeTool, View, useDataRef, AppTools, ToolRef, defineToolSet } from '@aotui/sdk';
 
-        function Parent({ state }) {
+        function Parent({ state, ParentActionUI }) {
             const ref = useDataRef('parent_ref', useMemo(() => ({ owner: 'parent' }), []));
-            useViewTypeTool('parent_action', {
-                description: 'Run the parent action', params: {}, isMutating: false,
-            }, async () => ({ success: true, data: { owner: 'parent' } }));
             return h('section', {}, [
                 h('div', {}, h('article', {}, 'ORDINARY_NESTED_DOM_MARKER')),
                 h('p', {}, ref('PARENT_REF_MARKER')),
                 h('p', {}, state.parentText),
+                h(ToolRef, { tool: ParentActionUI }, 'Run parent action'),
                 state.injectRawView
                     ? h('div', { 'data-view-id': 'raw_child', 'data-view-type': 'RawChild' },
                         h('p', {}, 'RAW_NESTED_VIEW_MARKER'))
@@ -33,18 +32,29 @@ function appSource(): string {
             ]);
         }
 
-        function Sibling() {
+        function Sibling({ SiblingActionUI }) {
             const ref = useDataRef('sibling_ref', useMemo(() => ({ owner: 'sibling' }), []));
-            useViewTypeTool('sibling_action', {
-                description: 'Run the sibling action', params: {}, isMutating: false,
-            }, async () => ({ success: true, data: { owner: 'sibling' } }));
-            return h('section', {}, [h('p', {}, ref('SIBLING_REF_MARKER'))]);
+            return h('section', {}, [
+                h('p', {}, ref('SIBLING_REF_MARKER')),
+                h(ToolRef, { tool: SiblingActionUI }, 'Run sibling action'),
+            ]);
         }
 
-        function Root() {
+
+const fixtureTools0 = defineToolSet({
+ParentActionUI: defineViewTypeTool({
+                viewType: 'Parent', name: 'parent_action', description: 'Run the parent action',
+                inputSchema: Type.Object({}, {additionalProperties:false}), }),
+SiblingActionUI: defineViewTypeTool({
+                viewType: 'Sibling', name: 'sibling_action', description: 'Run the sibling action',
+                inputSchema: Type.Object({}, {additionalProperties:false}), })
+});
+function Root() {
             const [state, setState] = useState({
                 parentText: 'PARENT_INITIAL_MARKER', injectRawView: false, siblingOpen: true,
             });
+            const ParentActionUI = fixtureTools0.ParentActionUI;
+            const SiblingActionUI = fixtureTools0.SiblingActionUI;
             useLayoutEffect(() => {
                 const onExternalEvent = event => {
                     switch (event.detail?.type) {
@@ -61,10 +71,13 @@ function appSource(): string {
                 document.addEventListener('aotui:external-event', onExternalEvent);
                 return () => document.removeEventListener('aotui:external-event', onExternalEvent);
             }, []);
-            return h('main', {}, [
-                h(View, { id: 'parent', type: 'Parent' }, h(Parent, { state })),
-                state.siblingOpen ? h(View, { id: 'sibling', type: 'Sibling' }, h(Sibling, {})) : null,
-            ]);
+            return h(AppTools, { definition: fixtureTools0, bindings: {
+ParentActionUI: { execute: async () => ({ success: true, data: { owner: 'parent' } }) },
+SiblingActionUI: { execute: async () => ({ success: true, data: { owner: 'sibling' } }) }
+} }, h('main', {}, [
+                h(View, {kind: 'state', id: 'parent', type: 'Parent' }, h(Parent, { state, ParentActionUI })),
+                state.siblingOpen ? h(View, {kind: 'state', id: 'sibling', type: 'Sibling' }, h(Sibling, { SiblingActionUI })) : null,
+            ]));
         }
 
         export default createTUIApp({ app_name: 'nested_view_rejection', component: Root });
@@ -73,7 +86,11 @@ function appSource(): string {
 
 async function buildFixture(directory: string): Promise<{ app: string; workerScript: string }> {
     const runtime = resolve(process.cwd());
-    await symlink(join(runtime, 'node_modules'), join(directory, 'node_modules'), 'dir');
+    const modules = join(directory, 'node_modules');
+    await mkdir(modules, { recursive: true });
+    await symlink(join(runtime, 'node_modules/preact'), join(modules, 'preact'), 'dir');
+    await symlink(join(runtime, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+    await symlink(join(runtime, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
     const sourcePath = join(directory, 'app.mjs');
     const app = join(directory, 'app.bundle.mjs');
     const workerScript = join(directory, 'worker-runtime.mjs');
@@ -129,8 +146,8 @@ function policyForSelection(): ScopePolicy {
                 views: views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
                 refs: Object.values(source.refs).filter(ref => selected.has(ref.ownerViewId))
                     .map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
-                targets: Object.values(source.tools).flatMap(tool => tool.targets
-                    .filter(target => selected.has(target.viewId)).map(target => ({ toolId: tool.id, target }))),
+                toolBindings: Object.values(source.tools).flatMap(tool => 
+                    views.some(view => view.type === tool.viewType) ? [{ toolId: tool.id, execution: tool.execution }] : []),
                 content: views.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' as const })),
             };
         },
@@ -154,7 +171,7 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
                 workerScriptPath: workerScript,
                 existingWorker: worker,
                 config: { AOTUI_DATA_DIR: directory },
-                interactionModes: ['ordinary-v2'],
+                interactionModes: ['view-type-parameters-v1'],
             });
             const captures: Capture[] = [];
             const healthNotifications: Array<string | undefined> = [];
@@ -187,6 +204,7 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
                 const observed = await scope.client.observe({ viewIds: [viewId] });
                 expect(observed.status).toBe('observed');
                 if (observed.status !== 'observed') throw new Error(observed.issue.code);
+                expect(scope.client.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
                 const tool = observed.observation.tools.find(candidate => candidate.name === name);
                 expect(tool).toBeDefined();
                 const binding = observed.observation.bindings.find(candidate => candidate.toolId === tool?.id);

@@ -1,12 +1,13 @@
+import { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION, STATE_SESSION_VERSION } from '../../spi/index.js';
+import { SNAPSHOT_CAPABILITY } from '../../adapters/worker-message-capture.js';
+import { initializationError } from '../../adapters/initialization-error.js';
 import { captureAppLifecycleAck, captureAppCleanupReport } from '../../adapters/app-lifecycle-protocol.js';
 import { withExecutableTools } from '../../adapters/semantic-capability-policy.js';
 import type { AppCleanupReport } from '../../spi/runtime/app-lifecycle.interface.js';
 import type { LLMOutputEventMeta } from '../../spi/core/llm-output.js';
 import { createStateStorageHost, resolveStateDirectory, type StateStorageBackend } from './state-storage-host.js';
-import { capturePersistenceAck, captureManagedPersistenceReport, DEFAULT_STATE_SESSION_LIMITS, DEFAULT_STATE_TRANSPORT_LIMITS } from '../../adapters/storage/state-storage-protocol.js';
+import { capturePersistenceAck, captureManagedPersistenceReport, DEFAULT_STATE_SESSION_LIMITS, DEFAULT_STATE_TRANSPORT_LIMITS, STATE_SESSION_PROTOCOL } from '../../adapters/storage/state-storage-protocol.js';
 import type { ManagedPersistenceReport } from '../../worker-runtime/state-persistence.js';
-import { compileSnapshotValueProfile } from '../../core/tool/snapshot-value-parameter-contract.js';
-import { captureRefV2Request, captureRefV2Terminal, REF_V2_CAPABILITY, REF_V2_MODE } from '../../adapters/ref-invocation-v2.js';
 /**
  * AppWorkerHost - 主线程端 Worker 管理器
  * 
@@ -22,17 +23,18 @@ import type { InteractionMode } from '../../spi/worker-protocol/messages.js';
 import { SEMANTIC_INTERACTION_MODES } from '../../spi/runtime/app-interaction.interface.js';
 import { captureInteractionModes } from './interaction-config.js';
 import { compileOrdinaryProfile, ORDINARY_PARAMETER_MARKER } from '../../core/tool/ordinary-parameter-profile.js';
-import { captureOrdinaryV2Request, captureOrdinaryV2Terminal, ORDINARY_V2_CAPABILITY, ORDINARY_V2_MODE } from '../../adapters/ordinary-invocation-v2.js';
+import { captureTypeParametersRequest, captureTypeParametersTerminal, PARAMETERS_V4_CAPABILITY, PARAMETERS_MODE } from '../../adapters/ordinary-invocation-v2.js';
 import { Worker } from 'worker_threads';
 import { randomUUID } from 'node:crypto';
 import { SemanticSnapshotReceiver, type SemanticSnapshotReport } from '../../adapters/snapshot/receiver.js';
 import type { CancellationSignal, ExecutionBinding, ExecutionFact, InteractionAuthority, InteractionStats,
-    InvocationSource, OperationResultData, ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
-import { captureWorkerCapabilities } from '../../adapters/worker-message-capture.js';
+    InvocationContext, InvocationSource, ToolResultData, ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
+import type { JsonValue } from '../../core/snapshot/types.js';
+import { captureViewToolCapabilities } from '../../adapters/worker-message-capture.js';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 
-import type { AppID, DesktopID, ViewID, OperationResult } from '../../spi/index.js';
+import type { AppID, DesktopID, ViewID, ToolResult } from '../../spi/index.js';
 import { WORKER_DEFAULTS, type WorkerConfig } from '../../spi/config/index.js';
 
 import {
@@ -61,6 +63,7 @@ interface PendingRequest {
     initialOpen?: true;
     persistence?: 'APP_SHUTDOWN' | 'APP_CLOSE';
     appCleanup?: 'APP_STOP' | 'APP_SHUTDOWN' | 'APP_CLOSE';
+    projection?: { worker: Worker; version: number };
 }
 
 /**
@@ -120,9 +123,9 @@ export class AppWorkerHost {
     /** Assigned by the Runtime per logical App execution; distinct from Worker thread ID. */
     readonly appInstanceId: string;
     private readonly snapshotReceiver: SemanticSnapshotReceiver;
+    private projectionRefresh?: { requestId: RequestID; promise: Promise<void> };
     private readonly interactionModes: readonly InteractionMode[];
     private ordinaryParametersCapability: { worker: Worker; version: number } | null = null;
-    private snapshotValueParametersCapability: { worker: Worker; version: number } | null = null;
     private interactionTransportUncertain = false;
     private interactionsClosed = false;
     private readonly interactionBindings = new WeakMap<InvocationSource, ExecutionBinding>();
@@ -202,8 +205,16 @@ export class AppWorkerHost {
     }
 
     private revokeRefCapability(): void {
+        if (this.projectionRefresh) {
+            const pending = this.pendingRequests.get(this.projectionRefresh.requestId);
+            if (pending) {
+                clearTimeout(pending.timeout);
+                this.pendingRequests.delete(this.projectionRefresh.requestId);
+                pending.reject(Object.assign(new Error('Projection owner closed'), { code: 'PROJECTION_CLOSED' }));
+            }
+            this.projectionRefresh = undefined;
+        }
         this.snapshotReceiver?.closeInteractions();
-        this.snapshotValueParametersCapability = null;
         this.ordinaryParametersCapability = null;
         for (const [id, pending] of this.pendingRequests) {
             if (!pending.ref) continue;
@@ -214,22 +225,17 @@ export class AppWorkerHost {
     }
 
     hasOrdinaryParametersCapability(): boolean {
-        return !this.interactionsClosed && this.interactionModes.includes('ordinary-v2') && this.ordinaryParametersCapability?.worker === this.worker &&
+        return !this.interactionsClosed && this.interactionModes.includes(PARAMETERS_MODE) && this.ordinaryParametersCapability?.worker === this.worker &&
             this.ordinaryParametersCapability?.version === this.lifecycleContextVersion;
     }
 
-    hasSnapshotValueParametersCapability(): boolean {
-        return !this.interactionsClosed && this.interactionModes.includes('snapshot-value-v2') && this.snapshotValueParametersCapability?.worker === this.worker &&
-            this.snapshotValueParametersCapability?.version === this.lifecycleContextVersion;
-    }
-
-    private unknownRef(scoped: boolean): ExecutionFact | OperationResult {
+    private unknownRef(scoped: boolean): ExecutionFact | ToolResult {
         this.interactionTransportUncertain = true;
         if (!scoped) return { success: false, error: { code: 'OUTCOME_UNKNOWN', message: 'The Worker outcome is unknown' } };
         return Object.freeze({ kind: 'unknown' });
     }
 
-    private interactionFailure(code: string, message: string): OperationResult {
+    private interactionFailure(code: string, message: string): ToolResult {
         return { success: false, error: { code, message } };
     }
 
@@ -242,14 +248,54 @@ export class AppWorkerHost {
         if (!this.interactionAvailable()) return Object.freeze({ status: 'rejected', issue: Object.freeze({
             code: 'REF_EXECUTION_UNAVAILABLE', message: 'Scoped Ref interaction is unavailable' }) });
         const execution = { resolve: this.resolveInteractionSource };
-        return this.snapshotReceiver!.createInteractionScope(withExecutableTools(policy, execution), execution);
+        const opened = this.snapshotReceiver!.createInteractionScope(withExecutableTools(policy, execution), execution);
+        if (opened.status !== 'opened') return opened;
+        const lifetime = new AbortController();
+        let observing = false;
+        return Object.freeze({ status: 'opened', client: Object.freeze({ ...opened.client,
+            observe: async (selection: unknown) => {
+                const rejected = (code: string) => Object.freeze({ status: 'rejected' as const,
+                    issue: Object.freeze({ code, message: 'Committed projection could not be observed' }) });
+                if (lifetime.signal.aborted) return rejected('SCOPE_UNAVAILABLE');
+                if (observing) return rejected('OBSERVATION_BUSY');
+                observing = true;
+                try {
+                    await this.refreshProjection(lifetime.signal);
+                    if (lifetime.signal.aborted) return rejected('SCOPE_UNAVAILABLE');
+                    return await opened.client.observe(selection);
+                } catch (error) {
+                    return rejected(error instanceof Error && 'code' in error && typeof error.code === 'string'
+                        ? error.code : 'OBSERVATION_REFRESH_FAILED');
+                } finally { observing = false; }
+            },
+            close: () => { lifetime.abort(); opened.client.close(); },
+        }) });
+    }
+
+    private refreshProjection(signal: AbortSignal): Promise<void> {
+        if (!this.interactionAvailable()) return Promise.reject(Object.assign(new Error('Projection source unavailable'), { code: 'PROJECTION_CLOSED' }));
+        if (!this.projectionRefresh) {
+            const requestId = generateRequestId();
+            const promise = this.sendRequest<void>({ type: 'FLUSH_PROJECTION', requestId });
+            if (!this.pendingRequests.has(requestId)) return promise;
+            this.projectionRefresh = { requestId, promise };
+        }
+        const pending = this.projectionRefresh.promise;
+        return new Promise((resolve, reject) => {
+            const abort = () => { signal.removeEventListener('abort', abort); reject(Object.assign(new Error('Scope closed'), { code: 'SCOPE_UNAVAILABLE' })); };
+            if (signal.aborted) { abort(); return; }
+            signal.addEventListener('abort', abort, { once: true });
+            void pending.then(() => { signal.removeEventListener('abort', abort); resolve(); }, error => {
+                signal.removeEventListener('abort', abort); reject(error);
+            });
+        });
     }
 
     getInteractionReport(): Readonly<{ mode: 'scoped'; negotiatedModes: readonly InteractionMode[]; transportUncertain: boolean; core: InteractionStats }> | null {
         const core = this.snapshotReceiver?.getInteractionStats();
         return core ? Object.freeze({
             mode: 'scoped' as const,
-            negotiatedModes: Object.freeze(this.interactionModes.filter(mode => mode === 'ordinary-v2' ? this.hasOrdinaryParametersCapability() : this.hasSnapshotValueParametersCapability())),
+            negotiatedModes: Object.freeze(this.interactionModes.filter(mode => mode === PARAMETERS_MODE && this.hasOrdinaryParametersCapability())),
             transportUncertain: this.interactionTransportUncertain, core,
         }) : null;
     }
@@ -260,31 +306,33 @@ export class AppWorkerHost {
         if (existing) return existing;
         const marked = source.tool.inputSchema !== null && typeof source.tool.inputSchema === 'object' &&
             Object.hasOwn(source.tool.inputSchema, ORDINARY_PARAMETER_MARKER);
-        const parameters = marked ? compileOrdinaryProfile(source.tool.inputSchema) : null;
-        const snapshotCompiled = marked ? compileSnapshotValueProfile(source.tool.inputSchema) : null;
-        const snapshotParameters = snapshotCompiled?.ok ? snapshotCompiled.contract : null;
-        if (marked && ((!parameters && !snapshotParameters) || snapshotParameters && source.tool.isMutating ||
-            !(snapshotParameters ? this.hasSnapshotValueParametersCapability() : this.hasOrdinaryParametersCapability()))) return null;
-        if (!parameters && !snapshotParameters) return null;
-        if (snapshotParameters ? !this.hasSnapshotValueParametersCapability() : !this.hasOrdinaryParametersCapability()) return null;
         const worker = this.worker!, version = this.lifecycleContextVersion;
-        const current = () => this.interactionAvailable() && this.worker === worker && this.lifecycleContextVersion === version && (!parameters || this.hasOrdinaryParametersCapability()) && (!snapshotParameters || this.hasSnapshotValueParametersCapability());
-        const binding: ExecutionBinding = Object.freeze({ identity: Object.freeze({}), mode: snapshotParameters ? 'snapshot-value-v2' : 'ordinary-v2',
-            validateInput: (_source, input) => {
-                if (snapshotParameters) { const result = snapshotParameters.validateEffective(input); return result.ok ? {ok:true as const,value:result.value} : {ok:false as const}; }
-                const result = parameters!.validate(input); return result.ok ? {ok:true as const,value:result.value} : {ok:false as const};
-            },
-            isLive: () => ({ ok: current() }),
-            execute: context => snapshotParameters ? this.sendRequest<ExecutionFact>({ type: 'VIEW_TOOL_INVOKE_REF_V2', requestId: generateRequestId(),
-                appId: context.source.appId as AppID, instanceId: context.source.instanceId, argumentMode: REF_V2_MODE,
-                snapshotId: context.source.snapshotId, tool: context.source.tool, target: context.source.target, rawArgs: context.rawInput,
-                effectiveArgs: context.effectiveInput, refSources: context.refSources }, { worker, version, signal: context.signal }) : this.sendRequest<ExecutionFact>({ type:'VIEW_TOOL_INVOKE_ORDINARY_V2',requestId:generateRequestId(),
-                appId:context.source.appId as AppID,instanceId:context.source.instanceId,argumentMode:ORDINARY_V2_MODE,
-                snapshotId:context.source.snapshotId,tool:context.source.tool,target:context.source.target,args:context.effectiveInput,
-            },{worker,version,signal:context.signal}),
-        } satisfies ExecutionBinding);
-        this.interactionBindings.set(source, binding);
-        return binding;
+        const live = (capability: () => boolean) => () => this.interactionAvailable() && this.worker === worker &&
+            this.lifecycleContextVersion === version && capability();
+
+        if (source.execution.kind === 'view-type') {
+            if (!marked || !this.hasOrdinaryParametersCapability()) return null;
+            const parameters = compileOrdinaryProfile(source.tool.inputSchema);
+            if (!parameters || parameters.revision !== PARAMETERS_MODE) return null;
+            const execution = source.execution;
+            const isLive = live(() => this.hasOrdinaryParametersCapability());
+            const binding: ExecutionBinding = Object.freeze({ identity: Object.freeze({}), mode: PARAMETERS_MODE,
+                validateInput: (_source: InvocationSource, input: Readonly<Record<string, JsonValue>>) => {
+                    const result = (parameters.validateResolvedInput ?? parameters.validate)(input);
+                    return result.ok ? { ok: true as const, value: result.value } : { ok: false as const };
+                },
+                isLive: () => ({ ok: isLive() }),
+                execute: (context: InvocationContext) => this.sendRequest<ExecutionFact>({ type: 'VIEW_TOOL_INVOKE_V4', requestId: generateRequestId(),
+                    appId: source.appId as AppID, instanceId: source.instanceId, snapshotId: source.snapshotId,
+                    tool: source.tool, argumentMode: PARAMETERS_MODE, execution, rawArgs: context.rawInput,
+                    effectiveArgs: context.effectiveInput, refSources: context.refSources,
+                }, { worker, version, signal: context.signal }),
+            });
+            this.interactionBindings.set(source, binding);
+            return binding;
+        }
+
+        return null;
     };
 
     // 回调: Worker 请求 notifyUpdate
@@ -348,12 +396,13 @@ export class AppWorkerHost {
                 appId: this.appId,
                 desktopId: this.desktopId,
                 appModulePath: this.appModulePath,
+                ...(this.name === undefined ? {} : { appName: this.name }),
                 config: this.config, // ✨ Send config to Worker
-                persistence: { protocol: 'state-session-v1', version: 1, instanceId: this.appInstanceId,
+                persistence: { protocol: STATE_SESSION_PROTOCOL, version: STATE_SESSION_VERSION, instanceId: this.appInstanceId,
                     limits: DEFAULT_STATE_SESSION_LIMITS, transport: { ...DEFAULT_STATE_TRANSPORT_LIMITS, timeoutMs: this.timeout } },
                 appInstanceId: this.appInstanceId,
-                appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: this.appInstanceId },
-                requestedCapabilities: this.interactionModes.map(mode => mode === 'ordinary-v2' ? ORDINARY_V2_CAPABILITY : REF_V2_CAPABILITY),
+                appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, version: APP_LIFECYCLE_VERSION, instanceId: this.appInstanceId },
+                requestedCapabilities: [SNAPSHOT_CAPABILITY, ...this.interactionModes.map(() => PARAMETERS_V4_CAPABILITY)],
             }, 'ready');
         } catch (error) {
             if (this.snapshotReceiver) {
@@ -717,16 +766,16 @@ export class AppWorkerHost {
         if (['RESET', 'APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE', 'APP_REINITIALIZE'].includes(message.type)) {
             this.revokeRefCapability();
         }
-        const snapshotParameters = message.type === 'VIEW_TOOL_INVOKE_REF_V2';
-        const parameters = message.type === 'VIEW_TOOL_INVOKE_ORDINARY_V2';
-        const ref = snapshotParameters || parameters;
+        const ref = message.type === 'VIEW_TOOL_INVOKE_V4';
+        const requestedCapture = message.type === 'INIT' ? captureViewToolCapabilities(message.requestedCapabilities) : null;
+        if (requestedCapture && !requestedCapture.ok) return Promise.reject(new Error(requestedCapture.code));
         return new Promise((resolve, reject) => {
-            const refused = (code: string, text: string) => scoped ? { kind: 'operation-result', phase: 'not-entered',
+            const refused = (code: string, text: string) => scoped ? { kind: 'tool-result', phase: 'not-entered',
                 result: { success: false, error: { code, message: text } } } : this.interactionFailure(code, text);
             const stale = () => scoped && (!this.interactionAvailable() || scoped.worker !== this.worker ||
                 scoped.version !== this.lifecycleContextVersion || scoped.signal.aborted);
-            if (ref && (this.interactionTransportUncertain || !(snapshotParameters ? this.hasSnapshotValueParametersCapability() : this.hasOrdinaryParametersCapability()) || this.status !== 'running' || stale())) {
-                resolve(refused('REF_EXECUTION_UNAVAILABLE', 'Current Worker has no negotiated Ref capability') as T);
+            if (ref && (this.interactionTransportUncertain || !this.hasOrdinaryParametersCapability() || this.status !== 'running' || stale())) {
+                resolve(refused('TOOL_EXECUTION_UNAVAILABLE', 'Current Worker has no negotiated parameter capability') as T);
                 return;
             }
             if ((this.status === 'closing' || this.status === 'closed') && !['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'RESET'].includes(message.type)) {
@@ -738,7 +787,10 @@ export class AppWorkerHost {
             const requestId = 'requestId' in message ? message.requestId : undefined;
             if (!requestId) { reject(new Error('Message missing requestId')); return; }
             if (ref) {
-                try { message = snapshotParameters ? captureRefV2Request(message) : captureOrdinaryV2Request(message); }
+                try {
+                    if (message.type === 'VIEW_TOOL_INVOKE_V4') message = captureTypeParametersRequest(message);
+                    else throw new Error('Invalid Tool message');
+                }
                 catch {
                     resolve(refused('REF_ARGUMENT_BUDGET_EXCEEDED', 'Complete Ref request exceeds the transport budget') as T);
                     return;
@@ -746,17 +798,21 @@ export class AppWorkerHost {
             }
             if (stale()) { resolve(refused('REF_EXECUTION_UNAVAILABLE', 'Scoped Ref interaction is unavailable') as T); return; }
             const timeout = setTimeout(() => {
-                this.pendingRequests.delete(requestId);
+                // A timed-out flush still owns its Worker wait. Keep the single
+                // slot until the real reply or App close, rather than stacking retries.
+                if (message.type !== 'FLUSH_PROJECTION') this.pendingRequests.delete(requestId);
                 if (ref) resolve(this.unknownRef(!!scoped) as T);
-                else reject(new Error(`Request ${requestId} timed out after ${this.timeout}ms`));
+                else reject(Object.assign(new Error(`Request ${requestId} timed out after ${this.timeout}ms`),
+                    message.type === 'FLUSH_PROJECTION' ? { code: 'PROJECTION_TIMEOUT' } : {}));
             }, this.timeout);
             this.pendingRequests.set(requestId, { resolve, reject, timeout,
+                ...(message.type === 'FLUSH_PROJECTION' ? { projection: { worker, version: this.lifecycleContextVersion } } : {}),
                 ...(message.type === 'APP_OPEN' ? { initialOpen: true as const } : {}),
                 ...(this.appLifecycleSupport === 'managed' && (message.type === 'APP_STOP' || message.type === 'APP_SHUTDOWN' || message.type === 'APP_CLOSE') ? { appCleanup: message.type } : {}),
                 ...(this.persistenceSupport === 'managed' && (message.type === 'APP_SHUTDOWN' || message.type === 'APP_CLOSE') ? { persistence: message.type } : {}),
-                ...(ref ? { ref: { worker, version: this.lifecycleContextVersion, mode: snapshotParameters ? REF_V2_MODE : ORDINARY_V2_MODE, ...(scoped ? { scoped: true } : {}) } } : {}),
+                ...(ref ? { ref: { worker, version: this.lifecycleContextVersion, mode: PARAMETERS_MODE, ...(scoped ? { scoped: true } : {}) } } : {}),
                 ...(message.type === 'INIT' ? { init: { worker, version: this.lifecycleContextVersion,
-                    requested: captureWorkerCapabilities(message.requestedCapabilities) ?? [] } } : {}),
+                    requested: requestedCapture?.ok ? requestedCapture.capabilities : [] } } : {}),
             });
             try { worker.postMessage(message); }
             catch {
@@ -786,26 +842,46 @@ export class AppWorkerHost {
         const refPending = typeof id === 'string' ? this.pendingRequests.get(id) : undefined;
         if (refPending?.ref) {
             const terminal = refPending.ref.worker === this.worker && refPending.ref.version === this.lifecycleContextVersion
-                ? (refPending.ref.mode === REF_V2_MODE ? captureRefV2Terminal : captureOrdinaryV2Terminal)(msg, { requestId: id, appId: String(this.appId), instanceId: this.appInstanceId }) : null;
+                ? captureTypeParametersTerminal(msg, { requestId: id, appId: String(this.appId), instanceId: this.appInstanceId }) : null;
             clearTimeout(refPending.timeout);
             this.pendingRequests.delete(id);
-            refPending.resolve(refPending.ref.scoped ? terminal ? { kind: 'operation-result', phase: terminal.phase,
-                result: terminal.result as unknown as OperationResultData,
+            refPending.resolve(refPending.ref.scoped ? terminal ? { kind: 'tool-result', phase: terminal.phase,
+                result: terminal.result as unknown as ToolResultData,
                 ...(terminal.phase === 'entered-returned' && terminal.failureEffects !== undefined ? { failureEffects: terminal.failureEffects } : {}) } : this.unknownRef(true) : terminal?.result ?? this.unknownRef(false));
             return;
         }
-        if (msg?.type === 'VIEW_TOOL_INVOKE_REF_V2_RESPONSE' || msg?.type === 'VIEW_TOOL_INVOKE_ORDINARY_V2_RESPONSE') return;
+        if (typeField.value === 'VIEW_TOOL_INVOKE_V3_RESPONSE' || typeField.value === 'VIEW_TOOL_INVOKE_V4_RESPONSE') return;
 
         // 处理响应消息
         if (isResponse(msg)) {
             const pending = this.pendingRequests.get(msg.requestId);
             if (pending) {
+                if (pending.projection) {
+                    clearTimeout(pending.timeout); this.pendingRequests.delete(msg.requestId);
+                    if (this.projectionRefresh?.requestId === msg.requestId) this.projectionRefresh = undefined;
+                    pending.reject(Object.assign(new Error('Worker did not return an accepted projection'), { code: 'OBSERVATION_REFRESH_FAILED' }));
+                    return;
+                }
                 let appCleanupFailed = false;
                 let appCleanupSucceeded = false;
                 let persistenceFailed = false;
                 let persistenceSucceeded = false;
                 let lifecycleTerminalMismatch = false;
                 if (pending.init) {
+                    const rejectInitialization = (code: string, error?: Error) => {
+                        this.ordinaryParametersCapability = null;
+                        clearTimeout(pending.timeout); this.pendingRequests.delete(msg.requestId);
+                        // A successful INIT may have left an App and persistence session
+                        // alive in a Worker whose capabilities we cannot trust. Retire it.
+                        this.terminate();
+                        pending.reject(error ?? new Error(code));
+                    };
+                    if (msg.type === 'ERROR_RESPONSE' && msg.success === false) {
+                        this.appLifecycleSupport = 'rejected'; this.persistenceSupport = 'rejected'; this.persistenceUnsafe = true;
+                        const error = initializationError(Object.getOwnPropertyDescriptor(msg, 'error')?.value, String(this.appId), 'INIT');
+                        rejectInitialization(error.code, error);
+                        return;
+                    }
                     if (msg.type !== 'INIT_RESPONSE') {
                         this.appLifecycleSupport = 'rejected'; this.persistenceSupport = 'rejected'; this.persistenceUnsafe = true;
                         clearTimeout(pending.timeout); this.pendingRequests.delete(msg.requestId);
@@ -831,16 +907,32 @@ export class AppWorkerHost {
                     }
                     const init = pending.init;
                     const capsField = Object.getOwnPropertyDescriptor(msg, 'acceptedCapabilities');
-                    const caps = capsField && !('value' in capsField) ? null : captureWorkerCapabilities(capsField?.value);
+                    const caps = capsField && !('value' in capsField) ? null
+                        : captureViewToolCapabilities(capsField?.value);
                     const instance = Object.getOwnPropertyDescriptor(msg, 'appInstanceId')?.value;
+                    if (caps && !caps.ok) {
+                        rejectInitialization(caps.code);
+                        return;
+                    }
+                    const accepted = caps?.ok ? caps.capabilities : null;
+                    if (accepted && accepted.some(capability => !init.requested.includes(capability))) {
+                        rejectInitialization('WORKER_CAPABILITY_ACK_INVALID');
+                        return;
+                    }
+                    if (!accepted?.includes(SNAPSHOT_CAPABILITY)) {
+                        rejectInitialization('WORKER_SNAPSHOT_UNSUPPORTED');
+                        return;
+                    }
+                    if (init.requested.some(capability => !accepted.includes(capability))) {
+                        rejectInitialization('WORKER_CAPABILITY_UNAVAILABLE');
+                        return;
+                    }
                     if (msg.type === 'INIT_RESPONSE' && msg.success === true &&
                         !this.interactionsClosed &&
                         init.worker === this.worker && init.version === this.lifecycleContextVersion &&
                         this.status !== 'closing' && this.status !== 'closed' && !this.closePromise && !this.releasePromise &&
-                        instance === this.appInstanceId && caps !== null && caps.length <= 2 &&
-                        caps.every(c => (c === ORDINARY_V2_CAPABILITY || c === REF_V2_CAPABILITY) && init.requested.includes(c))) {
-                        this.snapshotValueParametersCapability = caps.includes(REF_V2_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
-                        this.ordinaryParametersCapability = caps.includes(ORDINARY_V2_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
+                        instance === this.appInstanceId && accepted !== null) {
+                        this.ordinaryParametersCapability = accepted.includes(PARAMETERS_V4_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
                     }
                 }
                 if (pending.initialOpen && msg.success !== true) {
@@ -856,6 +948,9 @@ export class AppWorkerHost {
                     const cleanup = msg.type === 'LIFECYCLE_RESPONSE'
                         ? captureAppCleanupReport(Object.getOwnPropertyDescriptor(msg, 'appCleanup')?.value, this.appInstanceId) : null;
                     if (cleanup && cleanup.state !== 'active') this.lastAppCleanup = cleanup;
+                    clearTimeout(pending.timeout); this.pendingRequests.delete(msg.requestId);
+                    pending.reject(initializationError(Object.getOwnPropertyDescriptor(msg, 'error')?.value, String(this.appId), 'OPEN'));
+                    return;
                 }
                 if (pending.appCleanup) {
                     const report = captureAppCleanupReport(Object.getOwnPropertyDescriptor(msg, 'appCleanup')?.value, this.appInstanceId);
@@ -864,7 +959,7 @@ export class AppWorkerHost {
                     if (validPhase) this.lastAppCleanup = report;
                     appCleanupSucceeded = !!validPhase && report.issues.length === 0 &&
                         (pending.appCleanup === 'APP_CLOSE' ? report.state === 'completed' : report.state === 'stopped');
-                    // APP_STOP has no persistence operation whose result can explain a failed terminal.
+                    // APP_STOP has no persistence request whose result can explain a failed terminal.
                     // APP_SHUTDOWN/APP_CLOSE are evaluated with their persistence report below.
                     appCleanupFailed = !validPhase || !appCleanupSucceeded ||
                         pending.appCleanup === 'APP_STOP' && msg.success !== true;
@@ -916,6 +1011,8 @@ export class AppWorkerHost {
         }
 
         if (msg.type === 'SNAPSHOT_PREPARED' || msg.type === 'SNAPSHOT_PREPARE_FAILED') {
+            const request = msg.requestId && this.pendingRequests.get(msg.requestId);
+            const pending = request && request.projection ? request : undefined;
             let notify = false;
             try {
                 const result = msg.type === 'SNAPSHOT_PREPARED'
@@ -929,6 +1026,15 @@ export class AppWorkerHost {
                                 ? msg.error.message.slice(0, 160) : 'Semantic producer failed' },
                     });
                 notify = result.status === 'published' || result.healthChanged;
+                if (pending && msg.requestId) {
+                    clearTimeout(pending.timeout);
+                    this.pendingRequests.delete(msg.requestId);
+                    if (this.projectionRefresh?.requestId === msg.requestId) this.projectionRefresh = undefined;
+                    if (pending.projection!.worker !== this.worker || pending.projection!.version !== this.lifecycleContextVersion)
+                        pending.reject(Object.assign(new Error('Projection source replaced'), { code: 'PROJECTION_CLOSED' }));
+                    else if (result.status === 'rejected') pending.reject(Object.assign(new Error(result.issue.message), { code: result.issue.code }));
+                    else pending.resolve(undefined);
+                }
             } catch {
                 this.handleError(new Error('Semantic snapshot reception failed'));
                 notify = true;

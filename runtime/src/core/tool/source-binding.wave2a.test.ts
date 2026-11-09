@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
 import { acquireToolSource } from './source-binding.js';
+import { compileOrdinaryParams } from './ordinary-parameter-contract.js';
+import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
+
+const compiled = compileOrdinaryParams({});
+if (!compiled.ok) throw new Error('Fixture schema must compile');
 
 describe('Wave 2A: current Store lease and historical-source contract', () => {
     function setup() {
@@ -8,17 +13,18 @@ describe('Wave 2A: current Store lease and historical-source contract', () => {
         const core = createSnapshotCore({ now: () => time, historyTtlMs: 20, leaseTtlMs: 100 });
         core.lifecycle.startApp('app', 'instance');
         const toolId = JSON.stringify(['app', 'Detail', 'inspect']);
+        const execution = { kind: 'view-type' as const, activationId: 'ta:v1:["instance",1]' };
         const publish = (seq: number) => {
             const result = core.committer.accept({
-                schemaVersion: 2, appId: 'app', instanceId: 'instance', producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
+                schemaVersion: 3, appId: 'app', instanceId: 'instance', producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
                 views: [{ id: 'detail', viewInstanceId: 'mount', type: 'Detail', name: 'Detail', kind: 'state', content: { format: 'markdown-v1', value: String(seq) } }],
-                refs: {}, tools: { [toolId]: { id: toolId, name: 'inspect', viewType: 'Detail', description: 'Inspect', inputSchema: { type: 'object' }, isMutating: false,
-                    targets: [{ viewId: 'detail', viewInstanceId: 'mount', bindingVersion: 1 }] } },
+                refs: {}, tools: { [toolId]: { id: toolId, name: 'inspect', viewType: 'Detail', description: 'Inspect',
+                    inputSchema: ordinaryParameterProfile(compiled.contract),  execution } },
             });
-            if (result.status !== 'published') throw new Error('Expected V2');
+            if (result.status !== 'published') throw new Error('Expected V3');
             return result.snapshot.id;
         };
-        const select = (snapshotId: string) => acquireToolSource(core.store, { snapshotId, appId: 'app', instanceId: 'instance', toolId, viewId: 'detail' });
+        const select = (snapshotId: string) => acquireToolSource(core.store, { snapshotId, appId: 'app', instanceId: 'instance', toolId, execution });
         return { core, publish, select, time(value: number) { time = value; } };
     }
 

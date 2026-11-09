@@ -20,25 +20,25 @@ describe('DesktopManager', () => {
         it('should create desktop with auto-generated ID', async () => {
             const id = await manager.create();
             expect(id).toMatch(/^dt_/);
-            expect(manager.has(id)).toBe(true);
+            expect(manager.get(id)).toBeDefined();
         });
 
         it('should create desktop with custom ID', async () => {
             const customId = 'custom_desktop_id';
             const id = await manager.create(customId);
             expect(id).toBe(customId);
-            expect(manager.has(customId)).toBe(true);
+            expect(manager.get(customId)).toBeDefined();
         });
     });
 
     describe('beginDesktopShutdown()', () => {
         it('should close and remove an existing desktop after confirmed release', async () => {
             const id = await manager.create();
-            expect(manager.has(id)).toBe(true);
+            expect(manager.get(id)).toBeDefined();
 
-            const operation = manager.beginDesktopShutdown(id);
-            expect((await operation.completion).resourcesReleased).toBe(true);
-            expect(manager.has(id)).toBe(false);
+            const handle = manager.beginDesktopShutdown(id);
+            expect((await handle.completion).resourcesReleased).toBe(true);
+            expect(manager.get(id)).toBeUndefined();
         });
 
         it('reports a missing desktop without inventing resources', async () => {

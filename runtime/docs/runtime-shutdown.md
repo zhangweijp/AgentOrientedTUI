@@ -80,7 +80,7 @@ C1 报告中的 `transferred` 表示 Host 已把 Worker 安全交回池，不等
 - closing 即拒绝新业务，不能通过之前保存的 Desktop 对象绕过。重复 App/Desktop ID 在活动、关闭中或资源未确认释放时不能覆盖。
 - `getInstalledApps()` / `getAppStates()` 返回独立记录快照，修改快照不会改动 Manager 内部状态。业务配置的任意深层冻结不在此保证内。合法 pending/closed 重开使用原 metadata 的内部路径。
 - `Desktop.output` 和 `getLLMOutputChannel()` 返回本实例缓存 facade。关闭后不能新增订阅；旧取消函数只取消旧订阅，无法作用于同 ID 后继。后者保持服务方法形状，但要求本 Desktop ID，不再等于注入的原始 service 对象；错误 ID 为 `DESKTOP_SCOPE_MISMATCH`。关闭后的旧 facade 历史查询为空，push/subscribe/外部 cleanup 拒绝。
-- `logSystem`、`logAppOperation`、`emitSignal` 的迟到诊断无副作用。Logger 按精确 Desktop/App 元组隔离，包括带冒号的 ID。
+- `logSystem`、`emitSignal` 的迟到诊断无副作用。Logger 按精确 Desktop ID 隔离，包括带冒号的 ID。App 生命周期事件使用同一系统日志；独立 App 操作日志缓存及 `logAppActivity` 已退出。
 - AppManager 与 Kernel 分别最多接受 128 个规定类别的未完成异步业务操作，超额在依赖副作用之前以 `LIFECYCLE_CAPACITY_EXCEEDED` 拒绝。复用操作不重复占 AppManager 槽，清理、释放和查询不占 Kernel 槽，也没有隐藏等待队列。
 
 手工共享原始 SignalBus、LLM 服务或 Logger 时，同时存活的 Desktop 必须使用不同 ID；只有前一实例完整关闭之后才能复用 ID。直接绕过 facade 操作原始第三方对象仍由注入方负责。本次没有增加跨 Runtime 的全局服务注册中心。

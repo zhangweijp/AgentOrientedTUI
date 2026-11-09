@@ -11,7 +11,7 @@ it('B04: injects only a preassigned matching instance port; ordinary components 
         kernel.setId(createAppId('a'));kernel.setAppExecutionInstanceId('i');
         const port = { protocol: 'state-session-v1', instanceId: 'i' } as AppStatePersistence;
         if (managed) { kernel.setPersistence(port);expect(() => kernel.setPersistence(port)).toThrow(); }
-        await kernel.onOpen({ appId: createAppId('a'), desktopId: createDesktopId('d'), markDirty() {}, onRender() {} }, document.createElement('div'));
+        await kernel.onOpen({ appId: createAppId('a'), desktopId: createDesktopId('d') }, document.createElement('div'));
         expect(captured?.persistence).toBe(managed ? port : undefined);await kernel.onClose();
     }
 });

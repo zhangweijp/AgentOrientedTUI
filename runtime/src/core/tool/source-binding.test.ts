@@ -1,18 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
+import { compileOrdinaryParams } from './ordinary-parameter-contract.js';
+import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
 import { acquireToolSource } from './source-binding.js';
 
 const appId = 'ide';
 const instanceId = 'ide-run-1';
 const toolId = JSON.stringify([appId, 'FileDetail', 'lsp_hover']);
 const vid = 'vi:v1:["ide-run-1",1]';
+const activationId = 'ta:v1:["ide-run-1",1]';
+const schema = (() => {
+    const compiled = compileOrdinaryParams({ line: { type: 'string', required: false } }, { additionalProperties: false });
+    if (!compiled.ok) throw new Error('Tool schema fixture must compile');
+    return ordinaryParameterProfile(compiled.contract);
+})();
 
-function v2(
-    seq = 1, epoch = seq, viewInstanceId = vid,
-    bindingVersion = 1, value = 'A',
+function v3(
+    seq = 1, epoch = seq, toolActivationId = activationId,
+    value = 'A', viewInstanceId = vid,
 ) {
     return {
-        schemaVersion: 2, appId, instanceId,
+        schemaVersion: 3, appId, instanceId,
         producerSeq: seq, sourceEpoch: epoch, capturedAt: seq,
         views: [{
             id: 'fd_0', viewInstanceId, type: 'FileDetail', name: 'App.tsx',
@@ -22,9 +30,8 @@ function v2(
         tools: {
             [toolId]: {
                 id: toolId, name: 'lsp_hover', viewType: 'FileDetail',
-                description: 'Hover in current file', inputSchema: { type: 'object' },
-                isMutating: false,
-                targets: [{ viewId: 'fd_0', viewInstanceId, bindingVersion }],
+                description: 'Hover in current file', inputSchema: schema,
+                execution: { kind: 'view-type', activationId: toolActivationId },
             },
         },
     };
@@ -34,24 +41,25 @@ function start() {
     core.lifecycle.startApp(appId, instanceId);
     return core;
 }
-function commit(core: ReturnType<typeof start>, draft = v2()) {
+function commit(core: ReturnType<typeof start>, draft = v3()) {
     const result = core.committer.accept(draft);
     expect(result.status).toBe('published');
     if (result.status !== 'published') throw Error(JSON.stringify(result));
     return result.snapshot;
 }
-function query(snapshotId: string, viewId = 'fd_0', requestedTool = toolId) {
-    return { snapshotId, appId, instanceId, toolId: requestedTool, viewId };
+function query(snapshotId: string, requestedActivationId = activationId, requestedTool = toolId) {
+    return { snapshotId, appId, instanceId, toolId: requestedTool,
+        execution: { kind: 'view-type' as const, activationId: requestedActivationId } };
 }
 
-describe('M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot', () => {
+describe('V3 source binding resolves only Runtime committed/pinned type executions', () => {
     it('returns a frozen, lease-backed selection without any Handler or execute method', () => {
         const c = start();
         const old = commit(c);
         const selection = acquireToolSource(c.store, query(old.id));
         expect(selection).toMatchObject({
             status: 'found', snapshotId: old.id,
-            target: { viewInstanceId: vid, bindingVersion: 1, viewId: 'fd_0' },
+            execution: { kind: 'view-type', activationId },
         });
         expect(c.store.inspect().activeLeases).toBe(1);
         if (selection.status !== 'found') throw Error('Expected found');
@@ -66,46 +74,55 @@ describe('M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot', ()
     it('old observation remains usable when only Ref or displayed View content changes', () => {
         const c = start();
         const old = commit(c);
-        commit(c, v2(2, 2, vid, 1, 'New markup'));
+        const held = c.store.acquire(old.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
+        commit(c, v3(2, 2, activationId, 'New markup'));
         const selection = acquireToolSource(c.store, query(old.id));
         expect(selection.status).toBe('found');
         if (selection.status === 'found') selection.release();
+        held.lease.release();
     });
 
     it('rejects old source when same View gets a new Tool registration version', () => {
         const c = start();
         const old = commit(c);
-        commit(c, v2(2, 2, vid, 2));
+        const held = c.store.acquire(old.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
+        commit(c, v3(2, 2, 'ta:v1:["ide-run-1",2]'));
         expect(acquireToolSource(c.store, query(old.id)))
             .toMatchObject({ status: 'rejected', issue: { code: 'TOOL_SOURCE_STALE' } });
-        expect(c.store.inspect().activeLeases).toBe(0);
+        held.lease.release(); expect(c.store.inspect().activeLeases).toBe(0);
     });
 
-    it('rejects an old fd_0 that now points to a NEW ViewInstanceId', () => {
+    it('does not bind ordinary type execution to one View instance', () => {
         const c = start();
         const old = commit(c);
-        commit(c, v2(2, 2, 'vi_B', 2));
-        expect(acquireToolSource(c.store, query(old.id)))
-            .toMatchObject({ status: 'rejected', issue: { code: 'VIEW_INSTANCE_REVOKED' } });
-        expect(c.store.inspect().activeLeases).toBe(0);
+        const held = c.store.acquire(old.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
+        commit(c, v3(2, 2, activationId, 'A', 'vi_B'));
+        const source = acquireToolSource(c.store, query(old.id));
+        expect(source.status).toBe('found');
+        if (source.status === 'found') source.release();
+        held.lease.release(); expect(c.store.inspect().activeLeases).toBe(0);
     });
 
     it('rejects a Tool whose schema changed even if a faulty Producer reused bindingVersion', () => {
         const c = start();
         const old = commit(c);
-        const changed = v2(2);
-        changed.tools[toolId].inputSchema = { type: 'object', properties: { line: { type: 'number' } } };
+        const held = c.store.acquire(old.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
+        const changed = v3(2);
+        const otherSchema = compileOrdinaryParams({ line: { type: 'number', required: false } }, { additionalProperties: false });
+        if (!otherSchema.ok) throw new Error('Changed Tool schema fixture must compile');
+        changed.tools[toolId].inputSchema = ordinaryParameterProfile(otherSchema.contract);
         commit(c, changed);
         expect(acquireToolSource(c.store, query(old.id)))
             .toMatchObject({ status: 'rejected', issue: { code: 'TOOL_SOURCE_STALE' } });
+        held.lease.release();
     });
 
-    it('rejects caller-invented Tool name, target viewId, or snapshotId', () => {
+    it('rejects caller-invented Tool name, activation identity, or snapshotId', () => {
         const c = start();
         const old = commit(c);
-        expect(acquireToolSource(c.store, query(old.id, 'fd_9')))
-            .toMatchObject({ status: 'rejected', issue: { code: 'TOOL_UNAVAILABLE' } });
-        expect(acquireToolSource(c.store, query(old.id, 'fd_0', 'fake_tool')))
+        expect(acquireToolSource(c.store, query(old.id, 'forged-activation')))
+            .toMatchObject({ status: 'rejected', issue: { code: 'TOOL_SOURCE_CONFLICT' } });
+        expect(acquireToolSource(c.store, query(old.id, activationId, 'fake_tool')))
             .toMatchObject({ status: 'rejected', issue: { code: 'TOOL_UNAVAILABLE' } });
         expect(acquireToolSource(c.store, query('not-a-real-snapshot')))
             .toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
@@ -119,16 +136,8 @@ describe('M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot', ()
         expect(acquireToolSource(c.store, query(old.id)))
             .toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_UNREADY' } });
         c.committer.accept({
-            ...v2(1), instanceId: 'ide-run-2',
-            views: [{
-                ...v2().views[0], viewInstanceId: 'vi-run-2',
-            }],
-            tools: {
-                [toolId]: {
-                    ...v2().tools[toolId],
-                    targets: [{ viewId: 'fd_0', viewInstanceId: 'vi-run-2', bindingVersion: 1 }],
-                },
-            },
+            ...v3(1, 1, 'ta:v1:["ide-run-2",1]', 'A', 'vi-run-2'),
+            instanceId: 'ide-run-2',
         });
         expect(acquireToolSource(c.store, query(old.id)))
             .toMatchObject({ status: 'rejected', issue: { code: 'APP_INSTANCE_MISMATCH' } });
@@ -137,11 +146,11 @@ describe('M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot', ()
     it('fails closed while latest App is degraded, rejects V1 publication, and stops', () => {
         const c = start();
         const old = commit(c);
-        const invalid = { ...v2(2, 2), views: [] };
+        const invalid = { ...v3(2, 2), views: [] };
         expect(c.committer.accept(invalid).status).toBe('rejected');
         expect(acquireToolSource(c.store, query(old.id)))
             .toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_UNREADY' } });
-        expect(c.committer.accept(v2(3, 3)).status).toBe('unchanged'); // recovered without changing semantic content
+        expect(c.committer.accept(v3(3, 3)).status).toBe('unchanged'); // recovered without changing semantic content
         const v1 = {
             schemaVersion: 1, appId, instanceId, producerSeq: 4,
             sourceEpoch: 4, capturedAt: 4,
@@ -176,7 +185,7 @@ describe('M4 Stage 2: source is ONLY a Runtime committed/pinned V2 snapshot', ()
         c.lifecycle.startApp(appId, instanceId);
         const old = commit(c);
         now = 1;
-        commit(c, v2(2, 2, vid, 1, 'second'));
+        commit(c, v3(2, 2, activationId, 'second'));
         now = 25;
         expect(acquireToolSource(c.store, query(old.id)))
             .toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });

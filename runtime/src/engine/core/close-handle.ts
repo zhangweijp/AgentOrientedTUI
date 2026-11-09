@@ -1,4 +1,4 @@
-import type { CloseOperation, CloseReport } from '../../spi/runtime/close.interface.js';
+import type { CloseHandle, CloseReport } from '../../spi/runtime/close.interface.js';
 import type { AppManagerCloseReport } from '../../spi/runtime/close.interface.js';
 import type { SandboxCloseReport } from '../app/worker-sandbox.js';
 
@@ -22,10 +22,10 @@ export function freezeClose<T>(value: T): T {
 }
 
 /** The owner supplies an actual-completion promise whose failures are already represented in its report. */
-export function createCloseOperation<R extends CloseReport>(inspect: () => R, completion: Promise<R>): CloseOperation<R> {
+export function createCloseHandle<R extends CloseReport>(inspect: () => R, completion: Promise<R>): CloseHandle<R> {
     let reader: (() => R) | undefined = inspect;
     let final: R | undefined;
-    type Result = Awaited<ReturnType<CloseOperation<R>['wait']>>;
+    type Result = Awaited<ReturnType<CloseHandle<R>['wait']>>;
     const waiters = new Set<{ timer: ReturnType<typeof setTimeout>; resolve: (value: Result) => void; reject: (reason: Error) => void }>();
     const snapshot = () => freezeClose(final ?? reader!());
     const completed = completion.then(report => {
@@ -75,7 +75,7 @@ export function displayCloseId(value: string): string {
 export function newCloseState(scope: CloseReport['scope'], intent: CloseReport['intent'] = 'close'): CloseState {
     const counts = () => ({ accepted: 0, settled: 0, pending: 0, notVerifiedReleased: 0 });
     return { scope, state: 'closing', intent, ok: false, hasFailures: false, resourcesReleased: true, verification: 'managed',
-        apps: counts(), desktops: counts(), pendingOperations: 0, unverifiedParticipants: 0,
+        apps: counts(), desktops: counts(), pendingTasks: 0, unverifiedParticipants: 0,
         appCleanup: { managedApps: 0, completedApps: 0, failedApps: 0 },
         persistence: { managedApps: 0, unnegotiatedApps: 0, notUsedApps: 0, closeReceipts: 0,
             missingCloseReceipts: 0, confirmedFlushes: 0, failedFlushes: 0, absentFlushes: 0, unknownApps: 0, unsavedKeys: 0 },

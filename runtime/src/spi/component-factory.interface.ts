@@ -1,3 +1,5 @@
+import { APP_LIFECYCLE_PROTOCOL } from './runtime/app-lifecycle.interface.js';
+import { STATE_SESSION_PROTOCOL } from './runtime/state-persistence.interface.js';
 /**
  * AOTUI Runtime - Component Factory Interface (SPI)
  * 
@@ -12,12 +14,12 @@
  * @packageDocumentation
  */
 
-import type { IRefExporter } from './app/index.js';
-import type { AppID } from './core/index.js';
-import type { DesktopID } from './core/index.js';
+import type { IRefExporter } from './app/ref-exporter.interface.js';
+import type { AppID, DesktopID } from './core/types.js';
 import type { AppLaunchConfig } from './app/app-config.interface.js';
 import type { IProjectionPort } from './runtime/projection.interface.js';
 import type { IViewOwnedToolPort } from './runtime/view-owned-tools.interface.js';
+import type { IAppTypeToolPort } from './runtime/app-type-tools.interface.js';
 import type { AppLifecyclePort } from './runtime/app-lifecycle.interface.js';
 import type { AppStatePersistence } from './runtime/state-persistence.interface.js';
 export type { AppStatePersistence, StateValue, StateIssue, StateBinding, StateBindingStatus, StateFlushReport } from './runtime/state-persistence.interface.js';
@@ -63,6 +65,9 @@ export interface RuntimeContext {
 
     /** Per-View Tool port for current capability support, not Agent execution. */
     viewTools?: IViewOwnedToolPort;
+
+    /** App-scoped ordinary Tools; does not include business/resource authorization. */
+    appTypeTools?: IAppTypeToolPort;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -76,6 +81,8 @@ export interface RuntimeContext {
  * Runtime通过这些方法控制组件生命周期。
  */
 export interface ComponentRenderer {
+    /** Join already queued render commits, not background business work. Synchronous producers may omit this. */
+    whenCommitted?: (signal: AbortSignal) => Promise<void>;
     /**
      * 渲染组件
      * 
@@ -90,10 +97,6 @@ export interface ComponentRenderer {
      */
     unmount: () => void | Promise<void>;
 
-    // [未来扩展]
-    // pause?: () => void;    // 暂停组件更新
-    // resume?: () => void;   // 恢复组件更新
-    // getSnapshot?: () => any; // 获取组件状态快照
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -111,8 +114,8 @@ export interface ComponentRenderer {
  * - Runtime: 提供容器、注入运行时能力、管理生命周期
  */
 export interface ComponentFactory {
-    readonly persistenceSupport?: 'state-session-v1';
-    readonly appLifecycleSupport?: 'app-lifecycle-v2';
+    readonly persistenceSupport?: typeof STATE_SESSION_PROTOCOL;
+    readonly appLifecycleSupport?: typeof APP_LIFECYCLE_PROTOCOL;
     /**
      * 初始化组件
      * 

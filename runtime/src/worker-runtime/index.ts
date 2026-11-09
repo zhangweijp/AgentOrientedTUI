@@ -1,11 +1,13 @@
+import { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION, STATE_SESSION_VERSION, captureAppMetadata } from '../spi/index.js';
+import { SNAPSHOT_CAPABILITY } from '../adapters/worker-message-capture.js';
+import { initializationFailure } from '../adapters/initialization-error.js';
 import { captureAppLifecycleAck } from '../adapters/app-lifecycle-protocol.js';
+import { hasViewTypeToolAuthoringProtocol } from '../spi/app/app-factory.interface.js';
 import { createStateStorageProxy } from './state-storage-proxy.js';
 import { createAppStatePersistence } from './state-persistence.js';
-import { capturePersistenceOffer } from '../adapters/storage/state-storage-protocol.js';
+import { capturePersistenceOffer, STATE_SESSION_PROTOCOL } from '../adapters/storage/state-storage-protocol.js';
 import { copyJson, SnapshotDataError } from '../core/snapshot/json.js';
 import { DEFAULT_SNAPSHOT_LIMITS } from '../core/snapshot/snapshot-support.js';
-import { REF_V2_CAPABILITY } from '../adapters/ref-invocation-v2.js';
-import { invokeRefInvocationV2 } from './ref-invocation-v2.js';
 /**
  * AOTUI Runtime - Worker Runtime
  * 
@@ -30,6 +32,8 @@ import type {
     MainToWorkerMessage,
     WorkerToMainMessage,
     InitMessage,
+    WorkerError,
+    WorkerInitializationDiagnostic,
     RequestID,
     ViewID,
     AppID,
@@ -46,10 +50,10 @@ import { createAppId, createDesktopId, isTUIAppFactory } from '../spi/index.js';
 import { AOTUIError } from '../spi/core/errors.js';
 
 // [方案 B] AppKernel from worker-runtime
-import { AppKernel } from './app-kernel/index.js';
-import { captureWorkerCapabilities } from '../adapters/worker-message-capture.js';
-import { ORDINARY_V2_CAPABILITY } from '../adapters/ordinary-invocation-v2.js';
-import { invokeOrdinaryInvocationV2 } from './ordinary-invocation-v2.js';
+import { AppKernel } from './app-kernel/AppKernel.js';
+import { captureViewToolCapabilities } from '../adapters/worker-message-capture.js';
+import { PARAMETERS_V4_CAPABILITY } from '../adapters/ordinary-invocation-v2.js';
+import { invokeTypeParameters } from './ordinary-invocation-v2.js';
 import type { LLMOutputEventMeta } from '../spi/core/llm-output.js';
 
 // [RFC-002] Global Ref Registry from SDK -> REMOVED
@@ -63,10 +67,10 @@ let app: IAOTUIApp | null = null;
 type PersistenceRecord = { app: IAOTUIApp; proxy: ReturnType<typeof createStateStorageProxy>; session: ReturnType<typeof createAppStatePersistence> };
 let persistenceRecord: PersistenceRecord | null = null;
 let lastInitInstanceId = '';
-function persistenceResponse(requestId: RequestID, record: PersistenceRecord, ok: boolean): void {
+function persistenceResponse(requestId: RequestID, record: PersistenceRecord, ok: boolean, failure?: WorkerError): void {
     parentPort?.postMessage({ type: 'LIFECYCLE_RESPONSE', requestId, success: ok, persistence: record.session.getReport(),
         ...(record.app instanceof AppKernel && record.app.getAppCleanupReport() ? { appCleanup: record.app.getAppCleanupReport() } : {}),
-        ...(!ok ? { error: { code: 'PERSISTENCE_CLOSE_FAILED', message: 'Managed persistence did not complete successfully' } } : {}) });
+        ...(!ok ? { error: failure ?? { code: 'PERSISTENCE_CLOSE_FAILED', message: 'Managed persistence did not complete successfully' } } : {}) });
 }
 
 let appId: AppID = '' as AppID;  // Will be set by INIT message
@@ -74,10 +78,8 @@ let desktopId: DesktopID = '' as DesktopID;  // Will be set by INIT message
 let appContainer: HTMLElement | null = null;
 let appInstanceId = '';
 let lifecycleGeneration = 0;
-let refV2NegotiatedApp: IAOTUIApp | null = null;
 let ordinaryParametersNegotiatedApp: IAOTUIApp | null = null;
 function revokeRefProtocol(): number {
-    refV2NegotiatedApp = null;
     ordinaryParametersNegotiatedApp = null;
     return ++lifecycleGeneration;
 }
@@ -134,30 +136,38 @@ initLinkedOM();
 
 parentPort?.on('message', async (msg: MainToWorkerMessage) => {
     if (msg.type === 'STATE_STORAGE_RESPONSE') { persistenceRecord?.proxy.receive(msg);return; }
-    if (msg.type === 'VIEW_TOOL_INVOKE_ORDINARY_V2') {
+    if (msg.type === 'FLUSH_PROJECTION') {
+        const kernel = app;
+        try {
+            if (!(kernel instanceof AppKernel)) throw new Error('Projection source unavailable');
+            await kernel.whenProjectionCommitted();
+            if (kernel !== app) throw new Error('Projection source replaced');
+            flushInteractionProjection(msg.requestId);
+        } catch (error) { pushSemanticSnapshot(msg.requestId, error); }
+        return;
+    }
+    if (msg.type === 'VIEW_TOOL_INVOKE_V4') {
         try {
             const kernel = app instanceof AppKernel ? app : null;
-            const response = await invokeOrdinaryInvocationV2(msg,{appId,instanceId:appInstanceId,
-                negotiated:ordinaryParametersNegotiatedApp!==null && ordinaryParametersNegotiatedApp===app,
-                ...(kernel ? {validateBinding:(tool,target)=>kernel.validateBoundViewTool(tool,target),
-                    validateWrapper:(tool,target)=>kernel.validateBoundOrdinaryParametersViewTool(tool,target),
-                    invokeBinding:(tool,target,args)=>kernel.invokeBoundOrdinaryParametersViewTool(tool,target,args)} : {}),
+            const response = await invokeTypeParameters(msg, { appId, instanceId: appInstanceId,
+                negotiated: ordinaryParametersNegotiatedApp !== null && ordinaryParametersNegotiatedApp === app,
+                ...(kernel ? { validateBinding: (tool, execution) => kernel.validateBoundTypeTool(tool, execution),
+                    getParameterContract: (tool, execution) => kernel.getBoundTypeToolContract(tool, execution),
+                    invokeBinding: (tool, execution, args) => kernel.invokeBoundTypeTool(tool, execution, args) } : {}),
             });
-            if (response) { await flushInteractionProjection(); parentPort?.postMessage(response); }
+            if (response) {
+                // Projection is a separate fact. It cannot erase a trusted business terminal.
+                try { flushInteractionProjection(); }
+                finally { parentPort?.postMessage(response); }
+            }
         } catch { /* No trusted terminal: Host records unknown. */ }
         return;
     }
-    if (msg.type === 'VIEW_TOOL_INVOKE_REF_V2') {
-        try {
-            const kernel = app instanceof AppKernel ? app : null;
-            const response = await invokeRefInvocationV2(msg, { appId, instanceId: appInstanceId,
-                negotiated: refV2NegotiatedApp !== null && refV2NegotiatedApp === app,
-                ...(kernel ? { validateBinding: (tool, target) => kernel.validateBoundViewTool(tool, target),
-                    validateWrapper: (tool, target) => kernel.validateBoundSnapshotValueParametersViewTool(tool, target),
-                    invokeBinding: (tool, target, args) => kernel.invokeBoundSnapshotValueParametersViewTool(tool, target, args) } : {}),
-            });
-            if (response) { await flushInteractionProjection(); parentPort?.postMessage(response); }
-        } catch { /* No trusted terminal: Host records unknown. */ }
+    if (['VIEW_TOOL_INVOKE_V2', 'VIEW_TOOL_INVOKE_V3'].includes(msg.type as string)) {
+        const requestId = Object.getOwnPropertyDescriptor(msg, 'requestId')?.value;
+        if (typeof requestId === 'string' && requestId.length > 0) {
+            sendError(requestId, 'WORKER_CAPABILITY_UNSUPPORTED', 'Tool calls require qualified V4 parameters');
+        }
         return;
     }
     if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE', 'APP_REINITIALIZE', 'TERMINATE'].includes(msg.type)) revokeRefProtocol();
@@ -281,10 +291,29 @@ async function handleInit(msg: InitMessage): Promise<void> {
     if (typeof msg.appInstanceId !== 'string' || !msg.appInstanceId.trim()) {
         sendError(msg.requestId, 'APP_INSTANCE_MISMATCH', 'Runtime App instance identity is required');return;
     }
+    const requestedField = Object.getOwnPropertyDescriptor(msg, 'requestedCapabilities');
+    const requested = !requestedField
+        ? captureViewToolCapabilities([])
+        : !('value' in requestedField) || requestedField.value === undefined
+            ? { ok: false as const, code: 'WORKER_CAPABILITY_INVALID' as const }
+            : captureViewToolCapabilities(requestedField.value);
+    if (!requested.ok) {
+        sendError(msg.requestId, requested.code, requested.code === 'WORKER_PROTOCOL_V3_REQUIRED'
+            ? 'This Worker requires the V3 Tool invocation protocol'
+            : 'The requested Tool capability list is invalid or unsupported');
+        return;
+    }
+    if (!requested.capabilities.includes(SNAPSHOT_CAPABILITY)) {
+        sendError(msg.requestId, 'WORKER_SNAPSHOT_UNSUPPORTED', `This Worker requires ${SNAPSHOT_CAPABILITY} during INIT`);return;
+    }
+    if (msg.config && Object.hasOwn(msg.config, 'AOTUI_APP_NAME')) {
+        sendError(msg.requestId, 'APP_CONFIG_UNSUPPORTED', 'Use AOTUI_APP_KEY for the Host-owned state namespace; App identity comes from the generated manifest');return;
+    }
+    if (msg.config?.AOTUI_APP_KEY !== undefined && (typeof msg.config.AOTUI_APP_KEY !== 'string' || !msg.config.AOTUI_APP_KEY.length)) {
+        sendError(msg.requestId, 'APP_STATE_KEY_INVALID', 'AOTUI_APP_KEY must be a non-empty string when provided');return;
+    }
     lastInitInstanceId = msg.appInstanceId;
     const generation = revokeRefProtocol();
-    const field = Object.getOwnPropertyDescriptor(msg, 'requestedCapabilities');
-    const requested = field && !('value' in field) ? null : captureWorkerCapabilities(field?.value);
     if (appId) {
         await handleReset('internal_reset', generation);
         if (persistenceRecord) { sendError(msg.requestId, 'PERSISTENCE_CLOSE_FAILED', 'Previous instance did not close successfully');return; }
@@ -323,7 +352,21 @@ async function handleInit(msg: InitMessage): Promise<void> {
         if (!isTUIAppFactory(factory)) {
             throw new AOTUIError('APP_INVALID_EXPORT', { modulePath: msg.appModulePath });
         }
+        if (!hasViewTypeToolAuthoringProtocol(factory)) {
+            sendError(msg.requestId, 'APP_AUTHORING_PROTOCOL_UNSUPPORTED',
+                'This Runtime requires a TUIAppFactory using view-type-tools-v4');
+            return;
+        }
         const managedFactory = factory;
+        const metadata = captureAppMetadata({ app_name: managedFactory.kernelConfig.appName });
+        for (const [path, actual] of [
+            ['INIT.appName', msg.appName],
+        ] as const) {
+            if (actual !== undefined && actual !== metadata.app_name) {
+                const error = new AOTUIError('APP_IDENTITY_MISMATCH', { expected: metadata.app_name, actual, path });
+                sendError(msg.requestId, error.code, error.message);return;
+            }
+        }
         const offerField = Object.getOwnPropertyDescriptor(msg, 'persistence');
         const offer = offerField && 'value' in offerField ? capturePersistenceOffer(offerField.value, msg.appInstanceId ?? '') : null;
         if (!offerField || !('value' in offerField) || !offer) throw new Error('Invalid persistence offer');
@@ -355,7 +398,7 @@ async function handleInit(msg: InitMessage): Promise<void> {
             const proxy = createStateStorageProxy(offer.instanceId, offer.transport, request => {
                 if (!parentPort) return false;parentPort.postMessage(request);
             });
-            const configured = launchConfig?.AOTUI_APP_NAME;
+            const configured = launchConfig?.AOTUI_APP_KEY;
             const session = createAppStatePersistence({ instanceId: offer.instanceId, desktopId: String(msg.desktopId),
                 appKey: typeof configured === 'string' && configured.length ? configured : String(msg.appId),
                 storage: proxy.storage, limits: offer.limits });
@@ -368,24 +411,23 @@ async function handleInit(msg: InitMessage): Promise<void> {
         appContainer.id = `app-root-${appId}`;
         document.body.appendChild(appContainer as unknown as Node);
 
-        const refV2Accepted = requested?.includes(REF_V2_CAPABILITY) === true && app instanceof AppKernel;
-        refV2NegotiatedApp = refV2Accepted ? app : null;
-        const parametersAccepted = requested?.includes(ORDINARY_V2_CAPABILITY) === true && app instanceof AppKernel;
+        const parametersAccepted = requested.capabilities.includes(PARAMETERS_V4_CAPABILITY) && app instanceof AppKernel;
         ordinaryParametersNegotiatedApp = parametersAccepted ? app : null;
-        const capabilities = [...(refV2Accepted ? [REF_V2_CAPABILITY] : []), ...(parametersAccepted ? [ORDINARY_V2_CAPABILITY] : [])];
+        const capabilities = [SNAPSHOT_CAPABILITY, ...(parametersAccepted ? [PARAMETERS_V4_CAPABILITY] : [])];
         const initializedPersistence = persistenceRecord;
         if (!initializedPersistence) throw new Error('PERSISTENCE_INIT_FAILED');
         parentPort?.postMessage({ type: 'INIT_RESPONSE', requestId: msg.requestId, success: true,
-            appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: msg.appInstanceId! },
-            persistence: { protocol: 'state-session-v1', version: 1, instanceId: initializedPersistence.session.port.instanceId },
+            appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, version: APP_LIFECYCLE_VERSION, instanceId: msg.appInstanceId! },
+            persistence: { protocol: STATE_SESSION_PROTOCOL, version: STATE_SESSION_VERSION, instanceId: initializedPersistence.session.port.instanceId },
             acceptedCapabilities: capabilities,
             appInstanceId,
         } as WorkerToMainMessage);
     } catch (error) {
-        if (generation === lifecycleGeneration) { refV2NegotiatedApp = null; ordinaryParametersNegotiatedApp = null; }
+        const failure = initializationFailure('INIT', error);
+        if (generation === lifecycleGeneration) { ordinaryParametersNegotiatedApp = null; }
         const failed = persistenceRecord;
         if (failed) { if (failed.app instanceof AppKernel) failed.app.beginShutdown(); await failed.session.close(() => failed.app.onClose(), true); }
-        sendError(msg.requestId, 'E_INIT_FAILED', 'App initialization failed');
+        sendError(msg.requestId, failure.code, failure.message, failure.diagnostic);
     }
 }
 
@@ -397,62 +439,17 @@ async function handleAppOpen(requestId: RequestID): Promise<void> {
         return;
     }
 
-    // 渲染回调 - ViewBasedApp 注册，markDirty 调用
-    let renderCallback: (() => void) | null = null;
-
-    // Render Phase Flag + Deferred Scheduling
-    // 防止无限渲染循环。如果在渲染期间调用 markDirty，不会立即触发新渲染，
-    // 而是设置 needsRerender 标志，等当前渲染结束后通过 queueMicrotask 调度。
-    let isRendering = false;
-    let needsRerender = false;
-
-    function scheduleRender(): void {
-        if (!renderCallback || app !== openingApp || generation !== lifecycleGeneration) return;
-
-        isRendering = true;
-        try {
-            renderCallback();
-        } finally {
-            isRendering = false;
-            // Check if a deferred render was requested during the render phase
-            if (needsRerender) {
-                needsRerender = false;
-                // Use queueMicrotask to break the synchronous call chain
-                queueMicrotask(() => scheduleRender());
-            }
-        }
-    }
-
-    const context: AppContext = {
-        appId,
-        desktopId,
-
-        markDirty: () => {
-            if (app !== openingApp || generation !== lifecycleGeneration) return;
-            // If currently rendering, defer the re-render
-            if (isRendering) {
-                needsRerender = true;
-                return;
-            }
-
-            // Not in render phase - schedule render normally
-            if (renderCallback) {
-                scheduleRender();
-            }
-        },
-        onRender: (callback: () => void) => {
-            renderCallback = callback;
-        },
-    };
+    const context: AppContext = { appId, desktopId };
 
     const openingPersistence = persistenceRecord;
     try { await openingApp.onOpen(context, appContainer); }
-    catch {
+    catch (error) {
+        const failure = initializationFailure('OPEN', error);
         if (openingPersistence) {
             if (openingPersistence.app instanceof AppKernel) openingPersistence.app.beginShutdown();
             await openingPersistence.session.close(() => openingPersistence.app.onClose(), true);
-            persistenceResponse(requestId, openingPersistence, false);
-        } else sendError(requestId, 'E_OPEN_FAILED', 'App initial commit failed');
+            persistenceResponse(requestId, openingPersistence, false, failure);
+        } else sendError(requestId, failure.code, failure.message, failure.diagnostic);
         return;
     }
     if (app !== openingApp || generation !== lifecycleGeneration) {
@@ -510,8 +507,6 @@ async function handleAppReinitialize(requestId: RequestID, _reason?: string): Pr
         await app.onReinitialize({
             appId,
             desktopId,
-            markDirty: () => {},
-            onRender: () => {},
             reason: _reason,
         });
     }
@@ -656,28 +651,27 @@ function scheduleDomUpdate(): void {
 }
 
 /**
- * Publish the handler's committed render before its terminal response. MessagePort
- * ordering lets the Host accept that projection before resolving the invocation.
+ * Publish the currently committed render opportunistically. Observation requests
+ * first join the renderer's queued commit; business terminals never wait for it.
  * Background business work still publishes when the application completes it.
  */
-async function flushInteractionProjection(): Promise<void> {
-    // Drain the already queued component/MutationObserver microtask, not a wall-clock delay.
-    await Promise.resolve();
+function flushInteractionProjection(requestId?: RequestID): void {
     if (!appContainer) return;
     if (domUpdateTimer) {
         clearTimeout(domUpdateTimer);
         domUpdateTimer = null;
     }
-    pushSemanticSnapshot();
+    pushSemanticSnapshot(requestId);
 }
 
-function pushSemanticSnapshot(): void {
+function pushSemanticSnapshot(requestId?: RequestID, failure?: unknown): void {
     if (!appContainer) return;
     const producerSeq = ++producerSequence;
     const before = currentProjection()?.token();
     const sourceEpoch = before?.epoch ?? 0;
     try {
         if (!parentPort) throw new Error('Semantic transport unavailable');
+        if (failure !== undefined) throw failure;
         if (!before?.ready || !(app instanceof AppKernel)) throw new Error('Semantic projection is not ready');
         const now = Date.now();
         const draft = copyJson(captureDOMSnapshot({ appId, instanceId: appInstanceId,
@@ -690,6 +684,7 @@ function pushSemanticSnapshot(): void {
         const after = currentProjection()?.token();
         if (!after?.ready || after.epoch !== sourceEpoch) throw new Error('Projection changed during capture');
         parentPort.postMessage({ type: 'SNAPSHOT_PREPARED', draft,
+            ...(requestId ? { requestId } : {}),
             suppressSignal: signalPolicy === 'never' } as WorkerToMainMessage);
     } catch (error) {
         if (!parentPort) throw new Error('Semantic snapshot transport unavailable');
@@ -701,6 +696,7 @@ function pushSemanticSnapshot(): void {
             ? `${error.message} at …${error.path.slice(-112)}`.slice(0, 160)
             : nestedViewMessage ?? 'Semantic snapshot preparation or transport failed';
         parentPort.postMessage({ type: 'SNAPSHOT_PREPARE_FAILED', appId,
+            ...(requestId ? { requestId } : {}),
             instanceId: appInstanceId, producerSeq, sourceEpoch,
             suppressSignal: signalPolicy === 'never',
             error: { code: serializationFailure ? 'SNAPSHOT_SERIALIZATION_ERROR' : 'SNAPSHOT_INVALID', message },
@@ -721,11 +717,11 @@ function sendResponse(
     } as WorkerToMainMessage);
 }
 
-function sendError(requestID: RequestID, code: string, message: string): void {
+function sendError(requestID: RequestID, code: string, message: string, diagnostic?: WorkerInitializationDiagnostic): void {
     parentPort?.postMessage({
         type: 'ERROR_RESPONSE',
         requestId: requestID,
         success: false,
-        error: { code, message },
+        error: { code, message, ...(diagnostic ? { diagnostic } : {}) },
     } as WorkerToMainMessage);
 }
