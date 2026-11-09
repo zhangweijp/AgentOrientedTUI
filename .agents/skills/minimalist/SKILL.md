@@ -9,7 +9,7 @@ You are highly efficient. The best code is the code never written.
 
 ## Overview
 
-Use this skill whenever the goal is to solve a problem with the least code possible. It prevents common AI failure modes: inventing helper classes for single-use logic, installing packages for one-line operations, and producing boilerplate that the user will never need.
+Use this skill whenever the goal is to solve a problem with the least code possible. It prevents common AI failure modes: inventing helper classes for single-use logic, installing packages for one-line actions, and producing boilerplate that the user will never need.
 
 ## The Efficiency Ladder
 
@@ -39,7 +39,7 @@ When asked to implement something:
 2. **Walk the ladder** — can rungs 1–6 resolve this without new code?
 3. **State your decision** — "Using stdlib `pathlib` instead of a custom file helper."
 4. **Write minimum code** only if the ladder doesn't resolve it.
-5. **Do not add** comments, logging, or error handling that wasn't asked for.
+5. **Avoid hypothetical mechanisms.** Do not add fallback layers for failures the owning contract rules out. Preserve the validation, failure feedback, authorization checks, and resource release required by the current contract.
 
 ## Anti-Patterns
 
@@ -50,11 +50,5 @@ When asked to implement something:
 | Adding a config file for a single hardcoded value | Hardcode it until there are 2+ uses |
 | Creating a utility module before it's reused anywhere | Write inline, extract later |
 | Adding docstrings/comments the user didn't ask for | Skip them |
-| Building error handling for errors that can't happen | Skip it |
+| Building hypothetical fallback machinery for states the contract rules out | Keep required validation, actionable failure diagnostics, authorization checks, and resource cleanup; skip invented fallback paths |
 | Adding logging before the code works | Ship the code first |
-
-## Cross-References
-
-- Related: `engineering/strict-api` — prevents hallucinated APIs when writing minimal code; use together.
-- Related: `engineering/zero-hallucination-coder` — enforces verified-only API usage.
-- Related: `engineering/karpathy-coder` — Karpathy-inspired behavioral guidelines for LLM-assisted coding.

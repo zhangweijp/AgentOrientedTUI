@@ -1,5 +1,10 @@
 # Designing Software for AI Agents
 
+
+## Build an AOTUI App
+
+Start with the [SDK author guide](sdk/README.md), run its [file example](sdk/docs/examples/file-app.tsx), then add [Ref selection](sdk/docs/readonly-ref-v2.md) when choosing displayed objects. [View semantics](sdk/docs/views.md), [ordinary TypeScript bindings](sdk/docs/binding-tools.md), and [package/validation instructions](sdk/docs/runtime-compatibility.md) share the current public contract. The repository [App Builder skill](.agents/skills/aotui-app-builder/SKILL.md) follows the same path. Application authors need no private Runtime protocol or custom Ref resolver.
+
 > Experimental project. This repository is for research, prototyping, and internal exploration. It is not production-ready and should not be used as-is in production environments.
 
 For decades, mainstream interactive software has largely assumed that the user is human.
@@ -25,7 +30,7 @@ This article makes four claims.
 First, append-only transcripts are a poor substitute for maintained working state.
 Second, agent-facing software needs explicit views, references, and state-aligned actions.
 Third, this changes interaction from result accumulation to world maintenance.
-Finally, the model is promising but operationally constrained by real systems concerns such as invalidation, concurrency, and context management.
+Finally, the model is promising but constrained by real systems concerns such as invalidation, concurrency, and context management.
 
 ## Why Append-Only Results Break Down
 
@@ -291,7 +296,7 @@ Second, this model does not require abandoning the web stack. HTML, JS, JSX, com
 
 ## One Immediate Constraint
 
-There is, however, a real constraint that cannot be ignored. It is not a side note; it is one of the main reasons this model is easier to describe than to operationalize.
+There is, however, a real constraint that cannot be ignored. It is not a side note; it is one of the main reasons this model is easier to describe than to deploy in practice.
 
 ### KV Cache Invalidation
 
@@ -310,3 +315,6 @@ If agent-oriented interfaces are going to mature into infrastructure rather than
 ## Repository Guide
 
 This README focuses on the interface model itself. If you want the repository map, architecture layers, tech stack, and local development workflow, see [GUIDE.md](./GUIDE.md).
+
+
+当前 View 必须显式声明 `type` 和 `kind="instruction" | "state"`，实例 `id` 只标识页面实例。正文不携带框架外壳，XML 文本仅在最终呈现时转义一次；[View 声明与正文合同](sdk/docs/views.md)说明两种 Producer、原样内容和迁移方式。

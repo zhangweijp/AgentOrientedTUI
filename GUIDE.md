@@ -47,9 +47,9 @@ agent-driver-v2 -> runtime -> sdk -> host -> demo-apps
 | --- | --- |
 | `agent-driver-v2/` | LLM execution layer: provider setup, streaming, message aggregation, and tool-call orchestration. |
 | `runtime/` | Core execution substrate: app registry, app lifecycle, worker runtime, kernel, view exposure, and the `agentina` CLI. |
-| `sdk/` | Developer-facing app API: `createTUIApp`, `View`, hooks, refs, and operation types used by app authors. |
+| `sdk/` | Developer-facing app API: `createTUIApp`, `View`, hooks, refs, and Tool definitions and result types used by app authors. |
 | `host/` | Electron desktop shell plus web UI, local services, and product integration points. |
-| `demo-apps/` | Reference apps that run on the stack. The setup scripts auto-install `aotui-ide`, `terminal-app`, and `lite-browser-app` by default. |
+| `demo-apps/` | Reference apps that run on the stack. The setup scripts auto-install `aotui-ide`, `planning-app`, `terminal-app`, and `lite-browser-app` by default. |
 | `scripts/` | Repo-level helper scripts such as `generate-aoapp.mjs`, which writes app manifests during app builds. |
 | `resource/` | Static assets used by the project. |
 
@@ -69,7 +69,7 @@ Think in five layers:
 2. **Runtime**
    The work layer. It owns app loading, app registry, view/state exposure, worker isolation, kernels, adapters, and the `agentina` CLI.
 3. **SDK**
-   The app authoring model. It provides `createTUIApp()`, component primitives, hooks, refs, and typed operations for building agent-facing apps.
+   The app authoring model. It provides `createTUIApp()`, component primitives, hooks, refs, and typed Tools for building agent-facing apps.
 4. **Apps**
    Concrete system or demo apps built with the SDK and executed through the runtime/host stack.
 5. **Agent Driver**
@@ -123,7 +123,7 @@ Core stack:
 This stack is opinionated. It is optimized for an agent-facing desktop runtime, not for a conventional web SaaS app.
 
 - **Electron in `host/`** keeps the product local-first. The host needs desktop integration, local persistence, app installation, and process-level control that a browser-only shell would make harder.
-- **Node.js + Worker Threads in `runtime/`** separate app execution from the host shell. That matters because apps are not just UI fragments here; they are active runtime participants that expose views, refs, and operations to the agent.
+- **Node.js + Worker Threads in `runtime/`** separate app execution from the host shell. That matters because apps are not just UI fragments here; they are active runtime participants that expose views, refs, and Tools to the agent.
 - **Preact in `sdk/` and runtime-facing app code** keeps the app model component-based without paying the full weight of a larger client framework inside worker-rendered app execution.
 - **React in `host/`** is a separate choice from Preact in the app layer. The host is a conventional GUI product surface, while the SDK is an embedded app-authoring surface. They solve different problems, so the stack intentionally splits here.
 - **Vercel AI SDK and provider adapters in `agent-driver-v2/`** give the project one abstraction point for multi-model support, streaming, and tool-call execution. That keeps provider churn out of the rest of the runtime.
@@ -285,3 +285,6 @@ agentina link ./demo-apps/<app-folder>
 
 - [README.md](./README.md): project idea and interface model
 - [README.zh-CN.md](./README.zh-CN.md): Chinese version of the main README
+
+
+当前 View 必须显式声明 `type` 和 `kind="instruction" | "state"`，实例 `id` 只标识页面实例。正文不携带框架外壳，XML 文本仅在最终呈现时转义一次；[View 声明与正文合同](sdk/docs/views.md)说明两种 Producer、原样内容和迁移方式。
