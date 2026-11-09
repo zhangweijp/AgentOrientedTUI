@@ -1,0 +1,61 @@
+import assert from 'node:assert/strict';
+import { registerHooks } from 'node:module';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+
+const graph = [];
+const loaded = [];
+const forbidden = /(?:^|[/:@])(?:@preact|preact|jsdom|linkedom|happy-dom|worker_threads|web-worker|workerpool)(?:[/:@.]|$)|(?:^|\/)worker(?:-runtime|s)?(?:\/|$)|app-kernel|AppKernel/i;
+registerHooks({ resolve(specifier, context, next) {
+  if (forbidden.test(specifier)) throw new Error('M2_FORBIDDEN_DEPENDENCY: ' + specifier);
+  const result = next(specifier, context);
+  if (forbidden.test(result.url)) throw new Error('M2_FORBIDDEN_DEPENDENCY: ' + result.url);
+  graph.push({ specifier, parentURL: context.parentURL ?? null, url: result.url });
+  return result;
+}, load(url, context, next) {
+  if (forbidden.test(url)) throw new Error('M2_FORBIDDEN_DEPENDENCY: ' + url);
+  loaded.push(url); return next(url, context);
+} });
+const api = await import('@aotui/sdk/tools');
+const importOnlyGraphLength = graph.length;
+assert.equal(globalThis.document, undefined);
+const { default: Type } = await import('typebox');
+const definition = api.defineViewTypeTool({ viewType: 'Pure', name: 'inspect', description: 'Inspect.', inputSchema: Type.Object({ path: Type.String() }) });
+const tools = api.defineToolSet({ definition });
+const catalog = JSON.stringify(api.getToolCatalog(tools));
+assert.equal(api.getToolCatalog(tools)[0].name, 'inspect');
+const { createViewOwnedTools } = await import('@aotui/runtime/core');
+const registry = createViewOwnedTools('pure', 'pure-app');
+const controller = api.createToolBindings({ definition: tools, appTypeTools: registry });
+const bindings = owner => ({ definition: { execute: args => ({ success: true, data: { owner, path: args.path } }) } });
+controller.commit(bindings('first'));
+assert.equal(registry.inspect().bindings, 1);
+assert.equal(registry.listTools().length, 0);
+const view = registry.mount('pure', 'Pure');
+const initial = registry.listTools()[0];
+const invoke = observed => registry.invokeTypeTool(observed, observed.execution, { path: 'a' });
+assert.equal((await invoke(initial)).result.data.owner, 'first');
+controller.commit(bindings('updated'));
+assert.equal(registry.listTools()[0].execution.activationId, initial.execution.activationId);
+assert.equal((await invoke(initial)).result.data.owner, 'updated');
+controller.commit({ definition: { ...bindings('off').definition, enabled: false } });
+assert.equal(registry.inspect().bindings, 0);
+assert.equal((await invoke(initial)).phase, 'not-entered');
+controller.commit(bindings('reenabled'));
+const latest = registry.listTools()[0];
+assert.notEqual(latest.execution.activationId, initial.execution.activationId);
+assert.equal((await invoke(initial)).phase, 'not-entered');
+assert.equal((await invoke(latest)).result.data.owner, 'reenabled');
+assert.equal(JSON.stringify(api.getToolCatalog(tools)), catalog);
+controller.dispose(); controller.dispose();
+assert.equal(registry.inspect().bindings, 0);
+registry.unmount(view.viewInstanceId); registry.dispose();
+assert.deepEqual(registry.inspect(), { state: 'disposed', views: 0, bindings: 0, retainedBytes: 0 });
+assert.equal(globalThis.document, undefined);
+const lifecycle = { commit: true, update: true, disabled: true, reenabled: true, staleRejected: true,
+  disposed: true, resources: registry.inspect(), catalogStable: true };
+
+const out = new URL('../results/', import.meta.url);
+await mkdir(out, { recursive: true });
+await writeFile(new URL('pure-module-graph.json', out), JSON.stringify({ entry: import.meta.resolve('@aotui/sdk/tools'), importOnlyGraphLength, lifecycle, graph, loaded, forbiddenDependencies: [] }, null, 2) + '\n');
+console.log(JSON.stringify({ pureEntry: 'passed', lifecycle, importOnlyGraphLength, resolutions: graph.length, graphFile: fileURLToPath(new URL('pure-module-graph.json', out)) }));

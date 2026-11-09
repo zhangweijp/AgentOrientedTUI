@@ -1,8 +1,13 @@
+import Type from 'typebox';
 import {
   createTUIApp,
+  AppTools,
   useAppLifecycle,
   useAppRuntimeContext,
-  useViewTypeTool,
+  defineViewTypeTool,
+  createToolBindings,
+  defineToolSet,
+  refParam,
   type AppLifecycleCallbacks,
   type AppContext,
   type AppStatePersistence,
@@ -11,50 +16,59 @@ import {
   type ArrayRefHandle,
   type DeepReadonly,
   type DesktopID,
-  type InferArgs,
+  type ArgsOf,
   type IViewMeta,
   type ItemRefFormatter,
   type LLMOutputEvent,
   type LLMOutputListener,
   type ListRefFormatter,
-  type OperationError,
-  type OperationResult,
-  type ParamBaseType,
-  type ParamConstraints,
-  type ParamDef,
-  type ParamSchema,
-  type ParamType,
+  type ToolError,
+  type ToolResult,
   type PersistMeta,
   type PersistOptions,
   type PersistStatus,
   type RefHandle,
-  type SnapshotValueRefParamDef,
   type StateBindingStatus,
   type StateFlushReport,
   type StateIssue,
   type StateValue,
   type TUIAppConfig,
-  type TypeToolArgs,
-  type TypeToolHandler,
-  type TypeToolOptions,
-  type TypeToolUI,
-  type UseViewTypeToolResult,
+  type ViewTypeToolDeclaration,
+  type ToolBinding,
+  type ToolBindingController,
+  type ToolSetMap,
+  type AppToolsProps,
+  type ToolRefProps,
   type ViewID,
   type ViewProps,
 } from '../src/index.js';
+
+// @ts-expect-error The retired handwritten parameter DSL no longer owns inference.
+import type { InferArgs } from '../src/index.js';
+// @ts-expect-error Parameter types are declared with the shared TypeBox schema.
+import type { ParamBaseType } from '../src/index.js';
+// @ts-expect-error The retired parameter-constraint DSL is not a public export.
+import type { ParamConstraints } from '../src/index.js';
+// @ts-expect-error The retired parameter-definition DSL is not a public export.
+import type { ParamDef } from '../src/index.js';
+// @ts-expect-error The retired parameter-schema DSL is not a public export.
+import type { ParamSchema } from '../src/index.js';
+// @ts-expect-error The retired parameter-type DSL is not a public export.
+import type { ParamType } from '../src/index.js';
 
 // The live channel takes only a listener.
 // @ts-expect-error The retired options type is not part of the SDK root API.
 import type { LLMOutputChannelOptions } from '../src/index.js';
 import { useLLMOutputChannel, usePersistentState } from '../src/index.js';
+import './view-type-tool.js';
 
 // @ts-expect-error Launch config is read from useAppRuntimeContext().
 import { useAppEnv } from '../src/index.js';
 // @ts-expect-error The SDK has no history source for this Hook.
 import { useLLMOutputHistory } from '../src/index.js';
 import type {
-  OperationError as RuntimeOperationError,
-  OperationResult as RuntimeOperationResult,
+  ToolError as RuntimeToolError,
+  ToolResult as RuntimeToolResult,
 } from '@aotui/runtime/spi';
 
 // These former exports describe retired/internal Runtime assembly surfaces.
@@ -70,20 +84,20 @@ void ViewRuntimeContext;
 void useInternalAppRuntimeContext;
 type PublicAppRuntimeContext = ReturnType<typeof useAppRuntimeContext>;
 type InternalContextKeys = Extract<keyof PublicAppRuntimeContext,
-  'refExporter' | 'markDirty' | 'projection' | 'viewTools' | 'appLifecycle'>;
+  'refExporter' | 'markDirty' | 'projection' | 'viewTools' | 'appTypeTools' | 'appLifecycle'>;
 type AssertNever<Value extends never> = Value;
 type AssertTrue<Value extends true> = Value;
 type NoInternalContextPorts = AssertNever<InternalContextKeys>;
 type PublicPersistence = NonNullable<PublicAppRuntimeContext['persistence']>;
 type Equal<Left, Right> = (<T>() => T extends Left ? 1 : 2) extends
   (<T>() => T extends Right ? 1 : 2) ? true : false;
-type SDKOperationResultIsRuntimeResult = AssertTrue<Equal<OperationResult, RuntimeOperationResult>>;
-type SDKOperationErrorIsRuntimeError = AssertTrue<Equal<OperationError, RuntimeOperationError>>;
+type SDKToolResultIsRuntimeResult = AssertTrue<Equal<ToolResult, RuntimeToolResult>>;
+type SDKToolErrorIsRuntimeError = AssertTrue<Equal<ToolError, RuntimeToolError>>;
 const publicPersistenceIsTheManagedPort: AssertTrue<Equal<PublicPersistence, AppStatePersistence>> = true;
-const operationResultIsRuntimeResult: SDKOperationResultIsRuntimeResult = true;
-const operationErrorIsRuntimeError: SDKOperationErrorIsRuntimeError = true;
+const toolResultIsRuntimeResult: SDKToolResultIsRuntimeResult = true;
+const toolErrorIsRuntimeError: SDKToolErrorIsRuntimeError = true;
 type PublicContextChecks = [NoInternalContextPorts, typeof publicPersistenceIsTheManagedPort,
-  typeof operationResultIsRuntimeResult, typeof operationErrorIsRuntimeError];
+  typeof toolResultIsRuntimeResult, typeof toolErrorIsRuntimeError];
 function checkPublicContextShape() {
   const context = useAppRuntimeContext();
   const appId: AppID = context.appId;
@@ -103,15 +117,14 @@ void checkPublicContextShape;
 
 type PublicTypes = [
   AppContext, AppID, AppReinitializeContext, ArrayRefHandle,
-  DeepReadonly<unknown>, DesktopID, InferArgs<{ value: { type: 'string' } }>,
+  DeepReadonly<unknown>, DesktopID, ArgsOf<typeof readRecord>,
   IViewMeta, ItemRefFormatter, LLMOutputEvent,
-  LLMOutputListener, ListRefFormatter, OperationError, OperationResult,
-  ParamBaseType, ParamConstraints, ParamDef, ParamSchema, ParamType,
+  LLMOutputListener, ListRefFormatter, ToolError, ToolResult,
   PersistMeta, PersistOptions<string>, PersistStatus, RefHandle,
-  SnapshotValueRefParamDef, StateBindingStatus, StateFlushReport, StateIssue,
+  StateBindingStatus, StateFlushReport, StateIssue,
   StateValue,
-  TypeToolArgs<{ value: { type: 'string' } }, { isMutating: false }>,
-  TypeToolHandler, TypeToolOptions, TypeToolUI, UseViewTypeToolResult,
+  typeof defineViewTypeTool, typeof refParam, typeof AppTools,
+  ViewTypeToolDeclaration<ReturnType<typeof Type.Object>>, ToolBinding<typeof readRecord>, ToolBindingController<ToolSetMap<typeof readTools>>, AppToolsProps<typeof readTools>, ToolRefProps,
   ViewID, ViewProps,
 ];
 declare const publicTypes: PublicTypes;
@@ -146,23 +159,25 @@ const oldDescriptionConfig: TUIAppConfig = { app_name: 'old_description', descri
 void oldDescriptionConfig;
 const factory = createTUIApp(config);
 const lifecycleProtocol: 'app-lifecycle-v2' = factory.appLifecycleSupport;
-void lifecycleProtocol;
+const authoringProtocol: 'view-type-tools-v4' = factory.toolAuthoringProtocol;
+void lifecycleProtocol; void authoringProtocol;
 
 const cleanup: AppLifecycleCallbacks = { stop() {}, close() {} };
 useAppLifecycle(cleanup);
 useAppLifecycle({});
 
-useViewTypeTool(
-  'read_record',
-  {
-    description: 'Read a record.',
-    isMutating: false,
-    params: {
-      status: { type: 'enum', options: ['ready', 'pending'], required: true },
-      limit: { type: 'number' },
-    },
-  },
-  args => {
+const readRecord = defineViewTypeTool({
+  viewType: 'RecordDetail',
+  name: 'read_record',
+  description: 'Read a record.',
+  inputSchema: Type.Object({
+    status: Type.Enum(['ready', 'pending']),
+    limit: Type.Optional(Type.Number()),
+  }),
+});
+const readTools = defineToolSet({ readRecord });
+declare const appTypeTools: import('@aotui/runtime/spi').IAppTypeToolPort;
+createToolBindings({ definition: readTools, appTypeTools }).commit({ readRecord: { execute(args) {
     const status: 'ready' | 'pending' = args.status;
     const limit: number | undefined = args.limit;
     void status;
@@ -171,31 +186,42 @@ useViewTypeTool(
     // empty/ordinary-v2 Tool path.
     // @ts-expect-error Read-only Tool arguments are immutable.
     args.status = 'ready';
-    return { success: true } satisfies OperationResult;
-  },
-);
+    return { success: true } satisfies ToolResult;
+} } });
 
 const failedToolResult = {
   success: false,
   error: { code: 'PARTIAL_WRITE', message: 'The application reports partial work.' },
   effects: 'partial',
-} satisfies OperationResult;
+} satisfies ToolResult;
 void failedToolResult;
 
-useViewTypeTool(
-  'inspect_snapshot',
-  {
-    description: 'Inspect a displayed snapshot.',
-    isMutating: false,
-    params: {
-      record: { type: 'reference', required: true, refSource: 'snapshot-value-v1' },
-    },
-  },
-  args => {
-    // The Ref payload remains unknown unless the app provides its own checked
-    // business type, while the declared parameter is still required.
-    const record: unknown = args.record;
-    void record;
-    return { success: true };
-  },
-);
+const inspectSnapshot = defineViewTypeTool({ viewType: 'Record', name: 'inspect_snapshot',
+  description: 'Inspect a displayed snapshot.', 
+  inputSchema: Type.Object({ record: refParam('Record', Type.Object({ title: Type.String() })) }),
+});
+const snapshotTools = defineToolSet({ inspectSnapshot });
+createToolBindings({ definition: snapshotTools, appTypeTools }).commit({ inspectSnapshot: { execute(args) {
+  const title: string = args.record.title;
+  // @ts-expect-error Resolved Ref fields are recursively immutable.
+  args.record.title = title;
+  return { success: true };
+} } });
+// @ts-expect-error The retired snapshot Hook has no public export.
+import { useViewSnapshotTool } from '../src/index.js';
+
+// A receipt cannot simultaneously claim success and failure; failure requires a JSON error record.
+const shortReceipt: ToolResult = { success: true, data: { message: 'Done' } };
+const knownFailure: ToolResult = { success: false, error: { code: 'BUSINESS_FAILED', message: 'No write', context: { phase: 'invocation' } }, effects: 'none' };
+const uncertainFailure: ToolResult = { success: false, error: { code: 'BUSINESS_UNKNOWN', message: 'Observe before deciding next action' } };
+// @ts-expect-error Success cannot carry an error.
+const successAndError: ToolResult = { success: true, error: { code: 'BAD', message: 'bad' } };
+// @ts-expect-error Success cannot declare failure effects.
+const successAndEffects: ToolResult = { success: true, effects: 'none' };
+// @ts-expect-error Failed results require a transport error record.
+const missingError: ToolResult = { success: false };
+// @ts-expect-error Error context must be JSON, not an exception.
+const errorCause: ToolResult = { success: false, error: { code: 'BAD', message: 'bad', context: { cause: new Error('local only') } } };
+// @ts-expect-error Receipts cannot carry functions as current business data.
+const callbackData: ToolResult = { success: true, data: { callback() {} } };
+void [shortReceipt, knownFailure, uncertainFailure, successAndError, successAndEffects, missingError, errorCause, callbackData];

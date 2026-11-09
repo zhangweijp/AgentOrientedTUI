@@ -1,3 +1,5 @@
+import { captureAppMetadata, VIEW_TYPE_TOOL_PROTOCOL, APP_LIFECYCLE_PROTOCOL, STATE_SESSION_PROTOCOL } from '@aotui/runtime/spi';
+import type { AppMetadata } from '@aotui/runtime/spi';
 /**
  * AOTUI SDK - createTUIApp Factory
  * 
@@ -16,8 +18,13 @@ import type {
     TUIAppFactory,
 } from '@aotui/runtime/spi';
 
-import type { ComponentType } from 'preact';
+import { h, render, type ComponentType } from 'preact';
 import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
+import { trackRenderCommits, whenRenderCommitted } from './render-commit.js';
+
+// Failed initialization returns no renderer to the caller. Keep incomplete
+// teardown reachable until the same DOM container or App Tool port is reused.
+const pendingUnmounts = new WeakMap<HTMLElement | NonNullable<RuntimeContext['appTypeTools']>, () => void>();
 
 // ═══════════════════════════════════════════════════════════════
 //  Types
@@ -26,20 +33,7 @@ import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
 /**
  * TUI App Configuration (Component Based)
  */
-export interface TUIAppConfig {
-    /**
-     * App 唯一名称（用于展示、Tool 前缀、配置键、持久化命名空间）
-     *
-     * 约束: [a-z0-9_]
-     */
-    app_name: string;
-
-    /** App 是什么 */
-    whatItIs?: string;
-
-    /** 什么时候用 */
-    whenToUse?: string;
-
+export interface TUIAppConfig extends Omit<AppMetadata, 'description'> {
     /** 根React组件 */
     component: ComponentType;
 
@@ -82,38 +76,35 @@ export interface TUIAppConfig {
  * ```
  */
 export function createTUIApp(config: TUIAppConfig): TUIAppFactory {
-    if (typeof config.app_name !== 'string') {
-        throw new Error('[AOTUI SDK] app_name must be a string matching /^[a-z0-9_]+$/; name is not a substitute.');
-    }
-    if (!/^[a-z0-9_]+$/.test(config.app_name)) {
-        throw new Error(
-            `[AOTUI SDK] Invalid app_name "${config.app_name}". ` +
-            `app_name must match /^[a-z0-9_]+$/`
-        );
-    }
+    const metadata = captureAppMetadata(config);
+
+    // Render adapters such as act() restore the scheduler saved before initialization.
+    // Install at factory creation too, so that saved scheduler already tracks commits.
+    trackRenderCommits();
 
     // 保存根组件
     const RootComponent = config.component;
 
     // 转换为AppKernelConfig格式
     const kernelConfig: AppKernelConfig = {
-        appName: config.app_name,
-        name: config.app_name,
-        whatItIs: config.whatItIs,
-        whenToUse: config.whenToUse,
+        appName: metadata.app_name,
+        name: metadata.app_name,
+        ...(metadata.whatItIs === undefined ? {} : { whatItIs: metadata.whatItIs }),
+        ...(metadata.whenToUse === undefined ? {} : { whenToUse: metadata.whenToUse }),
         // [重要] 传递Factory本身而非Component
         component: undefined as any, // 将在下面的返回对象中被覆盖
-        onDelete: config.onDelete,
-        onReinitialize: config.onReinitialize,
-        launchConfig: config.launchConfig,
-        signalPolicy: config.signalPolicy,
+        ...(config.onDelete === undefined ? {} : { onDelete: config.onDelete }),
+        ...(config.onReinitialize === undefined ? {} : { onReinitialize: config.onReinitialize }),
+        ...(config.launchConfig === undefined ? {} : { launchConfig: config.launchConfig }),
+        ...(config.signalPolicy === undefined ? {} : { signalPolicy: config.signalPolicy }),
     };
 
     const factory: TUIAppFactory = {
-        displayName: config.app_name,
+        displayName: metadata.app_name,
         kernelConfig,
-        persistenceSupport: 'state-session-v1',
-        appLifecycleSupport: 'app-lifecycle-v2',
+        toolAuthoringProtocol: VIEW_TYPE_TOOL_PROTOCOL,
+        persistenceSupport: STATE_SESSION_PROTOCOL,
+        appLifecycleSupport: APP_LIFECYCLE_PROTOCOL,
 
         /**
          * [RFC-027-C] Factory Injection Pattern
@@ -122,16 +113,14 @@ export function createTUIApp(config: TUIAppConfig): TUIAppFactory {
          */
         async initializeComponent(container: HTMLElement, context: RuntimeContext): Promise<ComponentRenderer> {
 
-            // [长期主义] 使用标准ESM动态导入，不依赖CommonJS require
-            const { render, h } = await import('preact');
+            trackRenderCommits();
 
-            console.log('[createTUIApp] initializeComponent', {
-                appId: context.appId,
-                desktopId: context.desktopId
-            });
-
+            const toolCleanup = new Set<() => void>();
+            const toolOwners = { closed: false, active: new Set<() => void>() };
             // 构建AppRuntimeContext value
             const appContextValue = {
+                toolCleanup,
+                toolOwners,
                 appId: context.appId,
                 desktopId: context.desktopId,
                 launchConfig: (context as { launchConfig?: Record<string, unknown> }).launchConfig,
@@ -141,10 +130,14 @@ export function createTUIApp(config: TUIAppConfig): TUIAppFactory {
                 persistence: context.persistence,
                 appLifecycle: context.appLifecycle,
                 viewTools: context.viewTools,
+                appTypeTools: context.appTypeTools,
             };
 
-            if (context.appLifecycle?.protocol !== 'app-lifecycle-v2')
+            if (context.appLifecycle?.protocol !== APP_LIFECYCLE_PROTOCOL)
                 throw new Error('APP_LIFECYCLE_UNSUPPORTED');
+
+            const cleanupKeys = context.appTypeTools ? [container, context.appTypeTools] : [container];
+            for (const key of cleanupKeys) pendingUnmounts.get(key)?.();
 
             // 创建根VNode
             const rootVNode = h(
@@ -157,28 +150,55 @@ export function createTUIApp(config: TUIAppConfig): TUIAppFactory {
             // layout effects register View/Ref/Tool bindings inside this boundary.
             // Internal component setState commits are tracked by registry mutations
             // and DOM invalidations; these explicit brackets are not their only gate.
+            let attached = true;
+            let unmounting = false;
             const renderCommitted = (node: typeof rootVNode | null) => {
                 context.projection.beginCommit();
                 try {
                     render(node, container);
+                    if (node === null) attached = false;
                 } finally {
                     context.projection.endCommit();
                 }
             };
 
-            // A failed initial commit must not leave earlier View/Tool effects
-            // registered. Unmount the partial tree before propagating the error.
+            const unmount = () => {
+                if (unmounting) return;
+                unmounting = true;
+                toolOwners.closed = true;
+                try {
+                    let failure: { error: unknown } | undefined;
+                    // Revoke before application cleanup can call a Tool or interrupt traversal.
+                    for (const dispose of [...toolOwners.active]) {
+                        try { dispose(); } catch (error) { failure ??= { error }; }
+                    }
+                    if (attached) {
+                        try { renderCommitted(null); } catch (error) { failure ??= { error }; }
+                    }
+                    for (const key of cleanupKeys) {
+                        if (attached || toolOwners.active.size > 0) pendingUnmounts.set(key, unmount);
+                        else if (pendingUnmounts.get(key) === unmount) pendingUnmounts.delete(key);
+                    }
+                    if (failure) throw failure.error;
+                } finally {
+                    unmounting = false;
+                }
+            };
+
             try {
                 renderCommitted(rootVNode);
             } catch (error) {
-                try { renderCommitted(null); } catch { /* preserve initial error */ }
+                try { unmount(); } catch { /* preserve initial error; failed cleanup remains retryable */ }
                 throw error;
             }
 
-            // 返回Renderer控制接口
             return {
-                render: () => renderCommitted(rootVNode),
-                unmount: () => renderCommitted(null),
+                whenCommitted: signal => whenRenderCommitted(signal),
+                render: () => {
+                    if (toolOwners.closed) throw Object.assign(new Error('APP_RENDERER_CLOSED'), { code: 'APP_RENDERER_CLOSED' });
+                    renderCommitted(rootVNode);
+                },
+                unmount,
             };
         },
 

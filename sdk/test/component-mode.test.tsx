@@ -10,7 +10,7 @@ import { h } from 'preact';
 describe('[RFC-027] Component Mode', () => {
     it('should create TUIApp with component field', () => {
         function TestApp() {
-            return h(View, { name: 'TestView' }, 'Hello');
+            return h(View, { kind: 'state', id: 'test_view', type: 'TestView', name: 'TestView' }, 'Hello');
         }
 
         const app = createTUIApp({
@@ -30,7 +30,7 @@ describe('[RFC-027] Component Mode', () => {
 
     it('kernelConfig should support component field (root removed)', () => {
         function TestApp() {
-            return h(View, { name: 'TestView' }, 'Hello');
+            return h(View, { kind: 'state', id: 'test_view', type: 'TestView', name: 'TestView' }, 'Hello');
         }
 
         const app = createTUIApp({

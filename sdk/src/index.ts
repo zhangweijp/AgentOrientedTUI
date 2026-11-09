@@ -2,15 +2,14 @@
  * @aotui/sdk - component application entry for the current Preact Runtime.
  *
  * Start with README.md; docs/api-status.md lists exact capability conditions,
- * and docs/migration.md describes the View-local ordinary-v2 and snapshot-value-v2
- * contracts. Export presence does not grant execution permission.
+ * and docs/static-tools.md describes the current M1/M2 Tool contract. Export presence does not grant execution permission.
  *
  * @example
  * ```tsx
  * import { h } from 'preact';
  * import { createTUIApp, View } from '@aotui/sdk';
  * function Root() {
- *   return <View id="root" type="Root" name="Root"><h1>Example</h1></View>;
+ *   return <View kind="instruction" id="root" type="Root" name="Root"><h1>Example</h1></View>;
  * }
  * export default createTUIApp({ app_name: 'example', component: Root });
  * ```
@@ -38,31 +37,28 @@ export {
   type ItemRefFormatter,
 } from './hooks/useArrayRef.js';
 export { useViewContext } from './hooks/useViewContext.js';
-export { useViewTypeTool } from './hooks/useViewTypeTool.js';
-export { useLLMOutputChannel } from './hooks/useLLMOutputChannel.js';
+export { createToolBindings, defineToolSet, defineViewTypeTool, getToolCatalog, refParam, TOOL_BINDING_DIAGNOSTIC_LIMITS } from './tools/view-type-tool.js';
 export type {
-  TypeToolUI,
-  UseViewTypeToolResult,
-  TypeToolOptions,
-  TypeToolHandler,
-  TypeToolArgs,
-  SnapshotValueRefParamDef,
+    ToolBinding, ToolBindings, ToolBindingController, ToolBindingDiagnostics,
+    ToolBindingErrorSummary, ToolBindingCleanupDiagnostic, ToolBindingErrorCode,
+  ArgsOf,
   DeepReadonly,
-} from './hooks/useViewTypeTool.js';
-export type {
-  ParamDef,
-  ParamSchema,
-  ParamType,
-  ParamBaseType,
-  ParamConstraints,
-  InferArgs,
-} from './operation/types.js';
+  DefinedViewTypeTool,
+  JsonSchemaObject,
+  JsonSchemaValue,
+  SchemaOf,
+  ToolCatalogEntry,
+  ToolSet,
+  ToolSetMap,
+  ViewTypeToolDeclaration,
+} from './tools/view-type-tool.js';
+export { useLLMOutputChannel } from './hooks/useLLMOutputChannel.js';
 export type {
   AppID,
   ViewID,
   DesktopID,
-  OperationError,
-  OperationResult,
+  ToolError,
+  ToolResult,
   AppContext,
   AppReinitializeContext,
   IViewMeta,
@@ -75,3 +71,6 @@ export type {
   StateIssue,
 } from '@aotui/runtime/spi';
 export { AOTUIError } from '@aotui/runtime/spi';
+
+export { AppTools, ToolRef, ToolCatalog } from './components/AppTools.js';
+export type { AppToolsProps, ToolRefProps, ToolCatalogProps } from './components/AppTools.js';

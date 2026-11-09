@@ -1,61 +1,53 @@
 # @aotui/sdk
 
-用 Preact 组件构建面向 Agent 的 TUI 应用。View 呈现数据和使用指引，Tool 提供领域动作，Runtime 管理 View 身份、可见来源与执行。SDK 当前面向已有组件 Runtime，“可 import”不代表所有 Host 或无 DOM 环境均可运行。
+用 Preact 或普通 TypeScript 的既有 Producer 构建面向 Agent 的应用。App 管理业务状态，View 呈现当前状态，Tool 发起操作并返回简短收据；SDK/Runtime 维护提交、身份、调用资格和资源释放。
 
-## 完整最小应用
+## 从这里开始
+
+1. 读 [作者指南](docs/view-type-tools.md)，了解单一 Tool 声明、App 绑定和动态可用性。
+2. 运行 [文件 App](docs/examples/file-app.tsx)：打开 a.txt/b.txt，编辑后读最新 FileDetail，最后关闭页面。它只操作内存，不访问磁盘。
+3. 对已展示的业务对象，读 [Ref 参数与完整示例](docs/readonly-ref-v2.md)：类型提示留在页面，调用用 `view_id.local_ref`。
+4. 读 [View 合同](docs/views.md)：显式 id/type/kind、独立页面、原样正文和唯一包装。
+5. 普通 TS Producer 使用 [共同 binding controller](docs/binding-tools.md)；迁移旧应用看 [迁移说明](docs/migration.md)。
+
+[API 参考](docs/api-status.md)、[参数规则](docs/ordinary-v2.md)、[生命周期](docs/tool-lifecycle.md)和[持久化](docs/persistence.md)用于查阅。匹配包与安装、构建、验证命令统一见 [包使用说明](docs/runtime-compatibility.md)。当前工作树的能力已采用；这不表示同版本的旧文件或 registry 包自动具备这些能力，也不表示已经发布。
+
+## 最小组件应用
 
 ```tsx
-import { h } from 'preact';
 import { createTUIApp, View } from '@aotui/sdk';
 
-function AppRoot() {
-    return (
-        <View id="root" type="Root" name="Root">
-            <h1>Example Application Instruction</h1>
-            <h2>What Example is</h2>
-            <p>A component application showing its current state as readable text.</p>
-            <h2>How to use Example</h2>
-            <p>Read this View. This minimal application has no domain tools.</p>
-            <h2>Views of Example</h2>
-            <h3>Root</h3>
-            <p>Root shows application instructions.</p>
-        </View>
-    );
+function App() {
+  return <View id="root" type="Root" kind="instruction">
+    <h1>Example Application Instruction</h1>
+    <p>Read this page. This application has no domain tools.</p>
+  </View>;
 }
 
-export default createTUIApp({ app_name: 'example', component: AppRoot });
+export default createTUIApp({ app_name: 'example', component: App });
 ```
 
-`app_name` 是必填字符串，匹配 `/^[a-z0-9_]+$/`；`name` 不能替代它。View ID 在应用内唯一，2–15 位字母、数字或下划线。需要 View 上下文的 Tool/Ref Hook 放在目标 View 的子组件内；App 级 Hook 按各自的上下文要求使用。`createTUIApp` 返回 Runtime 使用的组件工厂；应用模块的 `default` 必须指向唯一托管组件工厂，Host 不会从命名导出中查找工厂。
+应用模块 default 导出唯一托管工厂。`app_name` 匹配 `/^[a-z0-9_]+$/`；View id 在 App 内唯一，使用2–15位字母、数字或下划线。View 必须显式提供 type 和 kind（instruction/state），多个实例可共享 type，页面不能嵌套。
 
-工具目录放在 Root 的 `Application Instruction → Views → <View Type> → Available Tools`，每个类型列一次，作为静态说明；不要在每个实例 View 中重复渲染。目录可以说明尚未打开的 View 类型和工具，实际调用以当前上下文附带的 Tools 为准。工具的注册仍由所属实例 View 内的 Hook 完成，可以不渲染 Hook 返回的 UI 组件。这样，关闭实例会撤销它的绑定，而静态目录不随实例数量或运行状态改变。
+## 开发时记住的合同
 
-## 添加普通只读工具
+- 用 TypeBox 和 `defineViewTypeTool` 声明一次 viewType/name/description/inputSchema，用 `defineToolSet` 组织；handler 只放 AppTools 的 bindings，普通 TS 使用同一个 `createToolBindings` controller。没有 isMutating 分类。
+- 完整说明与参数 Schema 由上下文的 Tools 提供。Root 用 `ToolCatalog` 从同一声明按 ViewType 列出名称；数据 View 呈现业务状态和 Ref，不复制完整工具定义。目录、可见性和 enabled 都不能代替授权与业务检查。
+- Tool 按 App + ViewType 共享。打开匹配页面后能力出现，最后一个匹配页面关闭后失效；Tool 不隐式选择某个实例。
+- 文件路径、编辑内容、标题等保留普通参数。已发布对象用 Ref 选择：页面中 `Note:notes[0]` 位于 View `detail`，调用写 `detail.notes[0]`，不带展示类型前缀、不抄业务 ID。对象、整列表、元素、多个/可选字段和多选均使用同一个 refParam。
+- 参数递归只读，不自动 coercion/default/trim。App 检查对象是否仍存在、归属、状态与权限，并自行执行业务变更。Tool 收据与当前业务数据分别通过结果和 View 呈现；unknown 写入不自动重试。
+- 框架生成外层 XML，App 不拼接外壳或预转义。文件/代码/日志使用 pre/code，保留空白及 CR/LF；普通说明按 HTML→Markdown 规则排版。
+- 宿主准备 Context 后显式 adopt，再调用。新采用撤销旧资格，释放无人持有的旧来源；诊断预览不采用。App 不创建 Scope、拼装调用绑定或实现 Ref parser。
 
-普通读写和普通只读 Tool 都使用 `useViewTypeTool`；只读声明显式设置 `isMutating: false`。包括空参数的只读 Tool 在内，所有普通参数都使用 ordinary-v2。规则由 Runtime 统一合同提供：enum 严格比较，Unicode 字符串按 code point 计数，额外字段默认拒绝，`default` 不自动填入缺席参数。开放额外字段须显式声明 `additionalProperties: true`。完整示例见 [ordinary-v2](docs/ordinary-v2.md)。
+## 源码开发
 
-执行要求对应 Runtime/Worker 能力和受信 Controller 授权；只读名称或 Schema 声明自身不授予权限。
+在已准备依赖的仓库中：
 
-## 使用原观察快照中的对象 Ref
+```sh
+pnpm -C runtime run build
+pnpm -C sdk run build
+pnpm -C sdk run typecheck:static
+pnpm -C sdk exec vitest run
+```
 
-同一 `useViewTypeTool` 可声明一个必填、顶层、同 View owner 的只读对象 Ref，并设置 `isMutating: false`；完整示例见 [readonly-ref-v2](docs/readonly-ref-v2.md)。`useDataRef` 发布对象，handler 收到递归只读快照对象；未声明业务 `refType` 时可保留真实的 `unknown`，显式声明时必须匹配。
-
-原观察 A 不因后续 B 发布被替换。历史来源、参数展开、授权后复查和 Worker 身份由框架管理；应用不传 observationId、bindingId 或 Worker ID。数组、多 Ref、跨 View Ref 和任意写操作没有由该入口获得支持。
-
-## 环境与不可用的能力
-
-- 组件模式用状态决定是否渲染 `<View>`，由组件挂载和卸载接入 View 实例生命周期。
-- `useLLMOutputChannel` 在 Worker 中监听 `aotui:llm-text` 事件，可在 View 外的 Root 使用；事件桥仅提供实时事件，没有 document 时明确拒绝。
-- 持久化支持已交付的 managed session；显式存储注入、隔离、关闭排空和 flush 见 [持久化文档](docs/persistence.md)。Legacy 与 managed 确认分别报告，不能相互替代。
-
-## 普通 Tool 与应用清理
-
-普通读写、只读 Ref 参数都通过 `useViewTypeTool(name, options, handler, config?)` 声明，分别使用 ordinary-v2 和 snapshot-value-v2。`createTUIApp` 总是声明 `app-lifecycle-v2`，不需要 opt-in；需要清理外部资源的应用可在长寿命组件中调用 `useAppLifecycle`，并按需提供同步 `stop` 或可等待的 `close` 回调。没有外部资源的应用不需要调用该 Hook。应用负责业务版本与实际完成，Runtime 负责执行器及自身资源。完整合同见 [普通 Tool 与应用清理](docs/tool-lifecycle.md)。
-
-可信 Host 从应用模块的 `default` 读取唯一托管工厂，通过 AppRegistry 安装并配置 `interactionModes`。省略该配置时支持 ordinary-v2 与 snapshot-value-v2；显式列表是完整集合，空列表关闭两种执行模式。Host/Runtime 使用 `createAppScope(desktopId, appId, policy)` 为受信应用建立 Scope 并进行目标选择和授权；SDK 组件不创建 Scope，也不能凭 Tool 可见性授予执行权限。详见 [Semantic Host 接入契约](../runtime/docs/semantic-host-integration.zh-CN.md) 与 [SDK API 状态](docs/api-status.md)。
-
-使用发布物时，必须安装同一交付的 Runtime、SDK、IDE 实际 tarball；相同版本号的历史发布物不因此具备新协议。
-
-完整名称与可用条件见 [API 状态](docs/api-status.md)，分批迁移见 [迁移说明](docs/migration.md)。实际执行能力取决于安装的 Runtime/Host 合同；单次 SDK 测试不代表其他运行时或无 DOM 环境已验证。
-
-C01 已删除无实际能力的全局持久化入口、组件挂载注册表入口、数据 Ref 过渡别名，以及无消费者的状态便利 Hook 和根命名校验工具。应用使用 `useState/useReducer` 管理组件状态，通过 `usePersistentState` 声明实例状态；需要定制实例会话的应用也可从 `useAppRuntimeContext().persistence` 使用完整的 `AppStatePersistence` 客户端口，并自行负责绑定、恢复、更新与释放。`useDataRef/useArrayRef` 声明数据引用。上下文只公开 App 元数据、启动配置和实例自有持久化端口；SDK 的 Ref、Tool、投影与生命周期端口保持内部。该端口不是 Host 文件系统适配器。具体 Breaking Changes 见迁移说明与[持久化文档](docs/persistence.md)。
+构建和严格类型门禁使用原生 TypeScript 7.0.2。SDK 的 TypeScript ESLint 开发图暂用 Microsoft 的旧 Compiler API 兼容包；它不属于 App 运行依赖，也不是应用作者的额外配置。lint、完整 Driver 第三方声明和原生 LSP 的已知限制分别记录，不能从示例运行通过推导整个工具链全绿。

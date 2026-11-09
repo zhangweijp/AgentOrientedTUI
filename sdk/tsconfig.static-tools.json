@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "skipLibCheck": false,
+    "lib": [
+      "ES2022",
+      "DOM"
+    ]
+  },
+  "include": [
+    "type-tests/static-tools.ts",
+    "type-tests/binding-tools.ts",
+    "type-tests/view-metadata.tsx"
+  ],
+  "exclude": []
+}

@@ -1,73 +1,59 @@
-# 只读快照值 Ref 参数
+# 用 Ref 选择已展示的业务对象
 
-通过唯一 View-local Hook `useViewTypeTool` 声明只读快照值 Ref。执行需要支持 snapshot-value-v2 的 Runtime/Worker，并经过受信 Controller 的来源检查与授权。
+Ref 是 View 发布的具名数据。模型选择 Ref，Runtime 从本次调用采用的 Observation 解析数据；handler 接收通过 Schema 检查的递归只读对象或对象列表。应用仍检查对象是否存在、父子归属、当前状态和业务权限。
 
-参数可以包含普通字段和一个必填、顶层的对象 Ref。调用输入中的 Ref 是页面展示的字符串 ID，handler 收到原始观察快照中的递归只读 JSON 对象；普通字段使用 ordinary-v2 规则。
+先运行 [完整笔记示例](examples/ref-app.tsx)，再按下面的参数形状扩展。示例中的 `Note` 是笔记的业务类型，`NoteDetail` 是应用自定义的 ViewType，`detail` 是页面实例 ID；这些名称都由示例应用决定。页面打开后才提供检查工具，结果进入页面的 Inspection 区域，关闭页面后该类型工具失活。示例不读写磁盘。
 
-下面是完整应用，所有SDK能力从根入口导入。`useDataRef`发布当前值并显示引用；工具不修改数据，结果指向已有详情View。Root只列出实际挂载的View及工具。
+## 展示标记与调用地址
 
-```tsx
-import { h } from 'preact';
-import { createTUIApp, View, useDataRef, useViewTypeTool } from '@aotui/sdk';
+SDK 在 View 内注册局部名，展示保留类型提示；Tool 输入使用 **View 实例 id + 局部名**，不带展示类型前缀。
 
-function FileDetail() {
-  const file = useDataRef('sample_file', {
-    title: 'Example file',
-    lines: ['First line', 'Second line'],
-  });
-  const [Inspect] = useViewTypeTool('inspect_file', {
-    description: 'When to use: inspect a displayed file value. How to use: provide its Ref ID and choose summary or full.',
-    isMutating: false,
-    params: {
-      file: { type: 'reference', required: true, refSource: 'snapshot-value-v1' },
-      format: { type: 'enum', options: ['summary', 'full'], required: true },
-    },
-  }, ({ file, format }) => {
-    const title = typeof file.title === 'string' ? file.title : 'Untitled';
-    return {
-      success: true,
-      data: { view_id: 'detail', title, format, keys: Object.keys(file) },
-    };
-  });
-  return h('section', {}, [
-    h('h2', {}, 'Example file'),
-    h('p', {}, file('Original file value')),
-    h(Inspect, { children: 'Inspect file' }),
-  ]);
+| 发布方式 | 页面展示的链接目标 | 在 `<view id="detail">` 中的调用参数 |
+| --- | --- | --- |
+| `useDataRef('current', note, { refType: 'Note' })` | `Note:current` | `detail.current` |
+| `useArrayRef('notes', notes, { itemType: 'Note' })` 的整数组 | `Note[]:notes` | `detail.notes` |
+| 同一 ArrayRef 的第一个元素 | `Note:notes[0]` | `detail.notes[0]` |
+
+例如 `[First note](Note:notes[0])` 位于 `id="detail"` 的 View 中，调用 `inspect_note` 时传 `{ "note": "detail.notes[0]" }`。使用 XML 中的 id，不使用 ViewType 或 name，也不猜“当前 View”。同一 App 两个 View 的同名 Ref 可分别寻址。业务类型由元数据核对，字符串前缀不能伪造类型。
+
+## 一份 Tool 声明，几种参数形状
+
+完整定义、绑定和发布只维护在 [ref-app.tsx](examples/ref-app.tsx)；它使用与普通参数相同的 `defineViewTypeTool`、`defineToolSet` 和 `AppTools`，没有第二类 Ref Tool。
+
+| 参数 Schema | 模型输入 | handler 接收 |
+| --- | --- | --- |
+| `refParam('Note', NoteSchema)` | 一个对象 Ref 地址 | 一个只读 Note 对象 |
+| `refParam('Note', Type.Array(NoteSchema))` | 一个整数组 Ref 地址 | 原来的只读 Note 列表 |
+| `Type.Array(refParam('Note', NoteSchema))` | Ref 地址字符串数组 | 按输入顺序解析的只读 Note 数组 |
+| `Type.Optional(refParam('Note', NoteSchema))` | 可省略的对象 Ref 地址 | 省略时字段仍缺席 |
+| `Type.Optional(Type.Array(refParam('Note', NoteSchema)))` | 可省略的 Ref 地址数组 | 缺席与提供 `[]` 不同 |
+
+示例的 `inspect_selection` 可同时传多个选择、可选对象和可选整数组：
+
+```json
+{
+  "selected": ["detail.notes[1]", "detail.notes[0]", "detail.notes[1]"],
+  "primary": "detail.current",
+  "whole": "detail.notes"
 }
-
-function App() {
-  return h('main', {}, [
-    h(View, { id: 'root', type: 'Root' }, [
-      h('h1', {}, 'File Inspector Application Instruction'),
-      h('h2', {}, 'What File Inspector is'),
-      h('p', {}, 'Inspect values displayed in File Detail.'),
-      h('h2', {}, 'How to use File Inspector'),
-      h('p', {}, 'Use the displayed reference with inspect_file and read its result.'),
-      h('h2', {}, 'Views of File Inspector'),
-      h('h3', {}, 'File Detail'),
-      h('h4', {}, 'File Detail Instruction'),
-      h('p', {}, 'Displays the current file value and its reference.'),
-      h('h4', {}, 'File Detail Available Tools'),
-      h('p', {}, 'inspect_file'),
-    ]),
-    h(View, { id: 'detail', type: 'FileDetail' }, h(FileDetail, {})),
-  ]);
-}
-
-export default createTUIApp({ app_name: 'file_inspector', component: App });
 ```
 
-本例使用 `useDataRef` 的实际unknown业务类型，所以没有声明具体refType。handler把对象字段视为unknown并检查类型；refType不提供业务结构推断。声明具体refType时，原Ref描述符必须严格匹配；Ref必须属于原目标View实例，且payload是非null、非数组的普通JSON对象。
+`selected` 保持顺序和重复项，不自动去重。`{ "selected": [] }` 是合法空选择，可选字段不填默认值。`null`、显式 `undefined`、空地址、不可见 Ref、错误类型或 payload Schema 不匹配都会拒绝整次调用；不可把它们当成“未提供”。普通参数同样不做隐式 coercion、default 或 trim。
 
-`SnapshotValueRefParamDef`、`TypeToolArgs` 与 `DeepReadonly` 已从 SDK 根入口导出。Ref 要求 `required: true`、`refSource: 'snapshot-value-v1'`，不允许 `default`、`constraints`、`options` 或 `itemType`。恰好一个 Ref 由 Runtime 编译保证。Ref Handler 参数递归只读；普通只读 Tool 的参数也有递归只读类型。`default` 只是声明注释，不补值、不转换类型、不 trim 或删除额外字段。默认拒绝额外参数，显式 `additionalProperties: true` 可保留。
+这些 Ref 参数位于 Tool 入参对象顶层，可以与路径、标题、编辑内容等普通字段组合。Ref payload 支持 JSON 对象和对象列表；`.field` 查询、嵌套 Ref 参数、新作用域和基础类型 payload 体系尚未提供。文件打开与编辑仍可使用有业务意义的文件路径，不应为统一形式而全部改成 Ref。
 
-Host 使用 `interactionModes` 配置可执行模式；省略时包含 `snapshot-value-v2`，也可显式配置子集。`refSource: 'snapshot-value-v1'` 与公开 `snapshot-value-params-v1` 都是来源/参数语义标记，不是 V1 transport。单有声明或端口支持不能执行。应用作者无需管理 observationId 或 Worker 身份；Controller 负责观察、绑定、授权和调用。旧 SDK/Worker 组合不会自动获得此能力。
+App 可用解析对象里的内部 ID 操作自己的状态，不要求模型另抄 `plan_id`、`phase_id` 或 `task_id`。只读参数不限制业务副作用，也不承诺多选业务原子性。完整展开参数与来源 envelope 共同受预算约束，额度不会按字段或选项重置。
 
-完整参数与展开payload受24层、10000节点及128KiB约束，最终执行还受Core请求、Ref envelope、Snapshot和整IPC的交集限制。类型检查或单次参数验证不证明来源或权限，也不替代实际Worker资格。
+## 观察与来源
 
-## Worker Snapshot 捕获与恢复
+Host 准备 Observation 后显式采用，再使用其中的绑定；标准 Driver 通过 `Context.adopt()` 完成。采用新 Observation 会撤销旧调用资格；单纯发布或诊断预览不采用，其他独立 Scope 持有者不受影响。App 不生成 observationId／bindingId，也不实现私有 Ref 解析器。
 
-Worker 发出 Snapshot 前会把完整 Draft 复制为有界的严格 JSON 数据；复制不会冻结或修改应用拥有的 Ref 对象。捕获最多接受 48 层、100,000 个节点和默认约 8 MiB 的近似输入字节。Ref payload 必须是无 getter/隐藏字段、无 Symbol、循环或类实例的普通 JSON 对象。此复制只约束 IPC 前的数据形状和捕获成本，不代替完整 V2 校验；Host 收到后仍检查结构、Ref/View 归属关系，并核算规范化后的精确序列化字节总量。
+Runtime 保留 Ref owner、View 实例、类型、原 Snapshot、来源、调用授权和预算检查。Tool 按 App + ViewType 共享，Ref 选择才指定数据；关闭一个页面而同类型其他页面仍打开，不会把共享 Tool 隐式绑定到剩下的某个对象。Tool 收据只报告完成及必要恢复提示，最新业务数据看 View。
 
-无法复制的数据会产生 `SNAPSHOT_SERIALIZATION_ERROR`，并使当前 Snapshot 来源进入 degraded 状态；Runtime 不会把失败的 Draft 发布为当前状态。应用修正 Ref 数据后，下一份有效 Snapshot 会恢复 ready。`auto` 在变化时自动发布并通知 Host；`never` 在变化时自动发布但抑制通知；`manual` 不自动发布后台变化，Tool 调用会提交当时的投影。信号策略不会放宽 JSON 校验。
+## 数据捕获与失败
+
+Worker 发出 Snapshot 前有界捕获严格 JSON，不冻结或修改 App 拥有的原对象。getter、隐藏字段、Symbol、循环和类实例会被拒绝；当前默认捕获限额为 48 层、100,000 个节点、约 8 MiB 的近似输入字节，Host 仍独立校验完整 V3 Snapshot、归属及规范化字节预算。
+
+非法 Draft 产生 `SNAPSHOT_SERIALIZATION_ERROR` 并使该来源 degraded，不把失败 Draft 冒充最新有效状态。修正后下一份有效 Snapshot 可恢复 ready。`auto` 自动发布并通知，`never` 自动发布但抑制通知，`manual` 不自动发布后台变化；Tool 调用仍会提交当时投影。信号策略不放宽校验，也不等待尚未完成的外部业务工作。
+
+配对包、运行步骤和验证命令见 [包使用说明](runtime-compatibility.md)。底层协议与资源合同属于 Runtime／Host；普通 App 作者只需声明数据、参数及业务检查。

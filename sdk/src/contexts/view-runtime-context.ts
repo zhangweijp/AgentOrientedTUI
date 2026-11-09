@@ -6,8 +6,7 @@
  * @module @aotui/sdk/contexts/view-runtime-context
  */
 import { createContext } from "preact";
-import type { IViewMeta, IRefRegistry, ViewToolDefinition,
-  ViewToolRegistrationOptions } from "@aotui/runtime/spi";
+import type { IViewMeta, IRefRegistry } from "@aotui/runtime/spi";
 
 // ═══════════════════════════════════════════════════════════════
 //  统一 Context 值接口
@@ -29,9 +28,6 @@ interface ViewRuntimeContextValue {
   /** View 元数据 (viewId, appId, desktopId, markDirty) */
   readonly meta: Readonly<IViewMeta>;
 
-  /** Internal mount generation used to release bindings when a View is recreated. */
-  readonly viewGeneration: string;
-
   // ═══════════════════════════════════════════════════════════
   // 内部 API - 仅 SDK 组件/Hooks 使用
   // ═══════════════════════════════════════════════════════════
@@ -39,16 +35,6 @@ interface ViewRuntimeContextValue {
   /** Ref 注册表 - useArrayRef, useRef */
   readonly refs: Readonly<IRefRegistry>;
 
-  /** View-local Tool registration; capability support is supplied by Runtime. */
-  readonly viewTools?: Readonly<{
-    readonly targetSelectorSupport?: 'argument-v1';
-    readonly refDeclarationSupport?: 'snapshot-value-v1';
-    readonly safeOrdinaryParametersInvocationSupport?: 'ordinary-v2';
-    readonly safeSnapshotValueParametersInvocationSupport?: 'snapshot-value-v2';
-    fingerprintReadOnlyParams?(params: unknown, additionalProperties: boolean): Readonly<{ kind: 'ordinary' | 'snapshot-value'; fingerprint: string }>;
-    fingerprintOrdinaryParams?(params: unknown, additionalProperties: boolean): string;
-    registerTool(name: string, definition: ViewToolDefinition, options: ViewToolRegistrationOptions): () => void;
-  }>;
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -18,6 +18,17 @@ describe('createTUIApp', () => {
         expect(factory.kernelConfig.onReinitialize).toBe(onReinitialize);
     });
 
+    it('captures metadata once without executing accessors or retaining mutable author metadata', () => {
+        let reads = 0;
+        expect(() => createTUIApp({ get app_name() { reads++; return 'test_app'; }, component: () => null }))
+            .toThrow(expect.objectContaining({ code: 'APP_METADATA_INVALID', path: 'app_name' }));
+        expect(reads).toBe(0);
+        const input = { app_name: 'test_app', whatItIs: 'Before', component: () => null };
+        const factory = createTUIApp(input);input.app_name = 'other';input.whatItIs = 'After';
+        expect(factory.displayName).toBe('test_app');
+        expect(factory.kernelConfig).toMatchObject({ appName: 'test_app', name: 'test_app', whatItIs: 'Before' });
+    });
+
     it('does not require a separate display name', () => {
         function RootComponent() {
             return null;
@@ -34,6 +45,7 @@ describe('createTUIApp', () => {
     it('advertises the managed lifecycle contract without requiring app cleanup callbacks', () => {
         const factory = createTUIApp({ app_name: 'test_app', component: () => null });
         expect(factory.appLifecycleSupport).toBe('app-lifecycle-v2');
+        expect(Object.getOwnPropertyDescriptor(factory, 'toolAuthoringProtocol')?.value).toBe('view-type-tools-v4');
         expect(factory.kernelConfig.onDelete).toBeUndefined();
         expect(factory.kernelConfig.onReinitialize).toBeUndefined();
     });
@@ -68,7 +80,6 @@ describe('createTUIApp', () => {
         const factory = createTUIApp({ app_name: 'valid_123', whatItIs: 'What', whenToUse: 'When', component: () => null });
         expect(factory.displayName).toBe('valid_123');expect(factory.kernelConfig).toMatchObject({ appName: 'valid_123', name: 'valid_123', whatItIs: 'What', whenToUse: 'When' });
         expect(typeof factory.initializeComponent).toBe('function');
-        expect(Object.hasOwn(factory.kernelConfig, 'onOperation')).toBe(false);
         expect(Object.hasOwn(factory, 'create')).toBe(false);
         expect(Object.hasOwn(factory, 'TUI_FACTORY')).toBe(false);
         expect(typeof factory).toBe('object');

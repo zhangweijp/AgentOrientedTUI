@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "skipLibCheck": false,
+    "noEmit": true,
+    "types": [
+      "node"
+    ],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact"
+  },
+  "files": [
+    "types/positive.ts",
+    "types/m2-positive.ts",
+    "types/variance-positive.ts",
+    "types/jsx-positive.tsx"
+  ]
+}

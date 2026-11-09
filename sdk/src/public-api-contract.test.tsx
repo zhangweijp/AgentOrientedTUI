@@ -3,7 +3,7 @@ import { act } from 'preact/test-utils';
 import { renderToString } from 'preact-render-to-string';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as SDK from './index.js';
-import { createTUIApp, View, useState, useDataRef, useViewTypeTool, useLLMOutputChannel, useAppRuntimeContext } from './index.js';
+import { createTUIApp, View, useState, useDataRef, useLLMOutputChannel, useAppRuntimeContext } from './index.js';
 import { useContext } from 'preact/hooks';
 import { ViewRuntimeContext } from './contexts/view-runtime-context.js';
 import { AppRuntimeContext } from './context/AppRuntimeContext.js';
@@ -12,11 +12,11 @@ import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel
 const closing: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of closing.splice(0)) await close();vi.restoreAllMocks();vi.unstubAllGlobals(); });
 async function mount(Body: () => any, options: { outside?: boolean } = {}) {
-    const factory = createTUIApp({ app_name: 'public_api', component: () => options.outside ? h(Body, {}) : h(View, { id: 'detail', type: 'Detail' }, h(Body, {})) });
+    const factory = createTUIApp({ app_name: 'public_api', component: () => options.outside ? h(Body, {}) : h(View, {kind: 'state', id: 'detail', type: 'Detail' }, h(Body, {})) });
     const kernel = new AppKernel({ ...factory.kernelConfig, component: factory } as any);kernel.setId('app' as any);kernel.setAppExecutionInstanceId('public_api_run');
     const container = document.createElement('div');document.body.appendChild(container);let closed = false;
     const close = async () => { if (!closed) { closed = true;await act(async () => { await kernel.onClose(); });container.remove(); } };closing.push(close);
-    await act(async () => { await kernel.onOpen({ appId: 'app' as any, desktopId: 'desktop' as any, markDirty() {}, onRender() {} }, container); });
+    await act(async () => { await kernel.onOpen({ appId: 'app' as any, desktopId: 'desktop' as any }, container); });
     return { kernel, container, close };
 }
 const currentOutputEvent = 'aotui:llm-text';
@@ -27,9 +27,16 @@ const calls = (spy: any) => spy.mock.calls.filter((args: any[]) => outputEvents.
 describe('C04/C09 SDK root exports and app context', () => {
     it('exposes exactly the supported JavaScript entry points', () => {
         expect(Object.keys(SDK).sort()).toEqual([
-            'AOTUIError',
+            'AOTUIError', 'AppTools',
+            'TOOL_BINDING_DIAGNOSTIC_LIMITS',
+            'ToolCatalog', 'ToolRef',
             'View',
             'createTUIApp',
+            'createToolBindings',
+            'defineToolSet',
+            'defineViewTypeTool',
+            'getToolCatalog',
+            'refParam',
             'useAppLifecycle',
             'useAppRuntimeContext',
             'useArrayRef',
@@ -43,7 +50,6 @@ describe('C04/C09 SDK root exports and app context', () => {
             'useRef',
             'useState',
             'useViewContext',
-            'useViewTypeTool',
         ]);
     });
 
@@ -51,7 +57,7 @@ describe('C04/C09 SDK root exports and app context', () => {
         for (const name of [
             'ViewRegistry', 'createInlineView', 'useViewSelector', 'useRefRegistry',
             'defineParams', 'escapeHtml', 'escapeJsonForAttr', 'useAppConfig',
-            'useAppEnv', 'useLLMOutputHistory',
+            'useAppEnv', 'useLLMOutputHistory', 'useViewSnapshotTool',
         ]) {
             expect(Object.hasOwn(SDK, name), name).toBe(false);
         }
@@ -76,9 +82,10 @@ describe('C04/C09 SDK root exports and app context', () => {
             appId: 'app', desktopId: 'desktop', launchConfig: { workspace: '/project' },
             persistence,
             appLifecycle: { protocol: 'app-lifecycle-v2', register() {} },
-            refExporter: { registerRef() {}, unregisterRef() {} },
+            refExporter: { registerRef() { return { update() {}, release() {} }; } },
             markDirty() {}, projection: { beginCommit() {}, endCommit() {} },
-            viewTools: { registerTool() {} },
+            viewTools: { mount() {}, unmount() {} },
+            appTypeTools: { protocol: 'view-type-tools-v1', registerTypeTool() {} },
         };
         function CaptureContext() { publicContext = useAppRuntimeContext();return null; }
         renderToString(h(AppRuntimeContext.Provider, { value: fullContext as any }, h(CaptureContext, {})));
@@ -109,16 +116,8 @@ describe('C01/C02 actual component capability honesty', () => {
         expect(refFormatter).not.toHaveProperty('id');
         expect(Object.hasOwn(context, 'mountable')).toBe(false);
         expect(Object.hasOwn(context, 'dynamic')).toBe(false);
-        expect(Object.hasOwn(context, 'operations')).toBe(false);expect(Object.hasOwn(context, 'typeTools')).toBe(false);expect(Object.hasOwn(context, 'config')).toBe(false);
+        expect(Object.hasOwn(context, 'typeTools')).toBe(false);expect(Object.hasOwn(context, 'config')).toBe(false);
         await x.close();expect(x.kernel.getViewOwnedViewInstances()).toHaveLength(0);expect(x.kernel.getViewRefs()).toHaveLength(0);
-    });
-    it('registers/calls/releases a View-owned Tool across enabled transitions', async () => {
-        let toggle!: () => void;const handler = vi.fn(async (args: { value?: string }) => ({ success: true, data: { value: args.value } }));
-        function Body() { const [enabled, set] = useState(true);toggle = () => set(!enabled);const [ToolUI] = useViewTypeTool('read', { description: 'Read', params: { value: { type: 'string' } } }, handler, { enabled });return h(ToolUI, {}, 'Read'); }
-        const x = await mount(Body);const tool = x.kernel.getViewOwnedToolDefinitions()[0];
-        expect(tool.targets).toHaveLength(1);
-        expect((await x.kernel.invokeBoundOrdinaryParametersViewTool(tool, tool.targets[0], { value: 'actual' })).result).toMatchObject({ success: true, data: { value: 'actual' } });expect(handler).toHaveBeenCalledOnce();
-        await act(toggle);expect(x.kernel.getViewOwnedToolDefinitions()).toHaveLength(0);await act(toggle);expect(x.kernel.getViewOwnedToolDefinitions()).toHaveLength(1);await x.close();expect(x.kernel.getViewOwnedToolDefinitions()).toHaveLength(0);
     });
 });
 

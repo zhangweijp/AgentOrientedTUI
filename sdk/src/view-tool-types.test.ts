@@ -1,32 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { useViewTypeTool } from './hooks/useViewTypeTool.js';
-
-const refParams = {
-    file: { type: 'reference', required: true, refSource: 'snapshot-value-v1' },
-} as const;
+import Type from 'typebox';
+import { defineViewTypeTool, defineToolSet, refParam, type ToolBindings, type ToolSetMap } from './tools/view-type-tool.js';
+import { AppTools } from './components/AppTools.js';
 
 function typeContract() {
-    useViewTypeTool('inspect', { description: 'Inspect', params: refParams, isMutating: false }, args => {
-        // Snapshot values handed to a Ref handler are recursively immutable.
-        // @ts-expect-error Ref object fields are read-only
-        args.file.path = '/mutated';
-        return { success: true };
+    const inspect = defineViewTypeTool({ viewType: 'FileDetail', name: 'inspect', description: 'Inspect.',
+        inputSchema: Type.Object({ file: refParam('File', Type.Object({ path: Type.String() })), query: Type.String() }),
     });
-
-    useViewTypeTool('find', { description: 'Find', params: { query: { type: 'string', required: true } }, isMutating: false }, args => {
-        // @ts-expect-error explicitly read-only ordinary arguments are immutable too
+    const tools = defineToolSet({ inspect });
+    const bindings: ToolBindings<ToolSetMap<typeof tools>> = { inspect: { execute(args) {
+        const path: string = args.file.path;
+        // @ts-expect-error Resolved Ref fields are recursively read-only.
+        args.file.path = path;
+        // @ts-expect-error Ordinary arguments are recursively read-only.
         args.query = 'changed';
         return { success: true };
-    });
-
-    // @ts-expect-error Ref tools must explicitly declare isMutating: false
-    useViewTypeTool('inspect', { description: 'Inspect', params: refParams }, () => ({ success: true }));
+    } } };
+    void bindings;
+    // @ts-expect-error A plain JSON Schema type is not a TypeBox author Schema.
+    defineViewTypeTool({ viewType: 'FileDetail', name: 'bad', description: 'Bad', inputSchema: { type: 'object' } });
 }
-
 void typeContract;
-
-describe('View-local Tool type contract', () => {
-    it('keeps compile-time Ref restrictions attached to the one Hook', () => {
-        expect(typeof useViewTypeTool).toBe('function');
+describe('one ViewType Tool contract for ordinary and Ref parameters', () => {
+    it('exports App registration and the Ref parameter declaration', () => {
+        expect(typeof AppTools).toBe('function');
+        expect(typeof refParam).toBe('function');
+        expect(typeof defineViewTypeTool).toBe('function');
     });
 });
