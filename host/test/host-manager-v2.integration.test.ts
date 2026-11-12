@@ -16,10 +16,12 @@ import type { ModelRegistry } from '../src/services/model-registry.js';
 // Mock LLMConfigService to avoid DB calls
 vi.mock('../src/core/llm-config-service.js', () => {
     return {
-        LLMConfigService: vi.fn().mockImplementation(() => ({
-            getActiveLLMConfig: vi.fn(),
-            getAvailableProviders: vi.fn()
-        }))
+        LLMConfigService: vi.fn(function () {
+            return {
+                getActiveLLMConfig: vi.fn(),
+                getAvailableProviders: vi.fn()
+            };
+        })
     };
 });
 
@@ -66,7 +68,7 @@ const createSessionManagerMock = () => {
 };
 
 vi.mock('../src/core/session-manager-v3.js', () => ({
-    SessionManagerV3: vi.fn(() => sessionManagerMock)
+    SessionManagerV3: vi.fn(function () { return sessionManagerMock; })
 }));
 
 describe('HostManager V2 Integration', () => {

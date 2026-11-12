@@ -40,14 +40,13 @@
     "@jest/globals": "29.7.0"
   },
   "overrides": {
-    "brace-expansion@1.1.12": "1.1.13",
-    "brace-expansion@2.0.2": "2.0.3",
-    "handlebars": "^4.7.9",
-    "happy-dom": "^20.8.9",
+    "handlebars": "^4.7.10",
     "minimatch@3.1.2": "3.1.4",
     "minimatch@9.0.5": "9.0.7",
     "picomatch@2.3.1": "2.3.2",
-    "preact": "^10.29.1"
+    "preact": "^10.29.1",
+    "brace-expansion@1": "^1.1.20",
+    "brace-expansion@2": "^2.1.2"
   },
   "optionalDependencies": {
     "pyright": "^1.1.390"
@@ -55,14 +54,13 @@
   "pnpm": {
     "overrides": {
       "@aotui/sdk": "link:../../sdk",
-      "brace-expansion@1.1.12": "1.1.13",
-      "brace-expansion@2.0.2": "2.0.3",
-      "handlebars": "^4.7.9",
-      "happy-dom": "^20.8.9",
+      "handlebars": "^4.7.10",
       "minimatch@3.1.2": "3.1.4",
       "minimatch@9.0.5": "9.0.7",
       "picomatch@2.3.1": "2.3.2",
-      "preact": "^10.29.1"
+      "preact": "^10.29.1",
+      "brace-expansion@1": "^1.1.20",
+      "brace-expansion@2": "^2.1.2"
     }
   },
   "keywords": [

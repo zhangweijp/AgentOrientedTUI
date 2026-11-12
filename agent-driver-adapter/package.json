@@ -31,7 +31,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "typescript": "7.0.2",
-    "vitest": "^3.2.4",
+    "vitest": "^4.1.12",
     "@aotui/runtime": "link:../runtime",
     "@aotui/agent-driver-v2": "link:../agent-driver-v2"
   }

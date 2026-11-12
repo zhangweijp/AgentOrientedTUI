@@ -9,10 +9,12 @@ const mockAddMessage = vi.fn();
 const mockGetMessages = vi.fn();
 
 vi.mock('../src/core/message-service-v2', () => ({
-    MessageServiceV2: vi.fn(() => ({
-        addMessage: mockAddMessage,
-        getMessages: mockGetMessages
-    }))
+    MessageServiceV2: vi.fn(function () {
+        return {
+            addMessage: mockAddMessage,
+            getMessages: mockGetMessages
+        };
+    })
 }));
 
 let sessionManagerMock: {
@@ -49,11 +51,11 @@ const createSessionManagerMock = () => {
 };
 
 vi.mock('../src/core/session-manager-v3.js', () => ({
-    SessionManagerV3: vi.fn(() => sessionManagerMock)
+    SessionManagerV3: vi.fn(function () { return sessionManagerMock; })
 }));
 
 vi.mock('../src/im/im-session-manager.js', () => ({
-    IMSessionManager: vi.fn(() => imSessionManagerMock),
+    IMSessionManager: vi.fn(function () { return imSessionManagerMock; }),
 }));
 
 const configGetMock = vi.fn();

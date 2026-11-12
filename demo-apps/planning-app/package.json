@@ -21,7 +21,7 @@
     "@types/node": "^22.15.21",
     "@types/sql.js": "^1.4.9",
     "typescript": "7.0.2",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.12"
   },
   "peerDependencies": {
     "@aotui/runtime": "7.0.0-srt.1"
