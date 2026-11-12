@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AgentDriverV2 } from '../../src/core/agent-driver-v2.js';
+import type { LLMClient } from '../../src/core/llm-client.js';
 import type { ContextDrivenSource, AgentState } from '../../src/core/interfaces.js';
 
 function stubLlmCall(driver: AgentDriverV2) {
@@ -105,7 +106,11 @@ describe('AgentDriver State Machine', () => {
                 },
             };
         });
-        (driver as any).llmClient = { call };
+        const modelCall: LLMClient['call'] = async (messages, tools, callbacks) => {
+            await callbacks?.beforeRequest?.(JSON.stringify({ messages, tools }));
+            return call();
+        };
+        (driver as any).llmClient = { call: modelCall };
 
         // 启动一个 run (会进入 thinking 状态)
         await driver.trigger();

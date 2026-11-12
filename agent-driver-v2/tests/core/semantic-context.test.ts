@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentDriverV2 } from '../../src/core/agent-driver-v2.js';
+import type { LLMClient } from '../../src/core/llm-client.js';
 import type {
     ContextDrivenSource, DrivenSource, DrivenSourceContext, ToolOutcomeStatus, ToolResult,
 } from '../../src/core/interfaces.js';
@@ -19,7 +20,11 @@ function makeSource(getContext: () => Promise<DrivenSourceContext>): ContextDriv
 
 function makeDriver(source: DrivenSource | DrivenSource[], call: ReturnType<typeof vi.fn>, onToolResult = vi.fn(), onRunError = vi.fn()) {
     const driver = new AgentDriverV2({ sources: Array.isArray(source) ? source : [source], llm: { model: 'gpt-4' }, onToolResult, onRunError });
-    (driver as any).llmClient = { call };
+    const modelCall: LLMClient['call'] = async (messages, tools, callbacks) => {
+        await callbacks?.beforeRequest?.(JSON.stringify({ messages, tools }));
+        return call(messages, tools);
+    };
+    (driver as any).llmClient = { call: modelCall };
     drivers.push(driver);
     return driver;
 }

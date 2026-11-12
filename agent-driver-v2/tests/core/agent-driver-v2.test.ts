@@ -452,7 +452,7 @@ describe('AgentDriverV2', () => {
             expect(release).toHaveBeenCalledTimes(1);
         });
 
-        it('keeps the last captured winner, then updates the public Map before unchanged-input skip without clearing it on capture failure', async () => {
+        it('keeps the captured winner, sends a changed tool definition and preserves routes on capture failure', async () => {
             const firstExecute = vi.fn(async (toolName: string, args: unknown, toolCallId: string) => ({ toolName, toolCallId, result: { first: args } }));
             const secondExecute = vi.fn(async (toolName: string, args: unknown, toolCallId: string) => ({ toolName, toolCallId, result: { second: args } }));
             const firstContext: DrivenSourceContext = { messages, tools: { shared: tool }, executeTool: firstExecute, release: vi.fn() };
@@ -461,7 +461,8 @@ describe('AgentDriverV2', () => {
             const first = contextSource('first', firstContext), second = contextSource('second', secondContext);
             const result = vi.fn(), onRunError = vi.fn();
             const localDriver = createDriver({ sources: [first, second], llm: { model: 'gpt-4' }, onToolResult: result, onRunError });
-            model.mockImplementationOnce(async (_messages, tools) => {
+            model.mockImplementationOnce(async (_messages, tools, callbacks) => {
+                await callbacks?.beforeRequest?.('winner definition');
                 expect(tools.shared).toBe(winner);
                 expect(localDriver.getToolSource('shared')).toBe(second);
                 // A later capture would differ; this turn must still use its captured route.
@@ -476,8 +477,13 @@ describe('AgentDriverV2', () => {
             expect(secondExecute.mock.contexts[0]).toBe(secondContext);
             expect(result).toHaveBeenCalledExactlyOnceWith({ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'winner-call', toolName: 'shared',
                 output: { type: 'json', value: { second: { value: 7 } } } }] });
+            model.mockImplementationOnce(async (_messages, tools, callbacks) => {
+                expect(tools.shared).toBe(tool);
+                await callbacks?.beforeRequest?.('first definition');
+                return response();
+            });
             await runTurn(localDriver);
-            expect(model).toHaveBeenCalledTimes(1);
+            expect(model).toHaveBeenCalledTimes(2);
             expect(localDriver.getToolSource('shared')).toBe(first);
             expect(first.getContext).toHaveBeenCalledTimes(2);
             expect(second.getContext).toHaveBeenCalledTimes(2);
@@ -488,7 +494,7 @@ describe('AgentDriverV2', () => {
             await runTurn(localDriver);
             expect(localDriver.getToolSource('shared')).toBe(first);
             expect(onRunError).toHaveBeenCalledExactlyOnceWith(failure);
-            expect(model).toHaveBeenCalledTimes(1);
+            expect(model).toHaveBeenCalledTimes(2);
             expect(firstContext.release).toHaveBeenCalledTimes(3);
             expect(secondContext.release).toHaveBeenCalledTimes(2);
         });

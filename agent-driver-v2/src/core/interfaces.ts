@@ -272,6 +272,13 @@ export interface ProviderConfig {
  *   apiKey: process.env.OPENROUTER_API_KEY,
  * };
  */
+export interface ModelInputLimits {
+    readonly contextWindow: number;
+    readonly maxInputTokens?: number;
+    readonly maxOutputTokens: number;
+    readonly capabilities?: LLMConfig['modelCapabilities'];
+}
+
 export interface LLMConfig {
     /** 
      * 模型 ID
@@ -320,6 +327,10 @@ export interface LLMConfig {
      * 控制生成的随机性，范围 0-2
      */
     temperature?: number;
+
+    /** Trusted Host limit lookup for the actual provider and model used for this request. */
+    inputBudget?: (target: Readonly<{ providerId: string; modelId: string }>) =>
+        ModelInputLimits | undefined | Promise<ModelInputLimits | undefined>;
 
     /**
      * 模型能力（来自 models.dev 等上游元数据）

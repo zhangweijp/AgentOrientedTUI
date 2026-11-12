@@ -28,6 +28,8 @@ import { Logger } from '../utils/logger.js';
 import { LLMClient } from './llm-client.js';
 import { assembleContextRegions } from './context-regions.js';
 
+const REQUEST_SKIPPED = Symbol('model request skipped');
+
 interface CapturedSourceContext {
     source: DrivenSource;
     context: DrivenSourceContext;
@@ -512,41 +514,6 @@ export class AgentDriverV2 {
     }
 
     /**
-     * 生成输入签名，用于跳过重复输入的 LLM 调用
-     */
-    private buildInputSignature(
-        messages: ModelMessage[],
-        tools: Record<string, Tool>
-    ): string {
-        const toolNames = Object.keys(tools).sort();
-        const toolSignature = toolNames.join('|');
-
-        const messageSignature = messages
-            .map((message) => {
-                const content =
-                    typeof message.content === 'string'
-                        ? message.content
-                        : JSON.stringify(message.content);
-                return `${message.role}:${this.hashString(content)}`;
-            })
-            .join('|');
-
-        return `${messages.length}:${messageSignature}::${toolNames.length}:${toolSignature}`;
-    }
-
-    /**
-     * 简单字符串哈希（32-bit），避免完整内容参与签名
-     */
-    private hashString(value: string): string {
-        let hash = 0;
-        for (let i = 0; i < value.length; i += 1) {
-            hash = (hash << 5) - hash + value.charCodeAt(i);
-            hash |= 0; // Convert to 32-bit integer
-        }
-        return hash.toString(16);
-    }
-
-    /**
      * 运行主循环 (一次 run)
      * 
      * 完整的 LLM ReAct 循环：
@@ -565,7 +532,6 @@ export class AgentDriverV2 {
             // 1. 收集 Messages 和 Tools
             await this.captureContexts(retained);
             if (!this.running) return;
-            for (const { context } of retained) await context.adopt?.();
             const messages = await this.collectMessages(retained);
             const tools: Record<string, Tool> = {};
             const routes = new Map<string, ToolExecutionRoute>();
@@ -580,15 +546,6 @@ export class AgentDriverV2 {
             }
             if (!this.running) return;
 
-            const inputSignature = this.buildInputSignature(messages, tools);
-            if (this.lastInputSignature === inputSignature) {
-                this.logger.info('Skipping LLM call: inputs unchanged');
-                await this.setState('idle');
-                return;
-            }
-
-            this.lastInputSignature = inputSignature;
-
             this.logger.info('Run iteration:', {
                 messagesCount: messages.length,
                 toolsCount: Object.keys(tools).length,
@@ -596,6 +553,15 @@ export class AgentDriverV2 {
 
             // 2. 调用 LLM (若配置了流式回调，实时推送增量文本/推理)
             const response = await this.llmClient.call(messages, tools, {
+                beforeRequest: async signature => {
+                    if (!this.running || signature === this.lastInputSignature) throw REQUEST_SKIPPED;
+                    for (const { context } of retained) {
+                        if (!this.running) throw REQUEST_SKIPPED;
+                        await context.adopt?.();
+                    }
+                    if (!this.running) throw REQUEST_SKIPPED;
+                    this.lastInputSignature = signature;
+                },
                 onTextDelta: this.config.onTextDelta,
                 onReasoningDelta: this.config.onReasoningDelta,
             });
@@ -677,6 +643,7 @@ export class AgentDriverV2 {
             await this.setState('idle');
 
         } catch (error) {
+            if (error === REQUEST_SKIPPED) return;
             this.logger.error('Error in run loop:', error);
             if (this.config.onRunError) {
                 const normalizedError = error instanceof Error ? error : new Error(String(error));

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentDriverV2 } from '../../src/core/agent-driver-v2.js';
 import { jsonSchema } from 'ai';
+import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { LLMClient } from '../../src/core/llm-client.js';
 import type { ContextDrivenSource, DrivenSourceContext } from '../../src/core/interfaces.js';
 
@@ -17,6 +18,24 @@ function fixture(context: DrivenSourceContext, beforeCapture = async () => {}) {
     return { driver, source, onRunError };
 }
 
+function provider(onRequest: () => void) {
+    const request = vi.fn(onRequest);
+    const model = new MockLanguageModelV3({ doStream: async () => {
+        request();
+        return { stream: convertArrayToReadableStream([
+            { type: 'text-start', id: 'text' },
+            { type: 'text-delta', id: 'text', delta: 'Done' },
+            { type: 'text-end', id: 'text' },
+            { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: {
+                inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+                outputTokens: { total: 1, text: 1, reasoning: 0 },
+            } },
+        ]) };
+    } });
+    vi.spyOn(LLMClient.prototype as unknown as { createProvider(): unknown }, 'createProvider').mockReturnValue(model);
+    return request;
+}
+
 describe('Driver serial adoption boundary', () => {
     it('prepares without adopting for preview, then adopts before the model reads and releases in finally', async () => {
         const order: string[] = [];
@@ -24,10 +43,7 @@ describe('Driver serial adoption boundary', () => {
             adopt: () => { order.push('adopt'); }, release: () => { order.push('release'); } };
         const f = fixture(context);
         await f.source.getContext(); expect(order).toEqual([]);
-        const call = vi.spyOn(LLMClient.prototype, 'call').mockImplementation(async () => {
-            expect(order).toEqual(['adopt']); order.push('model');
-            return { text: 'Done', toolCalls: [], finishReason: 'stop' };
-        });
+        const call = provider(() => { expect(order).toEqual(['adopt']); order.push('model'); });
         await f.driver['run']();
         expect(call).toHaveBeenCalledTimes(1); expect(order).toEqual(['adopt', 'model', 'release']);
         expect(f.onRunError).not.toHaveBeenCalled();
@@ -37,8 +53,8 @@ describe('Driver serial adoption boundary', () => {
         const error = Object.assign(new Error('Partial adoption'), { code: 'SEMANTIC_ADOPTION_PARTIAL',
             results: [{ appId: 'a', status: 'adopted' }, { appId: 'b', status: 'rejected' }] });
         const release = vi.fn();
-        const f = fixture({ messages: [], tools: {}, adopt: () => { throw error; }, release });
-        const call = vi.spyOn(LLMClient.prototype, 'call');
+        const f = fixture({ messages: [{ role: 'user', timestamp: 1, content: 'Current' }], tools: {}, adopt: () => { throw error; }, release });
+        const call = provider(() => {});
         await f.driver['run']();
         expect(call).not.toHaveBeenCalled(); expect(release).toHaveBeenCalledTimes(1);
         expect(f.onRunError).toHaveBeenCalledWith(error);

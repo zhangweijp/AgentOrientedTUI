@@ -9,10 +9,28 @@
  * - 类型安全的 ToolCall 处理
  */
 
-import { streamText, type Tool, type ModelMessage } from 'ai';
-import type { LLMConfig, LLMResponse } from './interfaces.js';
+import { createHash } from 'node:crypto';
+import { streamText, wrapLanguageModel, type Tool, type ModelMessage } from 'ai';
+import type { LLMConfig, LLMResponse, ModelInputLimits } from './interfaces.js';
 import { Logger } from '../utils/logger.js';
 import { createLanguageModel, type ModelTarget } from './provider-factory.js';
+
+export class ModelInputError extends Error {
+    constructor(readonly code: 'MODEL_INPUT_BUDGET_EXCEEDED' | 'MODEL_INPUT_LIMITS_UNAVAILABLE' | 'MODEL_INPUT_UNMEASURABLE', message: string, readonly details?: Readonly<Record<string, number | string>>) {
+        super(message);
+    }
+}
+
+function checkInputBudget(limits: ModelInputLimits, request: string, messages: number, tools: number): void {
+    const available = Math.min(limits.maxInputTokens ?? Infinity, limits.contextWindow - limits.maxOutputTokens);
+    const bytes = Buffer.byteLength(request, 'utf8');
+    const safety = Math.max(256, Math.ceil(bytes * 0.05)) + 8 * (messages + tools);
+    if (bytes + safety > available) {
+        throw new ModelInputError('MODEL_INPUT_BUDGET_EXCEEDED',
+            `Estimated model input requires ${bytes + safety} tokens (including margin); ${available} are available. Open fewer Views, reduce history, or select a larger model.`,
+            { method: 'utf8-bytes', inputBytes: bytes, safety, inputLimit: available, outputReserved: limits.maxOutputTokens });
+    }
+}
 
 /**
  * LLMClient - LLM 客户端
@@ -163,12 +181,16 @@ export class LLMClient {
         callbacks?: {
             onTextDelta?: (delta: string) => void;
             onReasoningDelta?: (delta: string) => void;
+            beforeRequest?: (signature: string) => void | Promise<void>;
         }
     ): Promise<LLMResponse> {
+        let requestFailure: unknown;
         try {
-            messages = this.applyInputCapabilityGuard(messages);
+            const budget = await this.inputLimits();
+            const capabilities = budget?.capabilities ?? this.config.modelCapabilities;
+            messages = this.applyInputCapabilityGuard(messages, capabilities);
             const shouldDisableTools =
-                this.config.modelCapabilities?.toolCall === false &&
+                capabilities?.toolCall === false &&
                 Object.keys(tools).length > 0;
             // Driver owns Source execution; the model SDK only receives the definition.
             const effectiveTools = shouldDisableTools ? {} : Object.fromEntries(
@@ -194,10 +216,43 @@ export class LLMClient {
             console.log('Tools:', Object.keys(effectiveTools));
             console.log('====================\n');
             
-            // 创建 Provider 实例
-            const model = this.createProvider();
+            if (budget && messages.some(message => Array.isArray(message.content) &&
+                message.content.some(part => part.type === 'file' || part.type === 'image'))) {
+                throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'This Host cannot count media inputs. Remove the attachment to continue.');
+            }
+            const provider = this.createProvider();
+            let admitted: Promise<void> | undefined;
+            const model = budget || callbacks?.beforeRequest ? wrapLanguageModel({ model: provider, middleware: {
+                specificationVersion: 'v3',
+                wrapStream: async ({ params, doStream }) => {
+                    try {
+                        if (budget) {
+                            if (params.tools?.some(tool => tool.type !== 'function') || params.maxOutputTokens !== budget.maxOutputTokens) {
+                                throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'The model request uses unsupported tools or output settings.');
+                            }
+                            const hasMedia = params.prompt.some(message => typeof message.content !== 'string' &&
+                                message.content.some(part => part.type === 'file' || (part.type === 'tool-result' &&
+                                    part.output.type === 'content' && part.output.value.some(item => item.type !== 'text'))));
+                            if (hasMedia) throw new ModelInputError('MODEL_INPUT_UNMEASURABLE',
+                                'This Host cannot count media inputs, including media in tool history.');
+                        }
+                        const input = JSON.stringify({ messages: params.prompt, tools: params.tools ?? [], toolChoice: params.toolChoice });
+                        if (budget) checkInputBudget(budget, input, params.prompt.length, params.tools?.length ?? 0);
+                        if (callbacks?.beforeRequest) {
+                            const signature = createHash('sha256').update(this.modelId).update(input)
+                                .update(String(params.maxOutputTokens)).digest('hex');
+                            admitted ??= Promise.resolve().then(() => callbacks.beforeRequest!(signature));
+                            await admitted;
+                        }
+                    } catch (error) {
+                        requestFailure = error;
+                        throw error;
+                    }
+                    return doStream();
+                },
+            } }) : provider;
 
-            const result = await this.streamWithOpenRouterFallback(model, messages, effectiveTools);
+            const result = await this.streamWithOpenRouterFallback(model, messages, effectiveTools, budget?.maxOutputTokens);
 
             let text: string;
             let reasoningParts: Array<{ type: 'reasoning'; text: string }> = [];
@@ -217,6 +272,7 @@ export class LLMClient {
                 let reasoningAccum = '';
                 for await (const part of result.fullStream) {
                     switch (part.type) {
+                        case 'error': throw part.error;
                         case 'text-delta':
                             text += (part as any).text ?? '';
                             if ((part as any).text) callbacks.onTextDelta?.((part as any).text);
@@ -259,6 +315,7 @@ export class LLMClient {
                 text = await result.text;
             }
 
+            if (requestFailure !== undefined) throw requestFailure;
             const reasoningString = reasoningParts.length > 0
                 ? reasoningParts.map((part) => part.text).join('\n')
                 : '';
@@ -348,6 +405,7 @@ export class LLMClient {
 
             return response;
         } catch (error) {
+            if (requestFailure !== undefined) throw requestFailure;
             this.logger.error('LLM call failed', { error });
             
             // 🔍 打印 API 请求中的 tools (从错误对象获取)
@@ -369,9 +427,23 @@ export class LLMClient {
         }
     }
 
-    private applyInputCapabilityGuard(messages: ModelMessage[]): ModelMessage[] {
-        const supportsImage = this.config.modelCapabilities?.input?.image !== false;
-        const supportsPdf = this.config.modelCapabilities?.input?.pdf !== false;
+    private async inputLimits(): Promise<ModelInputLimits | undefined> {
+        if (!this.config.inputBudget) return;
+        const target = this.resolveModelTarget(this.config.model);
+        let budget: ModelInputLimits | undefined;
+        try { budget = await this.config.inputBudget({ providerId: target.providerId, modelId: target.modelName }); }
+        catch { /* Missing or inaccessible metadata prevents sending this request. */ }
+        if (!budget || ![budget.contextWindow, budget.maxOutputTokens, budget.maxInputTokens ?? 1]
+            .every(value => Number.isSafeInteger(value) && value > 0) || budget.maxOutputTokens >= budget.contextWindow) {
+            throw new ModelInputError('MODEL_INPUT_LIMITS_UNAVAILABLE',
+                `No valid input window and output limit for ${target.registryModelId}. Set model limits in the Host or choose a model with known limits.`);
+        }
+        return budget;
+    }
+
+    private applyInputCapabilityGuard(messages: ModelMessage[], capabilities: LLMConfig['modelCapabilities']): ModelMessage[] {
+        const supportsImage = capabilities?.input?.image !== false;
+        const supportsPdf = capabilities?.input?.pdf !== false;
 
         const resolvePartModality = (part: any): 'image' | 'pdf' | null => {
             if (!part || typeof part !== 'object') {
@@ -459,13 +531,15 @@ export class LLMClient {
     private async streamWithOpenRouterFallback(
         model: any,
         messages: ModelMessage[],
-        tools: Record<string, Tool>
+        tools: Record<string, Tool>,
+        maxOutputTokens?: number,
     ) {
         try {
             return await streamText({
                 model,
                 messages,
                 tools,
+                maxOutputTokens,
                 temperature: this.config.temperature ?? 0.7,
             });
         } catch (error) {
@@ -487,6 +561,7 @@ export class LLMClient {
                 model,
                 messages,
                 tools: {},
+                maxOutputTokens,
                 temperature: this.config.temperature ?? 0.7,
             });
         }
