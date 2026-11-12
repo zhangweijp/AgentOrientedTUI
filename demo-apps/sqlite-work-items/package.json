@@ -1,0 +1,27 @@
+{
+  "name": "@aotui/sqlite-work-items",
+  "version": "0.1.0",
+  "description": "View SQLite work items and set the status of the selected item.",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/integration.test.mjs"
+  },
+  "dependencies": {
+    "@aotui/runtime": "7.0.0-srt.1",
+    "@aotui/sdk": "0.8.0-srt.1",
+    "typebox": "1.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.11.0",
+    "typescript": "7.0.2"
+  },
+  "pnpm": {
+    "overrides": {
+      "@aotui/runtime": "link:../../runtime",
+      "@aotui/sdk": "link:../../sdk"
+    }
+  }
+}

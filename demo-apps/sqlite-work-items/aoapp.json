@@ -1,0 +1,9 @@
+{
+  "app_name": "sqlite_work_items",
+  "description": "View SQLite work items and set the status of the selected item.",
+  "toolAuthoringProtocol": "view-type-tools-v4",
+  "persistenceSupport": "state-session-v1",
+  "appLifecycleSupport": "app-lifecycle-v2",
+  "version": "0.1.0",
+  "entry": { "main": "./dist/index.js" }
+}
