@@ -8,7 +8,6 @@ const commonExternal = [
   'electron-trpc',
   'electron-trpc/main',
   'electron-trpc/renderer',
-  'better-sqlite3',
   '@aotui/runtime',
   '@aotui/agent-driver-v2',
   '@aotui/sdk',

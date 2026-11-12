@@ -2,7 +2,6 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "electron",
-      "better-sqlite3",
       "esbuild",
       "@heroui/shared-utils",
       "electron-winstaller",
