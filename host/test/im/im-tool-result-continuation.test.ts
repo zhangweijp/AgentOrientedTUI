@@ -1,11 +1,12 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { format } from 'node:util';
+import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { HostManagerV2 } from '../../src/core/host-manager-v2.js';
 import { IMSessionManager } from '../../src/im/im-session-manager.js';
 import { IMDrivenSource } from '../../src/im/im-driven-source.js';
 import { McpDrivenSource } from '../../src/mcp/source.js';
-import { AgentDriverV2, jsonSchema, type DrivenSourceContext, type MessageWithTimestamp, type ToolResult } from '@aotui/agent-driver-v2';
+import { AgentDriverV2, jsonSchema, type DrivenSourceContext, type MessageWithTimestamp, type ModelInputLimits, type ToolResult } from '@aotui/agent-driver-v2';
 import { LLMClient } from '@aotui/agent-driver-v2/dist/core/llm-client.js';
 import type { ModelRegistry } from '../../src/services/model-registry.js';
 
@@ -20,7 +21,9 @@ const fixture = vi.hoisted(() => ({
   toolMessages: [] as Message[],
   diagnostics: [] as Array<{ level: string; text: string }>,
   quietExecutions: 0, mcpExecutions: 0, captures: 0,
+  modelOverride: undefined as string | undefined, modelInputLimits: {} as Record<string, ModelInputLimits>,
   released: [] as number[],
+  view: '',
 }));
 const record = (kind: string, data: Record<string, unknown> = {}) => {
   fixture.events.push({ at: Date.now(), kind, ...structuredClone(data) });
@@ -31,20 +34,22 @@ const record = (kind: string, data: Record<string, unknown> = {}) => {
 vi.mock('../../src/core/message-service-v2.js', () => ({
   MessageServiceV2: class { getMessages() { return []; } },
 }));
-vi.mock('../../src/core/llm-config-service.js', () => ({
-  LLMConfigService: class {
-    async getActiveLLMConfig() { return { model: 'openai:controlled-im-receipt', apiKey: 'unused-no-network' }; }
-  },
-}));
+vi.mock('../../src/core/llm-config-service.js', async importOriginal => {
+  const { LLMConfigService } = await importOriginal<typeof import('../../src/core/llm-config-service.js')>();
+  return { LLMConfigService: class extends LLMConfigService {
+    override async getActiveLLMConfig() { return { model: 'openai:controlled-im-receipt', apiKey: 'unused-no-network' }; }
+    override getAllConfigs() { return []; }
+  } };
+});
 vi.mock('../../src/core/session-manager-v3.js', () => ({
   SessionManagerV3: class { on() {} async cleanup() {} },
 }));
 vi.mock('../../src/config/config.js', () => ({
   Config: { get: async () => ({
-    agents: { list: [{ id: 'probe-agent', prompt: 'Controlled IM receipt probe.', enabledApps: ['probe-app'], enabledMCPs: ['probe-server'] }] },
+    agents: { list: [{ id: 'probe-agent', prompt: 'Controlled IM receipt probe.', enabledApps: ['probe-app'], enabledMCPs: ['probe-server'], modelId: fixture.modelOverride }] },
     mcp: { 'probe-server': {} },
     experimental: { contextCompaction: { enabled: false } },
-  }) },
+  }), getTuiConfig: async () => ({ modelInputLimits: fixture.modelInputLimits }) },
 }));
 vi.mock('../../src/im/message-store.js', () => ({
   listIMMessages: (key: string) => structuredClone(fixture.history.get(key) ?? []),
@@ -80,7 +85,8 @@ vi.mock('@aotui/agent-driver-adapter', () => ({
       const capture = ++fixture.captures;
       record('context-capture', { capture });
       return {
-        messages: [], tools: this.enabled ? { ...fixture.quietTools } : {},
+        messages: fixture.view ? [{ role: 'user', content: fixture.view, timestamp: 2, region: 'dynamic' }] : [],
+        tools: this.enabled ? { ...fixture.quietTools } : {},
         executeTool: async (name: string, args: unknown, id: string) => {
           const handler = fixture.quietHandlers.get(name);
           if (!handler) return undefined;
@@ -94,6 +100,7 @@ vi.mock('@aotui/agent-driver-adapter', () => ({
             record('quiet-handler-settled', { name, id });
           }
         },
+        adopt: () => { record('context-adopt', { capture }); },
         release: () => { fixture.released.push(capture); record('context-release', { capture }); },
       };
     }
@@ -113,6 +120,7 @@ beforeEach(() => {
   fixture.history.clear(); fixture.quietHandlers.clear();
   fixture.quietTools = {}; fixture.mcpTools = {};
   fixture.events = []; fixture.models = []; fixture.toolMessages = []; fixture.diagnostics = [];
+  fixture.modelOverride = undefined; fixture.modelInputLimits = {}; fixture.view = '';
   fixture.quietExecutions = 0; fixture.mcpExecutions = 0; fixture.captures = 0; fixture.released = [];
   vi.useFakeTimers();
   vi.setSystemTime(10_000);
@@ -131,6 +139,74 @@ afterAll(() => {
 });
 
 describe('IM tool receipts continue through the real Host and Driver', () => {
+  it('recovers the same pending IM input after a View shrinks without adopting or sending the rejected request', async () => {
+    fixture.modelOverride = 'openai:small-im-model';
+    const inputLimit = 2_600, userInput = '请读取当前页面。';
+    fixture.modelInputLimits['openai:small-im-model'] = { contextWindow: 5_000, maxInputTokens: inputLimit, maxOutputTokens: 100 };
+    fixture.view = 'Visible content ' + 'x'.repeat(1_400);
+    const modelRequest = vi.fn<(params: Parameters<MockLanguageModelV3['doStream']>[0]) => void>();
+    const model = new MockLanguageModelV3({ doStream: async params => {
+      modelRequest(params);
+      return { stream: convertArrayToReadableStream([
+        { type: 'stream-start', warnings: [] },
+        { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: {
+          inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 0, text: 0, reasoning: 0 },
+        } },
+      ]) };
+    } });
+    vi.spyOn(LLMClient.prototype as unknown as { createProvider(): unknown }, 'createProvider').mockReturnValue(model);
+    const host = new HostManagerV2('unused-desktop-topic', {} as ModelRegistry);
+    const desktop = { id: 'probe-desktop' };
+    const kernel = { getDesktop: () => desktop };
+    const desktops = { createDesktop: async () => ({ desktopId: desktop.id }), deleteDesktop: async () => {}, getAppsConfig: async () => ({}) };
+    type Init = Parameters<HostManagerV2['initAgentDriver']>;
+    const gui = vi.fn(), off = host.onGuiUpdate(gui);
+    try {
+      await host.initAgentDriver(desktop as Init[0], kernel as unknown as Init[1], desktops as unknown as Init[2]);
+      const sessionKey = 'agent:probe-agent:controlled:direct:budget-peer';
+      await host.sendIMMessage({ sessionKey, agentId: 'probe-agent', channel: 'controlled', chatType: 'direct',
+        peerId: 'budget-peer', body: userInput, messageId: 'budget-1', senderId: 'budget-peer',
+        chatId: 'budget-chat', timestamp: 9_990, triggerAgent: false });
+      const driver = host['imSessionManager']?.getSession(sessionKey)?.agentDriver;
+      if (!driver) throw Error('IM Driver was not initialized');
+      await driver.trigger();
+      await driver['runInFlight'];
+      expect(gui).toHaveBeenCalledWith(expect.objectContaining({ type: 'assistant', message: expect.objectContaining({
+        metadata: expect.objectContaining({ errorCode: 'MODEL_INPUT_BUDGET_EXCEEDED',
+          errorDetails: expect.objectContaining({ inputLimit, outputReserved: 100 }) }),
+      }) }));
+      expect(modelRequest).not.toHaveBeenCalled();
+      expect(fixture.events.some(event => event.kind === 'context-adopt')).toBe(false);
+      expect(fixture.released).toEqual([1]);
+      const diagnostic = gui.mock.calls.map(([event]) => event.message)
+        .find(message => message?.metadata?.errorCode === 'MODEL_INPUT_BUDGET_EXCEEDED');
+      const { inputBytes, safety } = diagnostic.metadata.errorDetails;
+      const removed = inputBytes + safety - inputLimit + 16;
+      expect(removed).toBeGreaterThan(0);
+      expect(removed).toBeLessThan(fixture.view.length - 'Visible content '.length);
+      fixture.view = fixture.view.slice(0, -removed);
+
+      await driver.trigger();
+      await driver['runInFlight'];
+      expect(modelRequest).toHaveBeenCalledOnce();
+      const params = modelRequest.mock.calls[0]![0];
+      const prompt = JSON.stringify(params.prompt);
+      expect(prompt).toContain(userInput);
+      expect(prompt).toContain(fixture.view);
+      expect(prompt).not.toContain(diagnostic.content);
+      expect(fixture.history.get(sessionKey)).toMatchObject([{ role: 'user', content: userInput }]);
+
+      await driver.trigger();
+      await driver['runInFlight'];
+      expect(modelRequest).toHaveBeenCalledOnce();
+      expect(fixture.events.filter(event => event.kind === 'context-adopt')).toHaveLength(1);
+      expect(fixture.released).toEqual([1, 2, 3]);
+    } finally {
+      off(); await host.dispose(); vi.restoreAllMocks(); vi.useRealTimers();
+    }
+  });
+
   it.each(scenarios)('%s', async scenario => {
     const gate = deferred(), entered = deferred();
     let driver: AgentDriverV2 | undefined;

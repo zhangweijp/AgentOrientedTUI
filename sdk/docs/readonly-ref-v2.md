@@ -1,6 +1,6 @@
 # 用 Ref 选择已展示的业务对象
 
-Ref 是 View 发布的具名数据。模型选择 Ref，Runtime 从本次调用采用的 Observation 解析数据；handler 接收通过 Schema 检查的递归只读对象或对象列表。应用仍检查对象是否存在、父子归属、当前状态和业务权限。
+Ref 是 View 发布的具名数据。模型选择 Ref，Runtime 从本次调用采用的 Observation 解析数据；handler 接收通过 Schema 检查的递归只读 JSON 值。应用仍检查对象是否存在、父子归属、当前状态和业务权限。
 
 先运行 [完整笔记示例](examples/ref-app.tsx)，再按下面的参数形状扩展。示例中的 `Note` 是笔记的业务类型，`NoteDetail` 是应用自定义的 ViewType，`detail` 是页面实例 ID；这些名称都由示例应用决定。页面打开后才提供检查工具，结果进入页面的 Inspection 区域，关闭页面后该类型工具失活。示例不读写磁盘。
 
@@ -40,13 +40,13 @@ SDK 在 View 内注册局部名，展示保留类型提示；Tool 输入使用 *
 
 `selected` 保持顺序和重复项，不自动去重。`{ "selected": [] }` 是合法空选择，可选字段不填默认值。`null`、显式 `undefined`、空地址、不可见 Ref、错误类型或 payload Schema 不匹配都会拒绝整次调用；不可把它们当成“未提供”。普通参数同样不做隐式 coercion、default 或 trim。
 
-这些 Ref 参数位于 Tool 入参对象顶层，可以与路径、标题、编辑内容等普通字段组合。Ref payload 支持 JSON 对象和对象列表；`.field` 查询、嵌套 Ref 参数、新作用域和基础类型 payload 体系尚未提供。文件打开与编辑仍可使用有业务意义的文件路径，不应为统一形式而全部改成 Ref。
+这些 Ref 参数位于 Tool 入参对象顶层，可以与路径、标题、编辑内容等普通字段组合。Ref payload 支持标量、null、数组和嵌套对象。可以分别用源 schema 和参数目标 schema 校验实际值。`.field` 查询、嵌套 Ref 参数及新作用域留在后续协议。文件打开与编辑仍可使用有业务意义的文件路径，不应为统一形式而全部改成 Ref。
 
 App 可用解析对象里的内部 ID 操作自己的状态，不要求模型另抄 `plan_id`、`phase_id` 或 `task_id`。只读参数不限制业务副作用，也不承诺多选业务原子性。完整展开参数与来源 envelope 共同受预算约束，额度不会按字段或选项重置。
 
 ## 观察与来源
 
-Host 准备 Observation 后显式采用，再使用其中的绑定；标准 Driver 通过 `Context.adopt()` 完成。采用新 Observation 会撤销旧调用资格；单纯发布或诊断预览不采用，其他独立 Scope 持有者不受影响。App 不生成 observationId／bindingId，也不实现私有 Ref 解析器。
+Host 准备 Observation 后显式采用，再使用其中的绑定；标准 Driver 通过 `Context.adopt()` 完成。采用新 Observation 会撤销旧调用资格。单纯发布或诊断预览不会替换观察。原 Ref 所属 View 关闭或同名重开时，旧 Ref 会被拒绝并附参数路径。App 不生成 observationId／bindingId，也不实现私有 Ref 解析器。
 
 Runtime 保留 Ref owner、View 实例、类型、原 Snapshot、来源、调用授权和预算检查。Tool 按 App + ViewType 共享，Ref 选择才指定数据；关闭一个页面而同类型其他页面仍打开，不会把共享 Tool 隐式绑定到剩下的某个对象。Tool 收据只报告完成及必要恢复提示，最新业务数据看 View。
 

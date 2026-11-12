@@ -1,4 +1,5 @@
-import type { WorkerPool } from '../app/worker-pool.js';
+import type { StateStorageBackend } from '../app/state-storage-host.js';
+import type { WorkerCapacity } from '../app/worker-capacity.js';
 import type { IDesktop, DesktopID, AppID, UpdateSignal, AppState, DesktopStatus, ILLMOutputChannelService, IRuntimeContext, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
 import { createDesktopId } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
@@ -10,8 +11,8 @@ import { DesktopLogger, type LogEntry } from './desktop-logger.js';
 import { AppManager } from '../app/manager.js';
 import { LLMOutputChannelService } from './llm-output-channel.js';
 import { RuntimeConfig, RUNTIME_DEFAULTS } from '../../spi/config/index.js';
-import type { AppInteractionOptions, AppScopeResult } from '../../spi/runtime/app-interaction.interface.js';
-import type { ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
+import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
+import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
 import { captureInteractionModes } from '../app/interaction-config.js';
 
 
@@ -21,7 +22,8 @@ import { captureInteractionModes } from '../app/interaction-config.js';
  * [Option B] 支持新的 Service 接口注入
  */
 export interface DesktopOptions {
-    workerPool?: WorkerPool;
+    workerCapacity?: WorkerCapacity;
+    storageBackend?: StateStorageBackend;
     /** 使用外部 SignalBus (默认创建内部实例) */
     signalBus?: SignalBus;
     /** 使用外部 DesktopLogger (默认创建内部实例) */
@@ -90,7 +92,7 @@ export class Desktop implements IDesktop {
             maxSystemLogs: this.config.logger.maxSystemLogs
         });
 
-        this.appManager = options?.appManager || new AppManager(this, { workerPool: options?.workerPool, runtimeConfig: this.config });
+        this.appManager = options?.appManager || new AppManager(this, { workerCapacity: options?.workerCapacity, runtimeConfig: this.config, storageBackend: options?.storageBackend });
 
         // [RFC-011] LLM Output Channel Service
         this.llmOutputChannel = options?.llmOutputChannelService ?? new LLMOutputChannelService();
@@ -327,15 +329,14 @@ export class Desktop implements IDesktop {
         return this.appManager.getInstalledApps();
     }
 
-    createAppScope(appId: string, policy: ScopePolicy): AppScopeResult {
+    getAppInteraction(appId: string, expectedInstanceId: string, policy?: AppInteractionPolicy): AppInteractionResult {
         const manager = this.appManager;
-        const unavailable = (): AppScopeResult => Object.freeze({ status: 'rejected', issue: Object.freeze({ code: 'SCOPE_UNAVAILABLE', message: 'App scope is unavailable' }) });
         const current = () => !this._isDraining && !this._disposed && this._status === 'active' && this.appManager === manager;
-        if (!current()) return unavailable();
-        const create = manager.createAppScope;
-        if (!current()) return unavailable();
-        const result = create.call(manager, appId, policy);
-        if (!current()) { if (result.status === 'opened') result.client.close();return unavailable(); }
+        if (!current()) return appInteractionUnavailable();
+        const create = manager.getAppInteraction;
+        if (!current()) return appInteractionUnavailable();
+        const result = create.call(manager, appId, expectedInstanceId, policy);
+        if (!current()) return appInteractionUnavailable();
         return result;
     }
 
@@ -393,7 +394,7 @@ export class Desktop implements IDesktop {
 
     private report(): DesktopCloseReport {
         const state = structuredClone(this.closeState);
-        const child = this.drainReport();if (child) { mergeCloseReport(state, child);state.pool = { ownership: child.pool.ownership, report: child.pool.report ? { ...child.pool.report, issues: [...child.pool.report.issues] } : null }; }
+        const child = this.drainReport();if (child) { mergeCloseReport(state, child);state.workers = { ...child.workers }; }
         const released = state.resourcesReleased && this._disposed && !Object.values(state.cleanup).some(value => value === 'pending' || value === 'failed' || value === 'unverified');
         state.resourcesReleased = released;
         state.desktops = { accepted: 1, settled: state.state === 'settled' ? 1 : 0, pending: state.state === 'settled' ? 0 : 1, notVerifiedReleased: released ? 0 : 1 };
@@ -405,6 +406,16 @@ export class Desktop implements IDesktop {
         if (intent !== 'close' && intent !== 'delete' || callback !== undefined && typeof callback !== 'function') throw closeError('CLOSE_OPTIONS_INVALID');
         if (this.closeHandle) {
             if (this.closeIntent === 'close' && intent === 'delete' || callback && callback !== this.selectedBeforeClose?.deref()) throw closeError('LIFECYCLE_CONFLICT');
+            if (this.closeState.state === 'settled' && this.appReport?.resources.retainedStorageOwners) {
+                this.closeState.state = 'closing';
+                const retry = Promise.resolve().then(async () => {
+                    try { this.appReport = await this.appManager.retryResourceRelease(); }
+                    catch { addCloseFailure(this.closeState, 'persistence', ['RESOURCE_RELEASE_FAILED'], { desktopId: this.id }); }
+                    this.closeState.state = 'settled';
+                    return this.report();
+                });
+                this.closeHandle = createCloseHandle(() => this.report(), retry);
+            }
             return this.closeHandle;
         }
         if (this._isDraining && this.closeIntent === 'close' && intent === 'delete') throw closeError('LIFECYCLE_CONFLICT');

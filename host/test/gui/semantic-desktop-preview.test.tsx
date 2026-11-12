@@ -8,9 +8,9 @@ import { TuiDesktopViewer } from '../../src/gui/components/TuiDesktopViewer.js';
 afterEach(cleanup);
 function fixture() {
     const apps = [
-        { appId: 'app_0', name: 'system_ide', status: 'running' },
-        { appId: 'app_1', name: 'terminal', status: 'running' },
-        { appId: 'app_2', name: 'lite_browser', status: 'pending' },
+        { appId: 'app_0', appInstanceId: 'app_0-run', name: 'system_ide', status: 'running' },
+        { appId: 'app_1', appInstanceId: 'app_1-run', name: 'terminal', status: 'running' },
+        { appId: 'app_2', appInstanceId: 'app_2-run', name: 'lite_browser', status: 'pending' },
     ];
     const view = (id: string, name: string, body: string) => ({ id, viewInstanceId: id + '-instance', type: name, name,
         kind: id === 'root' ? 'instruction' : 'state', content: { format: 'markdown-v1', value: body } });
@@ -23,13 +23,10 @@ function fixture() {
     const forbidden = vi.fn(() => { throw new Error('LEGACY_INTERACTION_USED'); });
     const desktop = { id: 'preview', getInstalledApps: () => apps, getSystemLogs: () => [], getSnapshotFragments: forbidden };
     const kernel = { acquireSnapshot: forbidden, execute: forbidden,
-        createAppScope: vi.fn((_desktop: string, appId: string) => {
-            const client = { observe: vi.fn(async () => ({ status: 'observed', observation: {
-                observationId: appId + '-observation', expiresAt: null,
-                source: { appId, instanceId: 'run', snapshotId: 'snapshot', revision: 1 },
-                views: views.get(appId) ?? [], refs: [], tools: [], bindings: [],
-            } })), releaseObservation: vi.fn(), close: vi.fn() };
-            clients.push(client); return { status: 'opened', client };
+        getAppInteraction: vi.fn((_desktop: string, appId: string, instanceId: string) => {
+            const client = { preview: vi.fn(async () => ({ status: 'previewed', source: { appId, instanceId, snapshotId: 'snapshot', revision: 1 },
+                views: views.get(appId) ?? [] })), observe: forbidden, releaseObservation: forbidden };
+            clients.push(client); return { status: 'ready', interaction: client };
         }),
     };
     return { apps, views, view, clients, forbidden, async preview() {
@@ -51,7 +48,7 @@ describe('Semantic Desktop preview → GUI', () => {
         expect(screen.getByText(/0 enabled for this topic/)).toBeInTheDocument();
         expect(screen.getByText(/terminal is not enabled for this topic/)).toBeInTheDocument();
     });
-    it('groups Semantic messages into the GUI application contract and releases observations', async () => {
+    it('groups read-only previews into the GUI application contract without observations', async () => {
         const f = fixture(), markup = await f.preview(), parsed = parseTuiSnapshot(markup);
         expect(parsed.parseErrors).toEqual([]);
         expect(parsed.desktop?.applications.map(app => app.name)).toEqual(['system_ide', 'terminal', 'lite_browser']);
@@ -60,7 +57,7 @@ describe('Semantic Desktop preview → GUI', () => {
         expect(parsed.desktop?.applications[1].views[0].content).toBe('Terminal instructions');
         expect(markup.indexOf('<desktop>')).toBeLessThan(markup.indexOf('<application '));
         for (const client of f.clients) {
-            expect(client.releaseObservation).toHaveBeenCalledOnce(); expect(client.close).toHaveBeenCalledOnce();
+            expect(client.preview).toHaveBeenCalledOnce();
         }
         expect(f.forbidden).not.toHaveBeenCalled();
     });
@@ -127,8 +124,7 @@ describe('Semantic Desktop preview → GUI', () => {
         const app = parseTuiSnapshot(await f.preview()).desktop!.applications[0];
         expect(app.views).toEqual([{ id: 'file', name: 'A > "B"', content: body }]);
         for (const client of f.clients) {
-            expect(client.releaseObservation).toHaveBeenCalledOnce();
-            expect(client.close).toHaveBeenCalledOnce();
+            expect(client.preview).toHaveBeenCalledOnce();
         }
     });
     it('shows the empty state for an actually empty Desktop' , async () => {

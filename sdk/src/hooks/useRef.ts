@@ -4,7 +4,8 @@
  * @module @aotui/sdk/useDataRef
  */
 import { useLayoutEffect, useRef } from 'preact/hooks';
-import { useRefRegistry } from './useViewContext.js';
+import { captureRefEntries, formatRef, type RefOptions } from '../app-factory/refs.js';
+import { useRefRegistry } from '../contexts/view-runtime-context.js';
 
 /** Formats content as a Ref marker for the registered ID. */
 export type RefHandle = (content: string) => string;
@@ -14,41 +15,34 @@ export type RefHandle = (content: string) => string;
  *
  * @param refId - A Ref ID unique within the current View.
  * @param data - The value bound to the Ref.
- * @param options - Explicit business type for a single object Ref. The marker
+ * @param options - Explicit business type and optional schema for a JSON Ref. The marker
  * becomes `refType:refId`; registration stays local to its View.
  * Tool input uses `view_id.refId`, without the display type prefix.
  */
-export function useDataRef(refId: string, data: object, options?: { refType: string }): RefHandle {
+export function useDataRef(refId: string, data: unknown, options?: RefOptions): RefHandle {
   const refType = options?.refType;
-  if (options !== undefined && (typeof refType !== 'string' || refType.trim().length === 0)) {
-    throw new TypeError('[AOTUI SDK] useDataRef refType must be a non-empty string.');
-  }
-  if (refType !== undefined && (data === null || typeof data !== 'object' || Array.isArray(data))) {
-    throw new TypeError('[AOTUI SDK] Typed useDataRef data must be a single object.');
-  }
-  const marker = refType === undefined ? refId : `${refType}:${refId}`;
-  const { registerRef } = useRefRegistry();
-  const bindingRef = useRef<{ binding: ReturnType<typeof registerRef>; value: object } | null>(null);
+  const { captureRef, registerRef } = useRefRegistry();
+  const captured = captureRefEntries(captureRef, { id: refId, value: data, ...options }).get(refId)!;
+  const bindingRef = useRef<{
+    binding: ReturnType<typeof registerRef>; refId: string; refType: string | undefined; registerRef: typeof registerRef;
+  }>();
 
-  useLayoutEffect(() => {
-    const binding = refType === undefined
-      ? registerRef(refId, data)
-      : registerRef(refId, data, refType);
-    const current = { binding, value: data };
-    bindingRef.current = current;
-    return () => {
-      current.binding.release();
-      if (bindingRef.current === current) bindingRef.current = null;
-    };
-  }, [refId, refType, registerRef]);
+  useLayoutEffect(() => () => {
+    bindingRef.current?.binding.release();
+    bindingRef.current = undefined;
+  }, []);
 
   useLayoutEffect(() => {
     const current = bindingRef.current;
-    if (current && current.value !== data) {
-      current.binding.update(data);
-      current.value = data;
+    if (current && current.refId === refId && current.refType === refType && current.registerRef === registerRef) {
+      current.binding.update(captured);
+    } else {
+      current?.binding.release();
+      bindingRef.current = undefined;
+      const binding = refType === undefined ? registerRef(refId, captured) : registerRef(refId, captured, refType);
+      bindingRef.current = { binding, refId, refType, registerRef };
     }
-  }, [data]);
+  });
 
-  return (content: string) => `[${content}](${marker})`;
+  return content => formatRef(content, refId, refType);
 }

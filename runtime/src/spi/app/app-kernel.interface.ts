@@ -69,15 +69,6 @@ export interface AppKernelConfig {
     whenToUse?: string;
 
     /**
-     * [RFC-027] 根React组件 (新模式)
-     * 
-     * Current and only supported app authoring mode.
-     * Developers declare all Views through `<View>` components and the runtime
-     * discovers them from component rendering.
-     */
-    component?: any; // ComponentType, 使用any避免引入preact依赖
-
-    /**
      * 运行时启动配置
      * 
      * 由 Worker Runtime 在实例化 AppKernel 时注入。

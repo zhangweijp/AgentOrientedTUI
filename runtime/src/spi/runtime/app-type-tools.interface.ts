@@ -17,6 +17,12 @@ export interface AppTypeToolRegistrationOptions {
     readonly createSafeOrdinaryParametersInvoker: (contract: OrdinaryParameterContract) => import('../../core/tool/invocation-terminal.js').SafeOrdinaryInvoker;
 }
 
+/** One stable SDK registration in a complete frame. */
+export interface AppFrameTool {
+    readonly definition: AppTypeToolDefinition;
+    readonly options: AppTypeToolRegistrationOptions;
+}
+
 /** App-level registration for the ordinary, type-scoped Tool execution path. */
 export interface IAppTypeToolPort {
     readonly protocol: typeof VIEW_TYPE_TOOL_PROTOCOL;

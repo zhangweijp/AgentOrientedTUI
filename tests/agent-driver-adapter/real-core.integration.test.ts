@@ -1,10 +1,11 @@
+import { projectCompleteViews } from '../../runtime/src/core/invocation/observation-registry.js';
 import { expect, it } from 'vitest';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { SemanticSnapshotReceiver } from '../../runtime/src/adapters/snapshot/receiver.js';
 import { createViewOwnedTools } from '../../runtime/src/core/tool/view-owned-tools.js';
 import { compileOrdinaryParams } from '../../runtime/src/core/tool/ordinary-parameter-contract.js';
 import type { AppDiscoveryInfo, IDesktop, IKernel } from '../../runtime/src/spi/runtime/kernel.interface.js';
-import type { ExecutionBinding, InvocationContext, InvocationSource, ScopePolicy } from '../../runtime/src/core/invocation/scoped-interaction-types.js';
+import type { ExecutionBinding, InvocationContext, InvocationSource, AppInteractionPolicy } from '@aotui/runtime/core';
 import type { ViewToolInvocationTerminal } from '../../runtime/src/core/tool/invocation-terminal.js';
 import type { AppTypeToolDefinition } from '../../runtime/src/spi/runtime/app-type-tools.interface.js';
 import type { SnapshotCore } from '../../runtime/src/core/snapshot/types.js';
@@ -105,10 +106,13 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
             unsubscribe: (listener: () => void) => subscriptions.delete(listener) },
     } as unknown as IDesktop;
     const kernel = {
-        createAppScope: (_desktopId: string, appId: string, policy: ScopePolicy) => {
+        getAppInteraction: (_desktopId: string, appId: string, instanceId: string, policy?: AppInteractionPolicy) => {
             const assembly = assemblies.find(item => item.app.appId === appId);
-            return assembly ? assembly.receiver.createInteractionScope(policy, assembly.execution)
-                : { status: 'rejected' as const, issue: { code: 'SCOPE_UNAVAILABLE', message: 'App not found.' } };
+            return assembly && assembly.app.appInstanceId === instanceId
+                ? { status: 'ready' as const, interaction: assembly.receiver.interaction(policy ?? {
+                    project: projectCompleteViews, authorize: () => true, canReadReceipt: () => true,
+                }, assembly.execution) }
+                : { status: 'rejected' as const, issue: { code: 'APP_INTERACTION_UNAVAILABLE', message: 'App not found.' } };
         },
     } as unknown as IKernel;
     const source = new SemanticAOTUIDrivenSource(desktop, kernel, { includeInstruction: false });
@@ -147,15 +151,15 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         expect(collidingB.invoked).toEqual([]);
         expect(healthy.invoked).toEqual(['usable']);
         expect(bad.invoked).toEqual([]);
-        expect(bad.receiver.getInteractionStats()).toMatchObject({ scopes: 0, combinedBytes: 0,
-            observations: { scopes: 0, observations: 0, reservations: 0, totalBytes: 0 } });
-        expect(collidingB.receiver.getInteractionStats()).toMatchObject({ scopes: 0, combinedBytes: 0,
-            observations: { scopes: 0, observations: 0, reservations: 0, totalBytes: 0 } });
+        expect(bad.receiver.getInteractionStats()).toMatchObject({ combinedBytes: 0,
+            observations: { observations: 0, reservations: 0, totalBytes: 0 } });
+        expect(collidingB.receiver.getInteractionStats()).toMatchObject({ combinedBytes: 0,
+            observations: { observations: 0, reservations: 0, totalBytes: 0 } });
 
         await first.release!();
         for (const assembly of assemblies) {
-            expect(assembly.receiver.getInteractionStats()).toMatchObject({ scopes: 0, combinedBytes: 0,
-                observations: { scopes: 0, observations: 0, reservations: 0, totalBytes: 0 } });
+            expect(assembly.receiver.getInteractionStats()).toMatchObject({ sourceBytes: 0, workBytes: 0,
+                observations: { observations: 0, reservations: 0, totalBytes: 0 } });
             expect(inspectCore(assembly.receiver).activeLeases).toBe(0);
         }
 
@@ -175,11 +179,10 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         await recovered.release!();
         source.dispose();
         for (const assembly of assemblies) {
-            await assembly.receiver.closeInteractions();
-            assembly.receiver.close();
+            await assembly.receiver.close();
             assembly.registry.dispose();
-            expect(assembly.receiver.getInteractionStats()).toMatchObject({ closed: true, scopes: 0, combinedBytes: 0,
-                observations: { scopes: 0, observations: 0, reservations: 0, totalBytes: 0 } });
+            expect(assembly.receiver.getInteractionStats()).toMatchObject({ closed: true, combinedBytes: 0,
+                observations: { observations: 0, reservations: 0, totalBytes: 0 } });
             expect(inspectCore(assembly.receiver)).toMatchObject({
                 state: 'disposed', appRecords: 0, activeLeases: 0, currentBytes: 0,
             });
@@ -189,8 +192,7 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         for (const context of contexts) await context.release?.();
         source.dispose();
         for (const assembly of assemblies) {
-            await assembly.receiver.closeInteractions();
-            assembly.receiver.close();
+            await assembly.receiver.close();
             assembly.registry.dispose();
         }
     }

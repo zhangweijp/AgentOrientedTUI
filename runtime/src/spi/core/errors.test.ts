@@ -108,7 +108,7 @@ describe('AOTUIError', () => {
     describe('app factory export contract', () => {
         it('describes the sole managed default-export contract', () => {
             const err = new AOTUIError('APP_INVALID_EXPORT', { modulePath: './app.js' });
-            expect(err.message).toBe("App module './app.js' must default-export a managed TUIAppFactory component factory");
+            expect(err.message).toBe("App module './app.js' must default-export an App factory created by createApp or createTUIApp");
         });
     });
 

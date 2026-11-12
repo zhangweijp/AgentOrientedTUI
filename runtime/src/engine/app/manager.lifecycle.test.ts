@@ -29,9 +29,9 @@ describe('AppManager owned lifecycle (controlled C1 Sandbox seam, no OS Workers)
         gate.resolve();await expect(installing).rejects.toHaveProperty('code','INSTALL_FAILED');await manager.cleanupAsync();
         expect(manager.getDynamicAppIds()).toEqual([]);expect(manager.getInstalledApps()).toEqual([]);expect(desktop.emitSignal).not.toHaveBeenCalled();
     });
-    it('registers Sandbox and metadata before await; duplicate active/pending/closing IDs cannot overwrite', async () => {
+    it('reserves identity before await and exposes only installed apps; duplicate active/pending/closing IDs cannot overwrite', async () => {
         const gate = barrier();controls.install = () => gate.promise;const { manager } = fixture();
-        const installing = manager.install('/app', { appId: 'app_0' });expect(manager.getDynamicAppIds()).toEqual(['app_0']);expect(manager.getInstalledApps()[0].status).toBe('pending');
+        const installing = manager.install('/app', { appId: 'app_0' });expect(manager.getDynamicAppIds()).toEqual(['app_0']);expect(manager.getInstalledApps()).toEqual([]);
         await expect(manager.install('/other', { appId: 'app_0' })).rejects.toMatchObject({ code: 'APP_ALREADY_EXISTS' });
         expect(() => manager.registerPendingApp({ appId: 'app_0', modulePath: '/x' })).toThrow('APP_ALREADY_EXISTS');
         const handle = manager.beginClose();expect(manager.beginClose()).toBe(handle);expect(controls.boxes[0].cleanCalls).toBe(1);

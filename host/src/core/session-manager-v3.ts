@@ -17,7 +17,7 @@
 
 import type { IKernel, IDesktop } from '@aotui/runtime';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
-import { AgentDriverV2 } from '@aotui/agent-driver-v2';
+import { AgentDriverV2, ModelInputError } from '@aotui/agent-driver-v2';
 import type { ModelMessage } from 'ai';
 import { EventEmitter } from 'events';
 import type { LLMConfigService } from './llm-config-service.js';
@@ -385,7 +385,7 @@ export class SessionManagerV3 extends EventEmitter {
                 skillDrivenSource,
                 mcpDrivenSource,    // Custom MCP Tools
             ],
-            llm: effectiveLLMConfig,
+            llm: this.llmConfigService.withModelInputBudget(effectiveLLMConfig),
             onAssistantMessage: (message) => {
                 this.handleMessage(topicId, 'assistant', message);
             },
@@ -1107,16 +1107,22 @@ export class SessionManagerV3 extends EventEmitter {
                 isAgentError: true,
                 errorCategory: category,
                 rawError: error.message,
+                ...(error instanceof ModelInputError ? { errorCode: error.code, errorDetails: error.details } : {}),
             },
         } as unknown as ModelMessage;
 
-        this.handleMessage(topicId, 'assistant', assistantErrorMessage);
+        if (error instanceof ModelInputError) {
+            this.emit('message', { topicId, type: 'assistant', message: assistantErrorMessage });
+        } else {
+            this.handleMessage(topicId, 'assistant', assistantErrorMessage);
+        }
     }
 
     private classifyAgentError(error: Error): {
-        category: 'provider' | 'network' | 'rate_limit' | 'unknown';
+        category: 'model_input' | 'provider' | 'network' | 'rate_limit' | 'unknown';
         userFacingMessage: string;
     } {
+        if (error instanceof ModelInputError) return { category: 'model_input', userFacingMessage: error.message };
         const raw = error.message || 'Unknown error';
         const normalized = raw.toLowerCase();
 

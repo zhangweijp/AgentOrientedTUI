@@ -89,9 +89,14 @@ export type SnapshotDraftEnvelope = Readonly<{
 
 export type SnapshotHealth = 'unready' | 'ready' | 'degraded' | 'stopped';
 
+export const SNAPSHOT_PREPARE_ISSUE_CODES = Object.freeze([
+    'SNAPSHOT_INVALID', 'SNAPSHOT_SERIALIZATION_ERROR', 'TOOL_BINDING_INVALID',
+    'TOOL_SCHEMA_INVALID', 'TOOL_SCHEMA_UNSUPPORTED', 'TOOL_SCHEMA_CAPACITY',
+] as const);
+type SnapshotPrepareIssueCode = typeof SNAPSHOT_PREPARE_ISSUE_CODES[number];
+
 export type SnapshotIssueCode =
-    | 'SNAPSHOT_INVALID'
-    | 'SNAPSHOT_SERIALIZATION_ERROR'
+    | SnapshotPrepareIssueCode
     | 'SNAPSHOT_CAPACITY'
     | 'SNAPSHOT_EXPIRED'
     | 'SNAPSHOT_UNREADY'
@@ -117,6 +122,8 @@ export interface SnapshotIssue {
     readonly instanceId?: string;
     readonly snapshotId?: string;
 }
+
+export type SnapshotPrepareIssue = Pick<SnapshotIssue, 'message' | 'path'> & { readonly code: SnapshotPrepareIssueCode };
 
 export type CommitResult =
     | Readonly<{ status: 'published' | 'unchanged'; snapshot: AppSnapshotV3 }>

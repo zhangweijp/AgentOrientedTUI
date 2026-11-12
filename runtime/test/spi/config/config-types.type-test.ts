@@ -1,7 +1,7 @@
 import type { RuntimeConfigInput } from '../../../src/spi/config/types.js';
 
 const supported: RuntimeConfigInput = {
-    worker: { timeoutMs: 60_000, pool: { maxSize: 12 } },
+    worker: { timeoutMs: 60_000, maxWorkers: 12 },
     logger: { maxSystemLogs: 200 },
 };
 void supported;

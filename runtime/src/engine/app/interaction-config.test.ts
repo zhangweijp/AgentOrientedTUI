@@ -44,12 +44,3 @@ it('C05 invalid values/descriptors never execute a getter or allocate metadata/A
     expect(getters).toBe(0);expect(manager.getInstalledApps()).toEqual([]);
     expect(manager.registerPendingApp({ modulePath: '/unused' })).toBe('app_0');await manager.cleanupAsync();
 });
-
-it('C05 missing config defaults to the qualified channel while explicit [] disables it', () => {
-    const defaults = new AppWorkerHost(hostConfig);
-    expect((defaults as any).interactionModes).toEqual(modes);
-    const none = new AppWorkerHost({ ...hostConfig, interactionModes: [] });
-    expect((none as any).interactionModes).toEqual([]);
-    expect(() => new AppWorkerHost({ ...hostConfig, interactionModes: ['ordinary-v1'] as any })).toThrow('Invalid interaction modes');
-    defaults.terminate();none.terminate();
-});

@@ -24,7 +24,7 @@ function createMockFactory(name: string): TUIAppFactory {
             description: `${name} App`,
             component: {},
         },
-        initializeComponent: vi.fn(async () => ({ render: vi.fn(), unmount: vi.fn() })),
+        initialize: vi.fn(async () => ({ close: vi.fn() })),
     };
 }
 
@@ -68,6 +68,17 @@ describe('AppRegistry', () => {
             // [Option D] Default config version is now 2
             expect(config.version).toBe(2);
             expect(config.apps).toEqual({});
+        });
+
+        it('rejects an invalid shared Worker script before changing discovery', async () => {
+            const registry = new AppRegistry({ configPath });
+            const directory = await writeApp('healthy');
+            await registry.registerTransient('local:' + directory);
+            await fs.writeFile(configPath, JSON.stringify({ version: 2, runtime: { workerScript: 42 },
+                apps: { healthy: { source: 'local:' + directory, enabled: true } } }));
+            await expect(registry.loadFromConfig()).rejects.toMatchObject({ code: 'CONFIG_INVALID',
+                context: { path: 'runtime.workerScript' } });
+            expect(registry.get('healthy')?.modulePath).toBe(path.join(directory, 'dist/index.mjs'));
         });
 
         it('should load existing config', async () => {
@@ -131,18 +142,37 @@ describe('AppRegistry', () => {
             expect(registry.get('duplicate')?.modulePath).toBe(path.join(first, 'dist/index.mjs'));
         });
 
+        it('reports duplicate and missing batch entries without discarding a loaded App', async () => {
+            const registry = new AppRegistry({ configPath }), appDir = await writeApp('canonical');
+            const healthy = { name: 'canonical', source: 'local:' + appDir, enabled: true };
+            const entries = [healthy, { ...healthy, source: 'local:' + path.join(tempDir, 'missing') }];
+            entries.length = 3;
+            const results = await registry.loadFromEntries(entries);
+            expect(Object.keys(results)).toEqual(['0', '1', '2']);
+            expect(results).toMatchObject([
+                { name: 'canonical', status: 'loaded' },
+                { name: 'canonical', status: 'failed', issue: { code: 'APP_ALREADY_REGISTERED', path: 'apps[1].name' } },
+                { name: 'apps[2]', status: 'failed', issue: { code: 'CONFIG_INVALID', path: 'apps[2].name' } },
+            ]);
+            expect(registry.get('canonical')?.modulePath).toBe(path.join(appDir, 'dist/index.mjs'));
+        });
+
         it('rejects registry identity and metadata overrides per App while loading healthy entries', async () => {
             const registry = new AppRegistry({ configPath }), appDir = await writeApp('canonical'), healthy = await writeApp('healthy');
-            const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-            await registry.loadFromEntries([
+            const missing = path.join(tempDir, 'missing');
+            expect(await registry.loadFromEntries([
                 { name: 'wrong', source: `local:${appDir}`, enabled: true },
                 { name: 'healthy', source: `local:${healthy}`, enabled: true },
+                { name: 'missing', source: `local:${missing}`, enabled: true },
+            ])).toMatchObject([
+                { name: 'wrong', status: 'failed', phase: 'discovery', issue: { code: 'APP_IDENTITY_MISMATCH' } },
+                { name: 'healthy', status: 'loaded' },
+                { name: 'missing', status: 'failed', phase: 'discovery', issue: { code: 'APP_MANIFEST_INVALID', path: missing } },
             ]);
             expect(registry.get('wrong')).toBeUndefined();expect(registry.get('healthy')).toBeDefined();
-            expect(errors.mock.calls[0]?.[1]).toMatchObject({ code: 'APP_IDENTITY_MISMATCH' });
-            await registry.loadFromEntries([{ name: 'canonical', source: `local:${appDir}`, enabled: true, description: 'second source' } as never]);
+            expect(await registry.loadFromEntries([{ name: 'canonical', source: `local:${appDir}`, enabled: true, description: 'second source' } as never]))
+                .toMatchObject([{ name: 'canonical', status: 'failed', issue: { code: 'CONFIG_INVALID' } }]);
             expect(registry.get('canonical')).toBeUndefined();
-            expect(errors.mock.calls.at(-1)?.[1]).toMatchObject({ code: 'CONFIG_INVALID' });
         });
 
         it('should delete managed npm install artifacts on remove', async () => {
@@ -254,8 +284,8 @@ describe('AppRegistry', () => {
             expect(isTUIAppFactory({ manifest: { app_name: 'test' }, create: () => ({}) })).toBe(false);
             expect(isTUIAppFactory(() => ({}))).toBe(false);
             expect(isTUIAppFactory({ displayName: 'test', kernelConfig: { appName: 'test' } })).toBe(false);
-            expect(isTUIAppFactory({ displayName: 'test', kernelConfig: {}, initializeComponent() {} })).toBe(false);
-            expect(isTUIAppFactory({ displayName: '', kernelConfig: { appName: 'test' }, initializeComponent() {} })).toBe(false);
+            expect(isTUIAppFactory({ displayName: 'test', kernelConfig: {}, initialize() {} })).toBe(false);
+            expect(isTUIAppFactory({ displayName: '', kernelConfig: { appName: 'test' }, initialize() {} })).toBe(false);
             const { persistenceSupport: _persistence, ...withoutPersistence } = factory;
             const { appLifecycleSupport: _lifecycle, ...withoutLifecycle } = factory;
             expect(isTUIAppFactory(withoutPersistence)).toBe(false);

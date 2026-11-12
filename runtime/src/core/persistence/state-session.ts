@@ -386,9 +386,13 @@ export function createStateSession(options: Readonly<{ instanceId: string; stora
     }
     function dispose(): Promise<StateDisposeReport> {
         if (disposePromise) return disposePromise;
-        const completion = deferred<StateDisposeReport>();disposePromise = completion.promise;phase = 'disposed';
-        for (const e of entries.values()) { e.active = false;if (e.initialization) cancelInitialization(e.initialization, 'DISPOSED'); }
-        for (const job of queue.splice(0)) finish(job, job.kind === 'read' ? failedRead('DISPOSED') : failedMutation('DISPOSED'), false);
+        const completion = deferred<StateDisposeReport>();
+        disposePromise = completion.promise;
+        if (phase !== 'disposed') {
+            phase = 'disposed';
+            for (const e of entries.values()) { e.active = false;if (e.initialization) cancelInitialization(e.initialization, 'DISPOSED'); }
+            for (const job of queue.splice(0)) finish(job, job.kind === 'read' ? failedRead('DISPOSED') : failedMutation('DISPOSED'), false);
+        }
         const oldFlush = flushPromise;
         Promise.resolve().then(async () => {
             if (oldFlush) await oldFlush;
@@ -409,7 +413,7 @@ export function createStateSession(options: Readonly<{ instanceId: string; stora
             if (release.status === 'released') {
                 for (const e of entries.values()) { drop(e.latest);e.latest = undefined;retainedBytes -= e.addressBytes; }
                 entries.clear();storage = undefined;now = undefined;
-            }
+            } else disposePromise = undefined;
             return Object.freeze({ status: 'disposed' as const, unsaved: Object.freeze(unsaved), release });
         }).then(completion.resolve);
         return completion.promise;

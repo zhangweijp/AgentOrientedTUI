@@ -28,7 +28,7 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
             const fixture = `
                 import { h } from 'preact';
                 import Type from 'typebox';
-                import { createTUIApp, defineViewTypeTool, AppTools, ToolRef, defineToolSet } from './sdk/src/index.ts';
+                import { createTUIApp, defineViewTypeTool, AppTools, defineToolSet } from './sdk/src/index.ts';
                 import { View } from './sdk/src/components/View.tsx';
 
 
@@ -44,20 +44,13 @@ Invalid: defineViewTypeTool({
                         inputSchema: Type.Object({target:Type.String()}, {additionalProperties:false}), })
 });
 function App() {
-                    const Fail = fixtureTools0.Fail;
-                    const OK = fixtureTools0.OK;
-                    const Invalid = fixtureTools0.Invalid;
                     return h(AppTools, { definition: fixtureTools0, bindings: {
 Fail: { execute: async () => ({ success:false, error:{
                         code:'BUSINESS_FAILED', message:'The requested file is locked',
                     }}) },
 OK: { execute: async () => ({success:true,data:{message:'completed'}}) },
 Invalid: { execute: async () => ({success:true,data:{unreachable:true}}) }
-} }, h(View,{kind: 'instruction',id:'root',type:'FileDetail'},h('section',{},[
-                        h(ToolRef,{ tool: Fail, ...({key:'fail'}) },'Fail'),
-                        h(ToolRef,{ tool: OK, ...({key:'ok'}) },'OK'),
-                        h(ToolRef,{ tool: Invalid, ...({key:'invalid'}) },'Invalid'),
-                    ])));
+} }, h(View,{kind: 'instruction',id:'root',type:'FileDetail'},'Tool receipts'));
                 }
                 export default createTUIApp({app_name:'test_result',component:App});
             `;

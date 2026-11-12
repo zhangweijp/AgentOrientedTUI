@@ -236,7 +236,7 @@ if (!isMainThread) {
         await fs.writeFile(gate, 'release');
         await app.wait(event => event.event === 'error', 'startup error retained');
         const closed = await app.wait(event => event.event === 'closed', 'failed startup cleanup');
-        assert.equal(closed.report.state, 'settled'); assert.equal(closed.report.pool.report.total, 0);
+        assert.equal(closed.report.state, 'settled'); assert.equal(closed.report.workers.report.total, 0);
         assert.equal((await app.done).code, 1);
         assert.equal(app.record.events.some(event => event.event === 'ready'), false);
     });

@@ -17,7 +17,8 @@
  * ```
  */
 import { useLayoutEffect, useRef } from 'preact/hooks';
-import { useRefRegistry } from './useViewContext.js';
+import { arrayRef, captureRefEntries, formatRef, type ArrayRefOptions } from '../app-factory/refs.js';
+import { useRefRegistry } from '../contexts/view-runtime-context.js';
 
 /**
  * ListRefFormatter - 列表标题格式化函数
@@ -41,18 +42,6 @@ export type ItemRefFormatter = (index: number, content: string) => string;
  */
 export type ArrayRefHandle = [ListRefFormatter, ItemRefFormatter];
 
-export interface UseArrayRefOptions {
-  /**
-   * 列表项类型名称 (如 "Message")
-   *
-   * 如果提供，生成的 Ref 展示链接包含类型信息，注册名仍为 View 内的局部 ID：
-   * - List: `(Type[]:id)`
-   * - Item: `(Type:id[index])`
-   * 同一业务种类也传入列表和元素的 Ref 注册记录。
-   */
-  itemType?: string;
-}
-
 /**
  * 创建一个指向数据数组的引用。
  *
@@ -63,92 +52,55 @@ export interface UseArrayRefOptions {
  */
 export function useArrayRef(
   refId: string,
-  data: object[],
-  options?: UseArrayRefOptions,
+  data: readonly unknown[],
+  options?: ArrayRefOptions,
 ): ArrayRefHandle {
-  const { registerRef } = useRefRegistry();
+  const { captureRef, registerRef } = useRefRegistry();
   const itemType = options?.itemType;
+  const desired = captureRefEntries(captureRef, arrayRef(refId, data, options));
   type Binding = ReturnType<typeof registerRef>;
-  type BoundValue = { binding: Binding; value: object };
-  const bindings = useRef<Map<string, BoundValue> | null>(null);
-  const entriesFor = (values: object[]) => [
-    { id: refId, value: values },
-    ...values.map((value, index) => ({
-      id: `${refId}[${index}]`,
-      value,
-    })),
-  ];
+  const owner = useRef<{ bindings: Map<string, Binding>; refId: string; itemType: string | undefined; registerRef: typeof registerRef }>();
+  const release = () => {
+    for (const binding of owner.current?.bindings.values() ?? []) binding.release();
+    owner.current = undefined;
+  };
+  useLayoutEffect(() => release, []);
 
-  // A publisher keeps its handles while updating values; cleanup only releases
-  // the handles it acquired.
   useLayoutEffect(() => {
-    const current = new Map<string, BoundValue>();
+    let current = owner.current;
+    if (!current || current.refId !== refId || current.itemType !== itemType || current.registerRef !== registerRef) {
+      release();
+      current = { bindings: new Map(), refId, itemType, registerRef };
+      owner.current = current;
+    }
+    const bindings = current.bindings;
+    const added: string[] = [];
     try {
-      for (const { id, value } of entriesFor(data)) {
-        const binding = registerRef(id, value, itemType);
-        current.set(id, { binding, value });
+      for (const [id, value] of desired) {
+        const binding = bindings.get(id);
+        if (binding) binding.update(value);
+        else {
+          bindings.set(id, registerRef(id, value, itemType));
+          added.push(id);
+        }
       }
     } catch (error) {
-      for (const { binding } of [...current.values()].reverse()) binding.release();
+      for (const id of added.reverse()) {
+        bindings.get(id)!.release();
+        bindings.delete(id);
+      }
       throw error;
     }
-    bindings.current = current;
-    return () => {
-      for (const { binding } of [...current.values()].reverse()) binding.release();
-      if (bindings.current === current) bindings.current = null;
-    };
-  }, [refId, itemType, registerRef]);
-
-  useLayoutEffect(() => {
-    const current = bindings.current;
-    if (!current) return;
-    const desired = entriesFor(data);
-    const added: Array<{ id: string; binding: Binding }> = [];
-    try {
-      for (const { id, value } of desired) {
-        if (current.has(id)) continue;
-        const binding = registerRef(id, value, itemType);
-        added.push({ id, binding });
-        current.set(id, { binding, value });
-      }
-    } catch (error) {
-      for (const { id, binding } of added.reverse()) {
+    for (const [id, binding] of bindings) {
+      if (!desired.has(id)) {
         binding.release();
-        current.delete(id);
-      }
-      throw error;
-    }
-
-    const desiredIds = new Set(desired.map(entry => entry.id));
-    for (const { id, value } of desired) {
-      const existing = current.get(id)!;
-      if (existing.value !== value) {
-        existing.binding.update(value);
-        existing.value = value;
+        bindings.delete(id);
       }
     }
-    for (const [id, existing] of current) {
-      if (!desiredIds.has(id)) {
-        existing.binding.release();
-        current.delete(id);
-      }
-    }
-  }, [data]);
+  });
 
-  // 列表标题格式化函数
-  const listRef: ListRefFormatter = (content: string): string => {
-    const prefix = itemType ? `${itemType}[]:` : "";
-    return `[${content}](${prefix}${refId})`;
-  };
-
-  // 列表项格式化函数
-  const itemRef: ItemRefFormatter = (
-    index: number,
-    content: string,
-  ): string => {
-    const prefix = itemType ? `${itemType}:` : "";
-    return `[${content}](${prefix}${refId}[${index}])`;
-  };
-
-  return [listRef, itemRef];
+  return [
+    content => formatRef(content, refId, itemType === undefined ? undefined : `${itemType}[]`),
+    (index, content) => formatRef(content, `${refId}[${index}]`, itemType),
+  ];
 }

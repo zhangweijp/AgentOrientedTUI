@@ -8,7 +8,7 @@ import { createTUIApp } from './app-factory/createTUIApp.js';
 import { View } from './components/View.js';
 import { useDataRef } from './hooks/useRef.js';
 import { useArrayRef } from './hooks/useArrayRef.js';
-import { AppTools, ToolRef } from './components/AppTools.js';
+import { AppTools } from './components/AppTools.js';
 import { defineViewTypeTool, defineToolSet, refParam } from './tools/view-type-tool.js';
 
 type Tool = ReturnType<AppKernel['getToolDefinitions']>[number];
@@ -21,28 +21,25 @@ function createEnvironment(component: () => unknown, options: {
     readonly wrapContext?: (context: any) => any;
 } = {}) {
     const factory = createTUIApp({ app_name: options.appName ?? 'type_tool_integration', component });
-    const initialize = factory.initializeComponent;
+    const initialize = factory.initialize;
     if (options.wrapContext) {
-        factory.initializeComponent = async (container, context) =>
-            initialize(container, options.wrapContext!(context));
+        factory.initialize = async context =>
+            initialize(options.wrapContext!(context));
     }
-    const kernel = new AppKernel({ ...factory.kernelConfig, component: factory } as any);
+    const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
     kernel.setId('type_tool_integration' as any);
     kernel.setAppExecutionInstanceId(options.instanceId ?? 'type_tool_integration_run_1');
-    const container = document.createElement('div');
-    document.body.appendChild(container);
     const environment = {
         kernel,
-        container,
+        get container() { return document.getElementById('app-root-type_tool_integration')!; },
         async open() {
             await act(async () => kernel.onOpen({
                 appId: 'type_tool_integration' as any,
                 desktopId: 'integration_desktop' as any,
-            }, container));
+            }));
         },
         async close() {
             await act(async () => kernel.onClose());
-            container.remove();
         },
         tools() { return kernel.getToolDefinitions(); },
         typeTool(name: string) {
@@ -92,14 +89,14 @@ function editDefinition(description = 'Edit an opened file.') {
 }
 
 describe('ViewTypeTool through real Preact and AppKernel', () => {
-    it('registers once for a ViewType, emits a V3 type activation without instance targets, and renders one affordance per View', async () => {
+    it('registers once for a ViewType, emits a V3 type activation without instance targets, across two mounted Views', async () => {
         const execute = vi.fn(async (args: Readonly<{ filePath: string }>) => ({ success: true, data: { path: args.filePath } }));
         const boundTools = defineToolSet({ tool: editDefinition() });
 
         function App() {
             return h(AppTools, { definition: boundTools, bindings: { tool: { execute: execute } } }, h('main', {}, [
-                h(View, {kind: 'state', id: 'file_a', type: 'FileDetail', key: 'a' }, h(ToolRef, { tool: boundTools.tool }, 'Edit A')),
-                h(View, {kind: 'state', id: 'file_b', type: 'FileDetail', key: 'b' }, h(ToolRef, { tool: boundTools.tool }, 'Edit B')),
+                h(View, {kind: 'state', id: 'file_a', type: 'FileDetail', key: 'a' }),
+                h(View, {kind: 'state', id: 'file_b', type: 'FileDetail', key: 'b' }),
             ]));
         }
         const environment = createEnvironment(App);
@@ -112,7 +109,7 @@ describe('ViewTypeTool through real Preact and AppKernel', () => {
         expect(tool.execution).not.toHaveProperty('targets');
         expect(tool).not.toHaveProperty('handler');
         expect(environment.kernel.getViewOwnedViewInstances().map(view => view.viewId)).toEqual(['file_a', 'file_b']);
-        expect(environment.container.querySelectorAll('tool-ref')).toHaveLength(2);
+        expect(environment.container.querySelectorAll('[data-view-id]')).toHaveLength(2);
         expect(await environment.invokeType(tool, { filePath: '/workspace/a.txt' })).toMatchObject({
             phase: 'entered-returned', result: { success: true, data: { path: '/workspace/a.txt' } },
         });
@@ -129,7 +126,7 @@ describe('ViewTypeTool through real Preact and AppKernel', () => {
 
         function ToolOwner({ fail }: { fail: boolean }) {
             if (fail) throw new Error('candidate render failed');
-            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: fail ? candidate : committed } } }, h(ToolRef, { tool: boundTools.tool }, 'Edit'));
+            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: fail ? candidate : committed } } });
         }
         function App() {
             const [fail, setFail] = useState(false);
@@ -164,7 +161,7 @@ describe('ViewTypeTool through real Preact and AppKernel', () => {
 
         function App() {
             const [isPartial, update] = useState(false); setPartial = update;
-            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => isPartial ? partial : unknown } } }, h(View, {kind: 'state', id: 'file', type: 'FileDetail' }, h(ToolRef, { tool: boundTools.tool }, 'Edit')));
+            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => isPartial ? partial : unknown } } }, h(View, {kind: 'state', id: 'file', type: 'FileDetail' }));
         }
         const environment = createEnvironment(App);
         await environment.open();
@@ -196,7 +193,7 @@ describe('ViewTypeTool through real Preact and AppKernel', () => {
             }) });
 
         function App() {
-            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: execute } } }, h(View, {kind: 'state', id: 'file', type: 'FileDetail' }, h(ToolRef, { tool: boundTools.tool }, 'Inspect')));
+            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: execute } } }, h(View, {kind: 'state', id: 'file', type: 'FileDetail' }));
         }
         const environment = createEnvironment(App);
         await environment.open();
@@ -215,7 +212,7 @@ describe('ViewTypeTool through real Preact and AppKernel', () => {
             }) });
 
         function App() {
-            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: execute } } }, h(View, {kind: 'state', id: 'status', type: 'Status' }, h(ToolRef, { tool: boundTools.tool }, 'Read status')));
+            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: execute } } }, h(View, {kind: 'state', id: 'status', type: 'Status' }));
         }
         const environment = createEnvironment(App);
         await environment.open();
@@ -239,7 +236,7 @@ describe('ViewTypeTool through real Preact and AppKernel', () => {
             const [state, setState] = useState({ changed: false, enabled: true }); update = setState;
             const definition = contracts[state.changed ? 1 : 0]!;
             return h(AppTools, { key: String(state.changed), definition, bindings: { tool: { execute, enabled: state.enabled } } },
-                h(View, {kind: 'state', id: 'file', type: 'FileDetail' }, h(ToolRef, { tool: definition.tool }, 'Edit')));
+                h(View, {kind: 'state', id: 'file', type: 'FileDetail' }));
         }
         function Checked() { return h(ErrorBoundary, {}, h(App, {})); }
         const environment = createEnvironment(Checked);
@@ -264,7 +261,7 @@ describe('ViewTypeTool through real Preact and AppKernel', () => {
         const boundTools = defineToolSet({ tool: editDefinition() });
 
         function App() {
-            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => ({ success: true }) } } }, h(View, {kind: 'state', id: 'file', type: 'FileDetail' }, h(ToolRef, { tool: boundTools.tool }, 'Edit')));
+            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => ({ success: true }) } } }, h(View, {kind: 'state', id: 'file', type: 'FileDetail' }));
         }
         const first = createEnvironment(App, { instanceId: 'runtime_app_instance_1' });
         await first.open();
@@ -291,7 +288,7 @@ describe('ViewTypeTool through real Preact and AppKernel', () => {
             const [description, setDescription] = useState('First declaration'); update = setDescription;
             const definition = declarations[description === 'First declaration' ? 0 : 1]!;
             return h(AppTools, { key: description, definition, bindings: { tool: { execute: async () => ({ success: true }) } } },
-                h(View, {kind: 'state', id: 'file', type: 'FileDetail' }, h(ToolRef, { tool: definition.tool }, 'Edit')));
+                h(View, {kind: 'state', id: 'file', type: 'FileDetail' }));
         }
         function Checked() { return h(ErrorBoundary, {}, h(App, {})); }
         const environment = createEnvironment(Checked, {
@@ -341,7 +338,7 @@ describe('ViewTypeTool through real Preact and AppKernel', () => {
         function App() {
             const [state, setState] = useState<State>({ open: [true, true, true, true], enabled: true }); update = setState;
             return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => ({ success: true }), ...({ enabled: state.enabled }) } } }, h('main', {}, state.open.flatMap((open, index) => open ? [
-                h(View, {kind: 'state', id: `file_${index}`, type: 'FileDetail', key: `file_${index}` }, h(ToolRef, { tool: boundTools.tool }, 'Edit')),
+                h(View, {kind: 'state', id: `file_${index}`, type: 'FileDetail', key: `file_${index}` }),
             ] : [])));
         }
         const environment = createEnvironment(App);
@@ -390,7 +387,7 @@ describe('Ref parameters with real Preact and AppKernel', () => {
         const calls: string[] = [], tools = recordTools();
         function Detail({ id }: { id: string }) {
             const record = useDataRef('record', { owner: id }, { refType: 'Record' });
-            return h('section', {}, [record('Record'), h(ToolRef, { tool: tools.inspect }, `Inspect ${id}`)]);
+            return h('section', {}, [record('Record')]);
         }
         function App() { return h(AppTools, { definition: tools, bindings: { inspect: { execute: args => {
             calls.push(args.record.owner); return { success: true }; } } } },
@@ -399,7 +396,7 @@ describe('Ref parameters with real Preact and AppKernel', () => {
         const tool = environment.typeTool('inspect'); expect(environment.tools()).toHaveLength(1);
         expect(tool.execution).not.toHaveProperty('targets');
         expect(tool.inputSchema).toMatchObject({ properties: { record: { type: 'string', 'x-aotui-ref-kind': 'Record' } } });
-        expect(environment.container.querySelectorAll('tool-ref')).toHaveLength(2);
+        expect(environment.container.querySelectorAll('[data-view-id]')).toHaveLength(2);
         for (const owner of ['rec_a', 'rec_b']) expect(await environment.invokeType(tool, { record: { owner } }))
             .toMatchObject({ phase: 'entered-returned', result: { success: true } });
         expect(calls).toEqual(['rec_a', 'rec_b']);
@@ -408,7 +405,7 @@ describe('Ref parameters with real Preact and AppKernel', () => {
         const tools = recordTools(); let setOpen!: (open: boolean) => void;
         function App() { const [open, update] = useState(true); setOpen = update;
             return h(AppTools, { definition: tools, bindings: { inspect: { execute: () => ({ success: true }) } } },
-                open ? h(View, {kind: 'state', id: 'record', type: 'Record' }, h(ToolRef, { tool: tools.inspect }, 'Inspect')) : null); }
+                open ? h(View, {kind: 'state', id: 'record', type: 'Record' }) : null); }
         const environment = createEnvironment(App); await environment.open(); const old = environment.typeTool('inspect');
         const oldView = environment.kernel.getViewOwnedViewInstances()[0]!.viewInstanceId;
         await act(async () => setOpen(false)); expect(environment.tools()).toEqual([]);
@@ -423,7 +420,7 @@ describe('Ref parameters with real Preact and AppKernel', () => {
             return h(AppTools, { definition: tools, bindings: { inspect: { execute: fail ? candidate : committed } } }, h(Detail, { fail }));
         }
         function Detail({ fail }: { fail: boolean }) { if (fail) throw Error('failed Ref render');
-            return h(View, {kind: 'state', id: 'record', type: 'Record' }, h(ToolRef, { tool: tools.inspect }, 'Inspect')); }
+            return h(View, {kind: 'state', id: 'record', type: 'Record' }); }
         function App() { const [fail, setFail] = useState(false); update = setFail;
             return h(ErrorBoundary, {}, h(Owner, { fail })); }
         const environment = createEnvironment(App); await environment.open(); const old = environment.typeTool('inspect');
@@ -439,7 +436,7 @@ describe('Ref parameters with real Preact and AppKernel', () => {
             const tools = definitions[state.maxLength as 1 | 2];
             return h(AppTools, { key: state.maxLength, definition: tools, bindings: { inspect: { execute: () => {
                 calls.push(state.revision); return { success: true }; } } } },
-                h(View, {kind: 'state', id: 'record', type: 'Record' }, h(ToolRef, { tool: tools.inspect }, 'Inspect'))); }
+                h(View, {kind: 'state', id: 'record', type: 'Record' })); }
         const environment = createEnvironment(App); await environment.open(); const old = environment.typeTool('inspect');
         await act(async () => update({ revision: 2, maxLength: 2 }));
         expect(environment.typeTool('inspect').execution).toEqual(old.execution);
@@ -454,7 +451,7 @@ describe('Ref parameters with real Preact and AppKernel', () => {
         const tools = recordTools(); let update!: (enabled: boolean) => void;
         function App() { const [enabled, setEnabled] = useState(false); update = setEnabled;
             return h(AppTools, { definition: tools, bindings: { inspect: { enabled, execute: () => ({ success: true }) } } },
-                h(View, {kind: 'state', id: 'record', type: 'Record' }, h(ToolRef, { tool: tools.inspect }, 'Inspect'))); }
+                h(View, {kind: 'state', id: 'record', type: 'Record' })); }
         const environment = createEnvironment(App); await environment.open(); expect(environment.tools()).toEqual([]);
         await act(async () => update(true)); const old = environment.typeTool('inspect');
         await act(async () => update(false)); expect(environment.tools()).toEqual([]);
@@ -484,7 +481,7 @@ describe('Ref parameters with real Preact and AppKernel', () => {
             const leftRef = useDataRef('left', left, { refType: 'Record' });
             const rightRef = useDataRef('right', right, { refType: 'Record' });
             const [listRef] = useArrayRef('records', records, { itemType: 'Record' });
-            return h('section', {}, [leftRef('Left'), rightRef('Right'), listRef('Records'), h(ToolRef, { tool: tools.inspect }, 'Inspect')]);
+            return h('section', {}, [leftRef('Left'), rightRef('Right'), listRef('Records')]);
         }
         const environment = createEnvironment(() => h(AppTools, { definition: tools, bindings: { inspect: { execute } } },
             h(View, {kind: 'state', id: 'record', type: 'Record' }, h(Detail, {}))));
@@ -510,7 +507,7 @@ describe('Ref parameters with real Preact and AppKernel', () => {
         const execute = vi.fn((args: Readonly<{ label: string; record?: Readonly<{ owner: string }>;
             records?: readonly Readonly<{ owner: string }>[] }>) => ({ success: true }));
         const environment = createEnvironment(() => h(AppTools, { definition: tools, bindings: { inspect: { execute } } },
-            h(View, {kind: 'state', id: 'record', type: 'Record' }, h(ToolRef, { tool: tools.inspect }, 'Inspect'))));
+            h(View, {kind: 'state', id: 'record', type: 'Record' })));
         await environment.open(); const tool = environment.typeTool('inspect');
         expect(environment.tools()).toHaveLength(1);
         expect((await environment.invokeType(tool, { label: 'absent' })).phase).toBe('entered-returned');
@@ -534,7 +531,7 @@ describe('Ref parameters with real Preact and AppKernel', () => {
             inputSchema: Type.Object({ left: ref, right: ref, label: Type.String() }, { additionalProperties: false }) }) });
         const execute = vi.fn(() => ({ success: true }));
         const environment = createEnvironment(() => h(AppTools, { definition: tools, bindings: { inspect: { execute } } },
-            h(View, {kind: 'state', id: 'record', type: 'Record' }, h(ToolRef, { tool: tools.inspect }, 'Inspect'))));
+            h(View, {kind: 'state', id: 'record', type: 'Record' })));
         await environment.open(); const tool = environment.typeTool('inspect');
         for (const input of [{ label: 'missing', left: { owner: 'A' } },
             { label: 'wrong shape', left: 'Record:left', right: { owner: 'B' } },
@@ -550,7 +547,7 @@ describe('Ref parameters with real Preact and AppKernel', () => {
             inputSchema: Type.Object({ records: Type.Array(refParam('Record', Type.Object({ owner: Type.String() }))) }) }) });
         const execute = vi.fn(() => ({ success: true }));
         const environment = createEnvironment(() => h(AppTools, { definition: tools, bindings: { inspect: { execute } } },
-            h(View, { id: 'record', type: 'Record', kind: 'state' }, h(ToolRef, { tool: tools.inspect }))));
+            h(View, { id: 'record', type: 'Record', kind: 'state' })));
         await environment.open(); const tool = environment.typeTool('inspect');
         expect((await environment.invokeType(tool, { records: [{ owner: 'A' }, { owner: 'B' }] })).phase).toBe('entered-returned');
         expect(execute).toHaveBeenCalledWith({ records: [{ owner: 'A' }, { owner: 'B' }] });

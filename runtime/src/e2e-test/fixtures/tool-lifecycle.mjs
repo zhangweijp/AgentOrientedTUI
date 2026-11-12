@@ -3,7 +3,7 @@ import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import { parentPort } from 'node:worker_threads';
 import { open } from 'node:fs/promises';
 import Type from 'typebox';
-import { createTUIApp, View, AppTools, ToolRef, defineToolSet, defineViewTypeTool,
+import { createTUIApp, View, AppTools, defineToolSet, defineViewTypeTool,
     useAppLifecycle, useAppRuntimeContext, usePersistentState } from '@aotui/sdk';
 
 const incrementInput = Type.Object({
@@ -13,11 +13,11 @@ const incrementInput = Type.Object({
     failure: Type.Optional(Type.String({ enum: ['none', 'partial', 'undeclared', 'throw'] })),
 }, { additionalProperties: false });
 
-function Counter({ owner, id, generation, Increment, enabled }) {
+function Counter({ owner, id, generation, enabled }) {
     const value = id === 'counter' ? owner.value : owner.secondaryValue;
     return h('section', {}, [
         h('p', {}, `Counter business ID: ${id}. Current value: ${value}. Render generation: ${generation}.`),
-        enabled ? h(ToolRef, { tool: Increment }, 'Increment this counter') : h('p', {}, 'Counter actions are disabled.'),
+        enabled ? null : h('p', {}, 'Counter actions are disabled.'),
     ]);
 }
 
@@ -39,7 +39,6 @@ function Root() {
 const fixtureTools0 = useMemo(() => createFixtureTools(view.binding), [view.binding]);
     const [, refresh] = useState(0);
 
-    const Increment = fixtureTools0.Increment;
     useAppLifecycle({ stop() { owner.live = false; parentPort.postMessage({ type: 'TEST_STOPPED', value: owner.value }); },
         async close() {
             parentPort.postMessage({ type: 'TEST_CLEANUP_ENTERED' });
@@ -86,15 +85,15 @@ Increment: { execute: async args => {
         }, enabled: view.enabled }
 } }, h('main', {}, [
         h(View, {kind: 'state', id: 'counter', type: 'Counter', key: view.generation },
-            h(Counter, { owner, id: 'counter', generation: view.generation, Increment, enabled: view.enabled })),
+            h(Counter, { owner, id: 'counter', generation: view.generation, enabled: view.enabled })),
         h(View, {kind: 'state', id: 'counter2', type: 'Counter' },
-            h(Counter, { owner, id: 'counter2', generation: 1, Increment, enabled: view.enabled })),
+            h(Counter, { owner, id: 'counter2', generation: 1, enabled: view.enabled })),
     ]));
 }
 const factory = createTUIApp({ app_name: 'tool_lifecycle', component: Root });
-const initialize = factory.initializeComponent;
-factory.initializeComponent = async (...args) => {
-    if (args[1].launchConfig.holdInitialization) {
+const initialize = factory.initialize;
+factory.initialize = async (...args) => {
+    if (args[0].launchConfig.holdInitialization) {
         parentPort.postMessage({ type: 'TEST_INITIALIZING' });
         await new Promise(resolve => {
             const listener = message => {

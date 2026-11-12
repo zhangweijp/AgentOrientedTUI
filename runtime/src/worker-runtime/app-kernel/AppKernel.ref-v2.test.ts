@@ -1,15 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { parseHTML } from 'linkedom';
 import { AppKernel } from './AppKernel.js';
 import { ordinaryParameterProfile } from '../../core/tool/ordinary-parameter-profile.js';
 async function setup() {
     let context: any;
-    const kernel = new AppKernel({ appName: 'ref', name: 'Ref', component: {
-        initializeComponent: async (_el, value) => { context = value; return { unmount() {} }; },
+    const kernel = new AppKernel({ appName: 'ref', name: 'Ref', factory: {
+        initialize: async (value) => { context = value; return { close() {} }; },
     } });
     kernel.setId('app' as any); kernel.setAppExecutionInstanceId('run');
-    const { document } = parseHTML('<html><body></body></html>');
-    await kernel.onOpen({ appId: 'app' as any, desktopId: 'd' as any }, document.createElement('div') as unknown as HTMLElement);
+    await kernel.onOpen({ appId: 'app' as any, desktopId: 'd' as any });
     context.viewTools.mount('aa', 'File'); return { kernel, context, port: context.appTypeTools };
 }
 const declaration = () => ({ viewType: 'File', name: 'read', description: 'Read', 

@@ -39,8 +39,8 @@ describe('Kernel close reporting', () => {
         const kernel = createRuntime();const id = await kernel.createDesktop('empty');const handle = kernel.beginShutdown();
         expect(kernel.beginShutdown('ignored')).toBe(handle);const first = kernel.shutdown();expect(kernel.shutdown()).toBe(first);
         await expect(kernel.createDesktop()).rejects.toMatchObject({ code: 'RUNTIME_SHUTDOWN' });
-        expect(kernel.createAppScope(id, 'app', {} as any)).toMatchObject({ status: 'rejected', issue: { code: 'SCOPE_UNAVAILABLE' } });
-        const report = await handle.completion;await first;expect(report).toMatchObject({ ok: true, resourcesReleased: true, pool: { ownership: 'owned', report: { state: 'closed', total: 0 } } });
+        expect(kernel.getAppInteraction(id, 'app', 'instance')).toMatchObject({ status: 'rejected', issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });
+        const report = await handle.completion;await first;expect(report).toMatchObject({ ok: true, resourcesReleased: true, workers: { ownership: 'owned', report: { state: 'closed', total: 0 } } });
         expect(Object.isFrozen(report.failures)).toBe(true);expect(kernel.beginShutdown()).toBe(handle);
     });
     it('enforces 128 accepted business calls before invoking dependencies and restores a slot', async () => {
@@ -91,6 +91,6 @@ describe('Kernel close reporting', () => {
         expect(report.failures).toContainEqual(expect.objectContaining({ stage: 'manager', codes: ['MANAGER_CLEANUP_FAILED'] }));
         expect(JSON.stringify(report)).not.toContain('private manager failure');
         vi.mocked(manager.beginShutdown).mockRestore();
-        expect(await actualBeginShutdown().completion).toMatchObject({ pool: { ownership: 'owned', report: { state: 'closed', total: 0 } } });
+        expect(await actualBeginShutdown().completion).toMatchObject({ workers: { ownership: 'owned', report: { state: 'closed', total: 0 } } });
     });
 });

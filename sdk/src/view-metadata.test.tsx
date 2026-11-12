@@ -23,14 +23,13 @@ describe('explicit View author metadata', () => {
                 h('p', { 'data-role': 'application-instruction' }, 'File data')),
         ]);
         const factory = createTUIApp({ app_name: 'metadata', component });
-        const kernel = new AppKernel({ ...factory.kernelConfig, component: factory } as any);
+        const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
         kernel.setId('metadata' as any);
         kernel.setAppExecutionInstanceId('metadata-run');
-        const container = document.createElement('div');
-        document.body.appendChild(container);
         try {
             await act(async () => kernel.onOpen({ appId: 'metadata' as any, desktopId: 'desktop' as any,
-                 }, container));
+                 }));
+            const container = document.getElementById('app-root-metadata')!;
             expect(extractViewFragments(container).map(({ viewId, viewType, kind }) => ({ viewId, viewType, kind })))
                 .toEqual([
                     { viewId: 'guide', viewType: 'Guide', kind: 'instruction' },
@@ -42,7 +41,6 @@ describe('explicit View author metadata', () => {
             expect(container.querySelector('[view]')).toBeNull();
         } finally {
             await act(async () => kernel.onClose());
-            container.remove();
         }
         expect(kernel.getViewOwnedViewInstances()).toEqual([]);
     });

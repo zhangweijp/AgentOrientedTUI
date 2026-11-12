@@ -1,4 +1,4 @@
-import type { ExecutionResolver, ScopePolicy } from '../core/invocation/scoped-interaction-types.js';
+import type { ExecutionResolver, AppInteractionPolicy } from '../core/invocation/app-interaction-types.js';
 import type { ObservationGrant } from '../core/invocation/observation-types.js';
 import { DEFAULT_OBSERVATION_REGISTRY_LIMITS } from '../core/invocation/observation-registry.js';
 import { captureBoundedJson } from '../core/invocation/invocation-outcome.js';
@@ -31,7 +31,7 @@ function executableBinding(value: unknown, tool: ToolDescriptorV3, grant: Observ
 }
 
 /** Host capability is an upper bound on a trusted policy's observable targets. */
-export function withExecutableTools(policy: ScopePolicy, execution: ExecutionResolver): ScopePolicy {
+export function withExecutableTools(policy: AppInteractionPolicy, execution: ExecutionResolver): AppInteractionPolicy {
     // Do not turn an invalid policy into a valid wrapper. Core remains the
     // authority for policy validation and its diagnostic contract.
     if (!fields(policy, ['project', 'authorize', 'canReadReceipt'])) return policy;

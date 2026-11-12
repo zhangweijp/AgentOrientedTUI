@@ -24,6 +24,10 @@
       "types": "./dist/core/index.d.ts",
       "import": "./dist/core/index.js"
     },
+    "./adapters/dom": {
+      "types": "./dist/adapters/dom-app.d.ts",
+      "import": "./dist/adapters/dom-app.js"
+    },
     "./adapters/memory-state-storage": {
       "types": "./dist/adapters/storage/memory-state-storage.d.ts",
       "import": "./dist/adapters/storage/memory-state-storage.js"

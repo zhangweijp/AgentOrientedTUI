@@ -21,14 +21,14 @@ describe('[RFC-027] Component Mode', () => {
         expect(app).toBeDefined();
         expect(app.displayName).toBe('test_app');
         // component字段被转换为factory对象
-        expect(app.kernelConfig.component).toBeDefined();
-        expect(app.kernelConfig.component.displayName).toBe('test_app');
+        expect(typeof app.initialize).toBe('function');
+        expect(app.kernelConfig).not.toHaveProperty('component');
         expect(app.kernelConfig.name).toBe('test_app');
     });
 
 
 
-    it('kernelConfig should support component field (root removed)', () => {
+    it('keeps the component out of neutral kernel metadata', () => {
         function TestApp() {
             return h(View, { kind: 'state', id: 'test_view', type: 'TestView', name: 'TestView' }, 'Hello');
         }
@@ -39,8 +39,8 @@ describe('[RFC-027] Component Mode', () => {
         } as any);
 
         // component字段应该存在(已转换为factory)
-        expect(app.kernelConfig.component).toBeDefined();
+        expect(typeof app.initialize).toBe('function');
         // root字段不应该存在(已废弃)
-        expect(app.kernelConfig.root).toBeUndefined();
+        expect(app.kernelConfig).not.toHaveProperty('root');
     });
 });

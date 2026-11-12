@@ -7,7 +7,7 @@ import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 
 it('selects same-name lists and elements by View through SDK, Worker and Source, preserving typed display and observation lifetime', async () => {
     const data = await mkdtemp(join(tmpdir(), 'aotui-view-refs-'));
-    const runtime = createRuntime({ worker: { timeoutMs: 5000, pool: { initialSize: 0, maxSize: 1 } } });
+    const runtime = createRuntime({ worker: { timeoutMs: 5000, maxWorkers: 1 } });
     let source: SemanticAOTUIDrivenSource | undefined;
     const contexts: Awaited<ReturnType<SemanticAOTUIDrivenSource['getContext']>>[] = [];
     let sequence = 0;
@@ -57,7 +57,7 @@ it('selects same-name lists and elements by View through SDK, Worker and Source,
         await source?.dispose();
         const closed = await runtime.beginShutdown().completion;
         expect(closed).toMatchObject({ ok: true, resourcesReleased: true,
-            interactions: { retainedScopes: 0, retainedBytes: 0 } });
+            interactions: { retainedOperations: 0, retainedBytes: 0 } });
         await rm(data, { recursive: true, force: true });
     }
 }, 15000);

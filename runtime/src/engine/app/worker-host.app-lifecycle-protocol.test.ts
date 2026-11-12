@@ -17,7 +17,7 @@ function fixture(fault?: (request: any, response: any) => any) {
             const report = { protocol: 'app-lifecycle-v2', instanceId: host.appInstanceId,
                 state: request.type === 'APP_CLOSE' ? 'completed' : 'stopped', issues: [] };
             const response = { requestId: request.requestId, success: true,
-                type: request.type === 'INIT' ? 'INIT_RESPONSE' : request.type === 'RESET' ? 'RESET_RESPONSE' : 'LIFECYCLE_RESPONSE',
+                type: request.type === 'INIT' ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
                 ...(request.type === 'INIT' ? {
                     appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: host.appInstanceId },
                     persistence: { protocol: 'state-session-v1', version: 1, instanceId: host.appInstanceId },
@@ -49,8 +49,7 @@ it('accepts the callback result without owner counts or resource-proof fields', 
     const x = fixture(); await x.host.start(); await x.host.open(); await x.host.close();
     expect(x.host.getResourceReport().appCleanup?.report).toEqual({ protocol: 'app-lifecycle-v2', instanceId: x.host.appInstanceId,
         state: 'completed', issues: [] });
-    expect(await x.host.releaseWorker()).toBe(x.worker);
-    expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true); await x.worker.terminate();
+    expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true);
 });
 
 it.each(['wrong-type', 'wrong-instance', 'wrong-protocol', 'wrong-version', 'missing-lifecycle-ack', 'missing-persistence-ack'])('rejects %s INIT and never transfers it as legacy', async fault => {
@@ -62,7 +61,7 @@ it.each(['wrong-type', 'wrong-instance', 'wrong-protocol', 'wrong-version', 'mis
             : fault === 'wrong-protocol' ? { protocol: 'app-lifecycle-v3' } : { version: 1 }) } });
     await expect(x.host.start()).rejects.toThrow();
     expect(x.host.getResourceReport().appCleanup?.support).toBe(fault === 'missing-persistence-ack' ? 'managed' : 'rejected');
-    expect(await x.host.releaseWorker()).toBeNull(); expect(x.worker.messages.some(message => message.type === 'RESET')).toBe(false);
+    expect(x.host.getResourceReport().worker).toBe('exited');
     expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true);
 });
 it.each(['wrong-type', 'active', 'wrong-instance', 'missing'])('does not trust %s APP_CLOSE evidence', async fault => {
@@ -74,13 +73,13 @@ it.each(['wrong-type', 'active', 'wrong-instance', 'missing'])('does not trust %
     });
     await x.host.start(); await x.host.open(); await expect(x.host.close()).rejects.toThrow();
     expect(x.host.getResourceReport().appCleanup?.report).toMatchObject({ state: 'stopped' });
-    expect(await x.host.releaseWorker()).toBeNull(); expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true);
+    expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true);
 });
 it('preserves cleanup failure while reporting the terminated execution resources separately', async () => {
     const x = fixture((request, response) => request.type === 'APP_CLOSE' ? { ...response, success: false,
         appCleanup: { ...response.appCleanup, state: 'failed', issues: ['APP_CLEANUP_FAILED'] } } : response);
     await x.host.start(); await x.host.open(); await expect(x.host.close()).rejects.toThrow();
-    expect(await x.host.releaseWorker()).toBeNull(); expect((await x.host.waitForResourceRelease()).appCleanup?.report).toMatchObject({ state: 'failed', issues: ['APP_CLEANUP_FAILED'] });
+    expect((await x.host.waitForResourceRelease()).appCleanup?.report).toMatchObject({ state: 'failed', issues: ['APP_CLEANUP_FAILED'] });
     expect(x.host.getResourceReport()).toMatchObject({ worker: 'exited', resourcesReleased: true });
 });
 
@@ -102,7 +101,6 @@ it('classifies a completed app cleanup and failed persistence flush as a persist
         lifecycle: { ok: false, unmount: 'completed', flush: { ok: false, entries: [{ status: 'failed', issue: { code: 'IO_FAILED' } }] },
             dispose: { unsaved: [{ status: 'failed', issue: { code: 'IO_FAILED' } }], release: { status: 'released' } } },
     });
-    expect(await x.host.releaseWorker()).toBeNull();
     expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true);
 });
 
@@ -114,6 +112,5 @@ it('rejects a false APP_CLOSE terminal even when both managed reports claim succ
 
     expect(x.host.getResourceReport().appCleanup?.report).toMatchObject({ state: 'completed', issues: [] });
     expect(x.host.getPersistenceReport()).toMatchObject({ unsafe: true, lifecycle: { ok: true, unmount: 'completed' } });
-    expect(await x.host.releaseWorker()).toBeNull();
     expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true);
 });

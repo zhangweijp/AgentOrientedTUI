@@ -23,7 +23,7 @@ export async function buildAoappManifest(appDir) {
   const moduleNamespace = await loadBuiltModule(appDir, main);
 
   const factory = moduleNamespace.default;
-  if (!isTUIAppFactory(factory)) throw Object.assign(new TypeError('Built app must export the createTUIApp component factory'), { code: 'APP_INVALID_EXPORT' });
+  if (!isTUIAppFactory(factory)) throw Object.assign(new TypeError('Built app must export a managed createApp or createTUIApp factory'), { code: 'APP_INVALID_EXPORT' });
   if (!hasViewTypeToolAuthoringProtocol(factory)) throw Object.assign(new TypeError('Build with the matching SDK authoring contract'), { code: 'APP_AUTHORING_PROTOCOL_UNSUPPORTED' });
   const kernelConfig = factory.kernelConfig;
   const metadata = captureAppMetadata({ app_name: kernelConfig.appName,

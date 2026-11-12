@@ -1,5 +1,5 @@
 import { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION, STATE_SESSION_VERSION } from '../../spi/index.js';
-import { SNAPSHOT_CAPABILITY } from '../../adapters/worker-message-capture.js';
+import { SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY } from '../../spi/worker-protocol/types.js';
 import { initializationError } from '../../adapters/initialization-error.js';
 import { captureAppLifecycleAck, captureAppCleanupReport } from '../../adapters/app-lifecycle-protocol.js';
 import { withExecutableTools } from '../../adapters/semantic-capability-policy.js';
@@ -20,21 +20,26 @@ import type { ManagedPersistenceReport } from '../../worker-runtime/state-persis
  */
 
 import type { InteractionMode } from '../../spi/worker-protocol/messages.js';
-import { SEMANTIC_INTERACTION_MODES } from '../../spi/runtime/app-interaction.interface.js';
+import { SEMANTIC_INTERACTION_MODES, appInteractionUnavailable, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
+import { projectCompleteViews } from '../../core/invocation/observation-registry.js';
 import { captureInteractionModes } from './interaction-config.js';
 import { compileOrdinaryProfile, ORDINARY_PARAMETER_MARKER } from '../../core/tool/ordinary-parameter-profile.js';
-import { captureTypeParametersRequest, captureTypeParametersTerminal, PARAMETERS_V4_CAPABILITY, PARAMETERS_MODE } from '../../adapters/ordinary-invocation-v2.js';
+import { captureTypeParametersRequest } from '../../adapters/ordinary-invocation-v2.js';
+import { VIEW_TYPE_PARAMETERS_MODE as PARAMETERS_MODE } from '../../core/tool/ordinary-parameter-contract.js';
 import { Worker } from 'worker_threads';
 import { randomUUID } from 'node:crypto';
 import { SemanticSnapshotReceiver, type SemanticSnapshotReport } from '../../adapters/snapshot/receiver.js';
-import type { CancellationSignal, ExecutionBinding, ExecutionFact, InteractionAuthority, InteractionStats,
-    InvocationContext, InvocationSource, ToolResultData, ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
+import type { CancellationSignal, ExecutionBinding, ExecutionFact, AppInteraction, InstanceInteraction, InteractionStats,
+    InvocationContext, InvocationSource, Issue, ToolResultData, AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
 import type { JsonValue } from '../../core/snapshot/types.js';
-import { captureViewToolCapabilities } from '../../adapters/worker-message-capture.js';
+import { captureSnapshotPrepareIssue } from '../../core/snapshot/snapshot-support.js';
+import { captureTypeParametersTerminal, captureViewToolCapabilities } from '../../adapters/worker-message-capture.js';
+import type { WorkerCapacity } from './worker-capacity.js';
+import { closeError } from '../core/close-handle.js';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 
-import type { AppID, DesktopID, ViewID, ToolResult } from '../../spi/index.js';
+import type { AppID, DesktopID, ViewID } from '../../spi/index.js';
 import { WORKER_DEFAULTS, type WorkerConfig } from '../../spi/config/index.js';
 
 import {
@@ -42,14 +47,13 @@ import {
     type RequestID,
     type MainToWorkerMessage,
     type WorkerToMainMessage,
-    isResponse,
-    isRequest,
 } from '../../spi/worker-protocol/index.js';
 
 // Compute default worker script path relative to this file
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DEFAULT_WORKER_SCRIPT = resolve(__dirname, '../../worker-runtime/index.js');
+const claimedWorkers = new WeakSet<Worker>();
 
 /**
  * 待处理请求
@@ -57,9 +61,9 @@ const DEFAULT_WORKER_SCRIPT = resolve(__dirname, '../../worker-runtime/index.js'
 interface PendingRequest {
     resolve: (value: any) => void;
     reject: (error: Error) => void;
-    timeout: ReturnType<typeof setTimeout>;
+    timeout?: ReturnType<typeof setTimeout>;
     init?: { worker: Worker; version: number; requested: readonly string[] };
-    ref?: { worker: Worker; version: number; scoped?: boolean; mode: InteractionMode };
+    ref?: { worker: Worker; appId: string; instanceId: string; completion: Promise<ExecutionFact> };
     initialOpen?: true;
     persistence?: 'APP_SHUTDOWN' | 'APP_CLOSE';
     appCleanup?: 'APP_STOP' | 'APP_SHUTDOWN' | 'APP_CLOSE';
@@ -84,7 +88,9 @@ export interface AppWorkerHostConfig {
      */
     workerScriptPath?: string;
     timeout?: number;  // 请求超时 (ms)
-    existingWorker?: Worker; // [WorkerPool] 复用的 Worker 实例
+    /** A fresh dedicated Worker, for adapters that supply the thread themselves. */
+    existingWorker?: Worker;
+    workerCapacity?: WorkerCapacity;
     config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig; // Configuration Injection
     runtimeConfig?: { worker: WorkerConfig }; // [RFC-005] Runtime Config
     interactionModes?: readonly InteractionMode[];
@@ -96,18 +102,30 @@ export interface AppWorkerHostConfig {
 export type WorkerStatus = 'starting' | 'ready' | 'running' | 'paused' | 'closing' | 'closed' | 'error';
 export interface HostResourceReport {
     readonly state: 'active' | 'closing' | 'settled';
-    readonly worker: 'not-created' | 'owned' | 'retiring' | 'exited' | 'transferred';
+    readonly worker: 'not-created' | 'owned' | 'retiring' | 'exited';
     readonly appCleanup?: Readonly<{ support: 'offered' | 'managed' | 'rejected'; report?: AppCleanupReport }>;
     readonly storage: ReturnType<AppWorkerHost['getPersistenceReport']>;
-    readonly interactions: { readonly closed: boolean; readonly retainedScopes: number; readonly retainedBytes: number };
+    readonly interactions: { readonly closed: boolean; readonly retainedOperations: number; readonly retainedBytes: number };
     readonly resourcesReleased: boolean;
-    readonly issues: readonly ('WORKER_ERROR' | 'WORKER_EXITED_UNEXPECTEDLY' | 'WORKER_TERMINATION_FAILED' | 'RESET_FAILED')[];
+    readonly issues: readonly ('WORKER_ERROR' | 'WORKER_EXITED_UNEXPECTEDLY' | 'WORKER_TERMINATION_FAILED')[];
 }
 
 
-/**
- * AppWorkerHost - 主线程端 Worker 管理
- */
+/** Only a validated snapshot rejection can expose details through an observation. */
+class ProjectionRefreshFailure extends Error {
+    readonly issue: Issue;
+
+    constructor({ code, message, path }: Issue) {
+        super(message);
+        this.issue = Object.freeze({ code, message, ...(path === undefined ? {} : { path }) });
+    }
+}
+
+const DEFAULT_APP_INTERACTION_POLICY: AppInteractionPolicy = Object.freeze({
+    project: projectCompleteViews, authorize: () => true, canReadReceipt: () => true,
+});
+
+/** AppWorkerHost - 主线程端 Worker 管理 */
 export class AppWorkerHost {
     readonly appId: AppID;
     readonly desktopId: DesktopID;
@@ -124,13 +142,16 @@ export class AppWorkerHost {
     readonly appInstanceId: string;
     private readonly snapshotReceiver: SemanticSnapshotReceiver;
     private projectionRefresh?: { requestId: RequestID; promise: Promise<void> };
-    private readonly interactionModes: readonly InteractionMode[];
+    private readonly requestParameters: boolean;
     private ordinaryParametersCapability: { worker: Worker; version: number } | null = null;
-    private interactionTransportUncertain = false;
     private interactionsClosed = false;
+    private instanceInteraction?: InstanceInteraction;
+    private interactionPolicy?: AppInteractionPolicy;
+    private observing = false;
     private readonly interactionBindings = new WeakMap<InvocationSource, ExecutionBinding>();
     private closePromise: Promise<void> | null = null;
-    private releasePromise: Promise<Worker | null> | null = null;
+    private readonly workerCapacity?: WorkerCapacity;
+    private releaseCapacity?: () => void;
     private readonly lifecycleRequests = new Set<Promise<void>>();
     private lifecycleContextVersion = 0;
     private initAttempted = false;
@@ -147,10 +168,7 @@ export class AppWorkerHost {
         return Object.freeze({ support: this.persistenceSupport, unsafe: this.persistenceUnsafe,
             ...this.persistenceHost.getStats(), ...(this.lastPersistence ? { lifecycle: this.lastPersistence } : {}) });
     }
-    private resourceWorker: Worker | null = null;
     private resourceWorkerState: HostResourceReport['worker'] = 'not-created';
-    private resourceExitListener?: () => void;
-    private resourceErrorListener?: () => void;
     private actualExitResolve!: () => void;
     private readonly actualExit = new Promise<void>(resolve => { this.actualExitResolve = resolve; });
     private terminationRequested = false;
@@ -162,10 +180,10 @@ export class AppWorkerHost {
     getResourceReport(): HostResourceReport {
         const storage = this.getPersistenceReport();
         const core = this.snapshotReceiver?.getInteractionStats();
-        const interactions = Object.freeze({ closed: this.interactionsClosed, retainedScopes: core?.scopes ?? 0, retainedBytes: core?.combinedBytes ?? 0 });
-        const resourcesReleased = ['not-created', 'exited', 'transferred'].includes(this.resourceWorkerState) &&
+        const interactions = Object.freeze({ closed: this.interactionsClosed, retainedOperations: core ? core.activeInvocations + core.activeReads + core.observations.reservations : 0, retainedBytes: core?.combinedBytes ?? 0 });
+        const resourcesReleased = ['not-created', 'exited'].includes(this.resourceWorkerState) &&
             storage.release?.status === 'released' && !storage.opening && storage.pending === 0 &&
-            interactions.closed && interactions.retainedScopes === 0 && interactions.retainedBytes === 0;
+            interactions.closed && interactions.retainedOperations === 0 && interactions.retainedBytes === 0;
         return Object.freeze({ state: this.resourceSettled ? 'settled' : this.resourceReleaseStarted || this.closePromise ? 'closing' : 'active',
             appCleanup: Object.freeze({ support: this.appLifecycleSupport, ...(this.lastAppCleanup ? { report: this.lastAppCleanup } : {}) }),
             worker: this.resourceWorkerState, storage, interactions, resourcesReleased,
@@ -175,31 +193,41 @@ export class AppWorkerHost {
         if (!this.resourceReleaseStarted) return Promise.reject(Object.assign(new Error('Resource release has not started'), { code: 'RESOURCE_RELEASE_NOT_STARTED' }));
         if (!this.resourcePromise) {
             this.resourcePromise = Promise.resolve().then(async () => {
-                await Promise.allSettled([this.closePromise, this.releasePromise]);
-                // Do not close admission while the managed close attempt may still flush.
-                await this.persistenceHost.release();
-                if (this.resourceWorkerState === 'owned' || this.resourceWorkerState === 'retiring') await this.actualExit;
-                await this.snapshotReceiver?.closeInteractions();
+                await this.waitForWorkerExit();
+                await this.persistenceHost.disconnect();
+                await this.snapshotReceiver.close();
                 this.resourceSettled = true;return this.getResourceReport();
             });
             void this.resourcePromise.catch(() => {});
         }
         return this.resourcePromise;
     }
+    retryResourceRelease(): Promise<HostResourceReport> {
+        const current = this.getResourceReport();
+        if (current.state !== 'settled' || !current.storage.ownerRetained) return this.waitForResourceRelease();
+        this.resourceSettled = false;
+        return this.resourcePromise = this.persistenceHost.release().then(() => {
+            this.resourceSettled = true;
+            return this.getResourceReport();
+        });
+    }
+
     private beginResourceRelease(): void {
+        if (this.resourceReleaseStarted) return;
         this.resourceReleaseStarted = true;
-        // Defer reading releasePromise until the releasing caller has installed it.
-        void Promise.resolve().then(() => this.waitForResourceRelease()).catch(() => {});
+        void this.waitForResourceRelease().catch(() => {});
     }
-    private detachResourceListeners(worker: Worker): void {
-        if (this.resourceExitListener) worker.off('exit', this.resourceExitListener);
-        if (this.resourceErrorListener) worker.off('error', this.resourceErrorListener);
+
+    private waitForWorkerExit(): Promise<void> {
+        return this.worker ? this.actualExit : Promise.resolve();
     }
-    private workerMessageListener = this.handleMessage.bind(this);
-    private workerErrorListener = this.handleError.bind(this);
-    private workerExitListener = this.handleExit.bind(this);
+
+    private workerMessageListener!: (message: WorkerToMainMessage) => void;
+    private workerErrorListener!: (error: Error) => void;
+    private workerExitListener!: (code: number) => void;
 
     beginInteractionClose(): void {
+        if (this.interactionsClosed) return;
         this.interactionsClosed = true;
         this.revokeRefCapability();
     }
@@ -214,65 +242,87 @@ export class AppWorkerHost {
             }
             this.projectionRefresh = undefined;
         }
-        this.snapshotReceiver?.closeInteractions();
         this.ordinaryParametersCapability = null;
-        for (const [id, pending] of this.pendingRequests) {
-            if (!pending.ref) continue;
-            clearTimeout(pending.timeout);
-            this.pendingRequests.delete(id);
-            if (pending.ref) pending.resolve(this.unknownRef(pending.ref.scoped === true));
-        }
+        this.interactionPolicy = undefined;
+        if (this.interactionsClosed) void this.snapshotReceiver.close();
+        else void this.snapshotReceiver.closeInteractions();
     }
 
     hasOrdinaryParametersCapability(): boolean {
-        return !this.interactionsClosed && this.interactionModes.includes(PARAMETERS_MODE) && this.ordinaryParametersCapability?.worker === this.worker &&
+        return !this.interactionsClosed && this.ordinaryParametersCapability?.worker === this.worker &&
             this.ordinaryParametersCapability?.version === this.lifecycleContextVersion;
     }
 
-    private unknownRef(scoped: boolean): ExecutionFact | ToolResult {
-        this.interactionTransportUncertain = true;
-        if (!scoped) return { success: false, error: { code: 'OUTCOME_UNKNOWN', message: 'The Worker outcome is unknown' } };
-        return Object.freeze({ kind: 'unknown' });
-    }
-
-    private interactionFailure(code: string, message: string): ToolResult {
-        return { success: false, error: { code, message } };
+    private pendingTool() {
+        for (const pending of this.pendingRequests.values()) if (pending.ref) return pending.ref;
     }
 
     private interactionAvailable(): boolean {
         return !this.interactionsClosed && !!this.snapshotReceiver && !!this.worker &&
-            this.status === 'running' && !this.interactionTransportUncertain && !this.closePromise && !this.releasePromise;
+            this.status === 'running' && !this.closePromise;
     }
 
-    createInteractionScope(policy: ScopePolicy): ReturnType<InteractionAuthority['createScope']> {
-        if (!this.interactionAvailable()) return Object.freeze({ status: 'rejected', issue: Object.freeze({
-            code: 'REF_EXECUTION_UNAVAILABLE', message: 'Scoped Ref interaction is unavailable' }) });
-        const execution = { resolve: this.resolveInteractionSource };
-        const opened = this.snapshotReceiver!.createInteractionScope(withExecutableTools(policy, execution), execution);
-        if (opened.status !== 'opened') return opened;
-        const lifetime = new AbortController();
-        let observing = false;
-        return Object.freeze({ status: 'opened', client: Object.freeze({ ...opened.client,
-            observe: async (selection: unknown) => {
-                const rejected = (code: string) => Object.freeze({ status: 'rejected' as const,
-                    issue: Object.freeze({ code, message: 'Committed projection could not be observed' }) });
-                if (lifetime.signal.aborted) return rejected('SCOPE_UNAVAILABLE');
-                if (observing) return rejected('OBSERVATION_BUSY');
-                observing = true;
-                try {
-                    await this.refreshProjection(lifetime.signal);
-                    if (lifetime.signal.aborted) return rejected('SCOPE_UNAVAILABLE');
-                    return await opened.client.observe(selection);
-                } catch (error) {
-                    return rejected(error instanceof Error && 'code' in error && typeof error.code === 'string'
-                        ? error.code : 'OBSERVATION_REFRESH_FAILED');
-                } finally { observing = false; }
-            },
-            close: () => { lifetime.abort(); opened.client.close(); },
-        }) });
+    getAppInteraction(policy?: AppInteractionPolicy): AppInteractionResult {
+        if (!this.interactionAvailable()) return appInteractionUnavailable();
+        if (policy !== undefined) {
+            if (this.interactionPolicy && this.interactionPolicy !== policy) {
+                return { status: 'rejected', issue: { code: 'APP_INTERACTION_POLICY_CONFLICT',
+                    message: 'This instance already uses an interaction policy.' } };
+            }
+            try { this.attachInteraction(policy); }
+            catch { return { status: 'rejected', issue: { code: 'APP_INTERACTION_POLICY_INVALID',
+                message: 'Expected trusted projection, execution and receipt authorization callbacks.' } }; }
+            if (!this.interactionAvailable()) return appInteractionUnavailable();
+        }
+        return Object.freeze({ status: 'ready', interaction: this.interaction });
     }
 
-    private refreshProjection(signal: AbortSignal): Promise<void> {
+    private attachInteraction(policy = DEFAULT_APP_INTERACTION_POLICY): InstanceInteraction {
+        if (!this.instanceInteraction) {
+            const execution = { resolve: this.resolveInteractionSource };
+            this.instanceInteraction = this.snapshotReceiver.interaction(withExecutableTools(policy, execution), execution);
+            this.interactionPolicy = policy;
+        }
+        return this.instanceInteraction;
+    }
+
+    private readonly interaction: AppInteraction = Object.freeze({
+        observe: async (selection: unknown) => {
+            if (!this.interactionAvailable()) return appInteractionUnavailable();
+            if (this.observing) return { status: 'rejected' as const, issue: { code: 'OBSERVATION_BUSY', message: 'An observation is already being prepared.' } };
+            this.observing = true;
+            try {
+                await this.refreshProjection();
+                if (!this.interactionAvailable()) return appInteractionUnavailable();
+                return await this.attachInteraction().observe(selection);
+            } catch (error) { return this.projectionRejection(error); }
+            finally { this.observing = false; }
+        },
+        preview: async () => {
+            if (!this.interactionAvailable()) return appInteractionUnavailable();
+            try {
+                await this.refreshProjection();
+                return this.interactionAvailable() ? this.snapshotReceiver.preview() : appInteractionUnavailable();
+            } catch (error) { return this.projectionRejection(error); }
+        },
+        adoptObservation: (id: string) => this.interactionAvailable() && this.instanceInteraction
+            ? this.instanceInteraction.adoptObservation(id) : appInteractionUnavailable(),
+        releaseObservation: (id: string) => { this.instanceInteraction?.releaseObservation(id); },
+        invoke: (request: unknown, timeoutMs?: number) => this.interactionAvailable() && this.instanceInteraction
+            ? this.instanceInteraction.invoke(request, timeoutMs ?? this.timeout)
+            : Promise.resolve({ kind: 'refused' as const, ...appInteractionUnavailable().issue }),
+        readReceipt: (request: unknown, timeoutMs?: number) => this.interactionAvailable() && this.instanceInteraction
+            ? this.instanceInteraction.readReceipt(request, timeoutMs ?? this.timeout)
+            : Promise.resolve({ kind: 'unavailable' as const, ...appInteractionUnavailable().issue }),
+    });
+
+    private projectionRejection(error: unknown): Extract<AppInteractionResult, { status: 'rejected' }> {
+        if (error instanceof ProjectionRefreshFailure) return Object.freeze({ status: 'rejected', issue: error.issue });
+        const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'OBSERVATION_REFRESH_FAILED';
+        return Object.freeze({ status: 'rejected', issue: Object.freeze({ code, message: 'Committed projection could not be observed' }) });
+    }
+
+    private refreshProjection(): Promise<void> {
         if (!this.interactionAvailable()) return Promise.reject(Object.assign(new Error('Projection source unavailable'), { code: 'PROJECTION_CLOSED' }));
         if (!this.projectionRefresh) {
             const requestId = generateRequestId();
@@ -280,23 +330,15 @@ export class AppWorkerHost {
             if (!this.pendingRequests.has(requestId)) return promise;
             this.projectionRefresh = { requestId, promise };
         }
-        const pending = this.projectionRefresh.promise;
-        return new Promise((resolve, reject) => {
-            const abort = () => { signal.removeEventListener('abort', abort); reject(Object.assign(new Error('Scope closed'), { code: 'SCOPE_UNAVAILABLE' })); };
-            if (signal.aborted) { abort(); return; }
-            signal.addEventListener('abort', abort, { once: true });
-            void pending.then(() => { signal.removeEventListener('abort', abort); resolve(); }, error => {
-                signal.removeEventListener('abort', abort); reject(error);
-            });
-        });
+        return this.projectionRefresh.promise;
     }
 
-    getInteractionReport(): Readonly<{ mode: 'scoped'; negotiatedModes: readonly InteractionMode[]; transportUncertain: boolean; core: InteractionStats }> | null {
+    getInteractionReport(): Readonly<{ mode: 'instance'; negotiatedModes: readonly InteractionMode[]; workerToolPending: boolean; core: InteractionStats }> | null {
         const core = this.snapshotReceiver?.getInteractionStats();
         return core ? Object.freeze({
-            mode: 'scoped' as const,
-            negotiatedModes: Object.freeze(this.interactionModes.filter(mode => mode === PARAMETERS_MODE && this.hasOrdinaryParametersCapability())),
-            transportUncertain: this.interactionTransportUncertain, core,
+            mode: 'instance' as const,
+            negotiatedModes: this.hasOrdinaryParametersCapability() ? SEMANTIC_INTERACTION_MODES : Object.freeze([]),
+            workerToolPending: !!this.pendingTool(), core,
         }) : null;
     }
 
@@ -322,7 +364,7 @@ export class AppWorkerHost {
                     return result.ok ? { ok: true as const, value: result.value } : { ok: false as const };
                 },
                 isLive: () => ({ ok: isLive() }),
-                execute: (context: InvocationContext) => this.sendRequest<ExecutionFact>({ type: 'VIEW_TOOL_INVOKE_V4', requestId: generateRequestId(),
+                execute: (context: InvocationContext) => this.dispatchTool({ type: 'VIEW_TOOL_INVOKE_V4', requestId: generateRequestId(),
                     appId: source.appId as AppID, instanceId: source.instanceId, snapshotId: source.snapshotId,
                     tool: source.tool, argumentMode: PARAMETERS_MODE, execution, rawArgs: context.rawInput,
                     effectiveArgs: context.effectiveInput, refSources: context.refSources,
@@ -335,7 +377,35 @@ export class AppWorkerHost {
         return null;
     };
 
-    // 回调: Worker 请求 notifyUpdate
+    private dispatchTool(message: import('../../spi/worker-protocol/messages.js').ViewToolInvokeV4Message,
+        expected: { worker: Worker; version: number; signal: CancellationSignal }): ExecutionFact | Promise<ExecutionFact> {
+        const refused = (code: string, text: string): ExecutionFact => ({ kind: 'tool-result', phase: 'not-entered',
+            result: { success: false, error: { code, message: text } } });
+        const live = () => this.interactionAvailable() && this.hasOrdinaryParametersCapability() &&
+            this.worker === expected.worker && this.lifecycleContextVersion === expected.version && !expected.signal.aborted;
+        if (!live() || this.pendingTool()) return refused('TOOL_EXECUTION_UNAVAILABLE', 'Worker Tool execution is unavailable');
+        try { message = captureTypeParametersRequest(message); }
+        catch { return refused('REF_ARGUMENT_BUDGET_EXCEEDED', 'Complete Ref request exceeds the transport budget'); }
+        if (!live() || this.pendingTool()) return refused('TOOL_EXECUTION_UNAVAILABLE', 'Worker Tool execution is unavailable');
+        const { requestId, appId, instanceId } = message;
+        let resolve!: (fact: ExecutionFact) => void;
+        const completion = new Promise<ExecutionFact>(complete => { resolve = complete; });
+        this.pendingRequests.set(requestId, { resolve, reject: () => {},
+            ref: { worker: expected.worker, appId, instanceId, completion } });
+        try { expected.worker.postMessage(message); }
+        catch { /* Without a terminal or exit, this attempt cannot prove completion. */ }
+        return completion;
+    }
+
+    private settleToolExit(worker: Worker): void {
+        for (const [id, pending] of this.pendingRequests) {
+            if (pending.ref?.worker !== worker) continue;
+            this.pendingRequests.delete(id);
+            pending.resolve({ kind: 'unknown' } satisfies ExecutionFact);
+        }
+    }
+
+    // Notify the Desktop when an App publication changes.
     onUpdateRequest?: () => void;
     constructor(config: AppWorkerHostConfig) {
         const modes = captureInteractionModes(config);
@@ -344,10 +414,10 @@ export class AppWorkerHost {
         this.name = config.name;
         this.appModulePath = config.appModulePath;
         this.appInstanceId = randomUUID();
-        this.interactionModes = modes ?? SEMANTIC_INTERACTION_MODES;
+        this.requestParameters = modes === undefined || modes.length > 0;
         this.snapshotReceiver = new SemanticSnapshotReceiver(String(this.appId), this.appInstanceId);
         // [C1 Fix] Default to Runtime's built-in worker-runtime
-        this.workerScriptPath = config.workerScriptPath ?? DEFAULT_WORKER_SCRIPT;
+        this.workerScriptPath = config.workerScriptPath ? resolve(config.workerScriptPath) : DEFAULT_WORKER_SCRIPT;
 
         // [RFC-005] Use Runtime Config
         const workerConfig = config.runtimeConfig?.worker ?? WORKER_DEFAULTS;
@@ -357,12 +427,12 @@ export class AppWorkerHost {
             rootDirectory: resolveStateDirectory(config.config), backend: config.persistenceBackend,
             limits: { ...DEFAULT_STATE_TRANSPORT_LIMITS, timeoutMs: this.timeout } });
 
-        this.config = config.config; // ✨ Store config
-
+        this.config = config.config;
+        this.workerCapacity = config.workerCapacity;
         if (config.existingWorker) {
-            this.worker = config.existingWorker;
-            // 重新绑定 listeners (因为 Pool 可能移除过)
-            this.bindWorkerListeners();
+            this.releaseCapacity = this.workerCapacity?.reserve();
+            try { this.bindWorker(config.existingWorker); }
+            catch (error) { this.releaseCapacity?.();throw error; }
         }
     }
 
@@ -372,24 +442,22 @@ export class AppWorkerHost {
     async start(): Promise<void> {
         if (this.initAttempted || this.status === 'closed' || this.status === 'error') throw new Error('APP_INSTANCE_REUSE_UNSUPPORTED: Create a new Host for another initialization');
         this.initAttempted = true;
-        if (this.status === 'closing' || this.closePromise || this.releasePromise) {
+        if (this.status === 'closing' || this.closePromise) {
             throw new Error('Cannot start an App while shutdown is pending');
         }
         try {
             if (!this.worker) {
-                // 创建新 Worker
-                this.worker = new Worker(this.workerScriptPath, {
-                    workerData: {
-                        appId: this.appId,
-                        desktopId: this.desktopId,
-                        appModulePath: this.appModulePath,
-                    },
-                });
-                this.bindWorkerListeners();
+                this.releaseCapacity = this.workerCapacity?.reserve();
+                try {
+                    this.bindWorker(new Worker(this.workerScriptPath, { workerData: {
+                        appId: this.appId, desktopId: this.desktopId, appModulePath: this.appModulePath,
+                    } }));
+                } catch (error) {
+                    this.releaseCapacity?.();
+                    this.releaseCapacity = undefined;
+                    throw error;
+                }
             }
-
-            // 发送初始化消息
-            // 注意: 即使是复用的 Worker，也需要发送 INIT 消息来加载 App 模块
             await this.sendLifecycleRequest({
                 type: 'INIT',
                 requestId: generateRequestId(),
@@ -402,117 +470,38 @@ export class AppWorkerHost {
                     limits: DEFAULT_STATE_SESSION_LIMITS, transport: { ...DEFAULT_STATE_TRANSPORT_LIMITS, timeoutMs: this.timeout } },
                 appInstanceId: this.appInstanceId,
                 appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, version: APP_LIFECYCLE_VERSION, instanceId: this.appInstanceId },
-                requestedCapabilities: [SNAPSHOT_CAPABILITY, ...this.interactionModes.map(() => PARAMETERS_V4_CAPABILITY)],
+                requestedCapabilities: this.requestParameters ? [SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY] : [SNAPSHOT_CAPABILITY],
             }, 'ready');
         } catch (error) {
-            if (this.snapshotReceiver) {
-                this.revokeRefCapability();
-                this.snapshotReceiver.close();
+            if (!this.closePromise) {
+                this.terminate();
+                await this.waitForWorkerExit();
             }
             throw error;
         }
     }
 
-    private bindWorkerListeners(): void {
-        if (!this.worker) return;
-        const worker = this.worker;
+    private bindWorker(worker: Worker): void {
+        if (claimedWorkers.has(worker)) throw closeError('APP_INSTANCE_REUSE_UNSUPPORTED');
+        claimedWorkers.add(worker);
+        this.worker = worker;
+        this.resourceWorkerState = 'owned';
         this.workerMessageListener = msg => { if (this.worker === worker) this.handleMessage(msg); };
         this.workerErrorListener = error => { if (this.worker === worker) this.handleError(error); };
-        this.workerExitListener = code => { if (this.worker === worker) this.handleExit(code); };
-        this.resourceWorker = worker;this.resourceWorkerState = 'owned';
-        this.resourceErrorListener = () => { if (this.resourceWorker === worker) { this.beginInteractionClose();this.resourceIssues.add('WORKER_ERROR'); } };
-        this.resourceExitListener = () => {
-            if (this.resourceWorker !== worker || this.resourceWorkerState === 'transferred') return;
-            this.beginInteractionClose();
-            if (!this.terminationRequested) this.resourceIssues.add('WORKER_EXITED_UNEXPECTEDLY');
-            this.resourceWorkerState = 'exited';this.resourceWorker = null;
-            this.detachResourceListeners(worker);this.actualExitResolve();this.beginResourceRelease();
-        };
-        worker.on('error', this.resourceErrorListener);worker.once('exit', this.resourceExitListener);
-        if (worker.threadId < 0) this.resourceExitListener();
-
-        this.worker.on('message', this.workerMessageListener);
-        this.worker.on('error', this.workerErrorListener);
-        this.worker.on('exit', this.workerExitListener);
-    }
-
-    /**
-     * 释放 Worker (用于归还给 Pool)
-     * 
-     * 会先发送 RESET 消息，成功后解绑监听器并返回 Worker 实例。
-     * When the Worker is not transferable, `retireLease` lets the owning pool
-     * mark the expected exit before its existing release(false) path terminates it.
-     */
-    releaseWorker(retireLease?: () => Promise<unknown>): Promise<Worker | null> {
-        this.beginInteractionClose();
-        this.beginResourceRelease();
-        // Only one caller receives ownership of the pooled Worker. Other
-        // release callers still wait for RESET, but must not pool it twice.
-        if (this.releasePromise) return this.releasePromise.then(() => null);
-        if (!this.worker) {
-            this.snapshotReceiver?.close();
-            this.status = 'closed';
-            return Promise.resolve(null);
-        }
-        const closing = this.closePromise ?? (this.persistenceSupport === 'managed' || this.appLifecycleSupport === 'managed' ? this.close() : null);
-        const lifecycle = Promise.all([...this.lifecycleRequests]);
-        this.status = 'closing';
-        const release = async (): Promise<Worker | null> => {
-            let resetting = false;
-            const retire = async () => {
-                if (!retireLease) { this.terminate();return; }
-                // Let the owning pool mark its lease as intentionally retiring
-                // before its release(false) path starts the asynchronous exit.
-                // Host bookkeeping is set first so both owners agree the exit
-                // was requested, while a standalone Host still terminates itself.
-                this.terminationRequested = true;
-                if (this.resourceWorkerState === 'owned') this.resourceWorkerState = 'retiring';
-                try { await retireLease(); }
-                finally { if (this.worker) this.terminate(); }
-            };
-            try {
-                await Promise.all([closing, lifecycle]);
-                if (!this.worker) return null;
-                if (this.appLifecycleSupport === 'rejected' || this.appLifecycleSupport === 'managed' && this.lastAppCleanup?.state !== 'completed' || this.interactionTransportUncertain || this.persistenceUnsafe || this.persistenceHost.getStats().uncertain ||
-                    this.persistenceSupport === 'managed' && this.lastPersistence?.ok !== true) { await retire(); return null; }
-                this.status = 'closing';
-                // 1. 发送 RESET
-                resetting = true;
-                await this.sendRequest<void>({
-                    type: 'RESET',
-                    requestId: generateRequestId(),
-                });
-
-                const worker = this.worker;
-                if (!worker || this.terminationRequested || this.resourceWorkerState === 'exited') return null;
-                this.detachWorkerListeners(worker);this.detachResourceListeners(worker);
-                this.resourceWorkerState = 'transferred';this.resourceWorker = null;
-                this.worker = null;
-                this.status = 'closed'; // Host 标记为关闭，但 Worker 存活
-                this.snapshotReceiver?.close();
-
-                // 清理待处理请求
-                this.cleanupPendingRequests();
-
-                return worker;
-            } catch (error) {
-                if (resetting) this.resourceIssues.add('RESET_FAILED');
-                // 如果重置失败，直接终止
-                try { await retire(); } catch { this.terminate(); }
-                return null;
-            }
-        };
-        this.releasePromise = release().finally(() => { this.releasePromise = null; });
-        return this.releasePromise;
+        this.workerExitListener = code => this.handleExit(worker, code);
+        worker.on('message', this.workerMessageListener);
+        worker.on('error', this.workerErrorListener);
+        worker.once('exit', this.workerExitListener);
+        if (worker.threadId < 0) this.handleExit(worker);
     }
 
     private cleanupPendingRequests(): void {
-        this.revokeRefCapability();
-        for (const [, pending] of this.pendingRequests) {
+        for (const [id, pending] of this.pendingRequests) {
+            if (pending.ref) continue;
             clearTimeout(pending.timeout);
+            this.pendingRequests.delete(id);
             pending.reject(new Error('Worker released/terminated'));
         }
-        this.pendingRequests.clear();
     }
 
     /**
@@ -567,6 +556,19 @@ export class AppWorkerHost {
         if (this.status === 'closing' || this.status === 'closed') {
             throw new Error('Cannot reinitialize an App while shutdown is pending');
         }
+        const tool = this.pendingTool();
+        if (tool) {
+            this.beginApplicationStop();
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try {
+                await Promise.race([tool.completion, new Promise<never>((_, reject) => {
+                    timer = setTimeout(() => reject(closeError('APP_CLOSE_DEADLINE_EXCEEDED')), this.timeout);
+                })]);
+            } catch (error) {
+                if (!this.closePromise) this.terminate();
+                throw error;
+            } finally { clearTimeout(timer); }
+        }
         await this.sendLifecycleRequest({
             type: 'APP_REINITIALIZE',
             requestId: generateRequestId(),
@@ -584,60 +586,59 @@ export class AppWorkerHost {
         return this.appStopPromise;
     }
 
-    close(): Promise<void> {
-        this.beginInteractionClose();
-        // Multiple callers must share one shutdown, not send duplicate
-        // APP_SHUTDOWN/APP_CLOSE requests to the same Worker.
+    close(intent: 'close' | 'delete' = 'close'): Promise<void> {
         if (this.closePromise) return this.closePromise;
-        if (this.releasePromise) return this.releasePromise.then(() => undefined);
-        if (this.status === 'closed') return Promise.resolve();
-        const lifecycle = Promise.all([...this.lifecycleRequests]);
+        if (this.terminationRequested || !this.worker) {
+            this.closePromise = this.waitForWorkerExit();
+            this.terminate();
+            return this.closePromise;
+        }
         this.status = 'closing';
-        const stopped = this.beginApplicationStop();
-        void stopped?.catch(() => {});
-        const finish = async () => {
+        const graceEndsAt = performance.now() + this.timeout;
+        const lifecycle = [...this.lifecycleRequests];
+        let stopped: Promise<void> | undefined;
+        this.closePromise = Promise.resolve().then(async () => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
             try {
-                let stopError: unknown;
-                await Promise.allSettled([lifecycle, stopped]);
-                try { await this.beginApplicationStop(); } catch (error) { stopError = error; }
-                if (!this.worker) {
-                    this.terminate();
-                    return;
-                }
-                let shutdownError: unknown = stopError;
-                try { await this.sendRequest<void>({ type: 'APP_SHUTDOWN', requestId: generateRequestId() }); }
-                catch (error) { shutdownError = error; }
-                // A failed flush must still reach unmount/dispose and supervised release.
-                try { await this.sendRequest<void>({ type: 'APP_CLOSE', requestId: generateRequestId() }); }
-                catch (error) { shutdownError ??= error; }
-                if (shutdownError) throw shutdownError;
-                if (this.persistenceSupport === 'managed' && (!this.lastPersistence?.ok || this.persistenceHost.getStats().uncertain ||
-                    this.persistenceHost.getStats().release?.status !== 'released')) {
-                    this.persistenceUnsafe = true;throw new Error('PERSISTENCE_CLOSE_FAILED: Managed persistence did not complete');
-                }
-                this.status = 'closed';
-                this.snapshotReceiver?.close();
-            } catch (error) {
+                const remaining = graceEndsAt - performance.now();
+                if (remaining <= 0) throw closeError('APP_CLOSE_DEADLINE_EXCEEDED');
+                const deadline = new Promise<never>((_, reject) => {
+                    timer = setTimeout(() => reject(closeError('APP_CLOSE_DEADLINE_EXCEEDED')), remaining);
+                });
+                await Promise.race([this.finishAppClose(intent, lifecycle, stopped), deadline, this.actualExit.then(() => {
+                    throw closeError('WORKER_EXITED_UNEXPECTEDLY');
+                })]);
+            } finally {
+                clearTimeout(timer);
                 this.terminate();
-                throw error;
+                await this.waitForWorkerExit();
             }
-        };
-        this.closePromise = finish();
+        });
+        stopped = this.beginApplicationStop();
+        void this.closePromise.catch(() => {});
         return this.closePromise;
     }
 
-    /**
-     * [RFC-015] Delete App (Data Cleanup)
-     * 
-     * Triggers app.onDelete() in worker to clean up persisted data.
-     * Note: This does NOT close the worker, you must call close() after delete().
-     */
-    async delete(): Promise<void> {
-        this.beginInteractionClose();
-        await this.sendRequest<void>({
-            type: 'APP_DELETE',
-            requestId: generateRequestId(),
-        });
+    private async finishAppClose(intent: 'close' | 'delete', lifecycle: Promise<void>[], stopped?: Promise<void>): Promise<void> {
+        await Promise.allSettled([...lifecycle, stopped]);
+        await this.pendingTool()?.completion;
+        if (this.terminationRequested || !this.worker) throw closeError('APP_CLOSE_FAILED');
+        let failure: unknown;
+        try { await this.beginApplicationStop(); } catch (error) { failure = error; }
+        if (intent === 'delete') {
+            try { await this.sendRequest<void>({ type: 'APP_DELETE', requestId: generateRequestId() }); }
+            catch { failure ??= closeError('APP_DELETE_FAILED'); }
+        }
+        try { await this.sendRequest<void>({ type: 'APP_SHUTDOWN', requestId: generateRequestId() }); }
+        catch (error) { failure ??= error; }
+        try { await this.sendRequest<void>({ type: 'APP_CLOSE', requestId: generateRequestId() }); }
+        catch (error) { failure ??= error; }
+        if (failure) throw failure;
+        if (this.persistenceSupport === 'managed' && (!this.lastPersistence?.ok || this.persistenceHost.getStats().uncertain ||
+            this.persistenceHost.getStats().release?.status !== 'released')) {
+            this.persistenceUnsafe = true;
+            throw new Error('PERSISTENCE_CLOSE_FAILED: Managed persistence did not complete');
+        }
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -703,29 +704,20 @@ export class AppWorkerHost {
     // ════════════════════════════════════════════════════════════════
 
     terminate(): void {
+        if (this.terminationRequested) return;
+        this.terminationRequested = true;
+        this.lifecycleContextVersion++;
+        if (this.status !== 'error') this.status = 'closed';
         this.beginInteractionClose();
-        this.terminationRequested = true;this.beginResourceRelease();
-        if (this.resourceWorkerState === 'owned') this.resourceWorkerState = 'retiring';
         if (this.persistenceSupport === 'managed' && !this.lastPersistence?.ok) this.persistenceUnsafe = true;
-        if (this.worker) {
-            const worker = this.worker;
-            this.worker = null;
-            this.detachWorkerListeners(worker);
-            try {
-                worker.postMessage({ type: 'TERMINATE' } as MainToWorkerMessage);
-            } catch {
-                // A broken channel must not prevent the native teardown.
-            }
-            try { void Promise.resolve(worker.terminate()).catch(() => { this.resourceIssues.add('WORKER_TERMINATION_FAILED'); }); }
-            catch { this.resourceIssues.add('WORKER_TERMINATION_FAILED'); }
-        }
-        this.status = 'closed';
-        this.snapshotReceiver?.close();
-
-        // 清理所有待处理请求
         this.cleanupPendingRequests();
-
-
+        this.beginResourceRelease();
+        const worker = this.worker;
+        if (!worker) return;
+        this.resourceWorkerState = 'retiring';
+        const failed = () => { this.resourceIssues.add('WORKER_TERMINATION_FAILED'); };
+        try { void Promise.resolve(worker.terminate()).then(code => this.handleExit(worker, code), failed); }
+        catch { failed(); }
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -733,13 +725,14 @@ export class AppWorkerHost {
     // ════════════════════════════════════════════════════════════════
 
     private async sendLifecycleRequest(
-        message: MainToWorkerMessage, nextStatus?: WorkerStatus,
+        message: import('../../spi/worker-protocol/messages.js').InitMessage | import('../../spi/worker-protocol/messages.js').AppLifecycleMessage,
+        nextStatus?: WorkerStatus,
     ): Promise<void> {
-        if (this.status === 'closing' || this.closePromise || this.releasePromise) {
+        if (this.status === 'closing' || this.status === 'closed' || this.closePromise) {
             throw new Error('Cannot change App lifecycle while shutdown is pending');
         }
         if (message.type === 'INIT' || message.type === 'APP_REINITIALIZE') {
-            // A fresh Host cannot have a negotiated Scope before its first INIT.
+            // A fresh Host cannot have a negotiated interaction before its first INIT.
             if (message.type !== 'INIT' || this.lifecycleContextVersion !== 0) this.revokeRefCapability();
             this.lifecycleContextVersion++;
         }
@@ -752,7 +745,7 @@ export class AppWorkerHost {
             if (this.worker !== worker || this.lifecycleContextVersion !== contextVersion) {
                 throw new Error('App lifecycle request was invalidated by a Worker or execution context change');
             }
-            if (this.getStatus() === 'closing' || this.closePromise || this.releasePromise) {
+            if (this.getStatus() === 'closing' || this.closePromise) {
                 throw new Error('App shutdown is pending; lifecycle response cannot reopen it');
             }
             if (nextStatus) this.status = nextStatus;
@@ -761,24 +754,13 @@ export class AppWorkerHost {
         }
     }
 
-    private sendRequest<T>(message: MainToWorkerMessage, scoped?: { worker: Worker; version: number; signal: CancellationSignal }): Promise<T> {
-        if (['RESET', 'APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE'].includes(message.type)) this.lifecycleContextVersion++;
-        if (['RESET', 'APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE', 'APP_REINITIALIZE'].includes(message.type)) {
+    private sendRequest<T>(message: Exclude<MainToWorkerMessage, { type: 'VIEW_TOOL_INVOKE_V4' }>): Promise<T> {
+        if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE'].includes(message.type)) this.lifecycleContextVersion++;
+        if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE', 'APP_REINITIALIZE'].includes(message.type)) {
             this.revokeRefCapability();
         }
-        const ref = message.type === 'VIEW_TOOL_INVOKE_V4';
-        const requestedCapture = message.type === 'INIT' ? captureViewToolCapabilities(message.requestedCapabilities) : null;
-        if (requestedCapture && !requestedCapture.ok) return Promise.reject(new Error(requestedCapture.code));
         return new Promise((resolve, reject) => {
-            const refused = (code: string, text: string) => scoped ? { kind: 'tool-result', phase: 'not-entered',
-                result: { success: false, error: { code, message: text } } } : this.interactionFailure(code, text);
-            const stale = () => scoped && (!this.interactionAvailable() || scoped.worker !== this.worker ||
-                scoped.version !== this.lifecycleContextVersion || scoped.signal.aborted);
-            if (ref && (this.interactionTransportUncertain || !this.hasOrdinaryParametersCapability() || this.status !== 'running' || stale())) {
-                resolve(refused('TOOL_EXECUTION_UNAVAILABLE', 'Current Worker has no negotiated parameter capability') as T);
-                return;
-            }
-            if ((this.status === 'closing' || this.status === 'closed') && !['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'RESET'].includes(message.type)) {
+            if (this.terminationRequested || (this.status === 'closing' || this.status === 'closed') && !['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE'].includes(message.type)) {
                 reject(new Error('Cannot send a new request while App shutdown is pending'));
                 return;
             }
@@ -786,23 +768,11 @@ export class AppWorkerHost {
             if (!worker) { reject(new Error('Worker not started')); return; }
             const requestId = 'requestId' in message ? message.requestId : undefined;
             if (!requestId) { reject(new Error('Message missing requestId')); return; }
-            if (ref) {
-                try {
-                    if (message.type === 'VIEW_TOOL_INVOKE_V4') message = captureTypeParametersRequest(message);
-                    else throw new Error('Invalid Tool message');
-                }
-                catch {
-                    resolve(refused('REF_ARGUMENT_BUDGET_EXCEEDED', 'Complete Ref request exceeds the transport budget') as T);
-                    return;
-                }
-            }
-            if (stale()) { resolve(refused('REF_EXECUTION_UNAVAILABLE', 'Scoped Ref interaction is unavailable') as T); return; }
             const timeout = setTimeout(() => {
                 // A timed-out flush still owns its Worker wait. Keep the single
                 // slot until the real reply or App close, rather than stacking retries.
                 if (message.type !== 'FLUSH_PROJECTION') this.pendingRequests.delete(requestId);
-                if (ref) resolve(this.unknownRef(!!scoped) as T);
-                else reject(Object.assign(new Error(`Request ${requestId} timed out after ${this.timeout}ms`),
+                reject(Object.assign(new Error(`Request ${requestId} timed out after ${this.timeout}ms`),
                     message.type === 'FLUSH_PROJECTION' ? { code: 'PROJECTION_TIMEOUT' } : {}));
             }, this.timeout);
             this.pendingRequests.set(requestId, { resolve, reject, timeout,
@@ -810,16 +780,14 @@ export class AppWorkerHost {
                 ...(message.type === 'APP_OPEN' ? { initialOpen: true as const } : {}),
                 ...(this.appLifecycleSupport === 'managed' && (message.type === 'APP_STOP' || message.type === 'APP_SHUTDOWN' || message.type === 'APP_CLOSE') ? { appCleanup: message.type } : {}),
                 ...(this.persistenceSupport === 'managed' && (message.type === 'APP_SHUTDOWN' || message.type === 'APP_CLOSE') ? { persistence: message.type } : {}),
-                ...(ref ? { ref: { worker, version: this.lifecycleContextVersion, mode: PARAMETERS_MODE, ...(scoped ? { scoped: true } : {}) } } : {}),
                 ...(message.type === 'INIT' ? { init: { worker, version: this.lifecycleContextVersion,
-                    requested: requestedCapture?.ok ? requestedCapture.capabilities : [] } } : {}),
+                    requested: Object.freeze([...message.requestedCapabilities]) } } : {}),
             });
             try { worker.postMessage(message); }
             catch {
                 clearTimeout(timeout);
                 this.pendingRequests.delete(requestId);
-                if (ref) resolve(this.unknownRef(!!scoped) as T);
-                else reject(new Error('Worker request could not be sent'));
+                reject(new Error('Worker request could not be sent'));
             }
         });
     }
@@ -829,32 +797,32 @@ export class AppWorkerHost {
         const typeField = Object.getOwnPropertyDescriptor(msg, 'type');
         if (!typeField || !('value' in typeField)) return;
         if (typeField.value === 'STATE_STORAGE_REQUEST') {
-            if (this.persistenceSupport !== 'managed') return;
+            if (this.persistenceSupport !== 'managed' || this.terminationRequested) return;
             const worker = this.worker, response = this.persistenceHost.accept(msg);
             if (response) void response.then(value => {
-                if (!worker || worker !== this.worker) return;
-                try { worker.postMessage(value); } catch { this.persistenceUnsafe = true;this.persistenceHost.markTransportUncertain();void this.persistenceHost.disconnect(); }
+                if (!worker || worker !== this.worker || this.terminationRequested) return;
+                try { worker.postMessage(value); }
+                catch { this.persistenceUnsafe = true;this.persistenceHost.markTransportUncertain();this.terminate(); }
             });
             return;
         }
         // Routing reads only a data descriptor; terminal content is captured before validation.
-        const id = msg && typeof msg === 'object' ? Object.getOwnPropertyDescriptor(msg, 'requestId')?.value : undefined;
+        const id = Object.getOwnPropertyDescriptor(msg, 'requestId')?.value;
         const refPending = typeof id === 'string' ? this.pendingRequests.get(id) : undefined;
         if (refPending?.ref) {
-            const terminal = refPending.ref.worker === this.worker && refPending.ref.version === this.lifecycleContextVersion
-                ? captureTypeParametersTerminal(msg, { requestId: id, appId: String(this.appId), instanceId: this.appInstanceId }) : null;
-            clearTimeout(refPending.timeout);
+            const { worker, appId, instanceId } = refPending.ref;
+            if (worker !== this.worker || typeField.value !== 'VIEW_TOOL_INVOKE_V4_RESPONSE') return;
+            const terminal = captureTypeParametersTerminal(msg, { requestId: id, appId, instanceId });
+            if (!terminal) return;
             this.pendingRequests.delete(id);
-            refPending.resolve(refPending.ref.scoped ? terminal ? { kind: 'tool-result', phase: terminal.phase,
+            refPending.resolve(terminal.phase === 'finished-unknown' ? { kind: 'unknown' } : { kind: 'tool-result', phase: terminal.phase,
                 result: terminal.result as unknown as ToolResultData,
-                ...(terminal.phase === 'entered-returned' && terminal.failureEffects !== undefined ? { failureEffects: terminal.failureEffects } : {}) } : this.unknownRef(true) : terminal?.result ?? this.unknownRef(false));
+                ...(terminal.phase === 'entered-returned' && terminal.failureEffects !== undefined ? { failureEffects: terminal.failureEffects } : {}) } satisfies ExecutionFact);
             return;
         }
-        if (typeField.value === 'VIEW_TOOL_INVOKE_V3_RESPONSE' || typeField.value === 'VIEW_TOOL_INVOKE_V4_RESPONSE') return;
-
-        // 处理响应消息
-        if (isResponse(msg)) {
-            const pending = this.pendingRequests.get(msg.requestId);
+        if ((msg.type === 'INIT_RESPONSE' || msg.type === 'LIFECYCLE_RESPONSE' || msg.type === 'ERROR_RESPONSE') &&
+            typeof id === 'string' && 'success' in msg) {
+            const pending = this.pendingRequests.get(id);
             if (pending) {
                 if (pending.projection) {
                     clearTimeout(pending.timeout); this.pendingRequests.delete(msg.requestId);
@@ -930,7 +898,7 @@ export class AppWorkerHost {
                     if (msg.type === 'INIT_RESPONSE' && msg.success === true &&
                         !this.interactionsClosed &&
                         init.worker === this.worker && init.version === this.lifecycleContextVersion &&
-                        this.status !== 'closing' && this.status !== 'closed' && !this.closePromise && !this.releasePromise &&
+                        this.status !== 'closing' && this.status !== 'closed' && !this.closePromise &&
                         instance === this.appInstanceId && accepted !== null) {
                         this.ordinaryParametersCapability = accepted.includes(PARAMETERS_V4_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
                     }
@@ -1000,16 +968,6 @@ export class AppWorkerHost {
             return;
         }
 
-        // 处理 Worker 主动请求
-        if (isRequest(msg)) {
-            switch (msg.type) {
-                case 'REQUEST_UPDATE':
-                    this.onUpdateRequest?.();
-                    break;
-            }
-            return;
-        }
-
         if (msg.type === 'SNAPSHOT_PREPARED' || msg.type === 'SNAPSHOT_PREPARE_FAILED') {
             const request = msg.requestId && this.pendingRequests.get(msg.requestId);
             const pending = request && request.projection ? request : undefined;
@@ -1020,10 +978,7 @@ export class AppWorkerHost {
                     : this.snapshotReceiver.acceptPrepareFailure({
                         appId: msg.appId, instanceId: msg.instanceId,
                         producerSeq: msg.producerSeq, sourceEpoch: msg.sourceEpoch,
-                        issue: { code: msg.error?.code === 'SNAPSHOT_SERIALIZATION_ERROR'
-                            ? 'SNAPSHOT_SERIALIZATION_ERROR' : 'SNAPSHOT_INVALID',
-                            message: typeof msg.error?.message === 'string'
-                                ? msg.error.message.slice(0, 160) : 'Semantic producer failed' },
+                        issue: captureSnapshotPrepareIssue(msg.error),
                     });
                 notify = result.status === 'published' || result.healthChanged;
                 if (pending && msg.requestId) {
@@ -1032,7 +987,7 @@ export class AppWorkerHost {
                     if (this.projectionRefresh?.requestId === msg.requestId) this.projectionRefresh = undefined;
                     if (pending.projection!.worker !== this.worker || pending.projection!.version !== this.lifecycleContextVersion)
                         pending.reject(Object.assign(new Error('Projection source replaced'), { code: 'PROJECTION_CLOSED' }));
-                    else if (result.status === 'rejected') pending.reject(Object.assign(new Error(result.issue.message), { code: result.issue.code }));
+                    else if (result.status === 'rejected') pending.reject(new ProjectionRefreshFailure(result.issue));
                     else pending.resolve(undefined);
                 }
             } catch {
@@ -1048,35 +1003,36 @@ export class AppWorkerHost {
     }
 
     private handleError(error: Error): void {
+        this.resourceIssues.add('WORKER_ERROR');
         this.beginInteractionClose();
         if (this.persistenceSupport === 'managed') this.persistenceUnsafe = true;
         this.lifecycleContextVersion++;
-        this.snapshotReceiver?.close();
-        if (this.interactionModes.length > 0) console.error('[AppWorkerHost] Worker failed in Ref-capable execution');
+        if (this.requestParameters) console.error('[AppWorkerHost] Worker failed in Ref-capable execution');
         else console.error(`[AppWorkerHost] Worker ${this.appId} error:`, error);
-        this.status = 'error';
+        if (!this.terminationRequested) this.status = 'error';
         this.cleanupPendingRequests();
     }
 
-    private detachWorkerListeners(worker = this.worker): void {
-        worker?.off('message', this.workerMessageListener);
-        worker?.off('error', this.workerErrorListener);
-        worker?.off('exit', this.workerExitListener);
-    }
-
-    private handleExit(code: number): void {
-        this.beginInteractionClose();
+    private handleExit(worker: Worker, code?: number): void {
+        if (this.worker !== worker) return;
+        if (!this.terminationRequested) {
+            this.resourceIssues.add('WORKER_EXITED_UNEXPECTEDLY');
+            this.status = 'error';
+            if (code) console.error(`[AppWorkerHost] Worker ${this.appId} exited with code ${code}`);
+        }
         if (this.persistenceSupport === 'managed' && !this.lastPersistence?.ok) this.persistenceUnsafe = true;
         this.lifecycleContextVersion++;
-        this.snapshotReceiver?.close();
-        if (code !== 0) {
-            console.error(`[AppWorkerHost] Worker ${this.appId} exited with code ${code}`);
-        }
-        this.detachWorkerListeners();
+        worker.off('message', this.workerMessageListener);
+        worker.off('error', this.workerErrorListener);
+        worker.off('exit', this.workerExitListener);
         this.worker = null;
-        if (this.status !== 'closed') {
-            this.status = 'error';
-        }
+        this.resourceWorkerState = 'exited';
+        this.settleToolExit(worker);
+        this.releaseCapacity?.();
+        this.releaseCapacity = undefined;
+        this.actualExitResolve();
+        this.beginInteractionClose();
         this.cleanupPendingRequests();
+        this.beginResourceRelease();
     }
 }

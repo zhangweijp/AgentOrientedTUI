@@ -13,13 +13,13 @@ by this adapter.
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import type { IDesktop, IKernel } from '@aotui/runtime/spi';
 
-export async function inspect(desktop: IDesktop, runtime: IKernel) {
+export async function useTurn(desktop: IDesktop, runtime: IKernel) {
   const source = new SemanticAOTUIDrivenSource(desktop, runtime);
   try {
     const context = await source.getContext();
     try {
-      // Diagnostic preview only. It does not adopt or grant tool-call eligibility.
-      return context.messages;
+      await context.adopt?.();
+      // Send this Context's messages and tools and use its execution bindings.
     } finally {
       await context.release?.();
     }
@@ -32,10 +32,11 @@ export async function inspect(desktop: IDesktop, runtime: IKernel) {
 Keep the captured Context alive until its model turn and tool calls finish.
 Its release method releases its observation owners; disposing the Source also
 releases remaining Contexts and subscriptions. Runtime shutdown remains the
-host's separate responsibility. The actual Driver run calls Context.adopt before
-model consumption. Successful adoption replaces earlier Context qualifications
+host's separate responsibility. The actual Driver run calls Context.adopt after
+the final model input check and before sending the request. Successful adoption replaces earlier Context qualifications
 in this Source; getContext and background publication only prepare data. Manual
-consumers must explicitly adopt too. An unadopted Context refuses tool calls.
+consumers must explicitly adopt too. An unadopted Context refuses tool calls. For diagnostic rendering, use Runtime
+`getAppInteraction(...).interaction.preview()` after checking the ready result.
 
 The Source converts Runtime observations and operation receipts into Driver
 messages, tool declarations and results. Runtime owns Ref resolution, source

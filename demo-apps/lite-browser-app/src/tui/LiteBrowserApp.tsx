@@ -1,4 +1,4 @@
-import { createTUIApp, View, useCallback, useState, AppTools, ToolRef } from '@aotui/sdk';
+import { createTUIApp, View, useCallback, useState, AppTools } from '@aotui/sdk';
 import { runWebFetch } from '../core/webfetch.js';
 import { runWebSearch } from '../core/websearch.js';
 import type { FetchFormat, PageState, SearchQuery, SearchState } from '../types.js';
@@ -13,7 +13,6 @@ import {
     createFetchUrlBinding,
     createOpenResultBinding,
     createSearchWebBinding,
-    ToolSection,
 } from './BrowserTools.js';
 
 function LiteBrowserRoot() {
@@ -95,22 +94,19 @@ function LiteBrowserRoot() {
     return (
         <AppTools definition={browserTools} bindings={bindings}>
             <View kind="instruction" id="root" type="Root" name="Root">
-                <RootView><ToolRef tool={browserTools.fetchUrl} /></RootView>
+                <RootView />
             </View>
             <View kind="state" id="search" type="Search" name="Search">
                 <SearchView state={searchState} />
-                <ToolSection><ToolRef tool={browserTools.searchWeb} /></ToolSection>
             </View>
             {hasResults ? (
                 <View kind="state" key={searchState.updatedAt} id="results" type="ResultList" name="Result List">
                     <ResultListView results={searchState.results} />
-                    <ToolSection><ToolRef tool={browserTools.openResult} /><ToolRef tool={browserTools.clearResults} /></ToolSection>
                 </View>
             ) : null}
             {hasPage ? (
                 <View kind="state" key={pageState.document?.url ?? 'error'} id="page" type="Page" name="Page">
                     <PageView state={pageState} />
-                    <ToolSection><ToolRef tool={browserTools.closePage} /></ToolSection>
                 </View>
             ) : null}
         </AppTools>

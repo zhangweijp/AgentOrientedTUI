@@ -1,7 +1,7 @@
 {
   "name": "@aotui/sdk",
   "version": "0.8.0-srt.1",
-  "description": "AOTUI Developer SDK - Build Agent-Oriented TUI Apps with Preact",
+  "description": "Build Agent-Oriented TUI Apps with TypeScript or Preact",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -10,9 +10,9 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./tools": {
-      "types": "./dist/tools.d.ts",
-      "import": "./dist/tools.js"
+    "./app": {
+      "types": "./dist/app.d.ts",
+      "import": "./dist/app.js"
     }
   },
   "scripts": {
@@ -25,7 +25,10 @@
   },
   "peerDependencies": {
     "typebox": "1.4.3",
-    "preact": "^10.0.0"
+    "preact": "^10.29.1"
+  },
+  "peerDependenciesMeta": {
+    "preact": { "optional": true }
   },
   "dependencies": {
     "@aotui/runtime": "7.0.0-srt.1"

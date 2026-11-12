@@ -3,16 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
 
 function inFlightHost() {
+    const worker = Object.assign(new EventEmitter(), {
+        postMessage: vi.fn(), terminate: vi.fn(() => Promise.resolve(0)),
+    });
     const host = new AppWorkerHost({
         appId: 'app_1' as any, desktopId: 'desktop_1' as any,
-        appModulePath: 'not-loaded',
+        appModulePath: 'not-loaded', existingWorker: worker as any,
     });
-    const worker = {
-        postMessage: vi.fn(), terminate: vi.fn(),
-        removeAllListeners: vi.fn(), off: vi.fn(),
-    };
     const request = vi.spyOn(host as any, 'sendRequest').mockResolvedValue(undefined);
-    (host as any).worker = worker;
     (host as any).status = 'running';
     return { host, worker, request };
 }
@@ -82,41 +80,24 @@ describe('Worker Host lifecycle and physical resource release', () => {
             .toEqual(['APP_SHUTDOWN', 'APP_CLOSE']);
     });
 
-    it('close waits for an already pending WorkerPool RESET instead of reporting completion early', async () => {
+    it('close joins the physical exit even after all lifecycle responses', async () => {
         const { host, worker, request } = inFlightHost();
-        let finishReset!: () => void;
-        let resetStarted!: () => void;
-        const resetEntered = new Promise<void>(resolve => { resetStarted = resolve; });
-        request.mockImplementationOnce(message => new Promise<void>(resolve => {
-            if (message.type !== 'RESET') throw new Error('Expected RESET');
-            finishReset = resolve;
-            resetStarted();
-        }));
-        const released = host.releaseWorker();
+        let terminateEntered!: () => void;
+        const terminating = new Promise<void>(resolve => { terminateEntered = resolve; });
+        worker.terminate.mockImplementationOnce(() => { terminateEntered();return new Promise(() => {}); });
         const closing = host.close();
-        let closed = false;
-        void closing.then(() => { closed = true; });
-        await resetEntered;
-        expect(closed).toBe(false);
-        finishReset();
-        expect(await released).toBe(worker);
+        await terminating;
+        expect(host.close()).toBe(closing);
+        expect(host.getResourceReport()).toMatchObject({ worker: 'retiring', resourcesReleased: false });
+        expect(request.mock.calls.map(([message]) => message.type)).toEqual(['APP_SHUTDOWN', 'APP_CLOSE']);
+        worker.emit('exit', 0);
         await closing;
-        expect(closed).toBe(true);
-        expect(host.getStatus()).toBe('closed');
-    });
-
-    it('can RESET and return a physically live Worker after graceful APP_CLOSE', async () => {
-        const { host, worker, request } = inFlightHost();
-        await host.close();
-        expect(await host.releaseWorker()).toBe(worker);
-        expect(request.mock.calls.map(([message]) => message.type))
-            .toEqual(['APP_SHUTDOWN', 'APP_CLOSE', 'RESET']);
-        expect(await host.releaseWorker()).toBeNull();
+        expect(await host.waitForResourceRelease()).toMatchObject({ worker: 'exited', resourcesReleased: true });
     });
 
     it('termination detaches Host listeners and preserves an external exit observer', async () => {
         const worker = Object.assign(new EventEmitter(), {
-            postMessage: vi.fn(), terminate: vi.fn(),
+            postMessage: vi.fn(), terminate: vi.fn(() => new Promise<number>(() => {})),
         });
         const host = new AppWorkerHost({
             appId: 'app_1' as any, desktopId: 'desktop_1' as any,
@@ -127,9 +108,9 @@ describe('Worker Host lifecycle and physical resource release', () => {
         host.terminate();
         const resources = host.waitForResourceRelease();
         expect(host.waitForResourceRelease()).toBe(resources);
-        expect(worker.listenerCount('message')).toBe(0);
+        expect(worker.listenerCount('message')).toBe(1);
         expect(worker.listeners('exit')).toEqual(expect.arrayContaining([
-            externalExit, (host as any).resourceExitListener,
+            externalExit, (host as any).workerExitListener,
         ]));
         expect(worker.listenerCount('exit')).toBe(2);
         expect(host.getResourceReport()).toMatchObject({ worker: 'retiring', resourcesReleased: false });
@@ -137,6 +118,7 @@ describe('Worker Host lifecycle and physical resource release', () => {
         expect(externalExit).toHaveBeenCalledWith(1);
         expect(externalExit).toHaveBeenCalledTimes(1);
         expect(worker.listenerCount('exit')).toBe(0);
+        expect(worker.listenerCount('message')).toBe(0);
         expect(await resources).toMatchObject({ worker: 'exited', resourcesReleased: true });
         expect(host.getStatus()).toBe('closed');
     });

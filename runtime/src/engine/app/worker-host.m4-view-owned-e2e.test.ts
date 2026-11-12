@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
 
 describe('Semantic WorkerHost View identity and App-level ViewType Tool', () => {
-    it('publishes trusted View identity and a fresh type activation across physical Worker reuse', async () => {
+    it('publishes trusted View identity and a fresh type activation across fresh Worker instances', async () => {
         const temp = await mkdtemp(join(tmpdir(), 'aotui-m4-viewowned-'));
         const root = resolve(process.cwd());
         const workerScript = join(temp, 'worker.mjs');
@@ -31,13 +31,12 @@ describe('Semantic WorkerHost View identity and App-level ViewType Tool', () => 
                 import Type from 'typebox';
                 import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
                 import { View } from './sdk/src/components/View.tsx';
-                import { AppTools, ToolRef } from './sdk/src/components/AppTools.tsx';
+                import { AppTools } from './sdk/src/components/AppTools.tsx';
                 import { defineToolSet, defineViewTypeTool } from './sdk/src/tools/view-type-tool.ts';
 
-                function Detail({ label, InspectUI }) {
+                function Detail({ label }) {
                     return h('section', {}, [
                         h('p', {key:'info'}, label),
-                        h(ToolRef, { tool: InspectUI, ...({key:'tool'}) }, 'Inspect')
                     ]);
                 }
 
@@ -49,14 +48,13 @@ InspectUI: defineViewTypeTool({
                         })
 });
 function App() {
-                    const InspectUI = fixtureTools0.InspectUI;
                     return h(AppTools, { definition: fixtureTools0, bindings: {
 InspectUI: { execute: async args => ({ success: true, data: { file: args.filePath } }) }
 } }, h('main', {}, [
                         h(View, {kind: 'state',id:'fd_0',type:'FileDetail',key:'a'},
-                            h(Detail, {label:'App.tsx', InspectUI})),
+                            h(Detail, {label:'App.tsx'})),
                         h(View, {kind: 'state',id:'fd_1',type:'FileDetail',key:'b'},
-                            h(Detail, {label:'package.json', InspectUI}))
+                            h(Detail, {label:'package.json'}))
                     ]));
                 }
                 export default createTUIApp({app_name:'m4_fixture',component:App});
@@ -104,9 +102,8 @@ InspectUI: { execute: async args => ({ success: true, data: { file: args.filePat
             expect(inspect).not.toHaveProperty('targets');
             const firstActivationId = inspect.execution.activationId;
 
-            // A managed close ends this port; remounting requires RESET and a new Host.
+            // A managed close retires this Host and Worker.
             const physical = (host as any).worker;
-            const threadId = physical.threadId;
             await host.close();
             const posted = vi.spyOn(physical, 'postMessage');
             await expect(host.open()).rejects.toThrow(/shutdown is pending/);
@@ -115,18 +112,12 @@ InspectUI: { execute: async args => ({ success: true, data: { file: args.filePat
             expect(host.getSemanticSnapshotReport()).toMatchObject({ health: 'stopped' });
             expect(host.getSemanticSnapshotReport()?.snapshotId).toBeUndefined();
 
-            // Reuse the SAME physical Worker via RESET, but issue a new logical
-            // AppInstanceId. Neither Runtime View identities nor Tool bindings
-            // from the old execution can be inherited.
             const oldExecution = host.appInstanceId;
-            const previousWorker = await host.releaseWorker();
-            expect(previousWorker).not.toBeNull();
-            expect(previousWorker).toBe(physical);expect(previousWorker!.threadId).toBe(threadId);
-            expect(posted.mock.calls.map(([message]) => (message as any).type)).toEqual(['RESET']);posted.mockRestore();
+            expect(physical.threadId).toBe(-1);
+            posted.mockRestore();
             host = new AppWorkerHost({
                 appId: 'm4_app' as any, desktopId: 'desktop_m4' as any,
                 appModulePath: appScript, workerScriptPath: workerScript,
-                existingWorker: previousWorker!,
             });
             expect(host.appInstanceId).not.toBe(oldExecution);
             await host.start();

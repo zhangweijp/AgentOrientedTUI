@@ -2,7 +2,7 @@
  * @aotui/sdk - component application entry for the current Preact Runtime.
  *
  * Start with README.md; docs/api-status.md lists exact capability conditions,
- * and docs/static-tools.md describes the current M1/M2 Tool contract. Export presence does not grant execution permission.
+ * and docs/static-tools.md describes the shared Tool contract.
  *
  * @example
  * ```tsx
@@ -36,17 +36,16 @@ export {
   type ListRefFormatter,
   type ItemRefFormatter,
 } from './hooks/useArrayRef.js';
-export { useViewContext } from './hooks/useViewContext.js';
-export { createToolBindings, defineToolSet, defineViewTypeTool, getToolCatalog, refParam, TOOL_BINDING_DIAGNOSTIC_LIMITS } from './tools/view-type-tool.js';
+export { defineToolSet, defineViewTypeTool, getToolCatalog, refParam } from './tools/view-type-tool.js';
 export type {
-    ToolBinding, ToolBindings, ToolBindingController, ToolBindingDiagnostics,
-    ToolBindingErrorSummary, ToolBindingCleanupDiagnostic, ToolBindingErrorCode,
   ArgsOf,
   DeepReadonly,
   DefinedViewTypeTool,
   JsonSchemaObject,
   JsonSchemaValue,
   SchemaOf,
+  ToolBinding,
+  ToolBindings,
   ToolCatalogEntry,
   ToolSet,
   ToolSetMap,
@@ -61,7 +60,6 @@ export type {
   ToolResult,
   AppContext,
   AppReinitializeContext,
-  IViewMeta,
   LLMOutputEvent,
   LLMOutputListener,
   AppStatePersistence,
@@ -72,5 +70,8 @@ export type {
 } from '@aotui/runtime/spi';
 export { AOTUIError } from '@aotui/runtime/spi';
 
-export { AppTools, ToolRef, ToolCatalog } from './components/AppTools.js';
-export type { AppToolsProps, ToolRefProps, ToolCatalogProps } from './components/AppTools.js';
+export { AppTools, ToolCatalog } from './components/AppTools.js';
+export type { AppToolsProps, ToolCatalogProps } from './components/AppTools.js';
+
+export { formatRef } from './app-factory/refs.js';
+export type { RefOptions } from './app-factory/refs.js';

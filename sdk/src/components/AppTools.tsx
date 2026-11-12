@@ -1,10 +1,8 @@
-import { createContext, h, type ComponentChildren } from 'preact';
+import { h, type ComponentChildren } from 'preact';
 import { useContext, useErrorBoundary, useLayoutEffect, useRef } from 'preact/hooks';
 import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
-import { ViewRuntimeContext } from '../contexts/view-runtime-context.js';
 import {
-    captureToolBindingsForRender, createToolBindings, defineToolSet,
-    getToolCatalog, toolSetKey, isToolBindingDisposed,
+    createToolBindings, defineToolSet, getToolCatalog,
     type ExactBindings, type ToolBindings, type ToolSet, type ToolSetMap, type ToolMap,
 } from '../tools/view-type-tool.js';
 
@@ -17,11 +15,6 @@ export type AppToolsProps<
     bindings: Bindings & ExactBindings<Bindings, ToolSetMap<Definition>>;
     children?: ComponentChildren;
 }>;
-
-const PresentationContext = createContext<Readonly<{
-    definition: AnyToolSet;
-    enabled: ReadonlyMap<string, boolean>;
-}> | null>(null);
 
 function authorError(code: string, message: string): Error & { readonly code: string } {
     return Object.assign(new Error(code + ': ' + message), { code });
@@ -39,26 +32,19 @@ export function AppTools<const Map extends ToolMap, const Bindings extends ToolB
     const port = context.appTypeTools;
     const fixed = useRef<ReturnType<typeof bind>>();
     function bind() {
-        const controller = createToolBindings<Map>({
-            definition,
-            appTypeTools: port!,
-        });
-        const inCommit = (operation: () => void) => {
-            context!.projection.beginCommit();
-            try { operation(); } finally { context!.projection.endCommit(); }
-        };
+        const controller = createToolBindings(definition, port);
         const dispose = () => {
             try {
-                if (!isToolBindingDisposed(controller)) inCommit(() => controller.dispose());
+                if (!controller.disposed) controller.dispose();
             }
             finally {
-                if (isToolBindingDisposed(controller)) {
+                if (controller.disposed) {
                     context!.toolCleanup?.delete(dispose);
                     context!.toolOwners?.active.delete(dispose);
                 } else context!.toolCleanup?.add(dispose);
             }
         };
-        return { definition, port, controller, inCommit, dispose };
+        return { definition, port, controller, dispose };
     }
 
     fixed.current ??= bind();
@@ -66,7 +52,7 @@ export function AppTools<const Map extends ToolMap, const Bindings extends ToolB
     if (owner.definition !== definition || owner.port !== port) {
         throw authorError('APP_TOOLS_IDENTITY_CHANGED', 'ToolSet and App port are fixed. Unmount AppTools and remount with a new key before replacing them.');
     }
-    const frame = captureToolBindingsForRender(definition, bindings);
+    const commit = owner.controller.prepare(bindings);
     // Preact can run parent layout effects before an outer boundary renders its
     // fallback. A descendant error escaping this frame invalidates its bindings.
     let failed = false;
@@ -77,44 +63,24 @@ export function AppTools<const Map extends ToolMap, const Bindings extends ToolB
     useLayoutEffect(() => owner.dispose, []);
     useLayoutEffect(() => {
         if (failed) return;
-        owner.inCommit(() => {
-            let failure: { error: unknown } | undefined;
-            for (const cleanup of [...(context.toolCleanup ?? [])]) {
-                try { cleanup(); } catch (error) { failure ??= { error }; }
+        let failure: { error: unknown } | undefined;
+        for (const cleanup of [...(context.toolCleanup ?? [])]) {
+            try { cleanup(); } catch (error) { failure ??= { error }; }
+        }
+        if (failure) throw failure.error;
+        if (context.toolOwners?.closed) return;
+        // Enroll before registerTypeTool, which can synchronously re-enter cleanup.
+        context.toolOwners?.active.add(owner.dispose);
+        try { commit(); }
+        catch (error) { context.toolCleanup?.add(owner.dispose); throw error; }
+        finally {
+            if (owner.controller.disposed) {
+                context.toolCleanup?.delete(owner.dispose);
+                context.toolOwners?.active.delete(owner.dispose);
             }
-            if (failure) throw failure.error;
-            if (context.toolOwners?.closed) return;
-            // Enroll before registerTypeTool, which can synchronously re-enter cleanup.
-            context.toolOwners?.active.add(owner.dispose);
-            try { owner.controller.commit<Bindings>(frame.bindings); }
-            catch (error) { context.toolCleanup?.add(owner.dispose); throw error; }
-            finally {
-                if (isToolBindingDisposed(owner.controller)) {
-                    context.toolCleanup?.delete(owner.dispose);
-                    context.toolOwners?.active.delete(owner.dispose);
-                }
-            }
-        });
+        }
     });
-    return h(PresentationContext.Provider, { value: { definition, enabled: frame.enabled } }, children);
-}
-
-export interface ToolRefProps {
-    readonly tool: ReturnType<typeof import('../tools/view-type-tool.js').defineViewTypeTool>;
-    readonly children?: ComponentChildren;
-}
-
-export function ToolRef({ tool, children }: ToolRefProps) {
-    const context = useContext(PresentationContext);
-    if (!context) throw authorError('TOOL_REF_CONTEXT_REQUIRED', 'Place ToolRef under the AppTools that binds its ToolSet.');
-    const key = toolSetKey(context.definition, tool);
-    if (key === undefined) throw authorError('TOOL_REF_OUTSIDE_SET', 'The Tool definition must be a member of the enclosing AppTools ToolSet.');
-    const view = useContext(ViewRuntimeContext);
-    if (view && view.meta.viewType !== tool.viewType) throw authorError('TOOL_REF_VIEW_TYPE_MISMATCH',
-        'Tool ' + tool.name + ' belongs to ' + tool.viewType + ', but the current View is ' + view.meta.viewType + '.');
-    return context.enabled.get(key) ? h('tool-ref', {
-        'view-type': tool.viewType, 'tool-name': tool.name, desc: tool.description,
-    }, children ?? tool.name) : null;
+    return children ?? null;
 }
 
 // Keep the existing descriptor-list type available alongside the component value.

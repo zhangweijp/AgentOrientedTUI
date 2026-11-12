@@ -2,7 +2,7 @@
 import { h } from 'preact';
 import { useLayoutEffect, useState } from 'preact/hooks';
 import { parentPort } from 'node:worker_threads';
-import { createTUIApp, View, useDataRef, AppTools, ToolRef } from '@aotui/sdk';
+import { createTUIApp, View, useDataRef, AppTools } from '@aotui/sdk';
 import { initialBusiness, applyBusiness, businessResult, tools,
   fileLabel, filePayload, selectedBusinessSession } from './dual-producer-business.mjs';
 
@@ -26,8 +26,6 @@ function Detail({ id, state }) {
   useDataRef('private_' + fileLabel(id), filePayload(state, id, 'private-' + id), { refType: 'File' });
   return h('section', {}, [
     h('p', {}, [`File View session ID: ${id}@${state.mounts[id]}. Stable File value. `, file('File value')]),
-    h(ToolRef, { tool: tools.Read }, 'Private ordinary-parameter comparison'),
-    h(ToolRef, { tool: tools.ReadRef }, 'Read the granted original file Ref'),
   ]);
 }
 function Root() {
@@ -48,6 +46,6 @@ function Root() {
     h(View, {kind: 'state', key: id + ':' + state.mounts[id], id, type: 'File' }, h(Detail, { id, state })))));
 }
 const factory = createTUIApp({ app_name: 'dual_producer', component: Root });
-const initialize = factory.initializeComponent;
-factory.initializeComponent = (container, context) => { projection = context.projection; return initialize.call(factory, container, context); };
+const initialize = factory.initialize;
+factory.initialize = context => { projection = context.projection; return initialize.call(factory, context); };
 export default factory;

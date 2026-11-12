@@ -9,12 +9,12 @@
 | 层 | 职责 | 边界 |
 | --- | --- | --- |
 | App / SDK | 声明 View、Ref 和 View 所属的 Tool；处理业务状态与副作用；把最新业务数据和后台进度投影到 View | 应用决定业务授权、事务、任务完成和业务幂等；无需编写专属 DrivenSource，也无需了解模型供应商 |
-| Runtime / Semantic Core | 管理 App、Worker、View 实例；发布 Semantic Snapshot；校验 Scope、Observation、Binding 和执行时有效性；分发调用并记录 Receipt | 提供有界内存与生命周期管理；不承诺外部业务事务、跨进程恢复或持久任务调度 |
+| Runtime / Semantic Core | 管理 App、Worker、View 实例；发布 Semantic Snapshot；校验 App 实例、Observation、Binding 和执行时有效性；分发调用并记录 Receipt | 提供有界内存与生命周期管理；不承诺外部业务事务、跨进程恢复或持久任务调度 |
 | Host / Agent Driver | 安装应用、配置可信策略和能力协商；通过通用 Source 聚合多个 App；组织 Messages / Tools，调用模型并释放本轮 Context | 模型只能使用本轮暴露的工具；Host 不硬编码 IDE 的 View 类型或业务工具名单 |
 
 普通 Tool 属于 App + ViewType，不属于某一个 View 实例。同类型的多个 View 共用一份 Tool 声明、注册和 Handler；App 用有业务意义的普通参数或显式 Ref 选择对象，并自行验证该对象当前是否可操作。至少一个匹配 View 存在时，对应类型的 Tool 才激活；最后一个匹配 View 关闭后，该类型的能力退出观察。旧 Observation 的 Binding 不能继续执行。工具在投影时还必须符合 Worker 实际协商的能力与 Host 策略。展示时可用不替代执行前校验：状态在模型思考期间变化时，Runtime 仍会拒绝失效调用。
 
-`refParam` 是同一 ViewType Tool 的显式参数取值方式，不再注册实例 Tool。本隔离候选允许每个 Tool 声明多个顶层对象或对象列表 Ref，并通过 required 区分必填与可选，可与普通参数并用。缺席可选字段不产生 payload 或来源；有值但无效的字段拒绝整次调用。Runtime 从调用绑定的原 Observation 解析完整 Ref 名、校验真实业务类型和 payload Schema，授权与执行使用同一份冻结 effectiveInput。View/Ref 的实例身份仍保留；数据只读不要求 Tool 必须只读。App 用 payload 内部 ID 检查当前业务对象，不让模型另抄该 ID；文件路径、标题和编辑内容等有意义的普通字段保留。
+`refParam` 是同一 ViewType Tool 的显式参数取值方式，不再注册实例 Tool。SDK 允许每个 Tool 声明多个显式顶层 Ref 参数，并通过 required 区分必填与可选，可与普通参数并用。缺席可选字段不产生 payload 或来源；有值但无效的字段拒绝整次调用。Runtime 从调用绑定的原 Observation 解析完整 Ref 名、校验真实业务类型和 payload Schema，授权与执行使用同一份冻结 effectiveInput。View/Ref 的实例身份仍保留；数据只读不要求 Tool 必须只读。App 用 payload 内部 ID 检查当前业务对象，不让模型另抄该 ID；文件路径、标题和编辑内容等有意义的普通字段保留。
 
 相关实现：[通用 Source](../../agent-driver-adapter/src/semantic-aotui-driven-source.ts)、[能力过滤](../src/adapters/semantic-capability-policy.ts)、[Worker 接入](../src/engine/app/worker-host.ts)。
 
@@ -22,11 +22,11 @@
 
 标准流程如下：
 
-1. Host 从 Desktop 读取安装的应用，为可运行应用创建 Semantic Scope。尚未打开的应用通过通用应用控制工具打开。
+1. Host 从 Desktop 读取安装的应用，按 App ID 和当前执行 instance ID 取得交互入口。尚未打开的应用通过通用应用控制工具打开。
 2. Source 对每个 App 调用 `observe({ all: true })`，从该 App 当前 Semantic Snapshot 选择 View。准备完成但没有 View 的 App 可以返回空 Observation。
 3. Source 把观察到的 View 编排为单层 XML + Markdown User Messages，并从同一 Observation 构造模型可见工具。instruction View 放入 static 区，业务状态放入 dynamic 区；两者都是应用数据，不提升为新的用户指令。
-4. Driver 在实际模型轮次中、编排消费消息前调用 Context 的 `adopt()`。Source 同步调用各 App 的 `adoptObservation(id)`，成功后旧 Observation／Binding 退出。仅准备或诊断预览不采用，也不能调用其工具。
-5. 模型选择工具后，Source 使用本轮保存的 ScopeClient、Observation ID 和 Binding ID 调用 `invoke()`。模型不负责构造内部身份。
+4. Driver 完成请求编排、能力过滤及整轮输入预算校验后，调用 Context 的 `adopt()`。Source 同步调用各 App 的 `adoptObservation(id)`，成功后旧 Observation／Binding 退出。仅准备或诊断预览不采用，也不能调用其工具。
+5. 模型选择工具后，Source 使用本轮保存的 AppInteraction、Observation ID 和 Binding ID 调用 `invoke()`。模型不负责构造内部身份。
 6. Driver 等待模型调用和本批 Tool 调用结束，在 `finally` 中释放 Context。后续轮次重新读取最新 View。
 
 同一 Context 的 `messages`、`tools`、`executeTool` 是一组。不能分别获取新旧版本后混用，也不能在执行旧调用时悄悄换成最新 Binding。旧 Context 释放后继续调用会被拒绝。
@@ -45,7 +45,7 @@ const source = new SemanticAOTUIDrivenSource(desktop, kernel, {
 // 标准 Driver 准备 Context、在实际 run 内 adopt，并在 finally release。
 ```
 
-自定义 Driver 在实际消费前也必须调用 `context.adopt()`，并成对调用 `getContext()` / `release()`，并在模型生成及该轮工具执行全部结束后释放。最后一个活跃 Context 释放时，Source 关闭它管理的 App Scopes；下轮创建新 Scope。观察释放只结束本轮观察的所有权，不表示回滚已经发生的业务操作。
+自定义 Driver 在实际消费前也必须调用 `context.adopt()`，并成对调用 `getContext()` / `release()`，并在模型生成及该轮工具执行全部结束后释放。Context 释放其观察，实例继续持有需要结算的执行与有限收据。自定义 Host 需要诊断预览时使用 `preview()`。
 
 ### 模型可见呈现与内部身份分离
 
@@ -67,15 +67,9 @@ Desktop 保留应用用途、状态、App ID 和最近 5 条系统日志。日�
 
 ## 3. 所有权决定观察生命周期，容量限制仍然有效
 
-默认 `lifetime: 'scope'`：Scope 和 Observation 的 `expiresAt` 为 `null`，不会仅因模型思考超过原来的 30 秒或 10 分钟而失效。Observation 持有的原始 Snapshot 使用 owner lease；即使应用发布了更新，仍可在执行校验中引用该次观察的原始数据。
+每个 App 实例保有当前采用观察及至多一个候选。观察持有原始 Snapshot，直到释放、被替换或实例关闭。新发布可以产生新的候选；原观察中仍挂载的 Ref 继续按冻结值读取。同名 View 重新挂载后，旧显式 Ref 拒绝新调用并返回参数路径。
 
-这不意味着旧工具永久有效。显式释放、Scope 关闭、App 实例替换、View 实例撤销、Binding 变更和执行授权检查依然生效。原始观察的数据身份也不会被新快照替换。
-
-需要时间租约的可信集成可以在 `createScopedInteraction()` 或 `createObservationRegistry()` 配置中显式选择 `lifetime: 'ttl'`。该模式使用配置的 Scope / Observation TTL，并受 Snapshot Lease 截止时间约束；这不是 `SemanticAOTUIDrivenSourceOptions` 的模型参数。
-
-Scope、Observation、准备中的观察、Snapshot lease、历史快照及字节占用都有容量上限。超限会返回容量错误；不能通过无限保留、静默换绑或重试写入来规避上限。owner 模式的释放责任属于创建它的集成方。
-
-当前标准 Source 对每个 App 读取一次完整 Observation，尚未提供通用分批读取。它受每次 256 个 Binding、256 KiB 完整 Observation 和 64 KiB metadata 等限制约束；完整 App 超限时，会在 Desktop 目录报告 Semantic issue，不会把截断内容伪装成完整页面。IDE 允许加载 64 个文件，不等于这 64 个文件和工具能同时进入一次观察。单个过大的 View 也可能超限。大工作集的选择与有界分批仍是后续接入工作，不能通过无限放大 Core 上限解决。
+标准 Source 请求完整 View。Runtime 的单 View 内容限额为 512 KiB，完整观察留出 View、Tool schema 与额外元数据空间。App 聚合内容仍可超额。Host 对最终模型消息、线路工具和输出预留进行整轮额度检查，通过后才采用候选观察。模型缺少可信额度时，Host 可用 `modelInputLimits` 配置提供 `contextWindow` 和 `maxOutputTokens`。
 
 相关实现：[Observation 生命周期](../src/core/invocation/observation-registry.ts)、[Snapshot Store](../src/core/snapshot/store.ts)。
 
@@ -90,19 +84,11 @@ Scope、Observation、准备中的观察、Snapshot lease、历史快照及字�
 
 `executionPhase` 和 `outcome` 分别回答“进入了哪个阶段”和“已知什么结果”。Core 内部保留完整 Receipt。Source 将成功 `ToolResult.data` 作为 Driver 工具结果，并将业务错误映射为可行动的错误；内部 `outcomeStatus` 供 Driver 区分终态，模型结果不包含 Receipt 或 `outcomeStatus` 包装，不能仅以有没有普通 result 字段判断成功。
 
-Core 的幂等范围是**同一个仍然存活的 Scope**。相同 Invocation ID 与完全相同的请求命中已有记录，读取仍可用的结果，不再次进入业务 Handler；相同 ID 搭配不同请求返回冲突。请求指纹包含 Observation ID 和 Binding ID，因此新轮换了 Observation 后不能把它包装成旧调用的“安全重试”。新 Scope 不继承旧 Scope 的去重表。
+实例内相同 Invocation ID、Observation、Binding 和请求指纹匹配原记录。不同指纹报告 `INVOCATION_ID_CONFLICT`。原观察已退出时，新调用会拒绝，可信 Host 仍可用 `readReceipt(originalRequest)` 读取原调用。首次返回及每次读取均通过 `AppInteractionPolicy.canReadReceipt`。
 
-Core 的 Receipt 内容默认保留 **60 秒**；重复调用不续期。Scope 提前关闭会更早释放结果。内容过期后，同一 Scope 内仍保留有界的 Invocation 指纹，避免重新执行已知调用；每 Scope 默认最多 256 条，关闭后释放。这里的 60 秒是结果内容保留策略，与默认无时间过期的 Observation 不同。
+每个实例最多一个真实执行。调用方等待截止后，原 handler 仍由实例跟踪，直到有效 terminal 或真实 Worker 退出。终态后的可读结果默认保留 60 秒，当前观察的防重指纹在采用期间继续保留。退出观察的结果按 TTL 释放，实例关闭撤销读取。标准 Source 将收据转换为 Driver 操作结果，模型从 View 获取业务数据。长期审计或业务任务进度分别由 Host 与 App 持有。
 
-`invoke()` 直接返回 Receipt，结果只由 `ToolResult` 与可信执行阶段生成。Core 不再提供另一套 `ActionOutcome` 返回格式、`OperationProvider`（后改名为 `TaskProgressProvider`）后台任务查询接口或 `ScopeClient.readReceipt()`。这是一项公共 Core API 的 Breaking Change：低层接入方应返回 `kind: 'tool-result'` 的 `ExecutionFact`，保留原请求时可在同一 Scope 内重复调用 `invoke()` 取得仍在保留期内的结果；只持有调用 ID 的事后查询已移除。
-
-`ScopePolicy.canReadReceipt` 仍在首次返回及重复调用返回结果前检查当前读取权限；这不是后台任务查询。关闭和容量统计仍覆盖尚未完成的结果授权，不能提前宣称资源已经释放。
-
-标准 Source 将 Receipt 转成 Driver 的公开操作数据和内部结果分类，不向模型暴露 Receipt 查询 Tool，也不提供跨轮持久 Receipt 查询。最后一个 Context 释放后，其 Scope 关闭；新一轮不会继承旧去重表。后台工作、恢复、业务去重和长期进度由应用自己的状态与 View 表达，关闭 Scope 不证明外部业务任务已取消。
-
-普通异步 Handler 仍会被等待，再返回调用结果。后台任务应把“启动/提交”定义为工具本身的操作。例如 Terminal 工具报告启动成功，Terminal View 持续展示运行状态、输出和结束结果；启动成功不能宣称命令已经运行完毕。Browser 的查询/抓取工具等待本次操作结束后返回，内容进入 View。这些流程不依赖通用任务轮询机制。
-
-相关实现：[Scope 调用与去重](../src/core/invocation/scoped-interaction.ts)、[Core 结果契约](../src/core/invocation/scoped-interaction-types.ts)。
+相关实现见 [实例调用与防重](../src/core/invocation/app-interaction.ts) 和 [公共交互](runtime-app-interaction.md)。
 
 ## 5. 验收需要同时检查调用链与可见行为
 
@@ -134,7 +120,7 @@ pnpm -C agent-driver-v2 exec vitest run \
 - 打开文件后出现 FileDetail View 和相应工具；编辑后下一轮看到最新 View；默认调用链没有 Legacy `acquireSnapshot()` / `execute()` 回退。
 - 模型思考超过 30 秒仍可调用未变更的 Binding；关闭最后一个匹配 View、禁用工具或替换 App 实例后，旧 activation 调用被拒绝；单个业务对象关闭但同类型仍活跃时，App guard 校验该对象。
 - 失败、拒绝和未知结果没有被统计成成功；后台任务启动成功不等于任务完成；未知写入不被自动重试；不暴露当前能力无法执行的工具。
-- Context 正常结束、异常结束和会话停止均释放观察；连续超过 256 轮不会因同一 Scope 的去重表累计而耗尽；后台命令的进度继续由应用 View 展示。
+- Context 正常结束、异常结束和会话停止均释放观察；多轮采用和结果过期会回收不再使用的记录；后台命令的进度继续由应用 View 展示。
 
 Semantic 的正式接入和清理以代码、当前 API 类型及定向验证共同确认；任何旧代码尚未删除的事实都不等于默认流程仍受支持。默认路径不通过回退掩盖 Semantic 接入缺口。
 
@@ -142,13 +128,13 @@ Semantic 的正式接入和清理以代码、当前 API 类型及定向验证共
 
 ## 参数 Schema 与公共别名
 
-SDK 将 TypeBox 声明编译为有界的 `view-type-parameters-v1` 参数合同。未支持的 Schema 词汇（包括 JSON Schema 字符串约束 `pattern`）会在 Tool 定义期带有 Schema 路径地拒绝，不会静默忽略；名为 `pattern` 的普通业务参数仍可作为普通字符串字段使用，但不会因此获得正则校验。完整支持范围见 SDK 的[`view-type-parameters-v1` 参数合同](../../sdk/docs/ordinary-v2.md)。Native Tool 的公共别名约束见上文；这不限制纯 Core 内部身份。
+SDK 将 TypeBox 声明编译为有界的 `view-type-parameters-v1` 参数合同。支持的 Schema 词汇贯通声明、模型参数和解引用校验。其他词汇会在 Tool 定义期带路径拒绝。完整支持范围见 SDK 的[`view-type-parameters-v1` 参数合同](../../sdk/docs/ordinary-v2.md)。Native Tool 的公共别名约束见上文；这不限制纯 Core 内部身份。
 
 本候选的工厂作者标记为 `view-type-tools-v4`，Host/Worker mode 为 `view-type-parameters-v1`；旧 Hook、实例 Tool 执行、专属 profile 和旧 wire 成功路径退出。View/Ref owner、授权后重验、预算及释放保持。观察的准备与采用分开，显式采用新观察会撤销旧资格，规则见下节。历史验收记录保留各自日期和适用产物，未执行的新候选测试不能标成已通过。
 
 ### 串行采用与失败
 
-`ScopeClient.observe()` 只准备观察；`adoptObservation(id)` 同步返回 adopted 或 rejected。未采用的绑定返回 OBSERVATION_NOT_ADOPTED，采用新观察后旧 ID 返回 OBSERVATION_UNAVAILABLE，不会按 Ref 名重定向。失败 adopt 不撤销尚有效的当前观察，已释放 ID 不可恢复。独立 Scope 的 holder 互不撤销。
+`AppInteraction.observe()` 只准备观察；`adoptObservation(id)` 同步返回 adopted 或 rejected。未采用的绑定返回 OBSERVATION_NOT_ADOPTED，采用新观察后旧 ID 返回 OBSERVATION_UNAVAILABLE，不会按 Ref 名重定向。失败 adopt 不撤销尚有效的当前观察，已释放 ID 不可恢复。独立 App 实例分别持有观察。
 
 Source 按 App 准备和诊断；后台通知、getContext 预览不换当前。若采用时跨 App 部分成功，错误 code 为 SEMANTIC_ADOPTION_PARTIAL，并保留逐 App 结果；不宣称整体回滚。Driver 不进入模型，仍在 finally 释放本轮资源。所有 App 采用失败时为 SEMANTIC_ADOPTION_FAILED。Source 不持有跨轮常驻 current。必要操作收据及完整请求防重不随旧观察撤销而删除。
 

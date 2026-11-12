@@ -13,7 +13,8 @@ import type { UpdateSignal } from '../core/signals.js';
 import type { IRuntimeContext } from './context.interface.js'; // New
 import type { ShutdownOptions, DesktopCloseOptions, DesktopCloseHandle, RuntimeCloseHandle } from './close.interface.js';
 export type { ShutdownOptions } from './close.interface.js';
-import type { AppInteractionOptions, RuntimeInteractionAccess, DesktopInteractionAccess } from './app-interaction.interface.js';
+import type { AppInteractionOptions, AppInteractionResult } from './app-interaction.interface.js';
+import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
 
 export interface ReinitializeDesktopAppsOptions {
     reason?: string;
@@ -53,7 +54,7 @@ export interface AppDiscoveryInfo {
 }
 
 export interface IDesktop {
-    createAppScope: DesktopInteractionAccess['createAppScope'];
+    getAppInteraction(appId: string, expectedInstanceId: string, policy?: AppInteractionPolicy): AppInteractionResult;
     beginClose(options?: DesktopCloseOptions): DesktopCloseHandle;
     id: DesktopID;
 
@@ -135,7 +136,7 @@ export interface IDesktop {
  * Runtime 的核心编排器。
  */
 export interface IKernel {
-    createAppScope: RuntimeInteractionAccess['createAppScope'];
+    getAppInteraction(desktopId: DesktopID, appId: string, expectedInstanceId: string, policy?: AppInteractionPolicy): AppInteractionResult;
     beginShutdown(reason?: string): RuntimeCloseHandle;
     beginDesktopShutdown(id: DesktopID, options?: ShutdownOptions): DesktopCloseHandle;
     createDesktop(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID>;

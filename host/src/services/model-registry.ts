@@ -44,6 +44,7 @@ export interface ModelsDevModel {
     };
     limit?: {
         context?: number;
+        input?: number;
         output?: number;
     };
 }

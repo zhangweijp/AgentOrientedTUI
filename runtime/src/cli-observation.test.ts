@@ -1,9 +1,11 @@
+import { projectCompleteViews } from './core/invocation/observation-registry.js';
+import { buildViewMessageMarkup } from './adapters/view-message.js';
 import { readFileSync } from 'node:fs';
 import { transformSync } from 'esbuild';
 import { Linter, type Rule, type SourceCode } from 'eslint';
 import { describe, expect, it, vi } from 'vitest';
-import { createScopedInteraction, createSnapshotCore, createViewOwnedTools, refKey } from './core/index.js';
-import type { ScopeClient, ScopePolicy } from './core/index.js';
+import { createAppInteraction, createSnapshotCore, createViewOwnedTools, refKey } from './core/index.js';
+import type { AppInteraction, AppInteractionPolicy } from './core/index.js';
 
 const cli = transformSync(readFileSync(new URL('./cli.ts', import.meta.url), 'utf8'), { loader: 'ts', target: 'es2022' }).code;
 const example = readFileSync(new URL('../../demo-apps/aotui-ide/examples/local-scoped-ide.mjs', import.meta.url), 'utf8');
@@ -20,17 +22,12 @@ function extract(source: string, selector: string, read: (node: Rule.Node, code:
     return matches[0];
 }
 const printCode = extract(cli, 'FunctionDeclaration[id.name="printCurrentViews"]');
-const projectCode = extract(example, 'Property[method=true][key.name="project"]', (node, code) => {
-    if (node.type !== 'Property' || node.value.type !== 'FunctionExpression') throw new Error('Expected project method');
-    return `function(${node.value.params.map(parameter => code.getText(parameter)).join(',')}) ${code.getText(node.value.body)}`;
-});
-const exampleProject = new Function(`return ${projectCode}`)() as ScopePolicy['project'];
 const viewsCase = extract(example, 'SwitchCase[test.value="views"]');
-function exampleViews(client: ScopeClient, emit: (value: unknown) => void): () => Promise<unknown> {
+function exampleViews(client: AppInteraction, emit: (value: unknown) => void): () => Promise<unknown> {
     return new Function('client', 'emit', `return async function() { let value; switch ('views') { ${viewsCase} } emit(value); return value; }`)(client, emit);
 }
 
-function fixture(project?: ScopePolicy['project']) {
+function fixture(project?: AppInteractionPolicy['project']) {
     const core = createSnapshotCore({ now: () => 0 });
     core.lifecycle.startApp('app', 'run');
     const tools = createViewOwnedTools('app', 'run');
@@ -50,13 +47,10 @@ function fixture(project?: ScopePolicy['project']) {
             id: 'data', ownerViewId: view.viewId, ownerViewInstanceId: view.viewInstanceId, refType: 'unknown', target: { kind: 'snapshot-value', payload: { value: 1 } },
         }])), tools: Object.fromEntries(tools.listTools().map(tool => [tool.id, tool])) });
     expect(published.status).toBe('published');
-    const authority = createScopedInteraction(core.store, { namespace: 'print', now: () => 0 });
-    const opened = authority.createScope({ appId: 'app', instanceId: 'run', policy: {
-        project: project ?? (({ source }) => ({ views: source.views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-            refs: [], toolBindings: [], content: [] })), authorize: () => true, canReadReceipt: () => true,
-    }, execution: { resolve: () => null } });
-    if (opened.status !== 'opened') throw new Error(opened.issue.code);
-    const client = opened.client;
+    const client = createAppInteraction(core.store, { namespace: 'print', now: () => 0, appId: 'app', instanceId: 'run',
+        policy: { project: project ?? projectCompleteViews, authorize: () => true, canReadReceipt: () => true },
+        execution: { resolve: () => null } });
+    const authority = client;
     function released() {
         expect(authority.inspect().observations).toMatchObject({ observations: 0, reservations: 0, sources: 0, totalBytes: 0 });
         expect(core.store.inspect().activeLeases).toBe(0);
@@ -68,18 +62,25 @@ function fixture(project?: ScopePolicy['project']) {
     return { authority, client, released, close };
 }
 
-describe('temporary CLI observations', () => {
-    it('releases every printed observation beyond the default per-Scope limit', async () => {
+function printer(client: AppInteraction, output: Pick<Console, 'log' | 'error'>) {
+    const desktop = { getInstalledApps: () => [{ appId: 'app', appInstanceId: 'run', status: 'running' }] };
+    const runtime = { getAppInteraction: () => ({ status: 'ready', interaction: client }) };
+    return new Function('runtime', 'desktopId', 'desktop', 'buildViewMessageMarkup', 'console', `${printCode}; return printCurrentViews;`)(
+        runtime, 'desktop', desktop, buildViewMessageMarkup, output);
+}
+
+describe('read-only CLI preview', () => {
+    it('prints repeated previews without allocating observations', async () => {
         const f = fixture(), output = { log: vi.fn(), error: vi.fn() };
-        const print = new Function('clients', 'console', `${printCode}; return printCurrentViews;`)(new Map([['app', f.client]]), output);
+        const print = printer(f.client, output);
         try {
             for (let index = 0; index < 20; index++) { await print(); f.released(); }
-            expect(output.error).not.toHaveBeenCalled(); expect(output.log).toHaveBeenCalledTimes(140);
+            expect(output.error).not.toHaveBeenCalled(); expect(output.log).toHaveBeenCalledTimes(60);
         } finally { await f.close(); }
     });
     it('releases the observation when printing throws', async () => {
         const f = fixture();
-        const print = new Function('clients', 'console', `${printCode}; return printCurrentViews;`)(new Map([['app', f.client]]), {
+        const print = printer(f.client, {
             log() { throw new Error('PRINT_FAILED'); }, error: vi.fn(),
         });
         try { await expect(print()).rejects.toThrow('PRINT_FAILED'); f.released(); }
@@ -89,7 +90,7 @@ describe('temporary CLI observations', () => {
 
 describe('local IDE example observations', () => {
     it('projects V3 type Tools once and all Ref owners using the current grant contract', async () => {
-        const f = fixture(exampleProject);
+        const f = fixture();
         try {
             const result = await f.client.observe({ all: true });
             expect(result.status).toBe('observed');
@@ -101,7 +102,7 @@ describe('local IDE example observations', () => {
         } finally { await f.close(); }
     });
     it('releases twenty views commands while retaining an explicit invocation observation', async () => {
-        const f = fixture(exampleProject), emit = vi.fn(), views = exampleViews(f.client, emit);
+        const f = fixture(), emit = vi.fn(), views = exampleViews(f.client, emit);
         try {
             const retained = await f.client.observe({ all: true });
             expect(retained.status).toBe('observed');
@@ -115,7 +116,7 @@ describe('local IDE example observations', () => {
         } finally { await f.close(); }
     });
     it('releases a views observation even when output throws', async () => {
-        const f = fixture(exampleProject), views = exampleViews(f.client, () => { throw new Error('OUTPUT_FAILED'); });
+        const f = fixture(), views = exampleViews(f.client, () => { throw new Error('OUTPUT_FAILED'); });
         try { await expect(views()).rejects.toThrow('OUTPUT_FAILED'); f.released(); }
         finally { await f.close(); }
     });

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
+import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
 
 let Host: typeof import('./worker-host.js').AppWorkerHost;
 let temporary: string, appFile: string, workerFile: string;
@@ -23,8 +23,8 @@ function wait(x: any, predicate: (m: any) => boolean, from = 0): Promise<any> {
         x.worker.on('message', receive);
     });
 }
-async function start(existing?: Worker) {
-    const worker = existing ?? new Worker(workerFile, { stdout: true, stderr: true, env: { ...process.env, AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } });
+async function start() {
+    const worker = new Worker(workerFile, { stdout: true, stderr: true, env: { ...process.env, AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } });
     const messages: any[] = [], sent: any[] = [], logs: string[] = [];
     const post = worker.postMessage.bind(worker); worker.postMessage = (m: any) => { sent.push(m); post(m); };
     worker.stdout!.on('data', b => logs.push(String(b))); worker.stderr!.on('data', b => logs.push(String(b)));
@@ -51,10 +51,10 @@ function scope(x: Awaited<ReturnType<typeof start>>) {
         };
     };
     const controls = { project: (ctx: any): any => grant(ctx), authorize: (_ctx: any): any => true, read: (_m: any, _s: any): any => true };
-    const policy: ScopePolicy = { project: ctx => controls.project(ctx), authorize: ctx => controls.authorize(ctx), canReadReceipt: (m, s) => controls.read(m, s) };
-    const opened = x.host.createInteractionScope(policy); expect(opened.status).toBe('opened'); if (opened.status !== 'opened') throw Error(opened.issue.code);
-    return { client: opened.client, controls, policy, grant,
-        async observe(view = 'aa') { const r = await opened.client.observe({ viewIds: [view] }); expect(r.status).toBe('observed'); if (r.status !== 'observed') throw Error(r.issue.code); expect(opened.client.adoptObservation(r.observation.observationId)).toEqual({ status: 'adopted' }); return r.observation; },
+    const policy: AppInteractionPolicy = { project: ctx => controls.project(ctx), authorize: ctx => controls.authorize(ctx), canReadReceipt: (m, s) => controls.read(m, s) };
+    const opened = x.host.getAppInteraction(policy); expect(opened.status).toBe('ready'); if (opened.status !== 'ready') throw Error(opened.issue.code);
+    return { client: opened.interaction, controls, policy, grant,
+        async observe(view = 'aa') { const r = await opened.interaction.observe({ viewIds: [view] }); expect(r.status).toBe('observed'); if (r.status !== 'observed') throw Error(r.issue.code); expect(opened.interaction.adoptObservation(r.observation.observationId)).toEqual({ status: 'adopted' }); return r.observation; },
         request(o: any, id = 'call', input: any = { file: REF_A }, name = 'read', view = 'aa') {
             const tool = o.tools.find((t: any) => t.name === name); expect(tool).toBeDefined();
             const binding = o.bindings.find((b: any) => b.toolId === tool.id && b.execution.kind === 'view-type'); expect(binding).toBeDefined();
@@ -72,9 +72,9 @@ async function counts(x: Awaited<ReturnType<typeof start>>) {
     return result;
 }
 
-describe('C actual emitted Host / accepted SDK / safe Worker Scope chain', () => {
+describe('C actual emitted Host / accepted SDK / safe Worker App interaction chain', () => {
     beforeAll(async () => {
-        const runtime = resolve(process.cwd()); 
+        const runtime = resolve(process.cwd());
         temporary = await mkdtemp(join(process.env.AOTUI_MIGRATION_TEMP_DIR ?? tmpdir(), 'aotui-scoped-c-'));
         Host = (await import(pathToFileURL(join(runtime, 'dist/engine/app/worker-host.js')).href)).AppWorkerHost;
         const modules = join(temporary, 'node_modules'); await mkdir(join(modules, '@aotui'), { recursive: true });
@@ -125,7 +125,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker Scope chain', () =>
         expect(receipt(await s.client.invoke(s.request(bb, 'bb', { file: REF_B }, 'read', 'bb'))).outcome)
             .toMatchObject({ value: { data: { owner: 'bb', calls: 2 } } });
         expect(x.refs()).toHaveLength(2); expect(authorizations).toBe(2); expect(reads).toBe(4);
-        expect(JSON.stringify(aa)).not.toContain(SENTINEL); facts.push({ id: 'C03/C05', wire: 2, handlers: 2, authorizations, reads }); s.client.close();
+        expect(JSON.stringify(aa)).not.toContain(SENTINEL); facts.push({ id: 'C03/C05', wire: 2, handlers: 2, authorizations, reads });
     });
     it('checks each current read permission and cancels a pending reading policy before diagnostics', async () => {
         const x = await start(), s = scope(x), o = await s.observe(); const first = receipt(await s.client.invoke(s.request(o)));
@@ -134,21 +134,28 @@ describe('C actual emitted Host / accepted SDK / safe Worker Scope chain', () =>
         expect(await s.client.invoke(s.request(o))).toMatchObject({ code: 'RECEIPT_PERMISSION_DENIED' });
         const gate = deferred(), entered = deferred(); let signal: any;
         s.controls.read = (_m, value) => { signal = value; entered.resolve(undefined); return gate.promise; };
-        const reading = s.client.invoke(s.request(o));
+        const reading = s.client.readReceipt(s.request(o));
         try {
-            await entered.promise; s.client.close(); expect(signal.aborted).toBe(true);
-            expect(x.host.getInteractionReport()?.core.activeReads).toBe(1); gate.resolve(true); expect(await reading).toMatchObject({ code: 'SCOPE_UNAVAILABLE' });
+            await entered.promise; x.host.beginInteractionClose(); expect(signal.aborted).toBe(true);
+            expect(x.host.getInteractionReport()?.core.activeReads).toBe(1); gate.resolve(true); expect(await reading).toMatchObject({ code: 'APP_INTERACTION_UNAVAILABLE' });
             expect(x.refs()).toHaveLength(1); facts.push({ id: 'C04', originalStatus: first.outcome.status, pendingReadAbortedBeforeInspect: true, wire: 1 });
-        } finally { gate.resolve(true); await reading.catch(() => undefined); s.client.close(); }
+        } finally { gate.resolve(true); await reading.catch(() => undefined); }
     });
-    it('retains original S1/A after actual SDK S2/B and Ref deletion, while new observations use the new source', async () => {
+    it('preserves the original Ref through a read-only preview and replaces it on adoption', async () => {
         const x = await start(), s = scope(x), old = await s.observe(); await configure(x, { text: 'B' });
-        const independent = scope(x), newer = await independent.observe();
-        const b = receipt(await independent.client.invoke(independent.request(newer, 'new'))); expect(b.outcome).toMatchObject({ value: { data: { args: { file: { text: 'B' } } } } });
+        expect(await s.client.preview()).toMatchObject({ status: 'previewed' });
+        const oldRequest = s.request(old, 'old'), first = receipt(await s.client.invoke(oldRequest));
+        expect(first.outcome).toMatchObject({ value: { data: { args: { file: { text: 'A' } } } } });
+        expect(x.refs().at(-1).snapshotId).toBe(old.source.snapshotId);
+        const newer = await s.observe();
+        expect(newer.source.snapshotId).not.toBe(old.source.snapshotId);
         await configure(x, { showRef: false });
-        const a = receipt(await s.client.invoke(s.request(old, 'old'))); expect(a.outcome).toMatchObject({ value: { data: { args: { file: { text: 'A' } } } } });
-        expect(x.refs().at(-1).snapshotId).toBe(old.source.snapshotId); expect(newer.source.snapshotId).not.toBe(old.source.snapshotId);
-        facts.push({ id: 'C06', originalA: true, newB: true, afterDeletion: true, independentScopes: true, wire: x.refs().length }); s.client.close(); independent.client.close();
+        expect(receipt(await s.client.invoke(s.request(newer, 'new'))).outcome).toMatchObject({
+            value: { data: { args: { file: { text: 'B' } } } },
+        });
+        expect(await s.client.invoke(s.request(old, 'stale'))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
+        expect(receipt(await s.client.readReceipt(oldRequest))).toEqual(first);
+        facts.push({ id: 'C06', originalA: true, newB: true, afterDeletion: true, wire: x.refs().length });
     });
     it.each(['published', 'unpublished'])('rejects an actually disabled SDK binding after authorize (%s)', async visibility => {
         const x = await start(), s = scope(x), o = await s.observe(), gate = deferred(), entered = deferred();
@@ -166,7 +173,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker Scope chain', () =>
         } finally {
             gate.resolve(true); await running.catch(() => undefined);
             if (visibility === 'unpublished') { x.worker.off('message', relay); x.worker.on('message', deliver); }
-            s.client.close();
+
         }
     });
     it('rejects invalid parameters before dispatch and keeps a completed false result separate from transport loss', async () => {
@@ -175,13 +182,14 @@ describe('C actual emitted Host / accepted SDK / safe Worker Scope chain', () =>
         const entered = receipt(await s.client.invoke(s.request(o, 'business', { file: REF_A, mode: 'false' })));
         expect(before).toMatchObject({ executionPhase: 'not-dispatched', outcome: { status: 'rejected', code: 'TOOL_INVALID_ARGS' } });
         expect(entered).toMatchObject({ executionPhase: 'entered-returned', outcome: { status: 'unknown', details: { result: { error: { code: 'E_INVALID_ARGS' }, data: { calls: 1 } } } } });
-        expect(x.host.getInteractionReport()?.transportUncertain).toBe(false);
+        expect(x.host.getInteractionReport()?.workerToolPending).toBe(false);
         expect(receipt(await s.client.invoke(s.request(o, 'next'))).outcome.status).toBe('succeeded'); expect(x.refs()).toHaveLength(2);
-        facts.push({ id: 'C08/C09', before: before.executionPhase, entered: entered.executionPhase, completedFalseNotTransportLoss: true, wire: 2 }); s.client.close();
+        facts.push({ id: 'C08/C09', before: before.executionPhase, entered: entered.executionPhase, completedFalseNotTransportLoss: true, wire: 2 });
     });
     it('keeps hidden and ungranted Refs out of execution through the shared ordinary binding', async () => {
-        const x = await start(), s = scope(x), o = await s.observe(), other = scope(x);
-        expect(receipt(await other.client.invoke(s.request(o, 'moved'))).outcome.status).toBe('rejected');
+        const x = await start(), s = scope(x), o = await s.observe();
+        const other = await start();
+        expect(await scope(other).client.invoke(s.request(o, 'moved'))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
         expect(x.host.getInteractionReport()?.negotiatedModes).toEqual(['view-type-parameters-v1']);
         expect(o.tools.some(tool => tool.name === 'read')).toBe(true);
         expect(o.tools.some(tool => ['optional', 'multi'].includes(tool.name))).toBe(false);
@@ -195,7 +203,6 @@ describe('C actual emitted Host / accepted SDK / safe Worker Scope chain', () =>
         expect(x.refs()).toHaveLength(0);
         expect((await counts(x))).toMatchObject({ calls: 0, handlerEntries: 0, guards: 0 });
         facts.push({ id: 'C05/C16', unknownAndForeignRefsRejected: true, noHandlerEntered: true });
-        s.client.close(); other.client.close();
     });
     it('rejects wrong registered refType even when payload.type says File, and rejects an array for object schema', async () => {
         const x = await start(), s = scope(x), o = await s.observe();
@@ -208,53 +215,140 @@ describe('C actual emitted Host / accepted SDK / safe Worker Scope chain', () =>
         const shape = receipt(await s.client.invoke(s.request(o, 'wrong-payload-shape', { file: 'aa.array_alpha' })));
         expect(shape.outcome).toMatchObject({ status: 'rejected', code: 'REF_VALUE_UNSUPPORTED' });
         expect(x.refs()).toHaveLength(0); expect(await counts(x)).toMatchObject({ calls: 0, handlerEntries: 0, guards: 0 });
-        facts.push({ id: 'metadata-and-shape-controls', typed, shape, dispatches: 0, handlerEntries: 0 }); s.client.close();
+        facts.push({ id: 'metadata-and-shape-controls', typed, shape, dispatches: 0, handlerEntries: 0 });
     });
-    it('cancels only the closed Scope while actual remote work remains in flight', async () => {
-        const x = await start(), a = scope(x), b = scope(x), oa = await a.observe(), ob = await b.observe();
-        const pending = a.client.invoke(a.request(oa, 'held', { file: REF_A, mode: 'barrier' }));
-        await wait(x, m => m.type === 'TEST_HANDLER_ENTERED'); a.client.close();
+    it('revokes the released observation and keeps the App busy until its actual execution ends', async () => {
+        const x = await start(), s = scope(x), original = await s.observe();
+        const request = s.request(original, 'held', { file: REF_A, mode: 'barrier' });
+        const pending = s.client.invoke(request);
+        await wait(x, m => m.type === 'TEST_HANDLER_ENTERED'); s.client.releaseObservation(original.observationId);
+        const current = await s.observe();
         expect((x.host as any).pendingRequests.size).toBe(1); expect(x.host.getInteractionReport()?.core.activeInvocations).toBe(1);
-        expect(x.host.getInteractionReport()?.transportUncertain).toBe(false);
-        expect(receipt(await b.client.invoke(b.request(ob))).outcome.status).toBe('succeeded');
-        await x.host.sendExternalEvent('aa' as any, 'release-handler', {}); expect(await pending).toMatchObject({ code: 'SCOPE_UNAVAILABLE' });
-        expect(x.host.getInteractionReport()?.core.activeInvocations).toBe(0); facts.push({ id: 'C11', remoteNotCancelledByScopeClose: true, otherScopeSucceeded: true, wire: x.refs().length }); b.client.close();
+        expect(x.host.getInteractionReport()?.workerToolPending).toBe(true);
+        expect(await s.client.invoke(s.request(current, 'busy'))).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
+        await x.host.sendExternalEvent('aa' as any, 'release-handler', {});
+        const result = receipt(await pending);
+        expect(result.outcome.status).toBe('succeeded');
+        expect(receipt(await s.client.readReceipt(request))).toEqual(result);
+        expect(x.host.getInteractionReport()?.core.activeInvocations).toBe(0);
+        expect(receipt(await s.client.invoke(s.request(current))).outcome.status).toBe('succeeded');
+        facts.push({ id: 'C11', releasedObservation: true, nextCallAfterTerminal: true, wire: x.refs().length });
     });
-    it('returns unknown while the actual Handler remains behind its barrier, preserves it against late terminal, and forbids pooling', async () => {
-        const x = await start(), s = scope(x), o = await s.observe(); (x.host as any).timeout = 100;
-        const request = s.request(o, 'blocked', { file: REF_A, mode: 'barrier' }), pending = s.client.invoke(request);
-        const handler = await wait(x, m => m.type === 'TEST_HANDLER_ENTERED'); const original = receipt(await pending), wire = x.refs()[0];
-        expect(handler.calls).toBe(1); expect(original).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown' } });
-        expect(x.messages.some(m => m.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE' && m.requestId === wire.requestId)).toBe(false);
-        expect((x.host as any).pendingRequests.size).toBe(0); expect(x.host.getInteractionReport()).toMatchObject({ transportUncertain: true, core: { activeInvocations: 0 } });
-        expect(receipt(await s.client.invoke(request))).toEqual(original); expect(receipt(await s.client.invoke(s.request(o, 'new'))).outcome.status).toBe('rejected');
-        expect(x.host.createInteractionScope(s.policy).status).toBe('rejected'); expect(x.refs()).toHaveLength(1);
-        const late = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE' && m.requestId === wire.requestId);
-        await x.host.sendExternalEvent('aa' as any, 'release-handler', {}); const terminal = await late;
-        expect(terminal.terminal.phase).toBe('entered-returned'); expect(receipt(await s.client.invoke(request))).toEqual(original);
-        await x.host.pause(); await x.host.resume(); expect(x.host.getInteractionReport()?.transportUncertain).toBe(true);
-        s.client.close(); expect(x.host.createInteractionScope(s.policy).status).toBe('rejected');
-        const terminate = vi.spyOn(x.worker, 'terminate'); expect(await x.host.releaseWorker()).toBeNull(); expect(terminate).toHaveBeenCalledTimes(1);
-        expect(x.sent.filter(m => m.type === 'RESET')).toHaveLength(0);
-        facts.push({ id: 'C13/C14', handlerEntered: 1, hostUnknownBeforeHandlerRelease: true, localTransportSettledNotRemoteFinished: true,
-            lateTerminalDidNotChangeReceipt: true, wire: 1, reset: 0, releaseReturnedNull: true });
+    it('keeps the original execution and source across deadline, new adoption and late terminal', async () => {
+        const x = await start(), s = scope(x), originalView = await s.observe();
+        const request = s.request(originalView, 'blocked', { file: REF_A, mode: 'barrier' });
+        const pending = s.client.invoke(request, 150);
+        const handler = await wait(x, m => m.type === 'TEST_HANDLER_ENTERED');
+        const original = receipt(await pending), wire = x.refs()[0];
+        expect(handler.calls).toBe(1);
+        expect(original).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown' } });
+        expect((x.host as any).pendingRequests.has(wire.requestId)).toBe(true);
+        expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: true, core: { activeInvocations: 1 } });
+        const store = (x.host as any).snapshotReceiver.core.store;
+        expect(x.host.getInteractionReport()!.core.sourceBytes).toBeGreaterThan(0);
+        expect(await s.client.invoke({ ...request, input: { file: REF_A } })).toMatchObject({ code: 'INVOCATION_ID_CONFLICT' });
+
+        await configure(x, { text: 'new version' });
+        const currentView = await s.observe();
+        expect(store.inspect().historicalSnapshots).toBe(1);
+        expect(store.inspect().activeLeases).toBe(2);
+        expect(await s.client.invoke(s.request(currentView, 'busy'))).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
+        const wrong = { type: 'VIEW_TOOL_INVOKE_V4_RESPONSE', requestId: wire.requestId, appId: wire.appId,
+            instanceId: 'another-instance', argumentMode: wire.argumentMode, success: true,
+            terminal: { phase: 'finished-unknown' } };
+        x.worker.emit('message', wrong);
+        x.worker.emit('message', { ...wrong, instanceId: wire.instanceId, requestId: 'another-request' });
+        expect((x.host as any).pendingRequests.has(wire.requestId)).toBe(true);
+
+        const replay = s.client.readReceipt(request);
+        const shorterReplay = receipt(await s.client.readReceipt(request, 25));
+        expect(shorterReplay.outcome.status).toBe('unknown');
+        expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: true, core: { activeInvocations: 1 } });
+        const late = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE' && m.requestId === wire.requestId && m.instanceId === wire.instanceId);
+        await x.host.sendExternalEvent('aa' as any, 'release-handler', {});
+        const terminal = await late;
+        expect(terminal.terminal.phase).toBe('entered-returned');
+        const settled = receipt(await replay);
+        expect(settled).toMatchObject({ outcome: { status: 'succeeded' }, source: { snapshotId: originalView.source.snapshotId } });
+        expect(original.outcome.status).toBe('unknown');
+        x.worker.emit('message', terminal);
+        expect(receipt(await s.client.invoke(request))).toEqual(settled);
+        expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: false, core: { activeInvocations: 0, sourceBytes: 0 } });
+        expect(store.inspect()).toMatchObject({ activeLeases: 1, historicalSnapshots: 0 });
+        expect(await s.client.invoke(s.request(originalView, 'old'))).toMatchObject({
+            kind: 'refused', code: 'OBSERVATION_UNAVAILABLE',
+        });
+        expect(x.refs()).toHaveLength(1);
+        expect(receipt(await s.client.invoke(s.request(currentView, 'after-terminal'))).outcome.status).toBe('succeeded');
+        expect(x.refs()).toHaveLength(2);
+
     });
-    it('a pending real Handler makes concurrent release return null and never hands off the uncertain Worker', async () => {
+
+    it('reports a deadline during authorization as not dispatched and prevents late admission', async () => {
+        const x = await start(), s = scope(x), view = await s.observe();
+        const entered = deferred(), gate = deferred<boolean>();
+        let signal: AbortSignal | undefined;
+        s.controls.authorize = context => { signal = context.signal; entered.resolve(undefined); return gate.promise; };
+        const request = s.request(view, 'before-dispatch');
+        const pending = s.client.invoke(request, 100);
+        await entered.promise;
+        expect(receipt(await pending)).toMatchObject({ executionPhase: 'not-dispatched',
+            outcome: { status: 'rejected', code: 'INVOCATION_DEADLINE_EXCEEDED' } });
+        expect(signal?.aborted).toBe(true);
+        expect(x.refs()).toHaveLength(0);
+        gate.resolve(true);
+        expect(receipt(await s.client.invoke(request))).toMatchObject({ executionPhase: 'not-dispatched',
+            outcome: { status: 'rejected', code: 'INVOCATION_DEADLINE_EXCEEDED' } });
+        expect(x.refs()).toHaveLength(0);
+        expect((await counts(x)).handlerEntries).toBe(0);
+
+    });
+    it('retains timed-out execution until a forced close confirms Worker exit', async () => {
         const x = await start(), s = scope(x), o = await s.observe();
-        const pending = s.client.invoke(s.request(o, 'pending-release', { file: REF_A, mode: 'barrier' })); await wait(x, m => m.type === 'TEST_HANDLER_ENTERED');
-        const terminate = vi.spyOn(x.worker, 'terminate'), a = x.host.releaseWorker(), b = x.host.releaseWorker();
-        expect(await a).toBeNull(); expect(await b).toBeNull(); expect(await pending).toMatchObject({ code: 'SCOPE_UNAVAILABLE' });
-        expect(terminate).toHaveBeenCalledTimes(1); expect(x.sent.filter(m => m.type === 'RESET')).toHaveLength(0);
-        facts.push({ id: 'C14-pending', noWorkerOwnershipDelivered: true, terminateAttempts: 1, resets: 0 });
+        const pending = s.client.invoke(s.request(o, 'pending-release', { file: REF_A, mode: 'barrier' }), 100);
+        await wait(x, m => m.type === 'TEST_HANDLER_ENTERED');
+        const first = receipt(await pending);
+        expect(first.outcome.status).toBe('unknown');
+
+        const terminating = deferred<void>(), allowExit = deferred<void>();
+        const nativeTerminate = x.worker.terminate.bind(x.worker);
+        const terminate = vi.spyOn(x.worker, 'terminate').mockImplementation(() => {
+            terminating.resolve();
+            return allowExit.promise.then(nativeTerminate);
+        });
+        try {
+            (x.host as any).timeout = 200;
+            const closing = x.host.close();
+            const failure = expect(closing).rejects.toMatchObject({ code: 'APP_CLOSE_DEADLINE_EXCEEDED' });
+            expect(x.host.close()).toBe(closing);
+            await terminating.promise;
+            expect(terminate).toHaveBeenCalledTimes(1);
+            expect(x.sent.some(m => m.type === 'APP_CLOSE')).toBe(false);
+            expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: true, core: { activeInvocations: 1 } });
+            expect(x.host.getResourceReport()).toMatchObject({ worker: 'retiring', resourcesReleased: false });
+            expect(x.worker.threadId).toBeGreaterThan(0);
+            allowExit.resolve();
+            await failure;
+            expect(await x.host.waitForResourceRelease()).toMatchObject({ worker: 'exited', resourcesReleased: true,
+                appCleanup: { report: { state: 'stopped' } } });
+            expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: false, core: { activeInvocations: 0, sourceBytes: 0 } });
+            expect(first.outcome.status).toBe('unknown');
+            expect(x.refs()).toHaveLength(1);
+        } finally { allowExit.resolve();terminate.mockRestore(); }
     });
-    it('normally completed work still permits pooling into a new Host and AppInstance', async () => {
-        const first = await start(), s = scope(first), o = await s.observe(); receipt(await s.client.invoke(s.request(o)));
-        const a = first.host.releaseWorker(), b = first.host.releaseWorker(); const returned = await a;
-        expect(await b).toBeNull(); expect(returned).toBe(first.worker); expect(first.host.getStatus()).toBe('closed');
-        const next = await start(returned!); expect(next.host.appInstanceId).not.toBe(first.host.appInstanceId);
-        expect(await s.client.invoke(s.request(o, 'old'))).toMatchObject({ code: 'SCOPE_UNAVAILABLE' });
-        const fresh = scope(next), observed = await fresh.observe(); expect(receipt(await fresh.client.invoke(fresh.request(observed))).outcome.status).toBe('succeeded');
-        facts.push({ id: 'C14-normal', workerReused: true, distinctAppInstance: true, oldObservationUnavailable: true }); fresh.client.close();
+    it('admits work in a fresh Worker without restoring the old Observation', async () => {
+        const first = await start(), s = scope(first), o = await s.observe();
+        receipt(await s.client.invoke(s.request(o)));
+        await first.host.close();
+        expect(first.worker.threadId).toBe(-1);
+        expect(first.host.getStatus()).toBe('closed');
+        const next = await start();
+        expect(next.worker).not.toBe(first.worker);
+        expect(next.host.appInstanceId).not.toBe(first.host.appInstanceId);
+        expect(await s.client.invoke(s.request(o, 'old'))).toMatchObject({ code: 'APP_INTERACTION_UNAVAILABLE' });
+        const fresh = scope(next), observed = await fresh.observe();
+        expect(receipt(await fresh.client.invoke(fresh.request(observed))).outcome.status).toBe('succeeded');
+
     });
     it('carries a genuine SDK 6000-node object Ref without the old M5 input ceiling', async () => {
         const x = await start(); await configure(x, { text: { items: Array.from({ length: 6000 }, () => null) } });
@@ -264,22 +358,19 @@ describe('C actual emitted Host / accepted SDK / safe Worker Scope chain', () =>
         expect(r.outcome.status, JSON.stringify(diagnostic)).toBe('succeeded'); if (r.outcome.status !== 'succeeded') return;
         expect((r.outcome.value as any).data.args.file.text.items).toHaveLength(6000); expect(x.refs()).toHaveLength(1);
         expect(JSON.stringify(x.host.getInteractionReport())).not.toContain(SENTINEL);
-        facts.push({ id: 'C15', genuineSdkRefArrayNodes: 6000, wire: 1, succeeded: true }); s.client.close();
+        facts.push({ id: 'C15', genuineSdkRefArrayNodes: 6000, wire: 1, succeeded: true });
     });
-    it.each(['non-json', 'invalid-result', 'oversize'])('marks actual lost terminal for %s output uncertain without replay', async mode => {
-        const x = await start(), s = scope(x), o = await s.observe(); (x.host as any).timeout = 100;
+    it.each(['non-json', 'invalid-result', 'oversize'])('reports completed %s output with unknown business result', async mode => {
+        const x = await start(), s = scope(x), o = await s.observe();
         const request = s.request(o, mode, { file: REF_A, mode }), r = receipt(await s.client.invoke(request));
         expect(r).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown' } });
-        expect(x.messages.filter(m => m.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE')).toHaveLength(0);
-        await wait(x, m => m.type === 'TEST_READ_HANDLER_ENTERED');
-        expect(x.messages.filter(m => m.type === 'TEST_READ_HANDLER_ENTERED')).toEqual([{ type: 'TEST_READ_HANDLER_ENTERED', owner: 'aa', calls: 1 }]);
-        const authorize = vi.fn(() => true);s.controls.authorize = authorize;
-        expect(await s.client.invoke(s.request(o, 'after-loss'))).toMatchObject({ kind: 'receipt', receipt: {
-            executionPhase: 'not-dispatched', outcome: { status: 'rejected', code: 'TOOL_EXECUTION_UNAVAILABLE' },
-        } });
-        expect(authorize).not.toHaveBeenCalled();expect(x.refs()).toHaveLength(1);
+        const terminal = x.messages.find(m => m.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE' && m.requestId === x.refs()[0].requestId);
+        expect(terminal?.terminal).toEqual({ phase: 'finished-unknown' });
         expect(receipt(await s.client.invoke(request))).toEqual(r);
-        expect(x.host.getInteractionReport()?.transportUncertain).toBe(true); expect(x.host.createInteractionScope(s.policy).status).toBe('rejected');
-        expect(x.refs()).toHaveLength(1); facts.push({ id: 'C09/C10', mode, noTrustedTerminal: true, handlerCalls: 1, wire: 1, transportUncertain: true }); s.client.close();
+        expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: false, core: { activeInvocations: 0, sourceBytes: 0 } });
+        expect((await counts(x)).calls).toBe(1);
+        expect(receipt(await s.client.invoke(s.request(o, 'after-terminal'))).outcome.status).toBe('succeeded');
+        expect(x.refs()).toHaveLength(2);
+
     });
 });

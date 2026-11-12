@@ -13,6 +13,7 @@ function fixture() {
     const events: string[] = [], context = { appId: 'app', instanceId: 'run', negotiated: true,
         validateBinding: vi.fn((tool: any) => { expect(tool.inputSchema).toHaveProperty('x-aotui-parameter-contract', 'view-type-parameters-v1');events.push('live');return { success: true }; }),
         getParameterContract: () => c.contract,
+            isRefViewLive: () => true,
         invokeBinding: vi.fn(() => { events.push('entry');return { phase: 'entered-returned' as const, result: { success: true } }; }) };
     return { input, context, events };
 }
@@ -30,6 +31,13 @@ describe('R03/R04/R15 Ref V4 Worker final qualification', () => {
     });
     it('cannot prove non-entry after a callable throws', async () => {
         const f = fixture();f.context.invokeBinding.mockImplementation(() => { throw Error('PRIVATE'); });
-        expect(await invokeTypeParameters(f.input, f.context)).toBe(null);expect(f.context.invokeBinding).toHaveBeenCalledOnce();
+        const response = await invokeTypeParameters(f.input, f.context);
+        expect(response).toEqual({
+            type: 'VIEW_TOOL_INVOKE_V4_RESPONSE', requestId: f.input.requestId,
+            appId: f.input.appId, instanceId: f.input.instanceId,
+            argumentMode: f.input.argumentMode, success: true,
+            terminal: { phase: 'finished-unknown' },
+        });
+        expect(f.context.invokeBinding).toHaveBeenCalledOnce();
     });
 });

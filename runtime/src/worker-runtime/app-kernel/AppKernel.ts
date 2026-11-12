@@ -17,15 +17,14 @@ import { APP_LIFECYCLE_PROTOCOL, VIEW_TYPE_TOOL_PROTOCOL, captureAppMetadata } f
 import type {
     AppID,
     AppContext,
-    IAOTUIApp,
     AppKernelConfig,
-    IRefExporter, // [RFC-002]
+    IRefExporter, AppInstance, ExternalAppEvent, RuntimeContext, TUIAppFactory,
 } from '../../spi/index.js';
-import type { IRefBinding } from '../../spi/app/ref-exporter.interface.js';
+import type { IRefBinding, RefValueCheck } from '../../spi/app/ref-exporter.interface.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import type { ViewToolInvocationTerminal } from '../../spi/worker-protocol/index.js';
 
-import { SemanticProjectionCoordinator } from '../../core/projection/coordinator.js';
+import { SemanticProjectionCoordinator, type CompleteProjectionFrame } from '../../core/projection/coordinator.js';
 import { createViewOwnedTools } from '../../core/tool/view-owned-tools.js';
 import type { OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
 import type { ToolDescriptorV3, ObservedToolExecutionV3 } from '../../core/snapshot/types.js';
@@ -33,29 +32,33 @@ import type { AppTypeToolDefinition, AppTypeToolRegistrationOptions } from '../.
 import { hasViewTypeToolAuthoringProtocol } from '../../spi/app/app-factory.interface.js';
 import { createAppLifecycle } from '../app-lifecycle.js';
 import type { AppStatePersistence } from '../../spi/runtime/state-persistence.interface.js';
+import { SnapshotDataError } from '../../core/snapshot/json.js';
 import { randomUUID } from 'node:crypto';
 import { closeError } from '../../engine/core/close-handle.js';
 import { isTUIAppFactory } from '../../spi/app/app-factory.interface.js';
+import type { LLMOutputEvent } from '../../spi/core/llm-output.js';
 
 /**
  * App Kernel Implementation
  *
  * 运行在 Worker 内的 App 执行引擎。
- * 实现 IAOTUIApp 接口，供 Worker Runtime 调用。
  */
-export class AppKernel implements IAOTUIApp, IRefExporter {
+export class AppKernel implements IRefExporter {
     private _id: AppID = '' as AppID;
     readonly name: string;
 
-    private config: AppKernelConfig;
+    private readonly config: AppKernelConfig & { factory: Pick<TUIAppFactory, 'initialize'> };
+    private instance?: AppInstance;
+    private readViews?: Parameters<RuntimeContext['setViewReader']>[0];
     private context!: AppContext;
-    private container!: HTMLElement;
 
-    /** Ref entries carry their own identity so stale cleanup cannot affect a later owner. */
-    private refRegistry = new Map<string, { value: object; refType?: string }>();
-
-    /** A pure TypeScript semantic mutation clock, not a DOM observation. */
-    private readonly projection = new SemanticProjectionCoordinator();
+    private readonly projection = new SemanticProjectionCoordinator({
+        identity: () => ({ appId: this.id, instanceId: this.appExecutionInstanceId }),
+        readFrame: () => ({
+            views: this.readViews?.(this.getViewOwnedViewInstances()) ?? [],
+            tools: this.getToolDefinitions(),
+        }),
+    });
     private appExecutionInstanceId: string = randomUUID();
     private viewOwnedTools?: ReturnType<typeof createViewOwnedTools>;
 
@@ -73,7 +76,7 @@ export class AppKernel implements IAOTUIApp, IRefExporter {
 
     async whenProjectionCommitted(): Promise<void> {
         this.assertActive();
-        await this.componentRenderer?.whenCommitted?.(this.projectionOwner.signal);
+        await this.instance?.whenCommitted?.(this.projectionOwner.signal);
         await this.projection.whenCommitted(this.projectionOwner.signal);
         this.assertActive();
     }
@@ -84,10 +87,13 @@ export class AppKernel implements IAOTUIApp, IRefExporter {
     private deletePromise?: Promise<void>;
     private assertActive(): void { if (this.closing) throw closeError('APP_KERNEL_CLOSED'); }
     private closedToolResult(): ToolResultData { return { success: false, error: { code: 'TOOL_UNAVAILABLE', message: 'App lifecycle is closing' } }; }
+    private failedProjectionResult(): ToolResultData {
+        return { success: false, error: { code: 'SNAPSHOT_UNREADY', message: 'App projection requires a successful commit' } };
+    }
 
     setPersistence(port: AppStatePersistence): void {
         this.assertActive();
-        if (this.componentRenderer || port.instanceId !== this.appExecutionInstanceId || this.persistence) throw new Error('Invalid persistence instance');
+        if (this.instance || port.instanceId !== this.appExecutionInstanceId || this.persistence) throw new Error('Invalid persistence instance');
         this.persistence = port;
     }
 
@@ -114,6 +120,7 @@ export class AppKernel implements IAOTUIApp, IRefExporter {
      */
     validateBoundTypeTool(source: ToolDescriptorV3, execution: ObservedToolExecutionV3): ToolResultData {
         if (this.closing) return this.closedToolResult();
+        if (this.projection.failed) return this.failedProjectionResult();
         if (!this.viewOwnedTools) return { success: false, error: {
             code: 'TOOL_UNAVAILABLE', message: 'ViewType Tool registry not initialized',
         } };
@@ -127,9 +134,14 @@ export class AppKernel implements IAOTUIApp, IRefExporter {
     invokeBoundTypeTool(source: ToolDescriptorV3, execution: ObservedToolExecutionV3,
         args: Readonly<Record<string, unknown>>): ViewToolInvocationTerminal | Promise<ViewToolInvocationTerminal> {
         if (this.closing) return { phase: 'not-entered', result: this.closedToolResult() };
+        if (this.projection.failed) return { phase: 'not-entered', result: this.failedProjectionResult() };
         if (!this.viewOwnedTools) return { phase: 'not-entered', result: { success: false,
             error: { code: 'TOOL_UNAVAILABLE', message: 'ViewType Tool registry not initialized' } } };
         return this.viewOwnedTools.invokeTypeTool(source, execution, args);
+    }
+
+    isRefViewLive(viewId: string, viewInstanceId: string): boolean {
+        return this.viewOwnedTools?.getView(viewId)?.viewInstanceId === viewInstanceId;
     }
 
     /** Stage 2 source inventory, captured alongside Tool bindings in Worker. */
@@ -137,12 +149,11 @@ export class AppKernel implements IAOTUIApp, IRefExporter {
         return this.viewOwnedTools?.listViews() ?? Object.freeze([]);
     }
 
-    constructor(config: AppKernelConfig) {
-        // [RFC-B2] Only support component mode
-        if (!config.component) {
+    constructor(config: AppKernelConfig & { factory: Pick<TUIAppFactory, 'initialize'> }) {
+        if (typeof config.factory?.initialize !== 'function') {
             throw new AOTUIError(
                 'CONFIG_INVALID',
-                { reason: 'AppKernelConfig.component is required. Traditional mode (config.root) is no longer supported.' }
+                { reason: 'App factory initialize(context) is required.' }
             );
         }
         if (!config.appName) {
@@ -171,13 +182,12 @@ export class AppKernel implements IAOTUIApp, IRefExporter {
     //  Lifecycle
     // ─────────────────────────────────────────────────────────────
 
-    onOpen(context: AppContext, container: HTMLElement): Promise<void> {
+    onOpen(context: AppContext): Promise<void> {
         if (this.closing) return Promise.reject(closeError('APP_KERNEL_CLOSED'));
         if (this.openPromise) return this.openPromise;
         this.openPromise = Promise.resolve().then(async () => {
-            this.assertActive();this.setId(context.appId);this.context = context;this.container = container;
-            this.initializeDOMStructure();
-            await this.initializeFromComponent();
+            this.assertActive();this.setId(context.appId);this.context = context;
+            await this.initializeInstance();
             this.assertActive();
         });
         void this.openPromise.catch(() => {});return this.openPromise;
@@ -195,11 +205,12 @@ export class AppKernel implements IAOTUIApp, IRefExporter {
         revokeViews();
         this.closePromise = Promise.resolve().then(async () => {
             await Promise.allSettled([this.openPromise, this.deletePromise]);
-            try { await this.componentRenderer?.unmount(); } catch { failed = true; }
-            this.componentRenderer = undefined;
+            try { await this.instance?.close(); } catch { failed = true; }
+            this.instance = undefined;
+            this.readViews = undefined;
             try { await this.appLifecycle?.close(); } catch { failed = true; }
             revokeViews();
-            for (const clear of [() => this.viewOwnedTools?.dispose(), () => this.refRegistry.clear()]) {
+            for (const clear of [() => this.viewOwnedTools?.dispose(), () => this.projection.close()]) {
                 try { clear(); } catch { failed = true; }
             }
             if (failed) throw closeError('APP_UNMOUNT_FAILED');
@@ -232,94 +243,38 @@ export class AppKernel implements IAOTUIApp, IRefExporter {
         void this.deletePromise.catch(() => {});return this.deletePromise;
     }
 
-    public registerRef(viewId: string, refId: string, data: object, refType?: string): IRefBinding {
-        this.assertActive();
-        const fullKey = `${viewId}:${refId}`;
-        if (this.refRegistry.has(fullKey)) {
-            const error = new Error(`Ref '${refId}' is already registered in View '${viewId}'`) as Error & { code: string };
-            error.name = 'RefRegistrationError';
-            error.code = 'REF_ALREADY_REGISTERED';
-            throw error;
-        }
-        const entry = { value: data, refType };
-        this.refRegistry.set(fullKey, entry);
-        this.projection.recordMutation('ref');
-        let released = false;
-        return {
-            update: (next: object) => {
-                this.assertActive();
-                if (released || this.refRegistry.get(fullKey) !== entry) {
-                    throw new Error(`Ref binding '${refId}' in View '${viewId}' is no longer active`);
-                }
-                if (entry.value !== next) {
-                    entry.value = next;
-                    this.projection.recordMutation('ref');
-                }
-            },
-            release: () => {
-                if (released) return;
-                released = true;
-                if (this.refRegistry.get(fullKey) === entry) {
-                    this.refRegistry.delete(fullKey);
-                    this.projection.recordMutation('ref');
-                }
-            },
-        };
+    captureRef(data: unknown, check?: RefValueCheck): object {
+        return this.projection.captureRef(data, check);
     }
 
-    getViewRefs(): readonly { viewId: string; refId: string; value: object; refType?: string }[] {
-        return [...this.refRegistry].map(([key, entry]) => {
-            const separator = key.indexOf(':');
-            return { viewId: key.slice(0, separator), refId: key.slice(separator + 1), value: entry.value,
-                ...(entry.refType === undefined ? {} : { refType: entry.refType }) };
-        });
+    registerRef(viewId: string, refId: string, data: unknown, refType?: string): IRefBinding {
+        this.assertActive();
+        const owner = this.viewOwnedTools?.getView(viewId);
+        if (!owner) throw Object.assign(new Error('Ref owner is not mounted: ' + viewId), { code: 'REF_VIEW_UNMOUNTED' });
+        const binding = this.projection.registerRef(owner, refId, data, refType);
+        return { update: next => { this.assertActive(); binding.update(next); }, release: binding.release };
+    }
+
+    getViewRefs() {
+        return this.projection.getViewRefs();
     }
 
     // ─────────────────────────────────────────────────────────────
     //  Private: View Initialization
     // ─────────────────────────────────────────────────────────────
 
-    private initializeDOMStructure(): void {
-        // Keep one container for the Preact app root. Views themselves are
-        // projected from their actual mounted DOM identities.
-        let viewsContainer = this.container.querySelector('[data-views]');
-        if (!viewsContainer) {
-            viewsContainer = this.container.ownerDocument.createElement('div');
-            viewsContainer.setAttribute('data-views', '');
-            this.container.appendChild(viewsContainer);
-        }
+    dispatchExternalEvent(event: ExternalAppEvent): boolean {
+        if (!this.instance || this.closing || this.projectionOwner.signal.aborted) return false;
+        this.instance.onExternalEvent?.(event);
+        return true;
     }
 
+    dispatchLLMOutput(event: LLMOutputEvent): void {
+        if (!this.closing && !this.projectionOwner.signal.aborted) this.instance?.onLLMOutput?.(event);
+    }
 
-
-    /**
-     * [RFC-027-C] Component初始化 (Factory Injection Pattern)
-     */
-    private componentRenderer?: import('../../spi/component-factory.interface.js').ComponentRenderer;
-
-    private async initializeFromComponent(): Promise<void> {
-        // 1. 创建App容器 (在data-views容器中)
-        const viewsContainer = this.container.querySelector('[data-views]');
-        if (!viewsContainer) {
-            throw new Error(
-                '[AppKernel] Cannot find data-views container. ' +
-                'This is required for component mode.'
-            );
-        }
-
-        const appContainer = this.container.ownerDocument.createElement('div');
-        appContainer.setAttribute('data-app-root', '');
-        viewsContainer.appendChild(appContainer);
-
-        // 2. 获取Factory (config.component现在是Factory对象)
-        const factory = this.config.component as any;
-
-        if (!factory || typeof factory.initializeComponent !== 'function') {
-            throw new Error(
-                '[AppKernel] Invalid component factory: initializeComponent method not found. ' +
-                'Make sure you are using createTUIApp() from SDK.'
-            );
-        }
+    private async initializeInstance(): Promise<void> {
+        const factory = this.config.factory;
         if (isTUIAppFactory(factory) && !hasViewTypeToolAuthoringProtocol(factory)) {
             throw new Error('APP_AUTHORING_PROTOCOL_UNSUPPORTED');
         }
@@ -335,36 +290,62 @@ export class AppKernel implements IAOTUIApp, IRefExporter {
             String(this._id), this.appExecutionInstanceId,
         );
 
-        // 3. 构建RuntimeContext
-        const runtimeContext = {
+        const runtimeContext: RuntimeContext = {
             appId: this._id,
             desktopId: this.context.desktopId,
             launchConfig: this.config.launchConfig,
             refExporter: this,
-            markDirty: () => {
-                if (this.closing) return;
-                this.projection.recordMutation('view');
-            },
             projection: this.projection,
+            signal: this.projectionOwner.signal,
+            setViewReader: read => {
+                if (this.readViews) throw new Error('App view reader already installed');
+                this.readViews = read;
+            },
+            publishFrame: build => {
+                this.assertActive();
+                this.projection.beginCommit();
+                let plan: ReturnType<typeof owned.prepareFrame>;
+                let candidate: CompleteProjectionFrame;
+                try {
+                    const frame = build();
+                    plan = owned.prepareFrame(frame.views, frame.tools);
+                    const refs: (typeof candidate.refs)[number][] = [];
+                    const views = frame.views.map(({ refs: viewRefs, ...view }, index) => {
+                        const { viewId, viewInstanceId } = plan.instances[index]!;
+                        for (const ref of viewRefs) refs.push({ ...ref, viewId, viewInstanceId });
+                        return { ...view, viewInstanceId };
+                    });
+                    candidate = { views, refs, tools: plan.tools };
+                } catch (error) {
+                    this.projection.endCommit({ error });
+                    throw error;
+                }
+                if (this.projection.endCommit(undefined, false, candidate) !== 'prepared') {
+                    const failure = this.projection.failure!;
+                    throw new SnapshotDataError(failure.code, failure.path ?? '$', failure.message);
+                }
+                // Apply the validated inventory before any publication subscriber runs.
+                plan.accept();
+            },
             persistence: this.persistence,
             appLifecycle: this.appLifecycle?.port,
             viewTools: {
                 mount: (viewId: string, viewType: string) => {
                     this.assertActive();
-                    const identity = owned.mount(viewId, viewType);
-                    this.projection.recordMutation('view');
-                    return identity.viewInstanceId;
+                    this.projection.assertWritable();
+                    return owned.mount(viewId, viewType).viewInstanceId;
                 },
                 unmount: (viewInstanceId: string) => {
-                    if (this.closing) return;
+                    this.projection.assertWritable();
                     owned.unmount(viewInstanceId);
-                    this.projection.recordMutation('view');
+                    this.projection.releaseView(viewInstanceId);
                 },
             },
             appTypeTools: {
                 protocol: VIEW_TYPE_TOOL_PROTOCOL,
                 registerTypeTool: (definition: AppTypeToolDefinition, options: AppTypeToolRegistrationOptions) => {
                     this.assertActive();
+                    this.projection.assertWritable();
                     // Core owns strict capture, compilation, callable qualification, and reentry checks.
                     // Pass the original values so custom prototypes/accessors cannot be laundered here.
                     const release = owned.registerTypeTool(definition, options);
@@ -372,22 +353,16 @@ export class AppKernel implements IAOTUIApp, IRefExporter {
                         release();
                         throw closeError('APP_KERNEL_CLOSED');
                     }
-                    this.projection.recordMutation('tool');
-                    let released = false;
-                    return () => {
-                        if (released) return;
-                        released = true;
-                        release();
-                        if (!this.closing) this.projection.recordMutation('tool');
-                    };
+                    return () => { this.projection.assertWritable(); release(); };
                 },
             },
         };
 
-        // 4. 调用SDK factory初始化组件
-        this.componentRenderer = await factory.initializeComponent(appContainer, runtimeContext);
+        const instance = await factory.initialize(runtimeContext);
+        if (!instance || typeof instance.close !== 'function') {
+            throw Object.assign(new Error('App initialize must return an instance with close()'),
+                { code: 'APP_INVALID_INSTANCE', path: 'initialize' });
+        }
+        this.instance = instance;
     }
-
-    // Component Views and their owned Tools render directly through Preact.
-    // Runtime only observes the committed View/Ref/Tool projection.
 }

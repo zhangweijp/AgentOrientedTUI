@@ -7,19 +7,10 @@ export interface ObservationJsonLimits {
     readonly maxCanonicalBytes: number;
 }
 export interface ObservationRegistryLimits {
-    readonly maxScopes: number;
-    readonly maxObservationsPerScope: number;
-    readonly maxObservations: number;
-    readonly maxReservationsPerScope: number;
-    readonly maxReservations: number;
     readonly maxViews: number;
     readonly maxRefs: number;
     readonly maxTools: number;
     readonly maxBindings: number;
-    /** Applied only when lifetime is explicitly 'ttl'. */
-    readonly scopeTtlMs: number;
-    /** Applied only when lifetime is explicitly 'ttl'. */
-    readonly observationTtlMs: number;
     readonly capture: ObservationJsonLimits;
     readonly metadata: ObservationJsonLimits;
     readonly observation: ObservationJsonLimits;
@@ -35,9 +26,6 @@ export type ObservationRegistryLimitOverrides = {
 };
 export interface ObservationRegistryOptions {
     readonly namespace: string;
-    readonly now: () => number;
-    /** Default scope ownership uses explicit release/close; TTL is opt-in. */
-    readonly lifetime?: 'scope' | 'ttl';
     readonly limits?: ObservationRegistryLimitOverrides;
 }
 export interface ReservationHandle { readonly reservation: true }
@@ -59,7 +47,7 @@ export type ObservedView = Readonly<Omit<ViewSnapshotV2, 'content'> & { readonly
 export interface Observation {
     readonly observationId: string;
     readonly source: ObservationSource;
-    /** null means this observation remains owned until release or Scope revocation. */
+    /** null means this observation remains owned until release or instance closure. */
     readonly expiresAt: number | null;
     readonly views: readonly ObservedView[];
     readonly refs: readonly Readonly<RefIdentity & { refType: string; kind: 'snapshot-value' | 'entity' }>[];
@@ -76,14 +64,13 @@ export interface ObservationGrant {
     readonly toolBindings: readonly ToolObservationGrant[];
     readonly content: readonly Readonly<{ view: ViewIdentity; decision: 'retain' | 'hide' }>[];
 }
-export type ObservationIssueCode = SnapshotIssueCode | 'SCOPE_INVALID' | 'SCOPE_UNAVAILABLE' |
+export type ObservationIssueCode = SnapshotIssueCode | 'APP_INTERACTION_UNAVAILABLE' |
     'RESERVATION_UNAVAILABLE' | 'OBSERVATION_INVALID' | 'OBSERVATION_PROJECTION_INVALID' |
     'OBSERVATION_UNAVAILABLE' | 'OBSERVATION_NOT_ADOPTED' | 'BINDING_UNAVAILABLE' | 'OBSERVATION_CAPACITY' | 'OBSERVATION_INTERNAL_ERROR';
-export interface ObservationIssue { readonly code: ObservationIssueCode; readonly message: string }
+export interface ObservationIssue { readonly code: ObservationIssueCode; readonly message: string; readonly path?: string }
 export interface ObservationRejected { readonly status: 'rejected'; readonly issue: ObservationIssue }
 export interface ObservationRegistryStats {
     readonly closed: boolean;
-    readonly scopes: number;
     readonly observations: number;
     readonly reservations: number;
     readonly cancelledReservations: number;

@@ -1,6 +1,6 @@
 import Type from 'typebox';
-import { defineViewTypeTool, defineToolSet, getToolCatalog } from '../src/tools.js';
-import type { ArgsOf, SchemaOf } from '../src/tools.js';
+import { defineViewTypeTool, defineToolSet, getToolCatalog } from '../src/app.js';
+import type { ArgsOf, SchemaOf } from '../src/app.js';
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type Assert<T extends true> = T;

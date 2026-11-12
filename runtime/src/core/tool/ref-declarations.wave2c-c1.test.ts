@@ -27,8 +27,15 @@ describe('annotation boundaries in the shared parameter grammar', () => {
         expect(c.ok).toBe(true); if (!c.ok) throw Error('fixture');
         expect((c.contract.schema.properties as any).file.default).toEqual(payload);
     });
-    it.each(['const', 'enum', 'examples'])('does not expand the ordinary object vocabulary for literal %s', keyword => {
+    it.each(['enum', 'examples'])('rejects unsupported or malformed object keyword %s', keyword => {
         expect(compile({ type: 'object', properties: { file: { type: 'object', [keyword]: {} } } }).ok).toBe(false);
+    });
+    it('validates a JSON object literal by value', () => {
+        const c = compile({ type: 'object', properties: { file: { type: 'object', const: { x: null } } } });
+        expect(c.ok).toBe(true);
+        if (!c.ok) throw Error('fixture');
+        expect(c.contract.validate({ file: { x: null } }).ok).toBe(true);
+        expect(c.contract.validate({ file: {} }).ok).toBe(false);
     });
     it.each(['file', ...literalNames, 'x-aotui-ref'])('accepts the current annotation under ordinary parameter name %s', name => {
         expect(compile({ type: 'object', properties: { [name]: { type: 'string', minLength: 1,

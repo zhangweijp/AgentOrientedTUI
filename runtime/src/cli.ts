@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { buildViewMessageMarkup } from './adapters/view-message.js';
 
 /**
  * agentina CLI - Third-Party App Management
@@ -21,7 +22,6 @@
 import { AppRegistry } from './engine/app/registry.js';
 import { createRuntime } from './facades/facades.js';
 import type { AppID } from './spi/core/types.js';
-import type { ScopeClient } from './core/invocation/scoped-interaction-types.js';
 import * as readline from 'readline';
 import fs from 'fs';
 import { installNpmPackage } from './cli/npm-installer.js';
@@ -71,7 +71,9 @@ async function main(): Promise<void> {
 
     const command = args[0];
     const registry = new AppRegistry();
-    await registry.loadFromConfig();
+    for (const result of await registry.loadFromConfig()) {
+        if (result.status === 'failed') console.error(`[TUI] Could not discover ${result.name}`, result.issue);
+    }
 
     try {
         switch (command) {
@@ -327,54 +329,22 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
     });
 
     let isInteractive = false;
-    const clients = new Map<string, ScopeClient>();
-
-    function openScope(appId: string): void {
-        const opened = runtime.createAppScope(desktopId, appId, {
-            project({ source, selection }) {
-                const selected = source.views.filter(view => selection.viewIds.includes(view.id));
-                const toolBindings = [];
-                for (const tool of Object.values(source.tools)) {
-                    if (tool.execution.kind === 'view-type') {
-                        if (selected.some(view => view.type === tool.viewType)) {
-                            toolBindings.push({ toolId: tool.id, execution: {
-                                kind: 'view-type' as const, activationId: tool.execution.activationId,
-                            } });
-                        }
-                        continue;
-                    }
-                }
-                return {
-                    views: selected.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-                    refs: Object.values(source.refs).filter(ref => selection.viewIds.includes(ref.ownerViewId))
-                        .map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
-                    toolBindings,
-                    content: selected.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' as const })),
-                };
-            },
-            authorize: () => true,
-            canReadReceipt: () => true,
-        });
-        if (opened.status !== 'opened') throw new Error(`Could not open Semantic scope for ${appId}: ${opened.issue.code}`);
-        clients.set(appId, opened.client);
-    }
-
     async function printCurrentViews(): Promise<void> {
-        for (const [appId, client] of clients) {
-            const result = await client.observe({ all: true });
-            if (result.status !== 'observed') {
-                console.error(`[TUI] Could not observe ${appId}: ${result.issue.code}`);
+        for (const app of desktop.getInstalledApps()) {
+            if (app.status !== 'running' || !app.appInstanceId) continue;
+            const appId = String(app.appId);
+            const access = runtime.getAppInteraction(desktopId, appId, app.appInstanceId);
+            const result = access.status === 'ready' ? await access.interaction.preview() : access;
+            if (result.status !== 'previewed') {
+                console.error(`[TUI] Could not preview ${appId}: ${result.issue.code} ${result.issue.message}`);
                 continue;
             }
-            try {
-                console.log(`--- App ${appId} ---`);
-                for (const view of result.observation.views) {
-                    console.log(`<view id="${view.id}" type="${view.type}">`);
-                    console.log(view.content?.value ?? '');
-                    console.log('</view>');
-                }
-            } finally {
-                client.releaseObservation(result.observation.observationId);
+            console.log(`--- App ${appId} ---`);
+            for (const view of result.views) {
+                if (!view.content) continue;
+                console.log(buildViewMessageMarkup({ appId, appName: app.name || appId,
+                    viewId: view.id, viewType: view.type, kind: view.kind, viewName: view.name,
+                    markup: view.content.format === 'markdown-v1' ? view.content.value : JSON.stringify(view.content.value) }));
             }
         }
     }
@@ -382,8 +352,6 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
     let stopping: Promise<void> | undefined;
     function stop(): Promise<void> {
         if (!stopping) {
-            for (const client of clients.values()) client.close();
-            clients.clear();
             stopping = runtime.beginShutdown('CLI stopped').completion.then(report => {
                 if (!report.ok || !report.resourcesReleased) process.exitCode = 1;
             });
@@ -420,28 +388,10 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
              continue;
         }
 
-        // HACK: for local apps, source starts with local:
-        let realPath = loadedApp.source;
-        if (realPath.startsWith('local:')) {
-            realPath = realPath.substring(6);
-            // Resolve relative to cwd
-            const path = await import('path');
-            const fs = await import('fs');
-            const url = await import('url');
-            
-            realPath = path.resolve(process.cwd(), realPath);
-            // Add dist/index.js if directory
-            if (fs.statSync(realPath).isDirectory()) {
-                realPath = path.join(realPath, 'dist/index.js');
-            }
-             // Convert to file URL
-            realPath = url.pathToFileURL(realPath).href;
-        }
+        console.log(`[TUI] Installing ${name} from ${loadedApp.modulePath}...`);
 
-        console.log(`[TUI] Installing ${name} from ${realPath}...`);
-        
         try {
-            const appId = await runtime.installDynamicWorkerApp(desktopId, realPath, {
+            const appId = await runtime.installDynamicWorkerApp(desktopId, loadedApp.modulePath, {
                 name: name,
                 config: {} // TODO: support config injection
             });
@@ -450,7 +400,6 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
             
             // Auto open
             await desktop.openApp(appId as AppID);
-            openScope(appId);
         } catch (e: any) {
             console.error(`[TUI] Failed to start ${name}: ${e.message}`);
         }

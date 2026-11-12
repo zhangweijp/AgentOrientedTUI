@@ -5,7 +5,6 @@ import {
   useAppLifecycle,
   useAppRuntimeContext,
   defineViewTypeTool,
-  createToolBindings,
   defineToolSet,
   refParam,
   type AppLifecycleCallbacks,
@@ -17,7 +16,6 @@ import {
   type DeepReadonly,
   type DesktopID,
   type ArgsOf,
-  type IViewMeta,
   type ItemRefFormatter,
   type LLMOutputEvent,
   type LLMOutputListener,
@@ -35,10 +33,7 @@ import {
   type TUIAppConfig,
   type ViewTypeToolDeclaration,
   type ToolBinding,
-  type ToolBindingController,
-  type ToolSetMap,
   type AppToolsProps,
-  type ToolRefProps,
   type ViewID,
   type ViewProps,
 } from '../src/index.js';
@@ -118,13 +113,13 @@ void checkPublicContextShape;
 type PublicTypes = [
   AppContext, AppID, AppReinitializeContext, ArrayRefHandle,
   DeepReadonly<unknown>, DesktopID, ArgsOf<typeof readRecord>,
-  IViewMeta, ItemRefFormatter, LLMOutputEvent,
+  ItemRefFormatter, LLMOutputEvent,
   LLMOutputListener, ListRefFormatter, ToolError, ToolResult,
   PersistMeta, PersistOptions<string>, PersistStatus, RefHandle,
   StateBindingStatus, StateFlushReport, StateIssue,
   StateValue,
   typeof defineViewTypeTool, typeof refParam, typeof AppTools,
-  ViewTypeToolDeclaration<ReturnType<typeof Type.Object>>, ToolBinding<typeof readRecord>, ToolBindingController<ToolSetMap<typeof readTools>>, AppToolsProps<typeof readTools>, ToolRefProps,
+  ViewTypeToolDeclaration<ReturnType<typeof Type.Object>>, ToolBinding<typeof readRecord>, AppToolsProps<typeof readTools>,
   ViewID, ViewProps,
 ];
 declare const publicTypes: PublicTypes;
@@ -132,8 +127,7 @@ void publicTypes;
 
 type NoRefHandleProperties = AssertNever<Extract<keyof RefHandle, 'data' | 'id'>>;
 type NoViewCloseHandler = AssertNever<Extract<keyof ViewProps, 'onClose'>>;
-type NoPublicMountIdentity = AssertNever<Extract<keyof IViewMeta, 'viewGeneration' | 'viewInstanceId'>>;
-type PublicShapeChecks = [NoRefHandleProperties, NoViewCloseHandler, NoPublicMountIdentity];
+type PublicShapeChecks = [NoRefHandleProperties, NoViewCloseHandler];
 void (null as unknown as PublicShapeChecks);
 
 useLLMOutputChannel(() => {});
@@ -176,8 +170,7 @@ const readRecord = defineViewTypeTool({
   }),
 });
 const readTools = defineToolSet({ readRecord });
-declare const appTypeTools: import('@aotui/runtime/spi').IAppTypeToolPort;
-createToolBindings({ definition: readTools, appTypeTools }).commit({ readRecord: { execute(args) {
+AppTools({ definition: readTools, bindings: { readRecord: { execute(args) {
     const status: 'ready' | 'pending' = args.status;
     const limit: number | undefined = args.limit;
     void status;
@@ -187,7 +180,7 @@ createToolBindings({ definition: readTools, appTypeTools }).commit({ readRecord:
     // @ts-expect-error Read-only Tool arguments are immutable.
     args.status = 'ready';
     return { success: true } satisfies ToolResult;
-} } });
+} } } });
 
 const failedToolResult = {
   success: false,
@@ -201,12 +194,12 @@ const inspectSnapshot = defineViewTypeTool({ viewType: 'Record', name: 'inspect_
   inputSchema: Type.Object({ record: refParam('Record', Type.Object({ title: Type.String() })) }),
 });
 const snapshotTools = defineToolSet({ inspectSnapshot });
-createToolBindings({ definition: snapshotTools, appTypeTools }).commit({ inspectSnapshot: { execute(args) {
+AppTools({ definition: snapshotTools, bindings: { inspectSnapshot: { execute(args) {
   const title: string = args.record.title;
   // @ts-expect-error Resolved Ref fields are recursively immutable.
   args.record.title = title;
   return { success: true };
-} } });
+} } } });
 // @ts-expect-error The retired snapshot Hook has no public export.
 import { useViewSnapshotTool } from '../src/index.js';
 

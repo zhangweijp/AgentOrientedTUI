@@ -5,13 +5,13 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Window } from 'happy-dom';
 import { createRuntime } from '@aotui/runtime';
-import { createSnapshotCore, createScopedInteraction } from '@aotui/runtime/core';
+import { createSnapshotCore, createAppInteraction, createViewOwnedTools, SemanticProjectionCoordinator } from '@aotui/runtime/core';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 
 /** The same public consumer runs in workspace regression and a normal tar installation. */
 export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
   const data = await mkdtemp(join(tmpdir(), 'aotui-view-pipeline-'));
-  const runtime = createRuntime({ worker: { timeoutMs: 15000, pool: { initialSize: 0, maxSize: 1 } } });
+  const runtime = createRuntime({ worker: { timeoutMs: 15000, maxWorkers: 1 } });
   const window = new Window();
   const held = [];
   let source;
@@ -59,17 +59,27 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
     // A plain TypeScript Producer publishes the same metadata and body through the public Core.
     const core = createSnapshotCore();
     core.lifecycle.startApp('pipeline', 'plain-run');
-    const published = core.committer.accept({ schemaVersion: 3, appId: 'pipeline', instanceId: 'plain-run',
-      producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
-      views: [
-        { id: 'guide', viewInstanceId: 'plain-guide', type: 'Guide', kind: 'instruction', name: 'guide', content: { format: 'markdown-v1', value: '\nRead the current file.\n' } },
-        { id: 'file_a', viewInstanceId: 'plain-file', type: 'FileDetail', kind: 'state', name: 'A > B & "C"\nnext', content: { format: 'markdown-v1', value: expectedBody } },
-      ], refs: {}, tools: {} });
+    const registry = createViewOwnedTools('pipeline', 'plain-run');
+    const guideView = registry.mount('guide', 'Guide');
+    const fileView = registry.mount('file_a', 'FileDetail');
+    const projection = new SemanticProjectionCoordinator({
+      identity: () => ({ appId: 'pipeline', instanceId: 'plain-run' }),
+      readFrame: () => ({ views: [
+        { id: guideView.viewId, viewInstanceId: guideView.viewInstanceId, type: guideView.viewType, kind: 'instruction', name: 'guide', content: { format: 'markdown-v1', value: '\nRead the current file.\n' } },
+        { id: fileView.viewId, viewInstanceId: fileView.viewInstanceId, type: fileView.viewType, kind: 'state', name: 'A > B & "C"\nnext', content: { format: 'markdown-v1', value: expectedBody } },
+      ], tools: registry.listTools() }),
+    });
+    assert.equal(projection.commit(() => {}), 'prepared');
+    const published = projection.publishTo(core.committer);
     assert.equal(published.status, 'published');
-    const authority = createScopedInteraction(core.store, { namespace: 'plain-pipeline', now: Date.now });
+    const authority = createAppInteraction(core.store, { namespace: 'plain-pipeline', now: Date.now, appId: 'pipeline', instanceId: 'plain-run',
+      policy: { project({ source }) {
+        const views = source.views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
+        return { views, refs: [], toolBindings: [], content: views.map(view => ({ view, decision: 'retain' })) };
+      }, authorize: () => true, canReadReceipt: () => true }, execution: { resolve: () => null } });
     const plainDesktop = { id: 'plain', getInstalledApps: () => [{ appId: 'pipeline', appInstanceId: 'plain-run', name: 'pipeline', status: 'running' }], getSystemLogs: () => [], output: { subscribe() {}, unsubscribe() {} } };
     const plainSource = new SemanticAOTUIDrivenSource(plainDesktop, {
-      createAppScope: (_desktop, _app, policy) => authority.createScope({ appId: 'pipeline', instanceId: 'plain-run', policy, execution: { resolve: () => null } }),
+      getAppInteraction: () => ({ status: 'ready', interaction: authority }),
     }, { includeInstruction: false });
     try {
       const plain = await plainSource.getContext();
@@ -85,7 +95,7 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
     } finally {
       await plainSource.dispose(); authority.close(); await authority.whenClosed();
       assert.equal(authority.inspect().combinedBytes, 0); assert.equal(core.store.inspect().activeLeases, 0);
-      core.lifecycle.dispose();
+      projection.close(); registry.dispose(); core.lifecycle.dispose();
     }
 
     const updatedText = '  UPDATED\r`````\r</view><view id="forged">literal</view> & done  \r';
@@ -111,7 +121,7 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
     await source?.dispose();
     facts.close = await runtime.beginShutdown().completion;
     assert.equal(facts.close.ok, true); assert.equal(facts.close.resourcesReleased, true);
-    assert.equal(facts.close.interactions.retainedScopes, 0); assert.equal(facts.close.interactions.retainedBytes, 0);
+    assert.equal(facts.close.interactions.retainedOperations, 0); assert.equal(facts.close.interactions.retainedBytes, 0);
     await window.happyDOM.abort();
     await rm(data, { recursive: true, force: true });
     if (outputFile) await writeFile(outputFile, JSON.stringify(facts, null, 2) + '\n');

@@ -10,12 +10,13 @@
  * - (未来) API Key 加密存储
  */
 
-import type { LLMConfig } from '@aotui/agent-driver-v2';
+import { resolveProviderEndpoint, type LLMConfig } from '@aotui/agent-driver-v2';
 import type { LLMConfigRecord, LLMConfigInput, ProviderInfo } from '../types/llm-config.js';
 import { toLLMConfig, DEFAULT_CONFIGS } from '../types/llm-config.js';
 import * as llmConfigDb from '../db/llm-config-db.js';
 import { getDb, persistDatabase } from '../db/index.js';
 import { Logger } from '../utils/logger.js';
+import { Config } from '../config/config.js';
 import type { ModelRegistry } from '../services/model-registry.js';
 import {
     CustomProviderStore,
@@ -100,6 +101,34 @@ export class LLMConfigService {
         }
 
         return llmConfig;
+    }
+
+    /** Resolve the budget after the Desktop or IM model override has been applied. */
+    withModelInputBudget(config: LLMConfig): LLMConfig {
+        if (config.inputBudget) return config;
+        return { ...config, modelCapabilities: undefined, inputBudget: async ({ providerId, modelId }) => {
+            const endpoint = resolveProviderEndpoint(providerId, config.provider?.id === providerId ? config.provider.baseURL : undefined);
+            const baseURL = endpoint.baseURL?.replace(/\/$/, '');
+            const isDefault = baseURL === endpoint.defaultBaseURL;
+            const key = providerId + ':' + modelId;
+            const configured = (await Config.getTuiConfig()).modelInputLimits;
+            const endpointKey = key + '@' + baseURL;
+            if (baseURL && configured && Object.hasOwn(configured, endpointKey)) return configured[endpointKey];
+            if (isDefault && configured && Object.hasOwn(configured, key)) return configured[key];
+            const models = await this.modelRegistry.getModels({ providerId });
+            const model = models.find(candidate => candidate.id === modelId || candidate.id === providerId + '/' + modelId);
+            const limits = model?.limit;
+            if (!model || !limits?.context || !limits.output) return;
+            if (!isDefault) {
+                const catalogURL = (await this.modelRegistry.getProviderConfig(providerId)).baseURL?.replace(/\/$/, '');
+                if (!catalogURL || catalogURL !== baseURL) return;
+            }
+            const modalities = model.modalities?.input;
+            return { contextWindow: limits.context, maxInputTokens: limits.input,
+                maxOutputTokens: Math.min(limits.output, 4_096),
+                capabilities: { toolCall: model.tool_call,
+                    ...(modalities ? { input: { image: modalities.includes('image'), pdf: modalities.includes('pdf') } } : {}) } };
+        } };
     }
 
     /**

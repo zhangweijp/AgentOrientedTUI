@@ -5,20 +5,20 @@ import { buildPublicToolName } from '@aotui/runtime/adapters';
 import { DEFAULT_AOTUI_SYSTEM_INSTRUCTION } from '@aotui/runtime/adapters';
 import { loadAOTUIInstruction } from './load-aotui-instruction.js';
 import { formatAppStatus, formatTimestamp } from './presentation.js';
+import { modelToolSchema } from '@aotui/runtime/core';
 import type { ObservedToolExecutionV3, ToolDescriptorV3 } from '@aotui/runtime/core';
 import type { ContextDrivenSource, DrivenSourceContext, MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2';
 import type { AppID } from '@aotui/runtime/spi';
 import type { IDesktop, IKernel, AppDiscoveryInfo } from '@aotui/runtime/spi';
 import type { Observation } from '@aotui/runtime/core';
-import type { InvokeResult, ScopeClient, ScopePolicy } from '@aotui/runtime/core';
+import type { InvokeResult, AppInteraction, AppInteractionPolicy } from '@aotui/runtime/core';
 
 export interface SemanticAOTUIDrivenSourceOptions {
     includeInstruction?: boolean;
     instruction?: string;
     instructionPath?: string;
     /** Trusted Host policy; applications and model arguments cannot supply it. */
-    policy?: (app: AppDiscoveryInfo) => ScopePolicy;
-    maxActiveContexts?: number;
+    policy?: (app: AppDiscoveryInfo) => AppInteractionPolicy;
     maxApps?: number;
 }
 
@@ -42,16 +42,16 @@ function semanticToolResult(toolName: string, toolCallId: string, result: Invoke
         ...base,
         ...(business?.data === undefined ? {} : { result: business.data }),
         error: { code: business?.error?.code ?? outcome.code,
-            message: (business?.error?.message ?? outcome.message) + (outcome.status === 'failed' && outcome.effects === 'partial'
+            message: (business?.error?.message ?? outcome.message) +
+                (outcome.status === 'rejected' && outcome.path ? ' At ' + outcome.path + '.' : '') + (outcome.status === 'failed' && outcome.effects === 'partial'
                 ? ' Some changes were applied. Inspect the current View before retrying.' : '') },
     };
 }
 
-interface AppScope { app: AppDiscoveryInfo; client: ScopeClient }
-interface Binding { app: AppDiscoveryInfo; client: ScopeClient; observationId: string; bindingId: string; execution: ObservedToolExecutionV3 }
+interface Binding { app: AppDiscoveryInfo; client: AppInteraction; observationId: string; bindingId: string; execution: ObservedToolExecutionV3 }
 interface ToolGroup { app: AppDiscoveryInfo; tool: ToolDescriptorV3; bindings: Map<string, Binding> }
-interface AppIssue { code: string; message: string }
-interface CapturedObservation { client: ScopeClient; observation: Observation; released: boolean }
+interface AppIssue { code: string; message: string; path?: string }
+interface CapturedObservation { client: AppInteraction; observation: Observation; released: boolean }
 interface AppProjection {
     app: AppDiscoveryInfo;
     captured: CapturedObservation;
@@ -61,22 +61,35 @@ interface AppProjection {
     presentations: Map<string, { digest: string; timestamp: number }>;
 }
 
-interface ContextOwner { appIds: Set<string>; release(): void }
+interface ContextOwner { observations: readonly CapturedObservation[]; release(): void }
 
 class AppProjectionError extends Error {
-    constructor(readonly code: string, message: string) { super(message); }
+    constructor(readonly code: string, message: string, readonly path?: string) { super(message); }
 }
 
-function boundedIssue(code: string, message: string): AppIssue {
+function boundedText(text: string, limit: number): string {
+    let safe = '';
+    for (const character of text) {
+        const escaped = character === '&' ? '&amp;' : character === '<' ? '&lt;' : character === '>' ? '&gt;'
+            : /[\u0000-\u001f\u007f]/.test(character) ? ' ' : character;
+        if (safe.length + escaped.length > limit) break;
+        safe += escaped;
+    }
+    return safe;
+}
+
+function boundedIssue(code: string, message: string, path?: string): AppIssue {
     const safeCode = /^[A-Z0-9_]{1,64}$/.test(code) ? code : 'AOTUI_APP_PROJECTION_FAILED';
-    const safeMessage = [...message.replace(/[\r\n\t]/g, ' ').replace(/[&<>]/g, character => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;',
-    })[character]!)].slice(0, 220).join('');
-    return { code: safeCode, message: safeMessage };
+    return { code: safeCode, message: boundedText(message, 220),
+        ...(path === undefined ? {} : { path: boundedText(path, 512) }) };
+}
+
+function formatAppIssue(issue: AppIssue): string {
+    return `${issue.code}: ${issue.message}${issue.path ? ` (at ${issue.path})` : ''}`;
 }
 
 function appIssueFrom(error: unknown): AppIssue {
-    if (error instanceof AppProjectionError) return boundedIssue(error.code, error.message);
+    if (error instanceof AppProjectionError) return boundedIssue(error.code, error.message, error.path);
     const message = error instanceof Error ? error.message : '';
     const code = message.match(/^([A-Z][A-Z0-9_]{0,63}):/)?.[1];
     if (code === 'AOTUI_TOOL_NAME_INVALID' ||
@@ -99,9 +112,8 @@ function releaseCaptured(captured: CapturedObservation): void {
  * direct Worker execution, or automatic rebinding of old calls.
  * A getContext() result owns its Observations until release(), including while
  * the model thinks. A later context cannot overwrite an earlier call target.
- * Scopes are owned by the active Contexts, and close when their last owner
- * releases. Core receipts stay internal; public results carry Tool result data
- * or actionable errors. Model-facing Tools are expected to await completion.
+ * Runtime keeps receipts on the App instance. Releasing a context only releases
+ * the observations prepared for that context.
  */
 export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
     readonly name = 'AOTUI';
@@ -109,25 +121,21 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
     private disposed = false;
     private generation = 0;
     private readonly disabledApps = new Set<string>();
-    private readonly scopes = new Map<string, AppScope>();
+    private readonly policies = new Map<string, { instanceId: string; policy: AppInteractionPolicy }>();
     private readonly contexts = new Set<ContextOwner>();
     private readonly listeners = new Set<() => void>();
     private readonly update = () => { for (const listener of this.listeners) listener(); };
     private subscribed = false;
-    private readonly maxActiveContexts: number;
     private readonly maxApps: number;
     private readonly instruction: string;
     private presentations = new Map<string, { digest: string; timestamp: number }>();
 
     constructor(private readonly desktop: IDesktop, private readonly kernel: IKernel,
         private readonly options: SemanticAOTUIDrivenSourceOptions = {}) {
-        this.maxActiveContexts = options.maxActiveContexts ?? 8;
         this.maxApps = options.maxApps ?? 128;
         this.instruction = loadAOTUIInstruction(options, DEFAULT_AOTUI_SYSTEM_INSTRUCTION);
-        for (const limit of [this.maxActiveContexts, this.maxApps]) {
-            if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('SEMANTIC_SOURCE_LIMIT_INVALID');
-        }
-        if (typeof desktop.getInstalledApps !== 'function' || typeof kernel.createAppScope !== 'function')
+        if (!Number.isSafeInteger(this.maxApps) || this.maxApps < 1) throw new Error('SEMANTIC_SOURCE_LIMIT_INVALID');
+        if (typeof desktop.getInstalledApps !== 'function' || typeof kernel.getAppInteraction !== 'function')
             throw new Error('SEMANTIC_RUNTIME_UNSUPPORTED');
     }
 
@@ -172,81 +180,40 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
             (!app.name || !this.disabledApps.has(key(app.name)));
     }
 
-    private policy(app: AppDiscoveryInfo): ScopePolicy {
-        const custom = this.options.policy?.(app);
-        return {
-            project: context => {
-                if (!this.allowed(app)) return { views: [], refs: [], toolBindings: [], content: [] };
-                if (custom) return custom.project(context);
-                const selected = new Set(context.selection.viewIds);
-                const views = context.source.views.filter(view => selected.has(view.id));
-                const owners = new Set(views.map(view => JSON.stringify([view.id, view.viewInstanceId])));
-                const toolBindings: Array<{ toolId: string; execution: ObservedToolExecutionV3 }> = [];
-                for (const tool of Object.values(context.source.tools)) {
-                    if (tool.execution.kind === 'view-type') {
-                        if (views.some(view => view.type === tool.viewType)) {
-                            toolBindings.push({ toolId: tool.id, execution: {
-                                kind: 'view-type', activationId: tool.execution.activationId,
-                            } });
-                        }
-                        continue;
-                    }
-                }
-                return {
-                    views: views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-                    refs: Object.values(context.source.refs)
-                        .filter(ref => owners.has(JSON.stringify([ref.ownerViewId, ref.ownerViewInstanceId])))
-                        .map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
-                    toolBindings,
-                    content: views.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' as const })),
-                };
-            },
-            authorize: context => this.allowed(app) && (custom ? custom.authorize(context) : true),
-            canReadReceipt: (metadata, signal) => this.allowed(app) && (custom ? custom.canReadReceipt(metadata, signal) : true),
-        };
-    }
-
-    private openScope(app: AppDiscoveryInfo): AppScope | { issue: string } {
-        const existing = this.scopes.get(String(app.appId));
-        if (existing) return existing;
-        const result = this.kernel.createAppScope(this.desktop.id, String(app.appId), this.policy(app));
-        if (result.status !== 'opened') return { issue: result.issue.code };
-        const scope = { app, client: result.client };
-        this.scopes.set(String(app.appId), scope);
-        return scope;
-    }
-
-    private retire(appId: string): void {
-        const scope = this.scopes.get(appId);
-        if (scope) { this.scopes.delete(appId); scope.client.close(); }
-    }
-
-    private retireUnownedScopes(): void {
-        for (const appId of this.scopes.keys()) {
-            if (![...this.contexts].some(owner => owner.appIds.has(appId))) this.retire(appId);
+    private appInteraction(app: AppDiscoveryInfo): AppInteraction {
+        const appId = String(app.appId), instanceId = app.appInstanceId;
+        if (!instanceId) throw new AppProjectionError('APP_INTERACTION_UNAVAILABLE', 'No running App instance to observe.');
+        let policy = this.policies.get(appId);
+        if (this.options.policy && policy?.instanceId !== instanceId) {
+            policy = { instanceId, policy: this.options.policy(app) };
+            this.policies.set(appId, policy);
         }
+        const access = this.kernel.getAppInteraction(this.desktop.id, appId, instanceId, policy?.policy);
+        if (access.status === 'rejected') throw new AppProjectionError(access.issue.code, access.issue.message, access.issue.path);
+        return access.interaction;
     }
 
     async getContext(): Promise<DrivenSourceContext> {
         if (this.disposed || !this.enabled) return { messages: [], tools: {} };
-        if (this.contexts.size >= this.maxActiveContexts) throw new Error('SEMANTIC_CONTEXT_CAPACITY');
+        if (this.contexts.size >= 2) throw new Error('SEMANTIC_CONTEXT_CAPACITY');
         const generation = this.generation;
         const observations: CapturedObservation[] = [];
         let released = false;
         let adopted = false;
-        const owner: ContextOwner = { appIds: new Set(), release: () => {
+        const owner: ContextOwner = { observations, release: () => {
             if (released) return;
             released = true;
             for (const observed of observations) releaseCaptured(observed);
+            observations.length = 0;
             this.contexts.delete(owner);
-            this.retireUnownedScopes();
         } };
         this.contexts.add(owner);
         try {
             const installedApps = this.listApps();
             const apps = installedApps.filter(app => this.allowed(app));
             const active = new Set(apps.filter(app => app.status === 'running').map(app => String(app.appId)));
-            for (const appId of this.scopes.keys()) if (!active.has(appId)) this.retire(appId);
+            const installedIds = new Set(installedApps.map(app => String(app.appId)));
+            for (const id of this.policies.keys()) if (!installedIds.has(id)) this.policies.delete(id);
             const messages: MessageWithTimestamp[] = [];
             const tools: Record<string, Tool> = {};
             const bindings = new Map<string, ToolGroup>();
@@ -264,43 +231,18 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
             for (const app of apps) {
                 const appId = String(app.appId);
                 if (!active.has(appId)) continue;
-                let scope: AppScope | undefined;
+                let interaction: AppInteraction | undefined;
                 let observation: Observation | undefined;
                 try {
-                    const opened = this.openScope(app);
-                    if ('issue' in opened) {
-                        issues.set(appId, boundedIssue(opened.issue,
-                            `The Runtime could not open this App scope (${opened.issue}); repair the App or refresh the context.`));
-                        continue;
-                    }
-                    scope = opened;
-                    owner.appIds.add(appId);
-                    let observed = await scope.client.observe({ all: true });
-                    // Reopen only while constructing a NEW observation. Calls from an
-                    // earlier context always retain their original client and binding.
-                    if (observed.status === 'rejected' && observed.issue.code === 'SCOPE_UNAVAILABLE') {
-                        owner.appIds.delete(appId);
-                        this.retire(appId);
-                        this.retireUnownedScopes();
-                        const reopened = this.openScope(app);
-                        if ('issue' in reopened) {
-                            issues.set(appId, boundedIssue(reopened.issue,
-                                `The Runtime could not reopen this App scope (${reopened.issue}); refresh the context.`));
-                            continue;
-                        }
-                        scope = reopened;
-                        owner.appIds.add(appId);
-                        observed = await scope.client.observe({ all: true });
-                    }
+                    interaction = this.appInteraction(app);
+                    const observed = await interaction.observe({ all: true });
                     if (observed.status !== 'observed') {
-                        throw new AppProjectionError(observed.issue.code,
-                            `The Runtime rejected this App observation (${observed.issue.code}); repair its projection or refresh the context.`);
+                        const { code, message, path } = observed.issue;
+                        throw new AppProjectionError(code, message, path);
                     }
                     observation = observed.observation;
                     if (released || this.generation !== generation) {
-                        scope.client.releaseObservation(observation.observationId);
-                        owner.appIds.delete(appId);
-                        this.retireUnownedScopes();
+                        interaction.releaseObservation(observation.observationId);
                         continue;
                     }
 
@@ -315,7 +257,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                             if (group.tool.execution.kind !== 'view-type' || group.tool.execution.activationId !== sourceBinding.execution.activationId ||
                                 group.bindings.size > 0) throw new AppProjectionError('TOOL_SOURCE_CONFLICT', 'The App ViewType Tool binding does not match its observation.');
                             const value = 'view-type:' + sourceBinding.execution.activationId;
-                            group.bindings.set(value, { app, client: scope.client, observationId: observation.observationId,
+                            group.bindings.set(value, { app, client: interaction, observationId: observation.observationId,
                                 bindingId: sourceBinding.bindingId, execution: sourceBinding.execution });
                             continue;
                         }
@@ -344,21 +286,19 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                         if (!object(group.tool.inputSchema)) throw new AppProjectionError('AOTUI_TOOL_SCHEMA_INVALID',
                             'This App Tool has an invalid input schema. Declare a JSON Schema object and refresh the context.');
                         let inputSchema: ReturnType<typeof jsonSchema>;
-                        try { inputSchema = jsonSchema(group.tool.inputSchema); }
+                        try { inputSchema = jsonSchema(modelToolSchema(group.tool.inputSchema)); }
                         catch { throw new AppProjectionError('AOTUI_TOOL_SCHEMA_INVALID',
                             'This App Tool schema is not supported by the Agent Driver. Simplify its JSON Schema and refresh the context.'); }
                         localBindings.set(name, group);
                         localTools.set(name, { description: `${group.tool.description}\nApplication: ${group.app.name || appId}; View type: ${group.tool.viewType}.`,
                             inputSchema });
                     }
-                    const captured: CapturedObservation = { client: scope.client, observation, released: false };
+                    const captured: CapturedObservation = { client: interaction, observation, released: false };
                     observations.push(captured);
                     projections.push({ app, captured, messages: localMessages, tools: localTools, bindings: localBindings,
                         presentations: localPresentations });
                 } catch (error) {
-                    if (observation && scope) scope.client.releaseObservation(observation.observationId);
-                    owner.appIds.delete(appId);
-                    this.retireUnownedScopes();
+                    if (observation && interaction) interaction.releaseObservation(observation.observationId);
                     issues.set(appId, appIssueFrom(error));
                 }
             }
@@ -378,8 +318,6 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                     issues.set(appId, boundedIssue('AOTUI_TOOL_NAME_COLLISION',
                         `Public Tool alias ${JSON.stringify(conflict)} collides with another App. Rename this App, ViewType, or Tool.`));
                     releaseCaptured(projection.captured);
-                    owner.appIds.delete(appId);
-                    this.retireUnownedScopes();
                     continue;
                 }
                 accepted.add(projection);
@@ -404,7 +342,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                 `${index + 1}. ${app.name || app.appId}`, `    - App ID: ${app.appId}`,
                 `    - Status: ${formatAppStatus(app.status)}`, `    - What it is: ${app.whatItIs || app.description || 'Not provided'}`,
                 `    - When to use: ${app.whenToUse || 'Not provided'}`,
-                ...(issues.has(String(app.appId)) ? [`    - Semantic status: ${issues.get(String(app.appId))!.code}: ${issues.get(String(app.appId))!.message}`] : []),
+                ...(issues.has(String(app.appId)) ? [`    - Semantic status: ${formatAppIssue(issues.get(String(app.appId))!)}`] : []),
             ].join('\n')).join('\n') : installedApps.length ? '- No applications enabled for this context.' : '- No applications installed.'}\n\n## System Logs\n${logs.length ? logs.map(log => `- [${formatTimestamp(log.timestamp)}] ${log.message}`).join('\n') : this.disabledApps.size ? '- Desktop-wide logs are hidden while application filtering is active.' : '- No recent activity.'}\n\n</desktop>`;
             messages.push({ role: 'user', region: 'dynamic', content: desktopMarkup,
                 timestamp: timestamp(presentations, 'desktop', desktopMarkup) });
@@ -504,14 +442,18 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
     setEnabled(enabled: boolean): void {
         if (this.disposed || this.enabled === enabled) return;
         this.enabled = enabled; this.generation++; this.presentations.clear();
-        if (!enabled) { for (const owner of this.contexts) owner.release(); for (const id of this.scopes.keys()) this.retire(id); }
+        if (!enabled) for (const owner of this.contexts) owner.release();
         this.update();
     }
     setAppEnabled(appName: string, enabled: boolean): void {
         if (this.disposed || !key(appName)) return;
         if (enabled) this.disabledApps.delete(key(appName)); else this.disabledApps.add(key(appName));
         this.generation++; this.presentations.clear();
-        for (const [id, scope] of this.scopes) if (!this.allowed(scope.app)) this.retire(id);
+        if (!enabled) {
+            const disabled = new Set(this.listApps().filter(app => !this.allowed(app)).map(app => String(app.appId)));
+            for (const owner of this.contexts) for (const captured of owner.observations)
+                if (disabled.has(captured.observation.source.appId)) releaseCaptured(captured);
+        }
         this.update();
     }
     onUpdate(callback: () => void): () => void {
@@ -527,7 +469,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
         if (this.disposed) return;
         this.disposed = true; this.generation++; this.presentations.clear();
         for (const owner of this.contexts) owner.release();
-        for (const id of this.scopes.keys()) this.retire(id);
+        this.policies.clear();
         if (this.subscribed) this.desktop.output.unsubscribe(this.update);
         this.subscribed = false; this.listeners.clear();
     }

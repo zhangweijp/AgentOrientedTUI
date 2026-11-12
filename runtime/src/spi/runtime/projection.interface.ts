@@ -1,8 +1,4 @@
-/**
- * M3 SPI: semantic projection lifecycle, independent of the UI renderer.
- * SDK can bracket explicit commits; Runtime owns mutation epochs.
- */
-export type ProjectionChange = 'view' | 'ref' | 'tool' | 'content';
+import type { SnapshotIssue } from '../../core/snapshot/types.js';
 
 export interface ProjectionToken {
     readonly epoch: number;
@@ -10,9 +6,10 @@ export interface ProjectionToken {
 }
 
 export interface IProjectionPort {
+    readonly failure?: SnapshotIssue | undefined;
     beginCommit(): void;
-    endCommit(): void;
-    recordMutation(kind: ProjectionChange): number;
+    /** Close a render batch. A blocked render has outstanding repairs from a prior failure. */
+    endCommit(failure?: { readonly error: unknown }, blocked?: boolean): 'prepared' | 'blocked' | 'failed';
     token(): ProjectionToken;
     subscribe(listener: (token: ProjectionToken) => void): () => void;
 }

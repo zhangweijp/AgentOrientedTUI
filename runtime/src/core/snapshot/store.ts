@@ -217,16 +217,20 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
             if (disposed) return;
             const app = apps.get(appId);
             if (!app || app.instanceId !== instanceId || app.status === 'stopped') return;
-            const time = clock();
+            let time: number | undefined;
+            try { time = clock(); } catch { /* Revocation and explicit lease release do not require time. */ }
             if (app.current) {
                 currentBytes -= app.current.bytes;
-                retire(app.current, time);
+                if (time === undefined) {
+                    app.current.canonical = undefined;
+                    app.current.retiredAt = app.current.snapshot.createdAt;
+                } else retire(app.current, time);
                 app.current = undefined;
             }
             app.status = 'stopped';
             app.issue = undefined;
-            const trim = budgetTransition(undefined, time);
-            if (trim.ok) trim.evictions.forEach(entry => entries.delete(entry.snapshot.id));
+            const trim = time === undefined ? undefined : budgetTransition(undefined, time);
+            if (trim?.ok) trim.evictions.forEach(entry => entries.delete(entry.snapshot.id));
             else for (const entry of historyEntries()) {
                 if (entry.leases.size === 0) entries.delete(entry.snapshot.id);
             }
@@ -266,7 +270,10 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
         accept(input: unknown): CommitResult {
             if (disposed) return rejected('APP_STOPPED', 'Snapshot Core is closed');
             const time = clock();
-            const checked = validatePreparedV3Draft(input, options.limits);
+            const checked = validatePreparedV3Draft(input, options.limits, (appId, instanceId) => {
+                const app = apps.get(appId);
+                return app?.instanceId === instanceId ? app.current?.snapshot.tools : undefined;
+            });
             if (!checked.ok) {
                 const envelope = checked.envelope;
                 if (envelope) {
@@ -305,6 +312,11 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
             }
             app.seenProducerSeq = draft.producerSeq;
             const equal = app.current?.canonical === data.canonicalContent;
+            if ((equal || !app.current) && app.status === 'degraded' && draft.sourceEpoch === app.seenSourceEpoch) {
+                // Transport can replay a previously prepared frame. Only a new source
+                // commit proves recovery from a failure at this epoch.
+                return Object.freeze({ status: 'rejected', issue: app.issue! });
+            }
             if (equal) {
                 app.seenSourceEpoch = draft.sourceEpoch;
                 app.status = 'ready';

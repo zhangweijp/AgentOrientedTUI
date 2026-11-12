@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
 import { describe, expect, it } from 'vitest';
-import type { ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
+import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
 import { AppWorkerHost } from './worker-host.js';
 
 type Capture =
@@ -16,7 +16,7 @@ function appSource(): string {
         import { h } from 'preact';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
         import Type from 'typebox';
-        import { createTUIApp, defineViewTypeTool, View, useDataRef, AppTools, ToolRef, defineToolSet } from '@aotui/sdk';
+        import { createTUIApp, defineViewTypeTool, View, useDataRef, AppTools, defineToolSet } from '@aotui/sdk';
 
         let getterCalls = 0;
         const getterData = {};
@@ -26,14 +26,13 @@ function appSource(): string {
         });
         const oversizedData = { payload: 'x'.repeat(9 * 1024 * 1024) };
 
-        function Detail({ state, StatsUI }) {
+        function Detail({ state }) {
             const data = useMemo(() => state.mode === 'getter'
                 ? getterData
                 : state.mode === 'oversized' ? oversizedData : { value: 'valid' }, [state.mode]);
             const ref = useDataRef('payload', data);
             return h('section', {}, [
                 h('p', {}, [state.mode, ref('payload')]),
-                h(ToolRef, { tool: StatsUI }, 'Read getter counter'),
             ]);
         }
 
@@ -45,7 +44,6 @@ StatsUI: defineViewTypeTool({
 });
 function Root() {
             const [state, setState] = useState({ mode: 'valid' });
-            const StatsUI = fixtureTools0.StatsUI;
             useLayoutEffect(() => {
                 const onExternalEvent = event => {
                     const mode = event.detail?.type;
@@ -58,7 +56,7 @@ function Root() {
             }, []);
             return h(AppTools, { definition: fixtureTools0, bindings: {
 StatsUI: { execute: async () => ({ success: true, data: { getterCalls } }) }
-} }, h(View, {kind: 'state', id: 'detail', type: 'Detail' }, h(Detail, { state, StatsUI })));
+} }, h(View, {kind: 'state', id: 'detail', type: 'Detail' }, h(Detail, { state })));
         }
 
         export default createTUIApp({ app_name: 'strict_json_capture', component: Root });
@@ -82,6 +80,8 @@ async function buildFixture(directory: string): Promise<{ app: string; workerScr
         alias: {
             '@aotui/sdk': resolve(runtime, '../sdk/src/index.ts'),
             '@aotui/runtime/spi': resolve(runtime, 'src/spi/index.ts'),
+            '@aotui/runtime/core': resolve(runtime, 'src/core/index.ts'),
+            '@aotui/runtime/adapters/dom': resolve(runtime, 'src/adapters/dom-app.ts'),
         },
         logLevel: 'silent',
     });
@@ -118,7 +118,7 @@ function waitForCapture(worker: Worker, captures: Capture[], after: number): Pro
     });
 }
 
-function policyForSelection(): ScopePolicy {
+function policyForSelection(): AppInteractionPolicy {
     return {
         project: ({ source, selection }) => {
             const selected = new Set(selection.viewIds);
@@ -178,7 +178,8 @@ describe('R4 strict JSON capture in a real Worker', () => {
             expect(accessorFailure).toMatchObject({ type: 'SNAPSHOT_PREPARE_FAILED',
                 error: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } });
             if (accessorFailure.type !== 'SNAPSHOT_PREPARE_FAILED') throw new Error('Expected strict JSON rejection');
-            expect(accessorFailure.error.message).toContain('secret');
+            expect(accessorFailure.error.path).toContain('secret');
+            expect(accessorFailure.error.message).toContain('Accessors');
             expect(host.getSemanticSnapshotReport()).toMatchObject({ health: 'degraded', prepareFailed: 1,
                 published: 1, rejected: 1, lastIssueCode: 'SNAPSHOT_SERIALIZATION_ERROR' });
             expect(healthNotifications).toEqual(['ready', 'degraded']);
@@ -189,27 +190,28 @@ describe('R4 strict JSON capture in a real Worker', () => {
             if (oversizedFailure.type !== 'SNAPSHOT_PREPARE_FAILED') throw new Error('Expected bounded capture rejection');
             expect(oversizedFailure.error.message).toContain('budget');
             expect(host.getSemanticSnapshotReport()).toMatchObject({ health: 'degraded', prepareFailed: 2,
-                rejected: 2, lastIssueCode: 'SNAPSHOT_SERIALIZATION_ERROR' });
-            expect(healthNotifications).toEqual(['ready', 'degraded']);
+                rejected: 2, lastIssueCode: 'SNAPSHOT_SERIALIZATION_ERROR', lastIssuePath: oversizedFailure.error.path });
+            expect(oversizedFailure.error.path).not.toBe(accessorFailure.error.path);
+            expect(healthNotifications).toEqual(['ready', 'degraded', 'degraded']);
 
             const recovery = await publishEvent('recover');
             expect(recovery.type).toBe('SNAPSHOT_PREPARED');
             expect(host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', published: 1, unchanged: 1,
                 prepareFailed: 2, lastRefCount: 1 });
-            expect(healthNotifications).toEqual(['ready', 'degraded', 'ready']);
+            expect(healthNotifications).toEqual(['ready', 'degraded', 'degraded', 'ready']);
 
-            const openedScope = host.createInteractionScope(policyForSelection());
-            expect(openedScope.status).toBe('opened');
-            if (openedScope.status !== 'opened') throw new Error(openedScope.issue.code);
-            const observed = await openedScope.client.observe({ viewIds: ['detail'] });
+            const openedScope = host.getAppInteraction(policyForSelection());
+            expect(openedScope.status).toBe('ready');
+            if (openedScope.status !== 'ready') throw new Error(openedScope.issue.code);
+            const observed = await openedScope.interaction.observe({ viewIds: ['detail'] });
             expect(observed.status).toBe('observed');
             if (observed.status !== 'observed') throw new Error(observed.issue.code);
-            expect(openedScope.client.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
+            expect(openedScope.interaction.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
             const stats = observed.observation.tools.find(tool => tool.name === 'stats');
             expect(stats).toBeDefined();
             const binding = observed.observation.bindings.find(candidate => candidate.toolId === stats?.id);
             expect(binding).toBeDefined();
-            const statsResult = await openedScope.client.invoke({
+            const statsResult = await openedScope.interaction.invoke({
                 invocationId: 'read-getter-counter',
                 observationId: observed.observation.observationId,
                 bindingId: binding!.bindingId,
@@ -218,16 +220,16 @@ describe('R4 strict JSON capture in a real Worker', () => {
             expect(statsResult).toMatchObject({ kind: 'receipt', receipt: {
                 outcome: { status: 'succeeded', value: { success: true, data: { getterCalls: 0 } } },
             } });
-            openedScope.client.close();
+            openedScope.interaction.releaseObservation(observed.observation.observationId);
 
             await host.close();
             expect(host.getSemanticSnapshotReport()?.health).toBe('stopped');
             expect(host.getResourceReport()).toMatchObject({ interactions: {
-                closed: true, retainedScopes: 0, retainedBytes: 0,
+                closed: true, retainedOperations: 0, retainedBytes: 0,
             }, appCleanup: { support: 'managed', report: { state: 'completed', issues: [] } } });
-            expect(await host.releaseWorker()).toBe(worker);
-            expect(await host.waitForResourceRelease()).toMatchObject({ state: 'settled', worker: 'transferred',
-                resourcesReleased: true, interactions: { closed: true, retainedScopes: 0, retainedBytes: 0 } });
+            expect(worker.threadId).toBe(-1);
+            expect(await host.waitForResourceRelease()).toMatchObject({ state: 'settled', worker: 'exited',
+                resourcesReleased: true, interactions: { closed: true, retainedOperations: 0, retainedBytes: 0 } });
         } finally {
             host?.terminate();
             if (worker) await worker.terminate();

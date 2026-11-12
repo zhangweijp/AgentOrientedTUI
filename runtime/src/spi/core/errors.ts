@@ -77,7 +77,7 @@ const ERROR_MESSAGES: Record<ErrorCode, MessageFormatter> = {
 
     // App
     APP_NOT_FOUND: (c) => `App '${c.appId ?? 'unknown'}' not found${c.desktopId ? ` in Desktop '${c.desktopId}'` : ''}`,
-    APP_INVALID_EXPORT: (c) => `App module '${c.modulePath ?? 'unknown'}' must default-export a managed TUIAppFactory component factory`,
+    APP_INVALID_EXPORT: (c) => `App module '${c.modulePath ?? 'unknown'}' must default-export an App factory created by createApp or createTUIApp`,
 
     APP_MANIFEST_INVALID: (c) => `Invalid App manifest at '${c.path ?? 'unknown'}': ${c.reason ?? 'expected generated aoapp.json'}`,
     APP_IDENTITY_MISMATCH: (c) => `App identity mismatch: expected '${c.expected ?? 'unknown'}', received '${c.actual ?? 'unknown'}' (${c.path ?? 'registration'})`,

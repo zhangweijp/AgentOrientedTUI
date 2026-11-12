@@ -1,6 +1,10 @@
 # Tool definition, binding and View lifecycle
 
-Declare ordinary Tools once with defineViewTypeTool and defineToolSet. Bind a complete map per App through AppTools or the pure createToolBindings controller. The [runnable file example](examples/file-app.tsx) and [author guide](view-type-tools.md) use the same declaration for registration, readonly parameter types, ToolRef and catalog.
+Declare Tools once with `defineViewTypeTool` and `defineToolSet`. A plain TypeScript App supplies a complete binding map to `createApp`'s `publish`. A Preact App supplies its map to `AppTools`. The two [work-item examples](app-authoring.md) share the same declaration and readonly parameter types.
+
+In a plain App, validation precedes changes to committed Views, Refs, and Tool bindings. A rejected frame keeps the last good snapshot and its View and Tool activation identities. The App enters a degraded state and rejects new dispatch until a valid frame is published. Resubmitting the last good content preserves its identities. Successfully closing the last matching View revokes its activation. Reopening creates new View and activation identities.
+
+## Preact and the binding controller
 
 | Change | Registration / invocation behavior |
 |---|---|
@@ -18,9 +22,9 @@ Declare ordinary Tools once with defineViewTypeTool and defineToolSet. Bind a co
 | Release throws / late registration handle | Stay unavailable and retain unconfirmed responsibility for retry; do not claim disposed |
 | Confirmed dispose / repeated stale dispose | Clear this owner's resources; cannot release a successor owner |
 
-The controller holds function references, not a frozen or framework-owned business owner. An invocation already awaiting its handler retains that entered function; updates/dispose do not undo business side effects. A second binding owner is rejected even if all its members are disabled. See [binding-tools](binding-tools.md) for states, bounded diagnostics and structured codes.
+The controller holds function references, not a frozen or framework-owned business owner. An invocation already awaiting its handler retains that entered function; updates/dispose do not undo business side effects. A second binding owner is rejected even if all its members are disabled. See [AppTools](app-tools.md) for renderer cleanup and bounded diagnostics.
 
-AppTools commits under the existing projection begin/end boundary. It is not a View/Ref/Tool batch transaction and does not promise that a returned business result has reached the Host or a new Observation. SDK initialization and renderer cleanup keep unconfirmed disposal responsibility for retry. Catching a cleanup exception is not release confirmation; fix the cause and retry the appropriate Host lifecycle operation.
+AppTools commits at the renderer's actual commit boundary. Successful observation requires a valid projection after that commit. SDK initialization and renderer cleanup retain unconfirmed disposal responsibility for retry. Fix a cleanup failure and retry through the owning Host lifecycle.
 
 ## Managed renderer cleanup and retained Views
 
@@ -32,7 +36,7 @@ Fix the application cleanup cause, then retry that renderer's unmount through th
 
 ## Business rules and results
 
-The App checks explicit business selectors such as filePath against its current open resources, permissions and versions. One FileDetail closing while another stays open leaves the type Tool active; an old call can reach the handler with the closed file's path, which the App must reject. ToolRef position, catalog and enabled do not perform that check or replace Host authorization.
+The App checks explicit business selectors such as filePath against its current open resources, permissions and versions. One FileDetail closing while another stays open leaves the type Tool active; an old call can reach the handler with the closed file's path, which the App must reject. The catalog and enabled flag do not perform that check or replace Host authorization.
 
 | Handler fact | ToolResult |
 |---|---|
@@ -44,8 +48,8 @@ The App checks explicit business selectors such as filePath against its current 
 
 ## Ref and App cleanup
 
-Use `refParam` in the same ViewType definition and publish the value with typed useDataRef/useArrayRef in its owning View. Runtime resolves each present top-level object or object-list Ref from the granted original Observation, checks its real metadata type and Schema, and supplies frozen data. The current contract admits multiple and optional Ref fields and Type.Array(refParam(...)) selections without resetting the complete argument/envelope budgets per field. A readonly payload does not restrict App business effects; the App checks current business identity/state/permissions before effects. Closing one owner View is not a new instance-scoped Tool gate while another same-type View remains active. Observation retention/release rules remain independent. See [Ref parameters](readonly-ref-v2.md).
+Use `refParam` in the ViewType definition. Publish JSON values in their owning View with `ref` / `arrayRef` in plain TypeScript or `useDataRef` / `useArrayRef` in Preact. Runtime resolves each supplied address from the granted original Observation, checks the published type and target schema, and supplies deeply readonly data. Multiple, optional and array selections share the complete argument budget. The App checks current business identity, state and permissions before effects. See [Ref parameters](readonly-ref-v2.md).
 
-Applications that own external resources may call useAppLifecycle({stop,close}) in a long-lived component. Each callback is optional. AppTools does not consume that business lifecycle owner. The application releases its own processes/files/services and publishes accurate business completion; Runtime/SDK release their registrations, scopes, renderer and worker resources. Persistence keeps its separate flush/close contract.
+Applications that own external resources use plain TypeScript `registerCleanup({ stop, close })` or Preact `useAppLifecycle({ stop, close })`. Each callback is optional. The application releases its own processes, files and services. Runtime and SDK release their registrations, observations, renderer and Worker resources. Persistence has its own flush and close contract.
 
-[Migration](migration.md) removes the ordinary Hook and UI return path without a compatibility shell. Changing the SDK author API does not change the Runtime wire or Observation/Scope contract.
+[Migration](migration.md) removes the ordinary Hook and UI return path without a compatibility shell. Changing the SDK author API does not change the Runtime wire or Observation contract.

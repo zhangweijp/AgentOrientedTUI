@@ -96,9 +96,8 @@ async function runCase(viewCount) {
     const viewContentJsonBytes = Buffer.byteLength(JSON.stringify(snapshot.views.map(view => view.content)));
     const viewContentUtf8Bytes = snapshot.views.reduce((sum, view) => sum + Buffer.byteLength(view.content.value, 'utf8'), 0);
 
-    const authority = core.createScopedInteraction(snapshotCore.store, { namespace: `capacity-${viewCount}`, now: Date.now });
     const bindings = new Map();
-    const scopeResult = authority.createScope({ appId, instanceId,
+    const authority = core.createAppInteraction(snapshotCore.store, { namespace: `capacity-${viewCount}`, now: Date.now, appId, instanceId,
         policy: { project: ({ source, selection }) => grant(source, selection.viewIds), authorize: () => true, canReadReceipt: () => true },
         execution: { resolve(source) {
             if (!bindings.has(source.tool.id)) bindings.set(source.tool.id, {
@@ -112,8 +111,7 @@ async function runCase(viewCount) {
             return bindings.get(source.tool.id);
         } },
     });
-    assert(scopeResult.status === 'opened', `Scope open failed: ${JSON.stringify(scopeResult)}`);
-    const client = scopeResult.client;
+    const client = authority;
     let allViewsObservation;
     if (viewCount > 256) {
         const start = performance.now();
@@ -131,6 +129,7 @@ async function runCase(viewCount) {
     const observeMs = elapsed(observeStart);
     assert(completed.status === 'observed', `Observation failed: ${JSON.stringify(completed)}`);
     const observation = completed.observation;
+    assert(client.adoptObservation(observation.observationId).status === 'adopted', 'Observation adoption failed');
     const callsBefore = [...counts.values()].reduce((sum, count) => sum + count, 0);
     const invokeStart = performance.now();
     for (const tool of observation.tools) {
@@ -146,7 +145,6 @@ async function runCase(viewCount) {
     const callsAfter = [...counts.values()].reduce((sum, count) => sum + count, 0);
 
     const cleanupStart = performance.now();
-    client.close(); client.close();
     authority.close(); authority.close();
     await authority.whenClosed();
     for (const release of releases) { release(); release(); }
@@ -164,10 +162,10 @@ async function runCase(viewCount) {
     assert(emptyRegistry.views === 0 && emptyRegistry.bindings === 0, 'Repeated releases/unmounts left live Tool state');
     assert(disposedToolStats.state === 'disposed' && disposedToolStats.views === 0 && disposedToolStats.bindings === 0,
         'Repeated registry disposal did not leave an empty registry');
-    assert(observationStats.scopes === 0 && observationStats.observations === 0 && observationStats.reservations === 0,
+    assert(observationStats.closed && observationStats.observations === 0 && observationStats.reservations === 0,
         'Repeated observation close left live observation state');
     assert(snapshotStats.activeLeases === 0, 'Cleanup left a pinned Snapshot lease');
-    assert(interactionStats.scopes === 0 && interactionStats.combinedBytes === 0, 'Cleanup left interaction ownership');
+    assert(interactionStats.closed && interactionStats.combinedBytes === 0, 'Cleanup left interaction ownership');
 
     return {
         views: viewCount,
@@ -230,7 +228,7 @@ console.log(JSON.stringify({
     arch: process.arch,
     ordinaryToolKinds: definitions.map(definition => definition.name),
     notes: {
-        scope: 'Current Core Registry + Snapshot + ScopedInteraction; observe/invoke include the real policy, preparation and receipt path. No Worker, DOM renderer or Host wire cost. Invocation timings are not directly comparable to the retired registry-only benchmark.',
+        scope: 'Current Core Registry + Snapshot + instance interaction; observe/invoke include the real policy, preparation and receipt path. No Worker, DOM renderer or Host wire cost. Invocation timings are not directly comparable to the retired registry-only benchmark.',
         schemaCompilation: 'V3 registry compiles the input schema during each type registration. Host resolve and Worker wire validation also compile ordinary profiles; this script does not measure those stages.',
         payloadBytes: 'JSON byte counts use JSON.stringify on Core snapshot/observation structures. View content UTF-8 bytes are reported separately. These are not XML/Markdown-rendered User Message bytes or model token counts; component byte fields overlap and should not be summed.',
         comparison: 'This entry measures current ViewType registration only. Historical baseline outputs remain separate immutable evidence.',

@@ -20,8 +20,8 @@ import type { SafeRefInvoker } from './index.js';
 
 it('C12 exports precisely the frozen Core values and separate Memory constructor', () => {
     expect(Object.keys(core).sort()).toEqual(['ORDINARY_INVOCATION_MODE', 'ORDINARY_PARAMETER_REVISION', 'MARKDOWN_VIEW_FORMAT', 'SEMANTIC_VIEW_FORMAT', 'SNAPSHOT_SCHEMA_VERSION', 'VIEW_TYPE_PARAMETERS_MODE', 'createSnapshotCore', 'refKey', 'createViewOwnedTools',
-        'ViewToolContractError', 'createScopedInteraction', 'createStateSession', 'compileOrdinaryParams',
-        'compileOrdinarySchema', 'ordinaryParameterProfile', 'compileOrdinaryProfile'].sort());
+        'ViewToolContractError', 'SnapshotDataError', 'SemanticProjectionCoordinator', 'createAppInteraction', 'createStateSession', 'compileOrdinaryParams',
+        'compileOrdinarySchema', 'compileValueSchema', 'modelToolSchema', 'ordinaryParameterProfile', 'compileOrdinaryProfile'].sort());
     expect(Object.keys(memory)).toEqual(['createMemoryStateStorage']);
 });
 
@@ -38,7 +38,7 @@ it('C13 keeps the shared terminal identity, mutable terminal data and Promise-on
     expect(entered).toEqual({ phase: 'entered-returned', result: { success: true }, failureEffects: 'partial' });
 });
 
-it('C18 runs actual Core, Registry and Scoped dispatch through the explicit entry', async () => {
+it('C18 runs actual Core, Registry and instance dispatch through the explicit entry', async () => {
     const registry = core.createViewOwnedTools('app', 'instance'), view = registry.mount('v', 'Detail');
     const contract = core.compileOrdinaryParams({}, { additionalProperties: false });
     if (!contract.ok) throw Error('Fixture ordinary-v2 contract');
@@ -60,15 +60,18 @@ it('C18 runs actual Core, Registry and Scoped dispatch through the explicit entr
             if (terminal.phase !== 'entered-returned' || !terminal.result.success || terminal.result.data?.value !== 19) throw Error('Unexpected business result');
             return { kind: 'tool-result', phase: 'entered-returned', result: { success: true, data: { value: 19 } } };
         } };
-    const authority = core.createScopedInteraction(snapshots.store, { namespace: 'public:instance', now: () => 0 });
-    const opened = authority.createScope({ appId: 'app', instanceId: 'instance', policy: {
+    const interaction = core.createAppInteraction(snapshots.store, { namespace: 'public:instance', now: () => 0, appId: 'app', instanceId: 'instance', policy: {
         project: () => ({ views: [{ viewId: 'v', viewInstanceId: view.viewInstanceId }], refs: [],
             toolBindings: [{ toolId: tool.id, execution: { kind: 'view-type', activationId: tool.execution.activationId } }], content: [] }),
         authorize: () => true, canReadReceipt: () => true }, execution: { resolve: () => binding } });
-    expect(opened.status).toBe('opened'); if (opened.status !== 'opened') throw Error();
-    const observed = await opened.client.observe({ viewIds: ['v'] }); expect(observed.status).toBe('observed'); if (observed.status !== 'observed') throw Error();
-    expect(opened.client.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
-    expect(await opened.client.invoke({ invocationId: 'call', observationId: observed.observation.observationId,
-        bindingId: observed.observation.bindings[0].bindingId, input: {} })).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { success: true, data: { value: 19 } } } } });
-    expect(calls).toBe(1); authority.close(); registry.dispose(); snapshots.lifecycle.dispose();
+    const observed = await interaction.observe({ viewIds: ['v'] }); expect(observed.status).toBe('observed'); if (observed.status !== 'observed') throw Error();
+    expect(interaction.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
+    const request = { invocationId: 'call', observationId: observed.observation.observationId,
+        bindingId: observed.observation.bindings[0].bindingId, input: {} };
+    const result = await interaction.invoke(request);
+    expect(result).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { success: true, data: { value: 19 } } } } });
+    interaction.releaseObservation(observed.observation.observationId);
+    expect(await interaction.readReceipt(request)).toEqual(result);
+    expect(await interaction.readReceipt('call')).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_INVALID' });
+    expect(calls).toBe(1); interaction.close(); registry.dispose(); snapshots.lifecycle.dispose();
 });

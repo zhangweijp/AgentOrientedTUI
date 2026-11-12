@@ -127,14 +127,35 @@ try {
     runtime = createRuntime();
     const registry = new AppRegistry({ configPath: path.join(work, 'registry.json') });
     const manager = new DesktopManager({ kernel: runtime, appRegistry: registry });
-    await manager.initialize({ appEntries: [
-        { name: 'token_monitor', source: `local:${path.join(repo, 'demo-apps/token-monitor-app')}`, enabled: true, autoStart: true },
-    ] });
-
-    const info = await manager.createDesktop();
+    const broken = path.join(work, 'broken');
+    await fs.mkdir(broken);
+    await fs.writeFile(path.join(broken, 'aoapp.json'), JSON.stringify({
+        app_name: 'broken', version: '0.1.0', entry: { main: './index.mjs' },
+        toolAuthoringProtocol: 'view-type-tools-v4', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
+    }));
+    await fs.writeFile(path.join(broken, 'index.mjs'), 'export default {};');
+    const warning = console.warn, issues: unknown[][] = [];
+    let info: Awaited<ReturnType<typeof manager.createDesktop>>;
+    console.warn = (...args) => { issues.push(args); warning(...args); };
+    try {
+        await manager.initialize({ appEntries: [
+            { name: 'token_monitor', source: `local:${path.join(repo, 'demo-apps/token-monitor-app')}`, enabled: true, autoStart: true },
+            { name: 'missing', source: `local:${path.join(work, 'missing')}`, enabled: true },
+            { name: 'broken', source: `local:${broken}`, enabled: true, autoStart: true },
+        ] });
+        info = await manager.createDesktop();
+    } finally { console.warn = warning; }
+    const discoverIssue = issues.find(([message]) => message === '[DesktopManager] App missing failed during discovery');
+    assert.ok(discoverIssue);
+    assert.equal((discoverIssue[1] as { code: string }).code, 'APP_MANIFEST_INVALID');
+    const installIssue = issues.find(([message]) => message === '[DesktopManager] App broken failed during install');
+    assert.ok(installIssue, 'Failed init is diagnosed separately');
+    assert.equal((installIssue[1] as { code: string }).code, 'APP_INVALID_EXPORT');
+    assert.equal((installIssue[1] as { path: string }).path, path.join(broken, 'index.mjs'));
     desktop = manager.getDesktop(info.desktopId) as LLMOutputDesktop;
     assert.ok(desktop, 'Host installed the app on a real Runtime Desktop');
     assert.equal(info.thirdPartyAppCount, 1);
+    assert.deepEqual(desktop.getInstalledApps().map(candidate => candidate.name), ['token_monitor']);
     const app = desktop.getInstalledApps().find(candidate => candidate.name === 'token_monitor');
     assert.ok(app, 'Token Monitor is installed');
     assert.equal(app.status, 'running');
@@ -207,11 +228,10 @@ try {
     const report = await shutdown;
     assert.equal(report.state, 'settled');
     assert.equal(report.resourcesReleased, true, 'Managed Runtime shutdown releases its resources');
-    assert.equal(report.pool.report?.state, 'closed');
-    assert.equal(report.pool.report?.total, 0, 'No physical Worker remains after Runtime shutdown');
-    assert.equal(report.pool.report?.leased, 0);
+    assert.equal(report.workers.report?.state, 'closed');
+    assert.equal(report.workers.report?.total, 0, 'No physical Worker remains after Runtime shutdown');
     console.log(JSON.stringify({ passed: true, app: 'token_monitor', usageUpdates: 2, latestTokens: 900,
-        warningThresholdPercent: 75, workerPool: report.pool.report }));
+        warningThresholdPercent: 75, workers: report.workers.report }));
 } finally {
     for (const context of activeContexts) release(context);
     try { await source?.dispose(); } catch { /* Continue to managed Worker shutdown. */ }

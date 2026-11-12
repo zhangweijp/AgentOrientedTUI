@@ -61,6 +61,33 @@ export interface AppRegistryInstallOptions extends AppInteractionOptions {
     dynamicConfig?: AppLaunchConfig;
 }
 
+export interface AppRegistryFailure {
+    readonly name: string;
+    readonly status: 'failed';
+    readonly phase: 'discovery' | 'install' | 'register';
+    readonly issue: { readonly code: string; readonly message: string; readonly path?: string };
+}
+export type AppDiscoveryResult = Readonly<{ name: string; status: 'loaded' | 'disabled' }> | AppRegistryFailure;
+export type AppInstallResult = Readonly<{ name: string; status: 'installed' | 'registered'; appId: AppID }> | AppRegistryFailure;
+
+function failedApp(name: string, phase: AppRegistryFailure['phase'], error: unknown, fallbackPath?: string): AppRegistryFailure {
+    const own = (value: unknown, key: string): unknown => {
+        if (typeof value !== 'object' || value === null) return;
+        try { return Object.getOwnPropertyDescriptor(value, key)?.value; } catch { return; }
+    };
+    const text = (value: unknown, max: number) => typeof value === 'string' && value.length
+        ? value.slice(0, max).replace(/[\u0000-\u001f\u007f]/g, ' ') : undefined;
+    let code = 'APP_INSTALL_FAILED', message = 'Check the App package and rebuild with the matching SDK.';
+    let path = text(fallbackPath, 512);
+    for (let depth = 0; error && depth < 8; depth++, error = own(error, 'cause')) {
+        const context = own(error, 'context');
+        code = text(own(error, 'code'), 128) ?? code;
+        message = text(own(context, 'reason'), 2048) ?? text(own(error, 'message'), 2048) ?? message;
+        path = text(own(error, 'path'), 512) ?? text(own(context, 'path'), 512) ?? path;
+    }
+    return { name, phase, status: 'failed', issue: { code, message, ...(path === undefined ? {} : { path }) } };
+}
+
 /**
  * App Registry
  * 
@@ -72,7 +99,7 @@ export interface AppRegistryInstallOptions extends AppInteractionOptions {
  * await registry.loadFromConfig();
  * 
  * // 为 Desktop 安装所有已注册的 App
- * await registry.installAllTo(desktop);
+ * await registry.installAll(desktop);
  * ```
  */
 export class AppRegistry {
@@ -92,38 +119,28 @@ export class AppRegistry {
     /**
      * 从配置文件加载所有 App
      */
-    async loadFromConfig(): Promise<void> {
-        // 读取配置
+    async loadFromConfig(): Promise<AppDiscoveryResult[]> {
         this.config = await this.readConfig();
-        this.apps.clear();
-        this.entryConfigs.clear();
-
-        // 加载每个启用的 App
-        for (const [name, entry] of Object.entries(this.config.apps)) {
-            await this.loadEntry(name, entry);
-        }
+        return this.loadFromEntries(Object.entries(this.config.apps).map(([name, entry]) => ({ ...entry, name })));
     }
 
-    /**
-     * 从显式 entries 加载 App，不读取 config.json
-     *
-     * 适用于 Host-owned capability control plane。
-     */
-    async loadFromEntries(
-        entries: AppRegistryEntry[],
-        options?: {
-            replace?: boolean;
-        }
-    ): Promise<void> {
+    /** Discover static App manifests from explicit Host configuration. */
+    async loadFromEntries(entries: AppRegistryEntry[], options?: { replace?: boolean }): Promise<AppDiscoveryResult[]> {
+        if (!Array.isArray(entries)) throw new AOTUIError('CONFIG_INVALID', { reason: 'Expected an array of App entries' });
         if (options?.replace !== false) {
             this.apps.clear();
             this.entryConfigs.clear();
         }
-
-        for (const entry of entries) {
+        const seen = new Set<string>();
+        return Array.from(entries, (entry, index) => {
+            const path = `apps[${index}].name`;
+            if (!entry || typeof entry.name !== 'string' || !entry.name.trim()) return failedApp(
+                `apps[${index}]`, 'discovery', new AOTUIError('CONFIG_INVALID', { path, reason: 'Provide the App name' }));
             const { name, ...appEntry } = entry;
-            await this.loadEntry(name, appEntry);
-        }
+            if (seen.has(name)) return failedApp(name, 'discovery', new AOTUIError('APP_ALREADY_REGISTERED', { appName: name, path }));
+            seen.add(name);
+            return this.loadEntry(name, appEntry);
+        });
     }
 
     /**
@@ -296,12 +313,12 @@ export class AppRegistry {
      * 
      * @param desktop - 目标 Desktop
      * @param options - 可选配置
-     * @returns 已安装的 App ID 列表
+     * @returns 每个 App 的安装或登记结果
      */
     async installAll(
         desktop: IDesktop,
         options?: AppRegistryInstallOptions
-    ): Promise<AppID[]> {
+    ): Promise<AppInstallResult[]> {
         // 获取默认 Worker 脚本路径
         const defaultWorkerScript = options?.defaultWorkerScript
             ?? this.config.runtime?.workerScript;
@@ -320,7 +337,7 @@ export class AppRegistry {
         desktop: IDesktop,
         names: string[],
         options?: AppRegistryInstallOptions
-    ): Promise<AppID[]> {
+    ): Promise<AppInstallResult[]> {
         const defaultWorkerScript = options?.defaultWorkerScript
             ?? this.config.runtime?.workerScript;
 
@@ -356,7 +373,7 @@ export class AppRegistry {
             const metadata = captureAppMetadata(manifest);
             if (typeof manifest.version !== 'string' || !manifest.version || typeof manifest.entry?.main !== 'string' || !manifest.entry.main)
                 throw new TypeError('version and entry.main are required; build the App to regenerate aoapp.json');
-            if (!hasViewTypeToolAuthoringProtocol(manifest)) throw Object.assign(new Error('The generated manifest declares an unsupported authoring protocol; rebuild with the matching SDK'), { code: 'APP_AUTHORING_PROTOCOL_UNSUPPORTED' });
+            if (!hasViewTypeToolAuthoringProtocol(manifest)) throw Object.assign(new Error('The generated manifest declares an unsupported authoring protocol; rebuild with the matching SDK'), { code: 'APP_AUTHORING_PROTOCOL_UNSUPPORTED', path: manifestPath + '#toolAuthoringProtocol' });
             if (manifest.persistenceSupport !== STATE_SESSION_PROTOCOL || manifest.appLifecycleSupport !== APP_LIFECYCLE_PROTOCOL)
                 throw new TypeError('The generated manifest requires the current persistence and lifecycle contracts');
             const modulePath = pathModule.resolve(directory, manifest.entry.main);
@@ -393,9 +410,14 @@ export class AppRegistry {
             const content = await fs.readFile(this.configPath, 'utf-8');
             const config = JSON.parse(content);
 
-            if (!validateConfig(config)) {
-                console.warn('[AppRegistry] Invalid config, using defaults');
-                return createDefaultConfig();
+            if (!validateConfig(config) || Array.isArray(config.apps)) {
+                throw new AOTUIError('CONFIG_INVALID', { path: this.configPath, reason: 'Expected a registry version and App entries' });
+            }
+            if (config.runtime !== undefined && (!config.runtime || typeof config.runtime !== 'object' || Array.isArray(config.runtime))) {
+                throw new AOTUIError('CONFIG_INVALID', { path: 'runtime', reason: 'Expected a Runtime configuration object' });
+            }
+            if (config.runtime?.workerScript !== undefined && typeof config.runtime.workerScript !== 'string') {
+                throw new AOTUIError('CONFIG_INVALID', { path: 'runtime.workerScript', reason: 'Expected a Worker script path' });
             }
 
             return config;
@@ -421,45 +443,39 @@ export class AppRegistry {
         await fs.writeFile(this.configPath, content, 'utf-8');
     }
 
-    private async loadEntry(name: string, entry: AppConfigEntry): Promise<void> {
+    private loadEntry(name: string, entry: AppConfigEntry): AppDiscoveryResult {
+        this.apps.delete(name);
         this.entryConfigs.set(name, { ...entry });
-
-        if (!entry.enabled) {
-            return;
-        }
-
         try {
+            if (typeof entry.source !== 'string' || typeof entry.enabled !== 'boolean') {
+                throw new AOTUIError('CONFIG_INVALID', { path: 'apps.' + name, reason: 'Provide source and enabled for this App' });
+            }
+            if (!entry.enabled) return { name, status: 'disabled' };
             const loaded = this.readManifest(entry.source);
             if (name !== loaded.name) throw new AOTUIError('APP_IDENTITY_MISMATCH', { expected: loaded.name, actual: name, path: 'registry.key' });
             const override = ['alias', 'description', 'whatItIs', 'whenToUse'].find(key => Object.hasOwn(entry, key));
-            if (override) throw new AOTUIError('CONFIG_INVALID', { reason: `${override} is App metadata, not a registration override; remove it and rebuild the App manifest` });
+            if (override) throw new AOTUIError('CONFIG_INVALID', { path: 'apps.' + name + '.' + override,
+                reason: `${override} is App metadata; remove the override and rebuild the App manifest` });
             this.apps.set(name, loaded);
-            console.log(`[AppRegistry] Loaded app: ${name}`);
+            return { name, status: 'loaded' };
         } catch (error) {
-            console.error(`[AppRegistry] Failed to load app "${name}":`, error);
+            return failedApp(name, 'discovery', error);
         }
     }
 
-    private async installEntries(
-        desktop: IDesktop,
-        names: string[],
-        options: AppRegistryInstallOptions
-    ): Promise<AppID[]> {
-        const installedIds: AppID[] = [];
-
+    private async installEntries(desktop: IDesktop, names: string[], options: AppRegistryInstallOptions): Promise<AppInstallResult[]> {
+        if (Object.hasOwn(options.dynamicConfig ?? {}, 'AOTUI_APP_NAME')) throw new AOTUIError('CONFIG_INVALID', {
+            reason: 'Use AOTUI_APP_KEY for a Host-owned state namespace; registration uses the generated app_name',
+        });
+        const results: AppInstallResult[] = [];
         for (const name of names) {
             const app = this.apps.get(name);
             if (!app) {
-                throw new AOTUIError('APP_NOT_FOUND', { appId: name });
+                results.push(failedApp(name, 'install', new AOTUIError('APP_NOT_FOUND', { appId: name })));
+                continue;
             }
-
             const configEntry = this.entryConfigs.get(name) ?? this.config.apps[name];
-            const dynamicConfig: AppLaunchConfig = { ...(options.dynamicConfig ?? {}) };
-            if (Object.hasOwn(dynamicConfig, 'AOTUI_APP_NAME')) throw new AOTUIError('CONFIG_INVALID', {
-                reason: 'AOTUI_APP_NAME mixed registration identity with persistence. Use AOTUI_APP_KEY for a Host-owned state namespace; registration uses the generated app_name',
-            });
-            if (dynamicConfig.AOTUI_APP_KEY === undefined) dynamicConfig.AOTUI_APP_KEY = name;
-
+            const dynamicConfig: AppLaunchConfig = { ...options.dynamicConfig, AOTUI_APP_KEY: options.dynamicConfig?.AOTUI_APP_KEY ?? name };
             const autoStart = configEntry?.autoStart ?? true;
             const modulePath = app.modulePath;
             const workerScript = configEntry?.workerScript ?? options.defaultWorkerScript;
@@ -480,7 +496,7 @@ export class AppRegistry {
                             interactionModes: options.interactionModes,
                         }
                     );
-                    installedIds.push(appId as AppID);
+                    results.push({ name, status: 'installed', appId: appId as AppID });
                     console.log(`[AppRegistry] Installed "${name}" to Desktop ${desktop.id} (Worker mode)`);
                 } else {
                     const appId = await desktop.registerPendingApp({
@@ -493,15 +509,15 @@ export class AppRegistry {
                         config: dynamicConfig,
                         interactionModes: options.interactionModes,
                     });
-                    installedIds.push(appId as AppID);
+                    results.push({ name, status: 'registered', appId: appId as AppID });
                     console.log(`[AppRegistry] Registered "${name}" to Desktop ${desktop.id} (Pending mode)`);
                 }
             } catch (error) {
-                console.error(`[AppRegistry] Failed to install "${name}":`, error);
+                results.push(failedApp(name, autoStart ? 'install' : 'register', error, modulePath));
             }
         }
 
-        return installedIds;
+        return results;
     }
 
     private async cleanupInstalledArtifacts(entry: AppConfigEntry): Promise<void> {

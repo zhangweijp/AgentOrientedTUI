@@ -15,21 +15,21 @@ facts.publicDocIdentity = identity;
 await fs.writeFile(evidence, JSON.stringify(facts, null, 2)+'\n');
 assert.ok(identity.passed, 'PUBLIC_DOC_IDENTITY: '+JSON.stringify(identity.references));
 const sdkRoot = path.join(consumer, 'node_modules/@aotui/sdk');
-for (const name of ['file-app.tsx', 'file-tools.ts', 'file-controller.ts', 'ref-app.tsx']) {
+for (const name of ['file-app.tsx', 'file-tools.ts', 'ref-app.tsx', 'work-items.ts', 'work-items-plain.ts', 'work-items-preact.tsx']) {
   await fs.copyFile(path.join(sdkRoot, 'docs/examples', name), path.join(output, name));
 }
-await fs.copyFile(new URL('./ordinary-producer.ts', import.meta.url), path.join(output, 'ordinary-producer.ts'));
 for (const [document, name, language] of [
   ['README.md', 'readme-app.tsx', 'tsx'],
   ['docs/app-tools.md', 'app-tools.tsx', 'tsx'],
   ['docs/static-tools.md', 'static-tools.ts', 'ts'],
-  ['docs/binding-tools.md', 'binding-tools.ts', 'ts'],
+  ['docs/app-authoring.md', 'public-app-host.mjs', 'js'],
 ]) {
   const text = await fs.readFile(path.join(sdkRoot, document), 'utf8');
   const source = text.split('```' + language + '\n')[1]?.split('\n```')[0];
   assert.ok(source, document + ' has a public author example');
   await fs.writeFile(path.join(output, name), source);
 }
+await execute(process.execPath, ['--check', path.join(output, 'public-app-host.mjs')]);
 const runtimeRoot = path.join(consumer, 'node_modules/@aotui/runtime');
 const runtimeGuide = await fs.readFile(path.join(runtimeRoot, 'docs/runtime-app-interaction.md'), 'utf8');
 const extract = (text, marker, language) => {
@@ -43,7 +43,7 @@ await fs.writeFile(path.join(output, 'core-example.ts'), extract(coreGuide, 'b1-
 for (const [alias, version] of [['typescript', '7.0.2']]) {
   const config = { compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext',
     strict: true, exactOptionalPropertyTypes: true, skipLibCheck: false, lib: ['ES2022', 'DOM'], types: ['node'],
-    jsx: 'react-jsx', jsxImportSource: 'preact', outDir: './out-' + version, rootDir: '.' }, files: ['./readme-app.tsx', './app-tools.tsx', './static-tools.ts', './binding-tools.ts', './file-app.tsx', './ref-app.tsx', './file-controller.ts', './ordinary-producer.ts', './runtime-host.ts'] };
+    jsx: 'react-jsx', jsxImportSource: 'preact', outDir: './out-' + version, rootDir: '.' }, files: ['./readme-app.tsx', './app-tools.tsx', './static-tools.ts', './file-app.tsx', './ref-app.tsx', './work-items-preact.tsx', './runtime-host.ts'] };
   const file = path.join(output, 'tsconfig-' + version + '.json'); await fs.writeFile(file, JSON.stringify(config, null, 2));
   const command = [path.join(consumer, 'node_modules', alias, 'bin/tsc'), '-p', file, '--pretty', 'false'];
   try { const result = await execute(process.execPath, command, { cwd: consumer }); facts.commands.push({ kind: 'compile', version, command: [process.execPath, ...command], exitCode: 0, ...result }); }
@@ -54,7 +54,7 @@ assert.ok(facts.commands.some(command => command.kind === 'compile' && command.v
  'TS 7.0.2 tutorial compilation failed; no emitted tutorial may execute. The compiler result was saved.');
 const coreConfig = { compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext',
   strict: true, exactOptionalPropertyTypes: true, skipLibCheck: false, lib: ['ES2022'], types: [],
-  outDir: './core-out' }, files: ['./core-example.ts'] };
+  outDir: './core-out' }, files: ['./core-example.ts', './work-items-plain.ts'] };
 await fs.writeFile(path.join(output, 'tsconfig-core.json'), JSON.stringify(coreConfig, null, 2));
 const coreCommand = [path.join(consumer, 'node_modules/typescript/bin/tsc'), '-p', path.join(output, 'tsconfig-core.json'), '--pretty', 'false'];
 try {
@@ -72,10 +72,9 @@ import { pathToFileURL } from 'node:url';
 import { createRuntime } from '@aotui/runtime';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { runExample } from './out-7.0.2/runtime-host.js';
-import { ordinaryFacts } from './out-7.0.2/ordinary-producer.js';
 import { coreTutorialFacts } from './core-out/core-example.js';
-const facts = { ordinaryFacts, coreTutorialFacts, minimalExample: false, fileExample: false, refExample: false, runtimeExample: false, calls: [], reports: [] };
-const minimalRuntime = createRuntime({ worker: { timeoutMs: 45000, pool: { initialSize: 0, maxSize: 1 } } });
+const facts = { coreTutorialFacts, minimalExample: false, fileExample: false, refExample: false, runtimeExample: false, calls: [], reports: [] };
+const minimalRuntime = createRuntime({ worker: { timeoutMs: 45000, maxWorkers: 1 } });
 let minimalSource;
 try {
  const desktop = await minimalRuntime.createDesktop('readme-example');
@@ -97,7 +96,7 @@ try {
  minimalSource?.dispose(); const close = await minimalRuntime.beginShutdown().completion;
  assert.equal(close.ok, true); assert.equal(close.resourcesReleased, true); facts.reports.push(close);
 }
-const runtime = createRuntime({ worker: { timeoutMs: 45000, pool: { initialSize: 0, maxSize: 2 } } });
+const runtime = createRuntime({ worker: { timeoutMs: 45000, maxWorkers: 2 } });
 const held = [];
 let source;
 try {
@@ -155,7 +154,7 @@ try {
  const report=await runtime.beginShutdown().completion;facts.reports.push(report);
  assert.equal(report.ok,true);assert.equal(report.resourcesReleased,true);
 }
-const refRuntime = createRuntime({ worker: { timeoutMs: 45000, pool: { initialSize: 0, maxSize: 1 } } });
+const refRuntime = createRuntime({ worker: { timeoutMs: 45000, maxWorkers: 1 } });
 const refHeld = [];
 let refSource;
 try {

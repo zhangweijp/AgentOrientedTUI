@@ -1,70 +1,101 @@
 import { expect, it } from 'vitest';
 import { parseHTML } from 'linkedom';
-import { captureDOMSnapshot } from './dom-snapshot-producer.js';
-import { createSnapshotCore } from '../core/index.js';
+import { captureDOMViews } from './dom-snapshot-producer.js';
+import { createSnapshotCore, SemanticProjectionCoordinator } from '../core/index.js';
+import { compileOrdinarySchema } from '../core/tool/ordinary-parameter-contract.js';
+import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profile.js';
 
 function fixture(ids: string[] = []) {
     const { document } = parseHTML('<html><body><main></main></body></html>'), container = document.querySelector('main')!;
     const views = ids.map(viewId => ({ viewId, viewInstanceId: 'instance-' + viewId, viewType: 'File' }));
-    for (const view of views) { const node = document.createElement('section');node.setAttribute('data-view-id', view.viewId);node.setAttribute('data-view-instance-id', view.viewInstanceId);container.appendChild(node); }
-    return { document, container, views, input: { appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 0, container,
-        fragments: ids.map(viewId => ({ viewId: viewId as any, viewType: 'File', markup: 'stable', kind: 'state' as const })),
-        kernel: { getViewOwnedViewInstances: () => views, getToolDefinitions: () => [], getViewRefs: () => [] } } };
+    for (const view of views) {
+        const node = document.createElement('section');
+        node.setAttribute('data-view-id', view.viewId);
+        node.setAttribute('data-view-instance-id', view.viewInstanceId);
+        container.appendChild(node);
+    }
+    const fragments = ids.map(viewId => ({ viewId: viewId as any, viewName: viewId, viewType: 'File', markup: 'stable', kind: 'state' as const }));
+    const capture = (current = fragments, mounted = views) => captureDOMViews(container, current, mounted);
+    return { document, container, views, fragments, capture };
 }
-const capture = (input: any) => captureDOMSnapshot(input);
+const identity = () => ({ appId: 'app', instanceId: 'run' });
 
 it('C04 explicit empty owned inventories produce a legal V3 snapshot with no tools', () => {
-    const f = fixture(), draft = capture(f.input);expect(draft).toMatchObject({ schemaVersion: 3, views: [], refs: {}, tools: {} });
-    const core = createSnapshotCore();core.lifecycle.startApp('app', 'run');expect(core.committer.accept(draft).status).toBe('published');core.lifecycle.dispose();
+    const f = fixture(), core = createSnapshotCore();
+    core.lifecycle.startApp('app', 'run');
+    const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.capture(), tools: [] }) });
+    expect(projection.commit(() => {})).toBe('prepared');
+    expect(projection.publishTo(core.committer)).toMatchObject({ status: 'published', snapshot: { views: [], refs: {}, tools: {} } });
+    projection.close();
+    core.lifecycle.dispose();
 });
 
 it('retains an empty-body View beside its healthy sibling and publishes the complete set', () => {
     const f = fixture(['healthy', 'empty']);
-    const fragments = f.input.fragments.map(fragment => ({
-        ...fragment,
-        markup: fragment.viewId === 'empty' ? '' : 'HEALTHY_BODY',
+    const fragments = f.fragments.map(fragment => ({
+        ...fragment, markup: fragment.viewId === 'empty' ? '' : 'HEALTHY_BODY',
     }));
-    const draft = capture({ ...f.input, fragments });
-    expect(draft.views.map(view => [view.id, view.content.value])).toEqual([
-        ['healthy', 'HEALTHY_BODY'],
-        ['empty', ''],
-    ]);
-
     const core = createSnapshotCore();
     core.lifecycle.startApp('app', 'run');
-    expect(core.committer.accept(draft).status).toBe('published');
+    const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.capture(fragments), tools: [] }) });
+    expect(projection.commit(() => {})).toBe('prepared');
+    expect(projection.publishTo(core.committer).status).toBe('published');
     expect(core.store.readLatest('app')).toMatchObject({
         status: 'ready',
-        snapshot: { views: [{ id: 'healthy' }, { id: 'empty', content: { value: '' } }] },
+        snapshot: { views: [{ id: 'healthy', content: { value: 'HEALTHY_BODY' } }, { id: 'empty', content: { value: '' } }] },
     });
+    projection.close();
     core.lifecycle.dispose();
 });
 
-it.each(['getViewOwnedViewInstances', 'getToolDefinitions', 'getViewRefs'])('C06 missing or noncallable %s never means empty inventory', method => {
-    for (const value of [undefined, null, [], {}]) { const f = fixture(['a']);(f.input.kernel as any)[method] = value;expect(() => capture(f.input)).toThrow(); }
-    const f = fixture();expect(() => capture({ ...f.input, kernel: null })).toThrow();
+it('C06 missing inventories fail closed', () => {
+    const f = fixture(['a']);
+    for (const value of [undefined, null, {}]) {
+        expect(() => captureDOMViews(f.container, f.fragments, value as any)).toThrow();
+        const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.capture(), tools: value as any }) });
+        expect(projection.commit(() => {})).toBe('failed');
+        expect(projection.nextPublication()).toHaveProperty('failure');
+    }
 });
 
 it('C06 zero fragments with orphan DOM nodes and extra DOM beside owned Views reject', () => {
-    for (const ids of [[], ['a']]) { const f = fixture(ids), orphan = f.document.createElement('section');orphan.setAttribute('data-view-id', 'orphan');f.container.appendChild(orphan);
-        expect(() => capture(f.input)).toThrow(/complete set/); }
+    for (const ids of [[], ['a']]) {
+        const f = fixture(ids), orphan = f.document.createElement('section');
+        orphan.setAttribute('data-view-id', 'orphan');
+        f.container.appendChild(orphan);
+        expect(() => f.capture()).toThrow(/complete set/);
+    }
 });
 
 it('C06 fragments must be exactly the owned/DOM identity set, including duplicate and missing cases', () => {
-    const f = fixture(['a', 'b']);expect(capture(f.input).views).toHaveLength(2);
-    for (const fragments of [[], [f.input.fragments[0]], [f.input.fragments[0], f.input.fragments[0]], [...f.input.fragments, f.input.fragments[0]],
-        [f.input.fragments[0], { ...f.input.fragments[1], viewId: 'orphan' }]]) expect(() => capture({ ...f.input, fragments })).toThrow();
-    f.container.querySelector('[data-view-id="b"]')!.remove();expect(() => capture(f.input)).toThrow(/complete set/);
+    const f = fixture(['a', 'b']);
+    expect(f.capture()).toHaveLength(2);
+    for (const fragments of [[], [f.fragments[0]], [f.fragments[0], f.fragments[0]], [...f.fragments, f.fragments[0]],
+        [f.fragments[0], { ...f.fragments[1], viewId: 'orphan' }]]) expect(() => f.capture(fragments)).toThrow();
+    f.container.querySelector('[data-view-id="b"]')!.remove();
+    expect(() => f.capture()).toThrow(/complete set/);
 });
 
-it('C06 existing duplicate DOM, duplicate owned IDs, wrong instance/type, Ref owner and Tool target checks remain', () => {
-    const f = fixture(['a']);const node = f.container.firstElementChild!;
-    const duplicate = node.cloneNode(true);f.container.appendChild(duplicate);expect(() => capture(f.input)).toThrow(/Duplicate/);duplicate.remove();
-    expect(() => capture({ ...f.input, kernel: { ...f.input.kernel, getViewOwnedViewInstances: () => [f.views[0], f.views[0]] } })).toThrow(/Duplicate/);
-    node.setAttribute('data-view-instance-id', 'wrong');expect(() => capture(f.input)).toThrow(/identity/);node.setAttribute('data-view-instance-id', f.views[0].viewInstanceId);
-    expect(() => capture({ ...f.input, fragments: [{ ...f.input.fragments[0], viewType: 'Wrong' }] })).toThrow(/identity/);
-    expect(() => capture({ ...f.input, kernel: { ...f.input.kernel, getViewRefs: () => [{ viewId: 'missing', refId: 'file', value: { text: 'x' } }] } })).toThrow(/owner/);
-    expect(() => capture({ ...f.input, kernel: { ...f.input.kernel, getToolDefinitions: () => [{ id: 'tool', name: 'read', viewType: 'Missing',
-        description: 'Read', inputSchema: { type: 'object', properties: {} }, 
-        execution: { kind: 'view-type', activationId: 'active' } }] } })).toThrow(/no live matching View/);
+it('C06 duplicate DOM, duplicate owned IDs, wrong instance/type, Ref owner and Tool target checks remain', () => {
+    const f = fixture(['a']); const node = f.container.firstElementChild!;
+    const duplicate = node.cloneNode(true); f.container.appendChild(duplicate);
+    expect(() => f.capture()).toThrow(/Duplicate/); duplicate.remove();
+    expect(() => f.capture(f.fragments, [f.views[0]!, f.views[0]!])).toThrow(/Duplicate/);
+    node.setAttribute('data-view-instance-id', 'wrong');
+    expect(() => f.capture()).toThrow(/identity/);
+    node.setAttribute('data-view-instance-id', f.views[0]!.viewInstanceId);
+    expect(() => f.capture([{ ...f.fragments[0]!, viewType: 'Wrong' }])).toThrow(/identity/);
+    const refs = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.capture(), tools: [] }) });
+    expect(refs.commit(() => { refs.registerRef({ viewId: 'missing', viewInstanceId: 'different' }, 'file', { text: 'x' }); })).toBe('failed');
+    expect(refs.nextPublication()).toMatchObject({ failure: { issue: { message: expect.stringMatching(/missing View instance/) } } });
+
+    const schema = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false }, 'view-type-parameters-v1');
+    if (!schema.ok) throw new Error('Invalid fixture schema');
+    const tools = new SemanticProjectionCoordinator({ identity, readFrame: () => ({
+        views: f.capture(), tools: [{ id: JSON.stringify(['app', 'Missing', 'read']), name: 'read', viewType: 'Missing',
+            description: 'Read', inputSchema: ordinaryParameterProfile(schema.contract),
+            execution: { kind: 'view-type', activationId: 'active' } }],
+    }) });
+    expect(tools.commit(() => {})).toBe('failed');
+    expect(tools.nextPublication()).toMatchObject({ failure: { issue: { message: expect.stringMatching(/matching View is mounted/) } } });
 });

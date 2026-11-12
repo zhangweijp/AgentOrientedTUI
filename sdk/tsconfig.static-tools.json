@@ -14,6 +14,8 @@
   "include": [
     "type-tests/static-tools.ts",
     "type-tests/binding-tools.ts",
+    "type-tests/ref-parameters.ts",
+    "type-tests/app-tools.tsx",
     "type-tests/view-metadata.tsx"
   ],
   "exclude": []

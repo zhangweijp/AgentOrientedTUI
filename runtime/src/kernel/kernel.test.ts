@@ -16,7 +16,7 @@ describe('Kernel lifecycle entry points', () => {
 
     it('does not expose the retired snapshot, lock, or dispatcher Kernel APIs', () => {
         const kernel = new Kernel(new DesktopManager());
-        expect(kernel).toHaveProperty('createAppScope');
+        expect(kernel).toHaveProperty('getAppInteraction');
 
         for (const name of [
             'acquireSnapshot',

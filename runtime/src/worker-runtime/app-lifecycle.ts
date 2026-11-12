@@ -34,7 +34,7 @@ export function createAppLifecycle(instanceId: string) {
         return completion;
     }
     const port: AppLifecyclePort = Object.freeze({ protocol: APP_LIFECYCLE_PROTOCOL, register(callbacks: AppLifecycleCallbacks) {
-        // APP_STOP may arrive while initializeComponent is awaiting. Retain a
+        // APP_STOP may arrive while the App initializer is awaiting. Retain a
         // late committed owner and stop it synchronously; close runs only after
         // AppKernel has joined initialization. Never admit owners after close.
         if (completion || owner) throw new Error('APP_LIFECYCLE_REGISTRATION_CLOSED');

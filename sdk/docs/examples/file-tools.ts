@@ -1,5 +1,5 @@
 import Type from 'typebox';
-import { defineToolSet, defineViewTypeTool } from '@aotui/sdk/tools';
+import { defineToolSet, defineViewTypeTool } from '@aotui/sdk/app';
 
 export const fileTools = defineToolSet({
   open: defineViewTypeTool({

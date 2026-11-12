@@ -46,12 +46,11 @@ describe('Ref parameters in the shared qualified compiler', () => {
         expect(c.validateModelInput!({ file: ['a', 'b', 'c'] }).ok).toBe(false);
         expect(compileOrdinaryProfile(ordinaryParameterProfile(c))?.fingerprint).toBe(c.fingerprint);
     });
-    it.each(['nested', 'nested-names-array', 'primitive', 'primitive-list'])('rejects unsupported Ref shape %s', kind => {
+    it.each(['nested', 'nested-names-array', 'union'])('rejects unsupported Ref shape %s', kind => {
         const s = schema();
         if (kind === 'nested') s.properties.file = { type: 'object', properties: { nested: ref() } };
         if (kind === 'nested-names-array') s.properties.file = { type: 'array', items: { type: 'array', items: ref() } };
-        if (kind === 'primitive') s.properties.file = ref('File', { type: 'string' });
-        if (kind === 'primitive-list') s.properties.file = ref('File', { type: 'array', items: { type: 'string' } });
+        if (kind === 'union') s.properties.file = { anyOf: [ref(), { type: 'null' }] };
         expect(compileOrdinarySchema(s, 'view-type-parameters-v1').ok).toBe(false);
     });
     it('keeps an object-list payload as one Ref and validates every business item', () => {

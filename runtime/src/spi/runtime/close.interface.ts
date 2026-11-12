@@ -1,5 +1,3 @@
-import type { DesktopID } from '../core/types.js';
-
 export interface ShutdownOptions {
     /** 超时时间(ms)，默认 30000 */
     timeoutMs?: number;
@@ -10,7 +8,7 @@ export interface DesktopCloseOptions extends ShutdownOptions { intent?: 'close' 
 
 export interface InteractionCloseReport {
     readonly verified: boolean;
-    readonly retainedScopes: number;
+    readonly retainedOperations: number;
     /** Core JSON/UTF-8 combinedBytes, not heap or RSS. */
     readonly retainedBytes: number;
 }
@@ -35,10 +33,8 @@ export interface CloseReport {
         readonly absentFlushes: number; readonly unknownApps: number; readonly unsavedKeys: number;
     };
     readonly resources: { readonly retainedStorageOwners: number; readonly storageActualIO: number; readonly openingStorageOwners: number };
-    readonly pool: { readonly ownership: 'owned' | 'not-owned' | 'unverified'; readonly report: null | {
-        readonly state: 'open' | 'closing' | 'closed'; readonly limit: number; readonly total: number; readonly reserved: number;
-        readonly idle: number; readonly leased: number; readonly retiring: number;
-        readonly issues: readonly ('WORKER_ERROR' | 'WORKER_TERMINATION_FAILED')[];
+    readonly workers: { readonly ownership: 'owned' | 'not-owned' | 'unverified'; readonly report: null | {
+        readonly state: 'open' | 'closing' | 'closed'; readonly limit: number; readonly total: number;
     } };
     readonly beforeClose: 'not-provided' | 'pending' | 'running' | 'done' | 'failed' | 'skipped-drain-failed' | 'skipped-deadline';
     readonly cleanup: {
@@ -47,8 +43,8 @@ export interface CloseReport {
         readonly logger: 'pending' | 'done' | 'failed' | 'not-owned' | 'unverified';
     };
     readonly failures: readonly {
-            readonly stage: 'admission' | 'apps' | 'persistence' | 'worker' | 'pool' | 'before-close' | 'signals' | 'llm-output' | 'logger' | 'manager';
-        readonly codes: readonly ('INSTALL_FAILED' | 'DELETE_FAILED' | 'APP_CLOSE_FAILED' | 'RESET_FAILED' | 'RESOURCE_RELEASE_FAILED' |
+            readonly stage: 'admission' | 'apps' | 'persistence' | 'worker' | 'before-close' | 'signals' | 'llm-output' | 'logger' | 'manager';
+        readonly codes: readonly ('INSTALL_FAILED' | 'DELETE_FAILED' | 'APP_CLOSE_FAILED' | 'APP_CLOSE_DEADLINE_EXCEEDED' | 'RESOURCE_RELEASE_FAILED' |
             'WORKER_ERROR' | 'WORKER_EXITED_UNEXPECTEDLY' | 'WORKER_TERMINATION_FAILED' | 'PERSISTENCE_CLOSE_FAILED' |
             'APP_UNMOUNT_FAILED' | 'APP_DELETE_FAILED' | 'BEFORE_CLOSE_FAILED' | 'BEFORE_CLOSE_SKIPPED' | 'DESKTOP_CLEANUP_FAILED' |
             'MANAGER_CLEANUP_FAILED')[];
@@ -70,7 +66,3 @@ export interface CloseHandle<R extends CloseReport> {
 export type DesktopCloseHandle = CloseHandle<DesktopCloseReport>;
 export type RuntimeCloseHandle = CloseHandle<RuntimeCloseReport>;
 export type AppManagerCloseHandle = CloseHandle<AppManagerCloseReport>;
-export interface RuntimeCloseReporting {
-    beginShutdown(reason?: string): RuntimeCloseHandle;
-    beginDesktopShutdown(id: DesktopID, options?: ShutdownOptions): DesktopCloseHandle;
-}

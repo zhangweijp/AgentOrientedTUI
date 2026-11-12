@@ -26,11 +26,10 @@ function assertJsonRecord(actual, expected, label) {
 }
 async function inspectTools(app, viewId) {
     const client = scope(app);
-    try {
-        const observed = await client.observe({ viewIds: [viewId] });
-        assert.equal(observed.status, 'observed', JSON.stringify(observed));
-        return observed.observation;
-    } finally { client.close(); }
+    const observed = await client.observe({ viewIds: [viewId] });
+    assert.equal(observed.status, 'observed', JSON.stringify(observed));
+    client.releaseObservation(observed.observation.observationId);
+    return observed.observation;
 }
 try {
     const root = path.join(working, 'workspace'), other = path.join(working, 'workspace-sibling');
@@ -122,7 +121,7 @@ try {
                 assert.equal(outcome.value.data.value, undefined, 'Business results are only in Views');
                 assert.equal(outcome.value.data.view_id, view);
             }
-        } finally { client.close(); }
+        } finally { client.releaseObservation(observation.observationId); }
         let loaded = await invoke(a, 'read_loaded_diagnostics', { filePath: file }, { view, changes: false });
         assert.ok(panel(a, view, 'diagnostics').value.some(d => d.code === 2322));
         await invoke(a, 'edit_file', { filePath: file, oldString: '"wrong"', newString: '1' }, { view: fileView(a, file).id });
@@ -186,7 +185,7 @@ try {
             binding.execution.activationId === writeTool.execution.activationId), 'stale-write check is bound to the observed FileDetail Tool activation');
         const replacement = renamed + '.replacement'; await fs.writeFile(replacement, content); await fs.rename(replacement, renamed);
         try { await invoke(a, 'write_file', { filePath: renamed, content: 'bad' }, { view: renamedView.id, status: 'failed', changes: false, client: stale, observation }); }
-        finally { stale.close(); }
+        finally { stale.releaseObservation(observation.observationId); }
         assert.deepEqual(await fs.readFile(renamed), content);
         await invoke(a, 'multi_open_file', { filePaths: [renamed] }, { changes: false });
         await invoke(a, 'delete_file', { filePath: renamed }, { view: fileView(a, renamed).id });
@@ -196,10 +195,11 @@ try {
         await invoke(a, 'close_file_detail', { view_id: fileView(a, absent).id }, { view: fileView(a, absent).id });
         await invoke(a, 'multi_close_file', { filePaths: [second, second] });
     });
-    await runCase('shutdown, actual resource release, physical Worker reuse and managed restoration', async () => {
+    await runCase('shutdown, actual resource release, fresh Worker and managed restoration', async () => {
         const data = a.data, oldViews = snapshot(a).views.map(view => view.viewInstanceId);
-        const worker = await close(a, true); await close(b);
-        const restarted = await start(root, 'restored', { worker, data, sessionKey: 'a', historyPath: path.join(working, 'history/a.json') });
+        await close(a); await close(b);
+        const restarted = await start(root, 'restored', { data, sessionKey: 'a', historyPath: path.join(working, 'history/a.json') });
+        assert.notEqual(restarted.worker, a.worker);
         assert.ok(fileView(restarted, file)); assert.ok(!fileView(restarted, second));
         assert.ok(snapshot(restarted).views.every(view => !oldViews.includes(view.viewInstanceId)));
         await close(restarted);

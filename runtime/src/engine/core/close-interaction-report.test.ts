@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { mergeCloseReport, newCloseState, sandboxCloseReport, snapshotClose } from './close-handle.js';
 
 function host(...values: unknown[]) {
-    const interactions = values.length ? values[0] : { closed: true, retainedScopes: 0, retainedBytes: 0 };
+    const interactions = values.length ? values[0] : { closed: true, retainedOperations: 0, retainedBytes: 0 };
     return { state: 'settled', intent: 'close', resourcesReleased: true, issues: [],
         host: { interactions, issues: [],
             storage: { support: 'rejected', actualIO: 0, pending: 0, opening: false, ownerRetained: false, unsafe: false,
@@ -10,34 +10,34 @@ function host(...values: unknown[]) {
 }
 
 it('B2 C22/24 default reports include known-empty interactions when negotiation is rejected', () => {
-    expect(newCloseState('runtime').interactions).toEqual({ verified: true, retainedScopes: 0, retainedBytes: 0 });
+    expect(newCloseState('runtime').interactions).toEqual({ verified: true, retainedOperations: 0, retainedBytes: 0 });
     expect(sandboxCloseReport(host(), 'd', 'a')).toMatchObject({ verification: 'mixed', resourcesReleased: true, hasFailures: false,
-        unverifiedParticipants: 0, interactions: { verified: true, retainedScopes: 0, retainedBytes: 0 } });
-    for (const interactions of [{ closed: false, retainedScopes: 0, retainedBytes: 0 }, { closed: true, retainedScopes: 1, retainedBytes: 90 }])
+        unverifiedParticipants: 0, interactions: { verified: true, retainedOperations: 0, retainedBytes: 0 } });
+    for (const interactions of [{ closed: false, retainedOperations: 0, retainedBytes: 0 }, { closed: true, retainedOperations: 1, retainedBytes: 90 }])
         expect(sandboxCloseReport(host(interactions), 'd', 'a')).toMatchObject({ resourcesReleased: false, hasFailures: false, interactions: { verified: true } });
 });
 
 it('B2 C21 ordered folds preserve immutable snapshots, exact subtotals, and one owner count per child', () => {
-    const report = (scopes: number, bytes: number) => sandboxCloseReport(host({ closed: true, retainedScopes: scopes, retainedBytes: bytes }), 'd', 'a');
+    const report = (scopes: number, bytes: number) => sandboxCloseReport(host({ closed: true, retainedOperations: scopes, retainedBytes: bytes }), 'd', 'a');
     const desktop = newCloseState('desktop');mergeCloseReport(desktop, report(1, 17));mergeCloseReport(desktop, report(2, 53));
     const previous = snapshotClose(desktop), runtime = newCloseState('runtime');mergeCloseReport(runtime, previous);mergeCloseReport(runtime, report(3, 41));
-    expect(runtime.interactions).toEqual({ verified: true, retainedScopes: 6, retainedBytes: 111 });expect(runtime.hasFailures).toBe(false);
+    expect(runtime.interactions).toEqual({ verified: true, retainedOperations: 6, retainedBytes: 111 });expect(runtime.hasFailures).toBe(false);
     desktop.interactions!.retainedBytes = 0;expect(previous.interactions?.retainedBytes).toBe(70);expect(Object.isFrozen(previous.interactions)).toBe(true);
-    for (let i = 0; i < 2000; i++) { const state = newCloseState('runtime');mergeCloseReport(state, report(0, 0));expect(state.interactions?.retainedScopes).toBe(0);expect(state.failures).toEqual([]); }
+    for (let i = 0; i < 2000; i++) { const state = newCloseState('runtime');mergeCloseReport(state, report(0, 0));expect(state.interactions?.retainedOperations).toBe(0);expect(state.failures).toEqual([]); }
 });
 
 it('B2 C23 old, partial, invalid and getter fields remain unknown with no getter invocation or business failure', () => {
     let getters = 0;const get = () => { getters++;return 0; };
-    const bad = [undefined, null, {}, { closed: true }, { closed: 'true', retainedScopes: 0, retainedBytes: 0 },
+    const bad = [undefined, null, {}, { closed: true }, { closed: 'true', retainedOperations: 0, retainedBytes: 0 },
         ...[-1, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, 0.5, '0'].flatMap(value => [
-            { closed: true, retainedScopes: value, retainedBytes: 7 }, { closed: true, retainedScopes: 2, retainedBytes: value }]),
-        Object.defineProperty({ retainedScopes: 0, retainedBytes: 0 }, 'closed', { get }),
-        Object.defineProperty({ closed: true, retainedBytes: 7 }, 'retainedScopes', { get }),
-        Object.create({ closed: true, retainedScopes: 0, retainedBytes: 0 })];
+            { closed: true, retainedOperations: value, retainedBytes: 7 }, { closed: true, retainedOperations: 2, retainedBytes: value }]),
+        Object.defineProperty({ retainedOperations: 0, retainedBytes: 0 }, 'closed', { get }),
+        Object.defineProperty({ closed: true, retainedBytes: 7 }, 'retainedOperations', { get }),
+        Object.create({ closed: true, retainedOperations: 0, retainedBytes: 0 })];
     for (const item of bad) {
         const report = sandboxCloseReport(host(item), 'd', 'a');
         expect(report).toMatchObject({ resourcesReleased: false, verification: 'mixed', hasFailures: false, unverifiedParticipants: 1, interactions: { verified: false } });
-        expect(Number.isSafeInteger(report.interactions?.retainedScopes)).toBe(true);expect(Number.isSafeInteger(report.interactions?.retainedBytes)).toBe(true);
+        expect(Number.isSafeInteger(report.interactions?.retainedOperations)).toBe(true);expect(Number.isSafeInteger(report.interactions?.retainedBytes)).toBe(true);
         const state = newCloseState('runtime');mergeCloseReport(state, report);expect(state.unverifiedParticipants).toBe(1);
     }
     const wrapped = host();Object.defineProperty(wrapped.host, 'interactions', { get });
@@ -52,8 +52,8 @@ it('B2 C23 old, partial, invalid and getter fields remain unknown with no getter
 });
 
 it('B2 C23 overflow saturates safe subtotals and marks coverage unknown without NaN, infinity, or duplicate unknowns', () => {
-    const state = newCloseState('runtime'), first = newCloseState('desktop');first.interactions = { verified: true, retainedScopes: Number.MAX_SAFE_INTEGER, retainedBytes: Number.MAX_SAFE_INTEGER };
-    mergeCloseReport(state, first);const second = newCloseState('desktop');second.interactions = { verified: true, retainedScopes: 1, retainedBytes: 1 };
-    mergeCloseReport(state, second);expect(state.interactions).toEqual({ verified: false, retainedScopes: Number.MAX_SAFE_INTEGER, retainedBytes: Number.MAX_SAFE_INTEGER });
+    const state = newCloseState('runtime'), first = newCloseState('desktop');first.interactions = { verified: true, retainedOperations: Number.MAX_SAFE_INTEGER, retainedBytes: Number.MAX_SAFE_INTEGER };
+    mergeCloseReport(state, first);const second = newCloseState('desktop');second.interactions = { verified: true, retainedOperations: 1, retainedBytes: 1 };
+    mergeCloseReport(state, second);expect(state.interactions).toEqual({ verified: false, retainedOperations: Number.MAX_SAFE_INTEGER, retainedBytes: Number.MAX_SAFE_INTEGER });
     expect(state).toMatchObject({ resourcesReleased: false, verification: 'mixed', hasFailures: false, unverifiedParticipants: 1 });
 });

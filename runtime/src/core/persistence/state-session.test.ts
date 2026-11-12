@@ -326,6 +326,33 @@ describe('seal, disposal and bounded resources (A12, A14–A17)', () => {
         const competitor = f.backend.open('next');if (competitor.status !== 'opened') throw Error('open');expect(await competitor.storage.read(a())).toMatchObject({ status: 'failed', issue: { code: 'NAMESPACE_BUSY' } });
         await f.base.replace(a(), '42');background.resolve();expect((await disposal).release.status).toBe('released');expect(await competitor.storage.read(a())).toEqual({ status: 'found', text: '42' });expect(original.entries[0]?.status).toBe('unknown');await competitor.storage.release();
     });
+    it('retries disposal of the retained owner without redoing saved writes', async () => {
+        const entered = defer(), finish = defer();
+        let attempts = 0;
+        const f = fixture([], { release: async () => {
+            if (++attempts === 1) return { status: 'failed', issue: stateIssue('PERMISSION_DENIED') };
+            entered.resolve();
+            await finish.promise;
+            return f.base.release();
+        } });
+        const binding = f.bind();
+        await confirm(binding);
+        expect((await f.session.flush()).ok).toBe(true);
+        const initial = await f.session.dispose();
+        expect(initial.release.status).toBe('failed');
+        expect(f.session.getStats()).toMatchObject({ ownerRetained: true, phase: 'disposed' });
+
+        const retry = f.session.dispose();
+        expect(f.session.dispose()).toBe(retry);
+        await entered.promise;
+        expect(f.session.getStats()).toMatchObject({ releasePending: 1, ownerRetained: true });
+        finish.resolve();
+        expect((await retry).release.status).toBe('released');
+        expect(f.session.dispose()).toBe(retry);
+        expect(initial.release.status).toBe('failed');
+        expect(f.calls).toMatchObject({ replace: 1, remove: 0, release: 2 });
+        expect(f.session.getStats()).toMatchObject({ retainedKeys: 0, ownerRetained: false });
+    });
     it.each(['failed', 'unknown', 'throw', 'invalid'])('retains ownership diagnostics after release %s', async status => {
         const f = fixture([], { release: async () => { if (status === 'throw') throw Error('SENTINEL');if (status === 'invalid') return undefined as any;return { status, issue: stateIssue('IO_FAILED') } as any; } });
         f.bind();const report = await f.session.dispose();expect(report.release.status).toBe(status === 'failed' ? 'failed' : 'unknown');expect(f.session.getStats().ownerRetained).toBe(true);expect(f.session.getStats().retainedKeys).toBe(1);expect(JSON.stringify(report)).not.toContain('SENTINEL');

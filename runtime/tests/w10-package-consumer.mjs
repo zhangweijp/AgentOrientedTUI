@@ -37,9 +37,10 @@ import type { ActionOutcome } from '@aotui/runtime/core';
 import type { TaskProgressProvider } from '@aotui/runtime/core';
 // @ts-expect-error The earlier provider name is also removed.
 import type { OperationProvider } from '@aotui/runtime/core';
-declare const client: import('@aotui/runtime/core').ScopeClient;
-// @ts-expect-error invoke returns its receipt directly; ID-only lookup is removed.
-client.readReceipt('prior-invocation');
+// @ts-expect-error A separately created Scope is no longer a public type.
+import type { ScopeClient } from '@aotui/runtime/core';
+import type { AppInteraction, AppInvocation } from '@aotui/runtime/core';
+export const readOriginal = (client: AppInteraction, request: AppInvocation) => client.readReceipt(request);
 // @ts-expect-error Factory return types are inferred rather than exported as aliases.
 import type { ViewOwnedTools } from '@aotui/runtime/core';
 // @ts-expect-error Factory return types are inferred rather than exported as aliases.
@@ -78,7 +79,7 @@ void [persistenceSupport, ideLifecycleSupport, ideToolAuthoringProtocol, ideFact
     await fs.writeFile(path.join(folder, 'sdk-types.ts'), `import { h } from 'preact';
 import { Type } from 'typebox';
 import { createRuntime, type InteractionMode } from '@aotui/runtime';
-import { createTUIApp, defineViewTypeTool, View, useDataRef, refParam, AppTools, ToolRef, defineToolSet, type ArgsOf, type ToolSetMap, type ToolBindings, useAppLifecycle, type AppLifecycleCallbacks } from '@aotui/sdk';
+import { createTUIApp, defineViewTypeTool, View, useDataRef, refParam, AppTools, defineToolSet, type ArgsOf, type ToolSetMap, type ToolBindings, useAppLifecycle, type AppLifecycleCallbacks } from '@aotui/sdk';
 ${refOnly ? '' : ideTypeImports}
 import type { TUIAppFactory } from '@aotui/runtime/spi';
 // @ts-expect-error Removed entity-only Hook is not a public API.
@@ -88,10 +89,10 @@ const incrementTool = defineViewTypeTool({ viewType: 'Counter', name: 'increment
  inputSchema: Type.Object({ amount: Type.Number() }, { additionalProperties: false }), });
 const inspectTool = defineViewTypeTool({ viewType: 'Counter', name: 'inspect_record', description: 'Inspect the displayed original record.', inputSchema: Type.Object({ record: refParam('Record', Type.Object({ id: Type.String() }, { additionalProperties: false })) }, { additionalProperties: false }) });
 const tools = defineToolSet({ increment: incrementTool, inspect: inspectTool });
-function Detail() { return h(ToolRef, { tool: tools.increment, children: 'Increment' }); }
+function Detail() { return 'Counter'; }
 function RefDetail() {
  const current = useDataRef('current_record', { id: 'record-1' }, { refType: 'Record' });
- return h(ToolRef, { tool: tools.inspect, children: current('Current record') });
+ return h('p', {}, current('Current record'));
 }
 const inspectBinding: ToolBindings<ToolSetMap<typeof tools>>['inspect'] = { execute(args: ArgsOf<typeof inspectTool>) {
  const id: string = args.record.id;
@@ -131,7 +132,7 @@ void [mode, refMode, lifecyclePort, lifecycleSupport, toolAuthoringProtocol, cre
     await run([tsc, '-p', path.join(folder, 'sdk-tsconfig.json')], refOnly ? 'strict Runtime/SPI/SDK Ref subset; IDE types not executed' : 'strict Runtime/SPI/SDK plus original IDE assertions');
     await fs.writeFile(path.join(folder, 'adapter-types.ts'), `import { SemanticAOTUIDrivenSource, type SemanticAOTUIDrivenSourceOptions } from '@aotui/agent-driver-adapter';
 import type { ContextDrivenSource } from '@aotui/agent-driver-v2';
-import type { ScopePolicy } from '@aotui/runtime/core';
+import type { AppInteractionPolicy } from '@aotui/runtime/core';
 import type { DesktopID, IDesktop, IKernel } from '@aotui/runtime/spi';
 // @ts-expect-error The split-read Legacy source is no longer a public adapter.
 import type { AOTUIDrivenSource } from '@aotui/runtime/adapters';
@@ -144,11 +145,11 @@ export async function releaseContext(instance: SemanticAOTUIDrivenSource): Promi
  await context.release?.();
  instance.dispose();
 }
-export const createScope = (kernel: IKernel, desktopId: DesktopID, appId: string, policy: ScopePolicy) => kernel.createAppScope(desktopId, appId, policy);
+export const interaction = (kernel: IKernel, desktopId: DesktopID, appId: string, instanceId: string, policy: AppInteractionPolicy) => kernel.getAppInteraction(desktopId, appId, instanceId, policy);
 `);
     await fs.writeFile(path.join(folder, 'adapter-tsconfig.json'), JSON.stringify({ compilerOptions: { ...compiler, lib: ['ES2022', 'DOM'], types: ['node'], outDir: './adapter-out' }, files: ['./adapter-types.ts'] }));
     try {
-      await run([tsc, '-p', path.join(folder, 'adapter-tsconfig.json')], 'Semantic Source, Context release, createAppScope, and public declarations compile with skipLibCheck false');
+      await run([tsc, '-p', path.join(folder, 'adapter-tsconfig.json')], 'Semantic Source, Context release, getAppInteraction, and public declarations compile with skipLibCheck false');
     } catch {
       // The JS behavior below does not consume this failed TS output. Keep the
       // required type gate red while collecting the independent real call proof.
@@ -161,7 +162,7 @@ export const createScope = (kernel: IKernel, desktopId: DesktopID, appId: string
 import { useState } from 'preact/hooks';
 import { appendFileSync } from 'node:fs';
 import Type from 'typebox';
-import { createTUIApp, defineViewTypeTool, useDataRef, refParam, AppTools, ToolRef, defineToolSet, View } from '@aotui/sdk';
+import { createTUIApp, defineViewTypeTool, useDataRef, refParam, AppTools, defineToolSet, View } from '@aotui/sdk';
 const filePath = '/open/a.txt';
 // This test-only witness is outside Tool Result and the App projection.
 const witnessFile = ${JSON.stringify(witnessPath)};
@@ -172,8 +173,7 @@ const tools = defineToolSet({
 });
 function FileDetail({ content }) {
  const current = useDataRef('current_file', { filePath, content }, { refType: 'File' });
- return h('section', {}, [h('p', {}, current('Current file')), h('pre', {}, content),
-  h(ToolRef, { tool: tools.EditUI }, 'Edit this file'), h(ToolRef, { tool: tools.InspectUI }, 'Inspect this snapshot')]);
+ return h('section', {}, [h('p', {}, current('Current file')), h('pre', {}, content)]);
 }
 function App() {
  const [content, setContent] = useState('OLD_PACKAGE_VIEW_VALUE');
@@ -202,7 +202,7 @@ import { pathToFileURL } from 'node:url';
 import { createRuntime } from '@aotui/runtime';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 
-const runtime = createRuntime({ worker: { timeoutMs: 45000, pool: { initialSize: 0, maxSize: 1 } } });
+const runtime = createRuntime({ worker: { timeoutMs: 45000, maxWorkers: 1 } });
 const calls = [];
 const readWitness = async () => (await readFile(${JSON.stringify(witnessPath)}, 'utf8')).trim().split('\\n').filter(Boolean).map(line => JSON.parse(line));
 let source, context, report;
@@ -284,7 +284,7 @@ assert.equal(Object.getOwnPropertyDescriptor(ideFactory,'persistenceSupport')?.v
 assert.equal(Object.getOwnPropertyDescriptor(ideFactory,'appLifecycleSupport')?.value,'app-lifecycle-v2');
 const base = await fs.realpath(await fs.mkdtemp(path.join(tmpdir(), 'aotui-public-package-'))), root=path.join(base,'project'); await fs.mkdir(root);
 const file=path.join(root,'example.ts'), unopenedFile=path.join(root,'not-open.ts'); await fs.writeFile(file,'export const answer = 1;\\n'); await fs.writeFile(path.join(root,'tsconfig.json'),'{}');
-const runtime=createRuntime({worker:{timeoutMs:45000,pool:{initialSize:0,maxSize:1}}}); const outcomes=[]; let source, context, report;
+const runtime=createRuntime({worker:{timeoutMs:45000,maxWorkers: 1}}); const outcomes=[]; let source, context, report;
 try {
  const desktopId=await runtime.createDesktop('external'); const appId=await runtime.installDynamicWorkerApp(desktopId,ideModulePath,{appId:'publicide',interactionModes:['view-type-parameters-v1'],config:{projectPath:root,ideSessionKey:'publicide',ideHistoryPath:path.join(base,'history.json'),AOTUI_DATA_DIR:path.join(base,'state')}});
  source=new SemanticAOTUIDrivenSource(runtime.getDesktop(desktopId),runtime,{includeInstruction:false,instruction:'Explicit full-mode IDE fixture instruction; full mode is not admitted in the Ref-only proof.'});

@@ -45,44 +45,35 @@ describe('Configuration Architecture', () => {
             expect(config).not.toHaveProperty('lock');
             expect(config).not.toHaveProperty('snapshot');
 
-            // Check deep properties
-            expect(config.worker.pool.initialSize).toBe(2);
-            expect(config.worker.pool.maxSize).toBe(10);
+            expect(config.worker.maxWorkers).toBe(10);
         });
 
         it('should return a frozen immutable object', () => {
             const config = defineRuntimeConfig();
             expect(Object.isFrozen(config)).toBe(true);
             expect(Object.isFrozen(config.worker)).toBe(true);
-            expect(Object.isFrozen(config.worker.pool)).toBe(true);
             expect(Object.isFrozen(config.logger)).toBe(true);
         });
 
         it('keeps defaults immutable and overridden instances detached from inputs', () => {
             const first = defineRuntimeConfig();
-            const input = { worker: { pool: { maxSize: 12 } }, logger: { maxSystemLogs: 80 } };
+            const input = { worker: { maxWorkers: 12 }, logger: { maxSystemLogs: 80 } };
             const overridden = defineRuntimeConfig(input);
             const later = defineRuntimeConfig();
 
             expect(overridden.worker).not.toBe(input.worker);
-            expect(overridden.worker.pool).not.toBe(input.worker.pool);
             expect(overridden.logger).not.toBe(input.logger);
-            expect(first.worker.pool.maxSize).toBe(10);
-            expect(later.worker.pool.maxSize).toBe(10);
-            expect(overridden.worker.pool.maxSize).toBe(12);
-            expect(first.worker.pool).toBe(later.worker.pool);
-            expect(Object.isFrozen(first.worker.pool)).toBe(true);
-            expect(Object.isFrozen(overridden.worker.pool)).toBe(true);
+            expect(first.worker.maxWorkers).toBe(10);
+            expect(later.worker.maxWorkers).toBe(10);
+            expect(overridden.worker.maxWorkers).toBe(12);
             expect(Object.isFrozen(RUNTIME_DEFAULTS.worker)).toBe(true);
-            expect(Object.isFrozen(RUNTIME_DEFAULTS.worker.pool)).toBe(true);
             expect(Object.isFrozen(RUNTIME_DEFAULTS.logger)).toBe(true);
 
-            input.worker.pool.maxSize = 20;
+            input.worker.maxWorkers = 20;
             input.logger.maxSystemLogs = 90;
-            expect(overridden.worker.pool.maxSize).toBe(12);
+            expect(overridden.worker.maxWorkers).toBe(12);
             expect(overridden.logger.maxSystemLogs).toBe(80);
             expect(Object.isFrozen(input)).toBe(false);
-            expect(Object.isFrozen(input.worker.pool)).toBe(false);
             expect(Object.isFrozen(input.logger)).toBe(false);
         });
 
@@ -94,18 +85,16 @@ describe('Configuration Architecture', () => {
 
             expect(config.worker.timeoutMs).toBe(60_000);
             expect(config.logger.maxSystemLogs).toBe(20);
-            expect(config.worker.pool.initialSize).toBe(2);
         });
 
-        it('should merge nested overrides deeply', () => {
+        it('should merge Worker fields with their defaults', () => {
             const config = defineRuntimeConfig({
                 worker: {
-                    pool: { maxSize: 20 }
+                    maxWorkers: 20
                 }
             });
 
-            expect(config.worker.pool.maxSize).toBe(20);
-            expect(config.worker.pool.initialSize).toBe(2); // Should persist from existing nested object
+            expect(config.worker.maxWorkers).toBe(20);
             expect(config.worker.timeoutMs).toBe(30_000);  // Sibling prop in parent
         });
 
@@ -116,12 +105,9 @@ describe('Configuration Architecture', () => {
                     Object.defineProperty(input, 'worker', { enumerable: true, get() { onRead(); return {}; } });
                     return input;
                 }],
-                ['worker.pool', onRead => ({ worker: Object.defineProperty({}, 'pool', {
-                    enumerable: true, get() { onRead(); return {}; },
-                }) })],
-                ['worker.pool.maxSize', onRead => ({ worker: { pool: Object.defineProperty({}, 'maxSize', {
+                ['worker.maxWorkers', onRead => ({ worker: Object.defineProperty({}, 'maxWorkers', {
                     enumerable: true, get() { onRead(); return 12; },
-                }) } })],
+                }) })],
             ];
 
             for (const [path, createInput] of cases) {
@@ -157,9 +143,8 @@ describe('Configuration Architecture', () => {
         });
 
         it('accepts ordinary and null-prototype partial data without mutating inputs', () => {
-            const ordinary = { worker: { pool: { maxSize: 12 } }, logger: { maxSystemLogs: 80 } };
-            const nullPool = Object.assign(Object.create(null), { maxSize: 13 });
-            const nullWorker = Object.assign(Object.create(null), { pool: nullPool });
+            const ordinary = { worker: { maxWorkers: 12 }, logger: { maxSystemLogs: 80 } };
+            const nullWorker = Object.assign(Object.create(null), { maxWorkers: 13 });
             const nullLogger = Object.assign(Object.create(null), { maxSystemLogs: 140 });
             const nullInput = Object.assign(Object.create(null), { worker: nullWorker, logger: nullLogger });
 
@@ -168,25 +153,21 @@ describe('Configuration Architecture', () => {
                 [nullInput, 13, 140],
             ] as const) {
                 const config = defineRuntimeConfig(input as any);
-                expect(config.worker.pool.maxSize).toBe(maxSize);
-                expect(config.worker.pool.initialSize).toBe(2);
+                expect(config.worker.maxWorkers).toBe(maxSize);
                 expect(config.logger.maxSystemLogs).toBe(maxSystemLogs);
                 expect(Object.isFrozen(input)).toBe(false);
             }
 
-            expect(ordinary).toEqual({ worker: { pool: { maxSize: 12 } }, logger: { maxSystemLogs: 80 } });
+            expect(ordinary).toEqual({ worker: { maxWorkers: 12 }, logger: { maxSystemLogs: 80 } });
             expect(Object.getPrototypeOf(nullInput)).toBeNull();
             expect(Object.getPrototypeOf(nullWorker)).toBeNull();
-            expect(Object.getPrototypeOf(nullPool)).toBeNull();
             expect(Object.getPrototypeOf(nullLogger)).toBeNull();
             expect(Reflect.ownKeys(nullInput)).toEqual(['worker', 'logger']);
-            expect(Reflect.ownKeys(nullPool)).toEqual(['maxSize']);
-            expect(nullPool.maxSize).toBe(13);
         });
 
         it('uses defaults for explicitly undefined partial fields', () => {
             expect(defineRuntimeConfig({ worker: undefined, logger: { maxSystemLogs: undefined } })).toMatchObject({
-                worker: { timeoutMs: 30_000, pool: { maxSize: 10 } },
+                worker: { timeoutMs: 30_000, maxWorkers: 10 },
                 logger: { maxSystemLogs: 100 },
             });
         });
@@ -201,8 +182,8 @@ describe('Configuration Architecture', () => {
                 [{ worker: null }, 'worker'],
                 [{ worker: [] }, 'worker'],
                 [{ worker: new WorkerInput() }, 'worker'],
-                [{ worker: { pool: null } }, 'worker.pool'],
-                [{ worker: { pool: [] } }, 'worker.pool'],
+                [{ logger: null }, 'logger'],
+                [{ logger: [] }, 'logger'],
             ];
 
             for (const [input, path] of cases) {
@@ -232,11 +213,11 @@ describe('Configuration Architecture', () => {
             }
         });
 
-        it('should throw when worker pool maxSize < initialSize', () => {
+        it('rejects a non-positive Worker capacity', () => {
             const error = captureError(() => defineRuntimeConfig({
-                worker: { pool: { initialSize: 10, maxSize: 5 } },
+                worker: { maxWorkers: 0 },
             }));
-            expectConfigError(error, 'worker.pool.maxSize');
+            expectConfigError(error, 'worker.maxWorkers');
         });
 
         it('should validate multiple rules simultaneously', () => {
@@ -267,9 +248,7 @@ describe('Configuration Architecture', () => {
 
         it.each([
             ['worker.timeoutMs', (value: unknown) => ({ worker: { timeoutMs: value } })],
-            ['worker.pool.maxSize', (value: unknown) => ({ worker: { pool: { maxSize: value } } })],
-            ['worker.pool.initialSize', (value: unknown) => ({ worker: { pool: { initialSize: value } } })],
-            ['worker.pool.idleTimeoutMs', (value: unknown) => ({ worker: { pool: { idleTimeoutMs: value } } })],
+            ['worker.maxWorkers', (value: unknown) => ({ worker: { maxWorkers: value } })],
             ['logger.maxSystemLogs', (value: unknown) => ({ logger: { maxSystemLogs: value } })],
         ] as const)('rejects non-numeric %s values without reading coercion properties', (path, createInput) => {
             let coercionReads = 0;
@@ -280,11 +259,8 @@ describe('Configuration Architecture', () => {
                 },
             });
             const error = captureError(() => defineRuntimeConfig(createInput(value) as any));
-            const configError = expectConfigError(error, path);
+            expectConfigError(error, path);
             expect(coercionReads).toBe(0);
-            if (path === 'worker.pool.initialSize') {
-                expect(configError.message).not.toContain('[worker.pool.maxSize]');
-            }
         });
 
         it.each([
@@ -296,9 +272,9 @@ describe('Configuration Architecture', () => {
         });
 
         it('rejects unknown nested worker keys while preserving supported worker/logger settings', () => {
-            expectConfigError(captureError(() => defineRuntimeConfig({ worker: { pool: { typo: 1 } } } as any)), 'worker.pool.typo');
-            expect(defineRuntimeConfig({ worker: { pool: { maxSize: 12 } }, logger: { maxSystemLogs: 80 } })).toMatchObject({
-                worker: { pool: { maxSize: 12, initialSize: 2 } },
+            expectConfigError(captureError(() => defineRuntimeConfig({ worker: { pool: { maxSize: 1 } } } as any)), 'worker.pool');
+            expect(defineRuntimeConfig({ worker: { maxWorkers: 12 }, logger: { maxSystemLogs: 80 } })).toMatchObject({
+                worker: { maxWorkers: 12 },
                 logger: { maxSystemLogs: 80 },
             });
         });

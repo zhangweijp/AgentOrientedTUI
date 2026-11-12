@@ -1,6 +1,5 @@
 import { buildPublicToolName } from '../../adapters/public-tool-name.js';
 import { describe, it, expect, vi } from 'vitest';
-import { parseHTML } from 'linkedom';
 import { AppKernel } from './AppKernel.js';
 import { compileOrdinaryParams, type OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
 import type { AppTypeToolRegistrationOptions, IAppTypeToolPort, IViewOwnedToolPort } from '../../spi/index.js';
@@ -15,16 +14,15 @@ const compiledSchema = () => {
 const setup = async () => {
   let viewTools!: IViewOwnedToolPort;
   let appTypeTools!: IAppTypeToolPort;
-  const kernel = new AppKernel({ appName: 'ordinary', name: 'Read', component: {
-    initializeComponent: async (_container, context) => {
+  const kernel = new AppKernel({ appName: 'ordinary', name: 'Read', factory: {
+    initialize: async (context) => {
       viewTools = context.viewTools!;
       appTypeTools = context.appTypeTools!;
-      return { unmount() {} };
+      return { close() {} };
     },
   } });
   kernel.setId('app' as any); kernel.setAppExecutionInstanceId('run');
-  const { document } = parseHTML('<html><body></body></html>');
-  await kernel.onOpen({ appId: 'app' as any, desktopId: 'd' as any }, document.createElement('div') as unknown as HTMLElement);
+  await kernel.onOpen({ appId: 'app' as any, desktopId: 'd' as any });
   const viewInstanceId = viewTools.mount('aa', 'File');
   return { kernel, viewTools, appTypeTools, viewInstanceId };
 };
@@ -112,7 +110,7 @@ describe('AppKernel ViewType Tool Runtime port', () => {
     const unsupportedSchema = {
       type: 'object',
       properties: {
-        nested: { type: 'object', properties: { x: { type: 'string' } } },
+        nested: { type: 'object', properties: { x: { type: 'string', format: 'email' } } },
       },
     };
     try {

@@ -1,12 +1,12 @@
-import { View, AppTools, ToolRef, ToolCatalog, useAppRuntimeContext, useEffect, useMemo, useState, useAppLifecycle } from '@aotui/sdk';
+import { View, AppTools, ToolCatalog, useAppRuntimeContext, useEffect, useMemo, useState, useAppLifecycle } from '@aotui/sdk';
 import { IDESession } from '../core/ide-session.js';
-import { createIDEToolBindings, ideTools, ideToolGroups, type IDEToolGroups, type IDEViewTool } from './ide-tool-contracts.js';
+import { createIDEToolBindings, ideTools, type IDEViewTool } from './ide-tool-contracts.js';
 import { WorkspaceCreateView } from './WorkspaceCreateView.js';
 import { requireIDE } from '../core/ide-errors.js';
 import { resolveIDEOptions } from '../core/app-options.js';
 import path from 'node:path';
 
-function Workspace({ owner, tools }: { owner: IDESession; tools: IDEToolGroups }) {
+function Workspace({ owner }: { owner: IDESession }) {
     return <section>
         <h2>Workspace</h2><p>Load existing files before editing, deleting or renaming them. Each file action checks the IDE's current loaded file and workspace state.</p>
         {owner.roots.length === 0 && <p>No folders. Add an authorized folder to begin.</p>}
@@ -22,26 +22,23 @@ function Workspace({ owner, tools }: { owner: IDESession; tools: IDEToolGroups }
             <ul>{owner.unavailableRoots.map(folder => <li key={folder}>{folder}</li>)}</ul>
         </section>}
         <h3>📂 Opened Files</h3>{owner.files.size ? <ul>{[...owner.files.values()].map(file => <li key={file.viewId}>{file.observed.path} — View {file.viewId}</li>)}</ul> : <p>No files open.</p>}
-        {tools.workspace.map(tool => <ToolRef key={tool.name} tool={tool} />)}
         {owner.lastBatch && <><h3>Last batch result</h3><pre>{JSON.stringify(owner.lastBatch, null, 2)}</pre></>}
     </section>;
 }
 
-function FileDetail({ file, tools }: { file: { viewId: string; observed: { path: string }; page: string; panels: Record<string, unknown> }; tools: IDEToolGroups }) {
+function FileDetail({ file }: { file: { viewId: string; observed: { path: string }; page: string; panels: Record<string, unknown> } }) {
     return <section>
         <h2>{file.observed.path}</h2><p>View ID: {file.viewId}. LSP positions use one-based lines and characters in the complete loaded document.</p>
         <h3>Content</h3><pre>{file.page}</pre>
-        {tools.file.map(tool => <ToolRef key={tool.name} tool={tool} />)}
         {Object.entries(file.panels).map(([name, value]) => <section key={name}><h3>{name}</h3><pre>{JSON.stringify(value, null, 2)}</pre></section>)}
-        <ToolRef tool={ideTools.read_loaded_diagnostics} />
     </section>;
 }
 
-function Search({ owner, tools }: { owner: IDESession; tools: IDEToolGroups }) {
+function Search({ owner }: { owner: IDESession }) {
     const search = owner.search!;
     return <section><h2>{'Search: ' + search.query}</h2><p>{search.paths.length} matching files. This result is complete for its accepted search profile.</p>
         <ul>{search.paths.map(file => <li key={file}>{file}</li>)}</ul>
-        {tools.search.map(tool => <ToolRef key={tool.name} tool={tool} />)}</section>;
+    </section>;
 }
 
 export function ScopedIDEApp() {
@@ -51,7 +48,6 @@ export function ScopedIDEApp() {
         requireIDE(context.persistence, 'IDE_PERSISTENCE_UNAVAILABLE');
         return new IDESession(context.persistence, resolveIDEOptions(context), () => render(value => value + 1));
     }, []);
-    const tools = ideToolGroups;
 
     const isEnabled = (definition: IDEViewTool): boolean => {
         if (!owner.live || !owner.ready) return false;
@@ -114,10 +110,10 @@ export function ScopedIDEApp() {
             {!owner.ready && <p>{owner.error ? 'Initialization failed: ' + owner.error : 'Restoring the IDE session…'}</p>}
             {owner.warnings.length > 0 && <ul>{owner.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>}
         </View>
-        <View kind="state" id="workspace" type="Workspace" name="Workspace"><Workspace owner={owner} tools={tools} /></View>
+        <View kind="state" id="workspace" type="Workspace" name="Workspace"><Workspace owner={owner} /></View>
         {[...owner.files.values()].map(file => <View kind="state" key={file.viewId} id={file.viewId} type="FileDetail" name={'File: ' + file.observed.path}>
-            <FileDetail file={file} tools={tools} /></View>)}
-        {owner.search && <View kind="state" key={owner.search.incarnation} id="search" type="SearchResult" name="Search Results"><Search owner={owner} tools={tools} /></View>}
+            <FileDetail file={file} /></View>)}
+        {owner.search && <View kind="state" key={owner.search.incarnation} id="search" type="SearchResult" name="Search Results"><Search owner={owner} /></View>}
         {config.enableWorkspaceCreate === true && owner.ready && owner.roots.map((root, index) => <WorkspaceCreateView key={root.path + ':' + root.identity}
             viewId={'create_' + index} workspacePath={root.path} />)}
     </AppTools>;

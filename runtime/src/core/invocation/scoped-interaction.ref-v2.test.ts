@@ -10,7 +10,7 @@ function parameters(extra = false) {
     }, required: ['file'], additionalProperties: true }, 'view-type-parameters-v1');
 }
 
-import { createScopedInteraction } from './scoped-interaction.js';
+import { createAppInteraction } from './app-interaction.js';
 function deferred() { let resolve!: () => void;const promise = new Promise<void>(yes => { resolve = yes; });return { promise, resolve }; }
 function fixture() {
     const core = createSnapshotCore({ now: () => 0 });core.lifecycle.startApp('app', 'run');const id = JSON.stringify(['app', 'File', 'read']);let seq = 0;
@@ -30,12 +30,10 @@ function fixture() {
     const binding = { identity: {}, mode: 'view-type-parameters-v1' as const, isLive: () => ({ ok: true }), validateInput: (_s: unknown, input: any) => {
         calls.validate++;if (!contract.ok) throw Error('fixture');const r = contract.contract.validateResolvedInput!(input);return r.ok ? { ok: true, value: r.value } : { ok: false };
     }, execute: (ctx: any) => { calls.execute++;seen.push(ctx);return { kind: 'tool-result' as const, phase: 'entered-returned' as const, result: { success: true, data: { label: ctx.effectiveInput.file.label } } }; } };
-    const authority = createScopedInteraction(core.store, { namespace: 'ref-v2', now: () => 0 });
-    const opened = authority.createScope({ appId: 'app', instanceId: 'run', policy: { project: ({ source }) => ({
+    const client = createAppInteraction(core.store, { namespace: 'ref-v2', now: () => 0, appId: 'app', instanceId: 'run', policy: { project: ({ source }) => ({
         views: source.views.map(v => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })), refs: Object.values(source.refs).map(r => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })),
         toolBindings: Object.values(source.tools).map(t => ({ toolId: t.id, execution: t.execution })), content: [] }),
         authorize: ctx => { calls.policy++;seen.push(ctx);return controls.authorize(ctx); }, canReadReceipt: () => true }, execution: { resolve: () => binding } });
-    if (opened.status !== 'opened') throw Error('scope');const client = opened.client;
     return { core, client, controls, calls, seen, publish, original, changeRule() {
         contract = parameters(true);
         if (!contract.ok) throw Error('fixture');schema = ordinaryParameterProfile(contract.contract);publish('rule');
@@ -55,11 +53,11 @@ describe('R08/R09/R11 unchanged Core coordination with versioned Ref admission',
             for (const ctx of f.seen) { expect(ctx.effectiveInput.file).toEqual({ label: 'A' });expect(ctx.source.snapshotId).toBe(f.original.id);expect(ctx.rawInput.file).toBe('aa.id');expect(ctx.refSources[0].snapshotId).toBe(f.original.id); } }
         finally { f.client.close(); }
     });
-    it.each(['rule', 'unmount', 'scope'])('rechecks %s after an awaited policy without adapter entry', async kind => {
+    it.each(['rule', 'unmount', 'instance'])('rechecks %s after an awaited policy without adapter entry', async kind => {
         const f = fixture(), started = deferred(), release = deferred();f.controls.authorize = () => { started.resolve();return release.promise.then(() => true); };
         const running = f.client.invoke(await f.request());await started.promise;
-        if (kind === 'rule') f.changeRule();if (kind === 'unmount') f.publish('A', false);if (kind === 'scope') f.client.close();release.resolve();
-        const result: any = await running;expect(f.calls.execute).toBe(0);expect(result.code ?? result.receipt.outcome.code).toBe(kind === 'rule' ? 'TOOL_SOURCE_STALE' : kind === 'unmount' ? 'TOOL_UNAVAILABLE' : 'SCOPE_UNAVAILABLE');
+        if (kind === 'rule') f.changeRule();if (kind === 'unmount') f.publish('A', false);if (kind === 'instance') f.client.close();release.resolve();
+        const result: any = await running;expect(f.calls.execute).toBe(0);expect(result.code ?? result.receipt.outcome.code).toBe(kind === 'rule' ? 'TOOL_SOURCE_STALE' : kind === 'unmount' ? 'TOOL_UNAVAILABLE' : 'APP_INTERACTION_UNAVAILABLE');
         f.client.close();expect(f.core.store.inspect().activeLeases).toBe(0);
     });
 });

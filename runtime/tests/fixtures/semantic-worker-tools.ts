@@ -33,35 +33,18 @@ export async function invokeObservedTool(
     input: Record<string, unknown> = {},
     targetViewId?: string,
 ): Promise<any> {
-    const opened = host.createInteractionScope({
-        project: ({ source, selection }: any) => {
-            const selected = new Set(selection.viewIds);
-            const views = source.views.filter((view: any) => selected.has(view.id));
-            return {
-                views: views.map((view: any) => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-                refs: Object.values(source.refs).filter((ref: any) => selected.has(ref.ownerViewId))
-                    .map((ref: any) => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
-                toolBindings: Object.values(source.tools).flatMap((tool: any) => tool.execution.kind === 'view-type'
-                    ? views.some((view: any) => view.type === tool.viewType)
-                        ? [{ toolId: tool.id, execution: tool.execution }]
-                        : []
-                    : tool.execution.targets.filter((target: any) => selected.has(target.viewId))
-                        .map((target: any) => ({ toolId: tool.id, execution: { kind: 'view-instance', target } }))),
-                content: [],
-            };
-        },
-        authorize: () => true,
-        canReadReceipt: () => true,
-    });
-    if (opened.status !== 'opened') throw new Error(opened.issue.code);
-    const { client } = opened;
+    const opened = host.getAppInteraction();
+    if (opened.status !== 'ready') throw new Error(opened.issue.code);
+    const client = opened.interaction;
+    let observationId: string | undefined;
     try {
         const state = host.snapshotReceiver.core.store.readLatest(host.appId);
         if (state.status !== 'ready') throw new Error('Expected a ready Semantic snapshot');
         const viewIds = targetViewId ? [targetViewId] : state.snapshot.views.map((view: any) => view.id);
         const observed = await client.observe({ viewIds });
         if (observed.status !== 'observed') throw new Error(observed.issue.code);
-        const adopted = client.adoptObservation(observed.observation.observationId);
+        observationId = observed.observation.observationId;
+        const adopted = client.adoptObservation(observationId);
         if (adopted.status !== 'adopted') throw new Error(adopted.issue.code);
         const tool = observed.observation.tools.find((candidate: any) => candidate.name === name);
         if (!tool) throw new Error('Observed Tool not found: ' + name);
@@ -75,6 +58,6 @@ export async function invokeObservedTool(
             input,
         });
     } finally {
-        await client.close();
+        if (observationId) client.releaseObservation(observationId);
     }
 }

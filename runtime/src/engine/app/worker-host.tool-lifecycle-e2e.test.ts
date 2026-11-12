@@ -57,7 +57,7 @@ async function start(id = 'app', options: { holdInitialization?: boolean; existi
 }
 function scope(x: any) {
     const controls = { authorize: (_c: any): boolean | Promise<boolean> => true };
-    const opened = x.host.createInteractionScope({
+    const opened = x.host.getAppInteraction({
         project: ({ source, selection }: any) => {
             const ids = new Set(selection.viewIds);
             const views = source.views.filter((v: any) => ids.has(v.id));
@@ -68,17 +68,17 @@ function scope(x: any) {
                 content: [] };
         }, authorize: (c: any) => controls.authorize(c), canReadReceipt: () => true,
     });
-    expect(opened.status).toBe('opened'); if (opened.status !== 'opened') throw Error(opened.issue.code);
-    return { ...opened.client, controls, async observeCounter() {
-        const observed = await opened.client.observe({ viewIds: ['counter'] });
-        if (observed.status === 'observed') expect(opened.client.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
+    expect(opened.status).toBe('ready'); if (opened.status !== 'ready') throw Error(opened.issue.code);
+    return { ...opened.interaction, controls, async observeCounter() {
+        const observed = await opened.interaction.observe({ viewIds: ['counter'] });
+        if (observed.status === 'observed') expect(opened.interaction.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
         expect(observed.status).toBe('observed'); return observed.observation;
     } };
 }
 const request = (observation: any, input: Record<string, unknown> = { view_id: 'counter', amount: 1 }) => ({ invocationId: 'invoke-' + ++sequence,
     observationId: observation.observationId, bindingId: observation.bindings[0].bindingId, input });
 function outcome(result: any) { expect(result.kind).toBe('receipt'); return result.receipt.outcome; }
-async function close(x: any, fail = false, transfer = false) {
+async function close(x: any, fail = false) {
     if (fail) await control(x, 'reject-close');
     const closed = x.host.close(); expect(x.host.close()).toBe(closed);
     await wait(x, m => m.type === 'TEST_STOPPED'); await wait(x, m => m.type === 'TEST_CLEANUP_ENTERED');
@@ -93,13 +93,9 @@ async function close(x: any, fail = false, transfer = false) {
     expect(x.host.getResourceReport().appCleanup).toMatchObject({ support: 'managed', report: {
         protocol: 'app-lifecycle-v2', state: fail ? 'failed' : 'completed', issues: fail ? ['APP_CLEANUP_FAILED'] : [],
     } });
-    const returned = transfer ? await x.host.releaseWorker() : null;
-    if (!transfer) x.host.terminate();
     const report = await x.host.waitForResourceRelease(); x.closed = true;
-    expect(report.resourcesReleased).toBe(true);
-    expect(report.worker).toBe(transfer ? 'transferred' : 'exited');
-    if (!transfer) expect(x.worker.threadId).toBe(-1);
-    return returned;
+    expect(report).toMatchObject({ worker: 'exited', resourcesReleased: true });
+    expect(x.worker.threadId).toBe(-1);
 }
 afterEach(async () => {
     for (const x of running.splice(0)) {
@@ -109,24 +105,24 @@ afterEach(async () => {
 });
 
 describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
-    it('stops through Sandbox before held installation settles and retains the leased Worker', async () => {
+    it('stops through Sandbox before held installation settles and retains the physical Worker', async () => {
         const root = await mkdtemp(join(tmpdir(), 'aotui-tool-sandbox-'));
         const sandbox = new WorkerSandbox({ appId: 'sandbox' as any, desktopId: 'd' as any, appModulePath: pathToFileURL(join(consumer, 'app.mjs')).href,
-            workerScriptPath: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), interactionModes: ['view-type-parameters-v1'], runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 5000, pool: { initialSize: 0, maxSize: 1 } } }),
+            workerScriptPath: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), interactionModes: ['view-type-parameters-v1'], runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 5000, maxWorkers: 1 } }),
             config: { AOTUI_DATA_DIR: join(root, 'state'), testFile: join(root, 'resource'), holdInitialization: true } });
         const install = sandbox.installDynamic(); void install.catch(() => {});
         let worker: Worker | undefined;
-        for (let index = 0; index < 100 && !worker; index++) { worker = (sandbox as any).lease?.worker; if (!worker) await new Promise(resolve => setTimeout(resolve, 1)); }
+        for (let index = 0; index < 100 && !worker; index++) { worker = (sandbox as any).workerHost?.worker; if (!worker) await new Promise(resolve => setTimeout(resolve, 1)); }
         expect(worker).toBeDefined(); const x: any = { worker, messages: [], host: (sandbox as any).workerHost, root, closed: false };
         worker!.on('message', message => x.messages.push(message)); running.push(x);
         await wait(x, m => m.type === 'TEST_INITIALIZING'); const closing = sandbox.disposeAsync();
         await wait(x, m => m.type === 'LIFECYCLE_RESPONSE' && m.appCleanup?.protocol === 'app-lifecycle-v2' && m.appCleanup.state === 'stopped');
-        expect(sandbox.getCloseReport().state).toBe('closing'); expect((sandbox as any).pool.getReport().leased).toBe(1);
+        expect(sandbox.getCloseReport().state).toBe('closing'); expect(worker!.threadId).toBeGreaterThan(0);
         worker!.postMessage({ type: 'TEST_RELEASE_INIT' }); await wait(x, m => m.type === 'TEST_STOPPED');
         await expect(install).rejects.toMatchObject({ code: 'INSTALL_FAILED' }); await wait(x, m => m.type === 'TEST_CLEANUP_ENTERED');
         expect(sandbox.getCloseReport().resourcesReleased).toBe(false); await control(x, 'release-cleanup');
         const report = await closing; expect(report).toMatchObject({ ok: false, resourcesReleased: true, issues: ['INSTALL_FAILED'],
-            host: { appCleanup: { report: { state: 'completed', issues: [] } } }, lease: { disposition: 'exited' } });
+            host: { worker: 'exited', appCleanup: { report: { state: 'completed', issues: [] } } } });
         await wait(x, m => m.type === 'TEST_RESOURCE_CLOSED');
         expect(worker!.threadId).toBe(-1); x.closed = true;
     }, 15000);
@@ -170,17 +166,18 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         x.host.terminate(); const report = await x.host.waitForResourceRelease(); x.closed = true;
         expect(report.resourcesReleased).toBe(true); expect(x.worker.threadId).toBe(-1);
     }, 15000);
-    it('reuses one physical Worker after the previous application cleanup completes', async () => {
+    it('starts a fresh Worker after the previous application cleanup completes', async () => {
         const a = await start('first'), physical = a.worker;
-        expect(await close(a, false, true)).toBe(physical);
-        const b = await start('second', { existingWorker: physical });
+        await close(a);
+        const b = await start('second');
+        expect(b.worker).not.toBe(physical);
         const s = scope(b); expect(outcome(await s.invoke(request(await s.observeCounter()))).status).toBe('succeeded');
         expect((await control(b, 'inspect')).value).toBe(1); await close(b);
     }, 15000);
     it('keeps business values App-owned and rechecks binding authorization across remount', async () => {
         const a = await start('a'), b = await start('b'), sa = scope(a), sb = scope(b);
         const oa = await sa.observeCounter(), ob = await sb.observeCounter();
-        expect(outcome(await sb.invoke(request(oa))).status).toBe('rejected'); expect((await control(b, 'inspect')).entries).toBe(0);
+        expect(await sb.invoke(request(oa))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' }); expect((await control(b, 'inspect')).entries).toBe(0);
         expect(outcome(await sa.invoke(request(oa))).status).toBe('succeeded');
         expect((await control(a, 'inspect')).value).toBe(1); expect((await control(b, 'inspect')).value).toBe(0);
         // The type-level capability stays live across a View replacement; its handler is App-owned.
@@ -210,10 +207,15 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         expect((await control(x, 'inspect')).entries).toBe(0); x.worker.postMessage = send;
         const pending = s.invoke(request(observation, { view_id: 'counter', amount: 1, hold: true }));
         await wait(x, m => m.type === 'TEST_ENTERED'); const closed = x.host.close();
-        await wait(x, m => m.type === 'TEST_STOPPED'); await control(x, 'release-handler');
+        await wait(x, m => m.type === 'TEST_STOPPED');
+        expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: true, core: { activeInvocations: 1 } });
+        expect(x.messages.some((message: any) => message.type === 'TEST_CLEANUP_ENTERED')).toBe(false);
+        const terminal = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE', x.messages.length);
+        await control(x, 'release-handler');
+        expect((await terminal).terminal.phase).toBe('entered-returned');
         // Closing revokes this Scope, including receipt access. It must not
         // return a success or permit a retry through the retired authority.
-        expect(await pending).toMatchObject({ kind: 'unavailable', code: 'SCOPE_UNAVAILABLE' });
+        expect(await pending).toMatchObject({ kind: 'unavailable', code: 'APP_INTERACTION_UNAVAILABLE' });
         expect((await control(x, 'inspect')).value).toBe(0);
         await wait(x, m => m.type === 'TEST_CLEANUP_ENTERED'); await control(x, 'release-cleanup'); await closed;
         x.host.terminate(); const report = await x.host.waitForResourceRelease(); x.closed = true;
@@ -221,9 +223,9 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         expect(report.appCleanup?.report).toMatchObject({ state: 'completed', issues: [] });
         expect(report.resourcesReleased).toBe(true); expect(x.worker.threadId).toBe(-1);
     }, 15000);
-    it('retains callback failure, releases Host resources and refuses a healthy pool return', async () => {
+    it('retains callback failure after Worker exit and Host resource release', async () => {
         const x = await start(); await close(x, true);
         expect(x.host.getResourceReport().appCleanup).toMatchObject({ support: 'managed', report: { state: 'failed', issues: ['APP_CLEANUP_FAILED'] } });
-        expect(x.host.getResourceReport().resourcesReleased).toBe(true); expect(await x.host.releaseWorker()).toBeNull();
+        expect(x.host.getResourceReport().resourcesReleased).toBe(true); expect(x.worker.threadId).toBe(-1);
     }, 15000);
 });

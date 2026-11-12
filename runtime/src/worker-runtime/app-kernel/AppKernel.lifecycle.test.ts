@@ -1,60 +1,61 @@
 import { expect, it, vi } from 'vitest';
-import { parseHTML } from 'linkedom';
 import { AppKernel } from './AppKernel.js';
 const defer = () => { let resolve!: () => void;const promise = new Promise<void>(yes => { resolve = yes; });return { promise, resolve }; };
 function fixture(initialize: (context: any) => Promise<any> | any, extra = {}) {
-    const { document } = parseHTML('<html><body><div id="app"></div></body></html>');
     let runtime: any;
-    const kernel = new AppKernel({ name: 'test', appName: 'test', component: { async initializeComponent(_container: any, context: any) { runtime = context;return initialize(context); } }, ...extra } as any);
+    const kernel = new AppKernel({ name: 'test', appName: 'test', factory: { async initialize(context: any) { runtime = context;return initialize(context); } }, ...extra } as any);
     kernel.setId('app' as any);
     const context = { appId: 'app', desktopId: 'd' };
-    const container = document.getElementById('app')!;
-    return { kernel, context, container, runtime: () => runtime, open: () => kernel.onOpen(context as any, container as any) };
+    return { kernel, context, runtime: () => runtime, open: () => kernel.onOpen(context as any) };
 }
 it('injects the formal lifecycle port when a managed factory is initialized directly', async () => {
-    const { document } = parseHTML('<html><body><div id="app"></div></body></html>');
     let runtime: any;
-    const kernel = new AppKernel({ name: 'test', appName: 'test', component: {
+    const kernel = new AppKernel({ name: 'test', appName: 'test', factory: {
         appLifecycleSupport: 'app-lifecycle-v2',
-        async initializeComponent(_container: any, context: any) { runtime = context;return { unmount() {} }; },
+        async initialize(context: any) { runtime = context;return { close() {} }; },
     } } as any);
     kernel.setId('app' as any);
-    await kernel.onOpen({ appId: 'app', desktopId: 'd' } as any, document.getElementById('app') as any);
+    await kernel.onOpen({ appId: 'app', desktopId: 'd' } as any);
     expect(runtime.appLifecycle).toMatchObject({ protocol: 'app-lifecycle-v2' });
     const close = vi.fn();runtime.appLifecycle.register({ close });
     await kernel.onClose();expect(close).toHaveBeenCalledTimes(1);
 });
 it.each(['sync', 'async'])('C2-18 %s unmount failure still clears owned registries', async kind => {
     const f = fixture(context => {
-        context.refExporter.registerRef('v', 'key', {});context.viewTools.mount('v', 'Detail');
-        return { unmount: () => { if (kind === 'sync') throw Error('private sync');return Promise.reject(Error('private async')); } };
+        context.projection.beginCommit();
+        const identity = context.viewTools.mount('v', 'Detail');
+        context.setViewReader(() => [{ id: 'v', viewInstanceId: identity, type: 'Detail', name: 'v',
+            kind: 'state', content: { format: 'markdown-v1', value: '' } }]);
+        context.refExporter.registerRef('v', 'key', {});
+        expect(context.projection.endCommit()).toBe('prepared');
+        return { close: () => { if (kind === 'sync') throw Error('private sync');return Promise.reject(Error('private async')); } };
     });
-    await f.open();expect(f.kernel.getViewOwnedViewInstances()).toHaveLength(1);
+    await f.open();expect(f.kernel.getViewOwnedViewInstances()).toHaveLength(1);expect(f.kernel.getViewRefs()).toHaveLength(1);
     const closing = f.kernel.onClose();expect(f.kernel.onClose()).toBe(closing);await expect(closing).rejects.toMatchObject({ code: 'APP_UNMOUNT_FAILED', message: 'APP_UNMOUNT_FAILED' });
     expect(f.kernel.getViewRefs()).toEqual([]);expect(f.kernel.getViewOwnedViewInstances()).toHaveLength(0);
     expect((f.kernel as any).viewRegistry).toBeUndefined();expect((f.kernel as any).typeTools).toBeUndefined();expect((f.kernel as any).viewKeyToId).toBeUndefined();
 });
 it('C2-19 closing during initialization owns the late renderer without registering or reviving', async () => {
     const entered = defer(), finish = defer(), unmount = vi.fn();
-    const f = fixture(async () => { entered.resolve();await finish.promise;return { unmount }; });
+    const f = fixture(async () => { entered.resolve();await finish.promise;return { close: unmount }; });
     const opening = f.open();expect(f.open()).toBe(opening);await entered.promise;const closing = f.kernel.onClose();
     expect(f.runtime().registerView).toBeUndefined();expect(f.runtime().allocateViewId).toBeUndefined();expect(f.runtime().typeTools).toBeUndefined();
     expect(() => f.runtime().refExporter.registerRef('v', 'r', {})).toThrow(expect.objectContaining({ code: 'APP_KERNEL_CLOSED' }));
     expect(() => f.runtime().viewTools.mount('later', 'Detail')).toThrow(expect.objectContaining({ code: 'APP_KERNEL_CLOSED' }));
-    const before = f.kernel.getProjectionCoordinator().token();f.runtime().markDirty();expect(f.kernel.getProjectionCoordinator().token()).toEqual(before);
+    expect(f.runtime().markDirty).toBeUndefined();
     await expect(f.kernel.onReinitialize()).rejects.toHaveProperty('code', 'APP_KERNEL_CLOSED');
     finish.resolve();await expect(opening).rejects.toHaveProperty('code', 'APP_KERNEL_CLOSED');await closing;expect(unmount).toHaveBeenCalledTimes(1);
     await expect(f.open()).rejects.toHaveProperty('code', 'APP_KERNEL_CLOSED');expect(f.kernel.onClose()).toBe(closing);
 });
 it('C2-19 async unmount is actually awaited and its rejection never becomes a success', async () => {
     const entered = defer(), finish = defer();let ended = false;
-    const f = fixture(() => ({ async unmount() { entered.resolve();await finish.promise;throw Error('private delayed'); } }));await f.open();
+    const f = fixture(() => ({ async close() { entered.resolve();await finish.promise;throw Error('private delayed'); } }));await f.open();
     const closing = f.kernel.onClose();void closing.then(() => { ended = true; }, () => { ended = true; });await entered.promise;expect(ended).toBe(false);
     finish.resolve();await expect(closing).rejects.toHaveProperty('code', 'APP_UNMOUNT_FAILED');expect(ended).toBe(true);
 });
 it.each(['sync', 'async'])('C2-20 %s delete failure is fixed, called once and joined by independent close cleanup', async kind => {
     const entered = defer(), finish = defer(), unmount = vi.fn(), onDelete = vi.fn(() => { entered.resolve();if (kind === 'async') return finish.promise.then(() => { throw Error('private delete'); });throw Error('private delete'); });
-    const f = fixture(() => ({ unmount }), { onDelete });await f.open();const deleting = f.kernel.onDelete();expect(f.kernel.onDelete()).toBe(deleting);await entered.promise;
+    const f = fixture(() => ({ close: unmount }), { onDelete });await f.open();const deleting = f.kernel.onDelete();expect(f.kernel.onDelete()).toBe(deleting);await entered.promise;
     const closing = f.kernel.onClose();if (kind === 'async') expect(unmount).not.toHaveBeenCalled();finish.resolve();
     await expect(deleting).rejects.toMatchObject({ code: 'APP_DELETE_FAILED', message: 'APP_DELETE_FAILED' });await closing;expect(onDelete).toHaveBeenCalledTimes(1);expect(unmount).toHaveBeenCalledTimes(1);
 });
@@ -69,7 +70,7 @@ it.each(['delete','close'] as const)('PF01 %s hanging rejects ordinary and Ref p
         releaseTool=register('held',{type:'object',properties:{},additionalProperties:false});
         register('parameters',{type:'object',properties:{n:{type:'number'}},required:['n'],additionalProperties:false});
         register('snapshot',{type:'object',properties:{file:{type:'string',minLength:1,'x-aotui-ref-kind':'File','x-aotui-ref-value':{type:'object'}}},required:['file'],additionalProperties:false});
-        return {async unmount(){if(stage==='close'){entered.resolve();await lifecycle.promise;}}};
+        return {async close(){if(stage==='close'){entered.resolve();await lifecycle.promise;}}};
     },{onDelete:async()=>{entered.resolve();await lifecycle.promise;}});
     await f.open();const tools=new Map(f.kernel.getToolDefinitions().map(tool=>[tool.name,tool]));
     const source=(name:string)=>tools.get(name)! as any,execution=(name:string)=>source(name).execution;

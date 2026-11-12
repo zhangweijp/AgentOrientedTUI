@@ -1,4 +1,4 @@
-import { SNAPSHOT_CAPABILITY } from '../../adapters/worker-message-capture.js';
+import { SNAPSHOT_CAPABILITY } from '../../spi/worker-protocol/types.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Worker } from 'node:worker_threads';
 import { build } from 'esbuild';
@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DEFAULT_STATE_SESSION_LIMITS, DEFAULT_STATE_TRANSPORT_LIMITS } from '../../adapters/storage/state-storage-protocol.js';
 
-describe('Worker accepts only the managed component factory contract', () => {
+describe('Worker accepts only the managed App factory contract', () => {
     let temp: string;
     let workerScript: string;
     const root = resolve(process.cwd());
@@ -99,7 +99,7 @@ describe('Worker accepts only the managed component factory contract', () => {
 
     it('refuses a registered name that differs from the factory before rendering', async () => {
         const { worker, init } = await launch(`export default { ${managedMarkers} displayName:'canonical',
-            kernelConfig: { name:'canonical', appName:'canonical' }, initializeComponent() { throw Error('must not render'); } };`, [SNAPSHOT_CAPABILITY], 'alias');
+            kernelConfig: { name:'canonical', appName:'canonical' }, initialize() { throw Error('must not render'); } };`, [SNAPSHOT_CAPABILITY], 'alias');
         try {
             expect(init).toMatchObject({ type: 'ERROR_RESPONSE', success: false, error: { code: 'APP_IDENTITY_MISMATCH' } });
             expect(init.error.message).toContain('INIT.appName');
@@ -112,15 +112,15 @@ describe('Worker accepts only the managed component factory contract', () => {
         ['plain App instance export', `export default { ${managedMarkers} onOpen() {} };`],
         ['named app instance export', `export const app = { ${managedMarkers} onOpen() {} };`],
         ['incomplete managed factory', `export default { ${managedMarkers} displayName: 'incomplete', kernelConfig: { name: 'incomplete', appName: 'incomplete' } };`],
-        ['named-only managed factory', `export const factory = { ${managedMarkers} displayName: 'named', kernelConfig: { name: 'named', appName: 'named' }, initializeComponent() {} };`],
-        ['factory without kernel appName', `export default { ${managedMarkers} displayName: 'missing_name', kernelConfig: { name: 'missing_name' }, initializeComponent() {} };`],
-        ['factory with empty kernel appName', `export default { ${managedMarkers} displayName: 'empty_name', kernelConfig: { name: 'empty_name', appName: '' }, initializeComponent() {} };`],
-        ['factory with invalid kernel appName', `export default { ${managedMarkers} displayName: 'invalid_name', kernelConfig: { name: 'invalid_name', appName: 1 }, initializeComponent() {} };`],
-        ['factory with empty displayName', `export default { ${managedMarkers} displayName: '', kernelConfig: { name: 'empty_display', appName: 'empty_display' }, initializeComponent() {} };`],
-        ['factory missing persistence marker', `export default { appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', displayName: 'missing_persistence', kernelConfig: { appName: 'missing_persistence' }, initializeComponent() {} };`],
-        ['factory with wrong persistence marker', `export default { persistenceSupport: 'state-session-v0', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', displayName: 'wrong_persistence', kernelConfig: { appName: 'wrong_persistence' }, initializeComponent() {} };`],
-        ['factory missing lifecycle marker', `export default { persistenceSupport: 'state-session-v1', toolAuthoringProtocol: 'view-type-tools-v4', displayName: 'missing_lifecycle', kernelConfig: { appName: 'missing_lifecycle' }, initializeComponent() {} };`],
-        ['factory with wrong lifecycle marker', `export default { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v1', toolAuthoringProtocol: 'view-type-tools-v4', displayName: 'wrong_lifecycle', kernelConfig: { appName: 'wrong_lifecycle' }, initializeComponent() {} };`],
+        ['named-only managed factory', `export const factory = { ${managedMarkers} displayName: 'named', kernelConfig: { name: 'named', appName: 'named' }, initialize() {} };`],
+        ['factory without kernel appName', `export default { ${managedMarkers} displayName: 'missing_name', kernelConfig: { name: 'missing_name' }, initialize() {} };`],
+        ['factory with empty kernel appName', `export default { ${managedMarkers} displayName: 'empty_name', kernelConfig: { name: 'empty_name', appName: '' }, initialize() {} };`],
+        ['factory with invalid kernel appName', `export default { ${managedMarkers} displayName: 'invalid_name', kernelConfig: { name: 'invalid_name', appName: 1 }, initialize() {} };`],
+        ['factory with empty displayName', `export default { ${managedMarkers} displayName: '', kernelConfig: { name: 'empty_display', appName: 'empty_display' }, initialize() {} };`],
+        ['factory missing persistence marker', `export default { appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', displayName: 'missing_persistence', kernelConfig: { appName: 'missing_persistence' }, initialize() {} };`],
+        ['factory with wrong persistence marker', `export default { persistenceSupport: 'state-session-v0', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', displayName: 'wrong_persistence', kernelConfig: { appName: 'wrong_persistence' }, initialize() {} };`],
+        ['factory missing lifecycle marker', `export default { persistenceSupport: 'state-session-v1', toolAuthoringProtocol: 'view-type-tools-v4', displayName: 'missing_lifecycle', kernelConfig: { appName: 'missing_lifecycle' }, initialize() {} };`],
+        ['factory with wrong lifecycle marker', `export default { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v1', toolAuthoringProtocol: 'view-type-tools-v4', displayName: 'wrong_lifecycle', kernelConfig: { appName: 'wrong_lifecycle' }, initialize() {} };`],
     ])('rejects %s', async (_name, source) => {
         const { worker, init } = await launch(source);
         try {
@@ -131,10 +131,10 @@ describe('Worker accepts only the managed component factory contract', () => {
     });
 
     it.each([
-        ['missing', `export default { ${lifecycleMarkers} displayName: 'missing_authoring', kernelConfig: { appName: 'missing_authoring' }, initializeComponent() {} };`],
-        ['retired v3', `export default { ${lifecycleMarkers} toolAuthoringProtocol: 'view-type-tools-v3', displayName: 'old_authoring', kernelConfig: { appName: 'old_authoring' }, initializeComponent() {} };`],
-        ['wrong value', `export default { ${lifecycleMarkers} toolAuthoringProtocol: 'view-local-tools-v2', displayName: 'wrong_authoring', kernelConfig: { appName: 'wrong_authoring' }, initializeComponent() {} };`],
-        ['accessor', `const factory = { ${lifecycleMarkers} displayName: 'accessor_authoring', kernelConfig: { appName: 'accessor_authoring' }, initializeComponent() {} }; Object.defineProperty(factory, 'toolAuthoringProtocol', { get() { throw new Error('authoring accessor invoked'); } }); export default factory;`],
+        ['missing', `export default { ${lifecycleMarkers} displayName: 'missing_authoring', kernelConfig: { appName: 'missing_authoring' }, initialize() {} };`],
+        ['retired v3', `export default { ${lifecycleMarkers} toolAuthoringProtocol: 'view-type-tools-v3', displayName: 'old_authoring', kernelConfig: { appName: 'old_authoring' }, initialize() {} };`],
+        ['wrong value', `export default { ${lifecycleMarkers} toolAuthoringProtocol: 'view-local-tools-v2', displayName: 'wrong_authoring', kernelConfig: { appName: 'wrong_authoring' }, initialize() {} };`],
+        ['accessor', `const factory = { ${lifecycleMarkers} displayName: 'accessor_authoring', kernelConfig: { appName: 'accessor_authoring' }, initialize() {} }; Object.defineProperty(factory, 'toolAuthoringProtocol', { get() { throw new Error('authoring accessor invoked'); } }); export default factory;`],
     ])('rejects %s tool authoring protocol before factory initialization', async (_name, source) => {
         const { worker, init } = await launch(source);
         try {
@@ -153,10 +153,12 @@ describe('Worker accepts only the managed component factory contract', () => {
                 toolAuthoringProtocol: 'view-type-tools-v4',
                 displayName: 'managed',
                 kernelConfig: { name: 'managed', appName: 'managed' },
-                async initializeComponent(_container, context) {
+                async initialize(context) {
                     if (context.launchConfig?.factoryContractMarker !== 'launch-config') throw new Error('LAUNCH_CONFIG_MISSING');
                     if (Object.hasOwn(globalThis, '__AOTUI_APP_CONFIG__')) throw new Error('GLOBAL_CONFIG_FALLBACK_PRESENT');
-                    return { unmount() {} };
+                    context.projection.beginCommit();
+                    if (context.projection.endCommit() !== 'prepared') throw Error('EMPTY_PROJECTION_NOT_PREPARED');
+                    return { close() {} };
                 },
             };
         `);

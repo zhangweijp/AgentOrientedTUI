@@ -13,6 +13,8 @@ describe('installation errors across a real Worker and AppManager', () => {
     beforeAll(async () => {
         temp = await mkdtemp(join(tmpdir(), 'aotui-install-error-'));
         await mkdir(join(temp, 'node_modules'));
+        await mkdir(join(temp, 'node_modules/@aotui'), { recursive: true });
+        await symlink(join(root, '../sdk'), join(temp, 'node_modules/@aotui/sdk'), 'dir');
         for (const name of ['linkedom', 'preact']) {
             await symlink(join(root, 'node_modules', name), join(temp, 'node_modules', name), 'dir');
         }
@@ -27,7 +29,7 @@ describe('installation errors across a real Worker and AppManager', () => {
         await writeFile(file, source);
         const manager = new AppManager({
             id: 'diagnostics' as any, emitSignal() {}, logSystem() {},
-        }, { runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 3000, pool: { initialSize: 0, maxSize: 1 } } }) });
+        }, { runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 3000, maxWorkers: 1 } }) });
         const installing = manager.install(pathToFileURL(file).href, {
             appId: id as any, workerScriptPath: workerScript,
             config: { AOTUI_APP_KEY: id, AOTUI_DATA_DIR: join(temp, 'data-' + id) },
@@ -36,15 +38,15 @@ describe('installation errors across a real Worker and AppManager', () => {
     }
 
     function app(renderBody: string) {
-        return `import { h, render } from 'preact';
+        return `import { h } from 'preact';
+import { createTUIApp } from '@aotui/sdk';
 export default {
     persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
     toolAuthoringProtocol: 'view-type-tools-v4', displayName: 'diagnostics',
     kernelConfig: { name: 'diagnostics', appName: 'diagnostics' },
-    initializeComponent(container) {
+    initialize(context) {
         function InitialRender() { ${renderBody} }
-        render(h(InitialRender, {}), container);
-        return { unmount() { render(null, container); } };
+        return createTUIApp({ app_name: 'diagnostics', component: () => h(InitialRender, {}) }).initialize(context);
     },
 };`;
     }
@@ -76,7 +78,7 @@ export default {
                 expect(JSON.stringify(error)).not.toContain(message);
                 const released = f.sandbox!.getCloseReport();
                 expect(released).toMatchObject({ state: 'settled', resourcesReleased: true });
-                expect(released.host?.interactions).toMatchObject({ closed: true, retainedScopes: 0, retainedBytes: 0 });
+                expect(released.host?.interactions).toMatchObject({ closed: true, retainedOperations: 0, retainedBytes: 0 });
                 // Developer diagnostics stay on the rejected Error, not in bounded cleanup summaries.
                 expect(JSON.stringify(released)).not.toContain(message);
                 if (phase === 'OPEN') {
@@ -101,7 +103,7 @@ export default {
         } finally {
             const report = await f.manager.cleanupAsync();
             expect(report).toMatchObject({ ok: true, resourcesReleased: true,
-                interactions: { retainedScopes: 0, retainedBytes: 0 },
+                interactions: { retainedOperations: 0, retainedBytes: 0 },
                 resources: { retainedStorageOwners: 0, storageActualIO: 0 } });
         }
     });

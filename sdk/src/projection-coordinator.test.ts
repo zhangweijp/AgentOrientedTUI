@@ -10,7 +10,7 @@ import { createTUIApp } from './app-factory/createTUIApp.js';
 import { View } from './components/View.js';
 import { useDataRef } from './hooks/useRef.js';
 import { useArrayRef } from './hooks/useArrayRef.js';
-import { AppTools, ToolRef } from './components/AppTools.js';
+import { AppTools } from './components/AppTools.js';
 import { defineViewTypeTool, defineToolSet } from './tools/view-type-tool.js';
 import Type from 'typebox';
 import { ViewRuntimeContext } from './contexts/view-runtime-context.js';
@@ -23,20 +23,17 @@ const refsOf = (kernel: AppKernel) => Object.fromEntries(
 
 function setup(component: () => any) {
     const factory = createTUIApp({ app_name: 'm3_app', component });
-    const kernel = new AppKernel({ ...factory.kernelConfig, component: factory } as any);
+    const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
     kernel.setId('m3_app_0' as any);
-    const container = document.createElement('div');
-    document.body.appendChild(container);
     return {
-        kernel, container,
+        kernel, get container() { return document.getElementById('app-root-m3_app_0')!; },
         async open() {
             await kernel.onOpen({
                 appId: 'm3_app_0' as any, desktopId: 'desktop_0' as any,
-            }, container);
+            });
         },
         async close() {
             await kernel.onClose();
-            container.remove();
         },
     };
 }
@@ -61,7 +58,6 @@ describe('M3 SDK semantic projection commit', () => {
         function App() {
             return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => ({ success: true }) } } }, h('main', {}, [
                 h(View, {kind: 'state', id: 'workspace', type: 'Workspace' }, h(Content, {})),
-                h(ToolRef, { tool: boundTools.tool }, 'Complete'),
             ]));
         }
         const x = setup(App);
@@ -84,7 +80,6 @@ describe('M3 SDK semantic projection commit', () => {
             expect(tools).toHaveLength(1);
             expect(tools[0]!.execution).toMatchObject({ kind: 'view-type', activationId: expect.any(String) });
             expect(tools[0]!.execution).not.toHaveProperty('targets');
-            expect(x.container.querySelector('tool-ref')?.textContent).toBe('Complete');
             const token = x.kernel.getProjectionCoordinator().token();
             expect(token.ready).toBe(true);
             expect(token.epoch).toBeGreaterThan(0);
@@ -109,17 +104,15 @@ describe('M3 SDK semantic projection commit', () => {
             const [state, setState] = useState({ id: 'A', enabled: true }); update = setState;
             return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => ({ success: true }), ...({ enabled: state.enabled }) } } }, h('main', {}, [
                 h(View, {kind: 'state', id: 'workspace', type: 'Workspace' }, h(Content, { id: state.id })),
-                h(ToolRef, { tool: boundTools.tool }, 'Inspect'),
             ]));
         }
         const x = setup(App);
-        const seen: Array<{ left?: string; right?: string; toolCount: number; visible: boolean; ready: boolean }> = [];
+        const seen: Array<{ left?: string; right?: string; toolCount: number; ready: boolean }> = [];
         const unsubscribe = x.kernel.getProjectionCoordinator().subscribe(token => {
             seen.push({
                 left: (refsOf(x.kernel)['workspace:left'] as any)?.id,
                 right: (refsOf(x.kernel)['workspace:right'] as any)?.id,
                 toolCount: x.kernel.getToolDefinitions().length,
-                visible: x.container.querySelector('tool-ref') !== null,
                 ready: token.ready,
             });
         });
@@ -132,7 +125,7 @@ describe('M3 SDK semantic projection commit', () => {
             expect((refsOf(x.kernel)['workspace:right'] as any)?.id).toBe('B');
             expect(x.kernel.getToolDefinitions()).toEqual([]);
             expect(seen.length).toBeGreaterThan(0);
-            expect(seen.every(item => item.left === 'B' && item.right === 'B' && item.toolCount === 0 && !item.visible && item.ready)).toBe(true);
+            expect(seen.every(item => item.left === 'B' && item.right === 'B' && item.toolCount === 0 && item.ready)).toBe(true);
 
             seen.length = 0;
             await act(async () => update({ id: 'C', enabled: true }));
@@ -140,7 +133,7 @@ describe('M3 SDK semantic projection commit', () => {
             expect((refsOf(x.kernel)['workspace:right'] as any)?.id).toBe('C');
             expect(x.kernel.getToolDefinitions()).toHaveLength(1);
             expect(seen.length).toBeGreaterThan(0);
-            expect(seen.every(item => item.left === 'C' && item.right === 'C' && item.toolCount === 1 && item.visible && item.ready)).toBe(true);
+            expect(seen.every(item => item.left === 'C' && item.right === 'C' && item.toolCount === 1 && item.ready)).toBe(true);
         } finally {
             unsubscribe();
             await x.close();
@@ -333,7 +326,7 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
             mutate = next => { expected = next; set(next); };
             return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => ({ success: true }), ...({ enabled: state.enabled }) } } }, state.show
                 ? h(View, {kind: 'state', id: 'workspace', type: 'Workspace' },
-                    h('section', {}, [h(Details, { key: 'refs', data: state.data }), h(ToolRef, { tool: boundTools.tool, ...({ key: 'tool' }) }, 'Inspect')]))
+                    h('section', {}, [h(Details, { key: 'refs', data: state.data })]))
                 : null);
         }
         const x = setup(App);
@@ -346,7 +339,7 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
             const tools = x.kernel.getToolDefinitions();
             if (!token.ready) torn++;
             if (views.length === 0) {
-                if (ids.length || tools.length || x.container.querySelector('tool-ref')) torn++;
+                if (ids.length || tools.length || x.container.querySelector('[data-view-id=workspace]')) torn++;
             } else {
                 const domNode = x.container.querySelector('[data-view-id="workspace"]');
                 if (!domNode || !domNode.getAttribute('data-view-instance-id')) torn++;
@@ -355,7 +348,6 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
                 if (Object.hasOwn(refs, 'workspace:tasks[0]') &&
                     !domNode?.textContent?.includes('(Task:tasks[0])')) torn++;
                 if (tools.length !== (expected.enabled ? 1 : 0)) torn++;
-                if ((x.container.querySelector('tool-ref') !== null) !== expected.enabled) torn++;
                 if (tools.length && (tools[0]!.execution.kind !== 'view-type' || Object.hasOwn(tools[0]!.execution, 'targets'))) torn++;
             }
             observed.push(views.length + '/' + ids.length + '/' + tools.length);
@@ -401,6 +393,7 @@ describe('M3 ArrayRef cleanup on registration failure', () => {
     it('removes every Ref registered before a later item registration throws', () => {
         const refs = new Map<string, object>();
         const registry = {
+            captureRef: (value: any, check?: (value: any) => void) => { check?.(value); return value; },
             registerRef(id: string, value: object) {
                 if (id === 'pending[1]') throw new Error('controlled Ref registration failure');
                 refs.set(id, value);
@@ -417,7 +410,7 @@ describe('M3 ArrayRef cleanup on registration failure', () => {
         const container = document.createElement('div');
         expect(() => render(
             h(ViewRuntimeContext.Provider, {
-                value: { meta: {}, refs: registry } as any,
+                value: { viewId: 'example', ...registry },
             }, h(Content, {})),
             container,
         )).toThrow('controlled Ref registration failure');

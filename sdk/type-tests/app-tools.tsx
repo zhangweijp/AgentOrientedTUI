@@ -1,5 +1,5 @@
 import Type from 'typebox';
-import { AppTools, ToolRef, ToolCatalog, View, defineToolSet, defineViewTypeTool } from '../src/index.js';
+import { AppTools, ToolCatalog, View, defineToolSet, defineViewTypeTool } from '../src/index.js';
 import type { ArgsOf, SchemaOf, ToolBindings, ToolSetMap, AppToolsProps } from '../src/index.js';
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type Assert<T extends true> = T;
@@ -13,7 +13,7 @@ export const jsx = <AppTools definition={tools} bindings={{ edit: { execute: arg
     type _Exact = Assert<Equal<typeof args, Expected>>;
     type _Any = Assert<Equal<IsAny<typeof args>, false>>;
     return { success: true, data: { path: args.path } };
-} } }}><View kind="state" id="file" type="File"><ToolRef tool={tools.edit} /></View><ToolCatalog definition={tools} /></AppTools>;
+} } }}><View kind="state" id="file" type="File">File content</View><ToolCatalog definition={tools} /></AppTools>;
 const bindings: ToolBindings<ToolSetMap<typeof tools>> = { edit: { enabled: false, execute: args => ({ success: true, data: { path: args.path } }) } };
 const props: AppToolsProps<typeof tools> = { definition: tools, bindings };
 export const forwarded = <AppTools {...props} />;

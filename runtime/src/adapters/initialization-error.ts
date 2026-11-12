@@ -2,7 +2,7 @@ import { captureInvocationJson, exact, invocationObject } from './worker-message
 import type { WorkerError, WorkerInitializationDiagnostic } from '../spi/worker-protocol/messages.js';
 
 type Phase = WorkerInitializationDiagnostic['phase'];
-const limits = { name: 128, message: 2048, stack: 8192 } as const;
+const limits = { name: 128, message: 2048, code: 128, path: 512, stack: 8192 } as const;
 
 /** Capture the thrown value before cleanup; only this flat, bounded record crosses IPC. */
 export function initializationFailure(phase: Phase, thrown: unknown): WorkerError {
@@ -22,10 +22,13 @@ export function initializationFailure(phase: Phase, thrown: unknown): WorkerErro
     const name = read('name', 'Error')!;
     const message = read('message', 'Non-Error value thrown')!;
     const stack = read('stack');
+    const code = read('code');
+    const path = read('path');
     return Object.freeze({
         code: phase === 'INIT' ? 'E_INIT_FAILED' : 'E_OPEN_FAILED',
         message: phase === 'INIT' ? 'App initialization failed' : 'App initial commit failed',
         diagnostic: Object.freeze({ phase, name, message,
+            ...(code === undefined ? {} : { code }), ...(path === undefined ? {} : { path }),
             ...(stack === undefined ? {} : { stack }), ...(truncated ? { truncated: true as const } : {}) }),
     });
 }
@@ -48,9 +51,12 @@ export function initializationError(input: unknown, appId: string, phase: Phase)
     });
     const diagnostic = failure?.diagnostic;
     if (invocationObject(diagnostic) && exact(diagnostic, ['phase', 'name', 'message',
-        ...(Object.hasOwn(diagnostic, 'stack') ? ['stack'] : []), ...(Object.hasOwn(diagnostic, 'truncated') ? ['truncated'] : [])]) &&
+        ...(Object.hasOwn(diagnostic, 'stack') ? ['stack'] : []),
+        ...(Object.hasOwn(diagnostic, 'code') ? ['code'] : []), ...(Object.hasOwn(diagnostic, 'path') ? ['path'] : []), ...(Object.hasOwn(diagnostic, 'truncated') ? ['truncated'] : [])]) &&
         diagnostic.phase === phase && typeof diagnostic.name === 'string' && diagnostic.name.length <= limits.name &&
         typeof diagnostic.message === 'string' && diagnostic.message.length <= limits.message &&
+        (!Object.hasOwn(diagnostic, 'code') || typeof diagnostic.code === 'string' && diagnostic.code.length <= limits.code) &&
+        (!Object.hasOwn(diagnostic, 'path') || typeof diagnostic.path === 'string' && diagnostic.path.length <= limits.path) &&
         (!Object.hasOwn(diagnostic, 'stack') || typeof diagnostic.stack === 'string' && diagnostic.stack.length <= limits.stack) &&
         (!Object.hasOwn(diagnostic, 'truncated') || diagnostic.truncated === true)) {
         Object.defineProperty(error, 'cause', { value: diagnostic });

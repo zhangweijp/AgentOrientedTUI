@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { SemanticAOTUIDrivenSourceOptions } from './semantic-aotui-driven-source.js';
 import type { IDesktop, IKernel, AppDiscoveryInfo } from '@aotui/runtime/spi';
 import type { Observation } from '@aotui/runtime/core';
-import type { InvocationOutcome, InvocationReceipt, InvokeResult, ScopedInvocation, ScopeClient } from '@aotui/runtime/core';
+import type { InvocationOutcome, InvocationReceipt, InvokeResult, AppInvocation, AppInteraction } from '@aotui/runtime/core';
 
 const app = (id: string, status: AppDiscoveryInfo['status'] = 'running', appInstanceId: string | null =
     status === 'pending' || status === 'closed' ? null : `${id}-instance`): AppDiscoveryInfo => ({ appId: id as any, name: id, status,
@@ -24,13 +24,13 @@ function observation(appId: string, revision = 1, name = 'multi_open_file'): Obs
         bindings: [{ bindingId: `${appId}-binding-${revision}`, toolId: 'tool', execution }],
     };
 }
-function receipt(request: ScopedInvocation, outcome: InvocationOutcome = { status: 'succeeded', value: null }): InvocationReceipt {
+function receipt(request: AppInvocation, outcome: InvocationOutcome = { status: 'succeeded', value: null }): InvocationReceipt {
     return { invocationId: request.invocationId, observationId: request.observationId, bindingId: request.bindingId,
         source: null, completedAt: 1, expiresAt: 60001, executionPhase: 'entered-returned', outcome };
 }
 function harness(installed = [app('one')], options: SemanticAOTUIDrivenSourceOptions = {}) {
     const observations = new Map(installed.map(item => [String(item.appId), observation(String(item.appId))]));
-    const clients: Array<{ appId: string; client: ScopeClient & { adoptObservation: ReturnType<typeof vi.fn>; observe: ReturnType<typeof vi.fn>; invoke: ReturnType<typeof vi.fn>; releaseObservation: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> } }> = [];
+    const clients: Array<{ appId: string; client: AppInteraction & { adoptObservation: ReturnType<typeof vi.fn>; observe: ReturnType<typeof vi.fn>; invoke: ReturnType<typeof vi.fn>; releaseObservation: ReturnType<typeof vi.fn> } }> = [];
     const updates = new Set<() => void>();
     const desktop = {
         id: 'desktop', getInstalledApps: vi.fn(() => installed),
@@ -43,23 +43,22 @@ function harness(installed = [app('one')], options: SemanticAOTUIDrivenSourceOpt
     const kernel = {
         acquireSnapshot: vi.fn(() => { throw new Error('legacy snapshot forbidden'); }),
         execute: vi.fn(() => { throw new Error('legacy execute forbidden'); }),
-        createAppScope: vi.fn((_desktopId: string, appId: string) => {
-            let closed = false;
+        getAppInteraction: vi.fn((_desktopId: string, appId: string, _instanceId: string) => {
+            const existing = clients.find(entry => entry.appId === appId);
+            if (existing) return { status: 'ready', interaction: existing.client };
             const results = new Map<string, InvocationReceipt>();
             const client = {
-                observe: vi.fn(async () => closed ? { status: 'rejected', issue: { code: 'SCOPE_UNAVAILABLE', message: 'closed' } } :
-                    { status: 'observed', observation: observations.get(appId)! }),
-                invoke: vi.fn(async (request: ScopedInvocation) => {
-                    if (closed) return { kind: 'refused', code: 'SCOPE_UNAVAILABLE', message: 'closed' };
+                observe: vi.fn(async () => ({ status: 'observed', observation: observations.get(appId)! })),
+                preview: vi.fn(), readReceipt: vi.fn(),
+                invoke: vi.fn(async (request: AppInvocation) => {
                     if (results.has(request.invocationId)) return { kind: 'receipt', receipt: results.get(request.invocationId)! };
-                    if (results.size >= 256) return { kind: 'refused', code: 'INVOCATION_CAPACITY', message: 'full' };
                     const value = receipt(request); results.set(request.invocationId, value);
                     return { kind: 'receipt', receipt: value };
                 }),
-                adoptObservation: vi.fn(() => ({ status: 'adopted' })), releaseObservation: vi.fn(), close: vi.fn(() => { closed = true; results.clear(); }),
+                adoptObservation: vi.fn(() => ({ status: 'adopted' })), releaseObservation: vi.fn(),
             } as unknown as (typeof clients)[number]['client'];
             clients.push({ appId, client });
-            return { status: 'opened', client };
+            return { status: 'ready', interaction: client };
         }),
     };
     const source = new SemanticAOTUIDrivenSource(desktop as unknown as IDesktop, kernel as unknown as IKernel, options);
@@ -111,10 +110,10 @@ describe('SemanticAOTUIDrivenSource', () => {
         const next = await h.source.getContext();
         h.clients[0].client.adoptObservation.mockReturnValueOnce({ status: 'rejected', issue: { code: 'OBSERVATION_UNAVAILABLE', message: 'gone' } });
         expect(() => next.adopt!()).toThrow(expect.objectContaining({ code: 'SEMANTIC_ADOPTION_FAILED' }));
-        expect(h.clients[0].client.close).not.toHaveBeenCalled();
+
         expect((await first.executeTool!(name, {}, 'still-current'))?.outcomeStatus).toBe('succeeded');
         expect((await next.executeTool!(name, {}, 'failed'))?.error?.code).toBe('SEMANTIC_CONTEXT_RELEASED');
-        await first.release!(); expect(h.clients[0].client.close).toHaveBeenCalledTimes(1); h.source.dispose();
+        await first.release!(); h.source.dispose();
     });
 
     it('reports partial App adoption without rollback claims and closes the unusable aggregate', async () => {
@@ -126,10 +125,10 @@ describe('SemanticAOTUIDrivenSource', () => {
             { appId: 'two', status: 'rejected', issue: { code: 'OBSERVATION_UNAVAILABLE', message: 'gone' } },
         ] }));
         expect((await first.executeTool!('system-close_app', { app_id: 'one' }, 'old'))?.error?.code).toBe('SEMANTIC_CONTEXT_RELEASED');
-        for (const item of h.clients) expect(item.client.close).toHaveBeenCalledTimes(1);
+        for (const item of h.clients) expect(item.client.releaseObservation).toHaveBeenCalled();
         await next.release!(); h.source.dispose();
     });
-    it('projects multiple apps through semantic scopes and opens pending apps through the Desktop lifecycle', async () => {
+    it('projects multiple App instances and opens pending apps through the Desktop lifecycle', async () => {
         const h = harness([app('one'), app('two'), app('pending', 'pending')]);
         const context = await consume(h.source);
         const one = findTool(context, 'one-'), two = findTool(context, 'two-');
@@ -225,7 +224,7 @@ describe('SemanticAOTUIDrivenSource', () => {
         await context.release!();h.source.dispose();
     });
 
-    it('pins each call to its observed binding and closes scopes only after the last context releases', async () => {
+    it('pins each call to its observed binding and releases only the owning observation', async () => {
         const h = harness();
         const first = await consume(h.source), tool = findTool(first, '-multi_open_file');
         h.observations.set('one', observation('one', 2));
@@ -235,11 +234,11 @@ describe('SemanticAOTUIDrivenSource', () => {
         await second.executeTool!(tool, {}, 'new');
         expect(h.clients[0].client.invoke.mock.calls.map(args => args[0].bindingId)).toEqual(['one-binding-1', 'one-binding-2']);
         await first.release!();
-        expect(h.clients[0].client.close).not.toHaveBeenCalled();
+
         expect((await first.executeTool!(tool, {}, 'late'))?.error?.code).toBe('SEMANTIC_CONTEXT_RELEASED');
         expect(h.clients[0].client.invoke).toHaveBeenCalledTimes(2);
         await second.release!();
-        expect(h.clients[0].client.close).toHaveBeenCalledTimes(1);
+
         h.source.dispose();
     });
 
@@ -275,17 +274,17 @@ describe('SemanticAOTUIDrivenSource', () => {
             expect(result?.outcomeStatus).toBe('succeeded');
             await context.release!();
         }
-        expect(h.clients).toHaveLength(300);
-        expect(h.clients.every(({ client }) => client.close.mock.calls.length === 1)).toBe(true);
+        expect(h.clients).toHaveLength(1);
+        expect(h.clients[0].client.releaseObservation).toHaveBeenCalledTimes(300);
         h.source.dispose();
     });
 
-    it('isolates a scope-open failure to its App and preserves healthy Apps', async () => {
+    it('isolates a interaction lookup failure to its App and preserves healthy Apps', async () => {
         const h = harness([app('one'), app('two')]);
-        const create = h.kernel.createAppScope.getMockImplementation()!;
-        h.kernel.createAppScope.mockImplementation((id, appId) => {
+        const create = h.kernel.getAppInteraction.getMockImplementation()!;
+        h.kernel.getAppInteraction.mockImplementation((id, appId, instanceId) => {
             if (appId === 'two') throw new Error('cannot observe');
-            return create(id, appId);
+            return create(id, appId, instanceId);
         });
         const context = await consume(h.source);
         expect(context.tools['one-AnyView-multi_open_file']).toBeDefined();
@@ -295,8 +294,33 @@ describe('SemanticAOTUIDrivenSource', () => {
         expect(context.messages.some(message => String(message.content).includes('AOTUI_APP_PROJECTION_FAILED'))).toBe(true);
         await context.release!();
         expect(h.clients[0].client.releaseObservation).toHaveBeenCalledWith('one-observation-1');
-        expect(h.clients[0].client.close).toHaveBeenCalledOnce();
+
         h.source.dispose();
+    });
+
+    it('escapes a rejected observation diagnostic and keeps other Apps visible', async () => {
+        const h = harness([app('one'), app('two')]);
+        const create = h.kernel.getAppInteraction.getMockImplementation()!;
+        h.kernel.getAppInteraction.mockImplementation((id, appId, instanceId) => {
+            const scope = create(id, appId, instanceId);
+            if (appId === 'two') scope.interaction.observe.mockResolvedValueOnce({
+                status: 'rejected',
+                issue: { code: 'SNAPSHOT_INVALID', message: 'Unexpected <value>&\nRetry', path: '$.<ref&>' },
+            });
+            return scope;
+        });
+        const context = await consume(h.source);
+        try {
+            expect(context.tools['one-AnyView-multi_open_file']).toBeDefined();
+            expect(context.tools['two-AnyView-multi_open_file']).toBeUndefined();
+            const messages = context.messages.map(message => String(message.content)).join('\n');
+            expect(messages).toContain('current one revision 1');
+            expect(messages).not.toContain('current two revision 1');
+            expect(messages).toContain('Semantic status: SNAPSHOT_INVALID: Unexpected &lt;value&gt;&amp; Retry (at $.&lt;ref&amp;&gt;)');
+        } finally {
+            await context.release!();
+            h.source.dispose();
+        }
     });
 
     it('does not retarget or retry a call whose result is unknown', async () => {
@@ -314,7 +338,7 @@ describe('SemanticAOTUIDrivenSource', () => {
         const result = await context.executeTool!(findTool(context, '-multi_open_file'), {}, 'after-disable');
         expect(result?.outcomeStatus).toBe('rejected');
         expect(h.clients[0].client.invoke).not.toHaveBeenCalled();
-        expect(h.clients[0].client.close).toHaveBeenCalledOnce();
+
         await context.release!(); h.source.dispose();
     });
 
@@ -323,13 +347,13 @@ describe('SemanticAOTUIDrivenSource', () => {
         const listener = vi.fn(), unsubscribe = h.source.onUpdate(listener);
         for (const update of h.updates) update();
         expect(listener).toHaveBeenCalledOnce();
-        const contexts = await Promise.all(Array.from({ length: 8 }, () => h.source.getContext()));
+        const contexts = await Promise.all(Array.from({ length: 2 }, () => h.source.getContext()));
         await expect(h.source.getContext()).rejects.toThrow('SEMANTIC_CONTEXT_CAPACITY');
         h.source.dispose(); unsubscribe();
         expect(h.desktop.output.unsubscribe).toHaveBeenCalledTimes(1);
-        expect(h.clients[0].client.releaseObservation).toHaveBeenCalledTimes(8);
+        expect(h.clients[0].client.releaseObservation).toHaveBeenCalledTimes(2);
         for (const context of contexts) await context.release!();
-        expect(h.clients[0].client.close).toHaveBeenCalledTimes(1);
+
     });
 
     it('isolates an oversized Tool alias and restores the App after its declaration is corrected', async () => {
@@ -341,8 +365,9 @@ describe('SemanticAOTUIDrivenSource', () => {
         expect(invalid.messages.some(message => String(message.content).includes('current bad revision 1'))).toBe(false);
         expect(invalid.messages.some(message => String(message.content).includes('AOTUI_TOOL_NAME_INVALID'))).toBe(true);
         expect(h.clients.find(entry => entry.appId === 'bad')!.client.releaseObservation).toHaveBeenCalledOnce();
-        expect(h.clients.find(entry => entry.appId === 'bad')!.client.close).toHaveBeenCalledOnce();
+
         h.observations.set('bad', observation('bad', 2, 'read'));
+        await invalid.release!();
         const recovered = await consume(h.source);
         expect(recovered.tools['bad-AnyView-read']).toBeDefined();
         await invalid.release!(); await recovered.release!();
@@ -570,7 +595,7 @@ describe('model-visible presentation contract', () => {
         expect(h.clients.find(entry => entry.appId === 'healthy')!.client.invoke).toHaveBeenCalledOnce();
         expect(h.clients.find(entry => entry.appId === 'two')!.client.releaseObservation).toHaveBeenCalledOnce();
         await context.release!();
-        expect(h.clients.find(entry => entry.appId === 'two')!.client.close).toHaveBeenCalledOnce();
+
         h.source.dispose();
     });
 
@@ -623,13 +648,14 @@ describe('model-visible presentation contract', () => {
         expect(invalid.messages.some(message => String(message.content).includes('current bad revision 1'))).toBe(false);
         expect(invalid.messages.some(message => String(message.content).includes('AOTUI_TOOL_SCHEMA_INVALID'))).toBe(true);
         h.observations.set('bad', observation('bad', 2));
+        await invalid.release!();
         const recovered = await consume(h.source);
         expect(recovered.tools['bad-AnyView-multi_open_file']).toBeDefined();
         await invalid.release!(); await recovered.release!();
         h.source.dispose();
     });
 
-    it('keeps a failed projection Scope alive while an older Context still owns its binding', async () => {
+    it('preserves the original binding after a candidate projection fails', async () => {
         const h = harness([app('healthy'), app('bad')]);
         const previous = await consume(h.source);
         const badClient = h.clients.find(entry => entry.appId === 'bad')!.client;
@@ -640,11 +666,11 @@ describe('model-visible presentation contract', () => {
         expect(current.tools['healthy-AnyView-multi_open_file']).toBeDefined();
         expect(current.tools['bad-AnyView-bad-tool']).toBeUndefined();
         expect(badClient.releaseObservation).toHaveBeenCalledWith('bad-observation-2');
-        expect(badClient.close).not.toHaveBeenCalled();
+
         await previous.executeTool!('bad-AnyView-multi_open_file', {}, 'prior-binding');
         expect(badClient.invoke).toHaveBeenCalledOnce();
         await previous.release!();
-        expect(badClient.close).toHaveBeenCalledOnce();
+
         await current.release!(); h.source.dispose();
     });
 

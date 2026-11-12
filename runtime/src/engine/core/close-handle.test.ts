@@ -13,7 +13,7 @@ function fixture() {
         pendingTasks: 0, unverifiedParticipants: 0,
         persistence: { managedApps: 0, unnegotiatedApps: 0, notUsedApps: 0, closeReceipts: 0, missingCloseReceipts: 0, confirmedFlushes: 0, failedFlushes: 0, absentFlushes: 0, unknownApps: 0, unsavedKeys: 0 },
         resources: { retainedStorageOwners: 0, storageActualIO: 0, openingStorageOwners: 0 },
-        pool: { ownership: 'not-owned', report: null }, beforeClose: 'not-provided',
+        workers: { ownership: 'not-owned', report: null }, beforeClose: 'not-provided',
         cleanup: { signalBus: 'not-owned', llmOutput: 'not-owned', logger: 'not-owned' },
         failures: [], failureCount: 0, samplesTruncated: false,
     };
@@ -58,7 +58,7 @@ it('C2-01 failed reports keep old void wrappers rejected, while mere unverified 
 function envelope(lifecycle: any, extra: any = {}) {
     return { state: 'closing', intent: 'close', ok: false, resourcesReleased: false, issues: [],
         host: { state: 'closing', worker: 'owned', resourcesReleased: false, issues: [],
-            interactions: { closed: true, retainedScopes: 0, retainedBytes: 0 },
+            interactions: { closed: true, retainedOperations: 0, retainedBytes: 0 },
             storage: { support: 'managed', unsafe: false, actualIO: 0, pending: 0, opening: false, ownerRetained: true, uncertain: false, lifecycle } }, ...extra } as any;
 }
 it('C2-25 Q01 rejected negotiation remains mixed without fabricating unknown resources or managed missing receipts', () => {
@@ -77,7 +77,7 @@ it.each(['normal', 'failed', 'unknown', 'unmount'])('C2-25 Q02 actual B2 control
     expect(managed.getReport()).toMatchObject({ ok: false, unmount: 'pending' });expect(before.hasFailures).toBe(mode === 'failed' || mode === 'unknown');
     expect(before.persistence.closeReceipts).toBe(1);expect(before.persistence.confirmedFlushes).toBe(mode === 'normal' || mode === 'unmount' ? 1 : 0);
     const lifecycle = await managed.close(() => { if (mode === 'unmount') throw Error('private unmount'); });
-    const final = envelope(lifecycle, { state: 'settled', resourcesReleased: true });final.host = { ...final.host, state: 'settled', worker: 'transferred', resourcesReleased: true,
+    const final = envelope(lifecycle, { state: 'settled', resourcesReleased: true });final.host = { ...final.host, state: 'settled', worker: 'exited', resourcesReleased: true,
         storage: { ...final.host.storage, ownerRetained: false, release: { status: 'released' } } };
     const report = sandboxCloseReport(final, 'd', 'a');expect(report.resourcesReleased).toBe(true);expect(report.ok).toBe(mode === 'normal');expect(backend.getStats().activeOwners).toBe(0);
     expect(report.persistence.unknownApps).toBe(mode === 'unknown' ? 1 : 0);expect(before.state).toBe('closing');
@@ -119,7 +119,7 @@ it('keeps callback failure separate from released resources through Runtime aggr
 it('C2-25 bounded failure samples and Unicode display IDs preserve complete counts and pending resource facts', () => {
     const state = newCloseState('runtime'), id = '\u0001'.repeat(1000), raw = '🙂'.repeat(100);
     expect(displayCloseId(raw)).toBe('🙂'.repeat(64));expect(raw).toHaveLength(200);
-    const codes: RuntimeCloseReport['failures'][number]['codes'] = ['INSTALL_FAILED', 'DELETE_FAILED', 'APP_CLOSE_FAILED', 'RESET_FAILED', 'RESOURCE_RELEASE_FAILED', 'WORKER_ERROR', 'WORKER_TERMINATION_FAILED', 'PERSISTENCE_CLOSE_FAILED', 'APP_UNMOUNT_FAILED', 'APP_DELETE_FAILED'];
+    const codes: RuntimeCloseReport['failures'][number]['codes'] = ['INSTALL_FAILED', 'DELETE_FAILED', 'APP_CLOSE_FAILED', 'APP_CLOSE_DEADLINE_EXCEEDED', 'RESOURCE_RELEASE_FAILED', 'WORKER_ERROR', 'WORKER_TERMINATION_FAILED', 'PERSISTENCE_CLOSE_FAILED', 'APP_UNMOUNT_FAILED', 'APP_DELETE_FAILED'];
     for (let i = 0; i < 100; i++) {
         const child = newCloseState('app-manager');child.apps = { accepted: 1, settled: 0, pending: 1, notVerifiedReleased: 1 };child.resourcesReleased = false;child.resources.retainedStorageOwners = 1;
         addCloseFailure(child, 'apps', [...codes, codes[0]], { desktopId: id + i, appId: id });mergeCloseReport(state, snapshotClose(child));

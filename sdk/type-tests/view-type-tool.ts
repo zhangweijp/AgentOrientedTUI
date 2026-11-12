@@ -1,5 +1,5 @@
 import Type from 'typebox';
-import { defineViewTypeTool, defineToolSet, createToolBindings } from '../src/tools/view-type-tool.js';
+import { AppTools, defineViewTypeTool, defineToolSet } from '../src/index.js';
 
 const input = Type.Object({
   filePath: Type.String({ description: 'Absolute path.' }),
@@ -11,8 +11,7 @@ const input = Type.Object({
 const definition = defineViewTypeTool({
   viewType: 'FileDetail', name: 'edit_file', description: 'Edit a loaded file.', inputSchema: input,
 });
-declare const port: import('@aotui/runtime/spi').IAppTypeToolPort;
-createToolBindings({ definition: defineToolSet({ edit: definition }), appTypeTools: port }).commit({ edit: { execute(args) {
+AppTools({ definition: defineToolSet({ edit: definition }), bindings: { edit: { execute(args) {
     const path: string = args.filePath;
     const replaceAll: boolean | undefined = args.replaceAll;
     const mode: 'name' | 'content' = args.mode;
@@ -24,7 +23,7 @@ createToolBindings({ definition: defineToolSet({ edit: definition }), appTypeToo
     args.notDeclared;
     void path; void replaceAll; void mode; void number;
     return { success: true };
-  } } });
+  } } } });
 
 const existing = async (args: { readonly filePath: string; readonly content: string }): Promise<import('@aotui/runtime/spi').ToolResult> => args.filePath.length > 0
   ? { success: true }
@@ -34,15 +33,15 @@ const write = defineViewTypeTool({
   inputSchema: Type.Object({ filePath: Type.String(), content: Type.String() }),
 });
 
-createToolBindings({ definition: defineToolSet({ write }), appTypeTools: port }).commit({ write: { execute: existing } });
+AppTools({ definition: defineToolSet({ write }), bindings: { write: { execute: existing } } });
 
 const invalidHandler = defineViewTypeTool({
   viewType: 'FileDetail', name: 'invalid_handler', description: 'Must fail type checking.', inputSchema: Type.Object({ filePath: Type.String() }),
 });
-createToolBindings({ definition: defineToolSet({ invalidHandler }), appTypeTools: port }).commit({ invalidHandler: {
+AppTools({ definition: defineToolSet({ invalidHandler }), bindings: { invalidHandler: {
   // @ts-expect-error Handler must accept the schema-derived string field.
   execute: async (args: { filePath: number }) => ({ success: true }),
-} });
+} } });
 
 defineViewTypeTool({
   viewType: 'FileDetail', name: 'invalid_root', description: 'Root must be an object.',

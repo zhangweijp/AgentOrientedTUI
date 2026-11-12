@@ -1,6 +1,7 @@
 import { it, expect } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { AppWorkerHost } from './worker-host.js';
+import { WorkerCapacity } from './worker-capacity.js';
 class ControlledWorker extends EventEmitter {
     threadId = 1;sent: any[] = [];termination: () => Promise<number> = () => Promise.resolve(0);terminations = 0;
     pendingCloseResponse: any;
@@ -14,7 +15,7 @@ class ControlledWorker extends EventEmitter {
             const init = message.type === 'INIT';
             const initMessage = this.sent.find(item => item.type === 'INIT');
             const instanceId = initMessage?.appInstanceId;
-            const response: any = { type: init ? 'INIT_RESPONSE' : message.type === 'RESET' ? 'RESET_RESPONSE' : 'LIFECYCLE_RESPONSE',
+            const response: any = { type: init ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
                 requestId: message.requestId, success: true };
             if (init) Object.assign(response, { appInstanceId: instanceId, acceptedCapabilities: message.requestedCapabilities,
                 appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId },
@@ -41,17 +42,38 @@ class ControlledWorker extends EventEmitter {
     exit() { this.threadId = -1;this.emit('exit', 0); }
 }
 const fixture = () => { const worker = new ControlledWorker();const host = new AppWorkerHost({ appId: 'a' as any, desktopId: 'd' as any, appModulePath: '/unused', timeout: 1000, existingWorker: worker as any });return { worker, host }; };
-it('C1-09 RESET removes only this Host callbacks and preserves Pool/external observation', async () => {
-    const worker = new ControlledWorker();let messages = 0, exits = 0;const external = () => { messages++; }, pool = () => { exits++; };
-    worker.on('message', external);worker.on('exit', pool);worker.on('error', () => {});
-    const host = new AppWorkerHost({ appId: 'a' as any, desktopId: 'd' as any, appModulePath: '/unused', existingWorker: worker as any });
-    await host.start();await host.open();await host.close();const first = host.releaseWorker(), second = host.releaseWorker();
-    expect(await first).toBe(worker);expect(await second).toBeNull();expect(worker.listeners('message')).toEqual([external]);expect(worker.listeners('exit')).toEqual([pool]);
-    const report = await host.waitForResourceRelease();expect(report).toMatchObject({ state: 'settled', worker: 'transferred', resourcesReleased: true });
-    host.terminate();expect(worker.terminations).toBe(0);worker.exit();expect(exits).toBe(1);expect(messages).toBeGreaterThan(0);
+it('after exit detaches only Host listeners and releases its physical capacity once', async () => {
+    const worker = new ControlledWorker(), capacity = new WorkerCapacity(1);
+    let messages = 0, exits = 0;
+    const external = () => { messages++; }, observer = () => { exits++; };
+    worker.on('message', external);worker.on('exit', observer);worker.on('error', () => {});
+    const host = new AppWorkerHost({ appId: 'a', desktopId: 'd', appModulePath: '/unused',
+        existingWorker: worker as any, workerCapacity: capacity });
+    let entered!: () => void;
+    const terminating = new Promise<void>(resolve => { entered = resolve; });
+    worker.termination = () => { entered();return new Promise(() => {}); };
+    await host.start();await host.open();
+    const closing = host.close();
+    await terminating;
+    expect(host.close()).toBe(closing);
+    expect(capacity.getReport().total).toBe(1);
+    expect(() => capacity.reserve()).toThrow(expect.objectContaining({ code: 'WORKER_CAPACITY_EXCEEDED' }));
+    worker.exit();
+    await closing;
+    expect(worker.listeners('message')).toEqual([external]);
+    expect(worker.listeners('exit')).toEqual([observer]);
+    expect(await host.waitForResourceRelease()).toMatchObject({ state: 'settled', worker: 'exited', resourcesReleased: true });
+    const next = capacity.reserve();
+    host.terminate();
+    expect(capacity.getReport().total).toBe(1);
+    next();
+    expect(worker.terminations).toBe(1);
+    expect(exits).toBe(1);
+    expect(messages).toBeGreaterThan(0);
 });
 it('C1-10 wait is shared and never implies close; terminate receipt is not actual exit', async () => {
     const { host, worker } = fixture();await expect(host.waitForResourceRelease()).rejects.toMatchObject({ code: 'RESOURCE_RELEASE_NOT_STARTED' });
+    worker.termination = () => new Promise(() => {});
     expect(worker.sent).toHaveLength(0);await host.start();host.terminate();const pending = host.waitForResourceRelease();expect(host.waitForResourceRelease()).toBe(pending);
     await Promise.resolve();expect(host.getResourceReport()).toMatchObject({ state: 'closing', worker: 'retiring', resourcesReleased: false });
     expect(worker.terminations).toBe(1);worker.exit();expect(await pending).toMatchObject({ state: 'settled', worker: 'exited', resourcesReleased: true });

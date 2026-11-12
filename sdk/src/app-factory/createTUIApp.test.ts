@@ -53,7 +53,7 @@ describe('createTUIApp', () => {
     it.each([undefined, { protocol: 'app-lifecycle-v1' }])('refuses an unsupported cleanup port before rendering the Root', async appLifecycle => {
         const component = vi.fn(() => null);
         const factory = createTUIApp({ app_name: 'test_app', component });
-        await expect(factory.initializeComponent({} as any, { appId: 'app', desktopId: 'desktop', appLifecycle } as any))
+        await expect(factory.initialize({ appId: 'app', desktopId: 'desktop', appLifecycle } as any))
             .rejects.toThrow('APP_LIFECYCLE_UNSUPPORTED');
         expect(component).not.toHaveBeenCalled();
     });
@@ -79,7 +79,7 @@ describe('createTUIApp', () => {
         expect(coercion).not.toHaveBeenCalled();
         const factory = createTUIApp({ app_name: 'valid_123', whatItIs: 'What', whenToUse: 'When', component: () => null });
         expect(factory.displayName).toBe('valid_123');expect(factory.kernelConfig).toMatchObject({ appName: 'valid_123', name: 'valid_123', whatItIs: 'What', whenToUse: 'When' });
-        expect(typeof factory.initializeComponent).toBe('function');
+        expect(typeof factory.initialize).toBe('function');
         expect(Object.hasOwn(factory, 'create')).toBe(false);
         expect(Object.hasOwn(factory, 'TUI_FACTORY')).toBe(false);
         expect(typeof factory).toBe('object');

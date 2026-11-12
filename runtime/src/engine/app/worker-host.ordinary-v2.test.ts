@@ -37,12 +37,12 @@ function scope(x: any) {
   const authorized: any[] = [], control = { authorize: (_c: any): any => true, canRead: (_m: any, _s: any): any => true };
   const recorded = { authorizations: [] as any[], invocations: [] as any[], observations: [] as any[] };
   (x.scopeFacts ??= []).push(recorded);
-  const opened = x.host.createInteractionScope({ project, authorize(c: any) {
-    authorized.push(c); recorded.authorizations.push({ scopeId: c.scopeId, invocationId: c.invocationId, rawInput: c.rawInput, effectiveInput: c.effectiveInput,
+  const opened = x.host.getAppInteraction({ project, authorize(c: any) {
+    authorized.push(c); recorded.authorizations.push({ invocationId: c.invocationId, rawInput: c.rawInput, effectiveInput: c.effectiveInput,
       execution: c.source.execution, instanceId: c.source.instanceId }); return control.authorize(c);
   }, canReadReceipt: (m: any, s: any) => control.canRead(m, s) });
-  expect(opened.status).toBe('opened'); if (opened.status !== 'opened') throw Error(opened.issue.code);
-  const original = opened.client;
+  expect(opened.status).toBe('ready'); if (opened.status !== 'ready') throw Error(opened.issue.code);
+  const original = opened.interaction;
   const client = { ...original, async invoke(request: unknown) {
     const invocationId = request && typeof request === 'object' ? Object.getOwnPropertyDescriptor(request, 'invocationId')?.value : null;
     const response = await original.invoke(request); recorded.invocations.push({ invocationId, response }); return response;
@@ -120,10 +120,10 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     legacySdkAppFile = join(temporary, 'legacy-sdk-app.mjs');
     await writeFile(legacySdkAppFile, `export default {
       displayName: 'legacy_sdk',
-      kernelConfig: { appName: 'legacy_sdk', name: 'legacy_sdk', component: undefined },
+      kernelConfig: { appName: 'legacy_sdk', name: 'legacy_sdk' },
       persistenceSupport: 'state-session-v1',
       appLifecycleSupport: 'app-lifecycle-v2',
-      initializeComponent() { throw new Error('OLD_SDK_COMPONENT_EXECUTED'); }
+      initialize() { throw new Error('UNSUPPORTED_FACTORY_EXECUTED'); }
     };\n`);
     facts.push({ kind: 'current emitted inputs', runtime, sdk, node: process.version, appFile, workerFile });
   });
@@ -141,13 +141,13 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
         appModulePath: 'file:///this-module-must-not-be-imported.mjs', appInstanceId: 'legacy-host-instance',
         requestedCapabilities: ['view-tool-ordinary-invoke/v2'] });
       await expect(responsePromise).resolves.toMatchObject({ type: 'ERROR_RESPONSE', requestId: 'legacy-host-init',
-        success: false, error: { code: 'WORKER_PROTOCOL_V3_REQUIRED' } });
+        success: false, error: { code: 'WORKER_CAPABILITY_UNSUPPORTED' } });
     } finally {
       await legacyWorker.terminate();
     }
   });
 
-  it('new Runtime rejects a legacy createTUIApp factory before AppKernel construction', async () => {
+  it('new Runtime rejects a factory with the old authoring protocol before AppKernel construction', async () => {
     const host = new Host({ appId: 'legacy_sdk', desktopId: 'd', appModulePath: legacySdkAppFile,
       timeout: NORMAL_HOST_TIMEOUT_MS, interactionModes: ALL, config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } });
     try {
@@ -158,21 +158,6 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
       host.terminate();
       await host.waitForResourceRelease();
     }
-  });
-
-  it.each(['VIEW_TOOL_INVOKE_V2', 'VIEW_TOOL_INVOKE_V3'])('a running V4 Worker rejects retired %s with a correlated error and zero handler entries', async type => {
-    const x = await start();
-    try {
-      const tool = Object.values(x.snapshot().tools).find((tool: any) => tool.name === 'find' && tool.viewType === 'File') as any;
-      const requestId = 'retired-' + type, from = x.messages.length;
-      x.physical({ type, requestId, appId: 'app', instanceId: x.host.appInstanceId,
-        snapshotId: x.snapshot().id, tool, execution: tool.execution, argumentMode: 'ordinary-v2', args: good });
-      const response = await wait(x, message => message.requestId === requestId, from);
-      expect(response).toMatchObject({ type: 'ERROR_RESPONSE', requestId, success: false,
-        error: { code: 'WORKER_CAPABILITY_UNSUPPORTED' } });
-      expect(x.entries()).toHaveLength(0);
-      facts.push({ kind: 'retired invocation explicitly rejected', type, requestId, response, handlerEntries: 0 });
-    } finally { x.host.terminate(); await x.host.waitForResourceRelease(); }
   });
 
   it('R11/R13 really enters the target handler with matching policy/post/handler values and no defaults', async () => {
@@ -269,53 +254,58 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     expect(x.entries()).toHaveLength(1); expect(s.authorized).toHaveLength(1);
     if (mode === 'business' || mode === 'throw') {
       expect(r.outcome).toMatchObject({ status: 'unknown', details: { kind: 'tool-result', phase: 'entered-returned', result: { success: false, error: { code: mode === 'business' ? 'BUSINESS' : 'E_HANDLER_ERROR' } } } });
-      expect(x.host.getInteractionReport().transportUncertain).toBe(false);
+      expect(x.host.getInteractionReport().workerToolPending).toBe(false);
       expect(JSON.stringify(r)).not.toContain('W07_PRIVATE_EXCEPTION');
-    } else { expect(r.outcome.status).toBe('unknown'); expect(x.host.getInteractionReport().transportUncertain).toBe(true); expect(await x.host.releaseWorker()).toBeNull(); }
+    } else {
+      expect(r.outcome.status).toBe('unknown');
+      expect(x.host.getInteractionReport().workerToolPending).toBe(false);
+      expect(x.messages.find((message: any) => message.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE')?.terminal.phase).toBe('finished-unknown');
+    }
   });
-  it('R18 deduplicates within Scope, rejects input reuse, isolates Scope IDs and authorizes receipt reads', async () => {
-    const x = await start(), a = scope(x), b = scope(x), oa = await a.observe(), ob = await b.observe('bb');
-    const request = a.request(oa, 'same-id', 'find', good), first = receipt(await a.client.invoke(request));
-    expect(receipt(await a.client.invoke(request))).toEqual(first); expect(x.entries()).toHaveLength(1);
-    const conflict = await a.client.invoke({ ...request, input: { ...good, n: 3 } });
-    expect(conflict.kind).not.toBe('receipt'); expect(x.entries()).toHaveLength(1);
-    const second = value(await b.client.invoke(b.request(ob, 'same-id', 'find', { ...good, view_id: 'bb' }, 'bb')));
+  it('R18 deduplicates within the instance and authorizes reads from the original observation', async () => {
+    const x = await start(), s = scope(x), oa = await s.observe();
+    const request = s.request(oa, 'same-id', 'find', good), first = receipt(await s.client.invoke(request));
+    expect(receipt(await s.client.invoke(request))).toEqual(first); expect(x.entries()).toHaveLength(1);
+    expect(await s.client.invoke({ ...request, input: { ...good, n: 3 } })).toMatchObject({ kind: 'refused', code: 'INVOCATION_ID_CONFLICT' });
+    const ob = await s.observe('bb');
+    expect(await s.client.invoke(s.request(ob, 'same-id', 'find', good, 'bb')))
+      .toMatchObject({ kind: 'refused', code: 'INVOCATION_ID_CONFLICT' });
+    const second = value(await s.client.invoke(s.request(ob, 'next-id', 'find', { ...good, view_id: 'bb' }, 'bb')));
     expect(second.data.view).toBe('bb'); expect(x.entries()).toHaveLength(2);
-    a.control.canRead = () => false;
-    expect((await a.client.invoke(request)).kind).toBe('unavailable');
+    expect(receipt(await s.client.readReceipt(request))).toEqual(first);
+    s.control.canRead = () => false;
+    expect(await s.client.readReceipt(request)).toMatchObject({ kind: 'unavailable', code: 'RECEIPT_PERMISSION_DENIED' });
   });
-  it('R19 the current qualified ordinary bindings share one Worker and one uncertainty state', async () => {
-    const x = await start(); await control(x, 'mode', { mode: 'hold' }); const a = scope(x), b = scope(x), oa = await a.observe(), ob = await b.observe();
-    const gate = deferred<boolean>(), reached = deferred(); b.control.authorize = () => { reached.resolve(); return gate.promise; };
-    const waiting = b.client.invoke(b.request(ob, 'waiting', 'find', good));
-    let promises: Promise<any>[] = [];
-    try {
-    await reached.promise;
-    x.host.timeout = FAULT_HOST_TIMEOUT_MS;
-    const requests = [['find', good], ['zero', {}]] as const;
-    promises = requests.map(([name, input]) => a.client.invoke(a.request(oa, 'mix-' + name, name, input)));
-    await wait(x, m => m.type === 'TEST_HANDLER_ENTER' && x.entries().length === 2);
-    const first = x.entries().find((entry: any) => entry.name === 'find'), nativeEmit = x.worker.emit.bind(x.worker);
+  it('R19 an invalid terminal preserves the one App-wide execution across observations and tool types', async () => {
+    const x = await start(); await control(x, 'mode', { mode: 'hold' });
+    const s = scope(x), original = await s.observe();
+    const running = s.client.invoke(s.request(original, 'mix-find', 'find', good), FAULT_HOST_TIMEOUT_MS);
+    await wait(x, m => m.type === 'TEST_HANDLER_ENTER');
+    expect(await s.client.invoke(s.request(original, 'mix-zero', 'zero', {}))).toMatchObject({ code: 'INVOCATION_CAPACITY' });
+    const current = await s.observe();
+    expect(await s.client.invoke(s.request(current, 'other-observation', 'find', good))).toMatchObject({ code: 'INVOCATION_CAPACITY' });
+    const originalEmit = x.worker.emit.bind(x.worker);
     x.worker.emit = (event: string, ...args: any[]) => {
-      if (event === 'message' && args[0]?.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE' && args[0]?.requestId === x.posts().find((message: any) => message.argumentMode === 'view-type-parameters-v1')?.requestId) {
+      if (event === 'message' && args[0]?.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE') {
         args[0] = { ...args[0], argumentMode: 'snapshot-value-v2' };
       }
-      return nativeEmit(event, ...args);
+      return originalEmit(event, ...args);
     };
-    await control(x, 'release', { id: first.id });
-    expect(receipt(await promises[0]).outcome.status).toBe('unknown');
-    gate.resolve(true); expect(receipt(await waiting).outcome.status).toBe('rejected');
-    expect(receipt(await promises[1]).outcome.status).toBe('unknown');
-    expect(x.posts()).toHaveLength(2); expect(x.entries()).toHaveLength(2); expect(x.host.getInteractionReport().transportUncertain).toBe(true);
-    expect(await x.host.releaseWorker()).toBeNull();
-    } finally { gate.resolve(true); x.host.terminate(); await Promise.allSettled([waiting, ...promises]); }
+    await control(x, 'release', { id: x.entries()[0].id });
+    expect(receipt(await running).outcome.status).toBe('unknown');
+    expect(x.posts()).toHaveLength(1);
+    expect(x.entries()).toHaveLength(1);
+    expect(x.host.getInteractionReport().workerToolPending).toBe(true);
+    x.host.terminate();
+    expect((await x.host.waitForResourceRelease()).worker).toBe('exited');
+    expect(x.host.getInteractionReport().workerToolPending).toBe(false);
   });
-  it('R20 healthy business failure permits pool reuse with a new logical instance', async () => {
+  it('R20 settled business failure allows closing and starting an independent instance', async () => {
     const x = await start(); await control(x, 'mode', { mode: 'business' }); const s = scope(x), o = await s.observe();
     expect(receipt(await s.client.invoke(s.request(o, 'healthy-failure', 'find', good))).outcome).toMatchObject({ status: 'unknown', details: { result: { success: false, error: { code: 'BUSINESS' } } } });
-    expect(x.host.getInteractionReport().transportUncertain).toBe(false);
-    const pooled = await x.host.releaseWorker(); expect(pooled).not.toBeNull();
-    const y = await start({ existing: pooled }); expect(y.host.appInstanceId).not.toBe(x.host.appInstanceId);
+    expect(x.host.getInteractionReport().workerToolPending).toBe(false);
+    await x.host.close();expect(x.worker.threadId).toBe(-1);
+    const y = await start();expect(y.worker).not.toBe(x.worker); expect(y.host.appInstanceId).not.toBe(x.host.appInstanceId);
     const other = scope(y), observed = await other.observe(); await control(y, 'mode', { mode: 'normal' });
     expect(value(await other.client.invoke(other.request(observed, 'new-run', 'find', good))).data.view).toBe('aa');
     const oldRead = await s.client.invoke(s.request(o, 'old-run', 'find', good)); expect(oldRead.kind).not.toBe('receipt');
@@ -326,6 +316,17 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     expect(o.tools).toEqual([]);
     expect(o.bindings).toEqual([]);
     expect(x.host.getInteractionReport().negotiatedModes).toEqual([]);
+    const snapshot = x.snapshot(), tool = Object.values(snapshot.tools).find((tool: any) => tool.name === 'find' && tool.viewType === 'File') as any;
+    const requestId = 'read-only-probe', from = x.messages.length;
+    x.physical({ type: 'VIEW_TOOL_INVOKE_V4', requestId, appId: 'app', instanceId: x.host.appInstanceId,
+      snapshotId: snapshot.id, tool, execution: tool.execution, argumentMode: 'view-type-parameters-v1',
+      rawArgs: good, effectiveArgs: good, refSources: [] });
+    expect(await wait(x, message => message.requestId === requestId, from)).toMatchObject({
+      type: 'VIEW_TOOL_INVOKE_V4_RESPONSE', terminal: { phase: 'not-entered', result: {
+        success: false, error: { code: 'TOOL_EXECUTION_UNAVAILABLE' },
+      } },
+    });
+    expect(x.entries()).toHaveLength(0);
   });
   it('R22 the current shared mode includes empty ordinary parameters and reject duplicate initialization', async () => {
     const x = await start(), s = scope(x), o = await s.observe();

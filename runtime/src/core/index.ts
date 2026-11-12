@@ -1,13 +1,15 @@
 export { createSnapshotCore } from './snapshot/store.js';
+export { SemanticProjectionCoordinator } from './projection/coordinator.js';
+export type { ProjectionSource } from './projection/coordinator.js';
 export { refKey } from './snapshot/snapshot-support.js';
 export { createViewOwnedTools, ViewToolContractError } from './tool/view-owned-tools.js';
-export { createScopedInteraction } from './invocation/scoped-interaction.js';
+export { createAppInteraction } from './invocation/app-interaction.js';
 export { createStateSession } from './persistence/state-session.js';
-export { compileOrdinaryParams, compileOrdinarySchema } from './tool/ordinary-parameter-contract.js';
+export { compileOrdinaryParams, compileOrdinarySchema, compileValueSchema, modelToolSchema } from './tool/ordinary-parameter-contract.js';
 export { ordinaryParameterProfile, compileOrdinaryProfile } from './tool/ordinary-parameter-profile.js';
 export type { JsonValue, ViewContent, RefTarget, ViewSnapshotV2, RefDescriptorV2, ToolExecutionV3, ObservedToolExecutionV3, ToolDescriptorV3, PreparedAppSnapshotDraftV3, AppSnapshotV3, SnapshotIssueCode, SnapshotIssue, CommitResult, SnapshotRead, SnapshotLookup, SnapshotLease, LeaseResult, RefLookup, ToolLookup, RefSelector, ToolSelector, SnapshotLimits, SnapshotStoreOptions, SnapshotStoreStats, SnapshotStore, PreparedSnapshotFailure, SnapshotCommitter, SnapshotLifecycle, SnapshotCore, AppIdentityRead, AppIdentityReader } from './snapshot/types.js';
 export type { ViewInstance, ViewOwnedToolLimits, ViewOwnedToolsStats } from './tool/view-owned-tools.js';
-export type { CancellationSignal, ToolResultData, ExecutionPhase, BusinessDetails, InvocationOutcome, ExecutionFact, ScopedInvocation, InvocationSource, ReceiptMetadata, InvocationReceipt, ReceiptAccess, InvokeResult, ObserveResult, InvocationContext, InputValidation, LiveCheck, ExecutionBindingBase, ExecutionBinding, ExecutionResolver, ScopePolicy, ScopeClient, TrustedScopeInput, InteractionLimits, InteractionLimitOverrides, InteractionStats, InteractionAuthority, Issue as InteractionIssue } from './invocation/scoped-interaction-types.js';
+export type { CancellationSignal, ToolResultData, ExecutionPhase, BusinessDetails, InvocationOutcome, ExecutionFact, AppInvocation, InvocationSource, ReceiptMetadata, InvocationReceipt, ReceiptAccess, InvokeResult, ObserveResult, InvocationContext, InputValidation, LiveCheck, ExecutionBindingBase, ExecutionBinding, ExecutionResolver, AppInteractionPolicy, AppInteraction, AppPreviewResult, AppInteractionSource, InteractionLimits, InteractionLimitOverrides, InteractionStats, InstanceInteraction, Issue as InteractionIssue } from './invocation/app-interaction-types.js';
 export type { ObservationJsonLimits, ObservationRegistryLimits, ObservationRegistryLimitOverrides, ViewIdentity, RefIdentity, ObservationSource, ObservationSelection, ObservationBinding, ObservedView, Observation, ObservationGrant, ObservationIssueCode, ObservationIssue, ObservationRegistryStats } from './invocation/observation-types.js';
 export type { SnapshotValueRefSource } from './tool/snapshot-value-arguments.js';
 export type { StateValue, StateAddress, StateValueLimits, StateIssueCode, StateIssue, StateReadResult, StateMutationResult, StateReleaseResult, StateStorage, Rejected as StateRejected } from './persistence/state-storage.js';
@@ -21,3 +23,4 @@ export { VIEW_TYPE_PARAMETERS_MODE } from './tool/ordinary-parameter-contract.js
 export { ORDINARY_INVOCATION_MODE } from './tool/invocation-terminal.js';
 export { ORDINARY_PARAMETER_REVISION } from './tool/ordinary-parameter-contract.js';
 export { MARKDOWN_VIEW_FORMAT, SEMANTIC_VIEW_FORMAT } from './snapshot/types.js';
+export { SnapshotDataError } from './snapshot/json.js';

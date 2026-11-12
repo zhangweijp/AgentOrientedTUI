@@ -16,8 +16,9 @@ import { LLMConfigService } from '../src/core/llm-config-service.js';
 import type { IDesktop, IKernel } from '@aotui/runtime/spi';
 import type { DesktopManager } from '../src/core/desktop-manager.js';
 import { LLMClient } from '@aotui/agent-driver-v2/dist/core/llm-client.js';
-import type { DrivenSourceContext, LLMConfig } from '@aotui/agent-driver-v2';
+import { ModelInputError, type DrivenSourceContext, type LLMConfig } from '@aotui/agent-driver-v2';
 import type { ModelRegistry } from '../src/services/model-registry.js';
+import { getTopic } from '../src/db/index.js';
 import * as dbV2 from '../src/db-v2.js';
 
 // Mock database
@@ -43,7 +44,7 @@ vi.mock('../src/db/index.js', () => ({
 
 vi.mock('../src/config/config.js', () => ({ Config: { get: async () => ({
     agents: { list: [] }, mcp: {}, experimental: { contextCompaction: { enabled: false } },
-}) } }));
+}), getTuiConfig: async () => ({}) } }));
 vi.mock('../src/mcp/index.js', () => ({ MCP: { tools: async () => ({}) } }));
 vi.mock('../src/skills/skill-driven-source.js', () => ({ SkillDrivenSource: class {
     name = 'Skill'; setEnabled() {} setSkillEnabled() {}
@@ -163,6 +164,18 @@ describe('SessionManager V3 Integration', () => {
             expect(mockKernel.createDesktop).toHaveBeenCalledWith(topicId);
         });
 
+        it('configures the request budget for the effective Topic model override', async () => {
+            vi.mocked(getTopic).mockReturnValueOnce({ modelOverride: 'openai:topic-model' } as ReturnType<typeof getTopic>);
+            vi.mocked(mockModelRegistry.getModels).mockResolvedValueOnce([{
+                id: 'topic-model', limit: { context: 12_000, input: 9_000, output: 2_000 }, tool_call: true,
+            }] as Awaited<ReturnType<ModelRegistry['getModels']>>);
+            const budget = vi.spyOn(llmConfigService, 'withModelInputBudget');
+            await sessionManager.ensureSession('topic-budget');
+            expect(budget).toHaveBeenCalledWith(expect.objectContaining({ model: 'openai:topic-model' }));
+            expect(await budget.mock.results[0]!.value.inputBudget({ providerId: 'openai', modelId: 'topic-model' }))
+                .toMatchObject({ contextWindow: 12_000, maxInputTokens: 9_000, maxOutputTokens: 2_000 });
+        });
+
         it('should reuse existing session for the same topic', async () => {
             const topicId = 'topic_test_2';
 
@@ -257,6 +270,24 @@ describe('SessionManager V3 Integration', () => {
                     content,
                 })
             );
+        });
+
+        it('delivers a structured budget diagnostic without writing it to Topic history', async () => {
+            const topicId = 'topic_budget_error', content = 'This input still needs a response';
+            const listener = vi.fn();
+            sessionManager.on('message', listener);
+            vi.mocked(LLMClient.prototype.call).mockRejectedValueOnce(
+                new ModelInputError('MODEL_INPUT_BUDGET_EXCEEDED', 'Shrink the open View', { inputLimit: 2000 }));
+            const session = await sessionManager.ensureSession(topicId);
+            await sessionManager.sendMessage(topicId, content);
+            await vi.waitFor(() => expect(listener).toHaveBeenCalledWith(expect.objectContaining({
+                topicId, type: 'assistant', message: expect.objectContaining({
+                    content: 'Shrink the open View',
+                    metadata: expect.objectContaining({ errorCode: 'MODEL_INPUT_BUDGET_EXCEEDED', errorDetails: { inputLimit: 2000 } }),
+                }),
+            })));
+            expect(messageService.getMessages(topicId)).toMatchObject([{ role: 'user', content }]);
+            expect((await session.sources.host.getContext()).messages).toMatchObject([{ role: 'user', content }]);
         });
 
         it('should emit GUI update event on message send', async () => {

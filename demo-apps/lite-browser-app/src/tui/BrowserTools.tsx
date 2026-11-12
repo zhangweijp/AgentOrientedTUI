@@ -1,4 +1,3 @@
-import type { ComponentChildren } from 'preact';
 import { defineViewTypeTool, defineToolSet, type ArgsOf, type ToolBinding } from '@aotui/sdk';
 import Type from 'typebox';
 import type { FetchFormat, SearchQuery, SearchResultItem } from '../types.js';
@@ -89,10 +88,6 @@ export function createClosePageBinding(onClosePage: BrowserActions['onClosePage'
             onClosePage();
             return { success: true, data: { message: 'Page closed.' } };
         } } satisfies ToolBinding<typeof browserTools.closePage>);
-}
-
-export function ToolSection({ children }: { children?: ComponentChildren }) {
-    return <div data-role="available-tools">{children}</div>;
 }
 
 export const browserTools = defineToolSet({

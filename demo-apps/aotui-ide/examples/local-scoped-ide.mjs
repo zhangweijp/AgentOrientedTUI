@@ -20,7 +20,7 @@ if (values.help) {
     await fs.mkdir(data, { recursive: true });
     const session = values.session ?? createHash('sha256').update(project).digest('hex').slice(0, 24);
     const emit = (event, detail = {}) => console.log('AOTUI_IDE ' + JSON.stringify({ event, ...detail }));
-    const runtime = createRuntime({ worker: { timeoutMs: 45000, pool: { initialSize: 0, maxSize: 1 } } });
+    const runtime = createRuntime({ worker: { timeoutMs: 45000, maxWorkers: 1 } });
     const input = createInterface({ input: process.stdin, crlfDelay: Infinity, terminal: false });
     const lines = input[Symbol.asyncIterator]();
     let client, closing, startup, initializing = true, queued = 0;
@@ -35,7 +35,6 @@ if (values.help) {
                 emit('closed', { report });
                 return report;
             })();
-            client?.close();
             input.close();
             emit('stopping', { reason, waitingForStartup: !!acceptedStartup });
         }
@@ -63,24 +62,10 @@ if (values.help) {
             }));
             startup = undefined;
             if (!closing) {
-                const opened = runtime.createAppScope(desktopId, appId, {
-                    project({ source, selection }) {
-                        const ids = new Set(selection.viewIds), selected = source.views.filter(view => ids.has(view.id));
-                        return {
-                            views: selected.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-                            refs: Object.values(source.refs).filter(ref => ids.has(ref.ownerViewId))
-                                .map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
-                            toolBindings: Object.values(source.tools)
-                                .filter(tool => selected.some(view => view.type === tool.viewType))
-                                .map(tool => ({ toolId: tool.id, execution: tool.execution })),
-                            content: selected.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' })),
-                        };
-                    },
-                    authorize: () => true,
-                    canReadReceipt: () => true,
-                });
-                if (opened.status !== 'opened') throw new Error(JSON.stringify(opened));
-                client = opened.client;
+                const instanceId = runtime.getDesktop(desktopId).getInstalledApps().find(app => app.appId === appId)?.appInstanceId;
+                const opened = runtime.getAppInteraction(desktopId, appId, instanceId);
+                if (opened.status !== 'ready') throw new Error(JSON.stringify(opened));
+                client = opened.interaction;
                 const deadline = Date.now() + 15000;
                 let ready;
                 while (!closing) {
@@ -115,14 +100,9 @@ if (values.help) {
                         let value;
                         switch (command.op) {
                             case 'views': {
-                                const observed = await client.observe({ all: true });
-                                if (observed.status !== 'observed') throw new Error('Could not observe the current Views: ' + observed.issue.code);
-                                try {
-                                    value = observed.observation.views
-                                        .map(({ id, type, name }) => ({ viewId: id, viewType: type, viewName: name }));
-                                } finally {
-                                    client.releaseObservation(observed.observation.observationId);
-                                }
+                                const preview = await client.preview();
+                                if (preview.status !== 'previewed') throw new Error('Could not preview Views: ' + preview.issue.code);
+                                value = preview.views.map(({ id, type, name }) => ({ viewId: id, viewType: type, viewName: name }));
                                 break;
                             }
                             case 'observe': value = await client.observe({ viewIds: command.viewIds }); break;

@@ -1,7 +1,6 @@
 import Type from 'typebox';
-import { defineToolSet, defineViewTypeTool, createToolBindings, refParam,
-    type ArgsOf, type SchemaOf } from '../src/tools.js';
-import type { IAppTypeToolPort } from '@aotui/runtime/spi';
+import { defineToolSet, defineViewTypeTool, refParam,
+    type AppAuthorContext, type ArgsOf, type SchemaOf, type ToolSetMap } from '../src/app.js';
 
 const Item = Type.Object({ id: Type.String(), mode: Type.Enum(['append', 'replace']),
     nested: Type.Object({ enabled: Type.Boolean() }) }, { additionalProperties: false });
@@ -25,9 +24,8 @@ export type ExactRefWitnesses = [
     Assert<SchemaOf<typeof choose> extends typeof input ? true : false>,
     Assert<typeof input extends SchemaOf<typeof choose> ? true : false>,
 ];
-declare const port: IAppTypeToolPort;
-const controller = createToolBindings({ definition, appTypeTools: port });
-controller.commit({ choose: { execute(args) {
+declare const publish: AppAuthorContext<ToolSetMap<typeof definition>>['publish'];
+publish({ views: [], bindings: { choose: { execute(args) {
     const id: string = args.many[0]!.id;
     const mode: 'append' | 'replace' = args.one.mode;
     const optional: string | undefined = args.optional?.id;
@@ -42,12 +40,12 @@ controller.commit({ choose: { execute(args) {
     const wrong: number = args.many[0]!.id;
     void id; void mode; void optional; void list; void raw; void wrong;
     return { success: true };
-} } });
-controller.commit({ choose: {
+} } } });
+publish({ views: [], bindings: { choose: {
     // @ts-expect-error A handler cannot accept fewer legal enum values through an array.
     execute: (_args: { readonly many: readonly { readonly mode: 'append' }[] }) => ({ success: true }),
-} });
-controller.commit({ choose: {
+} } });
+publish({ views: [], bindings: { choose: {
     // @ts-expect-error Raw Ref strings are not the resolved handler parameters.
     execute: (_args: { readonly many: readonly string[] }) => ({ success: true }),
-} });
+} } });

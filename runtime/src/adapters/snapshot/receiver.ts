@@ -1,7 +1,8 @@
 import { performance } from 'node:perf_hooks';
 import { createSnapshotCore } from '../../core/snapshot/store.js';
-import { createScopedInteraction } from '../../core/invocation/scoped-interaction.js';
-import type { ExecutionResolver, InteractionAuthority, ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
+import { createAppInteraction } from '../../core/invocation/app-interaction.js';
+import { previewCommittedApp } from '../../core/invocation/observation-registry.js';
+import type { ExecutionResolver, InstanceInteraction, AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
 import type { CommitResult, PreparedSnapshotFailure, SnapshotHealth, SnapshotIssueCode } from '../../core/snapshot/types.js';
 
 export interface SemanticSnapshotReport {
@@ -27,10 +28,10 @@ export type SnapshotAcceptance = CommitResult & Readonly<{ healthChanged: boolea
 
 const monotonicNow = () => Math.floor(performance.timeOrigin + performance.now());
 
-/** Owns one App instance's committed source and the Scopes which refer to it. */
+/** Owns one App instance's committed source and its observations and calls. */
 export class SemanticSnapshotReceiver {
     private readonly core: ReturnType<typeof createSnapshotCore>;
-    private interactions?: InteractionAuthority;
+    private interactions?: InstanceInteraction;
     private interactionsClosed = false;
     private prepared = 0;
     private published = 0;
@@ -44,24 +45,29 @@ export class SemanticSnapshotReceiver {
     private lastRefCount?: number;
     private lastToolCount?: number;
     private stopped = false;
+    private completion?: Promise<void>;
 
     constructor(readonly appId: string, readonly instanceId: string, private readonly now: () => number = monotonicNow) {
         this.core = createSnapshotCore({ now });
         this.core.lifecycle.startApp(appId, instanceId);
     }
 
-    createInteractionScope(policy: ScopePolicy, execution: ExecutionResolver): ReturnType<InteractionAuthority['createScope']> {
-        if (this.interactionsClosed || this.stopped) return Object.freeze({ status: 'rejected', issue: Object.freeze({
-            code: 'REF_EXECUTION_UNAVAILABLE', message: 'Scoped interaction is unavailable' }) });
-        this.interactions ??= createScopedInteraction(this.core.store, { namespace: `host:${this.instanceId}`, now: this.now });
-        return this.interactions.createScope({ appId: this.appId, instanceId: this.instanceId, policy, execution });
+    interaction(policy: AppInteractionPolicy, execution: ExecutionResolver): InstanceInteraction {
+        if (this.interactionsClosed || this.stopped) throw new Error('App interaction is unavailable');
+        return this.interactions ??= createAppInteraction(this.core.store, {
+            appId: this.appId, instanceId: this.instanceId, namespace: `host:${this.instanceId}`, now: this.now, policy, execution,
+        });
     }
+
+    preview() { return previewCommittedApp(this.core.store, this.appId, this.instanceId); }
 
     getInteractionStats() { return this.interactions?.inspect() ?? null; }
 
     closeInteractions(): Promise<void> {
-        this.interactionsClosed = true;
-        this.interactions?.close();
+        if (!this.interactionsClosed) {
+            this.interactionsClosed = true;
+            this.interactions?.close();
+        }
         return this.interactions?.whenClosed() ?? Promise.resolve();
     }
 
@@ -101,11 +107,13 @@ export class SemanticSnapshotReceiver {
         return Object.freeze({ ...result, healthChanged: before !== this.healthKey() });
     }
 
-    close(): void {
-        this.closeInteractions();
-        if (this.stopped) return;
+    close(): Promise<void> {
+        if (this.completion) return this.completion;
         this.stopped = true;
-        this.core.lifecycle.dispose();
+        this.core.lifecycle.stopApp(this.appId, this.instanceId);
+        this.completion = (this.interactions?.whenClosed() ?? Promise.resolve()).then(() => this.core.lifecycle.dispose());
+        void this.closeInteractions();
+        return this.completion;
     }
 
     report(): SemanticSnapshotReport {

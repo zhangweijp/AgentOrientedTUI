@@ -22,7 +22,7 @@ function respond(worker: EventEmitter, request: Request) {
     const closesPersistence = ['APP_SHUTDOWN', 'APP_CLOSE'].includes(request.type);
     const fullyClosed = request.type === 'APP_CLOSE';
     worker.emit('message', {
-        type: init ? 'INIT_RESPONSE' : request.type === 'RESET' ? 'RESET_RESPONSE' : 'LIFECYCLE_RESPONSE',
+        type: init ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
         requestId: request.requestId, success: true,
         ...(init ? {
             appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId },
@@ -56,14 +56,13 @@ const workerSource = `
     const { parentPort } = require('node:worker_threads');
     let appInstanceId;
     parentPort.on('message', message => {
-        if (message.type === 'TERMINATE') return process.exit(0);
         const init = message.type === 'INIT';
         if (init) appInstanceId = message.appInstanceId;
         const closesApp = ['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type);
         const closesPersistence = ['APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type);
         const fullyClosed = message.type === 'APP_CLOSE';
         parentPort.postMessage({
-            type: init ? 'INIT_RESPONSE' : message.type === 'RESET' ? 'RESET_RESPONSE' : 'LIFECYCLE_RESPONSE',
+            type: init ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
             requestId: message.requestId, success: true,
             ...(init ? {
                 appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: message.appInstanceId },
@@ -159,7 +158,7 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
         expect(sent).toHaveLength(0);expect(host.getStatus()).toBe('error');host.terminate();
     });
 
-    it('keeps managed-ACK transitions and requires RESET/new Host after close', async () => {
+    it('keeps managed-ACK transitions and requires a new Host and Worker after close', async () => {
         const { host, worker, sent } = controlledHost();
         let waitingForRelease: Request | undefined;
         worker.postMessage = message => {
@@ -170,7 +169,7 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
                     instanceId: managedInstances.get(worker), sequence: 1, action: 'release' }));
             } else if (message.type === 'STATE_STORAGE_RESPONSE' && waitingForRelease) {
                 const request = waitingForRelease;waitingForRelease = undefined;queueMicrotask(() => respond(worker, request));
-            } else if (message.type !== 'TERMINATE') queueMicrotask(() => respond(worker, message));
+            } else queueMicrotask(() => respond(worker, message));
         };
         let next: AppWorkerHost | undefined;
         try {
@@ -188,9 +187,13 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
             await expect(host.open()).rejects.toThrow(/shutdown is pending/);
             await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
             expect(sent).toHaveLength(count);expect(host.getStatus()).toBe('closed');
-            const reset = await host.releaseWorker();expect(reset).toBe(worker);expect(sent.at(-1)?.type).toBe('RESET');
-            next = new AppWorkerHost({ appId: 'r1_app' as any, desktopId: 'r1_desktop' as any, appModulePath: 'not-loaded', existingWorker: reset!, timeout: 1000 });
-            expect(next.appInstanceId).not.toBe(host.appInstanceId);await next.start();await next.open();expect(next.getStatus()).toBe('running');expect((next as any).worker).toBe(worker);
+            expect((await host.waitForResourceRelease()).worker).toBe('exited');
+            expect(() => new AppWorkerHost({
+                appId: 'r1_app' as any, desktopId: 'r1_desktop' as any,
+                appModulePath: 'not-loaded', existingWorker: worker as any,
+            })).toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
+            next = controlledHost().host;
+            expect(next.appInstanceId).not.toBe(host.appInstanceId);
         } finally { host.terminate();next?.terminate(); }
     });
 });
@@ -258,6 +261,7 @@ describe('Stage 8 R1: real node:worker_threads response ordering', () => {
             expect(await old).toMatchObject({ status: 'rejected' });
             expect(replacement).toBeDefined();
             expect(replacement).not.toBe(initial);
+            await host.waitForResourceRelease();
             expect(host.getStatus()).toBe('closed');
             expect((host as any).worker).toBeNull();
             expect(await closedRestart).toMatchObject({ status: 'rejected', message: expect.stringContaining('APP_INSTANCE_REUSE_UNSUPPORTED') });

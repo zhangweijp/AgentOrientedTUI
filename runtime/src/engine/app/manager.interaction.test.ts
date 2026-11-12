@@ -6,7 +6,7 @@ vi.mock('./worker-sandbox.js', () => ({ WorkerSandbox: class {
     async installDynamic() { this.status = 'running'; }
     getCloseReport() { return { state: this.closed ? 'settled' : 'active', intent: 'close', resourcesReleased: this.closed, issues: [] }; }
     async disposeAsync() { this.closed = true;this.status = 'closed';return this.getCloseReport(); }
-    createAppScope() { control.create(this);return { status: 'opened', client: { close: () => { this.closedClients++; } } }; }
+    getAppInteraction() { control.create(this);return { status: 'ready', interaction: { close: () => { this.closedClients++; } } }; }
     async pause() { this.status = 'paused'; }async resume() { this.status = 'running'; }
     async reinitialize() { control.reinitialize(this); }
 } }));
@@ -76,7 +76,7 @@ it('keeps an accepted close attached to its captured Worker while cleanup is pen
 it('C05 trusted qualified parameter mode survive pending/open/reopen/reinitialize with independent metadata', async () => {
     const manager = new AppManager(desktop), values: any[] = ['view-type-parameters-v1'];
     const id = manager.registerPendingApp({ modulePath: '/app', interactionModes: values });values.length = 0;
-    expect(manager.createAppScope(id, {} as any)).toMatchObject({ issue: { code: 'SCOPE_UNAVAILABLE' } });expect(control.boxes).toHaveLength(0);
+    expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing')).toMatchObject({ issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });expect(control.boxes).toHaveLength(0);
     const copy = manager.getInstalledApps()[0];expect(copy.interactionModes).toEqual(['view-type-parameters-v1']);
     expect(Object.isFrozen(copy.interactionModes)).toBe(true);expect(() => (copy.interactionModes as any).push('view-type-parameters-v1')).toThrow();
     (copy as any).interactionModes = [];await manager.openApp(id);expect(control.boxes[0].config.interactionModes).toEqual(['view-type-parameters-v1']);
@@ -88,15 +88,15 @@ it('C05 trusted qualified parameter mode survive pending/open/reopen/reinitializ
 
 it('B2 C11 collapsed is presentation while pending/paused/closed/current closing stop scope creation', async () => {
     const manager = new AppManager(desktop), id = await manager.install('/app', { interactionModes: ['view-type-parameters-v1'] });
-    expect(manager.createAppScope(id, {} as any).status).toBe('opened');await manager.collapseApp(id);
-    expect(manager.createAppScope(id, {} as any).status).toBe('opened');await manager.pauseAll();
-    expect(manager.createAppScope(id, {} as any).status).toBe('rejected');await manager.resumeAll();
-    expect(manager.createAppScope(id, {} as any).status).toBe('opened');const closing = manager.closeApp(id);
-    expect(manager.createAppScope(id, {} as any).status).toBe('rejected');await closing;
-    expect(manager.createAppScope(id, {} as any).status).toBe('rejected');await manager.cleanupAsync();
+    expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('ready');await manager.collapseApp(id);
+    expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('ready');await manager.pauseAll();
+    expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('rejected');await manager.resumeAll();
+    expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('ready');const closing = manager.closeApp(id);
+    expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('rejected');await closing;
+    expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('rejected');await manager.cleanupAsync();
 });
 
-it.each(['meta', 'worker', 'close'] as const)('B2 C13 App factory revokes a returned client after trusted DI reentry: %s', async change => {
+it.each(['meta', 'worker', 'close'] as const)('B2 C13 App factory rejects a returned handle after trusted DI reentry: %s', async change => {
     const manager = new AppManager(desktop), id = await manager.install('/app'), captured = control.boxes[0];
     let close: Promise<unknown> | undefined;
     control.create = () => {
@@ -104,7 +104,7 @@ it.each(['meta', 'worker', 'close'] as const)('B2 C13 App factory revokes a retu
         if (change === 'worker') (manager as any).workers.set(id, { status: 'running' });
         if (change === 'close') close = manager.closeApp(id);
     };
-    expect(manager.createAppScope(id, {} as any)).toMatchObject({ status: 'rejected', issue: { code: 'SCOPE_UNAVAILABLE' } });expect(captured.closedClients).toBe(1);
+    expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing')).toMatchObject({ status: 'rejected', issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });expect(captured.closedClients).toBe(0);
     (manager as any).workers.set(id, captured);await close;await manager.cleanupAsync();
 });
 

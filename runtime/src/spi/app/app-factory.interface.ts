@@ -3,15 +3,12 @@ import { APP_LIFECYCLE_PROTOCOL } from '../runtime/app-lifecycle.interface.js';
 import { STATE_SESSION_PROTOCOL } from '../runtime/state-persistence.interface.js';
 /** App module contract accepted by Runtime AppRegistry and Worker Runtime. */
 
-import type { ComponentFactory } from '../component-factory.interface.js';
+import type { AppInstance, RuntimeContext } from './app-instance.interface.js';
 import type { AppKernelConfig } from './app-kernel.interface.js';
 
-/**
- * The sole supported App factory: a component factory with its Kernel config.
- * Apps are created by Runtime from `kernelConfig`; factories do not create
- * separate `IAOTUIApp` instances.
- */
-export interface TUIAppFactory extends ComponentFactory {
+/** Static App definition loaded from the manifest entry. */
+export interface TUIAppFactory {
+    initialize(context: RuntimeContext): AppInstance | Promise<AppInstance>;
     readonly displayName: string;
     readonly kernelConfig: AppKernelConfig;
     readonly toolAuthoringProtocol: typeof VIEW_TYPE_TOOL_PROTOCOL;
@@ -19,20 +16,20 @@ export interface TUIAppFactory extends ComponentFactory {
     readonly appLifecycleSupport: typeof APP_LIFECYCLE_PROTOCOL;
 }
 
-/** Recognizes the component factory contract emitted by `createTUIApp`. */
+/** Recognizes the managed App factory contract. */
 export function isTUIAppFactory(value: unknown): value is TUIAppFactory {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
     try {
         const factory = Object.getOwnPropertyDescriptors(value);
         const displayName = factory.displayName;
         const kernelConfig = factory.kernelConfig;
-        const initializeComponent = factory.initializeComponent;
+        const initialize = factory.initialize;
         const persistenceSupport = factory.persistenceSupport;
         const appLifecycleSupport = factory.appLifecycleSupport;
         if (!displayName || !('value' in displayName) || typeof displayName.value !== 'string' || displayName.value.length === 0 ||
             !kernelConfig || !('value' in kernelConfig) || typeof kernelConfig.value !== 'object' ||
             kernelConfig.value === null || Array.isArray(kernelConfig.value) ||
-            !initializeComponent || !('value' in initializeComponent) || typeof initializeComponent.value !== 'function' ||
+            !initialize || !('value' in initialize) || typeof initialize.value !== 'function' ||
             !persistenceSupport || !('value' in persistenceSupport) || persistenceSupport.value !== STATE_SESSION_PROTOCOL ||
             !appLifecycleSupport || !('value' in appLifecycleSupport) || appLifecycleSupport.value !== APP_LIFECYCLE_PROTOCOL) {
             return false;

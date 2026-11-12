@@ -30,6 +30,7 @@ import {
     searchCatalog,
     type AppConfigEntry,
     type AppRegistryEntry,
+    type AppRegistryFailure,
     type CatalogSearchResult,
     type ResolvedCatalog
 } from '@aotui/runtime';
@@ -108,11 +109,9 @@ export class DesktopManager {
         const shouldLoadFromConfig = options?.loadFromConfig ?? !hasExplicitEntries;
         const enableDevAutoDiscovery = options?.enableDevAutoDiscovery ?? !hasExplicitEntries;
 
-        if (hasExplicitEntries) {
-            await this.appRegistry.loadFromEntries(options?.appEntries ?? []);
-        } else if (shouldLoadFromConfig) {
-            await this.appRegistry.loadFromConfig();
-        }
+        const discovery = hasExplicitEntries ? await this.appRegistry.loadFromEntries(options?.appEntries ?? [])
+            : shouldLoadFromConfig ? await this.appRegistry.loadFromConfig() : [];
+        for (const result of discovery) if (result.status === 'failed') this.reportAppFailure(result);
 
         // [Dev Experience] Auto-discover system-todo in development environment
         if (enableDevAutoDiscovery) {
@@ -173,12 +172,15 @@ export class DesktopManager {
 
         try {
             const desktop = this.kernel.getDesktop(actualDesktopId);
-            const thirdPartyIds = await this.appRegistry.installAll(desktop, {
+            const results = await this.appRegistry.installAll(desktop, {
                 dynamicConfig: config,
                 interactionModes: SEMANTIC_INTERACTION_MODES,
             });
-            installedAppIds.push(...thirdPartyIds);
-            console.log(`[DesktopManager] Created Desktop ${actualDesktopId} with ${thirdPartyIds.length} third-party apps (Semantic)`);
+            for (const result of results) {
+                if (result.status === 'failed') this.reportAppFailure(result);
+                else installedAppIds.push(result.appId);
+            }
+            console.log(`[DesktopManager] Created Desktop ${actualDesktopId} with ${installedAppIds.length} third-party apps (Semantic)`);
         } catch (error) {
             console.error('[DesktopManager] Failed to install apps:', error);
             await this.kernel.destroyDesktop(actualDesktopId);
@@ -192,6 +194,10 @@ export class DesktopManager {
             appId: installedAppIds[0],  // First app ID for backward compatibility
             thirdPartyAppCount: installedAppIds.length
         };
+    }
+
+    private reportAppFailure(result: AppRegistryFailure): void {
+        console.warn(`[DesktopManager] App ${result.name} failed during ${result.phase}`, result.issue);
     }
 
     /**

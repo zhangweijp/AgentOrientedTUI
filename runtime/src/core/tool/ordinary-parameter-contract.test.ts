@@ -137,17 +137,18 @@ describe('W07-B1 ordinary parameter contract', () => {
     expect(e.validate({ e: 'other' }).ok).toBe(false);
   });
 
-  it.each([
-    ['params.constraints.pattern', () => compileOrdinaryParams({ title: { type: 'string', constraints: { pattern: '^(a+)+$' } } }), '$params.title.constraints.pattern'],
-    ['JSON Schema pattern', () => compileOrdinarySchema(schema({ title: { type: 'string', pattern: '^(a+)+$' } })), '$.properties.title.pattern'],
-  ] as const)('P05 rejects arbitrary regex at declaration time: %s', (_label, compile, path) => {
-    unsupportedAt(compile(), path);
+  it('validates supported JSON Schema patterns while keeping the old flat DSL closed', () => {
+    unsupportedAt(compileOrdinaryParams({ title: { type: 'string', constraints: { pattern: '^a+$' } } }), '$params.title.constraints.pattern');
+    const c = contract(compileOrdinarySchema(schema({ title: { type: 'string', pattern: '^a+$' } })));
+    expect(c.validate({ title: 'aaa' }).ok).toBe(true);
+    expect(c.validate({ title: 'aba' })).toMatchObject({ ok: false, diagnostics: [{ path: '$.title' }] });
   });
-  it('P05 rejects malformed pattern strings as unsupported vocabulary', () => {
+  it('rejects malformed patterns at their declaration paths', () => {
     unsupportedAt(compileOrdinaryParams({ title: { type: 'string', constraints: { pattern: '[' } } }),
       '$params.title.constraints.pattern');
-    unsupportedAt(compileOrdinarySchema(schema({ title: { type: 'string', pattern: '[' } })),
-      '$.properties.title.pattern');
+    expect(compileOrdinarySchema(schema({ title: { type: 'string', pattern: '[' } }))).toMatchObject({
+      ok: false, issue: { code: 'PARAMETER_DECLARATION_INVALID', path: '$.properties.title.pattern' },
+    });
   });
   it('P05 keeps an ordinary parameter named pattern as string data', () => {
     for (const c of both({ pattern: { type: 'string', constraints: { minLength: 1 } } },
@@ -347,10 +348,9 @@ describe('W07-B1 ordinary parameter contract', () => {
     { type: 'string', options: ['a'] }, { type: 'boolean', itemType: 'string' },
   ])('P11 rejects unsupported DSL vocabulary %#', field => invalid(compileOrdinaryParams({ x: field }), true));
   it.each([
-    { type: 'integer' }, { type: 'object', properties: {} }, { type: 'string', nullable: true },
+    { type: 'string', nullable: true },
     { type: 'string', 'x-aotui-ref': {} }, { $ref: '#/a' }, { allOf: [] }, { oneOf: [] },
-    { type: 'array', items: { type: 'array', items: { type: 'string' } } },
-    { type: 'array', items: { type: 'object', properties: {} } }, { type: 'string', mystery: 1 },
+    { type: 'string', mystery: 1 },
     { type: 'array', items: { type: 'string' }, minLength: 1 },
   ])('P11 rejects unsupported Schema vocabulary %#', field => invalid(compileOrdinarySchema(schema({ x: field })), true));
   it.each([

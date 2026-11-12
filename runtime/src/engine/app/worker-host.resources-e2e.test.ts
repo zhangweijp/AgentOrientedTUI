@@ -26,15 +26,15 @@ async function facts(name: string, report: object) {
 async function fixture(extra: object = {}) {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-host-')), app = join(dir, 'app.mjs');
     await linkPreactPeer(dir);
-    await capture(app, `import {h} from 'preact';import Type from 'typebox';import {createTUIApp,defineViewTypeTool,usePersistentState,View,AppTools, ToolRef, defineToolSet} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let setter;
+    await capture(app, `import {h} from 'preact';import Type from 'typebox';import {createTUIApp,defineViewTypeTool,usePersistentState,View,AppTools, defineToolSet} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let setter;
 
 
 const fixtureTools0 = defineToolSet({
 Set: defineViewTypeTool({viewType:'Root',name:'set',description:'Set persisted value',inputSchema:Type.Object({value:Type.Number()}, {additionalProperties:false}),})
 });
-function Tools(){const Set = fixtureTools0.Set;return h(AppTools, { definition: fixtureTools0, bindings: {
+function Tools(){return h(AppTools, { definition: fixtureTools0, bindings: {
 Set: { execute: async args=>{setter(args.value);return {success:true};} }
-} }, h(ToolRef, { tool: Set }));}
+} }, 'Managed state');}
 function Root(){[,setter]=usePersistentState('value',0);return h(View,{kind: 'instruction',id:'root',type:'Root'},h(Tools));}
 export default createTUIApp({app_name:'c1',component:Root});`);
     const host = new AppWorkerHost({ appId: 'app' as any, desktopId: 'd' as any, appModulePath: url(app), timeout: 2000,
@@ -79,7 +79,7 @@ it.each(['failed', 'unknown'] as const)('C1-19 a terminal backend %s release is 
     } } });
     try {
         await f.host.start();await f.host.open();await setPersistedValue(f.host, 1);
-        await expect(f.host.close()).rejects.toThrow();expect(await f.host.releaseWorker()).toBeNull();const report = await f.host.waitForResourceRelease();
+        await expect(f.host.close()).rejects.toThrow();const report = await f.host.waitForResourceRelease();
         expect(report).toMatchObject({ state: 'settled', worker: 'exited', resourcesReleased: false, storage: { unsafe: true, ownerRetained: true, release: { status } } });
         expect(Object.isFrozen(report)).toBe(true);expect(Object.isFrozen(report.issues)).toBe(true);expect(report.issues.length).toBeLessThanOrEqual(4);
         await facts('backend-release-' + status, { report, backend: backend.getStats(), controlledReceiptAfterActualBackendRelease: true });

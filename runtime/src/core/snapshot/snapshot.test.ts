@@ -654,6 +654,22 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
 
 
 describe('M1 Core — nonpublishable Producer input and explicit prepare failure', () => {
+    it('stays degraded when lastGood is replayed and recovers unchanged at a new source epoch', () => {
+        const core = createSnapshotCore();
+        core.lifecycle.startApp('task_app', 'instance_a');
+        const first = published(core, draft(1, 1));
+        const failure = core.committer.reportPrepareFailure({ appId: 'task_app', instanceId: 'instance_a',
+            producerSeq: 2, sourceEpoch: 1, issue: { code: 'SNAPSHOT_INVALID', message: 'Failed commit' } });
+        expect(failure.status).toBe('rejected');
+        expect(core.committer.accept(draft(3, 1))).toEqual(failure);
+        expect(core.store.readLatest('task_app')).toMatchObject({ status: 'degraded', lastGood: { id: first.id } });
+        expect(core.committer.accept(draft(4, 1, 'conflict'))).toMatchObject({
+            status: 'rejected', issue: { code: 'SNAPSHOT_SOURCE_EPOCH_CONFLICT' },
+        });
+        expect(core.committer.accept(draft(5, 2))).toMatchObject({ status: 'unchanged', snapshot: { id: first.id, revision: 1 } });
+        expect(core.store.readLatest('task_app').status).toBe('ready');
+    });
+
     it('degrades lastGood when nested Ref serialization fails before full envelope clone', () => {
         const core = createSnapshotCore();
         core.lifecycle.startApp('task_app', 'instance_a');

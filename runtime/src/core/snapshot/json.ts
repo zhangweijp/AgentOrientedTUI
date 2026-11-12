@@ -26,6 +26,11 @@ export interface JsonCopyLimits {
  * This is a data contract, not a hostile-JavaScript isolation boundary.
  */
 export function copyJson(input: unknown, limits: JsonCopyLimits): JsonValue {
+    return createJsonCopier(limits)(input);
+}
+
+/** Several values in the same candidate can share the existing copy budget. */
+export function createJsonCopier(limits: JsonCopyLimits): (input: unknown) => JsonValue {
     const ancestors = new Set<object>();
     let nodes = 0;
     let approxBytes = 0;
@@ -112,7 +117,7 @@ export function copyJson(input: unknown, limits: JsonCopyLimits): JsonValue {
             ancestors.delete(value);
         }
     }
-    return copy(input, '$', 0);
+    return input => copy(input, '$', 0);
 }
 
 /** Lossless canonical encoding of *strict* JSON data (object field order normalized). */

@@ -164,6 +164,8 @@ describe('N08 exact mutation phases and retained resources', () => {
         const f = await setup();let foreign = '';
         control.handlers.open = async (...args) => { const h = await (real.open as any)(...args);foreign = String(args[0]);vi.spyOn(h, 'write').mockImplementation(async () => { await real.rename(foreign, foreign + '-moved');await real.writeFile(foreign, 'foreign');throw errno('EACCES'); });return h; };
         expect(await f.storage.replace(address(), 'new')).toMatchObject({ status: 'failed', effects: 'none' });expect(await real.readFile(foreign, 'utf8')).toBe('foreign');expect(f.backend.getStats()).toMatchObject({ retainedStorageIO: 1, temporaryFiles: 1 });expect(await f.storage.release()).toMatchObject({ status: 'unknown' });
+        expect(await f.storage.release()).toMatchObject({ status: 'unknown' });
+        expect(await real.readFile(foreign, 'utf8')).toBe('foreign');
     });
     it.each(['rename', 'unlink'].flatMap(method => [true, false].map(committed => ({ method, committed }))))('F02: a prior unknown does not make zero-I/O rejected new requests unknown: %j', async ({ method, committed }) => {
         const f = await setup(), uncertain = await seed(f.root, 'uncertain-old', 'unknown'), healthy = await seed(f.root, 'healthy-old', 'healthy');
@@ -211,6 +213,15 @@ describe('N08 exact mutation phases and retained resources', () => {
         expect(f.backend.getStats()).toMatchObject({ activeStorageIO: 0, ioInFlight: 0, retainedStorageIO: 1, pendingStorageIO: 1, temporaryFiles: 1, bufferedBytes: 0 });
         expect(await f.storage.read(address('other'))).toMatchObject({ issue: { code: 'CAPACITY_EXCEEDED' } });const releasing = f.storage.release();expect(f.storage.release()).toBe(releasing);expect(await releasing).toMatchObject({ status: 'failed', issue: { code: 'PERMISSION_DENIED' } });
         expect(f.backend.getStats()).toMatchObject({ retainedOwners: 1, claimedNamespaces: 1 });
+        delete control.handlers.unlink;
+        const mutationAttempts = control.calls.filter(call => call.method === 'open' || call.method === 'rename').length;
+        const retry = f.storage.release();
+        expect(f.storage.release()).toBe(retry);
+        expect(await retry).toEqual({ status: 'released' });
+        expect(f.storage.release()).toBe(retry);
+        expect(await real.readFile(target, 'utf8')).toBe('old');
+        expect(control.calls.filter(call => call.method === 'open' || call.method === 'rename')).toHaveLength(mutationAttempts);
+        expectEmpty(f.backend);
     });
     it('failed file close does not drop the unconfirmed handle or grant namespace to another owner', async () => {
         const f = await setup(), target = await seed(f.root, 'old');control.handlers.open = async (...args) => { const h = await (real.open as any)(...args);vi.spyOn(h, 'close').mockRejectedValue(errno('EIO'));return h; };

@@ -39,9 +39,9 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                 import { useAppRuntimeContext } from './sdk/src/context/AppRuntimeContext.tsx';
                 import { useDataRef } from './sdk/src/hooks/useRef.ts';
                 import { useArrayRef } from './sdk/src/hooks/useArrayRef.ts';
-                import { AppTools, ToolRef } from './sdk/src/components/AppTools.tsx';
+                import { AppTools } from './sdk/src/components/AppTools.tsx';
                 import { defineToolSet, defineViewTypeTool } from './sdk/src/tools/view-type-tool.ts';
-                function Content({ ToolUI }) {
+                function Content() {
                     const appId = useAppRuntimeContext().appId;
                     const [target, setTarget] = useState({ id: 'A' });
                     useLayoutEffect(() => {
@@ -60,7 +60,6 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                         h('p', {key:'list'}, listLabel('Stable list label')),
                         h('p', {key:'item'}, itemLabel(0, 'Stable task label')),
                         h('p', {key:'app-id'}, 'App=' + appId),
-                        h(ToolRef, { tool: ToolUI, ...({key:'tool'}) }, 'Complete'),
                     ]);
                 }
 
@@ -70,10 +69,9 @@ Complete: defineViewTypeTool({
                         inputSchema: Type.Object({}, {additionalProperties:false}), })
 });
 function Root() {
-                    const Complete = fixtureTools0.Complete;
                     return h(AppTools, { definition: fixtureTools0, bindings: {
 Complete: { execute: async () => ({ success: true }) }
-} }, h(View, {kind: 'state',id:'workspace',type:'Workspace'}, h(Content,{ToolUI:Complete})));
+} }, h(View, {kind: 'state',id:'workspace',type:'Workspace'}, h(Content)));
                 }
                 export default createTUIApp({app_name:'m3_integration',component:Root});
             `;

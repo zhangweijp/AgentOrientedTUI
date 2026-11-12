@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseHTML } from 'linkedom';
-import { captureDOMSnapshot } from './dom-snapshot-producer.js';
-import { createSnapshotCore } from '../core/snapshot/store.js';
+import { captureDOMViews } from './dom-snapshot-producer.js';
+import { createSnapshotCore, SemanticProjectionCoordinator } from '../core/index.js';
 import { refKey } from '../core/snapshot/snapshot-support.js';
 import { compileOrdinarySchema } from '../core/tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profile.js';
@@ -26,38 +26,35 @@ describe('DOM producer preserves Ref payloads as snapshot data', () => {
         const toolId = JSON.stringify(['task_app', 'Workspace', 'replace_file']);
         const compiled = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: false }, 'view-type-parameters-v1');
         if (!compiled.ok) throw Error('Ref Schema fixture');
-        const kernel = {
-            getViewRefs: () => Object.entries(refs).map(([key, value]) => ({
-                viewId: key.slice(0, key.indexOf(':')), refId: key.slice(key.indexOf(':') + 1), value,
-            })),
-            getViewOwnedViewInstances: () => [{
-                viewId: 'workspace', viewInstanceId: 'vi:v1:["logical-run",1]', viewType: 'Workspace',
-            }],
-            getToolDefinitions: () => [{
-                id: toolId, viewType: 'Workspace', name: 'replace_file',
-                description: 'Replace file with a version guard',
-                inputSchema: ordinaryParameterProfile(compiled.contract), 
-                execution: { kind: 'view-type' as const, activationId: 'active-1' },
-            }],
-        };
-        return {
-            toolId,
-            capture: () => captureDOMSnapshot({
-                appId: 'task_app', instanceId: 'logical-run',
-                producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
-                container: root, fragments: [fragment('workspace')], kernel,
+        const owner = { viewId: 'workspace', viewInstanceId: 'vi:v1:["logical-run",1]', viewType: 'Workspace' };
+        const projection = new SemanticProjectionCoordinator({
+            identity: () => ({ appId: 'task_app', instanceId: 'logical-run' }),
+            readFrame: () => ({
+                views: captureDOMViews(root, [fragment('workspace')], [owner]),
+                tools: [{ id: toolId, viewType: 'Workspace', name: 'replace_file',
+                    description: 'Replace file with a version guard', inputSchema: ordinaryParameterProfile(compiled.contract),
+                    execution: { kind: 'view-type', activationId: 'active-1' } }],
             }),
+        });
+        const prepare = () => {
+            expect(projection.commit(() => {
+                for (const [id, value] of Object.entries(refs)) projection.registerRef(owner, id, value as object);
+            })).toBe('prepared');
+            const publication = projection.nextPublication();
+            if (!('draft' in publication)) throw new Error(publication.failure.issue.message);
+            return publication.draft;
         };
+        return { toolId, capture: prepare };
     };
 
     it('does not interpret entity-looking payload data as an execution target', () => {
         const { capture, toolId } = setup({
-            'workspace:file': {
+            'file': {
                 $aotuiEntityRefV1: {
                     entityType: 'File', entityId: '/workspace/src/App.tsx', entityVersion: 'v1',
                 },
             },
-            'workspace:selected': { id: 'other data' },
+            'selected': { id: 'other data' },
         });
         const draft = capture();
         const instanceId = draft.views[0].viewInstanceId;

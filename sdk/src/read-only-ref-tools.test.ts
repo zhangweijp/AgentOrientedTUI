@@ -5,7 +5,7 @@ import { useState } from 'preact/hooks';
 import Type from 'typebox';
 import { compileOrdinarySchema } from '@aotui/runtime/core';
 import { AppRuntimeContext } from './context/AppRuntimeContext.js';
-import { AppTools, ToolRef } from './components/AppTools.js';
+import { AppTools } from './components/AppTools.js';
 import { defineViewTypeTool, defineToolSet, refParam } from './tools/view-type-tool.js';
 
 const cleanups: Array<() => void> = [];
@@ -35,11 +35,10 @@ function port() {
 describe('Ref parameters through AppTools', () => {
     it('registers at App scope and releases the trusted callable on unmount', async () => {
         const mock = port(), execute = vi.fn(async () => ({ success: true }));
-        const view = fixture(() => h(AppTools, { definition: tools, bindings: { inspect: { execute } } },
-            h(ToolRef, { tool: tools.inspect }, 'Inspect file')), mock);
+        const view = fixture(() => h(AppTools, { definition: tools, bindings: { inspect: { execute } } }), mock);
         expect(mock.registerTypeTool).toHaveBeenCalledOnce();
         expect(mock.registerTypeTool.mock.calls[0]![0]).not.toHaveProperty('handler');
-        expect(view.container.querySelector('tool-ref')?.textContent).toBe('Inspect file');
+
         await expect(mock.invokers[0]!({ file: { path: 'a.txt' } })).resolves.toMatchObject({ phase: 'entered-returned' });
         expect(execute).toHaveBeenCalledWith({ file: { path: 'a.txt' } });
         view.unmount(); expect(mock.releases[0]).toHaveBeenCalledOnce();
@@ -63,12 +62,11 @@ describe('Ref parameters through AppTools', () => {
     it('registers only while enabled and releases before re-enabling', async () => {
         const mock = port(); let update!: (enabled: boolean) => void;
         function App() { const [enabled, setEnabled] = useState(false); update = setEnabled;
-            return h(AppTools, { definition: tools, bindings: { inspect: { enabled, execute: () => ({ success: true }) } } },
-                h(ToolRef, { tool: tools.inspect }, 'Inspect')); }
+            return h(AppTools, { definition: tools, bindings: { inspect: { enabled, execute: () => ({ success: true }) } } }); }
         const view = fixture(App, mock); expect(mock.registerTypeTool).not.toHaveBeenCalled();
         await act(async () => update(true)); expect(mock.registerTypeTool).toHaveBeenCalledOnce();
         await act(async () => update(false)); expect(mock.releases[0]).toHaveBeenCalledOnce();
-        expect(view.container.querySelector('tool-ref')).toBeNull();
+
         await act(async () => update(true)); expect(mock.registerTypeTool).toHaveBeenCalledTimes(2);
     });
 });

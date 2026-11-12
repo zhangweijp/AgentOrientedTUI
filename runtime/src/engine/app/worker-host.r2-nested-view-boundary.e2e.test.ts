@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
 import { describe, expect, it } from 'vitest';
-import type { ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
+import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
 import { AppWorkerHost } from './worker-host.js';
 
 type Capture =
@@ -16,15 +16,14 @@ function appSource(): string {
         import { h } from 'preact';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
         import Type from 'typebox';
-        import { createTUIApp, defineViewTypeTool, View, useDataRef, AppTools, ToolRef, defineToolSet } from '@aotui/sdk';
+        import { createTUIApp, defineViewTypeTool, View, useDataRef, AppTools, defineToolSet } from '@aotui/sdk';
 
-        function Parent({ state, ParentActionUI }) {
+        function Parent({ state }) {
             const ref = useDataRef('parent_ref', useMemo(() => ({ owner: 'parent' }), []));
             return h('section', {}, [
                 h('div', {}, h('article', {}, 'ORDINARY_NESTED_DOM_MARKER')),
                 h('p', {}, ref('PARENT_REF_MARKER')),
                 h('p', {}, state.parentText),
-                h(ToolRef, { tool: ParentActionUI }, 'Run parent action'),
                 state.injectRawView
                     ? h('div', { 'data-view-id': 'raw_child', 'data-view-type': 'RawChild' },
                         h('p', {}, 'RAW_NESTED_VIEW_MARKER'))
@@ -32,11 +31,10 @@ function appSource(): string {
             ]);
         }
 
-        function Sibling({ SiblingActionUI }) {
+        function Sibling() {
             const ref = useDataRef('sibling_ref', useMemo(() => ({ owner: 'sibling' }), []));
             return h('section', {}, [
                 h('p', {}, ref('SIBLING_REF_MARKER')),
-                h(ToolRef, { tool: SiblingActionUI }, 'Run sibling action'),
             ]);
         }
 
@@ -53,8 +51,6 @@ function Root() {
             const [state, setState] = useState({
                 parentText: 'PARENT_INITIAL_MARKER', injectRawView: false, siblingOpen: true,
             });
-            const ParentActionUI = fixtureTools0.ParentActionUI;
-            const SiblingActionUI = fixtureTools0.SiblingActionUI;
             useLayoutEffect(() => {
                 const onExternalEvent = event => {
                     switch (event.detail?.type) {
@@ -75,8 +71,8 @@ function Root() {
 ParentActionUI: { execute: async () => ({ success: true, data: { owner: 'parent' } }) },
 SiblingActionUI: { execute: async () => ({ success: true, data: { owner: 'sibling' } }) }
 } }, h('main', {}, [
-                h(View, {kind: 'state', id: 'parent', type: 'Parent' }, h(Parent, { state, ParentActionUI })),
-                state.siblingOpen ? h(View, {kind: 'state', id: 'sibling', type: 'Sibling' }, h(Sibling, { SiblingActionUI })) : null,
+                h(View, {kind: 'state', id: 'parent', type: 'Parent' }, h(Parent, { state })),
+                state.siblingOpen ? h(View, {kind: 'state', id: 'sibling', type: 'Sibling' }, h(Sibling)) : null,
             ]));
         }
 
@@ -101,6 +97,8 @@ async function buildFixture(directory: string): Promise<{ app: string; workerScr
         alias: {
             '@aotui/sdk': resolve(runtime, '../sdk/src/index.ts'),
             '@aotui/runtime/spi': resolve(runtime, 'src/spi/index.ts'),
+            '@aotui/runtime/core': resolve(runtime, 'src/core/index.ts'),
+            '@aotui/runtime/adapters/dom': resolve(runtime, 'src/adapters/dom-app.ts'),
         },
         logLevel: 'silent',
     });
@@ -137,7 +135,7 @@ function waitForCapture(worker: Worker, captures: Capture[], after: number): Pro
     });
 }
 
-function policyForSelection(): ScopePolicy {
+function policyForSelection(): AppInteractionPolicy {
     return {
         project: ({ source, selection }) => {
             const selected = new Set(selection.viewIds);
@@ -197,25 +195,26 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
                 await host!.sendExternalEvent('parent' as any, eventType, {});
                 return capture;
             };
+            const policy = policyForSelection();
             const invoke = async (viewId: string, name: string, invocationId: string) => {
-                const scope = host!.createInteractionScope(policyForSelection());
-                expect(scope.status).toBe('opened');
-                if (scope.status !== 'opened') throw new Error(scope.issue.code);
-                const observed = await scope.client.observe({ viewIds: [viewId] });
+                const scope = host!.getAppInteraction(policy);
+                expect(scope.status).toBe('ready');
+                if (scope.status !== 'ready') throw new Error(scope.issue.code);
+                const observed = await scope.interaction.observe({ viewIds: [viewId] });
                 expect(observed.status).toBe('observed');
                 if (observed.status !== 'observed') throw new Error(observed.issue.code);
-                expect(scope.client.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
+                expect(scope.interaction.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
                 const tool = observed.observation.tools.find(candidate => candidate.name === name);
                 expect(tool).toBeDefined();
                 const binding = observed.observation.bindings.find(candidate => candidate.toolId === tool?.id);
                 expect(binding).toBeDefined();
-                const result = await scope.client.invoke({
+                const result = await scope.interaction.invoke({
                     invocationId,
                     observationId: observed.observation.observationId,
                     bindingId: binding!.bindingId,
                     input: {},
                 });
-                scope.client.close();
+                scope.interaction.releaseObservation(observed.observation.observationId);
                 return result;
             };
 
@@ -280,11 +279,11 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
 
             await host.close();
             expect(host.getResourceReport()).toMatchObject({ interactions: {
-                closed: true, retainedScopes: 0, retainedBytes: 0,
+                closed: true, retainedOperations: 0, retainedBytes: 0,
             }, appCleanup: { support: 'managed', report: { state: 'completed', issues: [] } } });
-            expect(await host.releaseWorker()).toBe(worker);
-            expect(await host.waitForResourceRelease()).toMatchObject({ state: 'settled', worker: 'transferred',
-                resourcesReleased: true, interactions: { closed: true, retainedScopes: 0, retainedBytes: 0 } });
+            expect(worker.threadId).toBe(-1);
+            expect(await host.waitForResourceRelease()).toMatchObject({ state: 'settled', worker: 'exited',
+                resourcesReleased: true, interactions: { closed: true, retainedOperations: 0, retainedBytes: 0 } });
         } finally {
             host?.terminate();
             if (worker) await worker.terminate();

@@ -2,7 +2,7 @@ import { isToolResultData } from '../../spi/core/tool-result.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
 import type { JsonValue } from '../snapshot/types.js';
 import type { ObservationJsonLimits } from './observation-types.js';
-import type { ExecutionPhase, InvocationOutcome } from './scoped-interaction-types.js';
+import type { ExecutionPhase, InvocationOutcome } from './app-interaction-types.js';
 
 export function jsonObject(value: unknown): value is Readonly<Record<string, JsonValue>> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -38,9 +38,13 @@ export function mapExecutionFact(raw: unknown, limits: ObservationJsonLimits): E
         if (!isToolResultData(result)) throw 0;
         if (Object.hasOwn(fact, 'failureEffects') && (phase !== 'entered-returned' || result.success ||
             fact.failureEffects !== 'none' && fact.failureEffects !== 'partial')) throw 0;
-        const details = { kind: 'tool-result' as const, phase, result: result as unknown as import('./scoped-interaction-types.js').ToolResultData };
+        const details = { kind: 'tool-result' as const, phase, result: result as unknown as import('./app-interaction-types.js').ToolResultData };
         if (phase === 'not-entered') {
             if (result.success) throw 0;
+            if (result.error.code === 'REF_VIEW_UNAVAILABLE' && typeof result.error.context?.path === 'string') {
+                return { executionPhase: phase, outcome: Object.freeze({ status: 'rejected', code: result.error.code,
+                    message: result.error.message, path: result.error.context.path, details }) };
+            }
             return { executionPhase: phase, outcome: Object.freeze({ status: 'rejected', code: 'TOOL_REJECTED',
                 message: 'The Tool rejected the request before handler entry', details }) };
         }

@@ -1,9 +1,9 @@
 import { validateCapturedTypeParameters as validateTypeParameters } from '../../../tests/fixtures/type-parameters.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
-import { refKey } from '../snapshot/snapshot-support.js';
+import { refKey, REF_VALUE_LIMITS, RESOLVED_TOOL_ARGUMENT_LIMITS as ARGS, RESOLVED_TOOL_ENVELOPE_LIMITS as ENVELOPE } from '../snapshot/snapshot-support.js';
 import { canonicalJson, utf8Size } from '../snapshot/json.js';
-import { createScopedInteraction } from '../invocation/scoped-interaction.js';
+import { createAppInteraction } from '../invocation/app-interaction.js';
 import { createViewOwnedTools } from './view-owned-tools.js';
 import { compileOrdinarySchema } from './ordinary-parameter-contract.js';
 import { prepareViewTypeParameters } from './snapshot-value-arguments.js';
@@ -53,9 +53,8 @@ function fixture(fields: Record<string, any> = { a: ref(), b: ref() }, required 
         if (result.status !== 'published') throw Error('Publication failed'); return result.snapshot;
     }
     const original = publish();
-    const authority = createScopedInteraction(core.store, { namespace: 'multi-optional', now: () => 0 });
     const bindings = new WeakMap<object, any>();
-    const opened = authority.createScope({ appId: 'app', instanceId: 'run', policy: {
+    const client = createAppInteraction(core.store, { namespace: 'multi-optional', now: () => 0, appId: 'app', instanceId: 'run', policy: {
         project: ({ source }) => ({ views: source.views.map(v => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
             refs: Object.values(source.refs).map(r => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })),
             toolBindings: Object.values(source.tools).map(t => ({ toolId: t.id, execution: t.execution })), content: [] }),
@@ -68,10 +67,9 @@ function fixture(fields: Record<string, any> = { a: ref(), b: ref() }, required 
         execute: async context => { dispatches.push(context); const terminal = await registry.invokeTypeTool(source.tool, source.execution, context.effectiveInput);
             return { kind: 'tool-result', phase: terminal.phase, result: terminal.result }; },
     }; bindings.set(source, binding); return binding; } } });
-    if (opened.status !== 'opened') throw Error('Scope failed');
     cleanup.push(async () => {
-        authority.close(); await authority.whenClosed(); release(); registry.dispose(); core.lifecycle.dispose();
-        expect(authority.inspect()).toMatchObject({ closed: true, scopes: 0, combinedBytes: 0 });
+        client.close(); await client.whenClosed(); release(); registry.dispose(); core.lifecycle.dispose();
+        expect(client.inspect()).toMatchObject({ closed: true, combinedBytes: 0 });
         expect(registry.inspect()).toMatchObject({ state: 'disposed', views: 0, bindings: 0, retainedBytes: 0 });
         expect(core.store.inspect().activeLeases).toBe(0);
     });
@@ -81,23 +79,20 @@ function fixture(fields: Record<string, any> = { a: ref(), b: ref() }, required 
         const p = prepare(args); expect(p.status, JSON.stringify(p)).toBe('prepared');
         if (p.status !== 'prepared') throw Error(p.issue.code); cleanup.push(p.release); return p;
     }
-    return { core, tool, view, original, publish, entries, dispatches, prepare, prepared, client: opened.client };
+    return { core, tool, view, original, publish, entries, dispatches, prepare, prepared, client };
 }
 
 describe('serial observation adoption with object and array Refs', () => {
-    it('preparation alone grants neither original nor preview Ref invocation eligibility', async () => {
+    it('a candidate has no invocation eligibility and read-only preview leaves it intact', async () => {
         const f = fixture();
         const original = await f.client.observe({ all: true }); if (original.status !== 'observed') throw Error('original');
         f.publish({ a: notes[1], b: notes[0] });
-        const preview = await f.client.observe({ all: true }); if (preview.status !== 'observed') throw Error('preview');
-        const results = [];
-        for (const observation of [original.observation, preview.observation]) results.push(await f.client.invoke({
-            invocationId: observation.observationId, observationId: observation.observationId,
-            bindingId: observation.bindings[0]!.bindingId, input: { a: 'aa.a', b: 'aa.b' },
-        }));
-        for (const result of results) expect(result).toMatchObject({ kind: 'receipt', receipt: {
-            executionPhase: 'not-dispatched', outcome: { status: 'rejected', code: 'OBSERVATION_NOT_ADOPTED' },
-        } });
+        expect(await f.client.preview()).toMatchObject({ status: 'previewed' });
+        expect((await f.client.observe({ all: true })).status).toBe('rejected');
+        const observation = original.observation;
+        expect(await f.client.invoke({ invocationId: 'not-adopted', observationId: observation.observationId,
+            bindingId: observation.bindings[0]!.bindingId, input: { a: 'aa.a', b: 'aa.b' } }))
+            .toMatchObject({ kind: 'refused', code: 'OBSERVATION_NOT_ADOPTED' });
         expect(f.entries).toHaveLength(0);
     });
     it('keeps publication and preview independent, then revokes the old binding without rebinding its names', async () => {
@@ -110,13 +105,13 @@ describe('serial observation adoption with object and array Refs', () => {
         const next = await f.client.observe({ all: true }); if (next.status !== 'observed') throw Error('next');
         expect(await f.client.invoke({ invocationId: 'preview-not-adopted', observationId: next.observation.observationId,
             bindingId: next.observation.bindings[0]!.bindingId, input: { a: 'aa.a', b: 'aa.b' } }))
-            .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'rejected', code: 'OBSERVATION_NOT_ADOPTED' } } });
+            .toMatchObject({ kind: 'refused', code: 'OBSERVATION_NOT_ADOPTED' });
         expect(await f.client.invoke(request('before-adopt'))).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
         expect(f.entries[0]).toMatchObject({ a: notes[0], b: notes });
         expect(f.client.adoptObservation(next.observation.observationId)).toEqual({ status: 'adopted' });
-        expect(await f.client.invoke(request('stale'))).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'rejected', code: 'OBSERVATION_UNAVAILABLE' } } });
+        expect(await f.client.invoke(request('stale'))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
         expect(f.entries).toHaveLength(1);
-        expect(await f.client.invoke(request('before-adopt'))).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
+        expect(await f.client.readReceipt(request('before-adopt'))).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
         expect(f.entries).toHaveLength(1); // A receipt remains readable; it does not execute again.
         expect(await f.client.invoke({ invocationId: 'current', observationId: next.observation.observationId,
             bindingId: next.observation.bindings[0]!.bindingId, input: { a: 'aa.a', b: 'aa.b' } }))
@@ -158,12 +153,12 @@ describe('serial observation adoption with object and array Refs', () => {
             .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
         expect(f.entries[0]).toMatchObject({ a: notes[0], b: notes[1] });
         f.client.close();
-        expect(f.client.adoptObservation(first.observation.observationId)).toMatchObject({ status: 'rejected', issue: { code: 'SCOPE_UNAVAILABLE' } });
+        expect(f.client.adoptObservation(first.observation.observationId)).toMatchObject({ status: 'rejected', issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });
         expect(f.core.store.inspect()).toMatchObject({ historicalSnapshots: 0, historicalBytes: 0, activeLeases: 0 });
     });
 });
 
-describe('multi/optional: actual registration, original source, and scoped invocation', () => {
+describe('multi/optional: actual registration, original source, and instance invocation', () => {
     it.each([
         ['objects', { a: ref(), b: ref() }, { a: notes[0], b: notes[1] }],
         ['object/list', { a: ref(), b: list() }, { a: notes[0], b: notes }],
@@ -183,7 +178,7 @@ describe('multi/optional: actual registration, original source, and scoped invoc
         frozen(f.entries[0]); f.client.releaseObservation(observed.observation.observationId);
         expect(await f.client.invoke({ invocationId: 'released', observationId: observed.observation.observationId,
             bindingId: observed.observation.bindings[0]!.bindingId, input: { a: 'aa.a', b: 'aa.b' } }))
-            .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'rejected', code: 'OBSERVATION_UNAVAILABLE' } } });
+            .toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
         expect(f.entries).toHaveLength(1);
     });
     it.each([['optional object', { a: ref() }], ['optional list', { a: list() }],
@@ -239,17 +234,16 @@ function budgetResult(f: ReturnType<typeof fixture>, args: any, over: boolean) {
     expect(f.core.store.inspect().activeLeases).toBe(0);
 }
 describe('multi/optional: complete arguments and envelope retain cumulative limits', () => {
-    for (const largeFirst of [true, false]) it.each([131071, 131072, 131073])(`final budget is order independent (largeFirst=${largeFirst}, bytes=%i)`, bytes => {
-        const longName = 'x'.repeat(128), empty = { a: { text: '' }, b: {} };
-        const large = { text: 'x'.repeat(bytes - measure(empty).approx) };
-        const expected = largeFirst ? { a: large, b: {} } : { a: {}, b: large };
+    const max = ARGS.maxCanonicalBytes;
+    for (const largeFirst of [true, false]) it.each([max - 1, max, max + 1])(`final budget is order independent (largeFirst=${largeFirst}, bytes=%i)`, bytes => {
+        const longName = 'x'.repeat(128), smaller = { text: 'x'.repeat(256 * 1024) };
+        const large = { text: 'x'.repeat(bytes - measure({ a: { text: '' }, b: smaller }).approx) };
+        const expected = largeFirst ? { a: large, b: smaller } : { a: smaller, b: large };
         expect(measure(expected).approx).toBe(bytes);
-        expect(measure(expected).canonical).toBeLessThanOrEqual(131072);
-        const f = fixture(undefined, undefined, largeFirst ? { a: large, [longName]: {} } : { a: {}, [longName]: large });
+        const f = fixture(undefined, undefined, { a: expected.a, [longName]: expected.b });
         const raw = { a: 'aa.a', b: 'aa.' + longName };
-        if (largeFirst) expect(measure({ a: large, b: 'aa.' + longName }).approx).toBeGreaterThan(131072);
         const p = f.prepare(raw);
-        if (bytes > 131072) expect(p).toMatchObject({ status: 'rejected', issue: { code: 'REF_ARGUMENT_BUDGET_EXCEEDED' } });
+        if (bytes > max) expect(p).toMatchObject({ status: 'rejected', issue: { code: 'REF_ARGUMENT_BUDGET_EXCEEDED' } });
         else {
             expect(p.status, JSON.stringify(p)).toBe('prepared');
             if (p.status !== 'prepared') throw Error(p.issue.code);
@@ -260,33 +254,38 @@ describe('multi/optional: complete arguments and envelope retain cumulative limi
         expect(f.core.store.inspect().activeLeases).toBe(0);
     });
 
-    it.each([9999, 10000, 10001])('counts %i nodes across both Ref payloads', nodes => {
-        const values = { a: { data: Array(4997).fill(null) }, b: { data: Array(nodes - 5002).fill(null) } };
-        expect(measure(values).nodes).toBe(nodes); expect(measure(values.a).nodes).toBeLessThan(10000); expect(measure(values.b).nodes).toBeLessThan(10000);
-        budgetResult(fixture(undefined, undefined, values), { a: 'aa.a', b: 'aa.b' }, nodes > 10000);
+    it.each([ARGS.maxNodes - 1, ARGS.maxNodes, ARGS.maxNodes + 1])('counts %i nodes across both Ref payloads', nodes => {
+        const values = { a: { data: Array(5997).fill(null) }, b: { data: Array(nodes - 6002).fill(null) } };
+        expect(measure(values).nodes).toBe(nodes);
+        expect(measure(values.a).nodes).toBeLessThan(REF_VALUE_LIMITS.maxNodes);
+        expect(measure(values.b).nodes).toBeLessThan(REF_VALUE_LIMITS.maxNodes);
+        budgetResult(fixture(undefined, undefined, values), { a: 'aa.a', b: 'aa.b' }, nodes > ARGS.maxNodes);
     });
-    it.each([23, 24, 25])('computes depth %i from the complete args root', depth => {
+    it.each([23, 25, REF_VALUE_LIMITS.maxDepth + 1])('accepts a valid Ref at depth %i from the complete args root', depth => {
         const values = { a: notes[0], b: nested(depth - 1) }; expect(measure(values).depth).toBe(depth);
-        budgetResult(fixture(undefined, undefined, values), { a: 'aa.a', b: 'aa.b' }, depth > 24);
+        budgetResult(fixture(undefined, undefined, values), { a: 'aa.a', b: 'aa.b' }, false);
     });
-    for (const metric of ['approx', 'canonical'] as const) it.each([131071, 131072, 131073])(`combines ${metric} bytes %i`, bytes => {
-        const base = { a: { text: 'x'.repeat(60000) }, b: { text: '' } };
+    for (const metric of ['approx', 'canonical'] as const) it.each([max - 1, max, max + 1])(`combines ${metric} bytes %i`, bytes => {
+        const base = { a: { text: 'x'.repeat(300 * 1024) }, b: { text: '' } };
         const remaining = bytes - measure(base)[metric]; base.b.text = metric === 'canonical' ? escapeBytes(remaining) : 'x'.repeat(remaining);
-        expect(measure(base)[metric]).toBe(bytes); expect(measure(base.a)[metric]).toBeLessThan(131072); expect(measure(base.b)[metric]).toBeLessThan(131072);
-        budgetResult(fixture(undefined, undefined, base), { a: 'aa.a', b: 'aa.b' }, bytes > 131072);
+        expect(measure(base)[metric]).toBe(bytes);
+        expect(measure(base.a)[metric]).toBeLessThan(REF_VALUE_LIMITS.maxCanonicalBytes);
+        expect(measure(base.b)[metric]).toBeLessThan(REF_VALUE_LIMITS.maxCanonicalBytes);
+        budgetResult(fixture(undefined, undefined, base), { a: 'aa.a', b: 'aa.b' }, bytes > max);
     });
     it('counts the same Ref payload twice when two parameters select it', () => {
-        const f = fixture(undefined, undefined, { a: { text: 'x'.repeat(65536) } });
+        const f = fixture(undefined, undefined, { a: { text: 'x'.repeat(max / 2) } });
         budgetResult(f, { a: 'aa.a', b: 'aa.a' }, true);
     });
-    it.each([10999, 11000, 11001])('counts %i envelope nodes including every provenance item', nodes => {
-        const fields = Object.fromEntries(Array.from({ length: 128 }, (_, n) => ['p' + String(n).padStart(3, '0'), ref()]));
-        const values: any = Object.fromEntries(Object.keys(fields).map(k => [k, {}]));
-        // envelope = args nodes + source object/5 values + root + sources array/128*(object+7 values).
-        const argsNodes = nodes - (8 + 128 * 8);
-        values.p000 = { data: Array(argsNodes - 130).fill(null) };
-        expect(measure(values).nodes).toBe(argsNodes); expect(argsNodes).toBeLessThanOrEqual(10000);
-        budgetResult(fixture(fields, Object.keys(fields), values), Object.fromEntries(Object.keys(fields).map(k => [k, 'aa.' + k])), nodes > 11000);
+    it.each([ENVELOPE.maxNodes - 1, ENVELOPE.maxNodes, ENVELOPE.maxNodes + 1])('counts %i envelope nodes including every provenance item', nodes => {
+        const fields = Object.fromEntries(Array.from({ length: 256 }, (_, n) => ['p' + String(n).padStart(3, '0'), ref()]));
+        const values: Record<string, object> = Object.fromEntries(Object.keys(fields).map(k => [k, {}]));
+        const argsNodes = nodes - (8 + 256 * 8);
+        values.p000 = { data: Array(6000).fill(null) };
+        values.p001 = { data: Array(argsNodes - 6259).fill(null) };
+        expect(measure(values).nodes).toBe(argsNodes);
+        expect(argsNodes).toBeLessThanOrEqual(ARGS.maxNodes);
+        budgetResult(fixture(fields, Object.keys(fields), values), Object.fromEntries(Object.keys(fields).map(k => [k, 'aa.' + k])), nodes > ENVELOPE.maxNodes);
     });
 });
 

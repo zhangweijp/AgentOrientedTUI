@@ -1,3 +1,5 @@
+import type { JsonValue } from '@aotui/runtime/core';
+
 /**
  * Export the JSON Schema portion of a TypeBox schema without invoking any
  * author-defined getters, converters, or serializers.
@@ -22,6 +24,7 @@ export class TypeBoxSchemaExportError extends Error {
         this.name = 'TypeBoxSchemaExportError';
         this.code = code;
         this.path = boundedPath;
+        Object.defineProperty(this, 'reason', { value: detail });
     }
 }
 
@@ -269,15 +272,21 @@ function copyObject(input: object, position: Position, path: string, depth: numb
     return Object.freeze(output);
 }
 
-/** Export a fresh deeply-frozen ordinary JSON Schema object. */
-export function exportTypeBoxSchema(schema: unknown): Readonly<Record<string, unknown>> {
+/** Export a fresh deeply frozen JSON Schema node. */
+export function exportTypeBoxValueSchema(schema: unknown): Readonly<Record<string, JsonValue>> {
     const budget: Budget = { nodes: 0, bytes: 0, active: new WeakSet() };
     const exported = copyValue(schema, 'schema', '$', 0, budget);
-    if (!exported || typeof exported !== 'object' || Array.isArray(exported) ||
-        (exported as Record<string, unknown>).type !== 'object' ||
-        !(exported as Record<string, unknown>).properties || typeof (exported as Record<string, unknown>).properties !== 'object' ||
-        Array.isArray((exported as Record<string, unknown>).properties)) {
+    if (!exported || typeof exported !== 'object' || Array.isArray(exported)) {
+        fail('TOOL_SCHEMA_INVALID', '$', 'Expected a TypeBox Schema object');
+    }
+    return exported as Readonly<Record<string, JsonValue>>;
+}
+
+export function exportTypeBoxSchema(schema: unknown): Readonly<Record<string, JsonValue>> {
+    const exported = exportTypeBoxValueSchema(schema);
+    if (exported.type !== 'object' || !exported.properties || typeof exported.properties !== 'object' ||
+        Array.isArray(exported.properties)) {
         fail('TOOL_SCHEMA_INVALID', '$', 'Tool inputSchema must be an object Schema with a properties map');
     }
-    return exported as Readonly<Record<string, unknown>>;
+    return exported;
 }

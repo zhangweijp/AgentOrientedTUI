@@ -43,7 +43,7 @@ beforeAll(async () => {
 afterAll(async () => { const output = process.env.AOTUI_W08_C1_FACTS_DIR;if (output) { await mkdir(output, { recursive: true });await writeFile(join(output, 'b2-public-e2e.json'), JSON.stringify(facts, null, 2)); }if (directory) await rm(directory, { recursive: true, force: true }); });
 
 const allModes = ['view-type-parameters-v1'] as const;
-function makeRuntime() { return runtimePackage.createRuntime({ worker: { timeoutMs: 4000, pool: { initialSize: 0, maxSize: 8 } } }); }
+function makeRuntime() { return runtimePackage.createRuntime({ worker: { timeoutMs: 4000, maxWorkers: 8 } }); }
 async function install(runtime: any, desktop = 'd', id = 'a', modes?: any, extra = {}, appPath = app) {
     try { runtime.getDesktop(desktop); } catch { await runtime.createDesktop(desktop); }
     return runtime.installDynamicWorkerApp(desktop, pathToFileURL(appPath).href, {
@@ -63,9 +63,10 @@ function scope(runtime: any, desktop = 'd', id = 'a') {
         content: views.map((view: any) => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' as const })),
     }; }
     const policy = { project: (context: any) => controls.project(context), authorize: (context: any) => controls.authorize(context), canReadReceipt: (meta: any, signal: any) => controls.read(meta, signal) };
-    const result = runtime.createAppScope(desktop, id, policy);expect(result.status).toBe('opened');if (result.status !== 'opened') throw Error(result.issue.code);
+    const instanceId = runtime.getDesktop(desktop).getInstalledApps().find((app: any) => app.appId === id)?.appInstanceId;
+    const result = runtime.getAppInteraction(desktop, id, instanceId, policy);expect(result.status).toBe('ready');if (result.status !== 'ready') throw Error(result.issue.code);
     async function observe() { let observation: any;await vi.waitFor(async () => { const result = await resultClient.observe({ viewIds: ['detail'] });expect(result.status).toBe('observed');if (result.status === 'observed') observation = result.observation; }, { timeout: 6000 });expect(resultClient.adoptObservation(observation.observationId).status).toBe('adopted');return observation; }
-    const resultClient = result.client;return { client: resultClient, controls, policy, observe };
+    const resultClient = result.interaction;return { client: resultClient, controls, policy, observe, instanceId };
 }
 function request(observation: any, name = 'ordinary', input: any = { text: 'change' }, invocationId = 'call') {
     const tool = observation.tools.find((tool: any) => tool.name === name), binding = observation.bindings.find((candidate: any) => candidate.toolId === tool?.id &&
@@ -98,7 +99,7 @@ it('B2 C08/26 omitted interactionModes enables ordinary and Ref calls through th
         }
         expect(outputs[1].receipt.outcome.value.data.currentValueAvailable).toBe(true);
         await waitForViewText(s.client, 'Completed actions: 1');
-        expect(runtime.createAppScope('d', 'a', {}).issue.code).toBe('SCOPE_INVALID');s.client.close();facts.push({ case: 'default-qualified-public', outputs });
+        expect(runtime.getAppInteraction('d', 'a', s.instanceId, {}).issue.code).toBe('APP_INTERACTION_POLICY_CONFLICT');facts.push({ case: 'default-qualified-public', outputs });
     } finally { expect((await runtime.beginShutdown().completion).ok).toBe(true); }
 }, 15000);
 
@@ -113,7 +114,7 @@ it('B2 C09 one qualified mode exposes ordinary and Ref tools through the same co
             expect(again.receipt.outcome.status).toBe('succeeded');
             if (name === 'ref') expect(again.receipt.outcome.value.data.currentValueAvailable).toBe(true);
         }
-        s.client.close();
+
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);
 
@@ -122,7 +123,7 @@ it('B2 C05 explicit empty interactionModes preserves Views but grants no executa
         await install(runtime, 'd', 'a', []);const s = scope(runtime), observation = await s.observe();
         expect(observation.views.some((view: any) => view.id === 'detail')).toBe(true);
         expect(observation.bindings).toEqual([]);
-        s.client.close();
+
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);
 
@@ -148,7 +149,7 @@ it('B2 C09 source authorization denies entry and unknown handler results are not
         const later = await s.client.invoke(request(observation, 'ordinary', { text: 'change' }, 'after-unknown'));
         expect(later.receipt.outcome.status).toBe('succeeded');
         await waitForViewText(s.client, 'Completed actions: 1');
-        s.client.close();
+
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);
 
@@ -165,7 +166,7 @@ function respond(m) {
     :m.type==='APP_SHUTDOWN'?{protocol:'state-session-v1',instanceId,ok:false,unmount:'pending',flush}
     :completed?{protocol:'state-session-v1',instanceId,ok:true,unmount:'completed',flush,dispose:{status:'disposed',unsaved:[],release:{status:'released'}}}:undefined;
   const appCleanup=['APP_STOP','APP_SHUTDOWN','APP_CLOSE'].includes(m.type)?{protocol:'app-lifecycle-v2',instanceId,state:completed?'completed':'stopped',issues:[]}:undefined;
-  parentPort.postMessage({type:init?'INIT_RESPONSE':m.type==='RESET'?'RESET_RESPONSE':'LIFECYCLE_RESPONSE',requestId:m.requestId,success:true,
+  parentPort.postMessage({type:init?'INIT_RESPONSE':'LIFECYCLE_RESPONSE',requestId:m.requestId,success:true,
     ...(init?{appInstanceId:m.appInstanceId,appLifecycle:{protocol:'app-lifecycle-v2',version:2,instanceId:m.appInstanceId},persistence${wrong ? ",acceptedCapabilities:['unknown-capability']" : ''}}:{}),
     ...(!init&&persistence?{persistence}:{}),...(appCleanup?{appCleanup}:{})});
   if(init) parentPort.postMessage({type:'SNAPSHOT_PREPARED',draft:{schemaVersion:3,appId:m.appId,instanceId:m.appInstanceId,producerSeq:1,sourceEpoch:1,capturedAt:Date.now(),
@@ -182,20 +183,28 @@ parentPort.on('message',m=>{
         try {
             await expect(install(runtime, 'd', 'a', [mode], { workerScriptPath: script })).rejects.toMatchObject({ code: 'INSTALL_FAILED' });
             const installed = runtime.getDesktop('d').getInstalledApps().find((entry: any) => entry.appId === 'a');
-            expect(installed?.status).toBe('closed');
+            expect(installed).toBeUndefined();
             const report = await runtime.beginShutdown().completion;
             facts.push({ case: `capability-ack-${mode}-${wrong ? 'invalid' : 'missing'}`, report, installedStatus: installed?.status });
-            expect(report).toMatchObject({ resourcesReleased: true, hasFailures: false, verification: 'managed', interactions: { verified: true, retainedScopes: 0, retainedBytes: 0 } });
+            expect(report).toMatchObject({ resourcesReleased: true, hasFailures: false, verification: 'managed', interactions: { verified: true, retainedOperations: 0, retainedBytes: 0 } });
         } finally { await runtime.beginShutdown().completion; }
     }
 }, 15000);
 
-it('B2 C10 public scope capacity shares the existing single authority and can release its slots', async () => {
-    const runtime = makeRuntime();try {
-        await install(runtime);const s = scope(runtime), clients = [s.client];
-        for (let index = 1; index < 16; index++) clients.push(scope(runtime).client);
-        expect(runtime.createAppScope('d', 'a', s.policy)).toMatchObject({ issue: { code: 'INVOCATION_CAPACITY' } });
-        clients[0].close();const next = scope(runtime);next.client.close();for (const client of clients) client.close();
+it('reuses one instance handle and keeps read-only preview independent of the candidate', async () => {
+    const runtime = makeRuntime();
+    try {
+        await install(runtime);
+        const s = scope(runtime), current = await s.observe();
+        expect(runtime.getAppInteraction('d', 'a', s.instanceId).interaction).toBe(s.client);
+        expect(runtime.getAppInteraction('d', 'a', 'wrong')).toMatchObject({ status: 'rejected', issue: { code: 'APP_INSTANCE_MISMATCH' } });
+        const pending = await s.client.observe({ all: true });
+        expect(pending.status).toBe('observed');
+        expect((await s.client.preview()).status).toBe('previewed');
+        expect(await s.client.observe({ all: true })).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_CAPACITY' } });
+        s.client.releaseObservation(pending.observation.observationId);
+        expect(await s.client.invoke(request(current))).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
+        expect((await s.client.observe({ all: true })).status).toBe('observed');
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);
 
@@ -204,22 +213,22 @@ it.each((['runtime', 'desktop', 'app', 'delete'] as const).flatMap(parent => [fa
     try {
         await install(runtime);const s = scope(runtime);const observation = await s.observe();let calls = 0;
         s.controls.project = (context: any) => { calls++;entered.resolve();context.signal.addEventListener('abort', () => {
-        expect(runtime.createAppScope('d', 'a', s.policy).status).toBe('rejected');
+        expect(runtime.getAppInteraction('d', 'a', s.instanceId, s.policy).status).toBe('rejected');
         });return gate.promise; };
         const observing = s.client.observe({ viewIds: ['detail'] });await entered.promise;const desktop = runtime.getDesktop('d');
         closing = parent === 'runtime' ? runtime.beginShutdown() : parent === 'desktop' || parent === 'delete' ? runtime.beginDesktopShutdown('d', parent === 'delete' ? { intent: 'delete' } : undefined) : undefined;
         const appClosing = parent === 'app' ? desktop.closeApp('a') : undefined;
         const previous = calls, sameStack = s.client.observe({ viewIds: ['detail'] });
         expect(await s.client.invoke({ invocationId: 'late', observationId: 'old', bindingId: 'old', input: {} })).not.toHaveProperty('kind', 'receipt');
-        expect(await s.client.invoke({ ...request(observation), invocationId: 'late' })).toHaveProperty('code', 'SCOPE_UNAVAILABLE');
-        expect(runtime.createAppScope('d', 'a', s.policy).status).toBe('rejected');await sameStack;expect(calls).toBe(previous);
+        expect(await s.client.invoke({ ...request(observation), invocationId: 'late' })).toHaveProperty('code', 'APP_INTERACTION_UNAVAILABLE');
+        expect(runtime.getAppInteraction('d', 'a', s.instanceId, s.policy).status).toBe('rejected');await sameStack;expect(calls).toBe(previous);
         let appDone = false;void appClosing?.then(() => { appDone = true; });
         if (closing) {
-            const deadline = await closing.wait({ timeoutMs: 5 });expect(deadline).toMatchObject({ status: 'deadline', report: { resourcesReleased: false, hasFailures: false, interactions: { verified: true, retainedScopes: 1 } } });
+            const deadline = await closing.wait({ timeoutMs: 5 });expect(deadline).toMatchObject({ status: 'deadline', report: { resourcesReleased: false, hasFailures: false, interactions: { verified: true, retainedOperations: 1 } } });
             facts.push({ case: 'held-project-' + parent, pending: deadline.report });
         } else { for (let i = 0; i < 30; i++) await Promise.resolve();expect(appDone).toBe(false); }
         if (reject) gate.reject(Error('held project'));else gate.resolve({ views: [], refs: [], toolBindings: [], content: [] });expect((await observing).status).toBe('rejected');await appClosing;
-        if (closing) expect(await closing.completion).toMatchObject({ resourcesReleased: true, interactions: { verified: true, retainedScopes: 0, retainedBytes: 0 } });
+        if (closing) expect(await closing.completion).toMatchObject({ resourcesReleased: true, interactions: { verified: true, retainedOperations: 0, retainedBytes: 0 } });
     } finally { gate.resolve({ views: [], refs: [], toolBindings: [], content: [] });await runtime.beginShutdown().completion; }
 }, 15000);
 
@@ -239,13 +248,13 @@ it.each((['authorize', 'auto-read', 'duplicate-read'] as const).flatMap(stage =>
             const handlersBeforeClose = await handlerCount();expect(handlersBeforeClose).toBe(stage === 'authorize' ? 0 : 1);
             const appClosing = parent === 'app' ? runtime.getDesktop('d').closeApp('a') : undefined;
             const closing = parent === 'desktop' ? runtime.beginDesktopShutdown('d') : runtime.beginShutdown(), before = closing.inspect();expect((await closing.wait({ timeoutMs: 5 })).status).toBe('deadline');
-            expect(closing.inspect()).toMatchObject({ resourcesReleased: false, hasFailures: false, interactions: { verified: true, retainedScopes: 1 } });
-            expect(await s.client.invoke(input)).toHaveProperty('code', 'SCOPE_UNAVAILABLE');expect(calls).toBe(1);
+            expect(closing.inspect()).toMatchObject({ resourcesReleased: false, hasFailures: false, interactions: { verified: true, retainedOperations: stage === 'authorize' ? 2 : 1 } });
+            expect(await s.client.invoke(input)).toHaveProperty('code', 'APP_INTERACTION_UNAVAILABLE');expect(calls).toBe(1);
             if (reject) gate.reject(Error('held policy'));else gate.resolve(true);
             expect(await work).not.toHaveProperty('kind', 'receipt');const report = await closing.completion;
-            expect(report).toMatchObject({ ok: true, resourcesReleased: true, interactions: { verified: true, retainedScopes: 0, retainedBytes: 0 } });
+            expect(report).toMatchObject({ ok: true, resourcesReleased: true, interactions: { verified: true, retainedOperations: 0, retainedBytes: 0 } });
             const handlersAfterClose = await handlerCount();expect(handlersAfterClose).toBe(handlersBeforeClose);
-            await appClosing;expect(before.interactions.retainedScopes).toBe(1);facts.push({ case: stage, parent, reject, handlersBeforeClose, handlersAfterClose, before, report });
+            await appClosing;expect(before.interactions.retainedOperations).toBe(stage === 'authorize' ? 2 : 1);facts.push({ case: stage, parent, reject, handlersBeforeClose, handlersAfterClose, before, report });
         } finally { gate.resolve(true);await runtime.beginShutdown().completion; }
     }
 }, 25000);
@@ -255,17 +264,17 @@ it('B2 C06/10–12/16 public pending/collapse/pause/reopen/reinitialize keeps mo
         const id = await runtime.createDesktop('d'), desktop = runtime.getDesktop(id), modes: Array<(typeof allModes)[number]> = ['view-type-parameters-v1'];
         await desktop.registerPendingApp({ appId: 'a', modulePath: pathToFileURL(app).href, interactionModes: modes });modes.length = 0;
         expect(desktop.getInstalledApps().find((entry: any) => entry.appId === 'a')?.interactionModes).toEqual(['view-type-parameters-v1']);
-        expect(runtime.createAppScope(id, 'a', {}).issue.code).toBe('SCOPE_UNAVAILABLE');await desktop.openApp('a');
-        const s = scope(runtime), first = await s.observe();await desktop.collapseApp('a');const collapsed = scope(runtime);collapsed.client.close();
-        await runtime.suspend(id);expect(runtime.createAppScope(id, 'a', s.policy).issue.code).toBe('SCOPE_UNAVAILABLE');
-        const paused = await s.client.invoke(request(first));expect(paused.receipt?.outcome.status).toBe('rejected');await runtime.resume(id);
+        expect(runtime.getAppInteraction(id, 'a', 'missing').issue.code).toBe('APP_INTERACTION_UNAVAILABLE');await desktop.openApp('a');
+        const s = scope(runtime), first = await s.observe();await desktop.collapseApp('a');expect(runtime.getAppInteraction(id, 'a', s.instanceId).interaction).toBe(s.client);
+        await runtime.suspend(id);expect(runtime.getAppInteraction(id, 'a', s.instanceId, s.policy).issue.code).toBe('APP_INTERACTION_UNAVAILABLE');
+        const paused = await s.client.invoke(request(first));expect(paused).toMatchObject({ kind: 'refused', code: 'APP_INTERACTION_UNAVAILABLE' });await runtime.resume(id);
         expect((await s.client.invoke(request(first, 'ordinary', { text: 'change' }, 'resumed'))).receipt.outcome.status).toBe('succeeded');
         await desktop.closeApp('a');expect((await s.client.observe({ viewIds: ['detail'] })).status).toBe('rejected');await desktop.openApp('a');
         const reopened = scope(runtime), next = await reopened.observe();expect(next.source.instanceId).not.toBe(first.source.instanceId);
-        const reinitializing = runtime.reinitializeDesktopApps(id);expect(runtime.createAppScope(id, 'a', s.policy).status).toBe('rejected');
+        const reinitializing = runtime.reinitializeDesktopApps(id);expect(runtime.getAppInteraction(id, 'a', s.instanceId, s.policy).status).toBe('rejected');
         expect((await reopened.client.observe({ viewIds: ['detail'] })).status).toBe('rejected');await reinitializing;
         const fresh = scope(runtime), last = await fresh.observe();expect(last.source.instanceId).not.toBe(next.source.instanceId);
-        expect((await fresh.client.invoke(request(last))).receipt.outcome.status).toBe('succeeded');fresh.client.close();
+        expect((await fresh.client.invoke(request(last))).receipt.outcome.status).toBe('succeeded');
         facts.push({ case: 'instance-boundaries', instances: [first.source.instanceId, next.source.instanceId, last.source.instanceId], registeredModes: ['view-type-parameters-v1'] });
     } finally { await runtime.beginShutdown().completion; }
 }, 20000);
@@ -298,7 +307,7 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
         const collapsedFirst = await context();
         expect((await call(collapsedFirst, 'system-show_app', { app_id: 'a' }, 'first-show'))?.outcomeStatus).toBe('succeeded');
         expect((await call(first, 'system-close_app', { app_id: 'a' }, 'first-close'))?.outcomeStatus).toBe('succeeded');
-        expect((await call(first, dynamicTool!, { filePath: '/open/note.txt', text: 'change' }, 'closed-read'))?.error?.code).toBe('SCOPE_UNAVAILABLE');
+        expect((await call(first, dynamicTool!, { filePath: '/open/note.txt', text: 'change' }, 'closed-read'))?.error?.code).toBe('APP_INTERACTION_UNAVAILABLE');
 
         const closed = await context();
         expect((await call(closed, 'system-open_app', { app_id: 'a' }, 'reopen'))?.outcomeStatus).toBe('succeeded');
@@ -308,7 +317,7 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
         expect(successorInstance).not.toBe(firstInstance);
         expect(JSON.stringify(successor.messages)).not.toContain(successorInstance);
         expect((await call(successor, dynamicTool!, { filePath: '/open/note.txt', text: 'change' }, 'successor-read'))?.outcomeStatus).toBe('succeeded');
-        expect((await call(first, dynamicTool!, { filePath: '/open/note.txt', text: 'change' }, 'old-read-after-reopen'))?.error?.code).toBe('SCOPE_UNAVAILABLE');
+        expect((await call(first, dynamicTool!, { filePath: '/open/note.txt', text: 'change' }, 'old-read-after-reopen'))?.error?.code).toBe('APP_INTERACTION_UNAVAILABLE');
 
         for (const [name, callId] of [['system-close_app', 'stale-close'], ['system-collapse_app', 'stale-collapse']] as const) {
             expect((await call(first, name, { app_id: 'a' }, callId))?.error?.code).toBe('APP_INSTANCE_CHANGED');
@@ -331,17 +340,17 @@ it('B2 C12/21 two Desktop/three App actual owners aggregate held callbacks witho
     const runtime = makeRuntime(), gates = [deferred(), deferred(), deferred()], entered = [deferred(), deferred(), deferred()];try {
         await install(runtime, 'one', 'a');await install(runtime, 'one', 'b');await install(runtime, 'two', 'a');
         const scopes = [scope(runtime, 'one', 'a'), scope(runtime, 'one', 'b'), scope(runtime, 'two', 'a')], observations = await Promise.all(scopes.map(s => s.observe()));
-        const foreign = await scopes[1].client.invoke(request(observations[0]));expect(foreign.receipt?.outcome.status).toBe('rejected');
+        const foreign = await scopes[1].client.invoke(request(observations[0]));expect(foreign).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
         const works = scopes.map((s, index) => { s.controls.project = () => { entered[index].resolve();return gates[index].promise; };return s.client.observe({ viewIds: ['detail'] }); });await Promise.all(entered.map(g => g.promise));
         const one = runtime.getDesktop('one').beginClose(), two = runtime.getDesktop('two').beginClose();
-        const closing = runtime.beginShutdown(), previous = closing.inspect();expect(previous.interactions).toMatchObject({ verified: true, retainedScopes: 3 });
-        expect(one.inspect().interactions.retainedScopes).toBe(2);expect(two.inspect().interactions.retainedScopes).toBe(1);
+        const closing = runtime.beginShutdown(), previous = closing.inspect();expect(previous.interactions).toMatchObject({ verified: true, retainedOperations: 3 });
+        expect(one.inspect().interactions.retainedOperations).toBe(2);expect(two.inspect().interactions.retainedOperations).toBe(1);
         expect(previous.interactions.retainedBytes).toBe(one.inspect().interactions.retainedBytes + two.inspect().interactions.retainedBytes);
         for (const [index, remaining] of [2, 1, 0].entries()) { gates[index].resolve({ views: [], refs: [], toolBindings: [], content: [] });await works[index];
-            await vi.waitFor(() => expect(closing.inspect().interactions.retainedScopes).toBe(remaining));
+            await vi.waitFor(() => expect(closing.inspect().interactions.retainedOperations).toBe(remaining));
             expect(closing.inspect().interactions.retainedBytes).toBe(one.inspect().interactions.retainedBytes + two.inspect().interactions.retainedBytes); }
-        const report = await closing.completion;expect(report).toMatchObject({ resourcesReleased: true, interactions: { verified: true, retainedScopes: 0, retainedBytes: 0 } });
-        expect(previous.interactions.retainedScopes).toBe(3);facts.push({ case: 'three-owners', previous, report });
+        const report = await closing.completion;expect(report).toMatchObject({ resourcesReleased: true, interactions: { verified: true, retainedOperations: 0, retainedBytes: 0 } });
+        expect(previous.interactions.retainedOperations).toBe(3);facts.push({ case: 'three-owners', previous, report });
     } finally { for (const gate of gates) gate.resolve({ views: [], refs: [], toolBindings: [], content: [] });await runtime.beginShutdown().completion; }
 }, 20000);
 
@@ -351,6 +360,6 @@ it('B2 C07 app launch config cannot grant modes disabled by the trusted Host', a
         const s = scope(runtime), observation = await s.observe();
         expect(observation.views.find((view: any) => view.id === 'detail')?.content.value).toContain('Completed actions: 0');
         expect(observation.bindings).toEqual([]);
-        s.client.close();
+
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);

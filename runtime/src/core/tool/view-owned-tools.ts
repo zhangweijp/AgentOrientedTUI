@@ -6,7 +6,7 @@ import type { ToolResultData } from '../../spi/core/tool-result.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
 import type { JsonValue, ObservedToolExecutionV3, ToolDescriptorV3 } from '../snapshot/types.js';
 import type { SafeOrdinaryInvoker, ViewToolInvocationTerminal } from './invocation-terminal.js';
-import type { AppTypeToolDefinition, AppTypeToolRegistrationOptions } from '../../spi/runtime/app-type-tools.interface.js';
+import type { AppFrameTool, AppTypeToolDefinition, AppTypeToolRegistrationOptions } from '../../spi/runtime/app-type-tools.interface.js';
 
 export interface ViewInstance {
     readonly viewId: string;
@@ -34,6 +34,7 @@ type TypeToolRegistration = {
     readonly contract: OrdinaryParameterContract;
     activationId?: string;
     activationBytes: number;
+    frameOwner?: AppFrameTool;
 };
 
 export class ViewToolContractError extends Error {
@@ -99,9 +100,9 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
     let disposed = false;
     let bindingCount = 0;
 
-    const byViewId = new Map<string, string>();
-    const byInstanceId = new Map<string, ViewInstance>();
-    const typeTools = new Map<string, Map<string, TypeToolRegistration>>();
+    let byViewId = new Map<string, string>();
+    let byInstanceId = new Map<string, ViewInstance>();
+    let typeTools = new Map<string, Map<string, TypeToolRegistration>>();
     let mountSequence = 0;
     let activationSequence = 0;
 
@@ -150,11 +151,10 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         entries: readonly Readonly<{ registration: TypeToolRegistration; id: string; bytes: number }>[];
     }> {
         const registrations = typeTools.get(viewType);
-        const count = registrations?.size ?? 0;
-        if (count > Number.MAX_SAFE_INTEGER - activationSequence) {
+        const pending = [...(registrations?.values() ?? [])].filter(registration => !registration.activationId);
+        if (pending.length > Number.MAX_SAFE_INTEGER - activationSequence) {
             throw new ViewToolContractError('TOOL_CAPACITY', 'Tool activation sequence exhausted');
         }
-        const pending = [...(registrations?.values() ?? [])];
         const lastSequence = activationSequence + pending.length;
         let bytes = 0;
         for (let index = 0; index < pending.length; index++) bytes += activationBytesFor(activationSequence + index + 1);
@@ -206,7 +206,73 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         return { success: true };
     }
 
-    return Object.freeze({
+    function removeTool(viewType: string, name: string, registration: TypeToolRegistration): void {
+        const current = typeTools.get(viewType);
+        if (current?.get(name)?.token !== registration.token) return;
+        current!.delete(name);
+        if (current!.size === 0) typeTools.delete(viewType);
+        retainedBytes -= registration.bytes + registration.activationBytes;
+        bindingCount--;
+    }
+
+    function removeView(viewInstanceId: string, retainedTypes?: ReadonlySet<string>): void {
+        const view = byInstanceId.get(viewInstanceId);
+        if (!view) return;
+        retainedBytes -= viewBytes(view);
+        byInstanceId.delete(viewInstanceId);
+        if (byViewId.get(view.viewId) === viewInstanceId) byViewId.delete(view.viewId);
+        if (!retainedTypes?.has(view.viewType) && matchingViewCount(view.viewType) === 0) expireTypeActivations(view.viewType);
+    }
+
+    function inventory() {
+        return { byViewId, byInstanceId, typeTools, mountSequence, activationSequence, retainedBytes, bindingCount };
+    }
+
+    function useInventory(next: ReturnType<typeof inventory>): void {
+        ({ byViewId, byInstanceId, typeTools, mountSequence, activationSequence, retainedBytes, bindingCount } = next);
+    }
+
+    const registry = Object.freeze({
+        /** Prepare View and Tool identities for one complete SDK frame. */
+        prepareFrame(views: readonly Readonly<{ id: string; type: string }>[], tools: readonly AppFrameTool[]): {
+            instances: readonly ViewInstance[]; tools: readonly ToolDescriptorV3[]; accept(): void;
+        } {
+            assertActive();
+            if (views.length > captured.maxViews || tools.length > captured.maxBindings) {
+                throw new ViewToolContractError('VIEW_CAPACITY', 'App frame exceeds the View or Tool retention limit');
+            }
+            const nextViews = new Map(views.map(view => [view.id, view.type]));
+            const nextTools = new Map(tools.map(tool => [toolId(tool.definition.viewType, tool.definition.name), tool]));
+            if (nextViews.size !== views.length) throw new ViewToolContractError('VIEW_DUPLICATE', 'Duplicate View in App frame');
+            if (nextTools.size !== tools.length) throw new ViewToolContractError('TOOL_DUPLICATE', 'Duplicate Tool in App frame');
+            const retainedTypes = new Set(nextViews.values());
+            const previous = inventory();
+            useInventory({ ...previous, byViewId: new Map(byViewId), byInstanceId: new Map(byInstanceId),
+                typeTools: new Map([...typeTools].map(([type, registrations]) => [
+                    type, new Map([...registrations].map(([name, registration]) => [name, { ...registration }])),
+                ])) });
+            try {
+                for (const [type, registrations] of typeTools) {
+                    for (const [name, registration] of registrations) {
+                        if (!registration.frameOwner || nextTools.get(toolId(type, name)) !== registration.frameOwner) removeTool(type, name, registration);
+                    }
+                }
+                for (const view of byInstanceId.values()) {
+                    if (nextViews.get(view.viewId) !== view.viewType) removeView(view.viewInstanceId, retainedTypes);
+                }
+                const instances = views.map(({ id, type }): ViewInstance => registry.getView(id) ?? registry.mount(id, type));
+                for (const tool of tools) {
+                    const { viewType, name } = tool.definition;
+                    if (typeTools.get(viewType)?.has(name)) continue;
+                    registry.registerTypeTool(tool.definition, tool.options);
+                    typeTools.get(viewType)!.get(name)!.frameOwner = tool;
+                }
+                const candidate = inventory();
+                return { instances, tools: registry.listTools(), accept() { useInventory(candidate); } };
+            } finally {
+                useInventory(previous);
+            }
+        },
         protocol: VIEW_TYPE_TOOL_PROTOCOL,
         dispose(): void {
             if (disposed) return;
@@ -303,18 +369,14 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             return () => {
                 if (released) return;
                 released = true;
-                const current = typeTools.get(registeredViewType);
-                const currentRegistration = current?.get(registeredName);
-                if (currentRegistration?.token !== registrationToken) return;
-                current!.delete(registeredName);
-                if (current!.size === 0) typeTools.delete(registeredViewType);
-                retainedBytes -= currentRegistration.bytes + currentRegistration.activationBytes;
-                bindingCount--;
+                const current = typeTools.get(registeredViewType)?.get(registeredName);
+                if (current?.token === registrationToken) removeTool(registeredViewType, registeredName, current);
             };
         },
         mount(viewId: string, viewType: string): ViewInstance {
             assertActive();
             nonEmpty(viewId, 'viewId');
+            if (viewId.includes('.')) throw new ViewToolContractError('VIEW_INVALID', 'View ID cannot contain a dot');
             nonEmpty(viewType, 'viewType');
             if (byViewId.has(viewId)) {
                 throw new ViewToolContractError('VIEW_DUPLICATE', 'View ID already mounted: ' + viewId);
@@ -344,12 +406,12 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         },
 
         unmount(viewInstanceId: string): void {
-            const view = byInstanceId.get(viewInstanceId);
-            if (!view) return;
-            retainedBytes -= viewBytes(view);
-            byInstanceId.delete(viewInstanceId);
-            if (byViewId.get(view.viewId) === viewInstanceId) byViewId.delete(view.viewId);
-            if (matchingViewCount(view.viewType) === 0) expireTypeActivations(view.viewType);
+            removeView(viewInstanceId);
+        },
+
+        getView(viewId: string): ViewInstance | undefined {
+            const instanceId = byViewId.get(viewId);
+            return instanceId === undefined ? undefined : byInstanceId.get(instanceId);
         },
 
         /** Internal producer inventory; no private callable or live View object escapes. */
@@ -379,4 +441,5 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         },
 
     });
+    return registry;
 }

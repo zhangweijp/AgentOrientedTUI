@@ -7,7 +7,7 @@ import { build } from 'esbuild';
 import { describe, expect, it, vi } from 'vitest';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import type { IDesktop, IKernel } from '../../runtime/src/spi/runtime/kernel.interface.js';
-import type { ScopePolicy } from '../../runtime/src/core/invocation/scoped-interaction-types.js';
+import type { AppInteractionPolicy } from '@aotui/runtime/core';
 import { AppWorkerHost } from '../../runtime/src/engine/app/worker-host.js';
 
 function appSource(): string {
@@ -15,7 +15,7 @@ function appSource(): string {
         import { h } from 'preact';
         import { useState } from 'preact/hooks';
         import Type from 'typebox';
-        import { createTUIApp, defineViewTypeTool, View, AppTools, ToolRef, defineToolSet } from '@aotui/sdk';
+        import { createTUIApp, defineViewTypeTool, View, AppTools, defineToolSet } from '@aotui/sdk';
 
 
 const fixtureTools0 = defineToolSet({
@@ -32,8 +32,6 @@ function Root() {
                 whitespace: '  \\n  ',
                 hidden: null,
             });
-            const PingUI = fixtureTools0.PingUI;
-            const SetBodyUI = fixtureTools0.SetBodyUI;
 
             return h(AppTools, { definition: fixtureTools0, bindings: {
 PingUI: { execute: async () => ({ success: true, data: { pong: true } }) },
@@ -48,7 +46,6 @@ SetBodyUI: { execute: async ({ viewId, body }) => {
                 h(View, {kind: 'state', id: 'hidden', type: 'EmptyType' }, bodies.hidden === null
                     ? h('span', { 'data-state': 'hidden' }, 'HIDDEN_BODY')
                     : h('p', {}, bodies.hidden)),
-                h(ToolRef, { tool: PingUI }, 'Ping'), h(ToolRef, { tool: SetBodyUI }, 'Set body'),
             ]));
         }
 
@@ -73,6 +70,8 @@ async function buildFixture(directory: string): Promise<{ app: string; workerScr
         alias: {
             '@aotui/sdk': resolve(runtime, '../sdk/src/index.ts'),
             '@aotui/runtime/spi': resolve(runtime, 'src/spi/index.ts'),
+            '@aotui/runtime/core': resolve(runtime, 'src/core/index.ts'),
+            '@aotui/runtime/adapters/dom': resolve(runtime, 'src/adapters/dom-app.ts'),
         },
         logLevel: 'silent',
     });
@@ -134,7 +133,7 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
                 output: { subscribe: vi.fn(), unsubscribe: vi.fn() },
             } as unknown as IDesktop;
             const kernel = {
-                createAppScope: (_desktopId: string, _appId: string, policy: ScopePolicy) => host!.createInteractionScope(policy),
+                getAppInteraction: (_desktopId: string, _appId: string, _instanceId: string, policy?: AppInteractionPolicy) => host!.getAppInteraction(policy),
             } as unknown as IKernel;
             source = new SemanticAOTUIDrivenSource(desktop, kernel, { includeInstruction: false });
             const observe = async () => {
@@ -188,12 +187,12 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
             source = undefined;
             await host.close();
             expect(host.getResourceReport()).toMatchObject({ interactions: {
-                closed: true, retainedScopes: 0, retainedBytes: 0,
+                closed: true, retainedOperations: 0, retainedBytes: 0,
             }, appCleanup: { support: 'managed', report: { state: 'completed', issues: [] } } });
-            expect(await host.releaseWorker()).toBe(worker);
+            expect(worker.threadId).toBe(-1);
             expect(await host.waitForResourceRelease()).toMatchObject({
-                state: 'settled', worker: 'transferred', resourcesReleased: true,
-                interactions: { closed: true, retainedScopes: 0, retainedBytes: 0 },
+                state: 'settled', worker: 'exited', resourcesReleased: true,
+                interactions: { closed: true, retainedOperations: 0, retainedBytes: 0 },
             });
         } finally {
             await context?.release?.();

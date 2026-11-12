@@ -1,3 +1,4 @@
+import { SemanticProjectionCoordinator } from '../projection/coordinator.js';
 import { describe, expect, it } from 'vitest';
 import { parseHTML } from 'linkedom';
 import { canonicalJson, copyJson, utf8Size } from './json.js';
@@ -9,7 +10,7 @@ import type { ViewID } from '../../spi/index.js';
 import { acquireToolSource } from '../tool/source-binding.js';
 import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
-import { captureDOMSnapshot } from '../../worker-runtime/dom-snapshot-producer.js';
+import { captureDOMViews } from '../../worker-runtime/dom-snapshot-producer.js';
 
 // Evidence of CURRENT Core/DOM-adapter behavior, not a proposed Ref executor.
 // Identities and declarations below are fixtures, not mounts performed by SDK.
@@ -78,23 +79,22 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
             node.setAttribute('data-view-instance-id', view.viewInstanceId);
             container.appendChild(node);
         }
-        const captured = captureDOMSnapshot({
-            appId, instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 1, container,
-            fragments: fixture.views.map(view => ({
-                viewId: view.id as ViewID, viewType: view.type, viewName: view.name,
-                kind: 'state', markup: '[File](file)',
-            })),
-            kernel: {
-                getViewOwnedViewInstances: () => fixture.views.map(view => ({
-                    viewId: view.id, viewType: view.type, viewInstanceId: view.viewInstanceId,
-                })),
-                getToolDefinitions: () => [],
-                getViewRefs: () => [
-                    { viewId: 'fd_A', refId: 'file', value: { value: 'A' } },
-                    { viewId: 'fd_B', refId: 'file', value: { $aotuiEntityRefV1: { entityType: 'File', entityId: 'B', entityVersion: 'v1' } } },
-                ],
-            },
+        const mounted = fixture.views.map(view => ({ viewId: view.id, viewType: view.type, viewInstanceId: view.viewInstanceId }));
+        const fragments = fixture.views.map(view => ({
+            viewId: view.id as ViewID, viewType: view.type, viewName: view.name,
+            kind: 'state' as const, markup: '[File](file)',
+        }));
+        const projection = new SemanticProjectionCoordinator({
+            identity: () => ({ appId, instanceId }),
+            readFrame: () => ({ views: captureDOMViews(container, fragments, mounted), tools: [] }),
         });
+        expect(projection.commit(() => {
+            projection.registerRef(mounted[0]!, 'file', { value: 'A' });
+            projection.registerRef(mounted[1]!, 'file', { $aotuiEntityRefV1: { entityType: 'File', entityId: 'B', entityVersion: 'v1' } });
+        })).toBe('prepared');
+        const publication = projection.nextPublication();
+        if (!('draft' in publication)) throw new Error(publication.failure.issue.message);
+        const captured = publication.draft;
         expect(captured.refs[refKey('fd_A', mountA, 'file')]).toMatchObject({
             refType: 'unknown', target: { kind: 'snapshot-value', payload: { value: 'A' } },
         });

@@ -19,7 +19,7 @@ describe('Desktop', () => {
     });
 
     it('does not expose the retired snapshot-fragment or dispatcher entry points', () => {
-        expect(desktop).toHaveProperty('createAppScope');
+        expect(desktop).toHaveProperty('getAppInteraction');
         for (const name of ['getSnapshotFragments', 'dismountView', 'hideView', 'showView', 'mountViewByLink', 'experimentalCreateAppScope']) {
             expect(desktop).not.toHaveProperty(name);
         }

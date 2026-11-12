@@ -80,8 +80,8 @@ export function newCloseState(scope: CloseReport['scope'], intent: CloseReport['
         persistence: { managedApps: 0, unnegotiatedApps: 0, notUsedApps: 0, closeReceipts: 0,
             missingCloseReceipts: 0, confirmedFlushes: 0, failedFlushes: 0, absentFlushes: 0, unknownApps: 0, unsavedKeys: 0 },
         resources: { retainedStorageOwners: 0, storageActualIO: 0, openingStorageOwners: 0 },
-        interactions: { verified: true, retainedScopes: 0, retainedBytes: 0 },
-        pool: { ownership: 'not-owned', report: null }, beforeClose: 'not-provided',
+        interactions: { verified: true, retainedOperations: 0, retainedBytes: 0 },
+        workers: { ownership: 'not-owned', report: null }, beforeClose: 'not-provided',
         cleanup: { signalBus: 'not-owned', llmOutput: 'not-owned', logger: 'not-owned' },
         failures: [], failureCount: 0, samplesTruncated: false };
 }
@@ -119,11 +119,11 @@ function ownData(value: unknown, key: string): unknown {
     catch { return undefined; }
 }
 function mergeInteractions(state: CloseState, child: unknown, host: boolean, alreadyUnverified = 0): void {
-    const target = state.interactions ??= { verified: true, retainedScopes: 0, retainedBytes: 0 };
+    const target = state.interactions ??= { verified: true, retainedOperations: 0, retainedBytes: 0 };
     const report = ownData(child, 'interactions'), flag = ownData(report, host ? 'closed' : 'verified');
     let valid = typeof flag === 'boolean' && (host || flag === true);
     let empty = true;
-    for (const key of ['retainedScopes', 'retainedBytes'] as const) {
+    for (const key of ['retainedOperations', 'retainedBytes'] as const) {
         const value = ownData(report, key);
         if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) { valid = false;empty = false;continue; }
         if (value !== 0) empty = false;
@@ -182,7 +182,6 @@ export function sandboxCloseReport(report: SandboxCloseReport, desktopId: string
     }
     state.apps.notVerifiedReleased = state.resourcesReleased ? 0 : 1;
     addCloseFailure(state, 'apps', report.issues, ids);
-    addCloseFailure(state, 'worker', [...host?.issues ?? [], ...report.lease?.issue ? [report.lease.issue] : []], ids);
-    if (report.ownedPool) addCloseFailure(state, 'pool', report.ownedPool.issues, ids);
+    addCloseFailure(state, 'worker', host?.issues ?? [], ids);
     return freezeClose({ ...snapshotClose(state), scope: 'app-manager' as const });
 }

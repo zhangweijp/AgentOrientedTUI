@@ -15,7 +15,7 @@ describe('R01 ordinary-v2 declaration profile', () => {
     expect(Object.isFrozen(tagged)).toBe(true);
     expect(result.validate({ z: 'x', a: 1 })).toMatchObject({ ok: true });
   });
-  it.each(['missing', 'future', 'extra', 'ref', 'required-order', 'omitted-required', 'omitted-extra', 'nested', 'integer'])('rejects %s without silently normalizing it', kind => {
+  it.each(['missing', 'future', 'extra', 'ref', 'required-order', 'omitted-required', 'omitted-extra', 'tuple', 'format'])('rejects %s without silently normalizing it', kind => {
     const p: any = JSON.parse(JSON.stringify(ordinaryParameterProfile(make())));
     if (kind === 'missing') delete p[marker];
     if (kind === 'future') p[marker] = 'ordinary-params-v2';
@@ -24,13 +24,13 @@ describe('R01 ordinary-v2 declaration profile', () => {
     if (kind === 'required-order') p.required.reverse();
     if (kind === 'omitted-required') delete p.required;
     if (kind === 'omitted-extra') delete p.additionalProperties;
-    if (kind === 'nested') p.properties.a = { type: 'object', properties: {} };
-    if (kind === 'integer') p.properties.a.type = 'integer';
+    if (kind === 'tuple') p.properties.a = { type: 'array', items: [{ type: 'string' }] };
+    if (kind === 'format') p.properties.a = { type: 'string', format: 'date-time' };
     expect(compileOrdinaryProfile(p)).toBeNull();
   });
-  it('rejects patterns in canonical profiles instead of compiling them into a live validator', () => {
+  it('rejects invalid patterns in transported profiles', () => {
     const p: any = JSON.parse(JSON.stringify(ordinaryParameterProfile(make())));
-    p.properties.query = { type: 'string', pattern: '^(a+)+$' };
+    p.properties.query = { type: 'string', pattern: '[' };
     expect(compileOrdinaryProfile(p)).toBeNull();
   });
   it('accepts equivalent object key insertion order without broadening required order', () => {

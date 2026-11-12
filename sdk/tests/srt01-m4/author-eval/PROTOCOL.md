@@ -1,6 +1,6 @@
 # Bounded Agent author evaluation
 
-This is a review fixture, not a production App or a second SDK. The project owner separately authorized nine isolated author trials on 2026-11-05. Production implementation stayed in the main coding chat.
+This is a frozen historical review fixture for the pre-upgrade SDK packages. Its task inputs and evaluator describe those packages only. For current authoring use the [SDK author guide](../../../README.md) and its published consumer validation. The project owner separately authorized nine isolated author trials on 2026-11-05. Production implementation stayed in the main coding chat.
 
 Three tasks are run three times each, in separate ephemeral model sessions. Fix the model and reasoning configuration, expose only the supplied tasks, public SDK documents and public declarations, allow at most two external repair turns, and retain every request, raw event log, source snapshot, diagnostic and result. Do not manually repair a model's source or change an evaluator after seeing its answer.
 

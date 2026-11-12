@@ -5,13 +5,14 @@ import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { createSnapshotCore, createViewOwnedTools, createScopedInteraction, compileOrdinarySchema,
-    refKey } from '../../core/index.js';
+import { createSnapshotCore, createViewOwnedTools, createAppInteraction, compileOrdinarySchema,
+    type SemanticProjectionCoordinator } from '../../core/index.js';
 import { initialBusiness, applyBusiness, businessResult, ordinaryInputSchema, referenceInputSchema, tools as businessTools, fileRef, privateRef, fileLabel, filePayload, selectedBusinessSession,
     expectedRead, businessSequence } from '../../../tests/fixtures/dual-producer-business.mjs';
 
 const defer = () => { let resolve!: (value?: any) => void;const promise = new Promise<any>(yes => { resolve = yes; });return { promise, resolve }; };
 let consumer: string, Host: any, actorCount = 0;
+let Projection: typeof SemanticProjectionCoordinator;
 const evidence: any[] = [];
 const grant = ({ source, selection }: any) => {
     const views = source.views.filter((v: any) => selection.viewIds.includes(v.id));
@@ -58,6 +59,8 @@ beforeAll(async () => {
         try { await symlink(join(repo, pkg, 'node_modules', entry), join(modules, entry), 'dir'); } catch (error: any) { if (error.code !== 'EEXIST') throw error; }
     }
     for (const file of ['dual-producer-app.mjs', 'dual-producer-business.mjs']) await capture(join(consumer, file), await readFile(join(repo, 'runtime/tests/fixtures', file), 'utf8'));
+    await capture(join(consumer, 'plain-producer.mjs'), "export { SemanticProjectionCoordinator } from '@aotui/runtime/core';\n");
+    Projection = (await import(pathToFileURL(join(consumer, 'plain-producer.mjs')).href)).SemanticProjectionCoordinator;
     Host = (await import(pathToFileURL(join(modules, '@aotui/runtime/dist/engine/app/worker-host.js')).href)).AppWorkerHost;
     evidence.push({ internalProducerTest: true, actualDistCopies: true, actualSdkApp: true, completePackageInstallClaimed: false, artifacts: artifacts || repo });
 }, 20000);
@@ -69,17 +72,25 @@ function plainActor() {
     if (!ordinary.ok || !reference.ok) throw Error('business declaration: ' + JSON.stringify({ ordinary, reference }));
     const instance = 'plain-' + ++actorCount, core = createSnapshotCore(), registry = createViewOwnedTools('app', instance);
     core.lifecycle.startApp('app', instance);
-    const authority = createScopedInteraction(core.store, { namespace: instance, now: Date.now });
-    let state = initialBusiness(), seq = 0;
+    let state = initialBusiness();
     const mounted = new Map<string, any>(), calls: any[] = [], entries: any[] = [], guards: any[] = [], facts: any[] = [], p = policy();
     let lost: ReturnType<typeof defer> | undefined, entered: ReturnType<typeof defer> | undefined;
     const releases = new Map<string, () => void>();
+    const refBindings = new Map<string, Map<string, ReturnType<SemanticProjectionCoordinator['registerRef']>>>();
+    const projection = new Projection({
+        identity: () => ({ appId: 'app', instanceId: instance }),
+        readFrame: () => ({
+            views: state.order.map(id => ({ id, viewInstanceId: mounted.get(id).viewInstanceId, type: 'File', name: id, kind: 'state',
+                content: { format: 'markdown-v1', value: `File View session ID: ${id}@${state.mounts[id]}. Stable File value.` } })),
+            tools: registry.listTools(),
+        }),
+    });
     function syncTools() {
         if (!state.order.some(id => state.enabled[id])) { for (const release of releases.values()) release(); releases.clear(); return; }
         for (const definition of Object.values(businessTools)) {
-            const { name } = definition;
+            const { name, viewType, description, inputSchema } = definition;
             if (releases.has(name)) continue;
-            releases.set(name, registry.registerTypeTool(definition, {
+            releases.set(name, registry.registerTypeTool({ name, viewType, description, inputSchema }, {
                 safeOrdinaryParametersInvocationMode: 'ordinary-v2',
                 createSafeOrdinaryParametersInvoker: contract => async args => {
                     const checked = (contract.validateResolvedInput ?? contract.validate)(args);
@@ -102,23 +113,33 @@ function plainActor() {
     }
     const snapshot = () => { const result = core.store.readLatest('app'); if (result.status !== 'ready') throw Error(result.status); return result.snapshot; };
     function publish() {
-        const refs: any = {};
-        for (const id of state.order) {
-            const view = mounted.get(id);
-            for (const [name, text] of [[state.ambiguous ? 'shared' : fileLabel(id), state.values[id]], ['private_' + fileLabel(id), 'private-' + id]])
-                refs[refKey(id, view.viewInstanceId, name)] = { id: name, ownerViewId: id,
-                    ownerViewInstanceId: view.viewInstanceId, refType: 'File',
-                    target: { kind: 'snapshot-value', payload: filePayload(state, id, text) } };
-        }
-        const n = ++seq, result = core.committer.accept({ schemaVersion: 3, appId: 'app', instanceId: instance,
-            producerSeq: n, sourceEpoch: n, capturedAt: Date.now(),
-            views: state.order.map(id => ({ id, viewInstanceId: mounted.get(id).viewInstanceId, type: 'File', name: id, kind: 'state',
-                content: { format: 'markdown-v1', value: `File View session ID: ${id}@${state.mounts[id]}. Stable File value.` } })),
-            refs, tools: Object.fromEntries(registry.listTools().map(tool => [tool.id, tool])) });
+        expect(projection.commit(() => {
+            for (const [id, view] of mounted) if (!state.order.includes(id)) {
+                projection.releaseView(view.viewInstanceId);
+                registry.unmount(view.viewInstanceId);
+                mounted.delete(id); refBindings.delete(id);
+            }
+            for (const id of state.order) {
+                if (!mounted.has(id)) mounted.set(id, registry.mount(id, 'File'));
+                const wanted = new Map([[state.ambiguous ? 'shared' : fileLabel(id), state.values[id]],
+                    ['private_' + fileLabel(id), 'private-' + id]]);
+                let bound = refBindings.get(id);
+                if (!bound) refBindings.set(id, bound = new Map());
+                for (const [name, binding] of bound) if (!wanted.has(name)) { binding.release(); bound.delete(name); }
+                for (const [name, value] of wanted) {
+                    const payload = filePayload(state, id, value);
+                    const binding = bound.get(name);
+                    if (binding) binding.update(payload);
+                    else bound.set(name, projection.registerRef(mounted.get(id), name, payload, 'File'));
+                }
+            }
+            syncTools();
+        })).toBe('prepared');
+        const result = projection.publishTo(core.committer);
         expect(['published', 'unchanged']).toContain(result.status); return snapshot();
     }
     const bindings = new WeakMap<object, any>();
-    const opened = authority.createScope({ appId: 'app', instanceId: instance, policy: p.policy, execution: { resolve(source: any) {
+    const authority = createAppInteraction(core.store, { namespace: instance, now: Date.now, appId: 'app', instanceId: instance, policy: p.policy, execution: { resolve(source: any) {
         let binding = bindings.get(source); if (binding) return binding;
         const tool = source.tool, execution = source.execution;
         const contract = tool.name === 'read_ref' ? reference.contract : ordinary.contract;
@@ -132,20 +153,18 @@ function plainActor() {
             } };
         bindings.set(source, binding); return binding;
     } } });
-    if (opened.status !== 'opened') throw Error(opened.issue.code); syncTools(); publish();
-    return { kind: 'plain', client: opened.client, ...p, policyCalls: p.calls, calls, entries, guards, dispatches: null, facts, snapshot,
+    publish();
+    return { kind: 'plain', client: authority, ...p, policyCalls: p.calls, calls, entries, guards, dispatches: null, facts, snapshot,
         stats: () => authority.inspect(),
         async change(command: any) {
             state = applyBusiness(state, command);
-            for (const [id, view] of mounted) if (!state.order.includes(id)) { registry.unmount(view.viewInstanceId); mounted.delete(id); }
-            for (const id of state.order) if (!mounted.has(id)) mounted.set(id, { ...registry.mount(id, 'File') });
-            syncTools(); return publish();
+            return publish();
         },
         loseTerminal() { lost = defer(); entered = defer(); return { entered: entered.promise, disconnect() { authority.close(); lost!.resolve(); } }; },
-        reinitialize() { authority.close(); registry.dispose(); core.lifecycle.startApp('app', instance + '-next'); return Promise.resolve(); },
-        close() { authority.close(); registry.dispose(); core.lifecycle.dispose(); return authority.whenClosed(); },
+        reinitialize() { authority.close(); projection.close(); registry.dispose(); core.lifecycle.startApp('app', instance + '-next'); return Promise.resolve(); },
+        close() { authority.close(); projection.close(); registry.dispose(); core.lifecycle.dispose(); return authority.whenClosed(); },
         businessIdFor(id: string) { return `${id}@${state.mounts[id]}`; },
-        async finish() { authority.close(); lost?.resolve(); await authority.whenClosed(); registry.dispose(); core.lifecycle.dispose();
+        async finish() { authority.close(); lost?.resolve(); await authority.whenClosed(); projection.close(); registry.dispose(); core.lifecycle.dispose();
             expect(authority.inspect().combinedBytes).toBe(0); expect(core.store.inspect().activeLeases).toBe(0);
             evidence.push({ producer: 'plain', cleanupKind: 'explicit Core close/dispose', interactions: authority.inspect(), store: core.store.inspect() }); },
     };
@@ -173,16 +192,17 @@ async function workerActor() {
     const host = new Host({ appId: 'app', desktopId: 'd', appModulePath: join(consumer, 'dual-producer-app.mjs'), existingWorker: worker,
         timeout: 2000, interactionModes: ['view-type-parameters-v1'],
         config: { AOTUI_DATA_DIR: dataDir } });
-    const unknown = host.unknownRef.bind(host);host.unknownRef = (...args: any[]) => { const fact = unknown(...args);facts.push(fact);return fact; };
+    const dispatch = host.dispatchTool.bind(host);
+    host.dispatchTool = async (...args: any[]) => { const fact = await dispatch(...args);facts.push(fact);return fact; };
     let opened: any;
     try {
         await host.start();await host.open();const first = await wait(m => m.type === 'SNAPSHOT_PREPARED' || m.type === 'SNAPSHOT_PREPARE_FAILED');
         expect(first.type).toBe('SNAPSHOT_PREPARED');expect(first.draft.schemaVersion).toBe(3);
-        opened = host.createInteractionScope(p.policy);expect(opened.status).toBe('opened');if (opened.status !== 'opened') throw Error(opened.issue.code);
+        opened = host.getAppInteraction(p.policy);expect(opened.status).toBe('ready');if (opened.status !== 'ready') throw Error(opened.issue.code);
     } catch (error) { evidence.push({ initializationFailed: true, logs, messages });host.terminate();await host.waitForResourceRelease();throw error; }
     let state = initialBusiness(), lastEpoch = -1;
     const snapshot = () => { const result = host.snapshotReceiver.core.store.readLatest('app');if (result.status !== 'ready') throw Error(result.status);return result.snapshot; };
-    return { kind: 'sdk-worker', client: opened.client, ...p, policyCalls: p.calls, calls, entries, guards, dispatches, facts, snapshot,
+    return { kind: 'sdk-worker', client: opened.interaction, ...p, policyCalls: p.calls, calls, entries, guards, dispatches, facts, snapshot,
         businessIdFor(id: string) { return `${id}@${state.mounts[id]}`; }, stats: () => host.getInteractionReport().core,
         async change(command: any) {
             const from = messages.length;state = applyBusiness(state, command);worker.postMessage({ type: 'DUAL_CONTROL', command });
@@ -195,8 +215,8 @@ async function workerActor() {
         },
         loseTerminal() { const from = messages.length;return { entered: wait(m => m.type === 'DUAL_HANDLER_ENTER', from), disconnect() { host.terminate(); } }; },
         reinitialize() { return host.reinitialize('C11 late authorization'); },
-        close() { const closing = host.close();return closing.then(() => { host.terminate();return host.waitForResourceRelease(); }); },
-        async finish() { try { await host.close(); } finally { host.terminate();await host.waitForResourceRelease();expect(host.getResourceReport().interactions).toEqual({ closed: true, retainedScopes: 0, retainedBytes: 0 }); evidence.push({ producer: 'sdk-worker', cleanupKind: 'low-level AppWorkerHost close then terminate', resourceReport: host.getResourceReport(), interactions: host.getInteractionReport(), gracefulRuntimeShutdownClaimed: false }); } },
+        close() { return host.close().then(() => host.waitForResourceRelease()); },
+        async finish() { try { await host.close(); } finally { host.terminate();await host.waitForResourceRelease();expect(host.getResourceReport().interactions).toEqual({ closed: true, retainedOperations: 0, retainedBytes: 0 }); evidence.push({ producer: 'sdk-worker', cleanupKind: 'AppWorkerHost close and actual exit', resourceReport: host.getResourceReport(), interactions: host.getInteractionReport(), gracefulRuntimeShutdownClaimed: false }); } },
     };
 }
 function request(observation: any, view: string, name: string, input: any, id: string) {
@@ -213,7 +233,7 @@ async function observe(actor: any, view = 'aa') {
     expect(rendered).toContain(`File View session ID: ${businessViewId}`);
     return { ...result.observation, businessViewId };
 }
-const factories = [['plain Core', async () => plainActor()], ['SDK/DOM/Node Worker', workerActor]] as const;
+const factories = [['plain TS via packaged Core', async () => plainActor()], ['SDK/DOM/Node Worker', workerActor]] as const;
 function counts(actor: any) { return { dispatches: actor.dispatches === null ? null : actor.dispatches.length,
     entries: actor.entries.length, guards: actor.guards.length, business: actor.calls.length }; }
 function expectDelta(actor: any, before: any, expected: { entries: number; guards: number; business: number; dispatches: number }) {
@@ -288,11 +308,17 @@ it.each(factories)('C08/09/13 records shared Tool versus App-session migration d
             }
             const beforeRefCounts = counts(actor);
             const staleRefResult = await actor.client.invoke(request(staleRef, 'aa', 'read_ref', { q: 'stale-ref', file: fileRef('aa') }, 'stale-ref-' + command.op));
-            expect(staleRefResult.receipt.executionPhase).toBe('entered-returned');
-            expect(staleRefResult.receipt.outcome).toMatchObject({ status: 'unknown', details: { result: { error: { code: 'VIEW_NOT_OPEN' } } } });
-            expectDelta(actor, beforeRefCounts, { entries: 1, guards: 1, business: 0, dispatches: 1 });
-            const guard = actor.guards.at(-1); expect(guard.stateAfter).toBe(guard.stateBefore);
-            evidence.push({ producer: name, migrationDifference: 'old instance-bound Ref rejected before dispatch; shared Tool enters App guard', command, before: beforeRefCounts, after: counts(actor), receipt: staleRefResult.receipt, guard });
+            if (command.op === 'remove') {
+                expect(staleRefResult.receipt).toMatchObject({ executionPhase: 'not-dispatched',
+                    outcome: { status: 'rejected', code: 'REF_VIEW_UNAVAILABLE', path: '$.file' } });
+                expectDelta(actor, beforeRefCounts, { entries: 0, guards: 0, business: 0, dispatches: 0 });
+            } else {
+                expect(staleRefResult.receipt.executionPhase).toBe('entered-returned');
+                expect(staleRefResult.receipt.outcome).toMatchObject({ status: 'unknown', details: { result: { error: { code: 'VIEW_NOT_OPEN' } } } });
+                expectDelta(actor, beforeRefCounts, { entries: 1, guards: 1, business: 0, dispatches: 1 });
+                const guard = actor.guards.at(-1); expect(guard.stateAfter).toBe(guard.stateBefore);
+            }
+            evidence.push({ producer: name, command, before: beforeRefCounts, after: counts(actor), receipt: staleRefResult.receipt });
             expect(actor.calls.length).toBe(count);
             if (command.op === 'enabled') await actor.change({ op: 'enabled', id: 'aa', value: true });
             if (command.op === 'remove') await actor.change({ op: 'mount', ids: ['aa'] });
@@ -305,10 +331,9 @@ it.each(factories)('C08/09/13 records shared Tool versus App-session migration d
             if (command.op === 'remove') {
                 const beforeReopenedRef = counts(actor);
                 const reopenedOldRef = await actor.client.invoke(request(staleRef, 'aa', 'read_ref', { q: 'old-session-after-reopen', file: fileRef('aa') }, 'old-ref-after-reopen'));
-                expect(reopenedOldRef.receipt.outcome).toMatchObject({ status: 'unknown', details: { result: { error: { code: 'VIEW_NOT_OPEN' } } } });
-                expectDelta(actor, beforeReopenedRef, { entries: 1, guards: 1, business: 0, dispatches: 1 });
-                expect(actor.guards.at(-1).stateAfter).toBe(actor.guards.at(-1).stateBefore);
-                evidence.push({ producer: name, migrationDifference: 'old Ref after App session reopens enters guard and cannot affect new session', receipt: reopenedOldRef.receipt, before: beforeReopenedRef, after: counts(actor) });
+                expect(reopenedOldRef.receipt.outcome).toMatchObject({ status: 'rejected', code: 'REF_VIEW_UNAVAILABLE', path: '$.file' });
+                expectDelta(actor, beforeReopenedRef, { entries: 0, guards: 0, business: 0, dispatches: 0 });
+                evidence.push({ producer: name, receipt: reopenedOldRef.receipt, before: beforeReopenedRef, after: counts(actor) });
             }
             const current = await observe(actor, 'aa');
             expect((await actor.client.invoke(request(current, 'aa', 'read', { q: 'current' }, 'current-' + command.op))).receipt.outcome.status).toBe('succeeded');
@@ -369,12 +394,12 @@ for (const stage of ['project', 'authorize'] as const) for (const action of ['cl
             if (action === 'reinitialize') await actor.reinitialize();
             let completed = false;closing = actor.close();void closing.then(() => { completed = true; });
             for (let i = 0; i < 30; i++) await Promise.resolve();
-            expect(completed).toBe(false);expect(actor.stats().scopes).toBe(1);expect(actor.calls.length).toBe(0);expect(actor.entries.length).toBe(0);
+            expect(completed).toBe(false);expect(actor.stats().combinedBytes).toBeGreaterThan(0);expect(actor.calls.length).toBe(0);expect(actor.entries.length).toBe(0);
             const replacement = await factory();try { await replacement.change({ op: 'mount', ids: ['aa'] });expect(replacement.calls.length).toBe(0);expect(replacement.entries.length).toBe(0);
                 gate.resolve();const result = await work;expect(actor.calls.length).toBe(0);expect(actor.entries.length).toBe(0);expect(replacement.calls.length).toBe(0);expect(replacement.entries.length).toBe(0);
                 if (stage === 'project') expect(result).toMatchObject({ status: 'rejected', issue: { code: 'RESERVATION_UNAVAILABLE' } });
-                else expect(result).toMatchObject({ kind: 'unavailable', code: 'SCOPE_UNAVAILABLE' });
-                await closing;expect(actor.stats()).toMatchObject({ closed: true, scopes: 0, combinedBytes: 0 });
+                else expect(result).toMatchObject({ kind: 'unavailable', code: 'APP_INTERACTION_UNAVAILABLE' });
+                await closing;expect(actor.stats()).toMatchObject({ closed: true, combinedBytes: 0 });
                 evidence.push({ producer: name, stage, action, retainedUntilActualCallback: true, oldHandlers: actor.calls.length, newHandlers: replacement.calls.length, result });
             } finally { await replacement.finish(); }
         } finally { gate.resolve();if (closing) await closing;await actor.finish(); }
@@ -386,12 +411,12 @@ it.each(factories)('C12 terminal loss after actual entry revokes authority with 
         const observation = await observe(actor), loss = actor.loseTerminal();
         const call = request(observation, 'aa', 'read_ref', { q: 'lost', file: fileRef('aa') }, 'lost'), work = actor.client.invoke(call);
         await loss.entered;expect(actor.calls.length).toBe(1);loss.disconnect();
-        expect(await work).toMatchObject({ kind: 'unavailable', code: 'SCOPE_UNAVAILABLE' });
+        expect(await work).toMatchObject({ kind: 'unavailable', code: 'APP_INTERACTION_UNAVAILABLE' });
         expect(actor.facts).toContainEqual({ kind: 'unknown' });
         const afterLoss = counts(actor);
-        expect(await actor.client.invoke(call)).toMatchObject({ kind: 'refused', code: 'SCOPE_UNAVAILABLE' });expect(actor.calls.length).toBe(1);
+        expect(await actor.client.invoke(call)).toMatchObject({ kind: 'refused', code: 'APP_INTERACTION_UNAVAILABLE' });expect(actor.calls.length).toBe(1);
         expectDelta(actor, afterLoss, { entries: 0, guards: 0, business: 0, dispatches: 0 });
         evidence.push({ producer: name, fault: actor.kind === 'plain' ? 'controlled real execution port' : 'actual Node Worker terminated after entry',
-            underlying: actor.facts, caller: 'SCOPE_UNAVAILABLE', handlers: actor.calls.length });
+            underlying: actor.facts, caller: 'APP_INTERACTION_UNAVAILABLE', handlers: actor.calls.length });
     } finally { await actor.finish(); }
 }, 20000);

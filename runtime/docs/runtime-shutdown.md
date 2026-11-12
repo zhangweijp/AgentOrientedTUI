@@ -10,7 +10,7 @@ const runtime = createRuntime();
 await runtime.shutdown();
 ```
 
-首次请求立即停止本 Runtime 的新建、安装、执行、快照获取、重初始化、暂停、恢复和加锁。已经接受的操作仍由原对象监督；释放快照、释放锁、关闭和读取仍受管理的 Desktop 状态可以继续。`shutdown()` 始终加入同一次关闭，返回稳定的 `Promise<void>`。已知关闭失败会以 `RUNTIME_CLOSE_FAILED` 拒绝并附冻结的 `report`；完成之后再次调用仍返回原来的失败。
+首次请求立即停止本 Runtime 的新建、安装、执行、新观察、预览、收据读取、重初始化、暂停、恢复和加锁。已经接受的操作仍由原对象监督；释放快照、释放锁、关闭和读取仍受管理的 Desktop 状态可以继续。`shutdown()` 始终加入同一次关闭，返回稳定的 `Promise<void>`。已知关闭失败会以 `RUNTIME_CLOSE_FAILED` 拒绝并附冻结的 `report`；完成之后再次调用仍返回原来的失败。
 
 ## 需要有限等待时
 
@@ -34,11 +34,13 @@ console.log(final.hasFailures, final.resourcesReleased, final.verification);
 | 是否发生已知故障 | `report.hasFailures`、固定失败样本 | 保存、卸载或清理故障不会被后来的资源释放抹去 |
 | 是否确认资源释放 | `resourcesReleased`、`verification` | 完成的尝试也可能留下未确认释放的所有者 |
 
+`interactions.retainedOperations` 统计实际尚未结算的执行、收据读取和投影准备。停止调用方等待之后，实际操作仍会计入。
+
 `completion` 解析最终报告，已知业务或清理失败通过报告表达。`inspect()` 每次返回新的深度冻结快照；以前拿到的快照保持原样。`ok` 仅在实际尝试完成、资源确认释放、证据为 `managed` 且没有已知故障时为 `true`。
 
 `wait` 缺省为 30000ms，允许安全整数 1–300000。同一个操作最多有 16 个尚未结束的观察者；超额以 `CLOSE_OBSERVER_LIMIT` 拒绝，无效配置为 `CLOSE_OPTIONS_INVALID`。已完成操作无需 timer。观察者互不取消，也不取消实际 I/O、Worker 退出或已经进入的回调。
 
-报告是有限摘要：失败最多 16 份样本，每份最多 8 个固定 code，显示 ID 最多 256 UTF-8 字节，完整 JSON 不超过 64KiB。`failureCount` 和 `samplesTruncated` 保留被截断样本的事实。显示 ID 不参与对象身份判断；报告不包含用户异常正文、配置、文件路径或业务数据。未确认释放的原对象仍由对应的 Manager/Host/Pool 持有，不能因为报告截断而丢弃。
+报告是有限摘要：失败最多 16 份样本，每份最多 8 个固定 code，显示 ID 最多 256 UTF-8 字节，完整 JSON 不超过 64KiB。`failureCount` 和 `samplesTruncated` 保留被截断样本的事实。显示 ID 不参与对象身份判断；报告不包含用户异常正文、配置、文件路径或业务数据。未确认释放的原对象仍由对应的 Manager/Host 或资源 adapter 持有，不能因为报告截断而丢弃。
 
 ## 关闭单个 Desktop 并保存应用清单
 
@@ -69,11 +71,13 @@ close/delete 由首次意图决定。delete 先开始会先尝试 App 的 `onDel
 
 `persistence` 按实际 Sandbox/Host 聚合：`managedApps`、`unnegotiatedApps` 和 `notUsedApps` 分开计数；flush 成功、失败、unknown 和 unsaved 分开保留。关闭中 `unmount=pending`、顶层 `ok=false` 的 B2 进度报告本身不算故障。flush 已成功仍计 `confirmedFlushes`。完成时缺合格最终报告，或实际 flush、unmount、dispose、release 失败，则保留固定失败。
 
-C1 报告中的 `transferred` 表示 Host 已把 Worker 安全交回池，不等于物理 Worker 退出。借用 Runtime 池的 Desktop 报告 `pool.ownership=not-owned`；Runtime 自有池关闭必须等待其全部实际 exit，并报告 `closed`、`total=0`。活动文件 CAS 或后端 open/replace 即使超过调用方期限，仍由原 Host 等待实际完成。
+每个 App 使用专属 Worker。Runtime 的 `workers.report` 给出容量状态、上限及当前物理 Worker 数量。关闭完成后，Runtime 自有容量报告为 `closed` 和 `total=0`。由父级 Runtime 管容量的 Desktop 报告 `workers.ownership=not-owned`。Host 在真实退出后归还名额，已接纳的存储 I/O 继续由原 Host 跟踪。
 
 `mixed` / `unverified` 描述报告中实际存在的未协商或无法确认的资源事实，不代表旧 SDK/Worker 的兼容运行模式。资源释放证据与持久化协商结果分别保留；未使用持久化的 Sandbox 计入 `notUsedApps`，没有 managed 协商的则计入 `unnegotiatedApps`。只有报告中存在相应未确认参与者时才保留 `mixed` / `unverified`，不会仅因已确认释放的资源凭空增加未知参与者。
 
 旧注入 Manager/Desktop/AppManager/AppHostService/Registry 缺少新能力时，仍尝试既有关闭入口，并记录未验证参与者。Promise 返回不能证明物理资源已经释放。真正抛出的关闭故障仍保留。默认装配具有完整报告能力；不会为测试替身把默认路径降成未验证。
+
+如果结算后 `resources.retainedStorageOwners` 大于零，仍活跃的 Desktop 可对同一实例再次调用 `desktop.closeApp(appId, expectedInstanceId)`。对已关闭的 Desktop 使用 `runtime.beginDesktopShutdown(desktopId).completion` 发起释放尝试，Runtime 整体关闭结算后仍可使用该入口。并发重试加入同一尝试。释放成功后原 owner 被移除，关闭回调、App cleanup 和写入均只保留原结果。此前的冻结报告及 `runtime.beginShutdown()` 原 handle 保持原样。后续报告可同时显示 `resourcesReleased: true` 和 `hasFailures: true`。
 
 ## 对现有调用方的影响
 

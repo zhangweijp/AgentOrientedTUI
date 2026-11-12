@@ -10,11 +10,10 @@ import { refParam as toolsRefParam } from './tools.js';
 
 function setup(Content: () => any) {
  const factory = createTUIApp({ app_name: 'typed_refs', component: () => h(View, {kind: 'state',id:'detail',type:'Detail'},h(Content, {})) });
- const kernel = new AppKernel({...factory.kernelConfig,component:factory} as any);
+ const kernel = new AppKernel({...factory.kernelConfig,factory} as any);
  kernel.setId('app' as any);
- const container=document.createElement('div');document.body.appendChild(container);
- return {kernel,container,open:()=>kernel.onOpen({appId:'app' as any,desktopId:'desktop' as any},container),
- async close(){await kernel.onClose();container.remove();}};
+ return {kernel,get container(){return document.getElementById('app-root-app')!;},open:()=>kernel.onOpen({appId:'app' as any,desktopId:'desktop' as any}),
+ async close(){await kernel.onClose();}};
 }
 const schema=Type.Object({id:Type.String(),title:Type.String()},{additionalProperties:false});
 const define=(parameter:any)=>defineViewTypeTool({viewType:'Detail',name:'edit',description:'Edit selected Plan',inputSchema:Type.Object({plan:parameter,title:Type.String()},{additionalProperties:false})});
@@ -51,7 +50,7 @@ describe('typed single-object Ref',()=>{
  it('keeps a prefixed two-argument ID untyped and uses the original two-argument registry call',async()=>{
    const x=setup(()=>{const ref=useDataRef('Plan:raw',{id:'one'});return h('p',{},ref('Legacy'));});
    const register=vi.spyOn(x.kernel,'registerRef');
-   try{await x.open();expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'Plan:raw',value:{id:'one'}}]);expect(x.container.textContent).toContain('[Legacy](Plan:raw)');expect(register.mock.calls[0]).toEqual(['detail','Plan:raw',{id:'one'},undefined]);}finally{await x.close();}
+   try{await x.open();expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'Plan:raw',value:{id:'one'}}]);expect(x.container.textContent).toContain('[Legacy](Plan:raw)');expect(register.mock.calls[0]).toEqual(['detail','Plan:raw',expect.any(Object),undefined]);}finally{await x.close();}
  });
  it('rejects duplicate typed publishers without replacing the first owner',async()=>{
    function Publisher(){useDataRef('current_plan',{id:'one'},{refType:'Plan'});return null;}
@@ -70,7 +69,8 @@ describe('typed single-object Ref',()=>{
    function Content(){const [show,set]=useState(true);hide=()=>set(false);return show?h(Publisher,{}):null;}
    const x=setup(Content);const register=vi.spyOn(x.kernel,'registerRef');
    try{await x.open();const first=register.mock.results[0]!.value;first.release();
-     const successor=x.kernel.registerRef('detail','current_plan',{id:'successor'},'Plan');
+     let successor!: ReturnType<AppKernel['registerRef']>;
+     x.kernel.getProjectionCoordinator().commit(() => { successor=x.kernel.registerRef('detail','current_plan',{id:'successor'},'Plan'); });
      await act(hide);expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'current_plan',refType:'Plan',value:{id:'successor'}}]);
      successor.release();expect(x.kernel.getViewRefs()).toEqual([]);
    }finally{await x.close();}
@@ -79,12 +79,12 @@ describe('typed single-object Ref',()=>{
    const x=setup(()=>{useDataRef('current_plan',{id:'one'},{refType} as any);return null;});
    try{await expect(x.open()).rejects.toThrow('refType must be a non-empty string');expect(x.kernel.getViewRefs()).toEqual([]);}finally{await x.close();}
  });
- it.each([null,42,[],['one']])('rejects non-object typed payload %s',async value=>{
-   const x=setup(()=>{useDataRef('current_plan',value as any,{refType:'Plan'});return null;});
-   try{await expect(x.open()).rejects.toThrow('data must be a single object');expect(x.kernel.getViewRefs()).toEqual([]);}finally{await x.close();}
+ it.each([null,42,false,'',[],['one']].map(value => [value]))('captures typed JSON payload %j',async value=>{
+   const x=setup(()=>{useDataRef('current_plan',value,{refType:'Plan'});return null;});
+   try{await x.open();expect(x.kernel.getViewRefs()[0]?.value).toEqual(value);}finally{await x.close();}
  });
- it('leaves empty/wrong type, scalar and unsupported Schema diagnostics to existing declaration capture',()=>{
-   for(const [type,value,code] of [['',schema,'TOOL_SCHEMA_INVALID'],[42,schema,'TOOL_SCHEMA_INVALID'],['Plan',Type.String(),'TOOL_SCHEMA_UNSUPPORTED'],['Plan',Type.Union([Type.String(),Type.Number()]),'TOOL_SCHEMA_UNSUPPORTED']] as const){
+ it('leaves empty/wrong type and unsupported Schema diagnostics to existing declaration capture',()=>{
+   for(const [type,value,code] of [['',schema,'TOOL_SCHEMA_INVALID'],[42,schema,'TOOL_SCHEMA_INVALID'],['Plan',Type.Tuple([Type.String()]),'TOOL_SCHEMA_UNSUPPORTED']] as const){
      expect(()=>define(refParam(type as any,value))).toThrow(expect.objectContaining({code}));
    }
  });

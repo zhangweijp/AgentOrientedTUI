@@ -1,17 +1,17 @@
 # 从正式包入口使用纯 Core
 
-`@aotui/runtime/core` 提供 V3 Snapshot、App/ViewType Tool、Observation/Scope、参数合同与 StateSession；`@aotui/runtime/adapters/memory-state-storage` 提供内存存储。Core 不加载 DOM、Worker、Node 或模型 SDK。业务规则和外部副作用仍由 App/Host 负责。
+`@aotui/runtime/core` 提供 V3 Snapshot、App/ViewType Tool、App 实例交互与 Observation、参数合同与 StateSession；`@aotui/runtime/adapters/memory-state-storage` 提供内存存储。Core 不加载 DOM、Worker、Node 或模型 SDK。业务规则和外部副作用仍由 App/Host 负责。
 
 本例面向自建 Host／Producer 的低层装配者。普通 App 作者先读 [SDK 指南](../../sdk/README.md)，不需复制这里的绑定、授权或资源接线。本例只依赖 Runtime 的纯 Core 与内存存储入口；Agent Driver 用户通过独立 `@aotui/agent-driver-adapter` 接入。安装版本和 tar 身份以同次交付为准，版本号不能替代联合验证。
 
 两个 Tool 都注册一次到 `Note` ViewType，统一使用正式 `view-type-parameters-v1` profile。`add` 接收普通数值；`read` 接收一个必填 Note 对象 Ref。Note 是本例的内存业务数据，不是文件定位。下面的 JSON 注解与 SDK TypeBox `refParam` 对应，低层装配者不另造 Ref parser。Core 从原观察解析参数，授权与执行使用同一 effectiveInput。
 
-正文只在 View 中呈现；Tool 返回完成收据，测试见证独立记录旧/新 Ref 的冻结值。b1 标记中的正文由真实新包消费者逐字提取、以 ES2022-only/types:[] 严格编译后执行，不能用另写的等价示例代替。
+普通 TypeScript 使用 `SemanticProjectionCoordinator.commit` 提交完整页面和当前工具，用现有 binding 提交参与本次的 Ref。框架管理发布版本，观察读取已准备的结果。正文只在 View 中呈现；Tool 返回完成收据，测试见证独立记录旧/新 Ref 的冻结值。b1 标记中的正文由真实新包消费者逐字提取、以 ES2022-only/types:[] 严格编译后执行，不能用另写的等价示例代替。
 
 <!-- b1-example:start -->
 ```ts
 import {
-  createSnapshotCore, createViewOwnedTools, createScopedInteraction, refKey,
+  createSnapshotCore, createViewOwnedTools, createAppInteraction, SemanticProjectionCoordinator,
   compileOrdinarySchema, createStateSession,
   type ExecutionBinding, type ExecutionFact, type JsonValue, type ToolResult,
   type OrdinaryParameterContract, type StateSessionLimits, type ObservationGrant,
@@ -47,7 +47,16 @@ const readSchema = {
 check(compileOrdinarySchema(addSchema, 'view-type-parameters-v1').ok, 'Add Schema');
 check(compileOrdinarySchema(readSchema, 'view-type-parameters-v1').ok, 'Ref Schema');
 
-let count = 1, noteText = 'old', seq = 0, handlerEntries = 0;
+let count = 1, noteText = 'old', handlerEntries = 0;
+const projection = new SemanticProjectionCoordinator({
+  identity: () => ({ appId, instanceId }),
+  readFrame: () => ({
+    views: [{ id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: 'Note', kind: 'state',
+      content: { format: 'markdown-v1', value: `Counter: ${count}\nNote: ${noteText}` } }],
+    tools: registry.listTools(),
+  }),
+});
+let selected: ReturnType<typeof projection.registerRef> | undefined;
 const witness: Array<{ text: string; frozen: boolean }> = [];
 async function add(args: Readonly<Record<string, unknown>>): Promise<ToolResult> {
   check(typeof args.n === 'number', 'Expected validated number');
@@ -109,20 +118,19 @@ function installBinding(tool: ReturnType<typeof registry.listTools>[number]) {
 }
 registry.listTools().forEach(installBinding);
 function publish(text: string) {
-  noteText = text;
-  const tools = Object.fromEntries(registry.listTools().map(tool => [tool.id, tool]));
-  const result = snapshots.committer.accept({ schemaVersion: 3, appId, instanceId, producerSeq: ++seq, sourceEpoch: seq, capturedAt: 0,
-    views: [{ id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: 'Note', kind: 'state',
-      content: { format: 'markdown-v1', value: `Counter: ${count}\nNote: ${text}` } }],
-    refs: { [refKey(view.viewId, view.viewInstanceId, 'selected')]: { id: 'selected', ownerViewId: view.viewId,
-      ownerViewInstanceId: view.viewInstanceId, refType: 'Note', target: { kind: 'snapshot-value', payload: { text } } } }, tools });
+  const prepared = projection.commit(() => {
+    noteText = text;
+    if (selected) selected.update({ text });
+    else selected = projection.registerRef(view, 'selected', { text }, 'Note');
+  });
+  check(prepared === 'prepared', 'Expected a complete View, Ref and Tool frame');
+  const result = projection.publishTo(snapshots.committer);
   check(result.status === 'published', 'Expected a new source version');
 }
 publish('old');
 
 let authorizations = 0;
-const authority = createScopedInteraction(snapshots.store, { namespace: 'tutorial:tutorial-run-1', now: () => 0 });
-const opened = authority.createScope({ appId, instanceId, policy: {
+const authority = createAppInteraction(snapshots.store, { namespace: 'tutorial:tutorial-run-1', now: () => 0, appId, instanceId, policy: {
   project: ({ source }): ObservationGrant => ({
     views: source.views.map(item => ({ viewId: item.id, viewInstanceId: item.viewInstanceId })),
     refs: Object.values(source.refs).map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
@@ -131,8 +139,7 @@ const opened = authority.createScope({ appId, instanceId, policy: {
   }),
   authorize: () => { authorizations++; return true; }, canReadReceipt: () => true,
 }, execution: { resolve: source => bindings.get(bindingKey(source.tool.id, source.execution)) ?? null } });
-check(opened.status === 'opened', 'Expected a Scope');
-const client = opened.client;
+const client = authority;
 async function observe() {
   const result = await client.observe({ viewIds: [view.viewId] });
   check(result.status === 'observed', 'Expected an observation');
@@ -184,12 +191,12 @@ try {
   authority.close(); await authority.whenClosed();
   check((await client.invoke(request(fresh, 'read', 'closed', { note: 'detail.selected', suffix: '!' }))).kind === 'refused', 'Closed Client rejects');
   check(authorizations === beforeClosed && handlerEntries === 3, 'Closed authority does not authorize or enter handlers');
-  check(authority.inspect().scopes === 0 && authority.inspect().closingScopes === 0 &&
+  check(authority.inspect().observations.observationSlots === 0 &&
     authority.inspect().combinedBytes === 0 && snapshots.store.inspect().activeLeases === 0,
-    'Scopes, logical bytes and leases really released');
+    'Observation slots, logical bytes and leases released');
 } finally {
   authority.close(); await authority.whenClosed();
-  releaseAdd(); releaseRead(); registry.dispose(); snapshots.lifecycle.dispose();
+  releaseAdd(); releaseRead(); projection.close(); registry.dispose(); snapshots.lifecycle.dispose();
   bindings.clear(); contracts.clear();
 }
 check(registry.inspect().bindings === 0 && snapshots.store.inspect().activeLeases === 0, 'Registry and Snapshot cleanup');
@@ -214,7 +221,7 @@ check(next.binding.confirmInitialization(recovery, { status: 'ready', value: rec
 check((await restored.dispose()).release.status === 'released' && memory.getStats().activeOwners === 0, 'Final owner release');
 
 export const coreTutorialFacts = { handlerEntries, authorizations: beforeClosed, witness,
-  scopes: authority.inspect().scopes, logicalBytes: authority.inspect().combinedBytes,
+  observationSlots: authority.inspect().observations.observationSlots, logicalBytes: authority.inspect().combinedBytes,
   leases: snapshots.store.inspect().activeLeases, bindings: registry.inspect().bindings,
   restoredValue: recovery.value, stateOwners: memory.getStats().activeOwners, storedKeys: memory.getStats().storedKeys };
 ```

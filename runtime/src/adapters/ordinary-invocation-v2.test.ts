@@ -2,7 +2,9 @@ import { validateCapturedTypeParameters as validateTypeParameters } from '../../
 import { describe, it, expect } from 'vitest';
 import { compileOrdinarySchema } from '../core/tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profile.js';
-import { captureTypeParametersRequest, captureTypeParametersTerminal, typeParametersResponse } from './ordinary-invocation-v2.js';
+import { RAW_TOOL_ARGUMENT_LIMITS, TOOL_REQUEST_LIMITS } from '../core/snapshot/snapshot-support.js';
+import { captureTypeParametersRequest, typeParametersResponse } from './ordinary-invocation-v2.js';
+import { captureTypeParametersTerminal } from './worker-message-capture.js';
 const header = { requestId: 'r', appId: 'a', instanceId: 'i' };
 const fixture = () => {
   const c = compileOrdinarySchema({ type: 'object', properties: { q: { type: 'string', maxLength: 1 } }, required: ['q'], additionalProperties: false }, 'view-type-parameters-v1');
@@ -29,8 +31,8 @@ describe('R10 precise qualified V4 message grammar', () => {
     if (kind === 'missing') delete message.snapshotId;
     if (kind === 'execution') message.execution = { ...message.execution, activationId: 'stale' };
     if (kind === 'nonjson') message.rawArgs.q = undefined;
-    if (kind === 'argument-bytes') message.rawArgs.q = 'x'.repeat(128 * 1024);
-    if (kind === 'whole-bytes') message.tool.description = 'x'.repeat(512 * 1024);
+    if (kind === 'argument-bytes') message.rawArgs.q = 'x'.repeat(RAW_TOOL_ARGUMENT_LIMITS.maxCanonicalBytes);
+    if (kind === 'whole-bytes') message.tool.description = 'x'.repeat(TOOL_REQUEST_LIMITS.maxCanonicalBytes);
     expect(() => captureTypeParametersRequest(message)).toThrow();
   });
   it('does not read getters and rejects non-B1 or mutated public profiles', () => {

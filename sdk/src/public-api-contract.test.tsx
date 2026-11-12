@@ -13,11 +13,11 @@ const closing: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of closing.splice(0)) await close();vi.restoreAllMocks();vi.unstubAllGlobals(); });
 async function mount(Body: () => any, options: { outside?: boolean } = {}) {
     const factory = createTUIApp({ app_name: 'public_api', component: () => options.outside ? h(Body, {}) : h(View, {kind: 'state', id: 'detail', type: 'Detail' }, h(Body, {})) });
-    const kernel = new AppKernel({ ...factory.kernelConfig, component: factory } as any);kernel.setId('app' as any);kernel.setAppExecutionInstanceId('public_api_run');
-    const container = document.createElement('div');document.body.appendChild(container);let closed = false;
-    const close = async () => { if (!closed) { closed = true;await act(async () => { await kernel.onClose(); });container.remove(); } };closing.push(close);
-    await act(async () => { await kernel.onOpen({ appId: 'app' as any, desktopId: 'desktop' as any }, container); });
-    return { kernel, container, close };
+    const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);kernel.setId('app' as any);kernel.setAppExecutionInstanceId('public_api_run');
+    let closed = false;
+    const close = async () => { if (!closed) { closed = true;await act(async () => { await kernel.onClose(); }); } };closing.push(close);
+    await act(async () => { await kernel.onOpen({ appId: 'app' as any, desktopId: 'desktop' as any }); });
+    return { kernel, container: document.getElementById('app-root-app')!, close };
 }
 const currentOutputEvent = 'aotui:llm-text';
 const outputEvents = [currentOutputEvent, 'aotui:llm-output'];
@@ -28,14 +28,12 @@ describe('C04/C09 SDK root exports and app context', () => {
     it('exposes exactly the supported JavaScript entry points', () => {
         expect(Object.keys(SDK).sort()).toEqual([
             'AOTUIError', 'AppTools',
-            'TOOL_BINDING_DIAGNOSTIC_LIMITS',
-            'ToolCatalog', 'ToolRef',
+            'ToolCatalog',
             'View',
             'createTUIApp',
-            'createToolBindings',
             'defineToolSet',
             'defineViewTypeTool',
-            'getToolCatalog',
+            'formatRef', 'getToolCatalog',
             'refParam',
             'useAppLifecycle',
             'useAppRuntimeContext',
@@ -49,7 +47,6 @@ describe('C04/C09 SDK root exports and app context', () => {
             'useReducer',
             'useRef',
             'useState',
-            'useViewContext',
         ]);
     });
 
@@ -58,6 +55,7 @@ describe('C04/C09 SDK root exports and app context', () => {
             'ViewRegistry', 'createInlineView', 'useViewSelector', 'useRefRegistry',
             'defineParams', 'escapeHtml', 'escapeJsonForAttr', 'useAppConfig',
             'useAppEnv', 'useLLMOutputHistory', 'useViewSnapshotTool',
+            'createToolBindings', 'ToolRef', 'useViewContext',
         ]) {
             expect(Object.hasOwn(SDK, name), name).toBe(false);
         }

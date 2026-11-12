@@ -1,21 +1,10 @@
-/**
- * AOTUI SDK - View Component (RFC-027 Enhanced + View Type Mechanism)
- *
- * 组件模式: 在createTUIApp的AppRuntimeContext中使用
- *
- * View Type机制改造:
- * - id prop改为必填，由开发者手动指定
- * - 新增type prop，用于同类View的Tool聚合
- * - 移除uniqueId（breaking change，不向后兼容）
- * 
- * 渲染为: <div data-view-id="fd_0" data-view-type="FileDetail" data-view-kind="state">...</div>
- * Snapshot stores the body separately; the Agent message boundary adds the View envelope.
- */
+import type { RefValueCheck } from '@aotui/runtime/spi';
 import { type ComponentChildren, type JSX, h } from "preact";
 import { useContext, useMemo, useRef as usePreactRef } from 'preact/hooks';
 import { AppRuntimeContext } from "../context/AppRuntimeContext.js";
 import { ViewRuntimeContext } from "../contexts/view-runtime-context.js";
 import { createViewId } from "@aotui/runtime/spi";
+import { VIEW_ID_PATTERN } from '../app-factory/app-factory.js';
 import type { ViewSnapshotV2 } from '@aotui/runtime/core';
 
 export interface ViewProps {
@@ -73,7 +62,7 @@ export function View({ id, type, kind, name, children }: ViewProps): JSX.Element
     );
   }
 
-  if (!/^[a-zA-Z0-9_]{2,15}$/.test(id)) {
+  if (typeof id !== 'string' || !VIEW_ID_PATTERN.test(id)) {
     throw new Error(
       `[AOTUI SDK] Invalid View ID "${id}".\n` +
       'ID must be 2-15 characters, alphanumeric and underscore (_) only.\n' +
@@ -88,7 +77,7 @@ export function View({ id, type, kind, name, children }: ViewProps): JSX.Element
   // 尝试获取AppRuntimeContext (组件模式)
   const parentViewContext = useContext(ViewRuntimeContext);
   if (parentViewContext) {
-    const parentViewId = parentViewContext.meta.viewId;
+    const parentViewId = parentViewContext.viewId;
     const childViewId = createViewId(id);
     throw Object.assign(
       new Error(
@@ -122,7 +111,7 @@ export function View({ id, type, kind, name, children }: ViewProps): JSX.Element
   // Ref callbacks run before child layout effects, so Refs can register in the
   // same commit without allocating a View identity from render().
   const instanceRef = usePreactRef<string | null>(null);
-  const viewToolsPort = appContext.viewTools;
+  const { viewTools: viewToolsPort, refExporter } = appContext;
   const attachContainer = useMemo(() => (node: HTMLDivElement | null) => {
     if (node && viewToolsPort && !instanceRef.current) {
       instanceRef.current = viewToolsPort.mount(viewId, viewType);
@@ -134,21 +123,11 @@ export function View({ id, type, kind, name, children }: ViewProps): JSX.Element
     }
   }, [viewId, viewType, viewToolsPort]);
 
-  // 构建ViewRuntimeContext (供子组件使用)
   const viewRuntimeContext = useMemo(() => ({
-    meta: {
-      viewId: viewId,
-      viewType: viewType,  // ✅ 传递type信息
-      appId: appContext.appId,
-      desktopId: appContext.desktopId,
-      markDirty: appContext.markDirty,
-    },
-    refs: {
-      registerRef: (refId: string, data: object, refType?: string) => {
-        return appContext.refExporter.registerRef(viewId, refId, data, refType);
-      },
-    },
-  }), [viewId, viewType, appContext.launchConfig, viewToolsPort]);
+    viewId,
+    captureRef: (data: unknown, check?: RefValueCheck) => refExporter.captureRef(data, check),
+    registerRef: (refId: string, data: unknown, refType?: string) => refExporter.registerRef(viewId, refId, data, refType),
+  }), [viewId, viewType, refExporter, viewToolsPort]);
 
   // 渲染
   return h(

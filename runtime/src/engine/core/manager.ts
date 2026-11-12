@@ -1,4 +1,5 @@
-import { WorkerPool } from '../app/worker-pool.js';
+import type { StateStorageBackend } from '../app/state-storage-host.js';
+import { WorkerCapacity } from '../app/worker-capacity.js';
 /**
  * Engine Layer - Desktop Manager Implementation
  * 
@@ -8,13 +9,13 @@ import { WorkerPool } from '../app/worker-pool.js';
  */
 
 import type {
-    IDesktopManager,
     DesktopID,
     AppState,
     DesktopStatus,
     IDesktop,
     IRuntimeContext, // New
 } from '../../spi/index.js';
+import type { IDesktopManager } from '../../spi/runtime/desktop-manager.interface.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import { Desktop } from './desktop.js';
 import type { DesktopCloseOptions, DesktopCloseHandle, DesktopCloseReport, RuntimeCloseHandle, RuntimeCloseReport } from '../../spi/runtime/close.interface.js';
@@ -42,20 +43,20 @@ import { RuntimeConfig, RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 export class DesktopManager implements IDesktopManager {
     private desktops = new Map<DesktopID, Desktop>();
     private config: RuntimeConfig;
-    private readonly workerPool: WorkerPool;
+    private readonly workerCapacity: WorkerCapacity;
     private closing?: RuntimeCloseHandle;
     private shutdownPromise?: Promise<void>;
     private phase: 'active' | 'closing' | 'settled' = 'active';
     private closeState = newCloseState('runtime');
     private closeTargets?: Map<Desktop, DesktopCloseHandle>;
-    private readonly capturedClosures = new WeakSet<Desktop>();
+    private readonly capturedClosures = new WeakMap<Desktop, DesktopCloseHandle>();
     private readonly removing = new Set<Promise<void>>();
 
     private assertActive(): void { if (this.phase !== 'active') throw new AOTUIError('RUNTIME_SHUTDOWN'); }
 
-    constructor(config?: RuntimeConfig) {
+    constructor(config?: RuntimeConfig, private readonly storageBackend?: StateStorageBackend) {
         this.config = config ?? RUNTIME_DEFAULTS;
-        this.workerPool = new WorkerPool({ ...this.config.worker.pool });
+        this.workerCapacity = new WorkerCapacity(this.config.worker.maxWorkers);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -66,7 +67,7 @@ export class DesktopManager implements IDesktopManager {
     async create(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID> {
         this.assertActive();
         if (desktopId !== undefined && this.desktops.has(desktopId)) throw closeError('DESKTOP_ALREADY_EXISTS');
-        const desktop = new Desktop(desktopId, { runtimeConfig: this.config, context, workerPool: this.workerPool });
+        const desktop = new Desktop(desktopId, { runtimeConfig: this.config, context, workerCapacity: this.workerCapacity, storageBackend: this.storageBackend });
         if (this.desktops.has(desktop.id)) { void desktop.dispose().catch(() => {});throw closeError('DESKTOP_ALREADY_EXISTS'); }
         this.desktops.set(desktop.id, desktop);
         return desktop.id;
@@ -82,8 +83,8 @@ export class DesktopManager implements IDesktopManager {
         }
         const handle = desktop.beginClose(options);
         // Capture the actual object. A late completion can never remove a successor.
-        if (!this.capturedClosures.has(desktop)) {
-            this.capturedClosures.add(desktop);
+        if (this.capturedClosures.get(desktop) !== handle) {
+            this.capturedClosures.set(desktop, handle);
             const removing = handle.completion.then(report => {
                 if (report.resourcesReleased && this.desktops.get(desktopId) === desktop) {
                     this.desktops.delete(desktopId);
@@ -138,9 +139,8 @@ export class DesktopManager implements IDesktopManager {
     private report(): RuntimeCloseReport {
         const state = structuredClone(this.closeState);state.state = this.phase;
         for (const handle of this.closeTargets?.values() ?? []) mergeCloseReport(state, handle.inspect());
-        const pool = this.workerPool.getReport();state.pool = { ownership: 'owned', report: { ...pool, issues: [...pool.issues] } };
-        state.resourcesReleased &&= pool.state === 'closed';
-        addCloseFailure(state, 'pool', pool.issues);
+        const workers = this.workerCapacity.getReport();state.workers = { ownership: 'owned', report: workers };
+        state.resourcesReleased &&= workers.state === 'closed';
         return freezeClose({ ...snapshotClose(state), scope: 'runtime' as const, intent: 'close' as const });
     }
     beginShutdown(): RuntimeCloseHandle {
@@ -149,14 +149,14 @@ export class DesktopManager implements IDesktopManager {
         let complete!: (report: RuntimeCloseReport) => void;
         const completion = new Promise<RuntimeCloseReport>(resolve => { complete = resolve; });
         this.closing = createCloseHandle(() => this.report(), completion);
-        const pool = this.workerPool.destroy();
+        const capacity = this.workerCapacity.close();
         // Every Desktop is started synchronously before any completion is awaited.
         for (const [id, desktop] of this.desktops) {
             try { this.closeTargets.set(desktop, this.beginDesktopShutdown(id)); }
             catch { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'apps', ['MANAGER_CLEANUP_FAILED'], { desktopId: id }); }
         }
         void (async () => {
-            await Promise.allSettled([pool, ...this.closeTargets!.values()].map(value => value instanceof Promise ? value : value.completion));
+            await Promise.allSettled([capacity, ...[...this.closeTargets!.values()].map(handle => handle.completion)]);
             await Promise.allSettled([...this.removing]);
             const folded = structuredClone(this.closeState);
             for (const handle of this.closeTargets!.values()) mergeCloseReport(folded, handle.inspect());

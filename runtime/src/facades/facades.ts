@@ -1,5 +1,4 @@
-import type { RuntimeCloseReporting } from '../spi/runtime/close.interface.js';
-import type { RuntimeInteractionAccess } from '../spi/runtime/app-interaction.interface.js';
+import type { StateStorageBackend } from '../engine/app/state-storage-host.js';
 /**
  * SDK Layer - Runtime Facade
  * 
@@ -18,6 +17,10 @@ import {
 } from '../spi/config/index.js';
 
 export type { RuntimeConfig };
+
+export interface RuntimeOptions {
+    readonly storageBackend?: StateStorageBackend;
+}
 
 // ============================================================================
 // Runtime factory
@@ -45,9 +48,9 @@ export type { RuntimeConfig };
  * await runtime.installDynamicWorkerApp(desktopId, '/absolute/path/to/app.mjs');
  * ```
  */
-export function createRuntime(input: RuntimeConfigInput = {}): IKernel & RuntimeCloseReporting & RuntimeInteractionAccess {
+export function createRuntime(input: RuntimeConfigInput = {}, options?: RuntimeOptions): IKernel {
     const config: RuntimeConfig = defineRuntimeConfig(input);
-    const desktopManager = new DesktopManager(config);
+    const desktopManager = new DesktopManager(config, options?.storageBackend);
     return new Kernel(desktopManager);
 }
 

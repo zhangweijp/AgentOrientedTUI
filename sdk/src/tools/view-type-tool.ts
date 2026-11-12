@@ -2,15 +2,13 @@ import { ORDINARY_INVOCATION_MODE } from '@aotui/runtime/core';
 import { VIEW_TYPE_TOOL_PROTOCOL } from '@aotui/runtime/spi';
 import Type from 'typebox';
 import { compileOrdinarySchema } from '@aotui/runtime/core';
-import type { ViewToolInvocationTerminal } from '@aotui/runtime/core';
-import type { AppTypeToolDefinition, IAppTypeToolPort, ToolResult } from '@aotui/runtime/spi';
+import type { JsonValue } from '@aotui/runtime/core';
+import type { AppFrameTool, IAppTypeToolPort, ToolResult } from '@aotui/runtime/spi';
 import { invokeOrdinaryParameterTool } from '../utils/ordinary-parameter-tool.js';
 import { exportTypeBoxSchema, TypeBoxSchemaExportError } from './typebox-schema.js';
 
 /** JSON values captured from TypeBox and normalized by Runtime. */
-export type JsonSchemaValue = string | number | boolean | null
-    | readonly JsonSchemaValue[]
-    | { readonly [key: string]: JsonSchemaValue };
+export type JsonSchemaValue = JsonValue;
 
 export type JsonSchemaObject = Readonly<Record<string, JsonSchemaValue>>;
 
@@ -30,7 +28,6 @@ export interface ViewTypeToolDeclaration<Schema extends TypeBoxObjectSchema> {
 
 declare const toolSchemaType: unique symbol;
 declare const toolSetType: unique symbol;
-declare const toolBindingSchemaType: unique symbol;
 
 /** Immutable static Tool metadata. The Schema witness exists only in its type. */
 export interface DefinedViewTypeTool<Schema extends TypeBoxObjectSchema> {
@@ -76,16 +73,23 @@ interface CapturedDefinition extends ToolCatalogEntry {
 const definitions = new WeakMap<object, CapturedDefinition>();
 const toolSets = new WeakMap<object, readonly (readonly [string, CapturedDefinition])[]>();
 
+const staticWitness = Symbol.for('@aotui/sdk/static-declaration');
+const definitionVersion = '0.8.0-srt.1/p2a-tool';
+const toolSetVersion = '0.8.0-srt.1/p2a-tool-set';
+
 const definitionFields = new Set(['viewType', 'name', 'description', 'inputSchema']);
 
-function codedError(code: string, message: string): TypeError & { readonly code: string } {
-    const error = new TypeError(`${code}: ${message}`) as TypeError & { readonly code: string };
-    Object.defineProperty(error, 'code', { value: code, enumerable: true });
-    return error;
+function codedError(code: string, reason: string, path?: string): TypeError & { readonly code: string } {
+    const error = new TypeError(`${code}: ${reason}`) as TypeError & { readonly code: string };
+    return Object.defineProperties(error, {
+        code: { value: code, enumerable: true },
+        reason: { value: reason },
+        ...(path === undefined ? {} : { path: { value: path, enumerable: true } }),
+    });
 }
 
-function fail(code: string, message: string): never {
-    throw codedError(code, message);
+function fail(code: string, message: string, path?: string): never {
+    throw codedError(code, message, path);
 }
 
 function plainDataProperties(
@@ -93,6 +97,7 @@ function plainDataProperties(
     label: string,
     allowed?: ReadonlySet<string>,
     code = 'TOOL_DEFINITION_INVALID',
+    version?: string,
 ): Map<string, unknown> {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         fail(code, `${label} must be a plain object`);
@@ -102,8 +107,14 @@ function plainDataProperties(
         fail(code, `${label} must not have a custom prototype`);
     }
     const descriptors = Object.getOwnPropertyDescriptors(value);
+    const witness = Object.getOwnPropertyDescriptor(value, staticWitness);
+    if (version !== undefined && (!witness || !('value' in witness) ||
+        witness.value !== version || witness.enumerable || !Object.isFrozen(value))) {
+        fail(code, `${label} must be a supported SDK static declaration`);
+    }
     const result = new Map<string, unknown>();
     for (const key of Reflect.ownKeys(descriptors)) {
+        if (key === staticWitness && version !== undefined) continue;
         if (typeof key !== 'string') fail(code, `${label} has a symbol property`);
         if (allowed && !allowed.has(key)) fail(code, `${label}.${key} is not supported`);
         const descriptor = descriptors[key]!;
@@ -121,30 +132,21 @@ function nonEmptyString(value: unknown, field: string): asserts value is string 
     }
 }
 
-function freezeJson(value: unknown): unknown {
-    if (value !== null && typeof value === 'object') {
-        for (const child of Object.values(value)) freezeJson(child);
-        Object.freeze(value);
-    }
-    return value;
-}
-
-function captureOrdinarySchema(typeBoxSchema: unknown): JsonSchemaObject {
-    const exported = exportTypeBoxSchema(typeBoxSchema);
-    const compiled = compileOrdinarySchema(exported, 'ref-value-specimen');
+function captureOrdinarySchema(schema: unknown): JsonSchemaObject {
+    const compiled = compileOrdinarySchema(schema, 'ref-value-specimen');
     if (!compiled.ok) {
         const code = compiled.issue.code === 'PARAMETER_DECLARATION_UNSUPPORTED'
             ? 'TOOL_SCHEMA_UNSUPPORTED'
             : 'TOOL_SCHEMA_INVALID';
         throw new TypeBoxSchemaExportError(code, compiled.issue.path, compiled.issue.message);
     }
-    return freezeJson(compiled.contract.schema) as JsonSchemaObject;
+    return compiled.contract.schema;
 }
 
 /**
  * Declares a Ref parameter whose handler receives the business value Schema.
  * Top-level fields may be required, optional, or arrays of Ref names.
- * Each selected Ref resolves to the declared object or object-list value.
+ * Each selected Ref resolves to the declared JSON value.
  * Existing declaration capture and Runtime profiles validate this annotation.
  */
 export function refParam<Schema extends Type.TSchema>(
@@ -158,11 +160,7 @@ export function refParam<Schema extends Type.TSchema>(
     }));
 }
 
-/** Capture one static Tool declaration; it does not register or own an App. */
-export function defineViewTypeTool<const Schema extends TypeBoxObjectSchema>(
-    declaration: ViewTypeToolDeclaration<Schema>,
-): DefinedViewTypeTool<Schema> {
-    const properties = plainDataProperties(declaration, 'definition', definitionFields);
+function captureDefinition(properties: Map<string, unknown>, fromTypeBox: boolean): CapturedDefinition {
     if (properties.size !== 4) {
         fail('TOOL_DEFINITION_INVALID', 'definition must contain viewType, name, description, inputSchema');
     }
@@ -174,54 +172,73 @@ export function defineViewTypeTool<const Schema extends TypeBoxObjectSchema>(
     nonEmptyString(name, 'name');
     nonEmptyString(description, 'description');
     if (inputSchema === undefined) fail('TOOL_DEFINITION_INVALID', 'inputSchema is required');
-
-    const capturedSchema = captureOrdinarySchema(inputSchema);
-    const captured: CapturedDefinition = Object.freeze({
-        viewType,
-        name,
-        description,
-        inputSchema: capturedSchema,
+    return Object.freeze({
+        viewType, name, description,
+        inputSchema: captureOrdinarySchema(fromTypeBox ? exportTypeBoxSchema(inputSchema) : inputSchema),
         tupleKey: JSON.stringify([viewType, name]),
     });
-    const definition = Object.freeze({
-        viewType: captured.viewType,
-        name: captured.name,
-        description: captured.description,
-        inputSchema: captured.inputSchema,
-    }) as DefinedViewTypeTool<Schema>;
+}
+
+/** Capture one static Tool declaration; it does not register or own an App. */
+export function defineViewTypeTool<const Schema extends TypeBoxObjectSchema>(
+    declaration: ViewTypeToolDeclaration<Schema>,
+): DefinedViewTypeTool<Schema> {
+    const captured = captureDefinition(plainDataProperties(declaration, 'definition', definitionFields), true);
+    const definition = {
+        viewType: captured.viewType, name: captured.name,
+        description: captured.description, inputSchema: captured.inputSchema,
+    };
+    Object.defineProperty(definition, staticWitness, { value: definitionVersion });
     definitions.set(definition, captured);
-    return definition;
+    return Object.freeze(definition) as DefinedViewTypeTool<Schema>;
+}
+
+function captureToolSet(properties: Map<string, unknown>) {
+    const entries: Array<readonly [string, CapturedDefinition]> = [];
+    const tuples = new Set<string>();
+    for (const [key, value] of properties) {
+        if (!key) fail('TOOL_SET_INVALID', 'ToolSet keys must not be empty');
+        if (value === null || typeof value !== 'object') {
+            fail('TOOL_SET_INVALID', `ToolSet.${key} must be created with defineViewTypeTool`);
+        }
+        let captured = definitions.get(value);
+        if (!captured) {
+            const fields = plainDataProperties(value, `ToolSet.${key}`, definitionFields, 'TOOL_SET_INVALID', definitionVersion);
+            captured = captureDefinition(fields, false);
+            definitions.set(value, captured);
+        }
+        if (tuples.has(captured.tupleKey)) {
+            fail('TOOL_SET_DUPLICATE', `Duplicate ViewType Tool tuple (${captured.viewType}, ${captured.name})`);
+        }
+        tuples.add(captured.tupleKey);
+        entries.push(Object.freeze([key, captured] as const));
+    }
+    return Object.freeze(entries);
+}
+
+function readToolSet(definition: unknown) {
+    if (definition === null || typeof definition !== 'object') fail('TOOL_SET_INVALID', 'Expected a ToolSet');
+    let entries = toolSets.get(definition);
+    if (!entries) {
+        entries = captureToolSet(plainDataProperties(definition, 'ToolSet', undefined, 'TOOL_SET_INVALID', toolSetVersion));
+        toolSets.set(definition, entries);
+    }
+    return entries;
 }
 
 /** Capture and freeze a named mapping of definitions without registering them. */
 export function defineToolSet<const Map extends ToolMap>(tools: Map): ToolSet<Map> {
     const properties = plainDataProperties(tools, 'ToolSet', undefined, 'TOOL_SET_INVALID');
-    const capturedTools: Record<string, DefinedViewTypeTool<TypeBoxObjectSchema>> = Object.create(null);
-    const entries: Array<readonly [string, CapturedDefinition]> = [];
-    const tuples = new Set<string>();
-    for (const [key, value] of properties) {
-        if (key.length === 0) fail('TOOL_SET_INVALID', 'ToolSet keys must not be empty');
-        if (value === null || typeof value !== 'object') {
-            fail('TOOL_SET_INVALID', `ToolSet.${key} must be created with defineViewTypeTool`);
-        }
-        const captured = definitions.get(value);
-        if (!captured) fail('TOOL_SET_INVALID', `ToolSet.${key} must be created with defineViewTypeTool`);
-        if (tuples.has(captured.tupleKey)) {
-            fail('TOOL_SET_DUPLICATE', `Duplicate ViewType Tool tuple (${captured.viewType}, ${captured.name})`);
-        }
-        tuples.add(captured.tupleKey);
-        capturedTools[key] = value as DefinedViewTypeTool<TypeBoxObjectSchema>;
-        entries.push(Object.freeze([key, captured] as const));
-    }
-    const toolSet = Object.freeze(capturedTools) as ToolSet<Map>;
-    toolSets.set(toolSet, Object.freeze(entries));
-    return toolSet;
+    const entries = captureToolSet(properties);
+    const toolSet = Object.assign(Object.create(null), Object.fromEntries(properties)) as ToolSet<Map>;
+    Object.defineProperty(toolSet, staticWitness, { value: toolSetVersion });
+    toolSets.set(toolSet, entries);
+    return Object.freeze(toolSet);
 }
 
 /** Return the immutable, sorted four-field static descriptor list for a ToolSet. */
 export function getToolCatalog<const Map extends ToolMap>(definition: ToolSet<Map>): ToolCatalog {
-    const entries = toolSets.get(definition as object);
-    if (!entries) fail('TOOL_SET_INVALID', 'ToolSet must be created with defineToolSet');
+    const entries = readToolSet(definition);
     const sorted = [...entries].sort((left, right) => {
         const leftViewType = left[1].viewType;
         const rightViewType = right[1].viewType;
@@ -256,50 +273,37 @@ export type ExactBindings<Candidate, Map extends ToolMap> = Candidate extends To
         : never
     : never;
 
-export interface ToolBindingController<Map extends ToolMap> {
-    /** Type-only invariant witness: a controller keeps its original declaration map. */
-    readonly [toolBindingSchemaType]: (map: Map) => Map;
-    commit<const Candidate extends ToolBindings<Map>>(bindings: Candidate & ExactBindings<Candidate, Map>): void;
-    dispose(): void;
-}
-
-export const TOOL_BINDING_DIAGNOSTIC_LIMITS = Object.freeze({
+const TOOL_BINDING_DIAGNOSTIC_LIMITS = Object.freeze({
     cleanupErrors: 8,
     labelCodeUnits: 64,
     messageCodeUnits: 256,
 });
 
-export interface ToolBindingErrorSummary {
+interface ToolBindingErrorSummary {
     readonly name: string;
     readonly message: string;
     readonly code?: string;
     readonly truncated: boolean;
 }
 
-export interface ToolBindingCleanupDiagnostic {
+interface ToolBindingCleanupDiagnostic {
     readonly toolKey: string;
     readonly toolKeyTruncated: boolean;
     readonly error: ToolBindingErrorSummary;
 }
 
-export interface ToolBindingDiagnostics {
+interface ToolBindingDiagnostics {
     readonly original?: ToolBindingErrorSummary;
     readonly cleanupErrors: readonly ToolBindingCleanupDiagnostic[];
     readonly cleanupFailureCount: number;
     readonly omittedCleanupFailures: number;
 }
 
-export type ToolBindingErrorCode = 'TOOL_BINDING_INVALID' | 'TOOL_BINDING_PORT_INVALID'
+type ToolBindingErrorCode = 'TOOL_BINDING_PORT_INVALID'
     | 'TOOL_BINDING_OWNER_CONFLICT' | 'TOOL_BINDING_UNAVAILABLE' | 'TOOL_BINDING_CLOSED'
     | 'TOOL_BINDING_COMMIT_FAILED' | 'TOOL_BINDING_CLEANUP_FAILED';
 
 type ControllerState = 'created' | 'active' | 'committing' | 'closing' | 'failed' | 'disposed';
-const controllerStates = new WeakMap<object, () => ControllerState>();
-
-/** Internal adapter check: a reentrant void dispose can still be closing. */
-export function isToolBindingDisposed(controller: object): boolean {
-    return controllerStates.get(controller)?.() === 'disposed';
-}
 interface CapturedBinding {
     readonly execute: (args: Readonly<Record<string, unknown>>) => ToolResult | Promise<ToolResult>;
     readonly enabled: boolean;
@@ -308,7 +312,6 @@ interface OwnedBinding { readonly release: () => void; readonly token: object }
 interface CleanupReport { count: number; errors: ToolBindingCleanupDiagnostic[] }
 const portOwners = new WeakMap<IAppTypeToolPort, object>();
 const bindingFields = new Set(['execute', 'enabled']);
-const controllerFields = new Set(['definition', 'appTypeTools']);
 
 // Read data descriptors only. The finite walk also handles a broken Proxy
 // prototype chain without invoking an Error's message/name/code getters.
@@ -358,7 +361,7 @@ function bindingFailure(code: ToolBindingErrorCode, original?: ToolBindingErrorS
 function captureBindings(input: unknown, entries: readonly (readonly [string, CapturedDefinition])[]): ReadonlyMap<string, CapturedBinding> {
     const properties = plainDataProperties(input, 'bindings', undefined, 'TOOL_BINDING_INVALID');
     if (properties.size !== entries.length || entries.some(([key]) => !properties.has(key))) {
-        fail('TOOL_BINDING_INVALID', 'bindings must contain exactly one entry for every ToolSet key');
+        fail('TOOL_BINDING_INVALID', 'bindings must contain exactly one entry for every ToolSet key', '$.bindings');
     }
     const result = new Map<string, CapturedBinding>();
     for (const [key] of entries) {
@@ -372,51 +375,61 @@ function captureBindings(input: unknown, entries: readonly (readonly [string, Ca
     return result;
 }
 
-/** Internal Preact preparation: the same descriptor capture used by commit. */
-export function captureToolBindingsForRender<Candidate>(definition: unknown, input: Candidate) {
-    const entries = definition !== null && typeof definition === 'object' ? toolSets.get(definition) : undefined;
-    if (!entries) fail('TOOL_SET_INVALID', 'definition must be created with defineToolSet');
-    const frame = captureBindings(input, entries);
-    return Object.freeze({
-        bindings: Object.freeze(Object.fromEntries(frame)) as Candidate,
-        enabled: new Map([...frame].map(([key, value]) => [key, value.enabled])),
-    });
+function toolRegistration(item: CapturedDefinition, current: () => CapturedBinding['execute'] | undefined): AppFrameTool {
+    return {
+        definition: { viewType: item.viewType, name: item.name, description: item.description, inputSchema: item.inputSchema },
+        options: {
+            safeOrdinaryParametersInvocationMode: ORDINARY_INVOCATION_MODE,
+            createSafeOrdinaryParametersInvoker: contract => async args => {
+                if (!current()) return {
+                    phase: 'not-entered', result: { success: false,
+                        error: { code: 'TOOL_UNAVAILABLE', message: 'Tool binding is not currently available' } },
+                };
+                let execute: CapturedBinding['execute'] | undefined;
+                return invokeOrdinaryParameterTool(contract, args, value => execute!(value), () => {
+                    execute = current();
+                    return execute !== undefined;
+                });
+            },
+        },
+    };
 }
 
-/** Internal presentation lookup; a copied definition is not a member. */
-export function toolSetKey(definition: unknown, tool: unknown): string | undefined {
-    if (definition === null || typeof definition !== 'object' || !toolSets.has(definition)) return undefined;
-    const set = definition as Readonly<Record<string, unknown>>;
-    return Object.keys(set).find(key => set[key] === tool);
+/** A complete frame selects registrations and handlers before accepting either. */
+export function createAppFrameTools(definition: unknown) {
+    const entries = readToolSet(definition);
+    let active: ReadonlyMap<string, CapturedBinding> | undefined;
+    const registrations = entries.map(([key, item]) => [key, toolRegistration(item, () => {
+        const binding = active?.get(key);
+        return binding?.enabled ? binding.execute : undefined;
+    })] as const);
+    return {
+        prepare(input: unknown) {
+            const next = captureBindings(input === undefined && entries.length === 0 ? {} : input, entries);
+            const tools = registrations.filter(([key]) => next.get(key)!.enabled).map(([, registration]) => registration);
+            return { tools, accept() { active = next; } };
+        },
+        close() { active = undefined; },
+    };
 }
 
-/** Bind one static ToolSet to one App port; construction has no registry effects. */
-export function createToolBindings<const Map extends ToolMap>(options: {
-    readonly definition: ToolSet<Map>;
-    readonly appTypeTools: IAppTypeToolPort;
-}): ToolBindingController<Map> {
-    const properties = plainDataProperties(options, 'createToolBindings', controllerFields, 'TOOL_BINDING_INVALID');
-    const definition = properties.get('definition');
-    const port = properties.get('appTypeTools');
-    const entries = definition !== null && typeof definition === 'object' ? toolSets.get(definition) : undefined;
-    if (!entries) fail('TOOL_SET_INVALID', 'definition must be created with defineToolSet');
-    if (port === null || typeof port !== 'object' || Array.isArray(port) ||
-        diagnosticData(port, 'protocol') !== VIEW_TYPE_TOOL_PROTOCOL) throw bindingFailure('TOOL_BINDING_PORT_INVALID');
-    const register = diagnosticData(port, 'registerTypeTool');
+/** Preact captures bindings during render and adopts them only during commit. */
+export function createToolBindings(definition: unknown, appPort: IAppTypeToolPort | undefined) {
+    const entries = readToolSet(definition);
+    if (!appPort || typeof appPort !== 'object' || Array.isArray(appPort) ||
+        diagnosticData(appPort, 'protocol') !== VIEW_TYPE_TOOL_PROTOCOL) throw bindingFailure('TOOL_BINDING_PORT_INVALID');
+    const register = diagnosticData(appPort, 'registerTypeTool');
     if (typeof register !== 'function') throw bindingFailure('TOOL_BINDING_PORT_INVALID');
-    const appPort = port as IAppTypeToolPort;
     const registerTypeTool = register as IAppTypeToolPort['registerTypeTool'];
     const owner = Object.freeze({});
     const handles = new Map<string, OwnedBinding>();
-    let ownerHeld = false;
     let state: ControllerState = 'created';
     let operation: object | undefined;
     let committed: ReadonlyMap<string, CapturedBinding> | undefined;
     let failedOriginal: ToolBindingErrorSummary | undefined;
 
     const releaseOwner = () => {
-        if (ownerHeld && portOwners.get(appPort) === owner) portOwners.delete(appPort);
-        ownerHeld = false;
+        if (portOwners.get(appPort) === owner) portOwners.delete(appPort);
     };
     const cleanupHandles = (): CleanupReport => {
         const report: CleanupReport = { count: 0, errors: [] };
@@ -449,28 +462,19 @@ export function createToolBindings<const Map extends ToolMap>(options: {
         const binding = committed?.get(key);
         return binding?.enabled ? binding.execute : undefined;
     };
-    const unavailable = (): ViewToolInvocationTerminal => ({
-        phase: 'not-entered', result: { success: false, error: { code: 'TOOL_UNAVAILABLE', message: 'Tool binding is not currently available' } },
-    });
 
-    const commit = (candidate: unknown): void => {
+    const commit = (next: ReadonlyMap<string, CapturedBinding>): void => {
         if (operation !== undefined || (state !== 'created' && state !== 'active')) {
             throw bindingFailure('TOOL_BINDING_UNAVAILABLE', summarizeError(codedError('TOOL_BINDING_UNAVAILABLE',
                 operation ? 'A synchronous binding operation is in progress' : 'Cannot commit while controller is ' + state)));
         }
+        const currentOwner = portOwners.get(appPort);
+        if (currentOwner !== undefined && currentOwner !== owner) throw bindingFailure('TOOL_BINDING_OWNER_CONFLICT');
         const token = Object.freeze({});
         operation = token;
-        let next: ReadonlyMap<string, CapturedBinding> | undefined;
-        let registryEntered = false;
+        portOwners.set(appPort, owner);
+        state = 'committing';
         try {
-            next = captureBindings(candidate, entries);
-            if (state !== 'created' && state !== 'active') throw codedError('TOOL_BINDING_CLOSED', 'Controller closed during prepare');
-            const currentOwner = portOwners.get(appPort);
-            if (currentOwner !== undefined && currentOwner !== owner) throw bindingFailure('TOOL_BINDING_OWNER_CONFLICT');
-            portOwners.set(appPort, owner);
-            ownerHeld = true;
-            state = 'committing';
-            registryEntered = true;
             for (const [key] of entries) {
                 const handle = handles.get(key);
                 if (!next.get(key)!.enabled && handle) {
@@ -482,21 +486,8 @@ export function createToolBindings<const Map extends ToolMap>(options: {
             for (const [key, item] of entries) {
                 if (!next.get(key)!.enabled || handles.has(key)) continue;
                 const registration = Object.freeze({});
-                const runtimeDefinition: AppTypeToolDefinition = {
-                    viewType: item.viewType, name: item.name, description: item.description,
-                    inputSchema: item.inputSchema, 
-                };
-                const release = registerTypeTool.call(appPort, runtimeDefinition, {
-                    safeOrdinaryParametersInvocationMode: ORDINARY_INVOCATION_MODE,
-                    createSafeOrdinaryParametersInvoker: contract => async args => {
-                        if (!available(key, registration)) return unavailable();
-                        let execute: CapturedBinding['execute'] | undefined;
-                        return invokeOrdinaryParameterTool(contract, args, value => execute!(value), () => {
-                            execute = available(key, registration);
-                            return execute !== undefined;
-                        });
-                    },
-                });
+                const tool = toolRegistration(item, () => available(key, registration));
+                const release = registerTypeTool.call(appPort, tool.definition, tool.options);
                 if (typeof release !== 'function') throw bindingFailure('TOOL_BINDING_PORT_INVALID');
                 handles.set(key, { release, token: registration });
                 assertCommitting(token, 'register');
@@ -505,23 +496,17 @@ export function createToolBindings<const Map extends ToolMap>(options: {
             committed = next;
             state = 'active';
         } catch (error) {
-            const original = summarizeError(error);
-            if (registryEntered || (state as ControllerState) === 'closing') {
-                const closing = (state as ControllerState) === 'closing';
-                committed = undefined;
-                next = undefined;
-                state = closing ? 'closing' : 'failed';
-                failedOriginal = original;
-                const cleanup = cleanupHandles();
-                finishCleanup(closing);
-                const code = cleanup.count > 0 ? 'TOOL_BINDING_CLEANUP_FAILED'
-                    : closing || original.code === 'TOOL_BINDING_CLOSED' ? 'TOOL_BINDING_CLOSED' : 'TOOL_BINDING_COMMIT_FAILED';
-                throw bindingFailure(code, original, cleanup);
-            }
-            const code = original.code === 'TOOL_BINDING_OWNER_CONFLICT' ? 'TOOL_BINDING_OWNER_CONFLICT' : 'TOOL_BINDING_INVALID';
-            throw bindingFailure(code, original);
+            const closing = (state as ControllerState) === 'closing';
+            committed = undefined;
+            state = closing ? 'closing' : 'failed';
+            failedOriginal = summarizeError(error);
+            const original = failedOriginal;
+            const cleanup = cleanupHandles();
+            finishCleanup(closing);
+            const code = cleanup.count > 0 ? 'TOOL_BINDING_CLEANUP_FAILED'
+                : closing || original.code === 'TOOL_BINDING_CLOSED' ? 'TOOL_BINDING_CLOSED' : 'TOOL_BINDING_COMMIT_FAILED';
+            throw bindingFailure(code, original, cleanup);
         } finally {
-            next = undefined;
             if (operation === token) operation = undefined;
         }
     };
@@ -542,7 +527,12 @@ export function createToolBindings<const Map extends ToolMap>(options: {
             if (operation === token) operation = undefined;
         }
     };
-    const controller = Object.freeze({ commit, dispose }) as ToolBindingController<Map>;
-    controllerStates.set(controller, () => state);
-    return controller;
+    return {
+        prepare(input: unknown) {
+            const next = captureBindings(input, entries);
+            return () => commit(next);
+        },
+        dispose,
+        get disposed() { return state === 'disposed'; },
+    };
 }

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { withExecutableTools } from './semantic-capability-policy.js';
 import type { ObservationGrant } from '../core/invocation/observation-types.js';
 import type { AppSnapshotV3 } from '../core/snapshot/types.js';
-import type { ExecutionBinding, ScopePolicy } from '../core/invocation/scoped-interaction-types.js';
+import type { ExecutionBinding, AppInteractionPolicy } from '../core/invocation/app-interaction-types.js';
 
 function fixture() {
     const view = { viewId: 'root', viewInstanceId: 'root-instance' };
@@ -21,7 +21,7 @@ function fixture() {
     };
     const grant: ObservationGrant = { views: [view], refs: [], content: [{ view, decision: 'retain' }],
         toolBindings: Object.values(source.tools).map(tool => ({ toolId: tool.id, execution: tool.execution })) };
-    const policy: ScopePolicy = { project: vi.fn(async () => grant), authorize: vi.fn(() => true), canReadReceipt: vi.fn(() => true) };
+    const policy: AppInteractionPolicy = { project: vi.fn(async () => grant), authorize: vi.fn(() => true), canReadReceipt: vi.fn(() => true) };
     const context = { source, selection: { viewIds: ['root'] }, signal: new AbortController().signal };
     const binding: ExecutionBinding = { identity: {}, mode: 'ordinary-v2', validateInput: () => ({ ok: true, value: {} }),
         isLive: () => ({ ok: true }), execute: () => ({ kind: 'unknown' }) };
@@ -53,7 +53,7 @@ describe('Host executable Tool projection', () => {
     it('does not sanitize invalid or duplicate policy execution grants by deleting them', async () => {
         const f = fixture(), resolve = vi.fn(() => null);
         const invalid = { ...f.grant, toolBindings: [{ toolId: 'missing', execution: f.grant.toolBindings[0].execution }] };
-        const invalidPolicy: ScopePolicy = { ...f.policy, project: () => invalid };
+        const invalidPolicy: AppInteractionPolicy = { ...f.policy, project: () => invalid };
         expect(await withExecutableTools(invalidPolicy, { resolve }).project(f.context)).toBe(invalid);
         const duplicate = { ...f.grant, toolBindings: [f.grant.toolBindings[0], f.grant.toolBindings[0]] };
         expect(await withExecutableTools({ ...f.policy, project: () => duplicate }, { resolve }).project(f.context)).toBe(duplicate);

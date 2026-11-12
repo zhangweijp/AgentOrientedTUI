@@ -1,98 +1,36 @@
-# Worker 租约与 App 资源归属
+# Worker 与 App 资源归属
 
-本文对应 W08-C1 的 Node 执行适配。这里的 Pool、Host、Sandbox 报告都是内部工程接缝，不是稳定的 Runtime 根 API，也不表示 Kernel 整体关闭已经完成。Core 不依赖 Worker、Node 或这些报告。
+每个本地 App 实例由一个 AppWorkerHost 创建并持有专属 Node Worker。业务入口在该线程中加载，静态发现读取 manifest。重开和重初始化创建新实例。Core 不依赖 Worker 或 Node。
 
-## 谁负责什么
-
-| 对象 | 持有的资源 | 何时算完成 |
-| --- | --- | --- |
-| DesktopManager | 本 Runtime 的一个 WorkerPool | 池停止接收借用，全部物理 Worker 实际退出，预留槽归零 |
-| AppManager | 借来的池；独立构造时可自有一个冷池 | `cleanupAsync()` 等待自有池关闭并返回资源报告；借来的池交由父级关闭 |
-| WorkerSandbox | 一次安装、一个逻辑 Host、一张本次 lease | 安装终态、独立清理步骤、Host 资源、lease 归还均有结论；自有池还须关闭 |
-| AppWorkerHost | 本逻辑实例的监听器、请求、文件替换与存储访问 | 自己的 Worker 已退出或安全转移，文件替换为零，真实后端 release 已确认 |
-| WorkerPool | 有限的实际 Worker 与创建预留槽 | 只根据真实 exit 释放物理额度 |
-
-默认链路是 DesktopManager → Desktop → AppManager → WorkerSandbox，传递同一个池。两个 createRuntime 不共享池；同一 Runtime 的多个 Desktop 共享容量。B2 默认存储后端仍按原合同共享，保证 namespace 排他；本单不清空或关闭其他实例的存储。
-
-独立 AppManager 和独立 Sandbox 在没有注入池时各自拥有冷池。构造不启动 Worker。池上限在构造时固定，后续 App 的启动配置不能改变共享池容量；原有 Worker timeout 和 launchConfig 仍传入 Host/Worker。
-
-## 借用凭证只属于本次借用
+## 容量与配置
 
 ```ts
-// 内部 deep import；不是新的稳定根导出。
-const pool = new WorkerPool({ initialSize: 0, maxSize: 1 });
-const first = await pool.acquireLease(workerScript);
-await first.release();
-const second = await pool.acquireLease(workerScript);
-// 可能是同一物理 Worker，但必定是另一张 lease。
-await first.release(false); // 返回第一次归还的同一个 Promise；不影响 second。
-const closing = pool.destroy(); // 同步停止准入，不强杀 second。
-await second.release();         // closing 池中等待真实退出。
-await closing;
+const runtime = createRuntime({ worker: { maxWorkers: 4, timeoutMs: 30000 } });
 ```
-
-每张 lease 冻结，首次 release 同步登记唯一决定与 Promise，重复调用即使传入相反参数也共享原结果。池不积累已完成借用 ID。正常健康归还是 `pooled`；不健康或池关闭时，等实际 exit 后为 `exited`。旧凭证不能把新借用归还或杀掉。
-
-`maxSize` 包括 leased、idle、retiring 和 reserved。没有空位且全部借出/退出中时，立即拒绝 `WORKER_POOL_CAPACITY_EXCEEDED`；没有无界等待队列。关闭后拒绝 `WORKER_POOL_CLOSED`，构造失败为 `WORKER_CREATE_FAILED`，不返回原始异常正文。
-
-脚本按调用时工作目录解析为绝对路径，完整路径精确匹配。满额但有不同脚本的 idle Worker 时，只选择一个槽，先等旧 Worker 实际退出，再用同一槽创建新脚本 Worker。关闭会取消尚未创建的替换。它不提供文件系统访问隔离。
-
-首次获取时，池按首次请求脚本预热 `initialSize` 个 Worker，再完成本次借用；预热目标包含本次借出的 Worker。`initialSize=0` 时仍会按需创建本次借用所需的 Worker。池只在首次获取时初始化一次，空闲 Worker 可以回收到零，不周期补齐。部分构造失败仍保留已创建 Worker 的监督与销毁能力。
 
 | 配置 | 默认 | 范围 |
 | --- | --- | --- |
-| initialSize | 2 | safe integer，0–100，且不大于 maxSize |
-| maxSize | 10 | safe integer，1–100 |
-| idleTimeoutMs | 60000 | safe integer，5000–600000 |
+| `worker.maxWorkers` | 10 | 1–100 安全整数 |
+| `worker.timeoutMs` | 30000 ms | 1000–300000 ms 安全整数 |
 
-直接构造和 defineRuntimeConfig 都验证上述范围。每个 idle Worker 只有一个 unref 定时器，借出、退出、替换、销毁时取消；旧回调不能作用于新 lease。
+`maxWorkers` 取代旧配置中的 `worker.pool.maxSize`。预热与空闲 Worker 配置已退出。一个 Runtime 的多个 Desktop 共享名额，不同 Runtime 各自计数。独立 AppManager 也拥有自己的限额。App 启动配置可以传递到 Host/Worker，不能改变父级 Runtime 的总容量。
 
-通过 `defineRuntimeConfig` 提供部分配置时，根对象及 `worker`、`worker.pool`、`logger` 等配置段须为普通对象或 null-prototype 对象；字段须是自有、可枚举的数据属性。Getter/setter 与非枚举字段会以 `CONFIG_INVALID` 拒绝，校验和合并不会读取 getter。未知字段、对象段形状错误及数值范围错误也以 `CONFIG_INVALID` 报告；message 会包含字段路径，例如 `[worker.pool.maxSize]`。省略的字段及显式设为 `undefined` 的字段都沿用默认值。合并不会改写调用方传入的对象。
+线程创建前先占一个名额。构造失败撤销该次预留，已创建线程等实际退出才归还。满额时拒绝启动，容量原因是 `WORKER_CAPACITY_EXCEEDED`，由安装入口包装为 `INSTALL_FAILED`。自定义 Worker 脚本路径按启动方工作目录解析。
 
-## 三种完成不要混为一谈
+`defineRuntimeConfig` 接受普通或 null-prototype 对象上的自有、可枚举数据字段。访问器、未知字段和无效值以 `CONFIG_INVALID` 拒绝，诊断给出字段路径。省略或显式传 `undefined` 使用默认值。
 
-Host.close 的业务结果、Worker 的物理退出、后端 I/O 的真实结束分别记录。terminate 只请求终止；它返回、native terminate Promise resolve/reject 或业务 timeout，都不能代替 exit。终止拒绝且尚未 exit 时，Pool 继续计 retiring，Host 继续报告未释放。
+## 关闭顺序
 
-Host 只解绑自己的 message/error/exit 回调，保留 Pool 和外部监听。成功 RESET 后，Host 报告 `transferred`，表示所有权交回池；物理 Worker 可能继续运行。请求终止时，即使 Host.worker 已置空，独立 exit 观察仍存在。
+1. Sandbox 接受首次 close 或 delete 后同步停止准入。重复关闭加入同一过程。迟到的安装结果无法恢复运行。
+2. Host 发送 `APP_STOP`，调用 App 已注册的同步 `stop`。初始化后才注册的 owner 也会立即停止。进行中的 Tool 保留原执行记录。
+3. 正常路径等待 Tool 终态，随后按首次意图执行适用的 `onDelete`、持久化 flush、unmount、App cleanup 和 dispose。删除失败会被记录，后续清理仍尝试。
+4. 超过 `worker.timeoutMs` 的宽限期后，Host 请求终止并记录 `APP_CLOSE_DEADLINE_EXCEEDED`。自然 `exit` 或原生 `terminate()` 成功完成提供同一个真实退出事实。终止请求或 Worker 单独报错时仍保留线程名额和必要关联。
+5. Host 等待已经接纳的存储访问、adapter release 以及 Core 交互清理。后台持久化 I/O 可以在 Worker 退出后继续，原 Host 仍负责其收尾。
 
-内部 waitForResourceRelease 只在 releaseWorker 开始、terminate 请求或实际 exit 后可用；之前以 `RESOURCE_RELEASE_NOT_STARTED` 拒绝，不隐式关闭 App。重复等待共用一次实际完成 Promise。它先等已有 close/release 尝试，再等实际文件替换和 B2 后端 release，避免在最后保存前关闭存储准入。它不增加 flush 或重试策略。
+内部 `AppWorkerHost.close()` 等到线程实际退出。内部 `waitForResourceRelease()` 等到 Host 的资源释放尝试结束。Public Runtime 的关闭 handle 汇总 App、Worker 和存储结果。独立调用方可以通过 `wait({ timeoutMs })` 截止等待。详情见 [Runtime 关闭与结果报告](runtime-shutdown.md)。
 
-被接受的文件替换仍受原 M4 屏障保护，不能提前强杀；保存操作可以在 Worker 已退出后继续执行，Host 仍保留后端所有者并等待。后端 release 为 failed/unknown 时，报告可 `settled`，但 `resourcesReleased=false`；文件保存的失败/unknown 不会因 Worker 随后退出而改成成功。
+`app-lifecycle-v2` 以 `state` / `issues` 报告 App 清理。应用的 `stop` 和 `close` 可选，卸载仍保留已经注册的 cleanup。强制退出时缺失或未完成的回调会体现在报告中。App 创建的子进程、远端任务及外部业务效果由应用或实际 adapter 处理。见 [ViewType Tool 与应用清理](tool-lifecycle.md)。
 
-## Sandbox 一次清理
+## 资源释放失败
 
-安装在途重复调用共享 Promise，完成后重复安装拒绝。关闭开始同步停止新安装、异步业务/事件/View 调用和 void 推送；快照不再返回活动内容。每个安装 await 后复核关闭身份，迟到 acquire/INIT/OPEN 不会把状态重新变成 running。已获得的 lease 在 Host 构造、start、open 任一步失败时仍必须清理。
-
-close、disposeAsync、delete 共用清理。第一种 close/delete 意图生效：delete 先开始只调用一次删除，失败也继续 close；close 先开始后 delete 拒绝 `LIFECYCLE_CONFLICT`。`AppKernel.onDelete()` 将应用回调异常映射为固定 `APP_DELETE_FAILED`；Sandbox 收到失败后仍独立执行 close、unmount 和资源清理。
-
-顺序为：等待已接受安装 → 尝试 delete（适用时）→ 尝试 Host.close → releaseWorker/必要 terminate → Host 实际资源等待 → 唯一 lease 归还 → 等自有池关闭。每步独立保留固定失败；不能因一个错误跳过后续。自有池先同步关闭准入，归还 lease 后再 await destroy，避免相互等待。
-
-```ts
-await sandbox.close(); // 保留 Promise<void>；失败以 SANDBOX_CLOSE_FAILED 和 report 拒绝。
-// 或获取有限报告，业务/清理失败以报告返回：
-const report = await sandbox.disposeAsync();
-```
-
-报告保留实例资源引用到实际结束。共享池健康归还允许 Sandbox.resourcesReleased=true、Host.worker=transferred，而父级池仍有 idle Worker；自有池还要求 closed。只有资源完成、无固定失败且 managed 持久化成功才 ok=true。Host、lease 或自有 Pool 的固定问题统一保留为 RESOURCE_RELEASE_FAILED，即使实际资源后来释放也不会把顶层 ok 改成 true。Host 的持久化和 App cleanup support 只报告 `offered` / `managed` / `rejected`；缺少必需的工厂标记或无效协商会被拒绝，不作为旧二进制兼容状态。应用 cleanup 完成不证明任意外部资源已释放，外部资源仍由应用所有者负责。
-
-## 有限报告和当前边界
-
-Pool 报告只有状态、上限、total/reserved/idle/leased/retiring 与最多两个固定 issue。Host 报告只有状态、Worker 所有权、活动文件替换数、B2 存储快照与最多四个 issue。Sandbox 报告只有意图、状态、ok/resourcesReleased、Host/lease/自有池结论与最多五个 issue。快照及 issue 数组冻结，不保留业务正文、用户 cause 或无限历史；已完成 Sandbox 报告保留原结论。
-
-本批受控测试验证交错、拒绝和计数；真实 Node/SDK 测试验证脚本身份、物理退出、实际文件和后端屏障、保存失败/回执丢失、Shadow 开关下复用，以及缺少或非法的工厂/INIT 标记会被拒绝。自然退出测试由新 Node 子进程完成 Pool/独立 Sandbox 清理后自行结束，没有 process.exit 或 afterAll 强杀作为成功证明。
-
-上层 Manager/Desktop/Kernel 的关闭接入与公共报告见下节 C2；这里的显式内部 Pool 关闭测试不能单独证明这些上层行为。跨进程、跨平台、长期 RSS、产品延迟、干净 tarball 分发和完整 IDE 迁移也不在本单签署范围。
-
-## C2 上层关闭接入（追加）
-
-C2 沿用以上 C1 资源归属和实际完成报告，接入 AppManager → Desktop → DesktopManager → Kernel。普通调用仍为 `await runtime.shutdown()`；进阶调用通过 `beginShutdown()` / `beginDesktopShutdown()` 的同一关闭操作区分观察者截止、已知故障和资源释放。截止不会取消实际 I/O，也不会启动第二次 destroy。
-
-上层同步停止新业务、登记已接受的安装与创建，独立启动所有子项清理，按原对象身份移除已释放记录并保留未确认所有者。AppKernel 的异步 open、delete、close 共用各自实际操作；delete 固定失败经原 LIFECYCLE_RESPONSE 返回，unmount 失败后仍独立清理自身监听及注册。B2 原有 flush → unmount → dispose 顺序保持。
-
-未协商持久化与 managed 保存确认分开计数；实际未确认的外部资源仍通过 `mixed` / `unverified` 和资源释放报告表达。`unmount=pending` 的 B2 进度顶层 `ok=false` 不单独视为故障。完整公共 API 和关闭方式见 [Runtime 关闭与结果报告](runtime-shutdown.md)。本段不改写上文 C1 的底层保证；C2/W08 的历史验收以已经封存的决定为准。
-
-## W10 App 资源生命周期
-
-当前 Host/Sandbox 关闭开始立即调用 `beginApplicationStop`，在安装尚未完成时保留停止意图；INIT 协商完成后补送 APP_STOP。业务 owner 的同步 stop 先于 managed session seal/flush，之后 join 初始化、卸载组件、等待实际 owner close 和 session dispose。新 owner 若在 stop 后才注册，会立即停止；卸载不抹去已登记的 cleanup 责任。
-
-App cleanup 使用 v2，只报告 state/issues；stop/close 各自可选，无回调正常完成。失败或未完成回调仍禁止健康回池并保留错误，但不覆写 Host 自身已确认的 Worker/storage/Scope 释放事实。完整合同见 [普通 Tool 与应用清理](tool-lifecycle.md)。App 创建的外部子进程仍由 App 清理，callback 完成不构成框架对任意外部资源的证明。
+原 Host 保留 adapter 尚未释放的存储 owner。对同一 App 重复 `desktop.closeApp(appId, expectedInstanceId)`，或对仍保留 owner 的 Desktop 重复 `runtime.beginDesktopShutdown(desktopId)`，可以显式继续释放。该尝试共享在途 release，沿用首次关闭的清理与写入结果。首次报告保持原样，后续报告体现新的资源释放事实。默认 Node adapter 按资源身份重试安全清理。见 [实例持久化](persistence.md)。

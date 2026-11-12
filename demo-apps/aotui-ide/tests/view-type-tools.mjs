@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createIDEToolBindings, ideToolGroups } from '../dist/tui/ide-tool-contracts.js';
+import { createIDEToolBindings, ideTools } from '../dist/tui/ide-tool-contracts.js';
 
 async function main() {
   let createResult = { success: true, data: { filePath: '/work/new.txt' } };
@@ -39,7 +39,8 @@ async function main() {
     createWorkspaceFile: async (...args) => { createCalls.push(args); return createResult; },
   };
 
-  const tools = ideToolGroups;
+  const ofType = viewType => Object.values(ideTools).filter(tool => tool.viewType === viewType);
+  const tools = { workspace: ofType('Workspace'), file: ofType('FileDetail'), search: ofType('SearchResult') };
   const bindings = createIDEToolBindings(owner);
   assert.ok(tools.workspace.length > 0 && tools.file.length > 0 && tools.search.length > 0,
     'every IDE TypeBox declaration should construct successfully');

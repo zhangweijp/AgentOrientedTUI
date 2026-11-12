@@ -1,4 +1,3 @@
-import type { ComponentChildren } from 'preact';
 import { defineViewTypeTool, defineToolSet, type ArgsOf, type ToolBinding } from '@aotui/sdk';
 import Type from 'typebox';
 import type { TerminalSession } from '../types.js';
@@ -72,14 +71,6 @@ export function createCloseTerminalBinding(onCloseTerminal: TerminalActions['onC
                 ? { success: true, data: { message: 'Terminal closed; its current View and tools are removed.' } }
                 : { success: false, error: { code: 'TERMINAL_NOT_FOUND', message: 'Terminal is already closed.' } };
         } } satisfies ToolBinding<typeof terminalTools.closeTerminal>);
-}
-
-export function TerminalToolList({ children }: { children?: ComponentChildren }) {
-    return <div data-role="available-tools"><h3>Terminal View Tools</h3>{children}</div>;
-}
-
-export function TerminalConsoleToolList({ children }: { children?: ComponentChildren }) {
-    return <div data-role="available-tools"><h3>Terminal Console Tools</h3>{children}</div>;
 }
 
 export const terminalTools = defineToolSet({

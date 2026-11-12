@@ -33,10 +33,7 @@ function readOwnEnumerableConfigValue(source: unknown, key: PropertyKey, parentP
  * 完整默认配置
  */
 export const RUNTIME_DEFAULTS: RuntimeConfig = Object.freeze({
-    worker: Object.freeze({
-        timeoutMs: WORKER_DEFAULTS.timeoutMs,
-        pool: Object.freeze({ ...WORKER_DEFAULTS.pool }),
-    }),
+    worker: Object.freeze({ ...WORKER_DEFAULTS }),
     logger: Object.freeze({ ...LOGGER_DEFAULTS }),
 });
 
@@ -72,21 +69,11 @@ function mergeConfig<T extends object>(target: T, source: unknown, path = ''): T
 function validateRuntimeConfig(config: RuntimeConfig): void {
     const errors: string[] = [];
     const { worker, logger } = config;
-    const initialSizeIsValid = Number.isSafeInteger(worker.pool.initialSize) &&
-        worker.pool.initialSize >= 0 && worker.pool.initialSize <= 100;
-
-    if (!(typeof worker.timeoutMs === 'number' && worker.timeoutMs >= 1000 && worker.timeoutMs <= 300_000)) {
-        errors.push('[worker.timeoutMs] worker.timeoutMs must be a number between 1000ms and 300000ms');
+    if (!Number.isSafeInteger(worker.timeoutMs) || worker.timeoutMs < 1000 || worker.timeoutMs > 300_000) {
+        errors.push('[worker.timeoutMs] worker.timeoutMs must be a safe integer between 1000ms and 300000ms');
     }
-    if (!Number.isSafeInteger(worker.pool.maxSize) || worker.pool.maxSize < 1 || worker.pool.maxSize > 100 ||
-        (initialSizeIsValid && worker.pool.maxSize < worker.pool.initialSize)) {
-        errors.push('[worker.pool.maxSize] worker.pool.maxSize must be a safe integer between 1 and 100 and >= worker.pool.initialSize');
-    }
-    if (!initialSizeIsValid) {
-        errors.push('[worker.pool.initialSize] worker.pool.initialSize must be between 0 and 100');
-    }
-    if (!Number.isSafeInteger(worker.pool.idleTimeoutMs) || worker.pool.idleTimeoutMs < 5000 || worker.pool.idleTimeoutMs > 600_000) {
-        errors.push('[worker.pool.idleTimeoutMs] worker.pool.idleTimeoutMs must be between 5000ms and 600000ms');
+    if (!Number.isSafeInteger(worker.maxWorkers) || worker.maxWorkers < 1 || worker.maxWorkers > 100) {
+        errors.push('[worker.maxWorkers] worker.maxWorkers must be a safe integer between 1 and 100');
     }
     if (!(typeof logger.maxSystemLogs === 'number' && logger.maxSystemLogs >= 10 && logger.maxSystemLogs <= 10_000)) {
         errors.push('[logger.maxSystemLogs] logger.maxSystemLogs must be a number between 10 and 10000');
@@ -121,7 +108,6 @@ function validateRuntimeConfig(config: RuntimeConfig): void {
 export function defineRuntimeConfig(input: RuntimeConfigInput = {}): RuntimeConfig {
     const config = mergeConfig(RUNTIME_DEFAULTS, input);
     validateRuntimeConfig(config);
-    Object.freeze(config.worker.pool);
     Object.freeze(config.worker);
     Object.freeze(config.logger);
     return Object.freeze(config) as RuntimeConfig;

@@ -99,7 +99,7 @@ export interface RuntimeConfig {
      * Worker 脚本的默认路径
      * 所有 App 默认使用此脚本运行在 Worker 中
      */
-    workerScript: string;
+    workerScript?: string;
 }
 
 /**

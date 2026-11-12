@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parseHTML } from 'linkedom';
 import * as contracts from '../core/tool/ordinary-parameter-contract.js';
 import { AppKernel } from './app-kernel/AppKernel.js';
 import { invokeTypeParameters } from './ordinary-invocation-v2.js';
@@ -8,20 +7,19 @@ import type { OrdinaryParameterContract } from '../core/tool/ordinary-parameter-
 
 async function setup() {
   let port!: IAppTypeToolPort, views!: IViewOwnedToolPort;
-  const kernel = new AppKernel({ appName: 'compiled', name: 'Compiled', component: {
-    initializeComponent: async (_container, context) => {
+  const kernel = new AppKernel({ appName: 'compiled', name: 'Compiled', factory: {
+    initialize: async (context) => {
       port = context.appTypeTools!; views = context.viewTools!;
-      return { unmount() {} };
+      return { close() {} };
     },
   } });
   kernel.setId('app' as never); kernel.setAppExecutionInstanceId('run');
-  const { document } = parseHTML('<html><body></body></html>');
-  await kernel.onOpen({ appId: 'app' as never, desktopId: 'd' as never },
-    document.createElement('div') as unknown as HTMLElement);
+  await kernel.onOpen({ appId: 'app' as never, desktopId: 'd' as never });
   views.mount('detail', 'File');
   const context = { appId: 'app', instanceId: 'run', negotiated: true,
     validateBinding: kernel.validateBoundTypeTool.bind(kernel),
     getParameterContract: (tool: Parameters<typeof kernel.validateBoundTypeTool>[0], execution: Parameters<typeof kernel.validateBoundTypeTool>[1]) =>
+            isRefViewLive: () => true,
       kernel.getBoundTypeToolContract(tool, execution),
     invokeBinding: kernel.invokeBoundTypeTool.bind(kernel),
   };

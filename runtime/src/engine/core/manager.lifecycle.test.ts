@@ -21,9 +21,9 @@ describe('DesktopManager admission and captured identity', () => {
         const completion = new Promise<DesktopCloseReport>(resolve => { release = () => { state.state = 'settled';state.resourcesReleased = true;state.desktops = { accepted: 1, settled: 1, pending: 0, notVerifiedReleased: 0 };resolve(report()); }; });
         const handle = createCloseHandle(report, completion);vi.spyOn(held, 'beginClose').mockReturnValue(handle);const otherClose = vi.spyOn(other, 'beginClose');
         const shutdown = manager.beginShutdown();expect(manager.beginShutdown()).toBe(shutdown);expect(otherClose).toHaveBeenCalledOnce();
-        expect(shutdown.inspect().pool.report?.state).not.toBe('open');await expect(manager.create('late')).rejects.toMatchObject({ code: 'RUNTIME_SHUTDOWN' });
+        expect(shutdown.inspect().workers.report?.state).not.toBe('open');await expect(manager.create('late')).rejects.toMatchObject({ code: 'RUNTIME_SHUTDOWN' });
         expect(shutdown.inspect().state).toBe('closing');
-        release();const result = await shutdown.completion;expect(result).toMatchObject({ ok: true, pool: { ownership: 'owned', report: { state: 'closed', total: 0 } }, desktops: { accepted: 2, settled: 2, pending: 0 } });
+        release();const result = await shutdown.completion;expect(result).toMatchObject({ ok: true, workers: { ownership: 'owned', report: { state: 'closed', total: 0 } }, desktops: { accepted: 2, settled: 2, pending: 0 } });
         // The barrier is a controlled report, not a real Worker: close its actual empty object too.
         await original().completion;
     });

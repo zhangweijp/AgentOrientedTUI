@@ -28,7 +28,7 @@ class TestWorker extends EventEmitter {
                 const lifecycleRequest = ['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type);
                 const cleanupFailed = this.shutdownFailed && lifecycleRequest;
                 const persistenceFailed = closing && (this.closeFailed || cleanupFailed);
-                const response = { type: message.type === 'RESET' ? 'RESET_RESPONSE' : 'LIFECYCLE_RESPONSE', requestId: message.requestId,
+                const response = { type: 'LIFECYCLE_RESPONSE', requestId: message.requestId,
                     success: closing ? !persistenceFailed : true,
                     ...(lifecycleRequest ? { appCleanup: {
                         protocol: 'app-lifecycle-v2', instanceId, state: closing ? cleanupFailed ? 'failed' : 'completed' : 'stopped',
@@ -73,7 +73,7 @@ it('B18: shutdown lifecycle failure still reaches APP_CLOSE and cannot pool', as
     const { worker, host } = setup();worker.shutdownFailed = true;await host.start();
     const close = host.close();expect(host.close()).toBe(close);await expect(close).rejects.toThrow('APP_CLEANUP_FAILED');
     expect(worker.sent.filter(m => m.type === 'APP_CLOSE')).toHaveLength(1);expect(host.getPersistenceReport().unsafe).toBe(true);
-    expect(await host.releaseWorker()).toBeNull();expect(worker.terminated).toBe(1);
+    expect((await host.waitForResourceRelease()).worker).toBe('exited');expect(worker.terminated).toBe(1);
 });
 it('B13: a storage type accessor never falls through into the legacy message router', async () => {
     const { host } = setup();await host.start();let calls = 0;

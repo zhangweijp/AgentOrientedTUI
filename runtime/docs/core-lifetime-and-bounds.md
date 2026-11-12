@@ -17,7 +17,7 @@
 
 current 预算失败沿用原 commit 次序：消费本次 producerSeq、进入 degraded、保留旧 revision/lastGood 和旧 Ref 内容。相同语义的 unchanged 沿用原 entry 的字节费用，即使新尝试的序号更长。当前快照不会被暗中驱逐，活 lease 也不会被额度强制取消。
 
-当前被新快照替换、stop 或换身份时，仅仍有合法 lease 的旧快照进入 history；没有 holder 的旧快照立即删除；最后一个 lease 显式释放后立即退出，时限 lease 在原有读／检查清理中识别过期后退出，不再额外等待历史 TTL。history TTL 不再承诺保留无人持有的完整 Ref payload。新 current／degraded lastGood、其他 Scope、预览准备或在途调用仍需要的数据按各自 owner 保留。
+当前被新快照替换、stop 或换身份时，仅仍有合法 lease 的旧快照进入 history；没有 holder 的旧快照立即删除；最后一个 lease 显式释放后立即退出，时限 lease 在原有读／检查清理中识别过期后退出，不再额外等待历史 TTL。history TTL 不再承诺保留无人持有的完整 Ref payload。新 current／degraded lastGood、已采用观察、观察准备或在途调用仍需要的数据按各自 owner 保留。
 
 stop 或换身份会把当前费用移入 history。活 lease 可能让历史暂时超出 history 额度，但迁移本身不增加总字节；新的发布同时满足 current 与原 history 预算。默认 current+history 逻辑预算为 64 MiB，此数值不能套用于任意自定义 history/单 Draft 配置。
 
@@ -53,10 +53,10 @@ maxViews/maxBindings 为 0 允许构造，但相应新增活动会被拒绝。ma
 
 ## 实际 owner 与下一身份域
 
-`createScopedInteraction()` 的 owner 先同步撤销 authority，再停止接收新调用，并等待已经接纳的 project、验证、授权、执行以及 `invoke()` 返回结果前的读取授权进入清理完成。关闭不能丢弃 authority 对象来伪造在途归零；拥有它的层随后才 dispose 自己的 Core 与 Registry。Worker、App 和 Desktop 的顺序见 [Worker 生命周期](worker-lifecycle.md) 与 [Runtime 关闭报告](runtime-shutdown.md)。
+`createAppInteraction()` 的 owner 先同步撤销 authority，再停止接收新调用，并等待已经接纳的 project、验证、授权、执行以及 `invoke()` 返回结果前的读取授权进入清理完成。关闭不能丢弃 authority 对象来伪造在途归零；拥有它的层随后才 dispose 自己的 Core 与 Registry。Worker、App 和 Desktop 的顺序见 [Worker 生命周期](worker-lifecycle.md) 与 [Runtime 关闭报告](runtime-shutdown.md)。
 
 AppKernel 保留 C2 同步 closing 门禁及 open/delete 等待，在 renderer unmount 结算后的独立清理阶段 dispose 自有 Registry。同步 throw、异步 reject 也会执行其余清理。该接入不改变 B2 flush→unmount→存储 dispose 的顺序。
 
-dispose 不能 reset。新 Core/Registry 是新的可信身份域：装配者必须使用其授权范围内从未复用的 AppInstance ID，新 Scoped authority 必须使用新的 namespace。默认 Host 的 randomUUID 和 host:instanceId 保持。旧 Client 永不转到新 Client；旧序列化请求也不能授权新 handler。刻意同时重用身份和 namespace 会制造来源碰撞，属于违反可信装配前提的负对照，不能用来说明合法装配的行为。
+dispose 不能 reset。新 Core/Registry 是新的可信身份域：装配者必须使用其授权范围内从未复用的 AppInstance ID，新的实例交互必须使用新的 namespace。默认 Host 的 randomUUID 和 host:instanceId 保持。旧交互句柄永不转到继任实例；旧序列化请求也不能授权新 handler。刻意同时重用身份和 namespace 会制造来源碰撞，属于违反可信装配前提的负对照，不能用来说明合法装配的行为。
 
 本阶段不证明公共无 DOM 包入口、独立 tarball 分发、任意数量 Runtime 的总 RSS、跨进程身份服务或产品 p95/RSS 预算。这些事项仍需后续工单的独立证据。

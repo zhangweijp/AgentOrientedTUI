@@ -4,7 +4,9 @@
 
 | 旧写法或职责 | 当前写法 |
 | --- | --- |
-| 每个 View 实例调用 useViewTypeTool／useViewSnapshotTool | module-scope `defineViewTypeTool` + `defineToolSet`；每个 App 一个 `AppTools`，普通 TS 用 `createToolBindings` |
+| 每个 View 实例调用 useViewTypeTool／useViewSnapshotTool | module-scope `defineViewTypeTool` + `defineToolSet`；每个 Preact App 一个 `AppTools`，普通 TS 用 `createApp` 的 `publish` |
+| `@aotui/sdk/tools` 和手动 `createToolBindings` | 静态声明从 `@aotui/sdk/app` 或 Preact 根入口导入；绑定随 `publish` 或 `AppTools` 提交 |
+| View 内的 `ToolRef` 与 `useViewContext` | 省略重复操作标签；确有业务用途的 View ID 由 App 自己作为组件参数传入 |
 | definition 内含 execute | definition 只含 viewType、name、description、inputSchema；execute／enabled 放入 App bindings |
 | 重复维护 Schema、参数类型、注册和工具说明 | 一份 TypeBox Schema 推导 `ArgsOf`／`SchemaOf`、注册和参数合同；handler 参数递归只读 |
 | isMutating 分类 | 删除该字段；只读参数、授权、业务 effects 及调用终态各守原合同 |
@@ -20,16 +22,14 @@
 | getContext 后直接调用，或只预览就替换旧资格 | 可信消费者显式 `Context.adopt()`；Driver 自动采用；finally 释放该 Context |
 | 从 @aotui/runtime/adapters 导入 SemanticAOTUIDrivenSource | 从独立 `@aotui/agent-driver-adapter` 导入，Host 安装匹配 Runtime／Driver peer |
 
-文件路径、标题、编辑内容和金额有独立业务意义时仍用普通参数；Ref 不是替代所有字符串的新类型系统。Ref 支持对象、整数组、元素、多个／可选与地址数组多选；使用方式及不支持的查询见 [Ref 指南](readonly-ref-v2.md)。
+文件路径、标题、编辑内容和金额有独立业务意义时仍用普通参数；Ref 不是替代所有字符串的新类型系统。Ref 支持标量、null、对象、整数组、元素、多个／可选与地址数组多选；使用方式及不支持的查询见 [Ref 指南](readonly-ref-v2.md)。
 
 静态声明不捕获业务实例；完整映射一次绑定到 App。将同类页面中的重复注册合并到共同祖先的 AppTools。同类型最后一个 View 关闭后 activation 失效，重开不恢复旧资格；App 仍检查路径是否打开、对象归属、版本和权限。不要把共享工具改为隐式绑定某个页面或文件。
-
-`createToolBindings` 的 controller 对声明 Map 不变；不要把它强转成另一套 Schema。绑定提交、失败关闭和 cleanup 细节见 [普通 TS 绑定](binding-tools.md)，组件行为见 [AppTools](app-tools.md)。旧 ToolUI 不能授予权限；可选 ToolRef 只呈现局部能力标签，不承担注册。
 
 迁移后运行 [文件 App](examples/file-app.tsx)、[笔记 Ref App](examples/ref-app.tsx) 与现有包消费者检查。验证打开后能力出现、数据更新只呈现最新快照、关闭后旧资格失效、合法业务失败和资源释放。历史阶段方案及签收记录只说明当时产物，不作为当前推荐教程或本次验收结论。
 
 本次为 Breaking Change：匹配组合是 Runtime 7.0.0-srt.1、SDK 0.8.0-srt.1、可选 Adapter 0.4.0-srt.1 与 Driver 0.3.0。工厂和注册端口统一引用 Runtime 的 view-type-tools-v4 常量；旧 v3 及更早工厂／端口不会获得兼容执行。重新构建工厂及生成清单，不手动修改协议字符串。
 
-Worker INIT 必须请求并确认 app-snapshot/v3；启用工具时还必须确认既有 view-tool-parameters-invoke/v4。缺失 Snapshot 支持或未确认全部请求能力时，在 OPEN/调用前拒绝。Snapshot 数据本身仍逐份独立校验，不以握手代替来源、参数、Ref 或预算检查。低层 ComponentFactory／纯 Core Producer 的身份与生命周期保持独立，普通 TS 的现有注册端口也使用同一个常量源。
+Worker INIT 必须请求并确认 app-snapshot/v3；启用工具时还必须确认既有 view-tool-parameters-invoke/v4。缺失 Snapshot 支持或未确认全部请求能力时，在 OPEN/调用前拒绝。Snapshot 数据本身仍逐份独立校验，不以握手代替来源、参数、Ref 或预算检查。普通 TS 和 Preact 均通过中立的 `initialize(context)` / `close()` 合同装载。手写 SPI 工厂迁移见 [App 作者指南](app-authoring.md)。
 
 旧 Registry 的 package.json/index.js 回退不再用于发现应用；缺失或无效 aoapp.json 给 APP_MANIFEST_INVALID。直接 Runtime Worker 安装入口仍可使用明确的模块路径，Worker 核对工厂协议和调用／Snapshot 支持。现有 SDK 文件／Ref 示例属于这种直接安装场景，不需要为了运行示例先引入应用市场。

@@ -32,9 +32,8 @@
 // Keep this list explicit so internal SPI/Engine additions do not become public
 // accidentally.
 // ============================================================================
-export { createRuntime, type RuntimeConfig } from './facades/facades.js';
+export { createRuntime, type RuntimeConfig, type RuntimeOptions } from './facades/facades.js';
 export { defineRuntimeConfig, type RuntimeConfigInput } from './spi/config/index.js';
-export { Kernel } from './kernel/index.js';
 
 export {
     AOTUIError,
@@ -50,7 +49,7 @@ export type {
     AppInteractionOptions,
     AppID,
     AppLaunchConfig,
-    AppScopeResult,
+    AppInteractionResult,
     AppState,
     AppStatePersistence,
     CloseHandle,
@@ -63,7 +62,6 @@ export type {
     DesktopStatus,
     ErrorCode,
     IDesktop,
-    IDesktopManager,
     IKernel,
     InteractionMode,
     InteractionCloseReport,
@@ -76,8 +74,6 @@ export type {
     ReinitializeDesktopAppsResult,
     RuntimeCloseHandle,
     RuntimeCloseReport,
-    RuntimeCloseReporting,
-    RuntimeInteractionAccess,
     ShutdownOptions,
     UpdateSignal,
     ViewID,
@@ -87,8 +83,9 @@ export type {
 // 🟢 Public: App Registry (Third-Party App Management)
 // Used by Product Layer to load and manage third-party TUI apps
 // ============================================================================
+export type { StateStorageBackend } from './engine/app/state-storage-host.js';
 export { AppRegistry } from './engine/app/registry.js';
-export type { LoadedApp, AppRegistryEntry, AppRegistryOptions, AppRegistryInstallOptions } from './engine/app/registry.js';
+export type { LoadedApp, AppRegistryEntry, AppRegistryOptions, AppRegistryInstallOptions, AppRegistryFailure, AppDiscoveryResult, AppInstallResult } from './engine/app/registry.js';
 export type { TUIConfig, AppConfigEntry } from './engine/app/config.js';
 
 // ============================================================================

@@ -1,6 +1,6 @@
 # AOTUI IDE package integration
 
-The package has one current entry: its default managed `TUIAppFactory`, created with `createTUIApp` and backed by `ScopedIDEApp`. It has one business owner per App and uses Runtime Scopes, committed snapshots and managed app state. Normal Host startup uses standard AppRegistry installation and the generic Semantic Source. See the [Host integration contract](../../runtime/docs/semantic-host-integration.zh-CN.md).
+The package has one current entry: its default managed `TUIAppFactory`, created with `createTUIApp` and backed by `ScopedIDEApp`. It has one business owner per App and uses instance-bound Runtime interaction, committed snapshots and managed app state. Normal Host startup uses standard AppRegistry installation and the generic Semantic Source. See the [Host integration contract](../../runtime/docs/semantic-host-integration.zh-CN.md).
 
 The current authoring contract is SDK 0.8.0-srt.1 with Runtime 7.0.0-srt.1. `createTUIApp` supplies `toolAuthoringProtocol: 'view-type-tools-v4'`; Runtime rejects a factory without that marker or with an older value. The IDE declares ordinary Tool inputs once with TypeBox 1.4.3 and registers them at App scope. This is a breaking replacement for the old ordinary `useViewTypeTool(name, options, handler, config?)` and per-View `target` routing. See the [public Tool author guide](../../sdk/docs/view-type-tools.md) for a runnable authoring example and [migration steps](../../sdk/docs/migration.md).
 
@@ -28,7 +28,7 @@ const appId = await runtime.installDynamicWorkerApp(desktopId, appModulePath, {
 });
 ```
 
-The Host supports `view-type-parameters-v1` for both ordinary and Ref parameters. Omitting `interactionModes` enables this mode; `[]` disables execution. The matching Host/Worker capability is `view-tool-parameters-invoke/v4`. Retired modes and execution categories are rejected. The optional diagnostics and WorkspaceCreate tools use the same current mode. Supply the Controller's actual Scope projection, authorization and receipt policy; test allow-all policies are not production authorization. App configuration is not an OS filesystem sandbox.
+The Host supports `view-type-parameters-v1` for both ordinary and Ref parameters. Omitting `interactionModes` enables this mode; `[]` disables execution. The matching Host/Worker capability is `view-tool-parameters-invoke/v4`. Retired modes and execution categories are rejected. The optional diagnostics and WorkspaceCreate tools use the same current mode. A trusted Controller can set the instance's projection, execution authorization and receipt authorization policy. App configuration is not an OS filesystem sandbox.
 
 The normal Host supplies App identity, Desktop identity, project path and managed persistence through AppContext. When omitted, the IDE derives its session key from Desktop and App identity, and stores history under `AOTUI_DATA_DIR/ide-sessions/<sessionKey>/history.json`. Explicit overrides remain available: session keys must be 1–128 ASCII letters/digits/underscore/dot/hyphen and history paths must be absolute. The current package default does not open the legacy home LowDB. Give concurrent independent Apps distinct session keys; identical keys are not a shared-write protocol. Recent history uses a cooperative lock/CAS and reports conflicts/warnings without invisible retries.
 
@@ -120,7 +120,7 @@ Import writes a `history` marker, prepares/saves the managed session, verifies e
 
 ## Replace an installed IDE
 
-1. Stop issuing calls to the current Scope. Close the App and await its actual resource report. Record failed/unknown disk outcomes for inspection.
+1. Stop issuing calls to the current App instance. Close the App and await its actual resource report. Record failed/unknown disk outcomes for inspection.
 2. Install the package version you want through its default entry and create fresh observations/bindings; do not reuse old IDs.
 3. Check actual edited/renamed/deleted files. Replacing an App version does not undo disk effects or authorize replay of an unknown write. A configured legacy data import remains separate from the current app entry.
 
@@ -143,11 +143,11 @@ node node_modules/@agentina/aotui-ide/examples/local-scoped-ide.mjs \
 
 Both project and data paths are explicit. The session defaults to a stable digest of the real project directory. The example runs with the local operator's permissions and never rebuilds the repository's shared dist. It prints the actual Runtime and IDE module URLs at startup, including normal package-manager resolution.
 
-Send JSON lines with `op`: `views`, `observe`, `adopt`, `invoke`, `release` or `exit`. `observe` prepares an observation; explicitly `adopt` its ID before selecting one of its bindings. Adoption replaces the previous calling qualification. `views` only lists current pages and releases its temporary observation. Tool selection is shared by ViewType; file paths remain explicit business parameters checked by the IDE, with no per-file execution target.
+Send JSON lines with `op`: `views`, `observe`, `adopt`, `invoke`, `release` or `exit`. `observe` prepares an observation; explicitly `adopt` its ID before selecting one of its bindings. Adoption replaces the previous calling qualification. `views` lists current pages through the read-only preview. Tool selection is shared by ViewType; file paths remain explicit business parameters checked by the IDE, with no per-file execution target.
 
 An `invoke` command contains `invocationId`, `observationId`, `bindingId` and `input`. If the ID is omitted the example generates one. To read the same completed receipt again, resend the same complete request with the same ID: Core checks its fingerprint and independently authorizes receipt reading without entering the handler again. There is no standalone `receipt` command. Do not turn an unknown outcome into a new write attempt. Inspect the returned receipt's succeeded/rejected/failed/unknown outcome.
 
-Release observations when finished. Select only the Views needed within existing observation limits, and observe/adopt again after a binding is replaced. Receipt retention and invocation identity belong to the original Scope. The data directory contains managed state/history; it is separate from installed packages. Different session keys isolate managed state, while recent history uses the selected cooperative shared history resource.
+Release observations when finished. Select only the Views needed within existing observation limits, and observe/adopt again after a binding is replaced. Receipt retention and invocation identity belong to the original App instance. The data directory contains managed state/history; it is separate from installed packages. Different session keys isolate managed state, while recent history uses the selected cooperative shared history resource.
 
 EOF, `exit`, SIGINT and SIGTERM stop admission and await the actual Runtime close report. Accepted startup work is joined so its lifecycle callbacks can be installed and released. The example never starts another initialization attempt after stop. Input errors do not discard subsequent commands. Initialization failure is recognized only from the IDE Root, retains its existing error, and is followed by real cleanup; arbitrary Workspace text cannot impersonate startup failure. App cleanup failure and actual Runtime resource release remain distinct, and either unsuccessful close or unreleased resources produces a nonzero exit status.
 

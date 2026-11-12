@@ -60,9 +60,9 @@ function bindAction(viewType, name, state) {
     return enter(name, view, args, state.revision);
   };
 }
-function ToolRows({ state, tools, viewId }) {
+function Detail({ state, viewId }) {
   if (state.bad) throw Error('Controlled render failure');
-  return h('div', {}, [h('p', {}, `Business View ID: ${viewId}`), ...tools.map(([tool, label]) => h(SDK.ToolRef, { tool }, label))]);
+  return h('p', {}, `Business View ID: ${viewId}`);
 }
 function Root() {
   const [state, set] = useState({ revision: 1, enabled: true, show: true, rule: false, bad: false, tag: 0 });
@@ -81,11 +81,8 @@ function Root() {
   const tools = toolSets[Number(state.rule)];
   const bindings = Object.fromEntries(Object.entries(tools).map(([key, tool]) => [key,
     { enabled: state.enabled, execute: bindAction(tool.viewType, tool.name, state) }]));
-  const rows = type => [['find', 'Find symbols'], ['flags', 'Count flags'], ['open', 'Open input'], ['zero', 'Read current state']]
-    .map(([name, label]) => [tools[type + '_' + name], label]);
-  const fileTools = rows('File'), otherTools = rows('OtherFile');
-  const view = (id, type, tools) => h(SDK.View, {kind: 'state', key: id, id, type }, h(Boundary, {}, h(ToolRows, { state, tools, viewId: id })));
+  const view = (id, type) => h(SDK.View, {kind: 'state', key: id, id, type }, h(Boundary, {}, h(Detail, { state, viewId: id })));
   return h(SDK.AppTools, { key: String(state.rule), definition: tools, bindings },
-    h('main', {}, [state.show ? view('aa', 'File', fileTools) : null, view('bb', 'OtherFile', otherTools)]));
+    h('main', {}, [state.show ? view('aa', 'File') : null, view('bb', 'OtherFile')]));
 }
 export default SDK.createTUIApp({ app_name: 'ordinary_v3_fixture', component: Root });

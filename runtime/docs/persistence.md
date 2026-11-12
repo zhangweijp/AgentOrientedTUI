@@ -4,11 +4,11 @@ Core StateSession 管理 JSON 捕获、精确地址、恢复收据、修订、�
 
 Worker 为实际 Host 分配的 AppInstanceId 创建一个 A 会话，提供只含 bind/flush 的 AppStatePersistence 给 AppKernel，再传到 SDK 上下文。它持窄 StateStorage 代理，不持路径或文件系统。代理只统计待决 IPC；Host 另行监督真实后端访问。
 
-Host 使用模块内共享的 createNodeStateStorage backend，构造无 I/O；也可通过 AppWorkerHostConfig.persistenceBackend 注入已构造的同合同 backend。需要互斥的 Hosts 应共享它。多个 backend、物理 Runtime 副本、进程及旧 SDK 的外部直接访问不受同一张所有权表保证。
+Runtime 默认使用模块内共享的 Node 文件后端。可信 Host 可以从 `@aotui/runtime` 导入 `StateStorageBackend` 并通过 `createRuntime(config, { storageBackend })` 传入已有端口实现。首次持久化访问才打开 owner；执行实例重开后仍可读取同一 desktopId 和 appKey 下的数据。需要互斥的 Runtime 共享同一 backend 及其所有权边界。
 
 根路径从已合并 launchConfig.AOTUI_DATA_DIR 捕获，不能由存储请求提供。非空字符串按 Host 构造时 cwd 解析并追加 app-state；无配置/空字符串为 `~/.aotui/app-state`。Desktop Manager 已注入的 `~/.aotui/data` 保持对应 `~/.aotui/data/app-state`。非字符串或 NUL 明确拒绝。SDK 不读取 process.env 来选另一个根；业务 namespace 为 JSON.stringify([desktopId, appKey])。历史合法名称原样映射，非法或不可安全表示的名称不清洗，不自动迁移。
 
-INIT 独立提供协议版本、实例和有限预算。Worker 只接受同时声明 `persistenceSupport: 'state-session-v1'` 与 `appLifecycleSupport: 'app-lifecycle-v2'` 的正式 SDK 工厂，校验 Host offers 后返回 ACK；Host 校验 ACK 的协议和实例。工厂标记、offer 或 ACK 缺失或非法时拒绝初始化，不提供旧 SDK fallback。持久化标记不会扩展或授予当前 `view-type-parameters-v1` Worker interaction mode。一个 Host 只初始化一次，物理 Worker 正常 RESET 后必须换新 Host/实例。
+INIT 独立提供协议版本、实例和有限预算。Worker 只接受同时声明 `persistenceSupport: 'state-session-v1'` 与 `appLifecycleSupport: 'app-lifecycle-v2'` 的正式 SDK 工厂，校验 Host offers 后返回 ACK；Host 校验 ACK 的协议和实例。工厂标记、offer 或 ACK 缺失或非法时拒绝初始化，不提供旧 SDK fallback。持久化标记不会扩展或授予当前 `view-type-parameters-v1` Worker interaction mode。每个 Host 及物理 Worker 只初始化一个 App 实例。
 
 STATE_STORAGE_REQUEST/RESPONSE 使用 version=1、instanceId、单调 sequence、action。read/replace/remove 接受精确 address，replace 另含 text，release 不带正文/地址。自有数据属性、精确字段、预算、实例、Desktop 和高水位在 I/O 前验证；release 有独立监督资格，不占普通请求槽。回复匹配实例/序号/action；畸形修改回执不能 applied。明确发送前拒绝是 failed/effects:none；已发送但结果不能确认的修改为 unknown，迟到回执不会升级成成功。既有风险阻止新请求时，新请求仍属于已知未进入，而非假装其已写过。
 
@@ -34,12 +34,14 @@ Host 在首次合法访问时才 open，同一实例共享一次 opening Promise
 
 传输每实例最多 16 个普通 pending，sequence 至 MAX_SAFE_INTEGER 不回绕；逻辑 UTF-8 封套最多 265344 字节（262272 正文＋1024 地址＋2048 元数据），不是额外 JSON 转义后的长度或实际堆大小。Host timeout 必须为 1–300000 ms 安全整数。小预算构造只供精确边界测试；这些是工程拒绝上限，不是产品延迟/RSS/磁盘总量 SLA，不保证所有上限同时可达。
 
-App 端口 flush 同步共享 Promise，下一微任务才进入 Core 快照。APP_SHUTDOWN 同步 seal，等待既有手工 batch；成功再取最终快照，没有既有 batch 时只一次最终保存。失败批次不暗中整批重试，应用可在开放期显式修复、更新并主动保存检查。APP_CLOSE 随后独立尝试 unmount，始终 dispose 并等实际 release。初始提交失败不保存部分默认值。失败/unknown/未结束资源均不允许 healthy RESET/pool；旧异步回调绑定原记录，不访问继任 app。activeFileReplacements 与既有 Tool 传输不确定保护保持。
+App 端口 flush 同步共享 Promise，下一微任务才进入 Core 快照。APP_SHUTDOWN 同步 seal，等待既有手工 batch；成功再取最终快照，没有既有 batch 时只一次最终保存。失败批次不暗中整批重试，应用可在开放期显式修复、更新并主动保存检查。APP_CLOSE 随后独立尝试 unmount，始终 dispose 并等实际 release。初始提交失败不保存部分默认值。旧异步回调绑定原记录。Worker 退出后，Host 仍等待已接纳的实际存储访问。
+
+首次 `release` 失败或未知时，adapter 保留原 owner。Core 可重复调用 `dispose()`，Host 侧使用既有 App 或 Desktop 关闭入口发起后续释放，详见 [Runtime 关闭与结果报告](runtime-shutdown.md)。并发释放共享一次尝试，成功后后续调用幂等。Node adapter 仅处理原 owner 持有的句柄和身份已验证的临时文件。无法确认的业务修改和无法验证的资源继续保留原归属。
 
 `AppWorkerHost.getPersistenceReport()` 是有限只读快照：
 
 - support：offered / managed / rejected，为实际协商事实。
-- unsafe：Host 已识别不可健康复用的持久化/关闭风险，后续真实 release 不会将其抹掉。
+- unsafe：Host 已识别的持久化或关闭风险，后续真实 release 不会将其抹掉。
 - pending、actualIO：当前已接纳、尚未真正结束的后端访问数量（含等待 open）；opening 为真实 opening Promise 是否未完成。它们不是代理 IPC 数量或逐 syscall 数量。
 - bufferedBytes：上述访问持有的请求正文逻辑字节；ownerRetained 表示已得到而尚未确认释放的实际 owner；opening 时另有打开中的归属。
 - highWater、closing、uncertain：当前序号/准入和 Host 已见结果不确定事实。Worker 丢回执导致的 unknown 也可能只体现在 lifecycle 与 unsafe，不能只看 backend uncertain。

@@ -48,13 +48,17 @@ export function createStateStorageHost(options: Readonly<{ instanceId: string; d
         closing = true;
         releasePromise = (async () => {
             await Promise.all([...active]);
-            if (openingPromise) await openingPromise;
+            await openingPromise;
+            openingPromise = undefined;
             let result: StateReleaseResult;
             try { result = owner ? captureStateReleaseResult(await owner.release()) : { status: 'released' }; }
             catch { result = { status: 'unknown', issue: stateIssue('UNKNOWN_OUTCOME') }; }
             lastRelease = result;
             if (result.status === 'released') owner = undefined;
-            else uncertain = true;
+            else {
+                if (result.status === 'unknown') uncertain = true;
+                releasePromise = undefined;
+            }
             return result;
         })();
         return releasePromise;
@@ -95,7 +99,7 @@ export function createStateStorageHost(options: Readonly<{ instanceId: string; d
         void task.finally(() => { active.delete(task);bufferedBytes -= bytes; });
         return task;
     }
-    return Object.freeze({ accept, release, disconnect: release,
+    return Object.freeze({ accept, release, disconnect: () => releasePromise ?? (lastRelease ? Promise.resolve(lastRelease) : release()),
         markTransportUncertain: () => { uncertain = true; },
         getStats: () => Object.freeze({ highWater, closing, opening, pending: active.size, actualIO: active.size,
             bufferedBytes, ownerRetained: !!owner, uncertain, ...(lastRelease ? { release: lastRelease } : {}) }),

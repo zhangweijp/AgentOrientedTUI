@@ -50,7 +50,7 @@ async function setup() {
     if (!factory || typeof factory !== 'object' ||
         typeof Object.getOwnPropertyDescriptor(factory, 'displayName')?.value !== 'string' ||
         !Object.getOwnPropertyDescriptor(factory, 'kernelConfig')?.value ||
-        typeof Object.getOwnPropertyDescriptor(factory, 'initializeComponent')?.value !== 'function' ||
+        typeof Object.getOwnPropertyDescriptor(factory, 'initialize')?.value !== 'function' ||
         Object.getOwnPropertyDescriptor(factory, 'persistenceSupport')?.value !== 'state-session-v1' ||
         Object.getOwnPropertyDescriptor(factory, 'appLifecycleSupport')?.value !== 'app-lifecycle-v2' ||
         Object.hasOwn(ideModule, 'ideEntryForRoute')) {
@@ -90,16 +90,9 @@ async function start(root, id, options = {}) {
     return x;
 }
 function scope(x) {
-    const opened = x.host.createInteractionScope({ project: ({ source, selection }) => {
-        const ids = new Set(selection.viewIds), selected = source.views.filter(view => ids.has(view.id));
-        return { views: selected.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-            refs: [],
-            toolBindings: Object.values(source.tools)
-                .filter(tool => selected.some(view => view.type === tool.viewType))
-                .map(tool => ({ toolId: tool.id, execution: tool.execution })),
-            content: selected.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' })) };
-    }, authorize: () => true, canReadReceipt: () => true });
-    assert.equal(opened.status, 'opened', JSON.stringify(opened)); return opened.client;
+    const opened = x.host.getAppInteraction();
+    assert.equal(opened.status, 'ready', JSON.stringify(opened));
+    return opened.interaction;
 }
 async function invoke(x, name, args, { view = 'workspace', status = 'succeeded', changes = true, observation, client } = {}) {
     const owned = !client, c = client ?? scope(x);
@@ -121,16 +114,17 @@ async function invoke(x, name, args, { view = 'workspace', status = 'succeeded',
         // A Tool receipt completes its handler; rendering may publish afterwards.
         if (changes && status === 'succeeded') await eventually(() => snapshot(x).revision > beforeRevision, name + ' published snapshot');
         return outcome;
-    } finally { if (owned) c.close(); }
+    } finally { if (owned) c.releaseObservation(observed.observationId); }
 }
-async function close(x, transfer = false) {
+async function close(x) {
     await x.host.close();
-    const worker = await x.host.releaseWorker(); assert.equal(worker, x.worker, 'Only a successful close returns its Worker');
     const report = await x.host.waitForResourceRelease(); facts.cleanup.push({ id: x.id, report });
     if (report.appCleanup?.support === 'managed') assert.deepEqual([report.appCleanup.report.state, report.appCleanup.report.issues], ['completed', []]);
-    assert.equal(report.resourcesReleased, true); x.closed = true;
-    if (!transfer) await worker.terminate();
-    return worker;
+    assert.equal(report.resourcesReleased, true);
+    assert.equal(report.worker, 'exited');
+    assert.equal(x.worker.threadId, -1);
+    x.closed = true;
+    return report;
 }
 async function runCase(name, run) { const started = performance.now(); await run(); facts.cases.push({ name, elapsedMs: performance.now() - started, passed: true }); console.log('PASS', name); }
 await setup();

@@ -10,7 +10,7 @@ import type { AppLifecyclePort } from '@aotui/runtime/spi';
 import type { AppStatePersistence } from '@aotui/runtime/spi';
 import { createContext } from 'preact';
 import { useContext, useMemo } from 'preact/hooks';
-import type { AppID, DesktopID, IRefExporter, IProjectionPort, IViewOwnedToolPort, IAppTypeToolPort, AppLaunchConfig } from '@aotui/runtime/spi';
+import type { AppID, DesktopID, IRefExporter, IViewOwnedToolPort, IAppTypeToolPort, AppLaunchConfig } from '@aotui/runtime/spi';
 
 // ═══════════════════════════════════════════════════════════════
 //  Types
@@ -19,7 +19,7 @@ import type { AppID, DesktopID, IRefExporter, IProjectionPort, IViewOwnedToolPor
 /**
  * App Runtime Context Value
  * 
- * 由AppKernel在initializeFromComponent时创建并提供给App及其View组件树
+ * Preact adapter supplies this context to the App and its Views.
  */
 interface AppRuntimeContextValue {
     persistence?: AppStatePersistence | undefined;
@@ -37,14 +37,6 @@ interface AppRuntimeContextValue {
      * RefExporter访问 (用于useRef/useArrayRef)
      */
     refExporter: IRefExporter;
-
-    /**
-     * 标记App为脏状态 (触发重新渲染)
-     */
-    markDirty: () => void;
-
-    /** Semantic commit coordination supplied by Runtime. */
-    projection: IProjectionPort;
 
     /** SDK renderer retries only controller cleanups that have failed. */
     toolCleanup?: Set<() => void> | undefined;
@@ -73,7 +65,7 @@ interface AppRuntimePublicContextValue {
 /**
  * App Runtime Context
  * 
- * 由AppKernel的Provider在根组件包裹时提供
+ * The Preact adapter installs the provider at the root.
  */
 export const AppRuntimeContext = createContext<AppRuntimeContextValue | null>(null);
 

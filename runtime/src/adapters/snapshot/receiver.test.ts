@@ -59,62 +59,73 @@ describe('Semantic snapshot acceptance', () => {
 });
 
 describe('receiver-owned interaction lifetime', () => {
-    it('keeps reporting lazy and permanently stops scope admission before first use', () => {
+    it('keeps preview independent and permanently stops interaction admission before first use', async () => {
         const receiver = new SemanticSnapshotReceiver('app', 'instance');
+        receiver.acceptPrepared(draft(1));
+        expect(receiver.preview()).toMatchObject({ status: 'previewed', views: [expect.objectContaining({ id: 'file' })] });
         expect(receiver.getInteractionStats()).toBeNull();
-        receiver.closeInteractions();receiver.closeInteractions();
+        await receiver.closeInteractions();
         expect(receiver.getInteractionStats()).toBeNull();
-        expect(receiver.createInteractionScope(policy, execution).status).toBe('rejected');
-        receiver.close();
+        expect(() => receiver.interaction(policy, execution)).toThrow('unavailable');
+        await receiver.close();
     });
 
-    it('shares a bounded authority and reuses capacity after a scope releases', () => {
+    it('shares one interaction and permits one prepared observation alongside the current one', async () => {
         const receiver = new SemanticSnapshotReceiver('app', 'instance', () => 0);
-        const opened = Array.from({ length: 16 }, () => receiver.createInteractionScope(policy, execution));
-        expect(opened.every(item => item.status === 'opened')).toBe(true);
-        const authority = (receiver as any).interactions;
-        expect(receiver.createInteractionScope(policy, execution).status).toBe('rejected');
-        if (opened[0].status === 'opened') opened[0].client.close();
-        expect(receiver.createInteractionScope(policy, execution).status).toBe('opened');
-        expect((receiver as any).interactions).toBe(authority);
-        receiver.closeInteractions();
-        expect(receiver.getInteractionStats()).toMatchObject({ closed: true, scopes: 0, combinedBytes: 0 });
-        expect(receiver.createInteractionScope(policy, execution).status).toBe('rejected');
-        receiver.close();
+        receiver.acceptPrepared(draft(1));
+        const interaction = receiver.interaction(policy, execution);
+        expect(receiver.interaction(policy, execution)).toBe(interaction);
+        const first = await interaction.observe({ all: true });
+        expect(first.status).toBe('observed');
+        if (first.status !== 'observed') throw Error(first.issue.code);
+        expect((await interaction.observe({ all: true })).status).toBe('rejected');
+        expect(interaction.adoptObservation(first.observation.observationId)).toEqual({ status: 'adopted' });
+        const next = await interaction.observe({ all: true });
+        expect(next.status).toBe('observed');
+        expect(receiver.preview().status).toBe('previewed');
+        expect((await interaction.observe({ all: true })).status).toBe('rejected');
+        await receiver.close();
+        expect(receiver.getInteractionStats()).toMatchObject({ closed: true, combinedBytes: 0 });
     });
 
-    it('uses the injected clock without expiring observations still owned by their context', async () => {
+    it('uses the injected clock without expiring the current observation', async () => {
         let time = 0;
         const receiver = new SemanticSnapshotReceiver('app', 'instance', () => time);
         receiver.acceptPrepared(draft(1));
         const core = (receiver as any).core, id = receiver.report().snapshotId!;
-        const opened = receiver.createInteractionScope(policy, execution);
-        expect(opened.status).toBe('opened');if (opened.status !== 'opened') throw new Error('scope');
-        const first = await opened.client.observe({ all: true });
-        expect(first.status).toBe('observed');if (first.status !== 'observed') throw new Error('observation');
+        const interaction = receiver.interaction(policy, execution);
+        const first = await interaction.observe({ all: true });
+        if (first.status !== 'observed') throw Error(first.issue.code);
+        expect(interaction.adoptObservation(first.observation.observationId)).toEqual({ status: 'adopted' });
         time = 60001;
         expect(core.store.inspect().activeLeases).toBe(1);
-        const second = await opened.client.observe({ all: true });
-        expect(second.status).toBe('observed');if (second.status !== 'observed') throw new Error('observation');
-        expect(first.observation.observationId.startsWith('host:instance:')).toBe(true);
         receiver.acceptPrepared(draft(2, 'new current'));
+        const second = await interaction.observe({ all: true });
+        if (second.status !== 'observed') throw Error(second.issue.code);
         time = 660002;
         const retained = core.store.acquire(id);
-        expect(retained.status).toBe('acquired');retained.lease.release();
-        opened.client.releaseObservation(first.observation.observationId);
-        opened.client.releaseObservation(second.observation.observationId);
+        expect(retained.status).toBe('acquired'); retained.lease.release();
+        interaction.releaseObservation(first.observation.observationId);
+        interaction.releaseObservation(second.observation.observationId);
         expect(core.store.acquire(id).status).toBe('rejected');
-        expect((await opened.client.observe({ all: true })).status).toBe('observed');
-        receiver.close();
-        expect(receiver.getInteractionStats()).toMatchObject({ scopes: 0, combinedBytes: 0 });
+        expect((await interaction.observe({ all: true })).status).toBe('observed');
+        await receiver.close();
+        expect(receiver.getInteractionStats()).toMatchObject({ combinedBytes: 0 });
     });
 
-    it.each([-1, NaN, 9])('fails closed with invalid injected clock %s and still cleans up', timeAfter => {
-        let time = 10;const receiver = new SemanticSnapshotReceiver('app', 'instance', () => time);
-        expect(receiver.createInteractionScope(policy, execution).status).toBe('opened');time = timeAfter;
-        expect(receiver.createInteractionScope(policy, execution).status).toBe('rejected');
-        receiver.closeInteractions();
-        expect(receiver.getInteractionStats()).toMatchObject({ scopes: 0, combinedBytes: 0 });
-        receiver.close();
+    it.each([-1, NaN, 9])('fails closed with invalid injected clock %s and still cleans up', async timeAfter => {
+        let time = 10;
+        const receiver = new SemanticSnapshotReceiver('app', 'instance', () => time);
+        receiver.acceptPrepared(draft(1));
+        const interaction = receiver.interaction(policy, execution);
+        const first = await interaction.observe({ all: true });
+        expect(first.status).toBe('observed');
+        time = timeAfter;
+        expect(await interaction.observe({ all: true })).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_INTERNAL_ERROR' } });
+        expect(await interaction.invoke({ invocationId: 'bad', observationId: 'bad', bindingId: 'bad', input: {} }))
+            .toMatchObject({ kind: 'refused', code: 'OBSERVATION_INTERNAL_ERROR' });
+        await receiver.close();
+        expect(receiver.getInteractionStats()).toMatchObject({ closed: true, combinedBytes: 0 });
+        expect(receiver.report().health).toBe('stopped');
     });
 });

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
-import type { ScopePolicy } from '../../core/invocation/scoped-interaction-types.js';
+import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
 
 type SignalPolicy = 'auto' | 'never' | 'manual' | undefined;
 type Capture =
@@ -30,7 +30,7 @@ function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, f
         import { h } from 'preact';
         import Type from 'typebox';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
-        import { createTUIApp, defineViewTypeTool, View, useDataRef, AppTools, ToolRef, defineToolSet } from '@aotui/sdk';
+        import { createTUIApp, defineViewTypeTool, View, useDataRef, AppTools, defineToolSet } from '@aotui/sdk';
 
         Date.now = () => 1700000000000;
         let businessCalls = 0;
@@ -40,6 +40,7 @@ function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, f
                 ? { value: () => 'not cloneable' }
                 : { value: state.refValue }, [state.invalidRef, state.refValue]);
             const ref = useDataRef('selection', selection);
+            useLayoutEffect(() => { if (state.invalidLayout) throw new Error('Layout did not finish'); });
             return h('section', {}, h('p', {}, state.text + ' ' + ref('Selection')));
         }
 
@@ -59,7 +60,7 @@ Stats: defineViewTypeTool({viewType: 'Workspace', name: 'stats', description: 'R
 function Root() {
             const [state, setState] = useState({
                 open: ${initiallyOpen}, text: 'initial', refValue: 'seed',
-                toolEnabled: true, extraToolEnabled: false, invalidRef: false,
+                toolEnabled: true, extraToolEnabled: false, invalidRef: false, invalidLayout: false,
             });
             const RefreshUI = fixtureTools0.RefreshUI;
             const ExtraUI = fixtureTools0.ExtraUI;
@@ -78,6 +79,8 @@ function Root() {
                         case 'refresh-tool': setState(current => ({ ...current, toolEnabled: detail.data.enabled })); break;
                         case 'poison-ref': setState(current => ({ ...current, invalidRef: true })); break;
                         case 'recover-ref': setState(current => ({ ...current, invalidRef: false, refValue: 'recovered' })); break;
+                        case 'break-layout': setState(current => ({ ...current, invalidLayout: true, text: 'partial layout', refValue: 'partial ref' })); break;
+                        case 'repair-layout': setState(current => ({ ...current, invalidLayout: false, text: 'repaired layout', refValue: 'repaired ref' })); break;
                     }
                 };
                 document.addEventListener('aotui:external-event', onExternalEvent);
@@ -110,6 +113,8 @@ async function compileApplication(name: string, signalPolicy: SignalPolicy, init
         alias: {
             '@aotui/sdk': resolve(process.cwd(), '../sdk/src/index.ts'),
             '@aotui/runtime/spi': resolve(process.cwd(), 'src/spi/index.ts'),
+            '@aotui/runtime/core': resolve(process.cwd(), 'src/core/index.ts'),
+            '@aotui/runtime/adapters/dom': resolve(process.cwd(), 'src/adapters/dom-app.ts'),
         },
         logLevel: 'silent',
     });
@@ -222,7 +227,7 @@ function viewCount(host: AppWorkerHost): number {
     return report.lastViewCount ?? 0;
 }
 
-function allViewsPolicy(): ScopePolicy {
+function allViewsPolicy(): AppInteractionPolicy {
     return {
         project: ({ source, selection }) => {
             const ids = new Set(selection.viewIds);
@@ -231,7 +236,7 @@ function allViewsPolicy(): ScopePolicy {
                 views: views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
                 refs: Object.values(source.refs).filter(ref => ids.has(ref.ownerViewId))
                     .map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
-                toolBindings: Object.values(source.tools).flatMap(tool => 
+                toolBindings: Object.values(source.tools).flatMap(tool =>
                     views.some(view => view.type === tool.viewType) ? [{ toolId: tool.id, execution: tool.execution }] : []),
                 content: views.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' as const })),
             };
@@ -241,12 +246,14 @@ function allViewsPolicy(): ScopePolicy {
     };
 }
 
+const publicationPolicy = allViewsPolicy();
+
 async function createToolCaller(host: AppWorkerHost, name: string, input: Record<string, unknown>) {
-    const scope = host.createInteractionScope(allViewsPolicy());
-    expect(scope.status).toBe('opened');
-    if (scope.status !== 'opened') throw new Error(scope.issue.code);
-    const observed = await scope.client.observe({ viewIds: ['workspace'] });
-    if (observed.status === 'observed') expect(scope.client.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
+    const scope = host.getAppInteraction(publicationPolicy);
+    expect(scope.status).toBe('ready');
+    if (scope.status !== 'ready') throw new Error(scope.issue.code);
+    const observed = await scope.interaction.observe({ viewIds: ['workspace'] });
+    if (observed.status === 'observed') expect(scope.interaction.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
     expect(observed.status).toBe('observed');
     if (observed.status !== 'observed') throw new Error(observed.issue.code);
     const tool = observed.observation.tools.find(candidate => candidate.name === name);
@@ -254,17 +261,35 @@ async function createToolCaller(host: AppWorkerHost, name: string, input: Record
     const binding = observed.observation.bindings.find(candidate => candidate.toolId === tool!.id);
     expect(binding).toBeDefined();
     return {
-        invoke: (invocationId: string) => scope.client.invoke({
+        invoke: (invocationId: string) => scope.interaction.invoke({
             invocationId,
             observationId: observed.observation.observationId,
             bindingId: binding!.bindingId,
             input,
         }),
-        close: () => scope.client.close(),
+        close: () => scope.interaction.releaseObservation(observed.observation.observationId),
     };
 }
 
 describe('Semantic publication through the current SDK and a real Node Worker', () => {
+    it('keeps the Worker alive after a managed queued layout error and waits for a valid repair', async () => {
+        const x = await start('auto-empty');
+        await x.host.open();
+        await change(x, 'open');
+        const initial = latestSnapshot(x.host);
+        const failed = await change(x, 'break-layout');
+        expect(failed).toMatchObject({ type: 'SNAPSHOT_PREPARE_FAILED', error: { code: 'SNAPSHOT_INVALID' } });
+        expect((x.host as any).snapshotReceiver.core.store.readLatest(x.host.appId)).toMatchObject({
+            status: 'degraded', lastGood: { id: initial.id },
+        });
+        const recovered = await change(x, 'repair-layout');
+        expect(recovered.type).toBe('SNAPSHOT_PREPARED');
+        expect(latestSnapshot(x.host)).toMatchObject({
+            views: [{ content: { value: expect.stringContaining('repaired layout') } }],
+        });
+        expect(Object.values(latestSnapshot(x.host).refs)).toMatchObject([{ target: { payload: { value: 'repaired ref' } } }]);
+    });
+
     it('auto publishes empty, background DOM, Ref-only, Tool-only, same-ms generations, and final close', async () => {
         const x = await start('auto-empty');
         await x.host.open();
@@ -417,18 +442,16 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         stats.close();
     });
 
-    it('reuses one physical Worker with a fresh source identity and resets the default policy to auto', async () => {
+    it('uses a fresh Worker and source identity with the default auto signal policy', async () => {
         const first = await start('manual-open');
         await first.host.open();
         const originalInstance = first.host.appInstanceId;
-        const physicalWorkerId = first.worker.threadId;
-        const transferred = await first.host.releaseWorker();
-        expect(transferred).toBe(first.worker);
+        await first.host.close();
+        expect(first.worker.threadId).toBe(-1);
         expect(first.host.getSemanticSnapshotReport()?.health).toBe('stopped');
 
-        const secondWorker = transferred!;
-        const second = await startOnWorker(secondWorker, 'default-empty');
-        expect(second.worker.threadId).toBe(physicalWorkerId);
+        const second = await start('default-empty');
+        expect(second.worker).not.toBe(first.worker);
         expect(second.host.appInstanceId).not.toBe(originalInstance);
         await second.host.open();
         expect(second.host.getSemanticSnapshotReport()).toMatchObject({
@@ -441,25 +464,3 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         expect(second.updates.at(-1)).toMatchObject({ health: 'ready', lastViewCount: 1 });
     });
 });
-
-async function startOnWorker(worker: Worker, name: string) {
-    const host = new AppWorkerHost({
-        appId: 'publication_app' as any,
-        desktopId: 'desktop' as any,
-        appModulePath: appModules.get(name)!,
-        workerScriptPath,
-        existingWorker: worker,
-        config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR! },
-    });
-    const captures: Capture[] = [];
-    const updates: any[] = [];
-    const messages: any[] = [];
-    host.onUpdateRequest = () => updates.push(host.getSemanticSnapshotReport());
-    temporaryHosts.push({ host, worker, messages });
-    await host.start();
-    worker.on('message', message => {
-        messages.push(message);
-        if (message?.type === 'SNAPSHOT_PREPARED' || message?.type === 'SNAPSHOT_PREPARE_FAILED') captures.push(message);
-    });
-    return { host, worker, captures, updates, messages };
-}

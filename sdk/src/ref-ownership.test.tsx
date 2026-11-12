@@ -11,16 +11,14 @@ import { ViewRuntimeContext } from './contexts/view-runtime-context.js';
 
 function setup(component: () => any) {
   const factory = createTUIApp({ app_name: 'ref_ownership', component });
-  const kernel = new AppKernel({ ...factory.kernelConfig, component: factory } as any);
+  const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
   kernel.setId('ref_ownership_app' as any);
-  const container = document.createElement('div');
-  document.body.appendChild(container);
   return {
     kernel,
-    container,
+    get container() { return document.getElementById('app-root-ref_ownership_app')!; },
     open: () => kernel.onOpen({ appId: 'ref_ownership_app' as any, desktopId: 'desktop' as any,
-       }, container),
-    async close() { await kernel.onClose(); container.remove(); },
+       }),
+    async close() { await kernel.onClose(); },
   };
 }
 
@@ -30,31 +28,36 @@ const refsOf = (kernel: AppKernel) => Object.fromEntries(
 
 describe('Ref registration ownership', () => {
   it('rejects a second live owner and makes update/release owner-bound and idempotent', async () => {
-    const x = setup(() => null);
+    const x = setup(() => h(View, { id: 'view', type: 'Record', kind: 'state' }));
     await x.open();
+    const projection = x.kernel.getProjectionCoordinator();
     const firstValue = { id: 'first' };
-    const first = x.kernel.registerRef('view', 'selected', firstValue);
+    let first!: ReturnType<AppKernel['registerRef']>;
+    projection.commit(() => {
+      first = x.kernel.registerRef('view', 'selected', firstValue);
+      expect(() => x.kernel.registerRef('view', 'selected', { id: 'duplicate' }))
+        .toThrow(expect.objectContaining({ code: 'REF_ALREADY_REGISTERED' }));
+    });
 
-    expect(() => x.kernel.registerRef('view', 'selected', { id: 'duplicate' }))
-      .toThrow(expect.objectContaining({ code: 'REF_ALREADY_REGISTERED' }));
-    expect(refsOf(x.kernel)['view:selected']).toBe(firstValue);
+    expect(refsOf(x.kernel)['view:selected']).toEqual(firstValue);
+    expect(refsOf(x.kernel)['view:selected']).not.toBe(firstValue);
 
     const updatedValue = { id: 'updated' };
-    first.update(updatedValue);
-    expect(refsOf(x.kernel)['view:selected']).toBe(updatedValue);
+    projection.commit(() => first.update(updatedValue));
+    expect(refsOf(x.kernel)['view:selected']).toEqual(updatedValue);
 
     first.release();
     first.release();
     expect(() => first.update({ id: 'stale' })).toThrow('is no longer active');
     const successorValue = { id: 'successor' };
-    const successor = x.kernel.registerRef('view', 'selected', successorValue);
+    let successor!: ReturnType<AppKernel['registerRef']>;
+    projection.commit(() => { successor = x.kernel.registerRef('view', 'selected', successorValue); });
     first.release();
-    expect(refsOf(x.kernel)['view:selected']).toBe(successorValue);
+    expect(refsOf(x.kernel)['view:selected']).toEqual(successorValue);
 
     const closing = x.kernel.onClose();
     expect(() => successor.release()).not.toThrow();
     await closing;
-    x.container.remove();
   });
 
   it('rejects duplicate declarations in real Preact when the later publisher keeps stable data', async () => {
@@ -118,6 +121,7 @@ describe('Ref registration ownership', () => {
   it('releases all ArrayRef bindings if a later registration fails', () => {
     const refs = new Map<string, object>();
     const registry = {
+      captureRef: (value: any, check?: (value: any) => void) => { check?.(value); return value; },
       registerRef(id: string, value: object) {
         if (id === 'pending[1]') {
           const error = new Error('controlled Ref registration failure');
@@ -135,7 +139,7 @@ describe('Ref registration ownership', () => {
     }
     const container = document.createElement('div');
     expect(() => render(h(ViewRuntimeContext.Provider, {
-      value: { meta: {}, refs: registry } as any,
+      value: { viewId: 'example', ...registry },
     }, h(Content, {})), container)).toThrow('controlled Ref registration failure');
     expect([...refs.keys()]).toEqual([]);
     render(null, container);

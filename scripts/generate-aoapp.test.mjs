@@ -35,7 +35,7 @@ test('buildAoappManifest derives aoapp.json from the configured built entry and 
         displayName: 'system_ide',
         persistenceSupport: 'state-session-v1',
         appLifecycleSupport: 'app-lifecycle-v2',
-        initializeComponent() {},
+        initialize() {},
         kernelConfig: {
           appName: 'system_ide',
           description: 'IDE app',
@@ -78,7 +78,7 @@ test('buildAoappManifest rejects the retired manifest/create factory shape', asy
       `export default { manifest: { app_name: 'old_app', version: '1.0.0', entry: { main: './dist/index.js' } }, create() {} };`,
     );
 
-    await assert.rejects(buildAoappManifest(tempDir), /createTUIApp component factory/);
+    await assert.rejects(buildAoappManifest(tempDir), { code: 'APP_INVALID_EXPORT' });
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
@@ -95,7 +95,7 @@ test('buildAoappManifest rejects a kernelConfig-shaped non-factory export', asyn
       `export default { displayName: 'incomplete_app', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'incomplete_app' } };`,
     );
 
-    await assert.rejects(buildAoappManifest(tempDir), /createTUIApp component factory/);
+    await assert.rejects(buildAoappManifest(tempDir), { code: 'APP_INVALID_EXPORT' });
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
@@ -103,8 +103,8 @@ test('buildAoappManifest rejects a kernelConfig-shaped non-factory export', asyn
 
 test('buildAoappManifest rejects named and nested factories instead of resolving a fallback export', async () => {
   for (const source of [
-      `const f = { displayName: 'named_app', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'named_app' }, initializeComponent() {} }; export const factory = f;`,
-    `export default { factory: { displayName: 'nested_app', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'nested_app' }, initializeComponent() {} } };`,
+      `const f = { displayName: 'named_app', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'named_app' }, initialize() {} }; export const factory = f;`,
+    `export default { factory: { displayName: 'nested_app', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'nested_app' }, initialize() {} } };`,
   ]) {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
 
@@ -113,7 +113,7 @@ test('buildAoappManifest rejects named and nested factories instead of resolving
       await writeFile(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'alternate-export' }));
       await writeFile(path.join(tempDir, 'dist/index.js'), source);
 
-      await assert.rejects(buildAoappManifest(tempDir), /createTUIApp component factory/);
+      await assert.rejects(buildAoappManifest(tempDir), { code: 'APP_INVALID_EXPORT' });
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -122,8 +122,8 @@ test('buildAoappManifest rejects named and nested factories instead of resolving
 
 test('buildAoappManifest requires a nonempty displayName and appName on the default factory', async () => {
   for (const [displayName, appName, expectedError] of [
-    ['', 'missing_display', /createTUIApp component factory/],
-    ['missing_app', '', /createTUIApp component factory/],
+    ['', 'missing_display', { code: 'APP_INVALID_EXPORT' }],
+    ['missing_app', '', { code: 'APP_INVALID_EXPORT' }],
   ]) {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aotui-generate-aoapp-'));
 
@@ -131,7 +131,7 @@ test('buildAoappManifest requires a nonempty displayName and appName on the defa
       await mkdir(path.join(tempDir, 'dist'), { recursive: true });
       await writeFile(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'invalid-metadata' }));
       await writeFile(path.join(tempDir, 'dist/index.js'),
-      `export default { displayName: ${JSON.stringify(displayName)}, persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: ${JSON.stringify(appName)} }, initializeComponent() {} };`);
+      `export default { displayName: ${JSON.stringify(displayName)}, persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: ${JSON.stringify(appName)} }, initialize() {} };`);
 
       await assert.rejects(buildAoappManifest(tempDir), expectedError);
     } finally {

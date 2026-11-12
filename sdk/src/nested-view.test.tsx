@@ -6,30 +6,27 @@ import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel
 import { createTUIApp } from './app-factory/createTUIApp.js';
 import { View } from './components/View.js';
 import { useDataRef } from './hooks/useRef.js';
-import { AppTools, ToolRef } from './components/AppTools.js';
+import { AppTools } from './components/AppTools.js';
 import { defineViewTypeTool, defineToolSet } from './tools/view-type-tool.js';
 import Type from 'typebox';
 
 function setup(component: () => any) {
     const factory = createTUIApp({ app_name: 'nested_view_fixture', component });
-    const kernel = new AppKernel({ ...factory.kernelConfig, component: factory } as any);
+    const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
     kernel.setId('nested_fixture' as any);
     kernel.setAppExecutionInstanceId('nested_fixture_run');
-    const container = document.createElement('div');
-    document.body.appendChild(container);
 
     return {
         kernel,
-        container,
+        get container() { return document.getElementById('app-root-nested_fixture')!; },
         async open() {
             await act(async () => kernel.onOpen({
                 appId: 'nested_fixture' as any,
                 desktopId: 'desktop_nested' as any,
-            }, container));
+            }));
         },
         async close() {
             await act(async () => kernel.onClose());
-            container.remove();
         },
     };
 }
@@ -150,7 +147,7 @@ describe('View nesting boundary', () => {
             expect(registerRef.mock.calls.every(([viewId]) => viewId !== 'child')).toBe(true);
             expect(instances(x.kernel)).toEqual([]);
             expect(refs(x.kernel)).toEqual([]);
-            expect(x.container.querySelectorAll('[data-view-id]')).toHaveLength(0);
+            expect(x.container).toBeNull();
         } finally {
             await x.close();
         }
@@ -180,9 +177,9 @@ describe('View nesting boundary', () => {
             return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => ({ success: true }) } } }, h('main', {}, [
                 h('p', {}, 'Application content'),
                 leftOpen ? h(View, {kind: 'state', id: 'left', key: 'left', type: 'Card' },
-                    h(OrdinaryWrapper, {}, [h(Content, { owner: 'left' }), h(ToolRef, { tool: boundTools.tool }, 'Inspect left')])) : null,
+                    h(OrdinaryWrapper, {}, [h(Content, { owner: 'left' })])) : null,
                 h(View, {kind: 'state', id: 'right', key: 'right', type: 'Card' },
-                    h(OrdinaryWrapper, {}, [h(Content, { owner: 'right' }), h(ToolRef, { tool: boundTools.tool }, 'Inspect right')])),
+                    h(OrdinaryWrapper, {}, [h(Content, { owner: 'right' })])),
             ]));
         }
 
@@ -195,7 +192,7 @@ describe('View nesting boundary', () => {
             expect(initialTool.execution.kind).toBe('view-type');
             expect(initialTool.execution).not.toHaveProperty('targets');
             expect(x.kernel.getToolDefinitions()).toHaveLength(1);
-            expect(x.container.querySelectorAll('tool-ref')).toHaveLength(2);
+
             expect(x.container.querySelectorAll('[data-view-id]')).toHaveLength(2);
             expect(x.container.textContent).toContain('Application content');
 

@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
 
-/** A real SDK/Worker race injected AFTER the producer epoch check and DURING V3 draft preparation. */
+/** A real SDK/Worker binding mutation attempted during V3 draft preparation. */
 describe('Semantic producer regression: a mutation during V3 preparation cannot publish a torn Draft', () => {
-    it('rejects the inconsistent prepare and recovers at a later stable epoch', async () => {
+    it('refuses reentrant writes during preparation and recovers on a real Tool commit', async () => {
         const temporary = await mkdtemp(join(tmpdir(), 'aotui-v2-prepare-race-'));
         const root = resolve(process.cwd());
         const workerScript = join(temporary, 'worker.mjs');
@@ -30,74 +30,74 @@ describe('Semantic producer regression: a mutation during V3 preparation cannot 
             const fixture = `
                 import { writeFileSync } from 'node:fs';
                 import { h } from 'preact';
+                import { useState } from 'preact/hooks';
                 import Type from 'typebox';
                 import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
                 import { View } from './sdk/src/components/View.tsx';
-                import { AppTools, ToolRef } from './sdk/src/components/AppTools.tsx';
+                import { AppTools } from './sdk/src/components/AppTools.tsx';
                 import { defineToolSet, defineViewTypeTool } from './sdk/src/tools/view-type-tool.ts';
 
-                function Detail({ InspectUI }) {
+                function Detail() {
                     return h('section',{},[
                         h('p',{},'Stable FileDetail'),
-                        h(ToolRef,{ tool: InspectUI },'Inspect'),
                     ]);
                 }
 
-const fixtureTools0 = defineToolSet({
-InspectUI: defineViewTypeTool({
-                        viewType:'FileDetail', name:'inspect',
-                        description:'Read the current file metadata',
-                        inputSchema:Type.Object({}, {additionalProperties:false}),
-                        })
-});
-function App() {
-                    const InspectUI = fixtureTools0.InspectUI;
-                    return h(AppTools, { definition: fixtureTools0, bindings: {
-InspectUI: { execute: async () => ({success:true,data:{file:'App.tsx'}}) }
-} }, h(View,{kind: 'state',id:'fd_0',type:'FileDetail'},h(Detail,{InspectUI})));
+                const fixtureTools = defineToolSet({
+                    inspect: defineViewTypeTool({ viewType:'FileDetail', name:'inspect',
+                        description:'Read the current file metadata', inputSchema:Type.Object({},{additionalProperties:false}) }),
+                    late: defineViewTypeTool({ viewType:'FileDetail', name:'late_inspect',
+                        description:'Read after enabling', inputSchema:Type.Object({},{additionalProperties:false}) }),
+                });
+                let enable, attempt;
+                function App() {
+                    const [enabled, setEnabled] = useState(false);
+                    const [, setRender] = useState(0);
+                    attempt = () => setRender(value => value + 1);
+                    enable = () => setEnabled(true);
+                    const execute = async () => ({success:true,data:{file:'App.tsx'}});
+                    return h(AppTools, { definition: fixtureTools, bindings: { inspect: { execute }, late: { execute, enabled } } },
+                        h(View,{kind:'state',id:'fd_0',type:'FileDetail'},h(Detail)));
                 }
                 const factory = createTUIApp({
                     app_name:'m4_epoch_race',
                     component:App,
                 });
-                const initialize = factory.initializeComponent.bind(factory);
-                factory.initializeComponent = async (container, ctx) => {
-                    const initialized = await initialize(container, ctx);
-                    const view = container.querySelector('[data-view-id="fd_0"]');
+                const initialize = factory.initialize.bind(factory);
+                factory.initialize = async ctx => {
+                    const initialized = await initialize(ctx);
+                    const view = document.querySelector('[data-view-id="fd_0"]');
                     if (!view) throw new Error('Mounted FileDetail View was not found');
                     const getAttribute = view.getAttribute.bind(view);
                     let mutated = false;
                     view.getAttribute = ((name: string) => {
                         const value = getAttribute(name);
-                        // captureDOMSnapshot reads this exact mounted identity only
-                        // after it has copied the App-level Tool inventory for the draft.
                         if (!mutated && name === 'data-view-instance-id' && value) {
                             mutated = true;
                             const before = ctx.projection.token();
-                            const handler = async () => ({ success: true, data: { file: 'App.tsx' } });
-                            const release = ctx.appTypeTools.registerTypeTool({
-                                viewType: 'FileDetail',
-                                name: 'late_inspect',
-                                description: 'Inspect after a concurrent registration',
-                                inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false },
-                                }, {
-                                safeOrdinaryParametersInvocationMode: 'ordinary-v2',
-                                createSafeOrdinaryParametersInvoker: contract => async args => {
-                                    const checked = contract.validate(args);
-                                    return checked.ok
-                                        ? { phase: 'entered-returned', result: await handler(checked.value) }
-                                        : { phase: 'not-entered', result: { success: false, error: { code: 'E_INVALID_ARGS', message: 'Invalid Tool arguments' } } };
-                                },
-                            });
-                            const after = ctx.projection.token();
+                            let registered = false;
+                            try {
+                                ctx.appTypeTools.registerTypeTool({
+                                    viewType:'FileDetail', name:'late_inspect', description:'Reentrant registration',
+                                    inputSchema:{ type:'object', properties:{}, required:[], additionalProperties:false },
+                                }, { safeOrdinaryParametersInvocationMode:'ordinary-v2',
+                                    createSafeOrdinaryParametersInvoker: () => async () => ({
+                                        phase:'entered-returned',result:{success:true},
+                                    }),
+                                });
+                                registered = true;
+                            } catch { /* swallowed deliberately; the batch must still fail */ }
                             writeFileSync(${JSON.stringify(raceTracePath)}, JSON.stringify({
-                                hook: 'data-view-instance-id', viewInstanceId: value,
-                                beforeEpoch: before.epoch, afterEpoch: after.epoch,
-                                registered: typeof release === 'function', toolName: 'late_inspect',
+                                viewInstanceId:value, beforeEpoch:before.epoch,
+                                afterEpoch:ctx.projection.token().epoch, registered,
                             }));
                         }
                         return value;
                     }) as typeof view.getAttribute;
+                    document.addEventListener('aotui:external-event', event => {
+                        if (event.detail.type === 'attempt') attempt();
+                        if (event.detail.type === 'repair') enable();
+                    });
                     return initialized;
                 };
                 export default factory;
@@ -118,29 +118,28 @@ InspectUI: { execute: async () => ({success:true,data:{file:'App.tsx'}}) }
             });
             await host.start();
             await host.open();
+            const first = host.getSemanticSnapshotReport()!;
+            expect(first).toMatchObject({ health: 'ready', revision: 1, lastViewCount: 1, lastToolCount: 1 });
+            await host.sendExternalEvent('fd_0' as any, 'attempt');
             await vi.waitFor(() => {
-                const report = host!.getSemanticSnapshotReport()!;
-                expect(report).toMatchObject({
-                    health: 'ready', lastViewCount: 1, lastToolCount: 2,
-                });
-                expect(report.prepareFailed).toBeGreaterThanOrEqual(1);
-                expect(report.published).toBeGreaterThanOrEqual(1);
-            }, { timeout: 4_000 });
-            const report = host.getSemanticSnapshotReport()!;
-            const raceTrace = JSON.parse(await readFile(raceTracePath, 'utf8'));
-            expect(raceTrace).toMatchObject({
-                hook: 'data-view-instance-id', registered: true, toolName: 'late_inspect',
+                expect(host!.getSemanticSnapshotReport()).toMatchObject({ health: 'degraded', prepareFailed: 1 });
             });
-            expect(raceTrace.beforeEpoch).toEqual(expect.any(Number));
-            expect(raceTrace.afterEpoch).toBe(raceTrace.beforeEpoch + 1);
-            expect(report.rejected).toBeGreaterThanOrEqual(1);
+            const degraded = (host as any).snapshotReceiver.core.store.readLatest('race_app');
+            expect(degraded).toMatchObject({ status: 'degraded', lastGood: { id: first.snapshotId } });
+            const trace = JSON.parse(await readFile(raceTracePath, 'utf8'));
+            expect(trace).toMatchObject({ viewInstanceId: expect.any(String), beforeEpoch: 1, afterEpoch: 1, registered: false });
+            await host.sendExternalEvent('fd_0' as any, 'repair');
+            await vi.waitFor(() => {
+                expect(host!.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 2, lastToolCount: 2 });
+            });
+            const report = host.getSemanticSnapshotReport()!;
             expect(report.lastIssueCode).toBeUndefined();
             const lookup = (host as any).snapshotReceiver.core.store.getById(report.snapshotId);
             expect(lookup).toMatchObject({ status:'found', snapshot:{
                 schemaVersion:3, views:[{id:'fd_0', content:{value: expect.stringContaining('Stable FileDetail')}}],
             }});
             if (lookup.status === 'found') {
-                expect(lookup.snapshot.revision).toBe(1);
+                expect(lookup.snapshot.revision).toBe(2);
                 expect(Object.values(lookup.snapshot.tools).map((tool: any) => tool.name).sort())
                     .toEqual(['inspect', 'late_inspect']);
             }

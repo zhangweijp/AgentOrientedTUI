@@ -2,6 +2,8 @@ import { SNAPSHOT_SCHEMA_VERSION } from '../snapshot/types.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
 import type { AppIdentityReader, AppSnapshotV3, ObservedToolExecutionV3, SnapshotLease, SnapshotStore } from '../snapshot/types.js';
 import { acquireToolSource } from '../tool/source-binding.js';
+import type { AppPreviewResult, AppInteractionPolicy } from './app-interaction-types.js';
+import { DEFAULT_SNAPSHOT_LIMITS as snapshotLimits, OBSERVATION_METADATA_BYTES } from '../snapshot/snapshot-support.js';
 import type {
     Observation, ObservationBinding, ObservationGrant, ObservationIssue,
     ObservationIssueCode, ObservationJsonLimits, ObservationRegistryLimits,
@@ -13,23 +15,51 @@ const KiB = 1024, MiB = KiB * KiB;
 const profile = (maxDepth: number, maxNodes: number, bytes: number): ObservationJsonLimits =>
     Object.freeze({ maxDepth, maxNodes, maxApproxBytes: bytes, maxCanonicalBytes: bytes });
 export const DEFAULT_OBSERVATION_REGISTRY_LIMITS: ObservationRegistryLimits = Object.freeze({
-    maxScopes: 16, maxObservationsPerScope: 8, maxObservations: 128,
-    maxReservationsPerScope: 2, maxReservations: 16,
     maxViews: 256, maxRefs: 512, maxTools: 256, maxBindings: 256,
-    scopeTtlMs: 600_000, observationTtlMs: 30_000,
-    capture: profile(4, 1024, 16 * KiB), metadata: profile(12, 8192, 64 * KiB),
-    observation: profile(50, 40_000, 256 * KiB), source: profile(50, 100_016, 8 * MiB),
+    capture: profile(4, 1024, 16 * KiB), metadata: profile(12, 8192, OBSERVATION_METADATA_BYTES),
+    observation: profile(snapshotLimits.maxDepth + 2, snapshotLimits.maxNodes + 4_000,
+        snapshotLimits.maxViewContentBytes + snapshotLimits.maxToolSchemaBytes + 2 * OBSERVATION_METADATA_BYTES),
+    source: profile(snapshotLimits.maxDepth + 2, snapshotLimits.maxNodes + 16, snapshotLimits.maxSnapshotBytes * 2 + 64 * KiB),
     maxSourceBytes: 32 * MiB, maxObservationBytes: 16 * MiB,
     maxMetadataBytes: 8 * MiB, maxTotalBytes: 64 * MiB,
 });
 
-class RegistryFailure {
-    constructor(readonly code: ObservationIssueCode) {}
+/** The default Host selection keeps complete Views and their visible capabilities. */
+export const projectCompleteViews: AppInteractionPolicy['project'] = ({ source, selection }) => {
+    const selected = new Set(selection.viewIds);
+    const views = source.views.filter(view => selected.has(view.id));
+    const types = new Set(views.map(view => view.type));
+    const identities = views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
+    return {
+        views: identities,
+        refs: Object.values(source.refs).filter(ref => selected.has(ref.ownerViewId)).map(ref => ({
+            viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id,
+        })),
+        toolBindings: Object.values(source.tools).filter(tool => types.has(tool.viewType)).map(tool => ({ toolId: tool.id, execution: tool.execution })),
+        content: identities.map(view => ({ view, decision: 'retain' })),
+    };
+};
+
+export function previewCommittedApp(store: SnapshotStore, appId: string, instanceId: string): AppPreviewResult {
+    const result = store.readLatest(appId);
+    if (result.status === 'degraded') return { status: 'rejected', issue: result.issue };
+    if (result.status !== 'ready' || result.snapshot.instanceId !== instanceId) return { status: 'rejected',
+        issue: { code: 'APP_INTERACTION_UNAVAILABLE', message: 'Current App projection is unavailable' } };
+    const snapshot = result.snapshot;
+    return Object.freeze({ status: 'previewed', source: Object.freeze({ appId, instanceId, snapshotId: snapshot.id,
+        revision: snapshot.revision }), views: snapshot.views });
 }
-function fail(code: ObservationIssueCode): never { throw new RegistryFailure(code); }
+
+class RegistryFailure {
+    constructor(readonly code: ObservationIssueCode, readonly path?: string) {}
+}
+function fail(code: ObservationIssueCode, path?: string): never { throw new RegistryFailure(code, path); }
 const issue = (error: unknown): ObservationIssue => Object.freeze({
     code: error instanceof RegistryFailure ? error.code : 'OBSERVATION_INTERNAL_ERROR',
-    message: 'Observation registry request could not be completed',
+    message: error instanceof RegistryFailure && error.code === 'OBSERVATION_CAPACITY'
+        ? 'The selected Views and Tool metadata exceed the complete observation limit. Select fewer complete Views or page the App content.'
+        : 'Observation registry request could not be completed',
+    ...(error instanceof RegistryFailure && error.path ? { path: error.path } : {}),
 });
 const rejected = (error: unknown): ObservationRejected => Object.freeze({ status: 'rejected', issue: issue(error) });
 function object(value: unknown, keys: readonly string[], code: ObservationIssueCode = 'OBSERVATION_INVALID'): Record<string, unknown> {
@@ -43,7 +73,7 @@ const viewKey = (view: ViewIdentity): string => JSON.stringify([view.viewId, vie
 const refKey = (ref: RefIdentity): string => JSON.stringify([ref.viewId, ref.viewInstanceId, ref.refId]);
 const executionKey = (toolId: string, execution: ObservedToolExecutionV3): string =>
     JSON.stringify([toolId, 'view-type', execution.activationId]);
-function bounded<T>(input: unknown, limits: ObservationJsonLimits, code: ObservationIssueCode): { value: T; bytes: number } {
+function bounded<T>(input: unknown, limits: ObservationJsonLimits, code: ObservationIssueCode, path?: string): { value: T; bytes: number } {
     try {
         const value = copyJson(input, limits);
         // Detached records have null prototypes and copied arrays have the
@@ -51,9 +81,9 @@ function bounded<T>(input: unknown, limits: ObservationJsonLimits, code: Observa
         // key order; keep the canonical path if an inherited array toJSON
         // could add behavior or execute an accessor.
         const bytes = utf8Size('toJSON' in Array.prototype ? canonicalJson(value) : JSON.stringify(value)!);
-        if (bytes > limits.maxCanonicalBytes) fail(code);
+        if (bytes > limits.maxCanonicalBytes) fail(code, path);
         return { value: value as T, bytes };
-    } catch { return fail(code); }
+    } catch { return fail(code, path); }
 }
 function configuration(input: unknown, allowed: readonly string[]): Record<string, unknown> {
     if (!input || typeof input !== 'object' || Array.isArray(input) ||
@@ -68,14 +98,11 @@ interface Hold { readonly source: AppSnapshotV3; readonly lease: SnapshotLease }
 export interface Reservation extends Hold {
     readonly observationId: string;
     readonly selection: ObservationSelection;
-    readonly expiresAt: number | null;
     cancelled: boolean;
 }
 interface Metadata {
-    readonly scopeId: string;
     readonly observationId: string;
     readonly source: ObservationSource;
-    readonly expiresAt: number | null;
     readonly views: readonly ViewIdentity[];
     readonly refs: readonly RefIdentity[];
     readonly bindings: readonly ObservationBinding[];
@@ -87,10 +114,8 @@ export interface RegisteredObservation extends Hold {
     readonly metadataBytes: number;
 }
 export interface ObservationState {
-    readonly id: string;
     readonly appId: string;
     readonly instanceId: string;
-    readonly expiresAt: number | null;
     readonly reservations: Map<ReservationHandle, Reservation>;
     readonly observations: Map<string, RegisteredObservation>;
     adoptedObservationId?: string;
@@ -98,17 +123,15 @@ export interface ObservationState {
 }
 
 export function createObservationOperations(store: SnapshotStore & AppIdentityReader, options: ObservationRegistryOptions,
-    states: ReadonlyMap<string, ObservationState>, refresh: () => number, isClosed: () => boolean) {
+    state: ObservationState, refresh: () => number) {
     let hasIdentity = false;
     try { hasIdentity = typeof store.readAppIdentity === 'function'; } catch { /* Invalid trusted capability. */ }
     if (!hasIdentity) throw new TypeError('Invalid observation registry store');
-    let namespace: string, limits: ObservationRegistryLimits, lifetime: 'scope' | 'ttl';
+    let namespace: string, limits: ObservationRegistryLimits;
     try {
-        const config = configuration(options, ['namespace', 'now', 'limits', 'lifetime']);
-        if (!text(config.namespace) || utf8Size(config.namespace) > 128 || typeof config.now !== 'function') throw 0;
+        const config = configuration(options, ['namespace', 'limits']);
+        if (!text(config.namespace) || utf8Size(config.namespace) > 128) throw 0;
         namespace = config.namespace;
-        if (config.lifetime !== undefined && config.lifetime !== 'scope' && config.lifetime !== 'ttl') throw 0;
-        lifetime = config.lifetime === 'ttl' ? 'ttl' : 'scope';
         const overrides = config.limits === undefined ? {} : configuration(config.limits, Object.keys(DEFAULT_OBSERVATION_REGISTRY_LIMITS));
         const result: Record<string, number | ObservationJsonLimits> = {};
         for (const [key, hard] of Object.entries(DEFAULT_OBSERVATION_REGISTRY_LIMITS)) {
@@ -139,11 +162,6 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
         if (utf8Size(value) > 256) fail('OBSERVATION_CAPACITY');
         return value;
     };
-    const deadline = (time: number, ttl: number): number => {
-        const value = time + ttl;
-        if (!Number.isSafeInteger(value)) fail('OBSERVATION_INTERNAL_ERROR');
-        return value;
-    };
     function dropHold(hold: Hold): void {
         try { hold.lease.release(); } finally {
             const entry = sources.get(hold.source.id)!;
@@ -156,23 +174,17 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
         observationBytes -= value.publicBytes; metadataBytes -= value.metadataBytes;
         dropHold(value);
     }
-    function releaseScope(scope: ObservationState): void {
+    function releaseAll(scope: ObservationState): void {
         for (const value of scope.reservations.values()) value.cancelled = true;
         for (const [key, value] of scope.observations) dropObservation(scope, key, value);
     }
-    function refreshScope(scope: ObservationState, time: number): boolean {
+    function isCurrent(scope: ObservationState): boolean {
+        if (scope.closing) return false;
         const identity = store.readAppIdentity(scope.appId);
-        const latest = store.readLatest(scope.appId);
-        if (isClosed() || scope.closing || (scope.expiresAt !== null && time >= scope.expiresAt) || identity.status === 'stopped' ||
-            (identity.status === 'active' && identity.instanceId !== scope.instanceId) || latest.status === 'stopped' ||
-            (latest.status === 'ready' && latest.snapshot.instanceId !== scope.instanceId)) return false;
-        for (const value of scope.reservations.values()) if (value.expiresAt !== null && time >= value.expiresAt) value.cancelled = true;
-        for (const [key, value] of scope.observations) if (value.observation.expiresAt !== null && time >= value.observation.expiresAt) dropObservation(scope, key, value);
-        return true;
+        return identity.status !== 'stopped' && (identity.status !== 'active' || identity.instanceId === scope.instanceId);
     }
-    function scopeFor(scope: ObservationState): void {
-        if (states.get(scope.id) !== scope) fail('SCOPE_INVALID');
-        if (scope.closing || isClosed()) fail('SCOPE_UNAVAILABLE');
+    function requireActive(scope: ObservationState): void {
+        if (scope !== state || scope.closing) fail('APP_INTERACTION_UNAVAILABLE');
     }
     function ready(scope: ObservationState): AppSnapshotV3 {
         const latest = store.readLatest(scope.appId);
@@ -192,16 +204,7 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
     }
     function capacity(nextSource: number, nextPublic: number, nextMetadata: number): void {
         if (nextSource > limits.maxSourceBytes || nextPublic > limits.maxObservationBytes ||
-            nextMetadata > limits.maxMetadataBytes || nextSource + nextPublic + nextMetadata > limits.maxTotalBytes) fail('OBSERVATION_CAPACITY');
-    }
-    function counts() {
-        let observations = 0, reservations = 0, cancelledReservations = 0;
-        for (const scope of states.values()) {
-            observations += scope.observations.size;
-            reservations += scope.reservations.size;
-            for (const value of scope.reservations.values()) if (value.cancelled) cancelledReservations++;
-        }
-        return { observations, reservations, cancelledReservations };
+            nextMetadata > limits.maxMetadataBytes || nextSource + nextPublic + nextMetadata > limits.maxTotalBytes) fail('OBSERVATION_CAPACITY', '$.observation');
     }
     function settle(scope: ObservationState, token: ReservationHandle, value: Reservation, transferred = false): void {
         scope.reservations.delete(token);
@@ -210,13 +213,13 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
         if (!transferred) dropHold(value);
     }
     function stats(error?: unknown): ObservationRegistryStats {
-        const current = counts();
-        return Object.freeze({ closed: isClosed(), scopes: [...states.values()].filter(scope => !scope.closing || scope.reservations.size > 0).length, ...current,
-            observationSlots: current.observations + current.reservations, sources: sources.size, sourceBytes,
+        return Object.freeze({ closed: state.closing, observations: state.observations.size, reservations: state.reservations.size,
+            cancelledReservations: [...state.reservations.values()].filter(reservation => reservation.cancelled).length,
+            observationSlots: state.observations.size + state.reservations.size, sources: sources.size, sourceBytes,
             observationBytes, metadataBytes, totalBytes: sourceBytes + observationBytes + metadataBytes,
             ...(error === undefined ? {} : { issue: issue(error) }) });
     }
-    function project(scope: ObservationState, value: Reservation, input: unknown): { observation: Observation; metadata: Metadata; publicBytes: number; metadataBytes: number } {
+    function project(value: Reservation, input: unknown): { observation: Observation; metadata: Metadata; publicBytes: number; metadataBytes: number } {
         let grant: ObservationGrant;
         try {
             grant = bounded<ObservationGrant>(input, limits.metadata, 'OBSERVATION_PROJECTION_INVALID').value;
@@ -285,11 +288,10 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
             const bindings: ObservationBinding[] = tools.map(tool => ({ bindingId: id('binding'), toolId: tool.id,
                 execution: { kind: 'view-type', activationId: tool.execution.activationId } }));
             const source = { appId: value.source.appId, instanceId: value.source.instanceId, snapshotId: value.source.id, revision: value.source.revision };
-            const output = bounded<Observation>({ observationId: value.observationId, source, expiresAt: value.expiresAt,
-                views: projectedViews, refs: projectedRefs, tools, bindings }, limits.observation, 'OBSERVATION_CAPACITY');
-            const metadata = bounded<Metadata>({ scopeId: scope.id, observationId: value.observationId,
-                source, expiresAt: value.expiresAt, views: projectedViews.map(v => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
-                refs: projectedRefs.map(({ viewId, viewInstanceId, refId }) => ({ viewId, viewInstanceId, refId })), bindings }, limits.metadata, 'OBSERVATION_CAPACITY');
+            const output = bounded<Observation>({ observationId: value.observationId, source, expiresAt: null,
+                views: projectedViews, refs: projectedRefs, tools, bindings }, limits.observation, 'OBSERVATION_CAPACITY', '$.observation');
+            const metadata = bounded<Metadata>({ observationId: value.observationId, source, views: projectedViews.map(v => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
+                refs: projectedRefs.map(({ viewId, viewInstanceId, refId }) => ({ viewId, viewInstanceId, refId })), bindings }, limits.metadata, 'OBSERVATION_CAPACITY', '$.observation');
             return { observation: output.value, metadata: metadata.value, publicBytes: output.bytes, metadataBytes: metadata.bytes };
         } catch (error) {
             if (error instanceof RegistryFailure && error.code === 'OBSERVATION_CAPACITY') throw error;
@@ -298,25 +300,11 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
     }
     return Object.freeze({
         limits,
-        refreshScope,
-        releaseScope,
-        stats,
-        prepareScope(input: unknown) {
-            try {
-                const time = refresh();
-                if (isClosed()) fail('SCOPE_UNAVAILABLE');
-                const data = object(bounded(input, limits.capture, 'SCOPE_INVALID').value, ['appId', 'instanceId'], 'SCOPE_INVALID');
-                if (!text(data.appId) || !text(data.instanceId)) fail('SCOPE_INVALID');
-                if (stats().scopes >= limits.maxScopes) fail('OBSERVATION_CAPACITY');
-                const expiresAt = lifetime === 'ttl' ? deadline(time, limits.scopeTtlMs) : null;
-                return Object.freeze({ status: 'prepared' as const, id: id('scope'),
-                    appId: data.appId, instanceId: data.instanceId, expiresAt });
-            } catch (error) { return rejected(error); }
-        },
+        isCurrent, releaseAll, stats,
         begin(scope: ObservationState, input: unknown) {
             let lease: SnapshotLease | undefined;
             try {
-                const time = refresh(); scopeFor(scope);
+                refresh(); requireActive(scope);
                 const captured = bounded<Record<string, unknown>>(input, limits.capture, 'OBSERVATION_INVALID').value;
                 const all = captured !== null && typeof captured === 'object' && Object.hasOwn(captured, 'all');
                 const data = object(captured, all ? ['all'] : ['viewIds']);
@@ -324,33 +312,28 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
                 if (!all && (!Array.isArray(data.viewIds) || data.viewIds.length === 0 ||
                     data.viewIds.length > DEFAULT_OBSERVATION_REGISTRY_LIMITS.maxViews ||
                     data.viewIds.some(v => !text(v)) || new Set(data.viewIds).size !== data.viewIds.length)) fail('OBSERVATION_INVALID');
-                const current = counts();
-                if (scope.reservations.size >= limits.maxReservationsPerScope || current.reservations >= limits.maxReservations ||
-                    scope.reservations.size + scope.observations.size >= limits.maxObservationsPerScope ||
-                    current.observations + current.reservations >= limits.maxObservations) fail('OBSERVATION_CAPACITY');
+                if (scope.reservations.size || scope.observations.size > (scope.adoptedObservationId ? 1 : 0))
+                    fail('OBSERVATION_CAPACITY');
                 const source = ready(scope);
                 const viewIds = all ? source.views.map(view => view.id) : data.viewIds as string[];
                 if (viewIds.length > DEFAULT_OBSERVATION_REGISTRY_LIMITS.maxViews) fail('OBSERVATION_CAPACITY');
                 if (viewIds.some(viewId => !source.views.some(v => v.id === viewId))) fail('OBSERVATION_INVALID');
-                const acquired = lifetime === 'scope' ? store.acquire(source.id, { lifetime: 'owner' }) : store.acquire(source.id);
+                const acquired = store.acquire(source.id, { lifetime: 'owner' });
                 if (acquired.status === 'rejected') fail(acquired.issue.code);
                 lease = acquired.lease;
-                const expiresAt = lifetime === 'scope' ? null : Math.min(scope.expiresAt!,
-                    deadline(time, limits.observationTtlMs), lease.expiresAt ?? deadline(time, limits.observationTtlMs));
-                if (expiresAt !== null && (!Number.isSafeInteger(expiresAt) || expiresAt <= time)) fail('OBSERVATION_UNAVAILABLE');
                 const existing = sources.get(source.id);
-                const bytes = existing?.bytes ?? bounded(source, limits.source, 'OBSERVATION_CAPACITY').bytes;
+                const bytes = existing?.bytes ?? bounded(source, limits.source, 'OBSERVATION_CAPACITY', '$.snapshot').bytes;
                 capacity(sourceBytes + (existing ? 0 : bytes), observationBytes + limits.observation.maxCanonicalBytes,
                     metadataBytes + limits.metadata.maxCanonicalBytes);
                 const token = Object.freeze({ reservation: true as const });
                 const selection: ObservationSelection = Object.freeze({ viewIds: Object.freeze([...viewIds]) });
-                const value = { source, lease, selection, expiresAt, observationId: id('observation'), cancelled: false };
+                const value = { source, lease, selection, observationId: id('observation'), cancelled: false };
                 if (existing) existing.references++;
                 else { sources.set(source.id, { source, bytes, references: 1 }); sourceBytes += bytes; }
                 scope.reservations.set(token, value);
                 observationBytes += limits.observation.maxCanonicalBytes; metadataBytes += limits.metadata.maxCanonicalBytes;
                 lease = undefined;
-                return Object.freeze({ status: 'reserved' as const, reservation: token, source, selection, expiresAt });
+                return Object.freeze({ status: 'reserved' as const, reservation: token, source, selection });
             } catch (error) { return rejected(error); }
             finally { lease?.release(); }
         },
@@ -358,11 +341,10 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
             const value = scope.reservations.get(token);
             let transferred = false;
             try {
-                const time = refresh();
-                if (!value || scope.closing || isClosed() || value.cancelled ||
-                    (value.expiresAt !== null && time >= value.expiresAt)) fail('RESERVATION_UNAVAILABLE');
+                refresh();
+                if (!value || scope.closing || value.cancelled) fail('RESERVATION_UNAVAILABLE');
                 reacquire(scope, value.source);
-                const projected = project(scope, value, input);
+                const projected = project(value, input);
                 capacity(sourceBytes, observationBytes - limits.observation.maxCanonicalBytes + projected.publicBytes,
                     metadataBytes - limits.metadata.maxCanonicalBytes + projected.metadataBytes);
                 scope.observations.set(value.observationId, { ...projected, source: value.source, lease: value.lease });
@@ -379,7 +361,7 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
         },
         resolveBinding(scope: ObservationState, input: unknown) {
             try {
-                refresh(); scopeFor(scope);
+                refresh(); requireActive(scope);
                 const data = object(bounded(input, limits.capture, 'OBSERVATION_INVALID').value, ['observationId', 'bindingId']);
                 if (!text(data.observationId) || !text(data.bindingId)) fail('OBSERVATION_INVALID');
                 const value = scope.observations.get(data.observationId);
@@ -400,10 +382,11 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
         },
         adoptObservation(scope: ObservationState, observationId: string) {
             try {
-                refresh(); scopeFor(scope);
+                refresh(); requireActive(scope);
                 if (!text(observationId) || utf8Size(observationId) > 256) fail('OBSERVATION_INVALID');
                 if (!scope.observations.has(observationId)) fail('OBSERVATION_UNAVAILABLE');
                 ready(scope);
+                if (scope.adoptedObservationId === observationId) return Object.freeze({ status: 'adopted' as const });
                 // Preparation and publication do not switch the consumer's source.
                 // Only this explicit boundary revokes earlier qualifications.
                 for (const pending of scope.reservations.values()) pending.cancelled = true;

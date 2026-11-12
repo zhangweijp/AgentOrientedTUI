@@ -10,6 +10,7 @@ import fs from "fs/promises"
 import path from "path"
 import os from "os"
 import { z } from "zod"
+import type { ModelInputLimits } from "@aotui/agent-driver-v2"
 import type { IMSessionScope } from "../im/types.js"
 
 // ─── MCP Zod 类型定义 ─────────────────────────────────────────────────────────
@@ -211,6 +212,7 @@ export interface TuiAppConfigEntry {
 export interface TuiInfo {
   version?: number
   runtime?: Record<string, unknown>
+  modelInputLimits?: Record<string, ModelInputLimits>
   apps?: Record<string, TuiAppConfigEntry>
   [key: string]: unknown
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
-import { createScopedInteraction } from './scoped-interaction.js';
+import { createAppInteraction } from './app-interaction.js';
 import { refKey } from '../snapshot/snapshot-support.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
 import type { AppSnapshotV3, JsonValue, PreparedAppSnapshotDraftV3, SnapshotStoreOptions, ToolDescriptorV3 } from '../snapshot/types.js';
@@ -11,75 +11,56 @@ import { createObservationOperations, type ObservationState, DEFAULT_OBSERVATION
 import type { Observation, ObservationGrant, ObservationRegistryLimitOverrides } from './observation-types.js';
 
 
-// Preparation tests supply their own states; public owner/drain behavior is tested through createScopedInteraction.
-type ScopeHandle = Readonly<{ scopeId: string }>;
-function createObservationRegistry(store: Parameters<typeof createObservationOperations>[0], options: Parameters<typeof createObservationOperations>[1]) {
-    const states = new Map<string, ObservationState & { handle: ScopeHandle }>();
-    let closed = false, lastNow = -1;
-    const failure = (code: string) => ({ status: 'rejected' as const, issue: { code, message: 'Observation registry request could not be completed' } });
-    const find = (handle: ScopeHandle) => [...states.values()].find(state => state.handle === handle);
-    const remove = () => { for (const state of states.values()) if (state.closing && state.reservations.size === 0) states.delete(state.id); };
+type Owner = Readonly<{ appId: string; instanceId: string }>;
+const context = { appId: 'app', instanceId: 'run' };
+type RegistryOptions = Parameters<typeof createObservationOperations>[1] & { readonly now: () => number };
+
+function createObservationRegistry(store: Parameters<typeof createObservationOperations>[0], options: RegistryOptions,
+    identity: Owner = context) {
+    const owner = Object.freeze({ ...identity });
+    const state: ObservationState = { ...owner, closing: false, reservations: new Map(), observations: new Map() };
+    let lastNow = -1;
+    const failure = (code: string) => ({ status: 'rejected' as const, issue: { code } });
     function refresh() {
         const time = options.now();
         if (!Number.isSafeInteger(time) || time < 0 || time < lastNow) throw new Error('Invalid clock');
         lastNow = time;
-        for (const state of states.values()) if (!operations.refreshScope(state, time)) {
+        if (!state.closing && !operations.isCurrent(state)) {
             state.closing = true;
-            operations.releaseScope(state);
+            operations.releaseAll(state);
         }
-        remove();
         return time;
     }
-    const operations = createObservationOperations(store, options, states, refresh, () => closed);
-    function cleanup(action?: () => void) {
-        const before = operations.stats();
-        let error: unknown;
-        try { refresh(); } catch (caught) { error = caught; }
-        action?.(); remove();
-        const after = operations.stats(error);
-        return { ...after, releasedObservations: before.observations - after.observations,
-            releasedSources: before.sources - after.sources, removedScopes: before.scopes - after.scopes };
-    }
+    const { now: _, ...config } = Object.getOwnPropertyDescriptors(options);
+    const operations = createObservationOperations(store, Object.defineProperties({}, config) as RegistryOptions, state, refresh);
     return {
-        openScope(input: unknown) {
-            const prepared = operations.prepareScope(input);
-            if (prepared.status === 'rejected') return prepared;
-            const handle = Object.freeze({ scopeId: prepared.id });
-            states.set(prepared.id, { id: prepared.id, handle, appId: prepared.appId, instanceId: prepared.instanceId,
-                expiresAt: prepared.expiresAt, closing: false, reservations: new Map(), observations: new Map() });
-            return { status: 'opened' as const, scope: handle };
+        owner,
+        active() { refresh(); return !state.closing; },
+        begin(handle: Owner, input: unknown) {
+            return handle === owner ? operations.begin(state, input) : failure('APP_INTERACTION_UNAVAILABLE');
         },
-        checkScope(handle: ScopeHandle) {
-            try { refresh(); } catch { return failure('OBSERVATION_INTERNAL_ERROR'); }
-            const state = find(handle);
-            return state && !state.closing && !closed ? { status: 'active' as const, expiresAt: state.expiresAt } : failure('SCOPE_UNAVAILABLE');
+        complete(handle: Owner, token: Parameters<typeof operations.complete>[1], grant: unknown) {
+            return handle === owner ? operations.complete(state, token, grant) : failure('RESERVATION_UNAVAILABLE');
         },
-        begin(handle: ScopeHandle, input: unknown) {
-            const state = find(handle);
-            return state ? operations.begin(state, input) : failure('SCOPE_INVALID');
+        abandon(handle: Owner, token: Parameters<typeof operations.abandon>[1]) {
+            if (handle === owner) operations.abandon(state, token);
         },
-        complete(handle: ScopeHandle, token: Parameters<typeof operations.complete>[1], grant: unknown) {
-            const state = find(handle);
-            try { return state ? operations.complete(state, token, grant) : failure('RESERVATION_UNAVAILABLE'); }
-            finally { remove(); }
+        adoptObservation(handle: Owner, id: string) {
+            return handle === owner ? operations.adoptObservation(state, id) : failure('APP_INTERACTION_UNAVAILABLE');
         },
-        abandon(handle: ScopeHandle, token: Parameters<typeof operations.abandon>[1]) {
-            const state = find(handle); if (state) operations.abandon(state, token); remove();
+        resolveBinding(handle: Owner, input: unknown) {
+            return handle === owner ? operations.resolveBinding(state, input) : failure('APP_INTERACTION_UNAVAILABLE');
         },
-        adoptObservation(handle: ScopeHandle, id: string) {
-            const state = find(handle); return state ? operations.adoptObservation(state, id) : failure('SCOPE_INVALID');
+        releaseObservation(handle: Owner, id: string) {
+            if (handle === owner) operations.releaseObservation(state, id);
         },
-        resolveBinding(handle: ScopeHandle, input: unknown) {
-            const state = find(handle); return state ? operations.resolveBinding(state, input) : failure('SCOPE_INVALID');
+        close() {
+            const before = operations.stats();
+            state.closing = true;
+            operations.releaseAll(state);
+            const after = operations.stats();
+            return { ...after, releasedObservations: before.observations - after.observations };
         },
-        releaseObservation(handle: ScopeHandle, id: string) {
-            const state = find(handle); if (state) operations.releaseObservation(state, id);
-        },
-        closeScope(handle: ScopeHandle) {
-            return cleanup(() => { const state = find(handle); if (state) { state.closing = true; operations.releaseScope(state); } });
-        },
-        sweepExpired() { return cleanup(); },
-        close() { return cleanup(() => { closed = true; for (const state of states.values()) { state.closing = true; operations.releaseScope(state); } }); },
         inspect() {
             try { refresh(); return operations.stats(); } catch (error) { return operations.stats(error); }
         },
@@ -87,7 +68,6 @@ function createObservationRegistry(store: Parameters<typeof createObservationOpe
 }
 
 afterEach(() => vi.restoreAllMocks());
-const context = { appId: 'app', instanceId: 'run' };
 const emptyGrant = (): ObservationGrant => ({ views: [], refs: [], toolBindings: [], content: [] });
 it('captures type activations and refuses policy activation rewrites or retired selectors', () => {
     const f = fixture({ views: 1, tools: 1, refs: 0 }); const scope = f.scope();
@@ -103,8 +83,7 @@ it('captures type activations and refuses policy activation rewrites or retired 
     f.registry.close(); f.core.lifecycle.dispose();
 });
 function fixture(options: { views?: number; refs?: number; tools?: number; content?: JsonValue;
-    payload?: JsonValue; store?: SnapshotStoreOptions; limits?: ObservationRegistryLimitOverrides; ready?: boolean;
-    lifetime?: 'scope' | 'ttl' } = {}) {
+    payload?: JsonValue; store?: SnapshotStoreOptions; limits?: ObservationRegistryLimitOverrides; ready?: boolean; namespace?: string } = {}) {
     let time = 0, sequence = 0;
     const now = () => time;
     const core = createSnapshotCore({ now, ...options.store });
@@ -150,13 +129,9 @@ function fixture(options: { views?: number; refs?: number; tools?: number; conte
         return result.snapshot;
     }
     const source = options.ready === false ? undefined : publish();
-    const registry = createObservationRegistry(core.store, { namespace: 'test', now, limits: options.limits, lifetime: options.lifetime });
-    function scope() {
-        const result = registry.openScope(context);
-        expect(result.status).toBe('opened'); if (result.status !== 'opened') throw new Error('Expected scope');
-        return result.scope;
-    }
-    function begin(handle: ScopeHandle, viewIds = owners.map(v => v.viewId)) {
+    const registry = createObservationRegistry(core.store, { namespace: options.namespace ?? 'test', now, limits: options.limits });
+    function scope() { return registry.owner; }
+    function begin(handle: Owner, viewIds = owners.map(v => v.viewId)) {
         const result = registry.begin(handle, { viewIds });
         expect(result.status).toBe('reserved'); if (result.status !== 'reserved') throw new Error('Expected reservation');
         return result;
@@ -168,7 +143,7 @@ function fixture(options: { views?: number; refs?: number; tools?: number; conte
                 .map(tool => ({ toolId: tool.id, execution: tool.execution })),
             content: retain ? snapshot.views.filter(v => visible.includes(v.id)).map(v => ({ view: { viewId: v.id, viewInstanceId: v.viewInstanceId }, decision: 'retain' as const })) : [] };
     }
-    function observe(handle: ScopeHandle, permission = grant(), adopt = true) {
+    function observe(handle: Owner, permission = grant(), adopt = true) {
         const preparation = begin(handle);
         const result = registry.complete(handle, preparation.reservation, permission);
         expect(result.status).toBe('observed'); if (result.status !== 'observed') throw new Error('Expected observation');
@@ -178,27 +153,31 @@ function fixture(options: { views?: number; refs?: number; tools?: number; conte
     return { core, registry, tools, handler, owners, source: source!, now, setTime: (n: number) => { time = n; }, draft, publish, scope, begin, grant, observe, rebindTool, remountAllViews };
 }
 type Fixture = ReturnType<typeof fixture>;
-it('adoption cancels unfinished preparations without releasing their reservation before settlement', () => {
-    const f = fixture(), scope = f.scope(), first = f.observe(scope), pending = f.begin(scope);
-    const next = f.observe(scope);
-    expect(f.registry.inspect()).toMatchObject({ observations: 1, reservations: 1, cancelledReservations: 1 });
-    expect(code(f.registry.complete(scope, pending.reservation, f.grant()))).toBe('RESERVATION_UNAVAILABLE');
+it('keeps the current observation during preparation and transfers qualification only on adoption', () => {
+    const f = fixture(), owner = f.scope(), first = f.observe(owner), pending = f.begin(owner);
+    expect(f.registry.adoptObservation(owner, first.observationId)).toEqual({ status: 'adopted' });
+    expect(f.registry.inspect()).toMatchObject({ observations: 1, reservations: 1, cancelledReservations: 0 });
+    const next = f.registry.complete(owner, pending.reservation, f.grant());
+    expect(next.status).toBe('observed'); if (next.status !== 'observed') return;
+    expect(code(f.registry.resolveBinding(owner, key(next.observation)))).toBe('OBSERVATION_NOT_ADOPTED');
+    expect(f.registry.resolveBinding(owner, key(first)).status).toBe('found');
+    expect(f.registry.adoptObservation(owner, next.observation.observationId)).toEqual({ status: 'adopted' });
     expect(f.registry.inspect()).toMatchObject({ observations: 1, reservations: 0 });
-    expect(code(f.registry.resolveBinding(scope, key(first)))).toBe('OBSERVATION_UNAVAILABLE');
-    expect(f.registry.resolveBinding(scope, key(next)).status).toBe('found'); zero(f);
+    expect(code(f.registry.resolveBinding(owner, key(first)))).toBe('OBSERVATION_UNAVAILABLE');
+    expect(f.registry.resolveBinding(owner, key(next.observation)).status).toBe('found'); zero(f);
 });
-it('invalid or cross-Scope adoption leaves the current original qualification unchanged', () => {
-    const f = fixture(), a = f.scope(), b = f.scope(), first = f.observe(a), other = f.observe(b);
+it('invalid or cross-instance adoption leaves the current qualification unchanged', () => {
+    const f = fixture(), g = fixture({ namespace: 'other' }), a = f.scope(), b = g.scope(), first = f.observe(a), other = g.observe(b);
     expect(code(f.registry.adoptObservation(a, ''))).toBe('OBSERVATION_INVALID');
     expect(code(f.registry.adoptObservation(a, other.observationId))).toBe('OBSERVATION_UNAVAILABLE');
     expect(f.registry.resolveBinding(a, key(first)).status).toBe('found');
-    expect(f.registry.resolveBinding(b, key(other)).status).toBe('found'); zero(f);
+    expect(g.registry.resolveBinding(b, key(other)).status).toBe('found'); zero(f); zero(g);
 });
 function key(observation: Observation, i = 0) { return { observationId: observation.observationId, bindingId: observation.bindings[i]!.bindingId }; }
 function code(result: unknown): string | undefined { return (result as { issue?: { code: string } }).issue?.code; }
 function zero(f: Fixture) {
     f.registry.close();
-    expect(f.registry.inspect()).toMatchObject({ scopes: 0, observations: 0, reservations: 0, sources: 0,
+    expect(f.registry.inspect()).toMatchObject({ observations: 0, reservations: 0, sources: 0,
         sourceBytes: 0, observationBytes: 0, metadataBytes: 0, totalBytes: 0 });
     expect(f.core.store.inspect().activeLeases).toBe(0); expect(f.handler).not.toHaveBeenCalled();
 }
@@ -259,20 +238,19 @@ describe('B1 projection and real source ownership', () => {
 });
 
 describe('B1 handles, isolation and strict data', () => {
-    it('rejects cloned handles and cross-Scope reservations without consuming the original work', () => {
-        const f = fixture(), a = f.scope(), b = f.scope(), preparation = f.begin(a);
-        expect(code(f.registry.begin({ ...a }, { viewIds: ['v0'] }))).toBe('SCOPE_INVALID');
-        expect(code(f.registry.complete(b, preparation.reservation, f.grant()))).toBe('RESERVATION_UNAVAILABLE');
+    it('rejects a copied reservation or a reservation from another instance without consuming the original', () => {
+        const f = fixture(), g = fixture({ namespace: 'other' }), a = f.scope(), b = g.scope(), preparation = f.begin(a);
+        expect(code(g.registry.complete(b, preparation.reservation, g.grant()))).toBe('RESERVATION_UNAVAILABLE');
         expect(code(f.registry.complete(a, { ...preparation.reservation }, f.grant()))).toBe('RESERVATION_UNAVAILABLE');
-        f.registry.abandon(b, preparation.reservation); f.registry.closeScope({ ...a });
+        g.registry.abandon(b, preparation.reservation);
         expect(f.registry.inspect().reservations).toBe(1);
         const completed = f.registry.complete(a, preparation.reservation, f.grant());
         expect(completed.status).toBe('observed'); if (completed.status !== 'observed') return;
-        expect(code(f.registry.resolveBinding(b, key(completed.observation)))).toBe('OBSERVATION_UNAVAILABLE');
-        f.registry.releaseObservation(b, completed.observation.observationId);
+        expect(code(g.registry.resolveBinding(b, key(completed.observation)))).toBe('OBSERVATION_UNAVAILABLE');
         expect(f.registry.adoptObservation(a, completed.observation.observationId)).toEqual({ status: 'adopted' });
         expect(f.registry.resolveBinding(a, key(completed.observation)).status).toBe('found');
-        expect(code(f.registry.complete(a, preparation.reservation, f.grant()))).toBe('RESERVATION_UNAVAILABLE'); zero(f);
+        expect(code(f.registry.complete(a, preparation.reservation, f.grant()))).toBe('RESERVATION_UNAVAILABLE');
+        zero(f); zero(g);
     });
     it('does not revive released IDs or bind an old observation ID to a new Binding', () => {
         const f = fixture(), scope = f.scope(), first = f.observe(scope);
@@ -305,8 +283,7 @@ describe('B1 handles, isolation and strict data', () => {
         expect(code(f.registry.begin(scope, data))).toBe('OBSERVATION_INVALID');
         const badClock = createObservationRegistry({ ...f.core.store, readLatest() { throw { get message() { exceptionReads++; return 'payload-secret'; },
             toString() { exceptionReads++; return 'payload-secret'; } }; } }, { namespace: 'bad-port', now: f.now });
-        const opened = badClock.openScope(context); expect(opened.status).toBe('opened');
-        if (opened.status === 'opened') expect(badClock.begin(opened.scope, { viewIds: ['v0'] })).toEqual({ status: 'rejected',
+        expect(badClock.begin(badClock.owner, { viewIds: ['v0'] })).toEqual({ status: 'rejected',
             issue: { code: 'OBSERVATION_INTERNAL_ERROR', message: 'Observation registry request could not be completed' } });
         expect(getterReads).toBe(0); expect(exceptionReads).toBe(0); expect(spies.every(spy => spy.mock.calls.length === 0)).toBe(true); zero(f);
     });
@@ -354,13 +331,12 @@ describe('B1 handles, isolation and strict data', () => {
 });
 
 describe('B1 original source, lifecycle and deadlines', () => {
-    it('keeps the default Scope and original Observation usable through a long model turn until explicit release', () => {
+    it('keeps the instance and original Observation usable through a long model turn until explicit release', () => {
         const f = fixture({ store: { historyTtlMs: 10, leaseTtlMs: 10 } }), scope = f.scope(), preparation = f.begin(scope);
-        expect(preparation.expiresAt).toBeNull();
         f.publish({ refs: Object.fromEntries(Object.entries(f.source.refs).map(([k, r]) => [k, { ...r,
             target: { kind: 'snapshot-value', payload: { value: 'updated' } } }])) });
         f.setTime(1_000_000);
-        expect(f.registry.checkScope(scope)).toEqual({ status: 'active', expiresAt: null });
+        expect(f.registry.active()).toBe(true);
         const completed = f.registry.complete(scope, preparation.reservation, f.grant());
         expect(completed.status).toBe('observed'); if (completed.status !== 'observed') return;
         expect(completed.observation.expiresAt).toBeNull();
@@ -374,15 +350,17 @@ describe('B1 original source, lifecycle and deadlines', () => {
         expect(f.core.store.getById(f.source.id).status).toBe('rejected');
         expect(f.registry.inspect()).toMatchObject({ observations: 0, sources: 0, totalBytes: 0 }); zero(f);
     });
-    it('keeps owner-based observations bounded without evicting an active model turn', () => {
-        const f = fixture({ limits: { maxObservationsPerScope: 1 } }), scope = f.scope(), observation = f.observe(scope);
+    it('bounds prepared observations without evicting the current observation', () => {
+        const f = fixture(), owner = f.scope(), observation = f.observe(owner);
         f.setTime(1_000_000);
-        expect(code(f.registry.begin(scope, { all: true }))).toBe('OBSERVATION_CAPACITY');
-        expect(f.registry.resolveBinding(scope, key(observation)).status).toBe('found');
-        f.registry.releaseObservation(scope, observation.observationId);
-        const next = f.registry.begin(scope, { all: true });
-        expect(next.status).toBe('reserved');
-        if (next.status === 'reserved') f.registry.abandon(scope, next.reservation); zero(f);
+        const pending = f.begin(owner);
+        expect(code(f.registry.begin(owner, { all: true }))).toBe('OBSERVATION_CAPACITY');
+        expect(f.registry.resolveBinding(owner, key(observation)).status).toBe('found');
+        f.registry.abandon(owner, pending.reservation);
+        const candidate = f.observe(owner, f.grant(), false);
+        expect(code(f.registry.begin(owner, { all: true }))).toBe('OBSERVATION_CAPACITY');
+        f.registry.releaseObservation(owner, candidate.observationId);
+        expect(f.registry.resolveBinding(owner, key(observation)).status).toBe('found'); zero(f);
     });
     it('resolves all from the current semantic source and publishes an empty observation after the last View closes', () => {
         const f = fixture(), scope = f.scope(), first = f.registry.begin(scope, { all: true });
@@ -444,88 +422,55 @@ describe('B1 original source, lifecycle and deadlines', () => {
         }
         expect(code(f.registry.resolveBinding(scope, key(observation)))).toBe(mode === 'degraded' ? 'SNAPSHOT_UNREADY' : mode === 'last-view-remove' ? 'TOOL_UNAVAILABLE' : 'TOOL_SOURCE_STALE'); zero(f);
     });
-    it.each(['stop', 'restart'] as const)('revokes %s Scopes without rebinding the instance', mode => {
-        const f = fixture(), scope = f.scope(), preparation = f.begin(scope), observation = f.observe(scope);
+    it.each(['stop', 'restart'] as const)('revokes observations on %s without rebinding the instance', mode => {
+        const f = fixture(), owner = f.scope(), observation = f.observe(owner), preparation = f.begin(owner);
         f.core.lifecycle.stopApp('app', 'run');
         if (mode === 'restart') { f.core.lifecycle.startApp('app', 'run-2'); f.publish({ instanceId: 'run-2' }); }
-        expect(f.registry.resolveBinding(scope, key(observation)).status).toBe('rejected');
-        expect(f.registry.inspect()).toMatchObject({ observations: 0, reservations: 1, cancelledReservations: 1, scopes: 1 });
-        expect(code(f.registry.complete(scope, preparation.reservation, f.grant()))).toBe('RESERVATION_UNAVAILABLE'); zero(f);
-    });
-    it.each([['observation', 10, 50, 100], ['scope', 50, 10, 100], ['lease', 50, 100, 10]] as const)('fixes the %s deadline at begin and refuses equality without renewal', (_, observationTtlMs, scopeTtlMs, leaseTtlMs) => {
-        const f = fixture({ lifetime: 'ttl', limits: { observationTtlMs, scopeTtlMs }, store: { leaseTtlMs } }), scope = f.scope(), preparation = f.begin(scope);
-        expect(preparation.expiresAt).toBe(10); f.setTime(9);
-        const result = f.registry.complete(scope, preparation.reservation, f.grant());
-        expect(result.status).toBe('observed'); if (result.status !== 'observed') return;
-        expect(result.observation.expiresAt).toBe(10); f.setTime(10);
-        expect(f.registry.resolveBinding(scope, key(result.observation)).status).toBe('rejected');
-        const current = f.core.store.acquire(f.source.id); expect(current.status).toBe('acquired'); if (current.status === 'acquired') current.lease.release(); zero(f);
-    });
-    it('does not complete at the deadline, while retaining a cancelled preparation until settlement', () => {
-        const f = fixture({ lifetime: 'ttl', limits: { observationTtlMs: 10 } }), scope = f.scope(), preparation = f.begin(scope);
-        const before = f.registry.inspect(); f.setTime(10);
-        expect(f.registry.sweepExpired()).toMatchObject({ reservations: 1, cancelledReservations: 1, totalBytes: before.totalBytes });
-        expect(code(f.registry.complete(scope, preparation.reservation, f.grant()))).toBe('RESERVATION_UNAVAILABLE');
-        expect(f.registry.inspect().totalBytes).toBe(0); zero(f);
-    });
-    it.each(['complete', 'resolve'] as const)('rejects history TTL at %s despite the pinned getById result', mode => {
-        const f = fixture({ lifetime: 'ttl', store: { historyTtlMs: 10 } }), scope = f.scope(), preparation = f.begin(scope);
-        const observation = mode === 'resolve' ? f.observe(scope) : undefined;
-        f.publish({ refs: Object.fromEntries(Object.entries(f.source.refs).map(([k, r]) => [k, { ...r, refType: 'different' }])) });
-        f.setTime(10); expect(f.core.store.getById(f.source.id).status).toBe('found');
-        const result = mode === 'complete' ? f.registry.complete(scope, preparation.reservation, f.grant()) : f.registry.resolveBinding(scope, key(observation!));
-        expect(code(result)).toBe('SNAPSHOT_EXPIRED');
-        f.registry.abandon(scope, preparation.reservation); zero(f);
+        expect(f.registry.resolveBinding(owner, key(observation)).status).toBe('rejected');
+        expect(f.registry.inspect()).toMatchObject({ observations: 0, reservations: 1, cancelledReservations: 1 });
+        expect(code(f.registry.complete(owner, preparation.reservation, f.grant()))).toBe('RESERVATION_UNAVAILABLE'); zero(f);
     });
 });
 
 describe('B1 settlement, counts and shared-source fees', () => {
-    it.each(['abandon', 'complete'] as const)('keeps cancelled work charged through %s and frees the closing Scope only at settlement', mode => {
-        const f = fixture({ limits: { maxScopes: 1 } }), scope = f.scope(), preparation = f.begin(scope), before = f.registry.inspect();
-        expect(f.registry.closeScope(scope)).toMatchObject({ scopes: 1, observations: 0, reservations: 1, cancelledReservations: 1, totalBytes: before.totalBytes });
-        expect(code(f.registry.openScope(context))).toBe('OBSERVATION_CAPACITY');
-        f.registry.closeScope(scope);
-        if (mode === 'abandon') f.registry.abandon(scope, preparation.reservation);
-        else expect(code(f.registry.complete(scope, preparation.reservation, f.grant()))).toBe('RESERVATION_UNAVAILABLE');
-        f.registry.abandon(scope, preparation.reservation);
-        expect(f.registry.inspect()).toMatchObject({ scopes: 0, reservations: 0, totalBytes: 0 });
-        expect(f.scope().scopeId).not.toBe(scope.scopeId); zero(f);
+    it.each(['abandon', 'complete'] as const)('keeps a cancelled reservation charged until %s', mode => {
+        const f = fixture(), owner = f.scope(), preparation = f.begin(owner), before = f.registry.inspect();
+        expect(f.registry.close()).toMatchObject({ closed: true, observations: 0, reservations: 1, cancelledReservations: 1, totalBytes: before.totalBytes });
+        expect(code(f.registry.begin(owner, { all: true }))).toBe('APP_INTERACTION_UNAVAILABLE');
+        f.registry.close();
+        if (mode === 'abandon') f.registry.abandon(owner, preparation.reservation);
+        else expect(code(f.registry.complete(owner, preparation.reservation, f.grant()))).toBe('RESERVATION_UNAVAILABLE');
+        f.registry.abandon(owner, preparation.reservation);
+        expect(f.registry.inspect()).toMatchObject({ reservations: 0, totalBytes: 0 }); zero(f);
     });
-    it('global close releases published observations but accurately retains all unfinished preparations', () => {
-        const f = fixture(), a = f.scope(), b = f.scope(), pa = f.begin(a), pb = f.begin(b); f.observe(a);
+    it('close releases the current observation but retains the unfinished preparation until it settles', () => {
+        const f = fixture(), owner = f.scope(); f.observe(owner); const pending = f.begin(owner);
         const closed = f.registry.close();
-        expect(closed).toMatchObject({ closed: true, releasedObservations: 1, observations: 0, reservations: 2, scopes: 2, sources: 1 });
-        expect(code(f.registry.openScope(context))).toBe('SCOPE_UNAVAILABLE');
+        expect(closed).toMatchObject({ closed: true, releasedObservations: 1, observations: 0, reservations: 1, sources: 1 });
         expect(f.registry.close().releasedObservations).toBe(0);
-        f.registry.abandon(a, pa.reservation); f.registry.abandon(b, pb.reservation); zero(f);
+        f.registry.abandon(owner, pending.reservation); zero(f);
     });
-    it('retains an expired Scope and its source fees until the last preparation settles', () => {
-        const f = fixture({ lifetime: 'ttl', limits: { maxScopes: 1, scopeTtlMs: 10 } }), scope = f.scope(), p = f.begin(scope), before = f.registry.inspect();
-        f.setTime(10);
-        expect(f.registry.sweepExpired()).toMatchObject({ scopes: 1, reservations: 1, cancelledReservations: 1, totalBytes: before.totalBytes });
-        expect(code(f.registry.openScope(context))).toBe('OBSERVATION_CAPACITY');
-        f.registry.abandon(scope, p.reservation);
-        expect(f.registry.inspect()).toMatchObject({ scopes: 0, sources: 0, totalBytes: 0 });
-        expect(f.scope().scopeId).not.toBe(scope.scopeId); zero(f);
-    });
-    it('charges one immutable source across Scopes and returns actual output fees after each complete', () => {
-        const f = fixture(), a = f.scope(), b = f.scope(), pa = f.begin(a), first = f.registry.inspect(), pb = f.begin(b);
-        expect(pa.source).toBe(pb.source); expect(f.registry.inspect()).toMatchObject({ sources: 1, sourceBytes: first.sourceBytes,
-            observationBytes: 2 * HARD.observation.maxCanonicalBytes, metadataBytes: 2 * HARD.metadata.maxCanonicalBytes });
-        const done = f.registry.complete(a, pa.reservation, f.grant()); expect(done.status).toBe('observed');
+    it('charges the current and prepared observation for a shared source once', () => {
+        const f = fixture(), owner = f.scope(), current = f.observe(owner), first = f.registry.inspect(), pending = f.begin(owner);
+        expect(pending.source).toBe(f.source);
+        expect(f.registry.inspect()).toMatchObject({ sources: 1, sourceBytes: first.sourceBytes,
+            observationBytes: first.observationBytes + HARD.observation.maxCanonicalBytes,
+            metadataBytes: first.metadataBytes + HARD.metadata.maxCanonicalBytes });
+        const done = f.registry.complete(owner, pending.reservation, f.grant()); expect(done.status).toBe('observed');
         if (done.status !== 'observed') return;
-        expect(f.registry.inspect().observationBytes).toBe(HARD.observation.maxCanonicalBytes + utf8Size(canonicalJson(done.observation as unknown as JsonValue)));
-        f.registry.releaseObservation(a, done.observation.observationId);
+        expect(f.registry.inspect().observationBytes).toBe(first.observationBytes + utf8Size(canonicalJson(done.observation as unknown as JsonValue)));
+        f.registry.releaseObservation(owner, current.observationId);
         expect(f.registry.inspect().sourceBytes).toBe(first.sourceBytes);
-        f.registry.abandon(b, pb.reservation); expect(f.registry.inspect().totalBytes).toBe(0); zero(f);
+        f.registry.releaseObservation(owner, done.observation.observationId);
+        expect(f.registry.inspect().totalBytes).toBe(0); zero(f);
     });
     it('separately charges two source versions and refunds only their final references', () => {
-        const f = fixture(), scope = f.scope(), a = f.begin(scope), before = f.registry.inspect();
+        const f = fixture(), owner = f.scope(), first = f.observe(owner), before = f.registry.inspect();
         const newer = f.publish({ refs: Object.fromEntries(Object.entries(f.source.refs).map(([k, r]) => [k, { ...r, refType: 'new-type' }])) });
-        const b = f.begin(scope), after = f.registry.inspect();
+        const b = f.begin(owner), after = f.registry.inspect();
         expect(b.source).toBe(newer); expect(after.sources).toBe(2); expect(after.sourceBytes).toBeGreaterThan(before.sourceBytes);
-        f.registry.abandon(scope, a.reservation); expect(f.registry.inspect().sources).toBe(1);
-        f.registry.abandon(scope, b.reservation); expect(f.registry.inspect().totalBytes).toBe(0); zero(f);
+        f.registry.releaseObservation(owner, first.observationId); expect(f.registry.inspect().sources).toBe(1);
+        f.registry.abandon(owner, b.reservation); expect(f.registry.inspect().totalBytes).toBe(0); zero(f);
     });
     it('settles repeated failing grants without residual slots or leases', () => {
         const f = fixture(), scope = f.scope();
@@ -533,23 +478,6 @@ describe('B1 settlement, counts and shared-source fees', () => {
             const p = f.begin(scope); expect(code(f.registry.complete(scope, p.reservation, { invalid: 'payload-secret' }))).toBe('OBSERVATION_PROJECTION_INVALID');
             expect(f.registry.inspect()).toMatchObject({ observations: 0, reservations: 0, sources: 0, totalBytes: 0 });
             expect(f.core.store.inspect().activeLeases).toBe(0);
-        }
-        zero(f);
-    });
-    it.each(['maxScopes', 'maxObservationsPerScope', 'maxObservations', 'maxReservationsPerScope', 'maxReservations'] as const)('enforces the lowered %s count without eviction or partial commit', limit => {
-        const f = fixture({ limits: { [limit]: 2 } }), scopes: ScopeHandle[] = [];
-        if (limit === 'maxScopes') {
-            scopes.push(f.scope(), f.scope()); expect(code(f.registry.openScope(context))).toBe('OBSERVATION_CAPACITY');
-        } else if (limit.startsWith('maxReservations')) {
-            const a = f.scope(), b = limit === 'maxReservations' ? f.scope() : a;
-            const p = f.begin(a), q = f.begin(b); expect(code(f.registry.begin(a, { viewIds: ['v0'] }))).toBe('OBSERVATION_CAPACITY');
-            expect(f.registry.inspect().reservations).toBe(2); f.registry.abandon(a, p.reservation); f.registry.abandon(b, q.reservation);
-        } else {
-            const a = f.scope(), b = limit === 'maxObservations' ? f.scope() : a;
-            const first = f.observe(a), second = f.observe(b, f.grant(), false);
-            expect(code(f.registry.begin(a, { viewIds: ['v0'] }))).toBe('OBSERVATION_CAPACITY');
-            expect(f.registry.resolveBinding(a, key(first)).status).toBe('found');
-            f.registry.releaseObservation(a, first.observationId); f.registry.releaseObservation(b, second.observationId);
         }
         zero(f);
     });
@@ -575,11 +503,11 @@ describe('B1 settlement, counts and shared-source fees', () => {
         expect(f.registry.complete(scope, p.reservation, f.grant(f.source, ['v0', 'v1'])).status).toBe('observed');
         expect(code(f.registry.begin(scope, { viewIds: f.owners.map(v => v.viewId) }))).toBe('OBSERVATION_INVALID'); zero(f);
     });
-    it('does not enlarge the Store lease quota and preserves independent reservations on short-lease failure', () => {
-        const f = fixture({ store: { maxActiveLeases: 1 } }), scope = f.scope(), p = f.begin(scope);
-        expect(code(f.registry.begin(scope, { viewIds: ['v0'] }))).toBe('SNAPSHOT_CAPACITY');
+    it('honors the Store lease limit without dropping an existing preparation', () => {
+        const f = fixture({ store: { maxActiveLeases: 1 } }), owner = f.scope(), pending = f.begin(owner);
+        expect(code(f.registry.begin(owner, { viewIds: ['v0'] }))).toBe('OBSERVATION_CAPACITY');
         expect(f.registry.inspect().reservations).toBe(1);
-        expect(code(f.registry.complete(scope, p.reservation, f.grant()))).toBe('SNAPSHOT_CAPACITY'); zero(f);
+        expect(code(f.registry.complete(owner, pending.reservation, f.grant()))).toBe('SNAPSHOT_CAPACITY'); zero(f);
     });
 });
 
@@ -636,14 +564,15 @@ describe('B1 independently bounded JSON and total budgets', () => {
             expect(f.registry.inspect().totalBytes).toBe(0); zero(f);
         }
     });
-    it('applies global source fees to distinct snapshots while sharing the same snapshot fee', () => {
-        const probe = fixture(), scope = probe.scope(), p = probe.begin(scope), sourceBytes = probe.registry.inspect().sourceBytes;
-        probe.registry.abandon(scope, p.reservation); zero(probe);
-        const f = fixture({ limits: { maxSourceBytes: sourceBytes } }), a = f.scope(), b = f.scope(), one = f.begin(a), two = f.begin(b);
+    it('applies the source budget to distinct snapshots while sharing one snapshot fee', () => {
+        const probe = fixture(), owner = probe.scope(); probe.observe(owner);
+        const sourceBytes = probe.registry.inspect().sourceBytes; zero(probe);
+        const f = fixture({ limits: { maxSourceBytes: sourceBytes } }), a = f.scope(), first = f.observe(a), same = f.begin(a);
+        expect(same.source).toBe(f.source); f.registry.abandon(a, same.reservation);
         f.publish({ refs: Object.fromEntries(Object.entries(f.source.refs).map(([k, r]) => [k, { ...r, refType: 'other-type' }])) });
         expect(code(f.registry.begin(a, { viewIds: ['v0'] }))).toBe('OBSERVATION_CAPACITY');
-        expect(f.registry.inspect()).toMatchObject({ reservations: 2, sources: 1, sourceBytes });
-        f.registry.abandon(a, one.reservation); f.registry.abandon(b, two.reservation); zero(f);
+        expect(f.registry.inspect()).toMatchObject({ reservations: 0, observations: 1, sources: 1, sourceBytes });
+        expect(f.registry.resolveBinding(a, key(first)).status).toBe('found'); zero(f);
     });
     it.each(['maxDepth', 'maxNodes', 'maxApproxBytes', 'maxCanonicalBytes'] as const)('bounds source %s before retaining any source reference', field => {
         const base = fixture({ payload: { nested: ['汉字\u0000', { value: 'source' }] } });
@@ -660,29 +589,16 @@ describe('B1 independently bounded JSON and total budgets', () => {
         const input = { viewIds: Array.from({ length: 8 }, (_, i) => 'v' + i) }, n = field === 'maxCanonicalBytes' ? bytes(input) : threshold(input, field);
         for (const delta of [-1, 0, 1]) {
             const f = fixture({ views: 8 }), registry = createObservationRegistry(f.core.store, { namespace: 'capture', now: f.now, limits: { capture: { [field]: n + delta } } });
-            const opened = registry.openScope(context);
-            expect(opened.status).toBe('opened'); if (opened.status !== 'opened') throw new Error('Expected scope with smaller context');
-            const result = registry.begin(opened.scope, input);
+            const result = registry.begin(registry.owner, input);
             expect(result.status).toBe(delta < 0 ? 'rejected' : 'reserved');
-            if (result.status === 'reserved') registry.abandon(opened.scope, result.reservation);
+            if (result.status === 'reserved') registry.abandon(registry.owner, result.reservation);
             else expect(code(result)).toBe('OBSERVATION_INVALID');
             registry.close(); zero(f);
         }
     });
-    it.each(['maxNodes', 'maxApproxBytes', 'maxCanonicalBytes'] as const)('bounds openScope capture %s before creating an entry', field => {
-        const n = field === 'maxCanonicalBytes' ? bytes(context) : threshold(context, field);
-        for (const delta of [-1, 0, 1]) {
-            const f = fixture(), registry = createObservationRegistry(f.core.store, { namespace: 'open-capture', now: f.now,
-                limits: { capture: { [field]: n + delta } } });
-            const result = registry.openScope(context);
-            expect(result.status).toBe(delta < 0 ? 'rejected' : 'opened');
-            if (result.status === 'rejected') expect(code(result)).toBe('SCOPE_INVALID');
-            registry.close(); expect(registry.inspect().scopes).toBe(0); zero(f);
-        }
-    });
     it.each(['maxDepth', 'maxNodes', 'maxApproxBytes', 'maxCanonicalBytes'] as const)('bounds grant and final internal metadata %s as a shared profile', field => {
         const probe = fixture(), scope = probe.scope(), permission = probe.grant(), observation = probe.observe(scope, permission);
-        const metadata = { scopeId: scope.scopeId, observationId: observation.observationId, source: observation.source, expiresAt: observation.expiresAt,
+        const metadata = { observationId: observation.observationId, source: observation.source,
             views: observation.views.map(v => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
             refs: observation.refs.map(({ viewId, viewInstanceId, refId }) => ({ viewId, viewInstanceId, refId })), bindings: observation.bindings };
         const measure = (v: unknown) => field === 'maxCanonicalBytes' ? bytes(v) : threshold(v, field);
@@ -704,10 +620,22 @@ describe('B1 independently bounded JSON and total budgets', () => {
             if (result.status === 'rejected') expect(code(result)).toBe('OBSERVATION_CAPACITY'); zero(f);
         }
     });
-    it('rejects the A near-content boundary, then succeeds only when a new explicit policy hides content', () => {
-        const f = fixture({ views: 1, refs: 0, content: 'x'.repeat(524286) }), scope = f.scope(), p = f.begin(scope);
-        expect(code(f.registry.complete(scope, p.reservation, f.grant(f.source, ['v0'], true)))).toBe('OBSERVATION_CAPACITY');
-        const observation = f.observe(scope, f.grant(f.source, ['v0'])); expect(observation.views[0]).not.toHaveProperty('content'); zero(f);
+    it('retains one View near the content limit and rejects two in the same observation', () => {
+        const f = fixture({ views: 2, refs: 0, content: 'x'.repeat(524286) }), owner = f.scope(), p = f.begin(owner);
+        expect(code(f.registry.complete(owner, p.reservation, f.grant(f.source, ['v0', 'v1'], true)))).toBe('OBSERVATION_CAPACITY');
+        const observation = f.observe(owner, f.grant(f.source, ['v0'], true));
+        expect(observation.views[0]!.content).toEqual(f.source.views[0]!.content); zero(f);
+    });
+    it('observes a near-limit View and rejects oversized metadata at its publication path', () => {
+        const f = fixture({ views: 1, refs: 0, tools: 0, content: 'x'.repeat(500 * 1024) }), owner = f.scope();
+        const view = { ...f.source.views[0]!, name: 'n'.repeat(16 * 1024 - 128) };
+        const source = f.publish({ views: [view] });
+        expect(f.observe(owner, f.grant(source, ['v0'], true)).views).toEqual([view]);
+        const oversized = { ...view, name: 'n'.repeat(224 * 1024) };
+        expect(f.core.committer.accept(f.draft({ views: [oversized] }))).toMatchObject({
+            status: 'rejected', issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$.views[0]' },
+        });
+        zero(f);
     });
     it('checks canonical escape expansion separately from the approximate source budget', () => {
         const f = fixture({ views: 1, refs: 1, payload: '\u0000'.repeat(1500), limits: { source: { maxCanonicalBytes: 4000 } } }), scope = f.scope();
@@ -718,9 +646,7 @@ describe('B1 independently bounded JSON and total budgets', () => {
 
 describe('B1 immutable configuration and clock faults', () => {
     it('freezes every approved default profile and has no undeclared extension fields', () => {
-        expect(HARD).toMatchObject({ maxScopes: 16, maxObservationsPerScope: 8, maxObservations: 128,
-            maxReservationsPerScope: 2, maxReservations: 16, maxViews: 256, maxRefs: 512, maxTools: 256, maxBindings: 256,
-            scopeTtlMs: 600000, observationTtlMs: 30000, source: { maxDepth: 50, maxNodes: 100016, maxApproxBytes: 8388608, maxCanonicalBytes: 8388608 } });
+        expect(HARD).toMatchObject({ maxViews: 256, maxRefs: 512, maxTools: 256, maxBindings: 256 });
         expect(Object.isFrozen(HARD)).toBe(true); expect(Object.isFrozen(HARD.source)).toBe(true);
     });
     it.each(Object.entries(HARD).flatMap(([key, value]) => typeof value === 'number' ? [[key, value, undefined] as const]
@@ -742,40 +668,31 @@ describe('B1 immutable configuration and clock faults', () => {
         }
         expect(reads).toBe(0);
         const max = createObservationRegistry(f.core.store, { namespace: '汉'.repeat(42) + 'ab', now: f.now });
-        const scope = max.openScope(context); expect(scope.status).toBe('opened');
-        if (scope.status === 'opened') expect(utf8Size(scope.scope.scopeId)).toBeLessThanOrEqual(256);
+        const p = max.begin(max.owner, { all: true });
+        expect(p.status).toBe('reserved');
+        if (p.status === 'reserved') {
+            const result = max.complete(max.owner, p.reservation, f.grant());
+            expect(result.status).toBe('observed');
+            if (result.status === 'observed') expect(utf8Size(result.observation.observationId)).toBeLessThanOrEqual(256);
+        }
         max.close(); zero(f);
     });
     it.each([-1, NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1])('rejects initial invalid clock %s with a fixed error', value => {
-        const f = fixture(); expect(() => createScopedInteraction(f.core.store, { namespace: 'clock', now: () => value })).toThrow('Invalid observation registry clock'); zero(f);
+        const f = fixture();
+        expect(() => createAppInteraction(f.core.store, { ...context, namespace: 'clock', now: () => value,
+            policy: { project: () => emptyGrant(), authorize: () => true, canReadReceipt: () => true },
+            execution: { resolve: () => null } })).toThrow('Invalid observation registry clock'); zero(f);
     });
     it('refuses clock rollback/throws and still permits owned preparation settlement and explicit close', () => {
         const f = fixture(); let time = 10, throws = false, reads = 0;
         const registry = createObservationRegistry(f.core.store, { namespace: 'clock', now: () => {
             if (throws) throw { get message() { reads++; return 'payload-secret'; } }; return time;
         } });
-        const opened = registry.openScope(context); expect(opened.status).toBe('opened'); if (opened.status !== 'opened') return;
-        const p = registry.begin(opened.scope, { viewIds: ['v0'] }); expect(p.status).toBe('reserved'); if (p.status !== 'reserved') return;
-        time = 9; expect(code(registry.begin(opened.scope, { viewIds: ['v0'] }))).toBe('OBSERVATION_INTERNAL_ERROR');
-        throws = true; expect(code(registry.complete(opened.scope, p.reservation, f.grant()))).toBe('OBSERVATION_INTERNAL_ERROR');
+        const p = registry.begin(registry.owner, { viewIds: ['v0'] }); expect(p.status).toBe('reserved'); if (p.status !== 'reserved') return;
+        time = 9; expect(code(registry.begin(registry.owner, { viewIds: ['v0'] }))).toBe('OBSERVATION_INTERNAL_ERROR');
+        throws = true; expect(code(registry.complete(registry.owner, p.reservation, f.grant()))).toBe('OBSERVATION_INTERNAL_ERROR');
         expect(registry.inspect()).toMatchObject({ reservations: 0, totalBytes: 0, issue: { code: 'OBSERVATION_INTERNAL_ERROR' } });
-        expect(registry.close().scopes).toBe(0); expect(reads).toBe(0); zero(f);
-    });
-});
-
-describe('B2 checkScope accessor preserves B1 authority', () => {
-    it('checks genuine handles without requiring ready state or renewing the deadline', () => {
-        const f = fixture({ lifetime: 'ttl', ready: false, limits: { scopeTtlMs: 10 } }), scope = f.scope();
-        expect(f.registry.checkScope(scope)).toEqual({ status: 'active', expiresAt: 10 });
-        expect(code(f.registry.checkScope({ ...scope }))).toBe('SCOPE_UNAVAILABLE');
-        f.setTime(9); expect(f.registry.checkScope(scope)).toEqual({ status: 'active', expiresAt: 10 });
-        f.setTime(10); expect(code(f.registry.checkScope(scope))).toBe('SCOPE_UNAVAILABLE'); zero(f);
-    });
-    it('does not expose stopped, closed or newly rebound App scopes', () => {
-        const f = fixture(), scope = f.scope(); f.registry.closeScope(scope);
-        expect(code(f.registry.checkScope(scope))).toBe('SCOPE_UNAVAILABLE');
-        const other = f.scope(); f.core.lifecycle.stopApp('app', 'run');
-        expect(code(f.registry.checkScope(other))).toBe('SCOPE_UNAVAILABLE'); zero(f);
+        expect(registry.close()).toMatchObject({ closed: true, totalBytes: 0 }); expect(reads).toBe(0); zero(f);
     });
 });
 
@@ -784,21 +701,21 @@ describe('B2-Q01 lifecycle identity capability', () => {
         const f = fixture(); const { readAppIdentity: _, ...legacy } = f.core.store;
         expect(() => createObservationRegistry(legacy as never, { namespace: 'legacy', now: f.now })).toThrow('Invalid observation registry store'); zero(f);
     });
-    it('allows pre-start Scope creation, then rejects replacement even before the new instance publishes', () => {
-        const core = createSnapshotCore({ now: () => 0 }), registry = createObservationRegistry(core.store, { namespace: 'prestart', now: () => 0 });
-        const opened = registry.openScope({ appId: 'app', instanceId: 'first' }); expect(opened.status).toBe('opened'); if (opened.status !== 'opened') return;
-        expect(registry.checkScope(opened.scope).status).toBe('active');
-        expect(code(registry.begin(opened.scope, { viewIds: ['v0'] }))).toBe('SNAPSHOT_UNREADY');
-        core.lifecycle.startApp('app', 'first'); expect(registry.checkScope(opened.scope).status).toBe('active');
+    it('allows a pre-start owner and invalidates it on replacement before a new projection', () => {
+        const core = createSnapshotCore({ now: () => 0 }), registry = createObservationRegistry(core.store,
+            { namespace: 'prestart', now: () => 0 }, { appId: 'app', instanceId: 'first' });
+        expect(registry.active()).toBe(true);
+        expect(code(registry.begin(registry.owner, { viewIds: ['v0'] }))).toBe('SNAPSHOT_UNREADY');
+        core.lifecycle.startApp('app', 'first'); expect(registry.active()).toBe(true);
         core.lifecycle.stopApp('app', 'first'); core.lifecycle.startApp('app', 'second');
         expect(core.store.readLatest('app')).toEqual({ status: 'unready' });
-        expect(code(registry.checkScope(opened.scope))).toBe('SCOPE_UNAVAILABLE');
+        expect(registry.active()).toBe(false);
         registry.close(); expect(registry.inspect().totalBytes).toBe(0);
     });
     it('keeps cancelled preparation fees through a direct instance replacement until settlement', () => {
         const f = fixture(), scope = f.scope(), preparation = f.begin(scope), before = f.registry.inspect();
         f.core.lifecycle.startApp('app', 'new-unready');
-        expect(f.registry.inspect()).toMatchObject({ scopes: 1, reservations: 1, cancelledReservations: 1, totalBytes: before.totalBytes });
+        expect(f.registry.inspect()).toMatchObject({ reservations: 1, cancelledReservations: 1, totalBytes: before.totalBytes });
         expect(code(f.registry.complete(scope, preparation.reservation, f.grant()))).toBe('RESERVATION_UNAVAILABLE'); zero(f);
     });
 });

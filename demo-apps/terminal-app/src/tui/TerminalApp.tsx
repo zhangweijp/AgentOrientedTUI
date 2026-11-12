@@ -1,4 +1,4 @@
-import { createTUIApp, View, useCallback, useEffect, useMemo, useRef, useState, useAppRuntimeContext, AppTools, ToolRef } from '@aotui/sdk';
+import { createTUIApp, View, useCallback, useEffect, useMemo, useRef, useState, useAppRuntimeContext, AppTools } from '@aotui/sdk';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import os from 'os';
 import { RootView } from './RootView.js';
@@ -10,8 +10,6 @@ import {
     terminalTools,
     createNewTerminalBinding,
     createSendCommandBinding,
-    TerminalConsoleToolList,
-    TerminalToolList,
 } from './TerminalTools.js';
 import type { TerminalSession, CommandRecord, CommandStatus } from '../types.js';
 import {
@@ -232,18 +230,10 @@ function TerminalRoot() {
             </View>
             <View kind="state" id="term_console" type="TerminalConsole" name="TerminalConsole">
                 <TerminalConsoleView projectPath={projectPath} terminals={terminals} />
-                <TerminalConsoleToolList><ToolRef tool={terminalTools.newTerminal} /></TerminalConsoleToolList>
             </View>
             {terminals.map((terminal: TerminalSession) => (
                 <View kind="state" key={terminal.id} id={terminal.id} type="Terminal" name={`Terminal ${terminal.id}`}>
                     <TerminalView terminal={terminal} />
-                    <TerminalToolList>
-                        <ul>
-                            <li><ToolRef tool={terminalTools.sendCommand} /></li>
-                            <li><ToolRef tool={terminalTools.loadMoreOutput} /></li>
-                            <li><ToolRef tool={terminalTools.closeTerminal} /></li>
-                        </ul>
-                    </TerminalToolList>
                 </View>
             ))}
         </AppTools>

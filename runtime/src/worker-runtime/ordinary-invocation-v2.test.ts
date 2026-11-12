@@ -25,6 +25,7 @@ function setup() {
   const context = { appId: 'app', instanceId: 'run', negotiated: true,
     validateBinding: (t: any, execution: any) => registry.validateTypeToolBinding(t, execution),
     getParameterContract: (t: any, execution: any) => registry.getTypeToolContract(t, execution),
+            isRefViewLive: () => true,
     invokeBinding: (t: any, execution: any, args: any) => registry.invokeTypeTool(t, execution, args) };
   return { registry, safe, handler, message, context,
     rebind() { release(); register(); } };
@@ -59,9 +60,23 @@ describe('ordinary parameters over the V4 type execution message', () => {
   });
   it('never invents not-entered after the trusted callable throws or returns an unencodable result', async () => {
     const x = setup(); x.safe.mockImplementation(async () => { throw Error('PRIVATE'); });
-    expect(await invokeTypeParameters(x.message, x.context)).toBeNull();
+    const thrown = await invokeTypeParameters(x.message, x.context);
+    expect(thrown).toEqual({
+      type: 'VIEW_TOOL_INVOKE_V4_RESPONSE', requestId: x.message.requestId,
+      appId: x.message.appId, instanceId: x.message.instanceId,
+      argumentMode: x.message.argumentMode, success: true,
+      terminal: { phase: 'finished-unknown' },
+    });
+    expect(x.safe).toHaveBeenCalledOnce();
     const y = setup(); y.safe.mockResolvedValue({ phase: 'entered-returned', result: { success: true, data: { huge: 'x'.repeat(512 * 1024) } } } as any);
-    expect(await invokeTypeParameters(y.message, y.context)).toBeNull();
+    const oversized = await invokeTypeParameters(y.message, y.context);
+    expect(oversized).toEqual({
+      type: 'VIEW_TOOL_INVOKE_V4_RESPONSE', requestId: y.message.requestId,
+      appId: y.message.appId, instanceId: y.message.instanceId,
+      argumentMode: y.message.argumentMode, success: true,
+      terminal: { phase: 'finished-unknown' },
+    });
+    expect(y.safe).toHaveBeenCalledOnce();
   });
   it('preserves application-declared failure effects', async () => {
     const x = setup();

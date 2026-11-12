@@ -6,13 +6,6 @@ import {
 import type { IDESession } from '../core/ide-session.js';
 
 export type IDEViewTool = ReturnType<typeof defineViewTypeTool>;
-export interface IDEToolGroups {
-    readonly workspace: readonly IDEViewTool[];
-    readonly file: readonly IDEViewTool[];
-    readonly search: readonly IDEViewTool[];
-    readonly diagnostics: IDEViewTool;
-    readonly workspaceCreate: IDEViewTool;
-}
 
 const closed = { additionalProperties: false } as const;
 const stringArray = () => Type.Array(Type.String());
@@ -173,14 +166,6 @@ create_file_if_absent: defineViewTypeTool({
             content: Type.String({ description: 'Exact UTF-8 text to create.' }),
         }, closed),
     })
-});
-
-export const ideToolGroups: IDEToolGroups = Object.freeze({
-workspace: Object.freeze([ideTools.search_files_by_pattern, ideTools.search_files_by_content, ideTools.multi_open_file, ideTools.multi_close_file, ideTools.create_file, ideTools.batch_edit, ideTools.multi_open_dirs, ideTools.multi_close_dirs, ideTools.add_folder_to_workspace, ideTools.remove_folder_from_workspace, ideTools.refresh_workspace]),
-file: Object.freeze([ideTools.write_file, ideTools.edit_file, ideTools.delete_file, ideTools.rename_file, ideTools.lsp_hover, ideTools.lsp_goto_definition, ideTools.lsp_find_references, ideTools.lsp_get_diagnostics, ideTools.lsp_document_symbol, ideTools.lsp_incoming_calls, ideTools.lsp_outgoing_calls, ideTools.close_file_detail]),
-search: Object.freeze([ideTools.close_search_view]),
-diagnostics: ideTools.read_loaded_diagnostics,
-workspaceCreate: ideTools.create_file_if_absent,
 });
 
 export function createIDEToolBindings(owner: IDESession, enabled: (definition: IDEViewTool) => boolean = () => true): ToolBindings<ToolSetMap<typeof ideTools>> {

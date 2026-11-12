@@ -4,6 +4,8 @@ import type { JsonValue, ObservedToolExecutionV3, SnapshotIssueCode, SnapshotSto
 import { compileOrdinaryProfile } from './ordinary-parameter-profile.js';
 import { acquireToolSource } from './source-binding.js';
 import { selectedRefParameters } from './versioned-ref-declarations.js';
+import { RAW_TOOL_ARGUMENT_LIMITS as RAW, RESOLVED_TOOL_ARGUMENT_LIMITS as ARGUMENTS,
+    RESOLVED_TOOL_ENVELOPE_LIMITS as ENVELOPE } from '../snapshot/snapshot-support.js';
 
 type JsonObject = Readonly<Record<string, JsonValue>>;
 type ArgumentIssueCode = SnapshotIssueCode | 'TOOL_INVALID_ARGS' | 'TOOL_PERMISSION_DENIED'
@@ -20,18 +22,30 @@ export interface SnapshotValueRefSource {
     readonly viewInstanceId: string;
 }
 
+export function checkRefViews(sources: readonly SnapshotValueRefSource[], raw: Readonly<Record<string, unknown>>,
+    isLive: (viewId: string, viewInstanceId: string) => boolean) {
+    const indices = new Map<string, number>();
+    for (const { param, viewId, viewInstanceId } of sources) {
+        const index = indices.get(param) ?? 0;
+        if (!isLive(viewId, viewInstanceId)) {
+            const key = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(param) ? '.' + param : '[' + JSON.stringify(param) + ']';
+            const path = ('$' + key + (Array.isArray(raw[param]) ? '[' + index + ']' : '')).slice(0, 512);
+            return { code: 'REF_VIEW_UNAVAILABLE', message: 'The original View is closed or was reopened. Choose a Ref from a current observation.', path };
+        }
+        indices.set(param, index + 1);
+    }
+}
+
 type Limits = JsonCopyLimits & { readonly maxCanonicalBytes: number };
 // Keep the existing separate argument and envelope budgets for Ref preparation.
-const REQUEST: Limits = Object.freeze({ maxDepth: 25, maxNodes: 10_009, maxApproxBytes: 136 * 1024, maxCanonicalBytes: 136 * 1024 });
-const ARGUMENTS: Limits = Object.freeze({ maxDepth: 24, maxNodes: 10_000, maxApproxBytes: 128 * 1024, maxCanonicalBytes: 128 * 1024 });
-const ENVELOPE: Limits = Object.freeze({ maxDepth: 26, maxNodes: 11_000, maxApproxBytes: 136 * 1024, maxCanonicalBytes: 136 * 1024 });
-export { ARGUMENTS as SNAPSHOT_VALUE_ARGUMENT_LIMITS, ENVELOPE as SNAPSHOT_VALUE_ENVELOPE_LIMITS };
+const REQUEST: Limits = Object.freeze({ maxDepth: RAW.maxDepth + 1, maxNodes: RAW.maxNodes + 16,
+    maxApproxBytes: RAW.maxApproxBytes + 8 * 1024, maxCanonicalBytes: RAW.maxCanonicalBytes + 8 * 1024 });
 
 /** Resolve only from the original granted Snapshot; execution remains ViewType-owned. */
 export function prepareViewTypeParameters(
     store: SnapshotStore, context: Readonly<{ appId: string; instanceId: string }>,
     callerRequest: unknown, visibleRefs: readonly Readonly<{ refId: string; viewId: string; viewInstanceId: string }>[],
-): Readonly<{ status: 'rejected'; issue: Readonly<{ code: ArgumentIssueCode; message: string }> }> | Readonly<{
+): Readonly<{ status: 'rejected'; issue: Readonly<{ code: ArgumentIssueCode; message: string; path?: string }> }> | Readonly<{
     status: 'prepared'; rawArgs: JsonObject; effectiveArgs: JsonObject;
     refSources: readonly SnapshotValueRefSource[]; release(): void;
 }> {
@@ -52,8 +66,12 @@ export function prepareViewTypeParameters(
         if (selected.execution.kind !== 'view-type') return rejected('REF_CONTRACT_UNSUPPORTED', 'Expected ViewType execution');
         const contract = compileOrdinaryProfile(selected.tool.inputSchema);
         if (!contract || contract.revision !== VIEW_TYPE_PARAMETERS_MODE) return rejected('REF_CONTRACT_UNSUPPORTED', 'Expected the ViewType parameter profile');
-        const rawArgs = bounded(request.args, ARGUMENTS) as JsonObject;
-        if (!(contract.validateModelInput ?? contract.validate)(rawArgs).ok) return rejected('TOOL_INVALID_ARGS', 'Invalid model parameters');
+        const rawArgs = bounded(request.args, RAW) as JsonObject;
+        const model = (contract.validateModelInput ?? contract.validate)(rawArgs);
+        if (!model.ok) {
+            const diagnostic = model.diagnostics[0];
+            return rejected('TOOL_INVALID_ARGS', diagnostic?.message ?? 'Invalid model parameters', diagnostic?.path);
+        }
         const fields = contract.schema.properties as JsonObject;
         const slots = selectedRefParameters(fields, rawArgs);
         let effectiveArgs: Record<string, JsonValue> = { ...rawArgs };
@@ -75,11 +93,6 @@ export function prepareViewTypeParameters(
             const expectedType = (field as JsonObject)['x-aotui-ref-kind'] as string;
             if (resolved.ref.refType !== expectedType) return rejected('REF_TYPE_MISMATCH',
                 `Parameter ${JSON.stringify(param.slice(0, 64))} requires a current ${JSON.stringify(expectedType.slice(0, 64))} Ref, but the selected Ref is ${JSON.stringify(resolved.ref.refType.slice(0, 64))}. Read the latest View and pass view_id.ref_id for the required type.`);
-            const payloadSchema = (field as JsonObject)['x-aotui-ref-value'] as JsonObject;
-            const payload = resolved.target.payload;
-            if (payloadSchema.type === 'array'
-                ? !Array.isArray(payload) || !payload.every(object)
-                : !object(payload)) return rejected('REF_VALUE_UNSUPPORTED', 'Ref payload does not match the declared object or object-list shape');
             if (index === undefined) effectiveArgs[param] = resolved.target.payload;
             else {
                 if (index === 0) effectiveArgs[param] = [];
@@ -90,14 +103,18 @@ export function prepareViewTypeParameters(
         }
         // Budget the complete resolved arguments, not a mix of payloads and unresolved Ref names.
         effectiveArgs = bounded(effectiveArgs, ARGUMENTS) as JsonObject;
-        if (!(contract.validateResolvedInput ?? contract.validate)(effectiveArgs).ok) return rejected('TOOL_INVALID_ARGS', 'Resolved parameters do not match the contract');
+        const effective = (contract.validateResolvedInput ?? contract.validate)(effectiveArgs);
+        if (!effective.ok) {
+            const diagnostic = effective.diagnostics[0];
+            return rejected('REF_VALUE_UNSUPPORTED', diagnostic?.message ?? 'Resolved parameters do not match the contract', diagnostic?.path);
+        }
         const envelope = bounded({ source: { appId: context.appId, instanceId: context.instanceId,
             snapshotId: request.snapshotId, toolId: request.toolId, activationId: selected.execution.activationId },
             effectiveArgs, refSources }, ENVELOPE) as JsonObject;
         retained = true;
         return Object.freeze({ status: 'prepared', rawArgs,
             effectiveArgs: envelope.effectiveArgs as JsonObject, refSources: envelope.refSources as unknown as readonly SnapshotValueRefSource[], release: selected.release });
-    } catch { return rejected('REF_ARGUMENT_BUDGET_EXCEEDED', 'Parameters exceed the existing budget'); }
+    } catch { return rejected('REF_ARGUMENT_BUDGET_EXCEEDED', 'Combined resolved parameters exceed the call limit. Select fewer Ref values.', '$'); }
     finally { if (!retained) selected.release(); }
 }
 
@@ -112,7 +129,7 @@ function bounded(value: unknown, limits: Limits): JsonValue {
     }
     return copied;
 }
-function rejected(code: ArgumentIssueCode, message: string): Readonly<{ status: 'rejected'; issue: Readonly<{ code: ArgumentIssueCode; message: string }> }> {
-    return Object.freeze({ status: 'rejected' as const, issue: Object.freeze({ code, message }) });
+function rejected(code: ArgumentIssueCode, message: string, path?: string): Readonly<{ status: 'rejected'; issue: Readonly<{ code: ArgumentIssueCode; message: string; path?: string }> }> {
+    return Object.freeze({ status: 'rejected' as const, issue: Object.freeze({ code, message, ...(path === undefined ? {} : { path }) }) });
 }
 

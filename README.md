@@ -3,7 +3,7 @@
 
 ## Build an AOTUI App
 
-Start with the [SDK author guide](sdk/README.md), run its [file example](sdk/docs/examples/file-app.tsx), then add [Ref selection](sdk/docs/readonly-ref-v2.md) when choosing displayed objects. [View semantics](sdk/docs/views.md), [ordinary TypeScript bindings](sdk/docs/binding-tools.md), and [package/validation instructions](sdk/docs/runtime-compatibility.md) share the current public contract. The repository [App Builder skill](.agents/skills/aotui-app-builder/SKILL.md) follows the same path. Application authors need no private Runtime protocol or custom Ref resolver.
+Start with the [SDK author guide](sdk/README.md), run its [file example](sdk/docs/examples/file-app.tsx), then add [Ref selection](sdk/docs/readonly-ref-v2.md) when choosing displayed objects. [View semantics](sdk/docs/views.md), [plain TypeScript App authoring](sdk/docs/app-authoring.md), and [package/validation instructions](sdk/docs/runtime-compatibility.md) share the current public contract. The repository [App Builder skill](.agents/skills/aotui-app-builder/SKILL.md) follows the same path. Application authors need no private Runtime protocol or custom Ref resolver.
 
 > Experimental project. This repository is for research, prototyping, and internal exploration. It is not production-ready and should not be used as-is in production environments.
 

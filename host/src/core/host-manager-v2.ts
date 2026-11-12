@@ -17,7 +17,7 @@
  */
 
 import type { ModelMessage } from 'ai';
-import { AgentDriverV2, type LLMConfig } from '@aotui/agent-driver-v2';
+import { AgentDriverV2, ModelInputError, type LLMConfig } from '@aotui/agent-driver-v2';
 import type { AppConfigEntry } from '@aotui/runtime';
 import type { IDesktop, IKernel } from '@aotui/runtime/spi';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
@@ -466,7 +466,7 @@ export class HostManagerV2 {
                 skillDrivenSource,
                 mcpDrivenSource,
             ],
-            llm: llmConfig,
+            llm: this.llmConfigService.withModelInputBudget(llmConfig),
             onAssistantMessage: (message) => {
                 input.source.addMessage(message);
                 this.emitGuiUpdate({
@@ -672,7 +672,9 @@ export class HostManagerV2 {
         const normalized = (error.message || 'Unknown error').toLowerCase();
         let userFacingMessage = `LLM 调用失败：${error.message || 'Unknown error'}\n请检查当前 Provider 配置或稍后重试。`;
 
-        if (
+        if (error instanceof ModelInputError) {
+            userFacingMessage = error.message;
+        } else if (
             normalized.includes('api key') ||
             normalized.includes('unauthorized') ||
             normalized.includes('invalid_api_key') ||
@@ -707,10 +709,11 @@ export class HostManagerV2 {
             metadata: {
                 isAgentError: true,
                 rawError: error.message,
+                ...(error instanceof ModelInputError ? { errorCategory: 'model_input', errorCode: error.code, errorDetails: error.details } : {}),
             },
         } as unknown as ModelMessage;
 
-        source.addMessage(assistantErrorMessage);
+        if (!(error instanceof ModelInputError)) source.addMessage(assistantErrorMessage);
         this.emitGuiUpdate({
             topicId: sessionKey,
             type: 'assistant',

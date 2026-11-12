@@ -52,9 +52,9 @@ try {
    appLifecycle: { protocol: 'app-lifecycle-v2', register(callbacks) { assert.equal(lifecycle, undefined); lifecycle = callbacks; return () => { callbacks.stop?.(); callbacks.close?.(); }; } },
    appTypeTools: registry, viewTools: { mount(id, type) { return registry.mount(id, type).viewInstanceId; }, unmount(id) { registry.unmount(id); }, },
   };
-  const container = document.createElement('div'); document.body.appendChild(container);
-  let renderer; await act(async () => { renderer = await app.default.initializeComponent(container, context); });
-  cleanups.push(() => renderer.unmount());
+  let renderer; await act(async () => { renderer = await app.default.initialize(context); });
+  const container = document.getElementById('app-root-author_app');
+  cleanups.push(() => renderer.close());
   const catalog = () => { const node = container.querySelector('[data-role="tool-catalog"]'); assert.ok(node, 'Static ToolCatalog is present'); return node.outerHTML; };
   const before = catalog();
   const call = async (name, input, observed) => { let result; await act(async () => { result = await invoke(registry, name, input, observed); }); return result; };
@@ -87,7 +87,7 @@ try {
    assert.ok(container.textContent.includes('NEW_RECORD') && !container.textContent.includes('INITIAL_RECORD'));
   }
   requireCritical('catalog bytes independent of dynamic state', catalog() === before);
-  await act(async () => renderer.unmount()); assert.equal(depth, 0); assert.equal(registry.inspect().bindings, 0); assert.equal(registry.inspect().views, 0);
+  await act(async () => renderer.close()); assert.equal(depth, 0); assert.equal(registry.inspect().bindings, 0); assert.equal(registry.inspect().views, 0);
   registry.dispose(); facts.resources.push(registry.inspect());
  }
  requireCritical('Framework retained bytes released', facts.resources.every(r => r.retainedBytes === 0 && r.bindings === 0));

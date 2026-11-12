@@ -6,7 +6,7 @@ import Type from 'typebox';
 import { compileOrdinarySchema } from '@aotui/runtime/core';
 import { AppRuntimeContext } from './context/AppRuntimeContext.js';
 import { defineViewTypeTool } from './tools/view-type-tool.js';
-import { AppTools, ToolRef } from './components/AppTools.js';
+import { AppTools } from './components/AppTools.js';
 import { defineToolSet } from './tools/view-type-tool.js';
 
 const mounted: Array<() => void> = [];
@@ -89,12 +89,12 @@ describe('defineViewTypeTool', () => {
         })).toThrow('$.properties.path.format');
     });
 
-    it('rejects an arbitrary TypeBox pattern at definition time with its field path', () => {
-        const inputSchema = Type.Object({ slug: Type.String({ pattern: '^(a+)+$' }) });
+    it('rejects a malformed TypeBox pattern at definition time with its field path', () => {
+        const inputSchema = Type.Object({ slug: Type.String({ pattern: '[' }) });
         expect(() => defineViewTypeTool({
             viewType: 'Record', name: 'lookup', description: 'Find a record.', inputSchema,
         })).toThrowError(expect.objectContaining({
-            name: 'TypeBoxSchemaExportError', code: 'TOOL_SCHEMA_UNSUPPORTED', path: '$.properties.slug.pattern',
+            name: 'TypeBoxSchemaExportError', code: 'TOOL_SCHEMA_INVALID', path: '$.properties.slug.pattern',
         }));
     });
 
@@ -108,7 +108,7 @@ describe('defineViewTypeTool', () => {
 });
 
 describe('AppTools ordinary binding migration', () => {
-    it('registers once at App scope and allows the UI reference to appear in several Views', async () => {
+    it('registers one binding at App scope for multiple component children', async () => {
         const registrations: Array<{ definition: any; options: any; release: ReturnType<typeof vi.fn> }> = [];
         const port = appTypePort(vi.fn((definition, options) => {
             const release = vi.fn(); registrations.push({ definition, options, release }); return release;
@@ -117,11 +117,11 @@ describe('AppTools ordinary binding migration', () => {
         const definition = defineToolSet({ edit: defineViewTypeTool({ viewType: 'FileDetail', name: 'edit_file', description: 'Edit an opened file.',
             inputSchema: Type.Object({ filePath: Type.String({ description: 'Opened path.' }) }) }) });
         function App() { return h(AppTools, { definition, bindings: { edit: { execute } } }, h('main', {}, [
-            h('section', { key: 'one' }, h(ToolRef, { tool: definition.edit }, 'Edit first file')),
-            h('section', { key: 'two' }, h(ToolRef, { tool: definition.edit }, 'Edit second file')),
+            h('section', { key: 'one' }),
+            h('section', { key: 'two' }),
         ])); }
-        const view = mount(App, port);
-        expect(registrations).toHaveLength(1); expect(view.container.querySelectorAll('tool-ref')).toHaveLength(2);
+        mount(App, port);
+        expect(registrations).toHaveLength(1);
         expect(registrations[0]!.definition).toEqual({ viewType: 'FileDetail', name: 'edit_file', description: 'Edit an opened file.',
             inputSchema: definition.edit.inputSchema });
         expect(Object.isFrozen(registrations[0]!.definition.inputSchema)).toBe(true);
@@ -139,7 +139,7 @@ describe('AppTools ordinary binding migration', () => {
         const second = vi.fn(async () => ({ success: true, data: { revision: 'second' } }));
         const definition = defineToolSet({ save: defineViewTypeTool({ viewType: 'Document', name: 'save', description: 'Save.', inputSchema: Type.Object({ content: Type.String() }) }) });
         function App() { const [revision, set] = useState(0); update = set;
-            return h(AppTools, { definition, bindings: { save: { execute: revision === 0 ? first : second, enabled } } }, h(ToolRef, { tool: definition.save }, 'Save')); }
+            return h(AppTools, { definition, bindings: { save: { execute: revision === 0 ? first : second, enabled } } }); }
         const view = mount(App, port); expect(registrations).toHaveLength(1);
         await act(async () => update(1)); expect(registrations).toHaveLength(1);
         const captured = { validate(input: unknown) { return { ok: true, value: Object.freeze(input as object) }; }, fingerprint: 'contract' };
@@ -147,9 +147,9 @@ describe('AppTools ordinary binding migration', () => {
         expect(await invoke({ content: 'new' })).toMatchObject({ result: { data: { revision: 'second' } } });
         expect(first).not.toHaveBeenCalled(); expect(second).toHaveBeenCalledOnce();
         enabled = false; await act(async () => update(2));
-        expect(registrations[0]!.release).toHaveBeenCalledOnce(); expect(view.container.querySelector('tool-ref')).toBeNull();
+        expect(registrations[0]!.release).toHaveBeenCalledOnce();
         expect(await invoke({ content: 'stale' })).toMatchObject({ phase: 'not-entered' });
-        enabled = true; await act(async () => update(3)); expect(registrations).toHaveLength(2); expect(view.container.querySelector('tool-ref')).not.toBeNull();
+        enabled = true; await act(async () => update(3)); expect(registrations).toHaveLength(2);
         expect(await registrations[1]!.options.createSafeOrdinaryParametersInvoker(captured)({ content: 'after enable' })).toMatchObject({ result: { data: { revision: 'second' } } });
         view.unmount(); expect(registrations[0]!.release).toHaveBeenCalledOnce(); expect(registrations[1]!.release).toHaveBeenCalledOnce();
     });
@@ -160,7 +160,7 @@ describe('AppTools ordinary binding migration', () => {
         const b = defineViewTypeTool({ viewType: 'Record', name: 'inspect', description: 'Inspect.', inputSchema: Type.Object({ alpha: Type.String(), zeta: Type.String() }) });
         expect(a.inputSchema).toEqual(b.inputSchema);
         const definition = defineToolSet({ inspect: a });
-        function App() { const [next, set] = useState(false); update = set; return h(AppTools, { definition, bindings: { inspect: { execute: () => ({ success: next }) } } }, h(ToolRef, { tool: a }, 'Inspect')); }
+        function App() { const [next, set] = useState(false); update = set; return h(AppTools, { definition, bindings: { inspect: { execute: () => ({ success: next }) } } }); }
         mount(App, appTypePort(register)); await act(async () => update(true)); expect(register).toHaveBeenCalledTimes(1);
     });
 
@@ -169,7 +169,7 @@ describe('AppTools ordinary binding migration', () => {
         const oldPort = appTypePort(vi.fn(() => { const release = vi.fn(); oldReleases.push(release); return release; }));
         const newPort = appTypePort(vi.fn(() => { const release = vi.fn(); newReleases.push(release); return release; }));
         const definition = defineToolSet({ save: defineViewTypeTool({ viewType: 'Document', name: 'save', description: 'Save.', inputSchema: Type.Object({ content: Type.String() }) }) });
-        function App() { return h(AppTools, { definition, bindings: { save: { execute: () => ({ success: true }) } } }, h(ToolRef, { tool: definition.save }, 'Save')); }
+        function App() { return h(AppTools, { definition, bindings: { save: { execute: () => ({ success: true }) } } }); }
         const view = render(h(AppRuntimeContext.Provider, { value: contextFor(oldPort) }, h(App, { key: 'old' }))); mounted.push(view.unmount);
         expect(oldReleases).toHaveLength(1);
         await act(async () => view.rerender(h(AppRuntimeContext.Provider, { value: contextFor(newPort) }, h(App, { key: 'new' }))));
@@ -182,7 +182,7 @@ describe('AppTools ordinary binding migration', () => {
         const port = appTypePort(vi.fn((definition, options) => { registrations.push({ definition, options }); return vi.fn(); }));
         const execute = vi.fn(async (args: Readonly<{ count: number }>) => ({ success: true, data: { count: args.count } }));
         const definition = defineToolSet({ inspect: defineViewTypeTool({ viewType: 'Counter', name: 'inspect', description: 'Inspect.',  inputSchema: Type.Object({ count: Type.Number({ minimum: 1 }) }, { additionalProperties: false }) }) });
-        function App() { return h(AppTools, { definition, bindings: { inspect: { execute } } }, h(ToolRef, { tool: definition.inspect }, 'Inspect')); }
+        function App() { return h(AppTools, { definition, bindings: { inspect: { execute } } }); }
         mount(App, port); const registration = registrations[0]!; expect(registration.definition).not.toHaveProperty('isMutating');
         const compiled = compileOrdinarySchema(registration.definition.inputSchema); expect(compiled.ok).toBe(true); if (!compiled.ok) throw new Error('Contract must compile');
         const invoke = registration.options.createSafeOrdinaryParametersInvoker(compiled.contract);
@@ -196,7 +196,7 @@ describe('AppTools ordinary binding migration', () => {
         let update!: (next: boolean) => void;
         const contracts = [1, 2].map(minimum => defineToolSet({ set: defineViewTypeTool({ viewType: 'Counter', name: 'set', description: 'Set.', inputSchema: Type.Object({ count: Type.Number({ minimum }) }) }) }));
         function App() { const [changed, set] = useState(false); update = set; const definition = contracts[changed ? 1 : 0]!;
-            return h(AppTools, { key: String(changed), definition, bindings: { set: { execute: () => ({ success: true }) } } }, h(ToolRef, { tool: definition.set }, 'Set')); }
+            return h(AppTools, { key: String(changed), definition, bindings: { set: { execute: () => ({ success: true }) } } }); }
         mount(App, port); await act(async () => update(true)); expect(registrations).toHaveLength(2); expect(registrations[0]!.release).toHaveBeenCalledOnce();
         expect(registrations[1]!.definition.inputSchema.properties.count.minimum).toBe(2);
     });
@@ -216,7 +216,7 @@ describe('AppTools ordinary binding migration', () => {
 
     it('treats absent enabled as true and rejects explicit undefined', () => {
         const register = vi.fn(() => vi.fn()); const definition = defineToolSet({ open: defineViewTypeTool({ viewType: 'File', name: 'open', description: 'Open.', inputSchema: Type.Object({}) }) });
-        function App() { return h(AppTools, { definition, bindings: { open: { execute: () => ({ success: true }) } } }, h(ToolRef, { tool: definition.open }, 'Open')); }
+        function App() { return h(AppTools, { definition, bindings: { open: { execute: () => ({ success: true }) } } }); }
         mount(App, appTypePort(register)); expect(register).toHaveBeenCalledOnce();
         function Invalid() { return h(AppTools, { definition, bindings: { open: { execute: () => ({ success: true }), enabled: undefined } } } as any); }
         expect(() => mount(Invalid, appTypePort())).toThrow('TOOL_BINDING_INVALID');

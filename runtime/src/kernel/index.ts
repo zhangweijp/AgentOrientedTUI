@@ -4,32 +4,30 @@ import type {
     DesktopID,
     IDesktop,
     DesktopState,
-    IDesktopManager,
     IRuntimeContext, // New
     ReinitializeDesktopAppsOptions,
     ReinitializeDesktopAppsResult,
 } from '../spi/index.js';
+import type { IDesktopManager } from '../spi/runtime/desktop-manager.interface.js';
 
 import { AOTUIError } from '../spi/core/errors.js';
 import type { DesktopCloseOptions, DesktopCloseHandle, RuntimeCloseHandle, RuntimeCloseReport, ShutdownOptions } from '../spi/runtime/close.interface.js';
 import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseHandle, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from '../engine/core/close-handle.js';
 import { captureInteractionModes } from '../engine/app/interaction-config.js';
-import type { AppScopeResult } from '../spi/runtime/app-interaction.interface.js';
-import type { ScopePolicy } from '../core/invocation/scoped-interaction-types.js';
+import { appInteractionUnavailable, type AppInteractionResult } from '../spi/runtime/app-interaction.interface.js';
+import type { AppInteractionPolicy } from '../core/invocation/app-interaction-types.js';
 
 /**
  * Kernel - The core orchestrator of the AOTUI Runtime.
  * 
  * Responsibilities:
  * - Creates and manages Desktop instances (via IDesktopManager)
- * - Exposes Semantic App Scope creation
+ * - Exposes App instance interaction
  * - Manages Desktop lifecycle (suspend, resume, serialize, restore)
  * 
  */
 export class Kernel implements IKernel {
-    private shutdownReason?: string;
     private shutdownPromise: Promise<void> | null = null;
-    private isShutdownComplete = false;
     private closing?: RuntimeCloseHandle;
     private readonly inFlight = new Set<Promise<unknown>>();
     private managerClose?: RuntimeCloseHandle;
@@ -42,12 +40,7 @@ export class Kernel implements IKernel {
     constructor(private desktopManager: IDesktopManager) { }
 
     private assertRuntimeAvailable(): void {
-        if (!this.closing && !this.isShutdownComplete) {
-            return;
-        }
-        throw new AOTUIError('RUNTIME_SHUTDOWN', {
-            reason: this.shutdownReason,
-        });
+        if (this.closing) throw new AOTUIError('RUNTIME_SHUTDOWN');
     }
 
     private business<T>(run: () => Promise<T>): Promise<T> {
@@ -68,7 +61,7 @@ export class Kernel implements IKernel {
             throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: desktop.id });
     }
     private acceptsDesktopDiagnostics(desktop: IDesktop, desktopId: DesktopID): boolean {
-        return !this.closing && !this.isShutdownComplete && this.desktopManager.get(desktopId) === desktop && !this.isDesktopClosing(desktop);
+        return !this.closing && this.desktopManager.get(desktopId) === desktop && !this.isDesktopClosing(desktop);
     }
 
     /**
@@ -118,15 +111,14 @@ export class Kernel implements IKernel {
         return desktop;
     }
 
-    createAppScope(desktopId: DesktopID, appId: string, policy: ScopePolicy): AppScopeResult {
+    getAppInteraction(desktopId: DesktopID, appId: string, expectedInstanceId: string, policy?: AppInteractionPolicy): AppInteractionResult {
         const desktop = this.desktopManager.get(desktopId);
-        const unavailable = (): AppScopeResult => Object.freeze({ status: 'rejected', issue: Object.freeze({ code: 'SCOPE_UNAVAILABLE', message: 'App scope is unavailable' }) });
         const current = () => !!desktop && this.acceptsDesktopDiagnostics(desktop, desktopId);
-        if (!current()) return unavailable();
-        const create = desktop!.createAppScope;
-        if (!current()) return unavailable();
-        const result = create.call(desktop, appId, policy);
-        if (!current()) { if (result.status === 'opened') result.client.close();return unavailable(); }
+        if (!current()) return appInteractionUnavailable();
+        const create = desktop!.getAppInteraction;
+        if (!current()) return appInteractionUnavailable();
+        const result = create.call(desktop, appId, expectedInstanceId, policy);
+        if (!current()) return appInteractionUnavailable();
         return result;
     }
 
@@ -238,7 +230,7 @@ export class Kernel implements IKernel {
 
     private report(): RuntimeCloseReport {
         const state = structuredClone(this.closeState), manager = this.managerClose?.inspect() ?? this.managerReport;
-        if (manager) { mergeCloseReport(state, manager);state.pool = { ownership: manager.pool.ownership, report: manager.pool.report ? { ...manager.pool.report, issues: [...manager.pool.report.issues] } : null }; }
+        if (manager) { mergeCloseReport(state, manager);state.workers = { ...manager.workers }; }
         for (const handle of this.lateDesktopCloses) mergeCloseReport(state, handle.inspect());
         state.pendingTasks = this.inFlight.size;
         if (state.pendingTasks) state.resourcesReleased = false;
@@ -259,7 +251,7 @@ export class Kernel implements IKernel {
         })();
         void Promise.allSettled([managerTask, ...accepted]).then(results => {
             if (results[0]?.status === 'rejected') { this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, 'manager', ['MANAGER_CLEANUP_FAILED']); }
-            this.closeState.state = 'settled';this.isShutdownComplete = true;complete(this.report());
+            this.closeState.state = 'settled';complete(this.report());
         });
         return this.closing;
     }

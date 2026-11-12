@@ -74,18 +74,18 @@ try {
         assert.ok(hoverValue, 'The current hover panel contains actual LSP data');
         assert.match(JSON.stringify(hoverValue), /42/);
         if (mode === 'transient') {
-            const transferred = await close(app, true);
-            assert.equal(transferred, worker);
+            await close(app);
+            assert.equal(worker.threadId, -1);
             const groupsAtRelease = [...new Set(probes.map(probe => probe.target))];
             assert.equal(groupsAtRelease.length, 1);
             for (const target of groupsAtRelease) assert.ok(probes.some(probe => probe.target === target && !probe.injected && probe.signal === 0 && probe.code === 'ESRCH'));
-            facts.releaseBoundary = { probeCount: probes.length, nativeAbsentGroups: groupsAtRelease, verifiedBeforeWorkerReuse: true };
-            const reused = await start(root, 'transient-reused', { worker: transferred, data: app.data, sessionKey: mode });
-            assert.ok(fileView(reused, file));
-            await close(reused);
+            facts.releaseBoundary = { probeCount: probes.length, nativeAbsentGroups: groupsAtRelease, verifiedByCloseCompletion: true };
+            const reopened = await start(root, 'transient-reopened', { data: app.data, sessionKey: mode });
+            assert.notEqual(reopened.worker, worker);
+            assert.ok(fileView(reopened, file));
+            await close(reopened);
         } else {
             await assert.rejects(app.host.close(), /APP_CLEANUP_FAILED/);
-            assert.equal(await app.host.releaseWorker(), null);
             const report = await app.host.waitForResourceRelease();
             facts.cleanup.push({ id: app.id, report });
             assert.equal(report.resourcesReleased, true);

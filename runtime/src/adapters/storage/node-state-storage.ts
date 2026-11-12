@@ -20,10 +20,11 @@ export interface NodeStateStorageLimits {
     readonly maxBufferedBytes: number;
 }
 type Identity = { dev: bigint; ino: bigint };
+type DirectoryIdentity = { path: string; identity: Identity };
 type Root = { path: string; identity: Identity; owners: Set<Owner>; namespaces: Map<string, Namespace> };
 type Owner = { id: string; opening: boolean; closing: boolean; root?: Root; storageIOs: Set<StorageIO>; claims: Set<Namespace>; releasePromise?: Promise<StateReleaseResult>; releaseResult?: StateReleaseResult; idle: (() => void)[] };
 type Namespace = { owner: Owner; desktop: string; app: string; identity: string; unknown: boolean; keys: Map<string, { key: string; storageIO: StorageIO }> };
-type StorageIO = { owner: Owner; active: boolean; retained: boolean; namespace?: Namespace; key?: string; buffered: number; files: Set<FileHandle>; dirs: Set<Dir>; failedFiles: Set<FileHandle>; failedDirs: Set<Dir>; temp?: { path: string; identity?: Identity }; unknown: boolean; cleanupUnknown: boolean; cleanupIssue?: StateIssueCode };
+type StorageIO = { owner: Owner; active: boolean; retained: boolean; namespace?: Namespace; key?: string; buffered: number; files: Set<FileHandle>; dirs: Set<Dir>; failedFiles: Set<FileHandle>; failedDirs: Set<Dir>; temp?: { path: string; parents: DirectoryIdentity[]; identity?: Identity }; unknown: boolean; cleanupUnknown: boolean; cleanupIssue?: StateIssueCode };
 type Address = { desktop: string; app: string; key: string; namespace: string; filename: string; desktopPath: string; appPath: string; target: string };
 class StorageFailure extends Error { constructor(readonly code: StateIssueCode) { super(code); } }
 function fail(code: StateIssueCode): never { throw new StorageFailure(code); }
@@ -143,7 +144,7 @@ export function createNodeStateStorage(input: NodeStateStorageLimits) {
         }
         return directory(filename);
     }
-    async function prepare(storageIO: StorageIO, a: Address, create: boolean): Promise<{ target?: BigIntStats; parents: { path: string; identity: Identity }[] } | undefined> {
+    async function prepare(storageIO: StorageIO, a: Address, create: boolean): Promise<{ target?: BigIntStats; parents: DirectoryIdentity[] } | undefined> {
         const root = storageIO.owner.root!;await directory(root.path, root.identity);
         const desktop = await childDirectory(storageIO, root.path, a.desktop, create);if (!desktop) return undefined;
         const app = await childDirectory(storageIO, a.desktopPath, a.app, create);if (!app) return undefined;
@@ -162,10 +163,10 @@ export function createNodeStateStorage(input: NodeStateStorageLimits) {
         if (storageIO.temp?.identity) {
             const temp = storageIO.temp;
             try {
-                await directory(storageIO.owner.root!.path, storageIO.owner.root!.identity);
+                for (const parent of temp.parents) await directory(parent.path, parent.identity);
                 const stat = await lstat(temp.path);
                 if (!stat) storageIO.temp = undefined;
-                else if (!sameIdentity(stat, temp.identity!)) { storageIO.cleanupUnknown = true;storageIO.cleanupIssue ??= 'RESOURCE_UNSUPPORTED'; }
+                else if (!stat.isFile() || stat.nlink !== 1n || !sameIdentity(stat, temp.identity!)) { storageIO.cleanupUnknown = true;storageIO.cleanupIssue ??= 'RESOURCE_UNSUPPORTED'; }
                 else {
                     try { await withIO(() => fs.unlink(temp.path));storageIO.temp = undefined; }
                     catch (error) {
@@ -231,10 +232,10 @@ export function createNodeStateStorage(input: NodeStateStorageLimits) {
                     let handle: FileHandle;
                     try { handle = await withIO(() => fs.open(tempPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)); }
                     catch (error) {
-                        if (errorCode(error) !== 'EEXIST') { const possible = await lstat(tempPath);if (possible) { storageIO.temp = { path: tempPath };storageIO.cleanupUnknown = true;storageIO.cleanupIssue = 'IO_FAILED'; } }
+                        if (errorCode(error) !== 'EEXIST') { const possible = await lstat(tempPath);if (possible) { storageIO.temp = { path: tempPath, parents: prepared!.parents };storageIO.cleanupUnknown = true;storageIO.cleanupIssue = 'IO_FAILED'; } }
                         throw error;
                     }
-                    storageIO.files.add(handle);storageIO.temp = { path: tempPath };
+                    storageIO.files.add(handle);storageIO.temp = { path: tempPath, parents: prepared!.parents };
                     const stat = await withIO(() => handle.stat({ bigint: true }));storageIO.temp.identity = stat;
                     if (!stat.isFile() || stat.nlink !== 1n) fail('RESOURCE_UNSUPPORTED');
                     let written = 0;
@@ -256,10 +257,20 @@ export function createNodeStateStorage(input: NodeStateStorageLimits) {
     }
     function release(owner: Owner): Promise<StateReleaseResult> {
         if (owner.releasePromise) return owner.releasePromise;
-        owner.closing = true;let resolve!: (value: StateReleaseResult) => void;
+        const retry = owner.releaseResult !== undefined;
+        owner.closing = true;owner.releaseResult = undefined;
+        let resolve!: (value: StateReleaseResult) => void;
         owner.releasePromise = new Promise(done => { resolve = done; });
         void Promise.resolve().then(async () => {
             if ([...owner.storageIOs].some(storageIO => storageIO.active)) await new Promise<void>(done => owner.idle.push(done));
+            if (retry) for (const storageIO of [...owner.storageIOs]) {
+                storageIO.failedFiles.clear();
+                storageIO.failedDirs.clear();
+                storageIO.cleanupIssue = undefined;
+                storageIO.cleanupUnknown = false;
+                await cleanup(storageIO);
+                finish(storageIO);
+            }
             const retained = [...owner.storageIOs];
             const result: StateReleaseResult = retained.some(storageIO => storageIO.unknown || storageIO.cleanupUnknown) ? Object.freeze({ status: 'unknown', issue: stateIssue('UNKNOWN_OUTCOME') }) : retained.length ? Object.freeze({ status: 'failed', issue: stateIssue(retained.find(storageIO => storageIO.cleanupIssue)?.cleanupIssue ?? 'IO_FAILED') }) : Object.freeze({ status: 'released' });
             if (result.status === 'released') {
@@ -267,7 +278,9 @@ export function createNodeStateStorage(input: NodeStateStorageLimits) {
                 if (!owner.root!.owners.size && roots.get(owner.root!.path) === owner.root) roots.delete(owner.root!.path);
                 if (owners.get(owner.id) === owner) owners.delete(owner.id);
             }
-            owner.releaseResult = result;resolve(result);
+            owner.releaseResult = result;
+            if (result.status !== 'released') owner.releasePromise = undefined;
+            resolve(result);
         });
         return owner.releasePromise;
     }

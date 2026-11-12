@@ -6,11 +6,10 @@ import { createViewOwnedTools } from '@aotui/runtime/core';
 import { createAppId, createDesktopId, type AppTypeToolDefinition, type AppTypeToolRegistrationOptions } from '@aotui/runtime/spi';
 import { SemanticProjectionCoordinator } from '../../runtime/src/core/projection/coordinator.js';
 import { AppRuntimeContext } from './context/AppRuntimeContext.js';
-import { AppTools, ToolRef, ToolCatalog } from './components/AppTools.js';
+import { AppTools, ToolCatalog } from './components/AppTools.js';
 import { View } from './components/View.js';
-import { createTUIApp } from './app-factory/createTUIApp.js';
+import { mountPreactApp } from './app-factory/createTUIApp.js';
 import * as bindingModule from './tools/view-type-tool.js';
-import type { ToolMap, ToolSet, ToolBindingController } from './tools/view-type-tool.js';
 import type { IAppTypeToolPort } from '@aotui/runtime/spi';
 import { createToolBindings, defineToolSet, defineViewTypeTool, getToolCatalog } from './tools/view-type-tool.js';
 
@@ -27,24 +26,30 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 
 function environment(name: string) {
     const registry = createViewOwnedTools(name, name + '_run');
-    const projection = new SemanticProjectionCoordinator();
+    const projection = new SemanticProjectionCoordinator({
+        identity: () => ({ appId: name, instanceId: name + '_run' }),
+        readFrame: () => ({
+            views: registry.listViews().map(view => ({ id: view.viewId, name: view.viewId,
+                type: view.viewType, viewInstanceId: view.viewInstanceId, kind: 'state', content: { format: 'markdown-v1', value: '' } })),
+            tools: registry.listTools(),
+        }),
+    });
     const begin = vi.spyOn(projection, 'beginCommit'), end = vi.spyOn(projection, 'endCommit');
     let registers = 0, releases = 0;
     const context = {
         appId: createAppId(name), desktopId: createDesktopId('cards'),
-        markDirty() {}, projection, toolCleanup: new Set<() => void>(),
+        projection, toolCleanup: new Set<() => void>(),
         refExporter: { registerRef() { throw new Error('This fixture has no Refs'); } },
         appTypeTools: {
             protocol: 'view-type-tools-v4' as const,
             registerTypeTool(definition: AppTypeToolDefinition, options: AppTypeToolRegistrationOptions) {
                 registers++; const release = registry.registerTypeTool(definition, options);
-                projection.recordMutation('tool');
-                return () => { releases++; release(); projection.recordMutation('tool'); };
+                return () => { releases++; release(); };
             },
         },
         viewTools: {
-            mount(id: string, type: string) { const view = registry.mount(id, type); projection.recordMutation('view'); return view.viewInstanceId; },
-            unmount(id: string) { registry.unmount(id); projection.recordMutation('view'); },
+            mount(id: string, type: string) { return registry.mount(id, type).viewInstanceId; },
+            unmount(id: string) { registry.unmount(id); },
         },
         appLifecycle: { protocol: 'app-lifecycle-v2' as const, register() { return () => {}; } },
     };
@@ -62,40 +67,29 @@ class Boundary extends Component<{ children?: ComponentChildren; onError?(error:
     componentDidCatch(error: unknown) { this.props.onError?.(error); }
     render() { return this.state.failed ? h('p', {}, 'Fallback') : this.props.children; }
 }
-const card = (id = 'card') => h(View, {kind: 'state', id, type: 'Card', key: id }, h(ToolRef, { tool: tools.read }));
+const card = (id = 'card') => h(View, {kind: 'state', id, type: 'Card', key: id });
 function mount(x: Environment, children: ComponentChildren) {
     const view = render(h(AppRuntimeContext.Provider, { value: x.context }, children));
     cleanups.push(view.unmount); return view;
 }
 
 describe('M3 AppTools Preact adapter', () => {
-    it('presents the first candidate without an extra render and omission never disables a binding', async () => {
+    it('registers the first committed bindings without an extra render', async () => {
         const x = environment('first'); let renders = 0;
-        function Content() { renders++; return h(View, {kind: 'state', id: 'card', type: 'Card' }, h(ToolRef, { tool: tools.read })); }
+        function Content() { renders++; return h(View, {kind: 'state', id: 'card', type: 'Card' }); }
         const view = mount(x, h(AppTools, { definition: tools, bindings: bindings('first') }, h(Content, {})));
-        expect(renders).toBe(1); expect(view.container.querySelectorAll('tool-ref')).toHaveLength(1);
+        expect(renders).toBe(1); expect(view.container.querySelector('[data-view-id=card]')).not.toBeNull();
         expect(x.registry.listTools()).toHaveLength(2);
         expect((await call(x)).result).toMatchObject({ success: true, data: { label: 'first' } });
         view.unmount(); expect(x.registry.inspect().bindings).toBe(0); expect(x.registry.inspect().views).toBe(0);
         expect(x.begin).toHaveBeenCalledTimes(x.end.mock.calls.length);
     });
 
-    it('rejects missing context, foreign definitions and mismatched View types before registering', () => {
-        expect(() => render(h(ToolRef, { tool: tools.read }))).toThrow('TOOL_REF_CONTEXT_REQUIRED');
-        const foreign = defineViewTypeTool({ viewType: 'Card', name: 'foreign', description: 'Foreign.', inputSchema: Type.Object({}) });
-        for (const [tool, type, code] of [[foreign, 'Card', 'TOOL_REF_OUTSIDE_SET'], [tools.read, 'Wrong', 'TOOL_REF_VIEW_TYPE_MISMATCH']] as const) {
-            const x = environment(code); let failure: unknown;
-            mount(x, h(Boundary, { onError: error => { failure = error; } }, h(AppTools, { definition: tools, bindings: bindings('bad') },
-                h(View, {kind: 'state', type: 'card', id: 'card', type }, h(ToolRef, { tool })))));
-            expect(failure).toMatchObject({ code }); expect(x.registry.inspect().bindings).toBe(0);
-        }
-    });
-
     it('captures a detached candidate without getters and ignores mutation after render capture', async () => {
         const x = environment('captured'), candidate = bindings('captured');
         function Mutate() { candidate.read.execute = () => ({ success: true, data: { label: 'mutated', path: 'wrong' } }); candidate.read.enabled = false; return card(); }
         const view = mount(x, h(AppTools, { definition: tools, bindings: candidate }, h(Mutate, {})));
-        expect(view.container.querySelector('tool-ref')).not.toBeNull(); expect((await call(x)).result).toMatchObject({ data: { label: 'captured' } });
+        expect((await call(x)).result).toMatchObject({ data: { label: 'captured' } });
         view.unmount();
         let reads = 0; const bad = bindings('getter'); Object.defineProperty(bad.read, 'execute', { enumerable: true, get() { reads++; return () => ({ success: true }); } });
         let failure: unknown;
@@ -216,12 +210,12 @@ describe('M3 AppTools Preact adapter', () => {
             return h(AppTools, { definition: tools, bindings: { ...bindings('closed'), read: { execute } } }, card());
         }
         const container = document.createElement('div');
-        const initialized = createTUIApp({ app_name: 'interrupted', component: App }).initializeComponent(container, x.context);
+        const initialized = mountPreactApp(App, container, x.context);
         const renderer = phase === 'initialize' ? undefined : await initialized;
         if (renderer) {
-            if (phase === 'reentrant-unmount') nestedClose = () => renderer.unmount();
+            if (phase === 'reentrant-unmount') nestedClose = () => renderer.close();
             readyTools.length = 0;
-            expect(() => renderer.unmount()).toThrow(cleanupError);
+            expect(() => renderer.close()).toThrow(cleanupError);
         } else {
             await expect(initialized).rejects.toBe(mountError);
         }
@@ -231,12 +225,13 @@ describe('M3 AppTools Preact adapter', () => {
         expect(x.registry.inspect().bindings).toBe(0);
         expect(readyTools.flat()).toEqual([]);
         unsubscribe();
-        const successor = await createTUIApp({ app_name: 'successor',
-            component: () => h(AppTools, { definition: tools, bindings: bindings('successor') }, card()),
-        }).initializeComponent(document.createElement('div'), x.context);
-        renderer?.unmount();
+        const successor = await mountPreactApp(
+            () => h(AppTools, { definition: tools, bindings: bindings('successor') }, card()),
+            document.createElement('div'), x.context,
+        );
+        renderer?.close();
         expect((await call(x)).result).toMatchObject({ data: { label: 'successor' } });
-        successor.unmount();
+        successor.close();
         expect(x.registry.inspect()).toMatchObject({ views: 0, bindings: 0 });
         expect(x.begin).toHaveBeenCalledTimes(x.end.mock.calls.length);
     });
@@ -247,15 +242,15 @@ describe('M3 AppTools Preact adapter', () => {
         let lifecycleRegistrations = 0;
         x.context.appLifecycle.register = () => { lifecycleRegistrations++; return () => {}; };
         function App() { return h(AppTools, { definition: tools, bindings: bindings('cleanup') }, card()); }
-        const factory = createTUIApp({ app_name: 'cleanup', component: App }); const container = document.createElement('div');
-        const renderer = await factory.initializeComponent(container, x.context);
+        const factory = { initialize: mountPreactApp.bind(null, App) }; const container = document.createElement('div');
+        const renderer = await factory.initialize(container, x.context);
         expect(lifecycleRegistrations).toBe(0);
-        expect(() => renderer.unmount()).toThrow('TOOL_BINDING_CLEANUP_FAILED'); expect(x.registry.inspect().bindings).toBe(1);
-        const successor = createToolBindings({ definition: tools, appTypeTools: x.context.appTypeTools });
-        expect(() => successor.commit(bindings('early'))).toThrow('TOOL_BINDING_OWNER_CONFLICT');
-        fail = false; renderer.unmount(); expect(x.registry.inspect().bindings).toBe(0);
-        const next = await factory.initializeComponent(container, x.context); expect(x.registry.inspect().bindings).toBe(2);
-        renderer.unmount(); expect(x.registry.inspect().bindings).toBe(2); next.unmount(); expect(x.registry.inspect().bindings).toBe(0);
+        expect(() => renderer.close()).toThrow('TOOL_BINDING_CLEANUP_FAILED'); expect(x.registry.inspect().bindings).toBe(1);
+        const successor = createToolBindings(tools, x.context.appTypeTools);
+        expect(() => successor.prepare(bindings('early'))()).toThrow('TOOL_BINDING_OWNER_CONFLICT');
+        fail = false; renderer.close(); expect(x.registry.inspect().bindings).toBe(0);
+        const next = await factory.initialize(container, x.context); expect(x.registry.inspect().bindings).toBe(2);
+        renderer.close(); expect(x.registry.inspect().bindings).toBe(2); next.close(); expect(x.registry.inspect().bindings).toBe(0);
         expect(x.begin).toHaveBeenCalledTimes(x.end.mock.calls.length); expect(x.projection.token().ready).toBe(true);
     });
 
@@ -273,28 +268,28 @@ describe('M3 AppTools Preact adapter', () => {
             };
         };
         function App() { return h(AppTools, { definition: tools, bindings: bindings('live') }, card()); }
-        const factory = createTUIApp({ app_name: 'initial_cleanup', component: App });
+        const factory = { initialize: mountPreactApp.bind(null, App) };
         const first = document.createElement('div');
-        await expect(factory.initializeComponent(first, x.context)).rejects.toMatchObject({
+        await expect(factory.initialize(first, x.context)).rejects.toMatchObject({
             code: 'TOOL_BINDING_CLEANUP_FAILED', diagnostics: { original: { message: 'second registration failed' } },
         });
         expect(x.registry.inspect().bindings).toBe(1);
-        const other = await factory.initializeComponent(document.createElement('div'), healthy.context);
-        await expect(factory.initializeComponent(document.createElement('div'), x.context)).rejects.toMatchObject({
+        const other = await factory.initialize(document.createElement('div'), healthy.context);
+        await expect(factory.initialize(document.createElement('div'), x.context)).rejects.toMatchObject({
             code: 'TOOL_BINDING_CLEANUP_FAILED',
         });
         expect(x.counts().registers).toBe(1);
         broken = false;
-        const next = await factory.initializeComponent(document.createElement('div'), x.context);
+        const next = await factory.initialize(document.createElement('div'), x.context);
         expect(first.childNodes).toHaveLength(0);
         expect(x.registry.inspect()).toMatchObject({ views: 1, bindings: 2 });
         expect((await call(x)).result.success).toBe(true);
-        await next.unmount();
+        await next.close();
         expect(x.registry.inspect()).toMatchObject({ views: 0, bindings: 0 });
         x.registry.dispose();
         expect(x.registry.inspect().retainedBytes).toBe(0);
         expect((await call(healthy)).result.success).toBe(true);
-        await other.unmount();
+        await other.close();
         expect(x.begin).toHaveBeenCalledTimes(x.end.mock.calls.length);
     });
 
@@ -311,43 +306,44 @@ describe('M3 AppTools Preact adapter', () => {
         };
         function App() { return h(AppTools, { definition: tools, bindings: bindings('live') }, card()); }
         const container = document.createElement('div');
-        const factory = createTUIApp({ app_name: 'reuse', component: App });
-        const old = await factory.initializeComponent(container, a.context);
-        expect(() => old.unmount()).toThrow('TOOL_BINDING_CLEANUP_FAILED');
-        await expect(factory.initializeComponent(container, b.context)).rejects.toMatchObject({ code: 'TOOL_BINDING_CLEANUP_FAILED' });
+        const factory = { initialize: mountPreactApp.bind(null, App) };
+        const old = await factory.initialize(container, a.context);
+        expect(() => old.close()).toThrow('TOOL_BINDING_CLEANUP_FAILED');
+        await expect(factory.initialize(container, b.context)).rejects.toMatchObject({ code: 'TOOL_BINDING_CLEANUP_FAILED' });
         expect(b.counts().registers).toBe(0);
         broken = false;
-        const next = await factory.initializeComponent(container, b.context);
+        const next = await factory.initialize(container, b.context);
         expect(a.registry.inspect()).toMatchObject({ views: 0, bindings: 0 });
-        await old.unmount();
+        await old.close();
         expect((await call(b)).result.success).toBe(true);
-        await next.unmount();
+        await next.close();
         expect(b.registry.inspect()).toMatchObject({ views: 0, bindings: 0 });
     });
 
     it('does not unmount a successor after the former DOM detached and projection end failed', async () => {
         const x = environment('detached');
         function App() { return h(AppTools, { definition: tools, bindings: bindings('live') }, card()); }
-        const factory = createTUIApp({ app_name: 'detached', component: App });
+        const factory = { initialize: mountPreactApp.bind(null, App) };
         const container = document.createElement('div');
-        const old = await factory.initializeComponent(container, x.context);
+        const old = await factory.initialize(container, x.context);
         const projectionError = new Error('injected projection end failure');
         const failEnd = vi.spyOn(x.context.projection, 'endCommit');
         failEnd.mockImplementation(() => {
-            SemanticProjectionCoordinator.prototype.endCommit.call(x.projection);
+            const result = SemanticProjectionCoordinator.prototype.endCommit.call(x.projection);
             if (x.projection.token().ready) throw projectionError;
+            return result;
         });
-        expect(() => old.unmount()).toThrow(projectionError);
+        expect(() => old.close()).toThrow(projectionError);
         expect(container.childNodes).toHaveLength(0);
         expect(x.registry.inspect()).toMatchObject({ views: 0, bindings: 0 });
         failEnd.mockRestore();
-        const next = await factory.initializeComponent(container, x.context);
+        const next = await factory.initialize(container, x.context);
         const observed = x.registry.listTools().find(tool => tool.name === 'read')!;
         expect((await call(x, observed)).result.success).toBe(true);
-        await old.unmount();
-        expect(container.querySelector('tool-ref')).not.toBeNull();
+        await old.close();
+        expect(container.querySelector('[data-view-id=card]')).not.toBeNull();
         expect((await call(x, observed)).result.success).toBe(true);
-        await next.unmount();
+        await next.close();
         expect(x.registry.inspect()).toMatchObject({ views: 0, bindings: 0 });
         x.registry.dispose();
         expect(x.registry.inspect().retainedBytes).toBe(0);
@@ -358,12 +354,10 @@ describe('M3 AppTools Preact adapter', () => {
         const original = bindingModule.createToolBindings;
         let disposeDuringRegister: () => void = () => {};
         let isDisposed: () => boolean = () => false;
-        vi.spyOn(bindingModule, 'createToolBindings').mockImplementation(function<const Map extends ToolMap>(options: {
-            definition: ToolSet<Map>; appTypeTools: IAppTypeToolPort;
-        }): ToolBindingController<Map> {
-            const controller = original(options);
+        vi.spyOn(bindingModule, 'createToolBindings').mockImplementation((definition, port) => {
+            const controller = original(definition, port);
             disposeDuringRegister = () => controller.dispose();
-            isDisposed = () => bindingModule.isToolBindingDisposed(controller);
+            isDisposed = () => controller.disposed;
             return controller;
         });
         const normal = x.context.appTypeTools.registerTypeTool; let closeInside = true, failRelease = true;
@@ -374,7 +368,7 @@ describe('M3 AppTools Preact adapter', () => {
         };
         let failure: unknown;
         expect(() => mount(x, h(Boundary, { onError: error => { failure = error; } },
-            h(AppTools, { definition: tools, bindings: bindings('late') }, h(ToolRef, { tool: tools.read }))))).toThrow('TOOL_BINDING_CLEANUP_FAILED');
+            h(AppTools, { definition: tools, bindings: bindings('late') })))).toThrow('TOOL_BINDING_CLEANUP_FAILED');
         failure ??= (() => { try { [...x.context.toolCleanup][0]!(); } catch (error) { return error; } })();
         expect(failure).toMatchObject({ code: 'TOOL_BINDING_CLEANUP_FAILED', diagnostics: { original: { code: 'TOOL_BINDING_CLOSED' } } });
         expect(x.context.toolCleanup.size).toBe(1); expect(x.registry.inspect().bindings).toBe(1);
@@ -386,33 +380,72 @@ describe('M3 AppTools Preact adapter', () => {
         successor.unmount(); expect(x.begin).toHaveBeenCalledTimes(x.end.mock.calls.length);
     });
 
-    it('matches pure TS descriptors, calls, invalidation, cleanup and stable catalog across one event sequence', async () => {
-        const react = environment('react_sequence'), pure = environment('ts_sequence');
-        const controller = createToolBindings({ definition: tools, appTypeTools: pure.context.appTypeTools });
-        const view = render(h('div', {})); cleanups.push(view.unmount);
-        const pureViews: string[] = []; let previousReact: ReturnType<typeof react.registry.listTools>[number] | undefined, previousPure: typeof previousReact;
-        const catalog = JSON.stringify(getToolCatalog(tools)); let catalogMarkup: string | undefined;
-        for (const [index, [count, enabled]] of [[0, true], [1, true], [3, true], [3, false], [1, true], [0, true], [1, true]].entries()) {
-            const label = 'event_' + index;
-            await act(async () => view.rerender(h(AppRuntimeContext.Provider, { value: react.context }, h(AppTools, { definition: tools, bindings: bindings(label, Boolean(enabled)) }, [
-                h(ToolCatalog, { definition: tools }), ...Array.from({ length: Number(count) }, (_, i) => card('card_' + i)),
-            ]))));
-            controller.commit(bindings(label, Boolean(enabled)));
-            while (pureViews.length > Number(count)) pure.context.viewTools.unmount(pureViews.pop()!);
-            while (pureViews.length < Number(count)) pureViews.push(pure.context.viewTools.mount('card_' + pureViews.length, 'Card'));
-            const a = react.registry.listTools(), b = pure.registry.listTools();
-            const descriptors = (list: typeof a) => list.map(({ viewType, name, description, inputSchema }) => ({ viewType, name, description, inputSchema }));
-            expect(descriptors(a)).toEqual(descriptors(b));
-            const currentA = a.find(tool => tool.name === 'read'), currentB = b.find(tool => tool.name === 'read');
-            if (currentA && currentB) expect(await call(react, currentA)).toEqual(await call(pure, currentB));
-            if (previousReact && previousPure) expect(await call(react, previousReact)).toEqual(await call(pure, previousPure));
-            previousReact = currentA ?? previousReact; previousPure = currentB ?? previousPure;
-            const markup = view.container.querySelector('[data-role="tool-catalog"]')!.outerHTML;
-            catalogMarkup ??= markup; expect(markup).toBe(catalogMarkup); expect(JSON.stringify(getToolCatalog(tools))).toBe(catalog);
+    it('bounds cleanup diagnostics and attempts every handle before releasing its owner', () => {
+        const registry = createViewOwnedTools('cards', 'bounded_cleanup');
+        cleanups.push(() => registry.dispose());
+        const keys = ['local_' + 'k'.repeat(200), ...Array.from({ length: 11 }, (_, i) => 'local_' + i)];
+        const definition = defineToolSet(Object.fromEntries(keys.map((key, i) => [key, defineViewTypeTool({
+            viewType: 'Card', name: 'tool_' + i, description: 'Test cleanup.', inputSchema: Type.Object({}),
+        })])));
+        const candidate = Object.fromEntries(keys.map(key => [key, { execute: () => ({ success: true }) }]));
+        let failing = true, attempts = 0;
+        const getter = vi.fn(() => 'must not be read');
+        const port: IAppTypeToolPort = { protocol: 'view-type-tools-v4', registerTypeTool(tool, options) {
+            const release = registry.registerTypeTool(tool, options);
+            return () => {
+                attempts++;
+                if (!failing) return release();
+                if (tool.name === 'tool_0') throw Object.defineProperty({}, 'message', { get: getter });
+                throw Object.assign(new Error('e'.repeat(1000)), { name: 'n'.repeat(200), code: 'c'.repeat(200) });
+            };
+        } };
+        const controller = createToolBindings(definition, port);
+        const next = createToolBindings(definition, port);
+        controller.prepare(candidate)();
+        let failure: any;
+        try { controller.dispose(); } catch (error) { failure = error; }
+        expect(failure).toMatchObject({ code: 'TOOL_BINDING_CLEANUP_FAILED',
+            diagnostics: { cleanupFailureCount: 12, omittedCleanupFailures: 4 } });
+        const diagnostics = failure.diagnostics;
+        expect(diagnostics.cleanupErrors).toHaveLength(8);
+        expect(diagnostics.cleanupErrors[0]).toMatchObject({ toolKeyTruncated: true });
+        expect(Object.isFrozen(diagnostics.cleanupErrors)).toBe(true);
+        for (const { toolKey, error } of diagnostics.cleanupErrors) {
+            expect(toolKey.length).toBeLessThanOrEqual(64);
+            expect(error.message.length).toBeLessThanOrEqual(256);
+            expect(error.name.length).toBeLessThanOrEqual(64);
+            expect(error.code?.length ?? 0).toBeLessThanOrEqual(64);
         }
-        view.unmount(); controller.dispose(); for (const id of pureViews) pure.context.viewTools.unmount(id);
-        expect(react.registry.inspect().bindings).toBe(0); expect(pure.registry.inspect().bindings).toBe(0);
-        react.registry.dispose(); pure.registry.dispose(); expect(react.registry.inspect().retainedBytes).toBe(0); expect(pure.registry.inspect().retainedBytes).toBe(0);
+        expect(getter).not.toHaveBeenCalled();
+        expect(attempts).toBe(12);
+        expect(() => next.prepare(candidate)()).toThrow('TOOL_BINDING_OWNER_CONFLICT');
+        failing = false;
+        controller.dispose();
+        expect(attempts).toBe(24);
+        expect(registry.inspect().bindings).toBe(0);
+        next.prepare(candidate)();
+        controller.dispose();
+        expect(registry.inspect().bindings).toBe(12);
+        next.dispose();
+    });
+
+    it('keeps the Root catalog stable as Views and current Tools change', async () => {
+        const x = environment('catalog');
+        const app = (open: boolean) => h(AppRuntimeContext.Provider, { value: x.context },
+            h(AppTools, { definition: tools, bindings: bindings('catalog') }, [
+                h(ToolCatalog, { definition: tools }), open ? card() : null,
+            ]));
+        const view = render(app(false));
+        cleanups.push(view.unmount);
+        const catalog = () => view.container.querySelector('[data-role="tool-catalog"]')!.outerHTML;
+        const initial = catalog();
+        expect(x.registry.listTools()).toHaveLength(0);
+        await act(async () => view.rerender(app(true)));
+        expect(x.registry.listTools()).toHaveLength(2);
+        expect(catalog()).toBe(initial);
+        await act(async () => view.rerender(app(false)));
+        expect(x.registry.listTools()).toHaveLength(0);
+        expect(catalog()).toBe(initial);
     });
 });
 
