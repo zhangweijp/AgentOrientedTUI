@@ -18,7 +18,7 @@ agentina install @agentina/aotui-ide
 
 ## Package default
 
-The package has one default managed factory built with `createTUIApp` and backed by `ScopedIDEApp`. Normal Host startup installs this package entry through AppRegistry and the generic Semantic Source; there is no route-specific app entry or IDE-only Runtime mode.
+The package exports its managed scoped IDE factory as the default entry. The Host installs it through AppRegistry and the generic Semantic Source. The standard launch configuration accepts `projectPath`, `ideSessionKey`, `AOTUI_DATA_DIR` and `ideHistoryPath`.
 
 Opening files publishes FileDetail Views and makes the IDE's FileDetail Tool set available. The IDE registers one App-level set for the `FileDetail` ViewType; ten open files still share one `edit_file`, one `write_file`, one `rename_file`, and one `delete_file` declaration. Each Tool call takes an explicit business path (`filePath`, or `oldPath`/`newPath` for rename), and the IDE checks it against its current loaded-file records. The SDK does not infer a file target from which View displayed the Tool.
 
