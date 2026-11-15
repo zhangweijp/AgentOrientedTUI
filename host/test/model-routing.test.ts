@@ -171,7 +171,13 @@ it('routes persisted and explicit models through Desktop and IM using the select
             protocol: 'openai', baseUrl: customURL, apiKey: 'fixture-compatible' });
         const proxyModel = await caller.llmConfig.customModelConfigsCreate({ customProviderId: proxy.id, modelId: 'openai:local' });
         await caller.llmConfig.setActive({ id: proxyModel.id });
-        await desktop(await caller.db.createTopic({ title: 'Custom active' }),
+        // These two models advertise text only. Keep the routing cases independent of the live App tools.
+        const textOnlySources = {
+            apps: { enabled: false, disabledItems: [] },
+            mcp: { enabled: true, disabledItems: [] },
+            skill: { enabled: true, disabledItems: [] },
+        };
+        await desktop(await caller.db.createTopic({ title: 'Custom active', sourceControls: textOnlySources }),
             { url: customURL + '/chat/completions', key: 'Bearer fixture-compatible', model: 'openai:local', maxTokens: 512 });
         await desktop(await caller.db.createTopic({ title: 'Explicit official model with same-named custom Provider',
             modelOverride: 'openai:' + activeModel }),
@@ -183,7 +189,8 @@ it('routes persisted and explicit models through Desktop and IM using the select
         const claude = 'anthropic/team:custom';
         await caller.llmConfig.customModelConfigsCreate({ customProviderId: anthropic.id, modelId: claude });
         await caller.llmConfig.customProvidersUpdate({ id: anthropic.id, data: { apiKey: 'fixture-an-new' } });
-        await desktop(await caller.db.createTopic({ title: 'Custom Anthropic', modelOverride: anthropic.id + ':' + claude }),
+        await desktop(await caller.db.createTopic({ title: 'Custom Anthropic', modelOverride: anthropic.id + ':' + claude,
+            sourceControls: textOnlySources }),
             { url: anthropicURL + '/messages', key: 'fixture-an-new', model: claude, maxTokens: 768 });
         await caller.llmConfig.customProvidersUpdate({ id: anthropic.id, data: { apiKey: '' } });
         await expect(host.llmConfigService.resolveLLMConfig(anthropic.id + ':' + claude))
