@@ -2,7 +2,7 @@
 
 ## 文档目的与状态
 
-本文件记录项目所有者明确的产品目标、交互约束，以及据此评审设计和实现的方法。初始基准为 2026-10-28，后续反馈按各节日期记录。自 2026-11-11 起，本机 SDK / Runtime 设计与验收索引位于 Git 忽略的 `docs/sdk-runtime-design/README.md`，当前三层主文档见第十五节，发布前兼容清理见第二十节。第十六至十九节保留 B01–B04 交接，第十三、十四节保留此前路线与交接事实。仓库提供 [SDK 作者指南](sdk/docs/app-authoring.md) 和 [Runtime 集成合同](runtime/docs/runtime-app-interaction.md)。各节引用的旧评审 `deepseek_review.md` 可在提交 `60ee17785` 中查阅。
+本文件记录项目所有者明确的产品目标、交互约束，以及据此评审设计和实现的方法。初始基准为 2026-10-28，后续反馈按各节日期记录。自 2026-11-11 起，本机 SDK / Runtime 设计与验收索引位于 Git 忽略的 `docs/sdk-runtime-design/README.md`，当前四层主文档见第二十一节；第十五节保留此前三层讨论记录，发布前兼容清理见第二十节。第十六至十九节保留 B01–B04 交接，第十三、十四节保留此前路线与交接事实。仓库提供 [SDK 作者指南](sdk/docs/app-authoring.md) 和 [Runtime 集成合同](runtime/docs/runtime-app-interaction.md)。各节引用的旧评审 `deepseek_review.md` 可在提交 `60ee17785` 中查阅。
 
 这些目标是设计基准，不表示现有实现已经满足全部要求。阅读代码时必须区分「目标」「当前实际行为」「提议中的改造」；发现冲突应明确指出，不能用现状反向改写目标。
 
@@ -24,6 +24,7 @@
 - Application 通过 View 向 Agent 呈现当前应用状态。
 - 当前呈现格式是 XML + Markdown；View 被包装为 LLM 上下文 Messages 数组中的 User Message。
 - Agent 可以通过应用提供的操作，控制 View 的打开、更新、关闭及其他明确支持的状态转换。
+- 2026-11-15 项目所有者明确：页面只有打开与未打开；本轮采用的同一快照中，所有已打开页面都应进入观察。上下文不足不应接受新页面打开，不能让页面保持打开却在成功观察中被挑选省略。请求前准备/采用属于内部交接，不构成页面第三种状态；真实模型输入必须与已采用来源对应。具体容量准入与实现差距见 C02 / K04。
 - 不应把视觉布局或 DOM 机制本身当作产品目标；采用何种内部渲染技术，需要以这些交互语义为依据。
 
 ### 2.2 应用当前状态的 Projection（投影）
@@ -31,13 +32,14 @@
 - 项目所有者于 2026-11-03 明确：采用 Projection，而不是“修改 Agent 工作记忆”或通用 Messages CRUD 作为系统模型。
 - Agent 操作 App，App 更新自己的业务状态；SDK/Runtime 将已提交的 View、Ref 和当前工具能力投影到上下文。Messages 是呈现结果，不是应用任意修改的业务数据库。
 - 对同一个逻辑 View，当前上下文中只呈现其最新有效快照。更新不能持续追加多份看似都代表当前状态的旧快照。
-- 「只保留最新 View」针对当前状态投影，不等于要求删除用户对话、操作收据或审计记录，也不要求为此保留旧快照的完整 Ref payload。
+- 「只保留最新 View」针对当前状态投影，不等于要求删除用户对话、操作收据或审计记录，也不要求为没有持有者的旧快照保留完整 Ref payload。有仍然有效的 Observation 或已分发且尚未终结的调用时，按各自所有权暂时持有必要来源；资格撤销与数据释放分开，责任结束后释放。此原则于 2026-11-15 再次确认，当前实现核对见 C01。
 - 应用只管理自己的投影部分，不能改写用户指令或其他来源的上下文；不因此扩展出通用记忆管理系统。
 
 ### 2.3 View 与可用行为共同构成充血模型
 
 - View 不只是数据文本，也承载当前工作对象及其适用操作。
-- App 业务 Tool 按 App + ViewType 声明与注册。同类型多个 View 实例共享一组 Tool，实例选择由显式业务参数或 Ref 数据表达，业务有效性由 App 校验。
+- 面向 Agent 的 Tool 定义按 App + ViewType 共享。2026-11-15 第四轮项目所有者进一步明确作者目标：每个 View 实例拥有自己的状态与局部操作，toolcall 明确 view_id 选择实例；共享定义不要求共享一个执行闭包。当前 App 级单 handler 与此目标的差距及候选迁移由 C04 记录；具体 API 和代码改造尚未实施，业务有效性仍由 App 校验。
+- 2026-11-16 项目所有者确认新版页面实例 Tool 的 `view_id` 由框架自动加入模型 Schema，始终必填。作者只声明业务参数。Runtime 消费该字段并校验接收者，handler 接收业务参数。跨页 Ref 与调用合同见 [View Type SDK 已确认目标](docs/sdk-runtime-design/view-type-sdk/01-goals-and-invariants.md#confirmed-contract)。
 - App 业务 Tool 会随着 Agent 打开 View、进入某个对象上下文或发生状态转换而逐渐暴露。
 - 例如，尚未打开任何文件时，不暴露针对已打开文件的编辑能力；文件打开后，其 FileDetailView 才提供相应编辑操作。
 - 2026-11-13 项目所有者明确，`system-open_app` 与 `system-close_app` 是 Desktop 基础工具。Apps Source 启用时，两项工具的名称和参数 Schema 固定，即使当前没有可操作的 App 也可见。调用时从当前 Desktop 选取 App ID，按话题启用范围、App 状态和关闭所绑定的实例判断能否执行。
@@ -186,7 +188,7 @@ read file / edit file 在这里表示交互语义，不要求保留这些字面 
 
 据此执行时，同一份 Tool 声明仍是类型、注册、参数校验和工具目录的来源，不为简化正文新增一份手写定义或工具表。去掉分类不取消既有 Scope 授权、参数只读、Ref 绑定与失效、调用防重、结果 effects／partial／unknown 语义及清理责任；这些是独立合同，不得随字段删除一并弱化。
 
-**2026-11-12 更新：** 上段保留当时的合同背景，其中要求保留 `effects` 的部分已由项目所有者的新决定覆盖：删除 `effects` 及其同义框架分类。当前方向见第十五节与 `docs/sdk-runtime-design/01-concept-design.md` 的 C04；不表示代码已完成迁移，必要的调用、防重与清理责任不因此消失。
+**2026-11-12 更新：** 上段保留当时的合同背景，其中要求保留 `effects` 的部分已由项目所有者的新决定覆盖：删除 `effects` 及其同义框架分类。当时方向见第十五节及旧版 `docs/sdk-runtime-design/01-concept-design.md` 的 C04；旧主文档当前不可读取，不能将这项历史引用与本轮重新建档后的 C04 页面操作议题混同；不表示当时代码已完成迁移，必要的调用、防重与清理责任不因此消失。
 
 本轮由 Clean 在独占副本连续完成实现、消费者／文档迁移与必要验证，再由 Owner 集中验收及采用。2026-11-08 已完成本轮工程验收并采用到实际根目录；原有历史验收事实保留，最终 Semantic 人工验收另记。交付与证据跟踪在 `deepseek_review.md` 的唯一索引。
 
@@ -198,6 +200,7 @@ read file / edit file 在这里表示交互语义，不要求保留这些字面 
 - Tool 的 Ref 参数使用 `view_id.ref_id`，例如 `plan_b.completed_phases[0]`；调用地址不带 `Phase:` 类型前缀。模型使用所在 View 的 id 与局部数据引用组成输入；应用说明清楚讲解一次即可，不在页面重复完整 Tool Schema。
 - AOTUI Desktop 的实际函数调用 prompt 必须同步解释展示标记与调用地址的转换，并同步相关 App 提示。复用现有共用指令来源；只有显式 Ref 参数使用该格式，普通路径、文本及 JSON 仍按各自 Schema。
 - 展示标记负责表达类型与局部引用，调用地址负责指定 View 和数据。Ref 在 View 内命名；两个同类型 View 可以分别发布同名数组和元素，调用必须明确选中所属 View。业务类型仍由 Ref 元数据及参数合同校验。
+- 2026-11-16 项目所有者确认新版调用支持同一个 App 运行实例的原 Observation 内跨 View 传递显式 Ref。顶层 `view_id` 选执行页面，Ref 地址的前缀选数据来源页。两者分别校验，业务适用性仍由 App 判断。
 - 第八节所说的完整 Ref，在本轮目标中由 View 外层 id 与正文局部 Ref 共同表达。模型仍不需要业务 ID；Runtime 保留现有 App、Observation、快照及 View 实例绑定、失效与释放合同，App 继续负责业务校验。
 - `view_id.completed_phases[0].field` 字段访问、View 私有／App 公用／全局公用的数据作用域及基础数据类型体系均为未来 TODO。本轮不实现这些能力，不预建表达式语言或作用域框架。
 
@@ -448,3 +451,63 @@ Host A–C 最终 r2 通过研发负责人本地工程验收。已将 Driver 模
 Driver 模型路由的修订包通过研发负责人本地工程验收。IDE 启动配置清理已下发给「项目优化 Coding」。[Driver 最终验收](docs/sdk-runtime-design/06-implementation-evidence.md#driver-model-routing-acceptance-20261115) · [IDE 实施顺序](docs/sdk-runtime-design/16-remaining-compatibility-cleanup-plan.md#ide-launch-option-cleanup)
 
 IDE 启动配置已通过本地工程验收，[16](docs/sdk-runtime-design/16-remaining-compatibility-cleanup-plan.md) 所列四批完成。IDE 综合 LSP 后代组关闭仍保留历史失败，前后包均有常规权限下的独立对照。[IDE 最终验收](docs/sdk-runtime-design/06-implementation-evidence.md#ide-launch-option-acceptance-20261115) · [四批验收汇总](docs/sdk-runtime-design/06-implementation-evidence.md#remaining-compatibility-closure-20261115)
+
+## 二十一、2026-11-15 反馈：按四层维护 SDK / Runtime 讨论 SSOT
+
+项目所有者要求将本轮评审的问题、关键讨论与决定，按概念设计、系统设计、模块设计、机制设计分别记录，继续边讨论边更新，直到双方与文档一致。唯一入口仍为 [SDK / Runtime 设计索引](docs/sdk-runtime-design/README.md)，当前主文档为：
+
+- [01 概念设计](docs/sdk-runtime-design/01-concept-design.md)：C01–C04，当前投影与历史来源持有、View/Tool/对象的不同条件、按所见观察拼装输入，以及页面局部状态/方法与实例路由的作者目标及候选机制。
+- [02 系统设计](docs/sdk-runtime-design/02-system-design.md)：S01–S03，Snapshot Core 所有权、发布完成层次、Runtime 未终结调用与 App 业务任务。
+- [03 模块设计](docs/sdk-runtime-design/03-module-design.md)：M01–M03，两种生产者接口、Preact 兼容性与默认入口分开决策、接口稳定等级。
+- [04 机制设计](docs/sdk-runtime-design/04-mechanism-design.md)：K01–K05，bindingId 减法、作者类型与展示一致性、Adapter 名称约束、预算可发现与冻结数据复用。
+
+每项只由一份主文档维护完整决定，索引映射本轮原始 14 项及后续新增讨论的状态。当前事实、用户复现、源码/测试断言查阅和实际执行结果必须分开；方向认可不等于 API 已冻结或代码已实施。
+
+### 本轮关键决定与未决边界
+
+- 原第 1 项原则已确认：最新 View 的呈现规则不排斥真实 Observation/在途调用的必要来源持有；业务完成与投影完成分别表达。现有机制已经核对，作者发布反馈仍归 S02 讨论。
+- 原第 3、4、6 项在首轮保持澄清状态；同日后续反馈已更新：S01 的单实例 Snapshot Core 简化方向获认可，具体 API/迁移尚未实施；C03 的隐含目标例子属于 App 可能引入的参数误用，框架没有自动 currentView；S03 优先研究直接超时错误，公开 pending 不作为必要前提。当前最新 handler、原观察 Ref 解析、串行调用和两字段收据查询合同仍作为现状记录。
+- 原第 8 项必须拆开：Preact 私有 hook 的兼容性风险成立；更换 SDK 默认入口是独立产品选择，尚未决定。不得据此取消现行 Preact 默认路线。
+- 原第 12 项修正前次诊断：身份分离与按 App 诊断隔离已经存在；先提前反馈 Adapter 可表示范围，同名多实例的稳定消歧按实际需求决定。
+- 删除独立 Observation bindingId、改善 Ref schema/value 推导及同源展示等方向已获认可，具体迁移和 API 尚未实施；删除 bindingId 不等于删除 SDK publish 的 handler bindings。具体边界由 K01/K02 唯一定义。
+- 接口稳定等级、两种 producer 边界与性能问题按主文档继续细化；不从认可诊断推导拆包、重写 renderer、修改硬上限、自动业务重试或通用任务系统。
+
+### 本轮范围与历史关系
+
+本次任务是建立文档、核对源码与更新当前指导，没有启动候选生产改造、测试、构建、发布或部署，也没有自动下发新的研发批次。
+
+读取基线为 76d46300dfa561e835607e7647d3c25ed90b48c2。建档核实时，旧 docs/sdk-runtime-design 文件不可读取，四层记录沿用原目录。第十三至二十节的决定与批次完成事实保留，缺失的旧文件链接是历史定位。新的 03-module-design.md 与旧 03-code-implementation.md 分属不同记录。当前设计和升级入口以本节主索引及第二十二节专题为准，后续实现再记录实际差异与必要验证。
+
+### 同日后续：打开即观察、业务目标与超时表达
+
+项目所有者进一步明确已打开页面应全部进入本轮观察，确认可简化 Core 内重复职责，并追问 handler 隐含目标的责任与“超时报错即可”的方案。当前决定归属仍为 C02/C03、S01/S03、K04，不另建平行清单。
+
+- 已打开页全量观察是产品约束；原先选择性省略已开页面的建议撤回。现有 viewIds 子集和 content hide 能力需按实际消费者收敛，不能将现状当作保留兼容 profile 的理由。工具授予范围与真实来源校验仍保留。
+- 默认请求链在正式请求模型之前采用 Observation；若启用了输入预算检查，该检查先于采用。候选 Messages 已组装不等于模型已看到，页面产品状态与这些内部交接分开。
+- App handler 若忽略传入的 A 而使用自己维护的 currentFile=B，属于业务实现错误；不据此要求通用上下文冻结。若 Runtime 把原 A Ref 解析成 B，则是框架必须防止的来源错误。
+- 超时可以直接反馈等待错误；它不自动代表未执行或取消成功。已分发工作的内部防重、来源持有与迟到终结责任继续存在。具体错误结构待细化，不新增业务任务系统。
+- 本轮延续文档讨论与源码核对，没有自动启动单实例 Core 或其他生产代码改造。
+
+### 同日第三轮：页面数据与调用接收者仍属候选讨论
+
+项目所有者提出 View 能否携带数据并作为 Tool 的隐性参数，及 ViewTypeTool 一对多是否有缺陷。唯一归属为 [C04](docs/sdk-runtime-design/01-concept-design.md#c04)。当前 Ref 已支持显式选来源、按原观察注入捕获值；共享操作定义本身不要求复制每实例 Tool，但代码尚无统一页面默认上下文/接收者合同。
+
+用户的提问不等于已批准新 API。继续比较主 Ref 的 SDK 作者辅助与直接选 View 的接收者协议；若引入后者，应复用现有捕获和来源所有权，不读取最新可变页面状态来冒充原观察数据。C03 中具体 handler 的参数误用仍属 App Bug，同时可以评估 SDK 是否让常见正确写法更直接。未改变既有 App + ViewType、App 级 handler owner、最新已提交 handler 或原观察 Ref 合同，未启动生产改造。
+
+### 同日第四轮：类型级定义与实例执行绑定分开
+
+项目所有者明确原意：页面可以像 HTML + JavaScript 一样声明局部状态和操作；不同 FileDetailView 实例各有 count，Agent 的 toolcall 明确 view_id，对外仅保留一份同类型工具定义。这是作者目标澄清，具体语法、API、协议和生产迁移仍待设计。唯一归属仍是 [C04](docs/sdk-runtime-design/01-concept-design.md#c04)。
+
+按此目标评估，最近已核对实现将每定义的 handler 集中到 App 级，未直接支持局部页面绑定。共享定义与实例绑定应分开；可保留一个 App 聚合协调者，但不能据此要求全部页面共用一个执行闭包。原 Observation 固定目标实例和 Ref 观察值，不冻结当前 count；函数与状态留在执行端，Runtime 不分析或序列化任意闭包。
+
+第三轮主要讨论的“冻结页面数据注入”不能代替完整页面运行上下文；其全部来自 Snapshot 的要求仅适用于声明的观察输入。当前代码与历史验收事实保留，新目标不自动启动生产改造。本轮远程连接恢复后确认 HEAD 仍为 76d46300dfa561e835607e7647d3c25ed90b48c2、原文档身份未变，并复核关键绑定实现；本轮仅更新讨论文档，没有实施生产改造。
+
+## 二十二、2026-11-15 反馈：高优先级 View Type SDK 独立专题
+
+项目所有者将页面局部状态/工具绑定改动列为高优先级，要求盘清：新的 View Type SDK 与作者代码、View 改动范围、Root 元数据来源、上下文呈现，并独立建立目标、技术设计、可行性和影响文档。上下文展示以保持现有方式为设计基准。
+
+唯一专题入口是 [View Type SDK](docs/sdk-runtime-design/view-type-sdk/README.md)，包含 01 目标、02 SDK、03 Runtime、04 Root/上下文、05 可行性、06 影响/迁移、07 决定/验证。父 C04 只保留议题路由与沿革，旧完整讨论明确归档；不要在多个目录继续维护平行技术方案。
+
+本轮给出推荐候选：静态 ViewType descriptor、页面实例 bindings、纯 TS 稳定 handle、原观察实例路由；保留 Root 静态名称目录、XML + Markdown User Messages 与动态原生 Tools。用户目标已明确，但具体 API、发布接受后置条件、enabled 代际、协议版本与迁移安排未全部冻结。新代码示例不是当前 SDK 导出。
+
+建立专题时的交付是研究、源码核对和设计文档。后续现行基线复测、已确认调用合同及候选实现状态分别登记在 [专题决定与验证](docs/sdk-runtime-design/view-type-sdk/07-decisions-and-validation.md)。2026-11-16 升级前完成文档一致性复核，实际状态以专题为准。
