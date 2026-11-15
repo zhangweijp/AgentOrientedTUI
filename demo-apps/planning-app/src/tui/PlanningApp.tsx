@@ -1,11 +1,11 @@
-import { createTUIApp, View, useEffect, useMemo, useState, useAppRuntimeContext, usePersistentState, AppTools } from '@aotui/sdk';
+import { createTUIApp, View, useEffect, useMemo, useState, useAppRuntimeContext, usePersistentState } from '@aotui/sdk';
 import type { Plan, Phase, PhaseInput, TaskInput, TaskItem, TaskStatus } from '../types.js';
 import { RootView } from './RootView.js';
 import { PlanListView } from './PlanListView.js';
 import { PlanDetailView } from './PlanDetailView.js';
 import { planningService } from '../core/planning-service.js';
 import type { AppContext } from '@aotui/sdk';
-import { planningTools, createPlanDetailBindings, createPlanListBindings } from './planning-tools.js';
+import { RootType, PlanListType, PlanDetailType, planningViewTypes, createPlanDetailBindings, createPlanListBindings } from './planning-tools.js';
 
 const isPlanCompleted = (plan: Plan) => {
     if (plan.phases.length === 0) {
@@ -351,38 +351,30 @@ function PlanningApp() {
         completeTask,
     });
 
-    const bindings = {
+    const listBindings = {
         ...planListBindings,
-        ...planDetailBindings,
-        closePlan: { ...planListBindings.closePlan, enabled: Boolean(activePlan) },
-        addPhase: { ...planDetailBindings.addPhase, enabled: Boolean(activePlan) },
-        deletePhase: { ...planDetailBindings.deletePhase, enabled: Boolean(activePlan) },
-        completePhase: { ...planDetailBindings.completePhase, enabled: Boolean(activePlan) },
-        addTask: { ...planDetailBindings.addTask, enabled: Boolean(activePlan) },
-        updateTask: { ...planDetailBindings.updateTask, enabled: Boolean(activePlan) },
-        deleteTask: { ...planDetailBindings.deleteTask, enabled: Boolean(activePlan) },
-        completeTask: { ...planDetailBindings.completeTask, enabled: Boolean(activePlan) },
+        close_plan: { ...planListBindings.close_plan, enabled: Boolean(activePlan) },
     };
 
     const planListName = activePlan ? 'Plan List (Active Plan Open)' : 'Plan List';
     const planDetailName = activePlan ? `Plan: ${activePlan.title}` : 'Plan Detail';
 
     return (
-        <AppTools definition={planningTools} bindings={bindings}>
-            <View kind="instruction" id="root" type="Root" name="Root">
+        <>
+            <View kind="instruction" id="root" type={RootType} name="Root">
                 <RootView />
             </View>
 
-            <View kind="state" id="plan_list" type="PlanList" name={planListName}>
+            <View kind="state" id="plan_list" type={PlanListType} bindings={listBindings} name={planListName}>
                 <PlanListView plans={plans} activePlan={activePlan} />
             </View>
 
             {activePlan ? (
-                <View kind="state" id="plan_detail" type="PlanDetail" name={planDetailName}>
+                <View kind="state" id="plan_detail" type={PlanDetailType} bindings={planDetailBindings} name={planDetailName}>
                     <PlanDetailView plan={activePlan} />
                 </View>
             ) : null}
-        </AppTools>
+        </>
     );
 }
 
@@ -391,6 +383,7 @@ export default createTUIApp({
     whatItIs: 'A hierarchical task planning and progress tracking system that organizes work into three levels: Plans (projects), Phases (major milestones), and Tasks (individual work items). Each level supports full CRUD actions and tracks completion status. All data is persisted per-desktop using SQLite.',
     whenToUse: 'Use Planning App when you need to: (1) Break down complex projects into manageable phases and tasks, (2) Track progress across multiple work streams or milestones, (3) Create structured, hierarchical work plans with descriptions and metadata, (4) Monitor completion status at plan, phase, and task levels, (5) Organize iterative development with clear phases and actionable tasks.',
     component: PlanningApp,
+    viewTypes: planningViewTypes,
     onDelete: async (context: AppContext) => {
         await planningService.clearDesktop(context.desktopId);
         planningService.close();

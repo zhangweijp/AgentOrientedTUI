@@ -36,9 +36,11 @@ try {
 
     async function invoke(observation, name, input) {
         const tool = observation.tools.find(tool => tool.name === name);
-        const binding = observation.bindings.find(binding => binding.toolId === tool?.id);
-        if (!binding) throw new Error(`Missing ${name}. Check that the example database is seeded and readable.`);
-        const result = await client.invoke({ invocationId: name, observationId: observation.observationId, bindingId: binding.bindingId, input });
+        if (!tool) throw new Error(`Missing ${name}. Check that the example database is seeded and readable.`);
+        const view = observation.views.find(view => view.type === tool.viewType);
+        if (!view) throw new Error(`Missing View for ${name}.`);
+        const result = await client.invoke({ invocationId: name, observationId: observation.observationId,
+            toolId: tool.id, input: { view_id: view.id, ...input } });
         console.log(JSON.stringify(result));
         if (result.kind !== 'receipt' || result.receipt.outcome.status !== 'succeeded') process.exitCode = 1;
     }

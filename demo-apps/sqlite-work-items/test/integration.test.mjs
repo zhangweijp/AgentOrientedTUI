@@ -90,9 +90,11 @@ exec ${shellQuote(sqlite)} "$@"
     }
     function request(observation, name, input = {}) {
         const tool = observation.tools.find(tool => tool.name === name);
-        const binding = observation.bindings.find(binding => binding.toolId === tool?.id);
-        assert.ok(binding, `No observed binding for ${name}`);
-        return { invocationId: `call-${++sequence}`, observationId: observation.observationId, bindingId: binding.bindingId, input };
+        assert.ok(tool, `No observed Tool for ${name}`);
+        const view = observation.views.find(view => view.type === tool.viewType);
+        assert.ok(view, `No observed View for ${name}`);
+        return { invocationId: `call-${++sequence}`, observationId: observation.observationId,
+            toolId: tool.id, input: { view_id: view.id, ...input } };
     }
 
     async function startHeldRead(observation, ignoreTerminate = true) {

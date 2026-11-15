@@ -1,8 +1,11 @@
-import { createTUIApp, View, useCallback, useEffect, useLLMUsage, useRef, useState } from '@aotui/sdk';
+import { defineViewType, createTUIApp, View, useCallback, useEffect, useLLMUsage, useRef, useState } from '@aotui/sdk';
 import type { LLMUsageEvent } from '@aotui/sdk';
 import { RootView } from './RootView.js';
 import { MonitorView } from './MonitorView.js';
 import type { TokenMonitorSettings } from '../types.js';
+
+const RootType = defineViewType({ name: 'Root', tools: {} });
+const MonitorType = defineViewType({ name: 'TokenMonitor', tools: {} });
 
 function TokenMonitorRoot() {
     const [settings, setSettings] = useState<TokenMonitorSettings>({
@@ -83,11 +86,11 @@ function TokenMonitorRoot() {
 
     return (
         <>
-            <View id="root" type="Root" kind="instruction" name="Root">
+            <View id="root" type={RootType} kind="instruction" name="Root">
                 <RootView settings={settings} onUpdateSettings={updateSettings} />
             </View>
             {shouldWarn ? (
-                <View id="monitor" type="TokenMonitor" kind="state" name="Token Monitor">
+                <View id="monitor" type={MonitorType} kind="state" name="Token Monitor">
                     <MonitorView settings={settings} history={history} latestMaxTokens={latestMaxTokens} />
                 </View>
             ) : null}
@@ -96,6 +99,7 @@ function TokenMonitorRoot() {
 }
 
 export default createTUIApp({
+    viewTypes: [RootType, MonitorType],
     app_name: 'token_monitor',
     whatItIs: 'A real-time token usage monitoring system that tracks LLM context consumption, automatically resolves model limits from models.dev, and warns when usage exceeds configurable thresholds. Maintains a history of the last 10 usage snapshots for trend analysis.',
     whenToUse: 'Use Token Monitor when you need to: (1) Track real-time token consumption during LLM interactions, (2) Avoid context overflow by monitoring usage percentage, (3) Optimize prompt efficiency by analyzing token usage patterns, (4) Set custom warning thresholds for proactive alerts, (5) Review historical usage trends from recent interactions.',

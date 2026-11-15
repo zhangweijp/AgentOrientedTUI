@@ -2,7 +2,7 @@
 
 The package has one current entry: its default managed `TUIAppFactory`, created with `createTUIApp` and backed by `ScopedIDEApp`. It has one business owner per App and uses instance-bound Runtime interaction, committed snapshots and managed app state. Normal Host startup uses standard AppRegistry installation and the generic Semantic Source. See the [Host integration contract](../../runtime/docs/semantic-host-integration.zh-CN.md).
 
-The current authoring contract uses SDK 0.8.0 with Runtime 7.0.0. `createTUIApp` supplies `toolAuthoringProtocol: 'view-type-tools-v4'`, which Runtime checks when it loads the factory. The IDE declares ordinary Tool inputs once with TypeBox 1.4.3 and registers them at App scope. This replaces the old `useViewTypeTool(name, options, handler, config?)` and per-View `target` routing. See the [public Tool author guide](../../sdk/docs/view-type-tools.md) for a runnable authoring example and [migration steps](../../sdk/docs/migration.md).
+The current authoring contract uses SDK 0.9.0 with Runtime 8.0.0. `createTUIApp` supplies `toolAuthoringProtocol: 'view-type-tools-v5'`, which Runtime checks when it loads the factory. The IDE declares ordinary Tool inputs once with TypeBox 1.4.3 and registers them at App scope. This replaces the old `useViewTypeTool(name, options, handler, config?)` and per-View `target` routing. See the [public Tool author guide](../../sdk/docs/view-type-tools.md) for a runnable authoring example and [migration steps](../../sdk/docs/migration.md).
 
 ## Standard installation and explicit custom hosts
 
@@ -27,13 +27,13 @@ const appId = await runtime.installDynamicWorkerApp(desktopId, appModulePath, {
 });
 ```
 
-Replace the absolute paths with an existing project directory and a writable data location. Tool execution is enabled by default. Set `toolsEnabled: false` on the installation options to keep View observation and preview read-only. Ordinary and Ref parameters share `view-type-parameters-v1` and use the `view-tool-parameters-invoke/v5` Worker capability. When the Host finishes, await `runtime.beginShutdown().completion` and inspect its report.
+Replace the absolute paths with an existing project directory and a writable data location. Tool execution is enabled by default. Set `toolsEnabled: false` on the installation options to keep View observation and preview read-only. Ordinary and Ref parameters share `view-type-parameters-v1` and use the `view-tool-parameters-invoke/v6` Worker capability. When the Host finishes, await `runtime.beginShutdown().completion` and inspect its report.
 
 The normal Host supplies App identity, Desktop identity, project path and managed persistence through AppContext. By default, the IDE derives its session key from the Desktop ID and the assigned App ID, and stores history under `AOTUI_DATA_DIR/ide-sessions/<sessionKey>/history.json`. A different App installation order can change the assigned ID and the default path. Explicit `ideSessionKey` values use 1–128 ASCII letters, digits, underscores, dots or hyphens. Explicit `ideHistoryPath` values must be absolute. Give concurrent independent Apps distinct session keys. Recent history uses a cooperative lock/CAS and reports conflicts and warnings.
 
 ## All tools and business targets
 
-`?` means optional. Single-file write/edit/delete/rename belong to FileDetail; creating a file remains a Workspace action. The IDE defines each ordinary Tool once and registers it through App-level `AppTools`. All open FileDetail Views share that same Tool name, Schema and handler. The explicit `filePath`, `oldPath`, `newPath` or `file_path` values are application parameters; `IDESession` checks them when the handler runs against the currently loaded record. Runtime does not add an implicit file target. Handler defaults are not silently inserted by Schema validation. The IDE checks business permissions and file versions against the loaded state. Filesystem searches and LSP queries put result data in their Views and return concise `ToolResult` receipts. They do not require an entity Hook, entity type/ID/version tuple or top-level `refId`.
+All page Tool calls require the receiving View's XML `view_id` in addition to the business arguments below. FileDetail operations use that page's current loaded file. Workspace operations use explicit paths when the path is part of the operation, such as opening or creating a file. The IDE checks permissions and the current file version. `?` denotes optional arguments.
 
 | Tool | Parameters | View / business target |
 | --- | --- | --- |
@@ -46,25 +46,25 @@ The normal Host supplies App identity, Desktop identity, project path and manage
 | add_folder_to_workspace | folderPath | Workspace |
 | remove_folder_from_workspace | folderPath | Workspace |
 | refresh_workspace | none | Workspace |
-| close_file_detail | view_id | FileDetail / its currently loaded file |
-| close_search_view | view_id | Current SearchResult |
-| write_file | filePath, content | FileDetail / its currently loaded file |
-| edit_file | filePath, oldString, newString, replaceAll? | FileDetail / its currently loaded file |
+| close_file_detail | none | FileDetail / its currently loaded file |
+| close_search_view | none | Current SearchResult |
+| write_file | content | FileDetail / its currently loaded file |
+| edit_file | oldString, newString, replaceAll? | FileDetail / its currently loaded file |
 | create_file | filePath, content | Workspace |
-| delete_file | filePath | FileDetail / its currently loaded file |
-| rename_file | oldPath, newPath | FileDetail / its currently loaded source file and current destination root |
+| delete_file | none | FileDetail / its currently loaded file |
+| rename_file | newPath | FileDetail / its currently loaded source file and current destination root |
 | batch_edit | edits: array of {filePath,oldString,newString} | Workspace / current loaded records captured at invocation |
-| lsp_hover | file_path, line, character | FileDetail / its currently loaded file |
-| lsp_goto_definition | file_path, line, character | FileDetail / its currently loaded file |
-| lsp_find_references | file_path, line, character | FileDetail / its currently loaded file |
-| lsp_get_diagnostics | file_path | FileDetail / its currently loaded file |
-| lsp_document_symbol | file_path | FileDetail / its currently loaded file |
-| lsp_incoming_calls | file_path, line, character | FileDetail / its currently loaded file |
-| lsp_outgoing_calls | file_path, line, character | FileDetail / its currently loaded file |
-| read_loaded_diagnostics | filePath | Optional read-only diagnostics slice; status and View hint only |
+| lsp_hover | line, character | FileDetail / its currently loaded file |
+| lsp_goto_definition | line, character | FileDetail / its currently loaded file |
+| lsp_find_references | line, character | FileDetail / its currently loaded file |
+| lsp_get_diagnostics | none | FileDetail / its currently loaded file |
+| lsp_document_symbol | none | FileDetail / its currently loaded file |
+| lsp_incoming_calls | line, character | FileDetail / its currently loaded file |
+| lsp_outgoing_calls | line, character | FileDetail / its currently loaded file |
+| read_loaded_diagnostics | none | Optional read-only diagnostics slice; status and View hint only |
 | create_file_if_absent | relativePath, content | Optional WorkspaceCreate slice, existing parent only; app-owned exclusive create |
 
-File mutation tools use the App's current FileDetail record. `filePath`/`oldPath` identify the requested business file, and the IDE verifies the loaded record before acting. LSP uses `file_path`; close uses `view_id`. No generated selector is added. Search matches, LSP values and batch details appear only in their Views; successful Tool results return receipts rather than duplicate result collections. A receipt uses the actual FileDetail ID for an updated/open file, Workspace after delete or close, and Workspace plus the application's warning if View synchronization failed. No file Tool is exposed before a file is open; Workspace `batch_edit` is enabled only while files are loaded. FileDetail LSP queries refuse another file's path. A successful search creates a new SearchResult incarnation. Renaming an open file preserves its View ID and instance. The IDE captures the relevant workspace version or loaded file record when the handler starts. Its own checks reject real file/root replacement, conflicting workspace commits and late language responses. Updating another language panel does not invalidate an otherwise valid query.
+Search matches, LSP values and batch details appear in Views. Tool receipts can point to the actual FileDetail, Workspace after delete or close, and Workspace with a warning after a projection failure. `batch_edit` is enabled when files are loaded. Each successful search creates a SearchResult incarnation. Renaming an open file preserves its View ID and mount. The IDE checks stale file records, conflicting workspace commits and late language responses through the operation's current View.
 
 ## Behavior corrections
 
@@ -142,11 +142,11 @@ node node_modules/@agentina/aotui-ide/examples/local-scoped-ide.mjs \
 
 Both project and data paths are explicit. The session defaults to a stable digest of the real project directory. The example runs with the local operator's permissions and never rebuilds the repository's shared dist. It prints the actual Runtime and IDE module URLs at startup, including normal package-manager resolution.
 
-Send JSON lines with `op`: `views`, `observe`, `adopt`, `invoke`, `release` or `exit`. `observe` prepares an observation; explicitly `adopt` its ID before selecting one of its bindings. Adoption replaces the previous calling qualification. `views` lists current pages through the read-only preview. Tool selection is shared by ViewType; file paths remain explicit business parameters checked by the IDE, with no per-file execution target.
+Send JSON lines with `op`: `views`, `observe`, `adopt`, `invoke`, `release` or `exit`. `observe` prepares an observation; explicitly `adopt` its ID before invoking a Tool from it. Adoption replaces the previous calling qualification. `views` lists current pages through the read-only preview. Find the Tool in the observation and supply the receiving page in `input.view_id`.
 
-An `invoke` command contains `invocationId`, `observationId`, `bindingId` and `input`. If the ID is omitted the example generates one. To read the same completed receipt again, resend the same complete request with the same ID: Core checks its fingerprint and independently authorizes receipt reading without entering the handler again. There is no standalone `receipt` command. Do not turn an unknown outcome into a new write attempt. Inspect the returned receipt's succeeded/rejected/failed/unknown outcome.
+An `invoke` command contains `invocationId`, `observationId`, `toolId` and `input`. If the ID is omitted the example generates one. To read the same completed receipt again, resend the same complete request with the same ID: Core checks its fingerprint and independently authorizes receipt reading without entering the handler again. There is no standalone `receipt` command. Do not turn an unknown outcome into a new write attempt. Inspect the returned receipt's succeeded/rejected/failed/unknown outcome.
 
-Release observations when finished. Select only the Views needed within existing observation limits, and observe/adopt again after a binding is replaced. Receipt retention and invocation identity belong to the original App instance. The data directory contains managed state/history; it is separate from installed packages. Different session keys isolate managed state, while recent history uses the selected cooperative shared history resource.
+Release observations when finished. Each observation includes all open Views. Observe and adopt again after the receiving View is replaced. Receipt retention and invocation identity belong to the original App instance. The data directory contains managed state/history; it is separate from installed packages. Different session keys isolate managed state, while recent history uses the selected cooperative shared history resource.
 
 EOF, `exit`, SIGINT and SIGTERM stop admission and await the actual Runtime close report. Accepted startup work is joined so its lifecycle callbacks can be installed and released. The example never starts another initialization attempt after stop. Input errors do not discard subsequent commands. Initialization failure is recognized only from the IDE Root, retains its existing error, and is followed by real cleanup; arbitrary Workspace text cannot impersonate startup failure. App cleanup failure and actual Runtime resource release remain distinct, and either unsuccessful close or unreleased resources produces a nonzero exit status.
 

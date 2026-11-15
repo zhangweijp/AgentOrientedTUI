@@ -1,5 +1,5 @@
 import { ToolCatalog } from '@aotui/sdk';
-import { planningTools } from './planning-tools.js';
+import { planningViewTypes } from './planning-tools.js';
 
 export function RootView() {
     return <section>
@@ -15,6 +15,7 @@ export function RootView() {
             <li>The app checks that the object still exists and belongs to the active plan. Callable Tools and their parameter contracts are provided separately in the tool list.</li>
         </ul>
         <h2>Views</h2>
-        <ToolCatalog definition={planningTools} />
+        <p>For each operation choose the receiving page’s XML id in view_id. Ref parameters can select a value from another current Planning page.</p>
+        <ToolCatalog viewTypes={planningViewTypes} />
     </section>;
 }

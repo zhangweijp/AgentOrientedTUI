@@ -239,21 +239,6 @@ export class IDESession {
                     ? new IDEError(error.message.split(':')[0]) : new IDEError('IDE_TOOL_UNKNOWN', 'unknown'));
         }));
     }
-    /** App-owned write entry for FileDetail Tools; unlike workspace write_file, it can never create an unopened path. */
-    invokeOpenedFile(args: Readonly<Record<string, any>>): Promise<ToolResult> {
-        return this.invoke('write_file', args, 'opened-file');
-    }
-    /** Select an already opened file by the Tool's explicit business path, then run its per-file LSP request. */
-    invokeLoadedFileTool(name: string, args: Readonly<Record<string, any>>): Promise<ToolResult> {
-        if (!this.live || !this.ready) return Promise.resolve(fail(new IDEError('IDE_NOT_READY')));
-        try {
-            const file = this.files.get(textPath(args.file_path));
-            requireIDE(file, 'IDE_FILE_NOT_LOADED');
-            return this.invoke(name, args, file.viewId);
-        } catch (error) {
-            return Promise.resolve(fail(error instanceof IDEError ? error : new IDEError('IDE_TOOL_UNKNOWN')));
-        }
-    }
     /** Return the current app-owned FileDetail View ID for a loaded file, if one exists. */
     getLoadedFileViewId(filePath: string): string | undefined {
         if (!this.live || !this.ready) return undefined;
@@ -344,13 +329,6 @@ export class IDESession {
         return { result: success({ action, filePath: file, diskCommitted: true, warnings }), committedWorkspaceVersion };
     }
     private async execute(name: string, args: Readonly<Record<string, any>>, viewId: string): Promise<ToolResult> {
-        if (viewId === 'opened-file') {
-            requireIDE(name === 'write_file', 'IDE_TOOL_UNKNOWN');
-            const file = textPath(args.filePath), { record, guard } = this.fileGuard(file);
-            requireIDE(typeof args.content === 'string', 'IDE_CONTENT_INVALID');
-            const effect = await replaceObservedFile(record.observed, args.content, guard);
-            return (await this.finishDisk(record, file, args.content, guard, 'write', effect)).result;
-        }
         if (viewId !== 'workspace') return this.executeView(name, args, viewId);
         if (['edit_file', 'delete_file', 'rename_file'].includes(name) || name === 'write_file' && this.files.has(textPath(args.filePath))) {
             const file = textPath(name === 'rename_file' ? args.oldPath : args.filePath), { record, guard } = this.fileGuard(file);
@@ -492,7 +470,7 @@ export class IDESession {
     }
     private async executeView(name: string, args: Readonly<Record<string, any>>, viewId: string): Promise<ToolResult> {
         if (viewId === 'search') {
-            const current = this.search; requireIDE(current && name === 'close_search_view' && args.view_id === viewId, 'IDE_SEARCH_STALE');
+            const current = this.search; requireIDE(current && name === 'close_search_view', 'IDE_SEARCH_STALE');
             this.current(); this.search = null; this.commitWorkspace(); return success({ closed: 1 });
         }
         const record = [...this.files.values()].find(file => file.viewId === viewId); requireIDE(record, 'IDE_FILE_VIEW_CLOSED');
@@ -505,7 +483,7 @@ export class IDESession {
             return this.execute(name, { ...args, filePath: record.observed.path, oldPath: record.observed.path }, 'workspace');
         }
         if (name === 'close_file_detail') {
-            requireIDE(args.view_id === viewId, 'IDE_WRONG_VIEW'); this.files.delete(record.observed.path); this.commitWorkspace();
+            this.files.delete(record.observed.path); this.commitWorkspace();
             try { await this.lsp.closeDocument(record.observed.path); return success({ closed: 1 }); }
             catch { return success({ closed: 1, warnings: ['LSP_DOCUMENT_CLOSE_FAILED'] }); }
         }

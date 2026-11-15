@@ -49,8 +49,8 @@ function start(extra = [], nodeArgs = []) {
     async function observe(viewId, condition = () => true) {
         const deadline = Date.now() + 15000;
         for (;;) {
-            const result = await send({ op: 'observe', viewIds: [viewId] });
-            if (result.status === 'observed' && condition(result.observation)) {
+            const result = await send({ op: 'observe' });
+            if (result.status === 'observed' && result.observation.views.some(view => view.id === viewId) && condition(result.observation)) {
                 assert.equal((await send({ op: 'adopt', observationId: result.observation.observationId })).status, 'adopted');
                 return result.observation;
             }
@@ -62,9 +62,11 @@ function start(extra = [], nodeArgs = []) {
     async function call(observation, name, input) {
         assert.equal((await send({ op: 'adopt', observationId: observation.observationId })).status, 'adopted');
         const tool = observation.tools.find(tool => tool.name === name);
-        const binding = observation.bindings.find(binding => binding.toolId === tool?.id); assert.ok(binding, name);
+        assert.ok(tool, name);
+        const receiver = observation.views.find(view => view.type === tool.viewType);
+        assert.ok(receiver, 'Expected a View for ' + name);
         const invocationId = 'local-' + sequence;
-        const request = { op: 'invoke', invocationId, observationId: observation.observationId, bindingId: binding.bindingId, input };
+        const request = { op: 'invoke', invocationId, observationId: observation.observationId, toolId: tool.id, input: { view_id: receiver.id, ...input } };
         const result = await send(request);
         assert.equal(result.kind, 'receipt', JSON.stringify(result));
         assert.equal(result.receipt.outcome.status, 'succeeded', JSON.stringify(result));
@@ -112,7 +114,7 @@ try {
         assert.equal(opened.tools.some(tool => tool.name === 'write_file'), false);
         const fileView = (await app.send({ op: 'views' })).find(view => view.viewType === 'FileDetail' && view.viewName === 'File: ' + file); assert.ok(fileView);
         const writable = await app.observe(fileView.viewId);
-        const written = await app.call(writable, 'write_file', { filePath: file, content: 'export const answer = 2;\n' });
+        const written = await app.call(writable, 'write_file', { content: 'export const answer = 2;\n' });
         assert.equal(await fs.readFile(file, 'utf8'), 'export const answer = 2;\n');
         const writtenVersion = (await fs.stat(file, { bigint: true })).mtimeNs;
         const receipt = await app.send(written.request);
@@ -122,7 +124,7 @@ try {
         await app.send({ op: 'release', observationId: writable.observationId });
         const view = fileView.viewId;
         const detail = await app.observe(view, observation => observation.views.some(view => view.content?.value.includes('answer = 2')));
-        const hovered = await app.call(detail, 'lsp_hover', { file_path: file, line: 1, character: 15 });
+        const hovered = await app.call(detail, 'lsp_hover', { line: 1, character: 15 });
         assert.equal(hovered.result.receipt.outcome.value.data.view_id, view);
         assert.equal(hovered.result.receipt.outcome.value.data.value, undefined);
         const hoverView = await app.observe(view, observation => observation.views.some(v => v.content?.value.includes('### hover')));
@@ -261,7 +263,7 @@ if (!isMainThread) {
         await app.send({ op: 'release', observationId: workspace.observationId });
         const fileView = (await app.send({ op: 'views' })).find(view => view.viewType === 'FileDetail' && view.viewName === 'File: ' + file); assert.ok(fileView);
         const detail = await app.observe(fileView.viewId);
-        await app.call(detail, 'lsp_hover', { file_path: file, line: 1, character: 15 });
+        await app.call(detail, 'lsp_hover', { line: 1, character: 15 });
         app.child.stdin.end();
         const closed = await app.wait(event => event.event === 'closed', 'failed close');
         assert.equal(closed.report.ok, false); assert.equal(closed.report.resourcesReleased, true);

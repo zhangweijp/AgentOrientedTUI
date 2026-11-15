@@ -28,7 +28,7 @@ See [SCOPED_IDE.md](./SCOPED_IDE.md) for tool contracts, limits and cleanup, and
 
 ## Runtime Requirements
 
-- Matching SDK 0.8.0 and Runtime 7.0.0 artifacts from one delivery. The IDE uses `view-type-tools-v4` authoring, `view-type-parameters-v1` ordinary and Ref parameters, Snapshot 3, and `app-lifecycle-v2`. Runtime checks the `createTUIApp` authoring marker before initialization.
+- Matching SDK 0.9.0 and Runtime 8.0.0 artifacts from one delivery. The IDE uses `view-type-tools-v5` authoring, `view-type-parameters-v1` ordinary and Ref parameters, Snapshot 4, and `app-lifecycle-v2`. Runtime checks the `createTUIApp` authoring marker before initialization.
 - TypeBox 1.4.3 for the IDE's single-source Tool parameter declarations.
 - Optional local language servers for advanced code intelligence
 

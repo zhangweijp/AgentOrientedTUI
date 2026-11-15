@@ -1,4 +1,4 @@
-import { createTUIApp, View, useCallback, useState, AppTools } from '@aotui/sdk';
+import { createTUIApp, View, useCallback, useState } from '@aotui/sdk';
 import { runWebFetch } from '../core/webfetch.js';
 import { runWebSearch } from '../core/websearch.js';
 import type { FetchFormat, PageState, SearchQuery, SearchState } from '../types.js';
@@ -7,7 +7,7 @@ import { ResultListView } from './ResultListView.js';
 import { RootView } from './RootView.js';
 import { SearchView } from './SearchView.js';
 import {
-    browserTools,
+    RootType, SearchType, ResultListType, PageType, browserViewTypes,
     createClearResultsBinding,
     createClosePageBinding,
     createFetchUrlBinding,
@@ -80,36 +80,29 @@ function LiteBrowserRoot() {
         setPageState({ status: 'idle' });
     }, []);
 
-    const bindings = {
-        searchWeb: createSearchWebBinding(handleSearch),
-        fetchUrl: createFetchUrlBinding(handleFetch),
-        openResult: createOpenResultBinding(searchState.results, handleOpenResult),
-        clearResults: createClearResultsBinding(handleClearResults),
-        closePage: createClosePageBinding(handleClosePage),
-    };
-
     const hasResults = searchState.results.length > 0;
     const hasPage = pageState.status !== 'idle';
 
     return (
-        <AppTools definition={browserTools} bindings={bindings}>
-            <View kind="instruction" id="root" type="Root" name="Root">
+        <>
+            <View kind="instruction" id="root" type={RootType} bindings={{ fetch_url: createFetchUrlBinding(handleFetch) }} name="Root">
                 <RootView />
             </View>
-            <View kind="state" id="search" type="Search" name="Search">
+            <View kind="state" id="search" type={SearchType} bindings={{ search_web: createSearchWebBinding(handleSearch) }} name="Search">
                 <SearchView state={searchState} />
             </View>
             {hasResults ? (
-                <View kind="state" key={searchState.updatedAt} id="results" type="ResultList" name="Result List">
+                <View kind="state" key={searchState.updatedAt} id="results" type={ResultListType}
+                    bindings={{ open_result: createOpenResultBinding(searchState.results, handleOpenResult), clear_results: createClearResultsBinding(handleClearResults) }} name="Result List">
                     <ResultListView results={searchState.results} />
                 </View>
             ) : null}
             {hasPage ? (
-                <View kind="state" key={pageState.document?.url ?? 'error'} id="page" type="Page" name="Page">
+                <View kind="state" key={pageState.document?.url ?? 'error'} id="page" type={PageType} bindings={{ close_page: createClosePageBinding(handleClosePage) }} name="Page">
                     <PageView state={pageState} />
                 </View>
             ) : null}
-        </AppTools>
+        </>
     );
 }
 
@@ -118,6 +111,7 @@ const browserApp: ReturnType<typeof createTUIApp> = createTUIApp({
     whatItIs: 'A lightweight TUI browser that runs web searches and fetches URL content into structured views for LLM workflows.',
     whenToUse: 'Use Lite Browser when you need to search the web for current information and fetch specific URLs into a readable format.',
     component: LiteBrowserRoot,
+    viewTypes: browserViewTypes,
     signalPolicy: 'auto'
 });
 
