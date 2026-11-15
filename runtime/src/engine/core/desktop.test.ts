@@ -39,7 +39,7 @@ describe('Desktop', () => {
                 failedAppIds: [],
             }),
             getInstalledApps: vi.fn().mockReturnValue([]),
-            broadcastLLMOutput: vi.fn(),
+            broadcastLLMUsage: vi.fn(),
         };
         const delegatedDesktop = new Desktop('dt_phase1' as any, {
             appManager: appManager as any,

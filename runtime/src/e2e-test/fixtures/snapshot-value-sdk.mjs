@@ -40,15 +40,16 @@ function Root() {
     const initial = () => ({ text: 'A', showRef: true, enabled: true, revision: 1 });
     const [state, set] = useState({ aa: initial(), bb: initial(), toolEnabled: true });
     useLayoutEffect(() => {
-        const receive = event => {
-            const { type, viewId, data } = event.detail;
+        const receive = message => {
+            if (message.type !== 'TEST_COMMAND') return;
+            const { command: type, viewId, data } = message;
             if (type === 'configure') set(previous => ({ ...previous,
                 ...(typeof data.toolEnabled === 'boolean' ? { toolEnabled: data.toolEnabled } : {}),
                 [viewId]: { ...previous[viewId], ...data } }));
             if (type === 'release-handler') releaseHandler?.();
         };
-        document.body.addEventListener('aotui:external-event', receive);
-        return () => document.body.removeEventListener('aotui:external-event', receive);
+        parentPort.on('message', receive);
+        return () => parentPort.off('message', receive);
     }, []);
     function execute(name, args) {
         parentPort.postMessage({ type: 'TEST_HANDLER_ENTRY', name, entries: ++handlerEntries });

@@ -4,7 +4,7 @@ import { initializationError } from '../../adapters/initialization-error.js';
 import { captureAppLifecycleAck, captureAppCleanupReport } from '../../adapters/app-lifecycle-protocol.js';
 import { withExecutableTools } from '../../adapters/semantic-capability-policy.js';
 import type { AppCleanupReport } from '../../spi/runtime/app-lifecycle.interface.js';
-import type { LLMOutputEventMeta } from '../../spi/core/llm-output.js';
+import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
 import { createStateStorageHost, resolveStateDirectory, type StateStorageBackend } from './state-storage-host.js';
 import { capturePersistenceAck, captureManagedPersistenceReport, DEFAULT_STATE_SESSION_LIMITS, DEFAULT_STATE_TRANSPORT_LIMITS, STATE_SESSION_PROTOCOL } from '../../adapters/storage/state-storage-protocol.js';
 import type { ManagedPersistenceReport } from '../../worker-runtime/state-persistence.js';
@@ -38,7 +38,7 @@ import { closeError } from '../core/close-handle.js';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 
-import type { AppID, DesktopID, ViewID } from '../../spi/index.js';
+import type { AppID, DesktopID } from '../../spi/index.js';
 import { WORKER_DEFAULTS, type WorkerConfig } from '../../spi/config/index.js';
 
 import {
@@ -631,59 +631,9 @@ export class AppWorkerHost {
 
     // ════════════════════════════════════════════════════════════════
     //  External Event
-    // ════════════════════════════════════════════════════════════════
-
-    async sendExternalEvent(
-        viewId: ViewID,
-        eventType: string,
-        data: Record<string, unknown>
-    ): Promise<void> {
-        await this.sendRequest<void>({
-            type: 'EXTERNAL_EVENT',
-            requestId: generateRequestId(),
-            viewId,
-            eventType,
-            data,
-        });
-    }
-
-    // ════════════════════════════════════════════════════════════════
-    //  Render
-    // ════════════════════════════════════════════════════════════════
-
-
-    // ════════════════════════════════════════════════════════════════
-    //  [RFC-011] LLM Output Channel
-    // ════════════════════════════════════════════════════════════════
-
-    /**
-     * [RFC-011] Push LLM text to Worker for SDK's useLLMOutputChannel
-     * [RFC-020] Now accepts structured payload { reasoning?, content? }
-     * 
-     * Fire-and-forget: no response expected from Worker
-     */
-    pushLLMOutput(
-        payload: { reasoning?: string; content?: string },
-        type: 'complete',
-        meta?: Pick<LLMOutputEventMeta, 'model' | 'providerId' | 'modelId' | 'usage'>
-    ): void {
+    pushLLMUsage(event: LLMUsageEvent): void {
         if (this.status === 'closing' || this.status === 'closed') return;
-        if (!this.worker) {
-            console.warn('[AppWorkerHost] Cannot push LLM text: Worker not started');
-            return;
-        }
-
-        const totalLength = (payload.reasoning?.length ?? 0) + (payload.content?.length ?? 0);
-        console.log(`[AppWorkerHost] Pushing LLM text to Worker ${this.appId}, total length: ${totalLength}`);
-
-        this.worker.postMessage({
-            type: 'LLM_OUTPUT_PUSH',
-            reasoning: payload.reasoning,
-            content: payload.content,
-            eventType: type,
-            timestamp: Date.now(),
-            meta,
-        } as MainToWorkerMessage);
+        this.worker?.postMessage({ type: 'LLM_USAGE', event } satisfies MainToWorkerMessage);
     }
 
 

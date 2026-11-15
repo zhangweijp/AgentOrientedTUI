@@ -31,6 +31,7 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                 format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent',
             });
             const sdkFixture = `
+        import { parentPort } from 'node:worker_threads';
                 import { h } from 'preact';
                 import Type from 'typebox';
                 import { useLayoutEffect, useState } from 'preact/hooks';
@@ -45,13 +46,14 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                     const appId = useAppRuntimeContext().appId;
                     const [target, setTarget] = useState({ id: 'A' });
                     useLayoutEffect(() => {
-                        const onExternalEvent = event => {
-                            if (event.detail?.type === 'replace-target') {
-                                setTarget({ id: event.detail.data.id });
+                        const onCommand = message => {
+                    if (message.type !== 'TEST_COMMAND') return;
+                            if (message.command === 'replace-target') {
+                                setTarget({ id: message.data.id });
                             }
                         };
-                        document.addEventListener('aotui:external-event', onExternalEvent);
-                        return () => document.removeEventListener('aotui:external-event', onExternalEvent);
+                        parentPort.on('message', onCommand);
+                        return () => parentPort.off('message', onCommand);
                     }, []);
                     const selected = useDataRef('selected', target);
                     const [listLabel, itemLabel] = useArrayRef('pending', [target], { itemType: 'Task' });
@@ -107,7 +109,7 @@ Complete: { execute: async () => ({ success: true }) }
             const markup = oldRead.snapshot.views[0].content.value;
             expect(markup).toContain('Stable task label');
             expect(markup).toContain('App=m3_app');
-            await host.sendExternalEvent('workspace' as any, 'replace-target', { id: 'B' });
+            host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'replace-target', data: { id: 'B' } });
             await import('vitest').then(({ vi }) => vi.waitFor(() => {
                 const report = host?.getSemanticSnapshotReport();
                 expect(report?.health).toBe('ready');

@@ -1,8 +1,9 @@
-import type { TokenMonitorSettings, TokenUsageSnapshot } from '../types.js';
+import type { LLMUsageEvent } from '@aotui/sdk';
+import type { TokenMonitorSettings } from '../types.js';
 
 type MonitorViewProps = {
     settings: TokenMonitorSettings;
-    history: TokenUsageSnapshot[];
+    history: LLMUsageEvent[];
     latestMaxTokens: number | null;
 };
 
@@ -14,16 +15,15 @@ export function MonitorView({ settings, history, latestMaxTokens }: MonitorViewP
     const latestUsagePercent = usagePercent !== null ? `${usagePercent}%` : 'unknown';
     const latestTable = latest
         ? [
-            '| timestamp | model | providerId | modelId | promptTokens | completionTokens | totalTokens | usagePercent |',
-            '| --- | --- | --- | --- | --- | --- | --- | --- |',
-            `| ${new Date(latest.timestamp).toLocaleTimeString()} | ${latest.model ?? 'unknown'} | ${latest.providerId ?? 'unknown'} | ${latest.modelId ?? 'unknown'} | ${latest.promptTokens} | ${latest.completionTokens} | ${latest.totalTokens} | ${latestUsagePercent} |`
+            '| timestamp | providerId | modelId | promptTokens | completionTokens | totalTokens | usagePercent |',
+            '| --- | --- | --- | --- | --- | --- | --- |',
+            `| ${new Date(latest.timestamp).toLocaleTimeString()} | ${latest.providerId} | ${latest.modelId} | ${latest.promptTokens} | ${latest.completionTokens} | ${latest.totalTokens} | ${latestUsagePercent} |`
         ].join('\n')
         : null;
 
     return (
         <div>
             <h1>Token Monitor View</h1>
-            <p>Usage records come from LLMOutputEventMeta.usage.</p>
             <p>Model max tokens: {latestMaxTokens ?? 'Unknown'}</p>
             <p>Warn threshold: {warnThreshold}%</p>
 

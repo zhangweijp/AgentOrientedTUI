@@ -7,6 +7,7 @@ import { isAbsolute, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
 let directory: string, app: string, runtimePackage: any, adaptersPackage: any;
+let AppWorkerHost: any;
 const facts: any[] = [];
 const output = process.env.AOTUI_W08_C1_FACTS_DIR;
 const installedConsumer = process.env.AOTUI_PACKAGE_CONSUMER_DIR;
@@ -58,6 +59,7 @@ beforeAll(async () => {
         runtimeDocs = join(modules, '@aotui', 'runtime', 'docs');
         facts.push({ consumer: directory, selfPackageLinks: false, thirdPartyLinks: links, completeCleanInstall: false });
     }
+    ({ AppWorkerHost } = await import(pathToFileURL(join(runtimeDocs, '../dist/engine/app/worker-host.js')).href));
     const document = await readFile(join(runtimeDocs, 'runtime-app-interaction.md'), 'utf8');
     const body = document.match(/<!-- b2-app:start -->\n```js\n([\s\S]*?)\n```\n<!-- b2-app:end -->/)?.[1];if (!body) throw Error('App example markers');
     const executableBody = body.replace("if (args.filePath !== '/open/note.txt')", `if (args.text === 'throw') throw new Error('PRIVATE_CONTROLLED_FAILURE');
@@ -320,14 +322,19 @@ parentPort.on('message',m=>{
   respond(m);
 });
 `);
+        const start = AppWorkerHost.prototype.start;
+        const override = vi.spyOn(AppWorkerHost.prototype, 'start').mockImplementationOnce(function (this: any) {
+            this.workerScriptPath = script;
+            return start.call(this);
+        });
         try {
-            await expect(install(runtime, 'd', 'a', undefined, { workerScriptPath: script })).rejects.toMatchObject({ code: 'INSTALL_FAILED' });
+            await expect(install(runtime, 'd', 'a')).rejects.toMatchObject({ code: 'INSTALL_FAILED' });
             const installed = runtime.getDesktop('d').getInstalledApps().find((entry: any) => entry.appId === 'a');
             expect(installed).toBeUndefined();
             const report = await runtime.beginShutdown().completion;
             facts.push({ case: `capability-ack-${variant}`, report, installedStatus: installed?.status });
             expect(report).toMatchObject({ resourcesReleased: true, hasFailures: false, verification: 'managed', interactions: { verified: true, retainedOperations: 0, retainedBytes: 0 } });
-        } finally { await runtime.beginShutdown().completion; }
+        } finally { override.mockRestore(); await runtime.beginShutdown().completion; }
     }
 }, 15000);
 

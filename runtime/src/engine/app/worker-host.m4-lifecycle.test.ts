@@ -19,10 +19,10 @@ describe('Worker Host lifecycle and physical resource release', () => {
     it('does not push new fire-and-forget LLM output during or after shutdown', async () => {
         const { host, worker, request } = inFlightHost();
         const closing = host.close();
-        host.pushLLMOutput({ content: 'late output' }, 'complete');
+        host.pushLLMUsage({ timestamp: 0, providerId: 'p', modelId: 'm', promptTokens: 0, completionTokens: 0, totalTokens: 0 });
         expect(worker.postMessage).not.toHaveBeenCalled();
         await closing;
-        host.pushLLMOutput({ content: 'closed output' }, 'complete');
+        host.pushLLMUsage({ timestamp: 0, providerId: 'p', modelId: 'm', promptTokens: 0, completionTokens: 0, totalTokens: 0 });
         expect(worker.postMessage).not.toHaveBeenCalled();
     });
 

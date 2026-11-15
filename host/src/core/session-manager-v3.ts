@@ -249,18 +249,8 @@ export class SessionManagerV3 extends EventEmitter {
                 };
                 this.emit('message', event);
             },
-            onLLMUsage: (usage) => {
-                const payload = { content: undefined, reasoning: undefined };
-                const meta = {
-                    usage,
-                    model: modelId,
-                    providerId,
-                    modelId,
-                };
-
-                if ((desktop as any).broadcastLLMOutput) {
-                    (desktop as any).broadcastLLMOutput(payload, 'complete', meta);
-                }
+            onLLMUsage: ({ promptTokens, completionTokens, totalTokens }) => {
+                desktop.broadcastLLMUsage({ timestamp: Date.now(), providerId, modelId, promptTokens, completionTokens, totalTokens });
             },
             onStateChange: (oldState, newState) => {
                 this.logger.debug('AgentDriver state changed', {

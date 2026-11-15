@@ -21,9 +21,6 @@ const ERROR_MESSAGES = {
     // App
     APP_ALREADY_REGISTERED: (c) => `App '${c.appName ?? 'unknown'}' is already registered. Choose a different App name or remove it before registering again.`,
 
-    // Worker
-    WORKER_NOT_STARTED: (c) => `Worker '${c.appId ?? 'unknown'}' not started`,
-
     // Config
     CONFIG_INVALID: (c) => `Invalid configuration: ${c.reason ?? 'unknown'}`,
     CONFIG_NOT_SUPPORTED: (c) => `Configuration not supported: ${c.feature ?? 'unknown'}`,

@@ -1,3 +1,4 @@
+import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
 import type { StateStorageBackend } from '../app/state-storage-host.js';
 import type { WorkerCapacity } from '../app/worker-capacity.js';
 import type { IDesktop, DesktopID, AppID, UpdateSignal, AppDiscoveryInfo, DesktopStatus, IRuntimeContext, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
@@ -113,24 +114,9 @@ export class Desktop implements IDesktop {
 
     private assertActive(): void { if (this._isDraining || this._disposed) throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: this.id }); }
 
-    // [RFC-011] Broadcast LLM text to all Workers
-    // [RFC-020] Now accepts structured payload
-    public broadcastLLMOutput(
-        payload: { reasoning?: string; content?: string },
-        type: 'complete',
-        meta?: {
-            model?: string;
-            providerId?: string;
-            modelId?: string;
-            usage?: {
-                promptTokens: number;
-                completionTokens: number;
-                totalTokens: number;
-            };
-        }
-    ): void {
+    broadcastLLMUsage(event: LLMUsageEvent): void {
         this.assertActive();
-        this.appManager.broadcastLLMOutput(payload, type, meta);
+        this.appManager.broadcastLLMUsage(event);
     }
 
     // --- System Commands (App) ---
@@ -181,7 +167,6 @@ export class Desktop implements IDesktop {
     async installDynamicWorkerApp(
         appModulePath: string,
         options?: AppInteractionOptions & {
-            workerScriptPath?: string;
             appId?: string;
             name?: string;
             /** [RFC-013] App description for Agent */
@@ -213,7 +198,6 @@ export class Desktop implements IDesktop {
         return this.appManager.install(
             appModulePath,
             {
-                workerScriptPath: options?.workerScriptPath,  // Now optional, AppManager/AppWorkerHost will use default
                 appId: options?.appId as any,
                 name: options?.name,
                 description: options?.description,  // [RFC-013]
@@ -236,7 +220,6 @@ export class Desktop implements IDesktop {
         whatItIs?: string;
         whenToUse?: string;
         modulePath: string;
-        workerScriptPath?: string;
         config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
     }): Promise<string> {
         const captured = captureOptions(options, { ...appInstallFields, modulePath: 'string' });
@@ -250,7 +233,6 @@ export class Desktop implements IDesktop {
             whatItIs: options.whatItIs,
             whenToUse: options.whenToUse,
             modulePath: options.modulePath,
-            workerScriptPath: options.workerScriptPath,
             config: { ...this.context?.env, ...options.config },
             runtimeConfig: this.config,
             toolsEnabled: options.toolsEnabled,

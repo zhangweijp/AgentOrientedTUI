@@ -4,9 +4,8 @@
  * @module @aotui/runtime/engine/app-sandbox
  */
 
-import type { AppID, DesktopID, ViewID } from '../../spi/index.js';
-import { AOTUIError } from '../../spi/core/errors.js';
-import type { LLMOutputEventMeta } from '../../spi/core/llm-output.js';
+import type { AppID, DesktopID } from '../../spi/index.js';
+import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
 import { AppWorkerHost, type HostResourceReport } from './worker-host.js';
 import type { WorkerCapacity } from './worker-capacity.js';
 import type { StateStorageBackend } from './state-storage-host.js';
@@ -235,40 +234,8 @@ export class WorkerSandbox {
     }
     disposeAsync(): Promise<SandboxCloseReport> { return this.beginCleanup(this.intent ?? 'close'); }
 
-    /**
-     * 发送外部事件
-     */
-    async sendExternalEvent(
-        viewId: ViewID,
-        eventType: string,
-        data: Record<string, unknown>
-    ): Promise<void> {
-        this.ensureNotClosed();
-        if (!this.workerHost) {
-            throw new AOTUIError('WORKER_NOT_STARTED', { appId: this.appId });
-        }
-        await this.workerHost.sendExternalEvent(viewId, eventType, data);
-    }
-
-    // ════════════════════════════════════════════════════════════════
-    //  [RFC-011] LLM Output Channel
-    // ════════════════════════════════════════════════════════════════
-
-    /**
-     * [RFC-011] Push LLM text to Worker
-     * [RFC-020] Now accepts structured payload { reasoning?, content? }
-     */
-    pushLLMOutput(
-        payload: { reasoning?: string; content?: string },
-        type: 'complete',
-        meta?: Pick<LLMOutputEventMeta, 'model' | 'providerId' | 'modelId' | 'usage'>
-    ): void {
-        if (this.intent) return;
-        if (!this.workerHost) {
-            console.warn(`[WorkerSandbox] Cannot push LLM text: Worker not started for ${this.appId}`);
-            return;
-        }
-        this.workerHost.pushLLMOutput(payload, type, meta);
+    pushLLMUsage(event: LLMUsageEvent): void {
+        if (!this.intent) this.workerHost?.pushLLMUsage(event);
     }
 
 

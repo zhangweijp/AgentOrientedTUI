@@ -74,7 +74,7 @@ async function control(x: any, type: string, data: any = {}) { const id = ++tag,
   const previousTimeout = x.host.timeout;
   if (previousTimeout < NORMAL_HOST_TIMEOUT_MS) x.host.timeout = NORMAL_HOST_TIMEOUT_MS;
   try {
-    await x.host.sendExternalEvent('probe', type, { ...data, tag: id });
+    x.worker.postMessage({ type: 'TEST_COMMAND', command: type, data: { ...data, tag: id } });
     return await wait(x, m => m.type === (type === 'state' ? 'TEST_COMMITTED' : 'TEST_CONTROL_ACK') && m.tag === id, from);
   } finally { x.host.timeout = previousTimeout; } }
 async function change(x: any, patch: any, predicate: (draft: any) => boolean) {

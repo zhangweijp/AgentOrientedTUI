@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
 import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
 
-type SignalPolicy = 'auto' | 'never' | 'manual' | undefined;
+type SignalPolicy = 'auto' | 'never' | undefined;
 type Capture =
     | { type: 'SNAPSHOT_PREPARED'; draft: any; suppressSignal: boolean }
     | { type: 'SNAPSHOT_PREPARE_FAILED'; producerSeq: number; sourceEpoch: number; error: { code: string } };
@@ -27,6 +27,7 @@ function deferred<T>() {
 function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, faultTools = false): string {
     const policy = signalPolicy ? `signalPolicy: '${signalPolicy}',` : '';
     return `
+        import { parentPort } from 'node:worker_threads';
         import { h } from 'preact';
         import Type from 'typebox';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
@@ -66,25 +67,26 @@ function Root() {
             const ExtraUI = fixtureTools0.ExtraUI;
             void RefreshUI; void ExtraUI;
             useLayoutEffect(() => {
-                const onExternalEvent = event => {
-                    const detail = event.detail || {};
-                    switch (detail.type) {
+                const onCommand = message => {
+                    if (message.type !== 'TEST_COMMAND') return;
+                    const { command, data } = message;
+                    switch (command) {
                         case 'open': setState(current => ({ ...current, open: true })); break;
                         case 'close': setState(current => ({ ...current, open: false })); break;
                         case 'background':
-                            setTimeout(() => setState(current => ({ ...current, text: detail.data.value })), 0);
+                            setTimeout(() => setState(current => ({ ...current, text: data.value })), 0);
                             break;
-                        case 'ref': setState(current => ({ ...current, refValue: detail.data.value })); break;
-                        case 'tool': setState(current => ({ ...current, extraToolEnabled: detail.data.enabled })); break;
-                        case 'refresh-tool': setState(current => ({ ...current, toolEnabled: detail.data.enabled })); break;
+                        case 'ref': setState(current => ({ ...current, refValue: data.value })); break;
+                        case 'tool': setState(current => ({ ...current, extraToolEnabled: data.enabled })); break;
+                        case 'refresh-tool': setState(current => ({ ...current, toolEnabled: data.enabled })); break;
                         case 'poison-ref': setState(current => ({ ...current, invalidRef: true })); break;
                         case 'recover-ref': setState(current => ({ ...current, invalidRef: false, refValue: 'recovered' })); break;
                         case 'break-layout': setState(current => ({ ...current, invalidLayout: true, text: 'partial layout', refValue: 'partial ref' })); break;
                         case 'repair-layout': setState(current => ({ ...current, invalidLayout: false, text: 'repaired layout', refValue: 'repaired ref' })); break;
                     }
                 };
-                document.addEventListener('aotui:external-event', onExternalEvent);
-                return () => document.removeEventListener('aotui:external-event', onExternalEvent);
+                parentPort.on('message', onCommand);
+                return () => parentPort.off('message', onCommand);
             }, []);
             return h(AppTools, { definition: fixtureTools0, bindings: {
 RefreshUI: { execute: async () => {
@@ -139,7 +141,7 @@ beforeAll(async () => {
     await Promise.all([
         compileApplication('auto-empty', 'auto', false),
         compileApplication('never-empty', 'never', false),
-        compileApplication('manual-open', 'manual', true),
+        compileApplication('default-open', undefined, true),
         compileApplication('auto-fault', 'auto', true, true),
         compileApplication('default-empty', undefined, false),
     ]);
@@ -211,7 +213,7 @@ function waitForCapture(x: Awaited<ReturnType<typeof start>>, after: number): Pr
 async function change(x: Awaited<ReturnType<typeof start>>, eventType: string, data: Record<string, unknown> = {}) {
     const before = sequence(x.captures.at(-1));
     const capture = waitForCapture(x, before);
-    await x.host.sendExternalEvent('workspace' as any, eventType, data);
+    x.worker.postMessage({ type: 'TEST_COMMAND', command: eventType, data: data });
     return capture;
 }
 
@@ -370,40 +372,6 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         expect(passive.updates).toHaveLength(0);
     });
 
-    it('manual ignores automatic DOM/Ref/Tool changes until a valid current Tool commits the projection', async () => {
-        const manual = await start('manual-open', {
-        });
-        await manual.host.open();
-        expect(viewCount(manual.host)).toBe(1);
-        expect(Object.values(latestSnapshot(manual.host).tools).some((tool: any) => tool.name === 'refresh')).toBe(true);
-        const caller = await createToolCaller(manual.host, 'refresh', { query: 'manual flush' });
-        const initialCaptureCount = manual.captures.length;
-        const updateCount = manual.updates.length;
-        await manual.host.sendExternalEvent('workspace' as any, 'background', { value: 'manual background' });
-        await manual.host.sendExternalEvent('workspace' as any, 'ref', { value: 'manual ref' });
-        await manual.host.sendExternalEvent('workspace' as any, 'tool', { enabled: true });
-        // The following request is a Worker message barrier. Observer microtasks from
-        // the preceding events have run, so any automatic Semantic push would be visible.
-        await manual.host.sendExternalEvent('workspace' as any, 'barrier');
-        expect(manual.captures).toHaveLength(initialCaptureCount);
-        expect(manual.updates).toHaveLength(updateCount);
-
-        const explicitCommit = await caller.invoke('manual-current-tool');
-        expect(explicitCommit).toMatchObject({ kind: 'receipt', receipt: {
-            executionPhase: 'entered-returned', outcome: { status: 'succeeded', value: { success: true, data: { calls: 1 } } },
-        } });
-        expect(manual.captures.at(-1)).toMatchObject({ type: 'SNAPSHOT_PREPARED', suppressSignal: false });
-        expect(manual.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', published: 2, lastViewCount: 1 });
-        const snapshot = latestSnapshot(manual.host);
-        expect(snapshot.views[0].content.value).toContain('manual background');
-        expect(Object.values(snapshot.refs).find((ref: any) => ref.id === 'selection')).toMatchObject({
-            target: { payload: { value: 'manual ref' } },
-        });
-        expect(Object.values(snapshot.tools).some((tool: any) => tool.name === 'extra')).toBe(true);
-        expect(manual.updates.at(-1)).toMatchObject({ health: 'ready' });
-        caller.close();
-    });
-
     it('auto reports a failed projection after a successful mutation and recovers from external state repair', async () => {
         const x = await start('auto-fault');
         await x.host.open();
@@ -426,7 +394,7 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
         } });
 
         const recoveryCapture = waitForCapture(x, sequence(x.captures.at(-1)));
-        await x.host.sendExternalEvent('workspace' as any, 'recover-ref');
+        x.worker.postMessage({ type: 'TEST_COMMAND', command: 'recover-ref' });
         expect(await recoveryCapture).toMatchObject({ type: 'SNAPSHOT_PREPARED', suppressSignal: false });
         expect(x.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', published: 2, prepareFailed: 1 });
         expect(x.updates.at(-1)).toMatchObject({ health: 'ready' });
@@ -442,7 +410,7 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
     });
 
     it('uses a fresh Worker and source identity with the default auto signal policy', async () => {
-        const first = await start('manual-open');
+        const first = await start('default-open');
         await first.host.open();
         const originalInstance = first.host.appInstanceId;
         await first.host.close();

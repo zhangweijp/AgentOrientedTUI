@@ -318,7 +318,6 @@ describe('AppManager', () => {
             const appId = manager.registerPendingApp({
                 name: 'lazy-app',
                 modulePath: '/path/to/module',
-                workerScriptPath: '/path/to/worker',
             });
 
             const installedApp = (manager as any).installedApps.get(appId)!;
@@ -333,7 +332,7 @@ describe('AppManager', () => {
 
             expect(startSpy).toHaveBeenCalledTimes(1);
             expect(launchConfig(manager, appId)).toMatchObject({
-                appId, name: 'lazy-app', appModulePath: '/path/to/module', workerScriptPath: '/path/to/worker',
+                appId, name: 'lazy-app', appModulePath: '/path/to/module',
                 config: { projectPath: '/repo', __aotuiLifecycle: { startupKind: 'normal' } }
             });
             expect(manager.getInstalledApps()[0]).toMatchObject({ appId, status: 'running', whatItIs: 'IDE', whenToUse: 'Use for code' });
@@ -348,14 +347,13 @@ describe('AppManager', () => {
             const appId = manager.registerPendingApp({
                 name: 'lazy-app',
                 modulePath: '/path/to/module',
-                workerScriptPath: '/path/to/worker'
             });
 
             const result = await manager.startPendingApp(appId);
 
             expect(result).toBe(true);
             expect(startSpy).toHaveBeenCalledTimes(1);
-            expect(launchConfig(manager, appId)).toMatchObject({ appId, name: 'lazy-app', appModulePath: '/path/to/module', workerScriptPath: '/path/to/worker' });
+            expect(launchConfig(manager, appId)).toMatchObject({ appId, name: 'lazy-app', appModulePath: '/path/to/module' });
             expect(manager.getInstalledApps()[0].status).toBe('running');
 
             startSpy.mockRestore();

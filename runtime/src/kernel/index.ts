@@ -124,7 +124,6 @@ export class Kernel implements IKernel {
     /**
      * [Worker-Only] 安装 App
      * 
-     * [C1 Fix] workerScriptPath 现在是可选的，默认使用 Runtime 内置的 worker-runtime
      */
     installDynamicWorkerApp(desktopId: DesktopID, appModulePath: string, options?: Parameters<IKernel['installDynamicWorkerApp']>[2]): Promise<string> {
         try {

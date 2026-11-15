@@ -57,13 +57,12 @@ export interface AppRegistryOptions {
 
 /** Host-owned installation policy; business launch config cannot enable Runtime capabilities. */
 export interface AppRegistryInstallOptions extends AppInteractionOptions {
-    defaultWorkerScript?: string;
     dynamicConfig?: AppLaunchConfig;
 }
 
-const installFields = { defaultWorkerScript: 'string', dynamicConfig: 'object', toolsEnabled: 'boolean' } as const;
+const installFields = { dynamicConfig: 'object', toolsEnabled: 'boolean' } as const;
 const entryFields = {
-    name: 'string', source: 'string', enabled: 'boolean', installedAt: 'string', workerScript: 'string',
+    name: 'string', source: 'string', enabled: 'boolean', installedAt: 'string',
     autoStart: 'boolean', originalSource: 'string', distribution: 'object',
 } as const;
 
@@ -326,49 +325,17 @@ export class AppRegistry {
     /**
      * [Option D] 为 Desktop 安装所有已注册的 App (配置驱动)
      * 
-     * 使用 config.json 中的 runtime.workerScript 作为默认 Worker 脚本，
-     * 各 App 可以通过 workerScript 字段覆盖。
-     * 
      * @param desktop - 目标 Desktop
      * @param options - 可选配置
      * @returns 每个 App 的安装或登记结果
      */
-    async installAll(
-        desktop: IDesktop,
-        options?: AppRegistryInstallOptions
-    ): Promise<AppInstallResult[]> {
-        options = captureOptions(options, installFields);
-        // 获取默认 Worker 脚本路径
-        const defaultWorkerScript = options?.defaultWorkerScript
-            ?? this.config.runtime?.workerScript;
-
-        // [C1 Fix] defaultWorkerScript is now optional
-        // If not provided, Runtime will use its built-in worker-runtime
-
-        return this.installEntries(desktop, Array.from(this.apps.keys()), {
-            defaultWorkerScript,
-            dynamicConfig: options?.dynamicConfig,
-            toolsEnabled: options?.toolsEnabled,
-        });
+    async installAll(desktop: IDesktop, options?: AppRegistryInstallOptions): Promise<AppInstallResult[]> {
+        return this.installSelected(desktop, Array.from(this.apps.keys()), options);
     }
 
-    async installSelected(
-        desktop: IDesktop,
-        names: string[],
-        options?: AppRegistryInstallOptions
-    ): Promise<AppInstallResult[]> {
-        options = captureOptions(options, installFields);
-        const defaultWorkerScript = options?.defaultWorkerScript
-            ?? this.config.runtime?.workerScript;
-
-        return this.installEntries(desktop, names, {
-            defaultWorkerScript,
-            dynamicConfig: options?.dynamicConfig,
-            toolsEnabled: options?.toolsEnabled,
-        });
+    async installSelected(desktop: IDesktop, names: string[], options?: AppRegistryInstallOptions): Promise<AppInstallResult[]> {
+        return this.installEntries(desktop, names, captureOptions(options, installFields) ?? {});
     }
-
-
 
     /** Resolve the generated entry without importing any App code. */
     public resolveModulePath(source: string): string {
@@ -433,13 +400,6 @@ export class AppRegistry {
             if (!validateConfig(config) || Array.isArray(config.apps)) {
                 throw new AOTUIError('CONFIG_INVALID', { path: this.configPath, reason: 'Expected a registry version and App entries' });
             }
-            if (config.runtime !== undefined && (!config.runtime || typeof config.runtime !== 'object' || Array.isArray(config.runtime))) {
-                throw new AOTUIError('CONFIG_INVALID', { path: 'runtime', reason: 'Expected a Runtime configuration object' });
-            }
-            if (config.runtime?.workerScript !== undefined && typeof config.runtime.workerScript !== 'string') {
-                throw new AOTUIError('CONFIG_INVALID', { path: 'runtime.workerScript', reason: 'Expected a Worker script path' });
-            }
-
             return config;
         } catch (error: any) {
             if (error.code === 'ENOENT') {
@@ -494,7 +454,6 @@ export class AppRegistry {
             const dynamicConfig: AppLaunchConfig = { ...options.dynamicConfig, AOTUI_APP_KEY: options.dynamicConfig?.AOTUI_APP_KEY ?? name };
             const autoStart = configEntry?.autoStart ?? true;
             const modulePath = app.modulePath;
-            const workerScript = configEntry?.workerScript ?? options.defaultWorkerScript;
 
             try {
                 const { description, whatItIs, whenToUse } = app.metadata;
@@ -503,7 +462,6 @@ export class AppRegistry {
                     const appId = await desktop.installDynamicWorkerApp(
                         modulePath,
                         {
-                            workerScriptPath: workerScript,
                             name,
                             description,
                             whatItIs,
@@ -521,7 +479,6 @@ export class AppRegistry {
                         whatItIs,
                         whenToUse,
                         modulePath,
-                        workerScriptPath: workerScript,
                         config: dynamicConfig,
                         toolsEnabled: options.toolsEnabled,
                     });

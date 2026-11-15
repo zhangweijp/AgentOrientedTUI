@@ -29,6 +29,7 @@ describe('Semantic producer regression: a mutation during V3 preparation cannot 
             });
             const fixture = `
                 import { writeFileSync } from 'node:fs';
+        import { parentPort } from 'node:worker_threads';
                 import { h } from 'preact';
                 import { useState } from 'preact/hooks';
                 import Type from 'typebox';
@@ -94,9 +95,10 @@ describe('Semantic producer regression: a mutation during V3 preparation cannot 
                         }
                         return value;
                     }) as typeof view.getAttribute;
-                    document.addEventListener('aotui:external-event', event => {
-                        if (event.detail.type === 'attempt') attempt();
-                        if (event.detail.type === 'repair') enable();
+                    parentPort.on('message', message => {
+                        if (message.type !== 'TEST_COMMAND') return;
+                        if (message.command === 'attempt') attempt();
+                        if (message.command === 'repair') enable();
                     });
                     return initialized;
                 };
@@ -120,7 +122,7 @@ describe('Semantic producer regression: a mutation during V3 preparation cannot 
             await host.open();
             const first = host.getSemanticSnapshotReport()!;
             expect(first).toMatchObject({ health: 'ready', revision: 1, lastViewCount: 1, lastToolCount: 1 });
-            await host.sendExternalEvent('fd_0' as any, 'attempt');
+            host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'attempt' });
             await vi.waitFor(() => {
                 expect(host!.getSemanticSnapshotReport()).toMatchObject({ health: 'degraded', prepareFailed: 1 });
             });
@@ -128,7 +130,7 @@ describe('Semantic producer regression: a mutation during V3 preparation cannot 
             expect(degraded).toMatchObject({ status: 'degraded', lastGood: { id: first.snapshotId } });
             const trace = JSON.parse(await readFile(raceTracePath, 'utf8'));
             expect(trace).toMatchObject({ viewInstanceId: expect.any(String), beforeEpoch: 1, afterEpoch: 1, registered: false });
-            await host.sendExternalEvent('fd_0' as any, 'repair');
+            host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'repair' });
             await vi.waitFor(() => {
                 expect(host!.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 2, lastToolCount: 2 });
             });

@@ -1,3 +1,4 @@
+import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
 import type { StateStorageBackend } from './state-storage-host.js';
 /**
  * AppManager - App 安装与生命周期管理
@@ -52,8 +53,6 @@ interface InstalledApp extends AppInteractionOptions {
 
     /** [RFC-014] 懒加载: 模块路径 */
     modulePath?: string;
-    /** [RFC-014] 懒加载: Worker 脚本路径 */
-    workerScript?: string;
 
     /** [RFC-025] Reopen 时复用的启动配置 */
     config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
@@ -90,7 +89,6 @@ type PendingOptions = AppInteractionOptions & {
         whatItIs?: string;
         whenToUse?: string;
         modulePath: string;
-        workerScriptPath?: string;
         config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
         runtimeConfig?: import('../../spi/config/index.js').RuntimeConfig;
     };
@@ -168,7 +166,7 @@ export class AppManager {
         return this.track(id, 'install', async () => {
             const meta: InstalledApp = { appId: id, name: options?.name, description: options?.description, whatItIs: options?.whatItIs,
                 whenToUse: options?.whenToUse, status: 'pending', modulePath: appModulePath,
-                workerScript: options?.workerScriptPath, config: options?.config, runtimeConfig: options?.runtimeConfig,
+                config: options?.config, runtimeConfig: options?.runtimeConfig,
                 toolsEnabled: options?.toolsEnabled };
             this.installedApps.set(id, meta);
             try { await this.installMeta(meta); }
@@ -187,7 +185,7 @@ export class AppManager {
                 __aotuiLifecycle: { startupKind: reinitialize ? 'reinitialize' : 'normal', reason: reinitialize?.reason },
             };
             const worker = new WorkerSandbox({ appId: meta.appId, desktopId: this.desktop.id, name: meta.name, appModulePath: meta.modulePath!,
-                workerScriptPath: meta.workerScript, config,
+                config,
                 runtimeConfig: meta.runtimeConfig ?? this.options.runtimeConfig, workerCapacity: this.workerCapacity,
                 toolsEnabled: meta.toolsEnabled, persistenceBackend: this.options.storageBackend });
             record = this.owned(meta.appId, worker);record.meta = meta;this.workers.set(meta.appId, worker);
@@ -217,7 +215,7 @@ export class AppManager {
         this.assertActive();const id = options.appId ?? this.allocateId();
         if (this.installedApps.has(id) || this.workers.has(id) || this.appTasks.has(id)) throw closeError('APP_ALREADY_EXISTS');
         this.installedApps.set(id, { appId: id, name: options.name, description: options.description, whatItIs: options.whatItIs, whenToUse: options.whenToUse,
-            status: 'pending', modulePath: options.modulePath, workerScript: options.workerScriptPath,
+            status: 'pending', modulePath: options.modulePath,
             config: options.config, runtimeConfig: options.runtimeConfig,
             toolsEnabled });
         this.desktop.logSystem(`Registered pending app: ${id} (${options.name ?? 'unnamed'})`);return id;
@@ -394,7 +392,8 @@ export class AppManager {
         if (!current()) return appInteractionUnavailable();
         return result;
     }
-    broadcastLLMOutput(payload: { reasoning?: string; content?: string }, type: 'complete', meta?: Parameters<WorkerSandbox['pushLLMOutput']>[2]): void {
-        if (this.phase !== 'active') return;for (const worker of this.workers.values()) worker.pushLLMOutput(payload, type, meta);
+    broadcastLLMUsage(event: LLMUsageEvent): void {
+        if (this.phase !== 'active') return;
+        for (const worker of this.workers.values()) worker.pushLLMUsage(event);
     }
 }

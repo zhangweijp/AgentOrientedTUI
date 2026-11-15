@@ -64,7 +64,7 @@ function scope(x: Awaited<ReturnType<typeof start>>) {
 async function configure(x: Awaited<ReturnType<typeof start>>, data: any) {
     const seq = x.messages.filter(m => m.type === 'SNAPSHOT_PREPARED').at(-1)?.draft.producerSeq ?? 0;
     const changed = wait(x, m => m.type === 'SNAPSHOT_PREPARED' && m.draft.producerSeq > seq);
-    await x.host.sendExternalEvent('aa' as any, 'configure', data); await changed;
+    x.worker.postMessage({ type: 'TEST_COMMAND', command: 'configure', viewId: 'aa', data: data }); await changed;
 }
 async function counts(x: Awaited<ReturnType<typeof start>>) {
     const tag = Math.random().toString(36).slice(2), result = wait(x, m => m.type === 'TEST_COUNTS' && m.tag === tag);
@@ -226,7 +226,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         expect((x.host as any).pendingRequests.size).toBe(1); expect(x.host.getInteractionReport()?.core.activeInvocations).toBe(1);
         expect(x.host.getInteractionReport()?.workerToolPending).toBe(true);
         expect(await s.client.invoke(s.request(current, 'busy'))).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
-        await x.host.sendExternalEvent('aa' as any, 'release-handler', {});
+        x.worker.postMessage({ type: 'TEST_COMMAND', command: 'release-handler', viewId: 'aa' });
         const result = receipt(await pending);
         expect(result.outcome.status).toBe('succeeded');
         expect(receipt(await s.client.readReceipt({ observationId: request.observationId, invocationId: request.invocationId }))).toEqual(result);
@@ -269,7 +269,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         expect(shorterReplay.outcome.status).toBe('unknown');
         expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: true, core: { activeInvocations: 1 } });
         const late = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE' && m.requestId === wire.requestId && m.instanceId === wire.instanceId);
-        await x.host.sendExternalEvent('aa' as any, 'release-handler', {});
+        x.worker.postMessage({ type: 'TEST_COMMAND', command: 'release-handler', viewId: 'aa' });
         const terminal = await late;
         expect(terminal.terminal.phase).toBe('entered-returned');
         const settled = receipt(await replay);

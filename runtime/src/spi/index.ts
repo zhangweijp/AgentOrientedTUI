@@ -22,7 +22,7 @@ export type { ToolError, ToolResult } from './core/tool-result.js';
 export { AOTUIError } from './core/errors.js';
 export type { ErrorCode } from './core/errors.js';
 export type { UpdateSignal } from './core/signals.js';
-export type { LLMOutputEvent, LLMOutputEventMeta, LLMOutputListener } from './core/llm-output.js';
+export type { LLMUsageEvent } from './core/llm-usage.js';
 
 // App factory, configuration, lifecycle, and semantic View integration.
 export type { AppKernelConfig, AppReinitializeContext, SignalPolicy } from './app/app-kernel.interface.js';
@@ -38,7 +38,6 @@ export type {
     AppStatePersistence,
     AppInstance,
     AppProjectionFrame,
-    ExternalAppEvent,
     RuntimeContext,
     StateBinding,
     StateBindingStatus,

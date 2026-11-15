@@ -393,8 +393,7 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
         return;
     }
 
-    console.log('[TUI] Runtime ready. Type JSON event to send, or "exit" to quit.');
-    console.log('Example: {"type":"EXTERNAL_EVENT", "eventType":"grep-result", "data":{"line":"foo"}}');
+    console.log('[TUI] Runtime ready. Type "snapshot" to show current views, or "exit" to quit.');
 
     isInteractive = true;
     rl.prompt();
@@ -406,36 +405,7 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
             return;
         }
 
-        if (input.startsWith('{')) {
-            try {
-                const event = JSON.parse(input);
-                if (event.type === 'EXTERNAL_EVENT') {
-                    // Send to all running apps
-                    for (const appId of runningAppIds) {
-                        const workerSandbox = ((desktop as any).appManager as any).workers.get(appId);
-                        if (workerSandbox && workerSandbox.workerHost) {
-                             workerSandbox.workerHost.worker.postMessage({
-                                type: 'EXTERNAL_EVENT',
-                                requestId: `cli_${Date.now()}`,
-                                viewId: event.viewId || 'view_0',
-                                eventType: event.eventType,
-                                data: event.data
-                             });
-                             console.log(`[TUI] Sent event to ${appId}`);
-                        }
-                    }
-                } else {
-                    console.log('Unknown command. Support JSON with type="EXTERNAL_EVENT"');
-                }
-            } catch (e) {
-                console.error('Invalid JSON');
-            }
-        } else {
-             // Render Snapshot check
-             if (input === 'snapshot') {
-                 await printCurrentViews();
-             }
-        }
+        if (input === 'snapshot') await printCurrentViews();
         rl.prompt();
     });
 }

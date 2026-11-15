@@ -6,8 +6,8 @@ import { expect, it, vi } from 'vitest';
 import { build } from 'esbuild';
 import { AppWorkerHost } from './worker-host.js';
 
-it('forwards provider/model metadata to the Worker DOM event without mutating caller metadata', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'aotui-llm-output-'));
+it('forwards the exact usage event to the Worker SDK hook', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'aotui-llm-usage-'));
     const runtimeRoot = resolve(process.cwd());
     const repoRoot = resolve(runtimeRoot, '..');
     const workerScript = join(directory, 'worker.mjs');
@@ -35,24 +35,24 @@ it('forwards provider/model metadata to the Worker DOM event without mutating ca
                     import { parentPort } from 'node:worker_threads';
                     import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
                     import { View } from './sdk/src/components/View.tsx';
-                    import { useLLMOutputChannel } from './sdk/src/hooks/useLLMOutputChannel.ts';
+                    import { useLLMUsage } from './sdk/src/hooks/useLLMUsage.ts';
 
                     function Content() {
-                        useLLMOutputChannel(event => parentPort.postMessage({
+                        useLLMUsage(event => parentPort.postMessage({
                             type: 'TEST_LLM_EVENT', detail: event,
                         }));
                         useEffect(() => {
                             parentPort.postMessage({ type: 'TEST_LLM_LISTENER_READY' });
                         }, []);
-                        return h('p', {}, 'Listening for LLM output');
+                        return h('p', {}, 'Listening for LLM usage');
                     }
                     function Root() {
                         return h(View, {kind: 'instruction', id: 'root', type: 'Root' }, h(Content, {}));
                     }
-                    export default createTUIApp({ app_name: 'llm_output_test', component: Root });
+                    export default createTUIApp({ app_name: 'llm_usage_test', component: Root });
                 `,
                 resolveDir: repoRoot,
-                sourcefile: 'llm-output-fixture.tsx',
+                sourcefile: 'llm-usage-fixture.tsx',
                 loader: 'tsx',
             },
             outfile: appFile, bundle: true, platform: 'node', format: 'esm',
@@ -67,28 +67,24 @@ it('forwards provider/model metadata to the Worker DOM event without mutating ca
             if (message?.type === 'TEST_LLM_LISTENER_READY') listenerReady = true;
         });
         host = new AppWorkerHost({
-            appId: 'llm_output_test' as any,
+            appId: 'llm_usage_test' as any,
             desktopId: 'desktop' as any,
             appModulePath: appFile,
             workerScriptPath: workerScript,
             existingWorker: worker,
         });
-        const meta = Object.freeze({
-            model: 'Model label', providerId: 'test-provider', modelId: 'model-123',
-            usage: Object.freeze({ promptTokens: 11, completionTokens: 7, totalTokens: 18 }),
+        const usage = Object.freeze({
+            timestamp: 10, providerId: 'test-provider', modelId: 'model-123',
+            promptTokens: 11, completionTokens: 7, totalTokens: 18,
         });
-        const before = structuredClone(meta);
+        const before = structuredClone(usage);
 
         await host.start();
         await host.open();
         await vi.waitFor(() => expect(listenerReady).toBe(true));
-        host.pushLLMOutput({ reasoning: 'reasoning', content: 'answer' }, 'complete', meta);
-        await vi.waitFor(() => expect(observed).toBeDefined());
-
-        expect(observed).toMatchObject({
-            type: 'complete', content: 'answer', reasoning: 'reasoning', meta: before,
-        });
-        expect(meta).toEqual(before);
+        host.pushLLMUsage(usage);
+        await vi.waitFor(() => expect(observed).toEqual(before));
+        expect(usage).toEqual(before);
         await host.close();
     } finally {
         host?.terminate();

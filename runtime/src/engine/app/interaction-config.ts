@@ -2,7 +2,7 @@ import { AOTUIError } from '../../spi/core/errors.js';
 
 export const appInstallFields = {
     appId: 'string', name: 'string', description: 'string', whatItIs: 'string', whenToUse: 'string',
-    config: 'object', toolsEnabled: 'boolean', workerScriptPath: 'string',
+    config: 'object', toolsEnabled: 'boolean',
 } as const;
 
 function isRecord(value: unknown): boolean {

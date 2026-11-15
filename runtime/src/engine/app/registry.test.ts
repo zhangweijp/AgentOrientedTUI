@@ -66,17 +66,6 @@ describe('AppRegistry', () => {
             expect(config.apps).toEqual({});
         });
 
-        it('rejects an invalid shared Worker script before changing discovery', async () => {
-            const registry = new AppRegistry({ configPath });
-            const directory = await writeApp('healthy');
-            await registry.registerTransient('local:' + directory);
-            await fs.writeFile(configPath, JSON.stringify({ version: 2, runtime: { workerScript: 42 },
-                apps: { healthy: { source: 'local:' + directory, enabled: true } } }));
-            await expect(registry.loadFromConfig()).rejects.toMatchObject({ code: 'CONFIG_INVALID',
-                context: { path: 'runtime.workerScript' } });
-            expect(registry.get('healthy')?.modulePath).toBe(path.join(directory, 'dist/index.mjs'));
-        });
-
         it('should load existing config', async () => {
             // 写入测试配置
             const testConfig = {
@@ -342,6 +331,8 @@ describe('AppRegistry', () => {
             mockDesktop.installDynamicWorkerApp.mockClear();
             await expect(registry.installAll(mockDesktop, { interactionModes: [] } as any))
                 .rejects.toMatchObject({ code: 'CONFIG_INVALID', context: { path: 'options.interactionModes' } });
+            await expect(registry.installSelected(mockDesktop, ['semantic_app'], { defaultWorkerScript: '/unused' } as never))
+                .rejects.toMatchObject({ code: 'CONFIG_INVALID', context: { path: 'options.defaultWorkerScript' } });
             expect(mockDesktop.installDynamicWorkerApp).not.toHaveBeenCalled();
         });
 

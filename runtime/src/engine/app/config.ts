@@ -3,8 +3,6 @@
  * 
  * 定义 ~/.agentina/config.json 的结构
  * 
- * [Option D] Version 2 adds runtime.workerScript for config-driven Worker installation.
- * 
  * @module @aotui/runtime/engine/app-registry
  */
 
@@ -25,12 +23,6 @@ export interface AppConfigEntry {
 
     /** 安装时间 */
     installedAt?: string;
-
-    /** 
-     * [Option D] 自定义 Worker 脚本路径 (可选)
-     * 为空时使用 runtime.workerScript 默认值
-     */
-    workerScript?: string;
 
     /**
      * [RFC-014] Desktop 创建时是否自动启动此 App
@@ -91,29 +83,10 @@ export interface CatalogConfig {
     trustedKeys?: CatalogTrustKeyConfig[];
 }
 
-/**
- * [Option D] Runtime 配置
- */
-export interface RuntimeConfig {
-    /** 
-     * Worker 脚本的默认路径
-     * 所有 App 默认使用此脚本运行在 Worker 中
-     */
-    workerScript?: string;
-}
-
-/**
- * ~/.agentina/config.json 结构
- *
- * Version 1: 基础 App 配置
- * Version 2: 增加 runtime.workerScript 配置
- */
+/** Registry file shared with product configuration. */
 export interface TUIConfig {
     /** 配置版本 */
     version: number;
-
-    /** [Option D] Runtime 配置 */
-    runtime?: RuntimeConfig;
 
     /** 远端目录配置 */
     catalog?: CatalogConfig;
@@ -128,9 +101,6 @@ export interface TUIConfig {
 export function createDefaultConfig(): TUIConfig {
     return {
         version: 2,
-        runtime: {
-            workerScript: '' // 留空，由 Product Layer 设置
-        },
         apps: {}
     };
 }

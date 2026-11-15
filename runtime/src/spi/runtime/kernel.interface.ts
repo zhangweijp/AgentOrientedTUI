@@ -5,6 +5,7 @@
  */
 
 import type { DesktopID, AppID } from '../core/types.js';
+import type { LLMUsageEvent } from '../core/llm-usage.js';
 import type { UpdateSignal } from '../core/signals.js';
 import type { IRuntimeContext } from './context.interface.js'; // New
 import type { ShutdownOptions, DesktopCloseOptions, DesktopCloseHandle, RuntimeCloseHandle } from './close.interface.js';
@@ -49,6 +50,8 @@ export interface IDesktop {
     beginClose(options?: DesktopCloseOptions): DesktopCloseHandle;
     id: DesktopID;
 
+    broadcastLLMUsage(event: LLMUsageEvent): void;
+
     /** Installed application catalog used by Semantic context and lifecycle controls. */
     getInstalledApps(): readonly AppDiscoveryInfo[];
     /** Optional, bounded by the adapter when projecting recent Desktop activity. */
@@ -59,12 +62,10 @@ export interface IDesktop {
      * 
      * App 运行在独立的 Worker Thread 中。
      * 
-     * [C1 Fix] workerScriptPath 现在是可选的，默认使用 Runtime 内置的 worker-runtime
      */
     installDynamicWorkerApp(
         appModulePath: string,
         options?: AppInteractionOptions & {
-            workerScriptPath?: string;
             appId?: string;
             name?: string;
             /** [RFC-013] App description for Agent */
@@ -88,7 +89,6 @@ export interface IDesktop {
         whatItIs?: string;
         whenToUse?: string;
         modulePath: string;
-        workerScriptPath?: string;
         config?: import('../app/app-config.interface.js').AppLaunchConfig;
     }): Promise<string>;
 
@@ -140,17 +140,14 @@ export interface IKernel {
      * 
      * @param desktopId - 目标桌面 ID
      * @param appModulePath - App 模块路径
-     * @param workerScriptPath - Worker 脚本路径 (可选，默认使用 Runtime 内置)
      * @param options - 可选配置
      * @returns 分配的 appId
      * 
-     * [C1 Fix] workerScriptPath 现在是可选的
      */
     installDynamicWorkerApp(
         desktopId: DesktopID,
         appModulePath: string,
         options?: AppInteractionOptions & {
-            workerScriptPath?: string;
             appId?: string;
             name?: string;
             /** [RFC-013] App description for Agent */

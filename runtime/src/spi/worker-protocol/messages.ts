@@ -23,11 +23,11 @@ import type { ManagedPersistenceReport } from '../../worker-runtime/state-persis
  * @module @aotui/runtime/spi/worker-protocol
  */
 
-import type { RequestID, AppID, DesktopID, ViewID } from './types.js';
+import type { RequestID, AppID, DesktopID } from './types.js';
 import type { AppLaunchConfig } from '../app/app-config.interface.js';
 import type { ObservedToolExecutionV3, SnapshotPrepareIssue, ToolDescriptorV3 } from '../../core/snapshot/types.js';
 import type { SnapshotValueRefSource } from '../../core/tool/snapshot-value-arguments.js';
-import type { LLMOutputEventMeta } from '../core/llm-output.js';
+import type { LLMUsageEvent } from '../core/llm-usage.js';
 
 // ============================================================================
 // Main → Worker Messages
@@ -83,35 +83,6 @@ export type ViewToolInvokeV5Response = Readonly<{
 }>;
 
 /**
- * 外部事件消息
- */
-export interface ExternalEventMessage {
-    type: 'EXTERNAL_EVENT';
-    requestId: RequestID;
-    viewId: ViewID;
-    eventType: string;
-    data: Record<string, unknown>;
-}
-
-
-/**
- * [RFC-011] LLM Output Push 消息
- * [RFC-020] 支持结构化 payload { reasoning?, content? }
- * 
- * 主线程推送 LLM 输出文本到 Worker，用于 SDK 的 useLLMOutputChannel
- */
-export interface LLMOutputPushMessage {
-    type: 'LLM_OUTPUT_PUSH';
-    /** [RFC-020] LLM 思考/推理过程 */
-    reasoning?: string;
-    /** LLM 最终回复内容 */
-    content?: string;
-    eventType: 'complete';
-    timestamp: number;
-    meta?: Pick<LLMOutputEventMeta, 'model' | 'providerId' | 'modelId' | 'usage'>;
-}
-
-/**
  * 主线程 → Worker 消息联合类型
  */
 export type MainToWorkerMessage =
@@ -120,8 +91,7 @@ export type MainToWorkerMessage =
     | StateStorageResponse
     | InitMessage
     | AppLifecycleMessage
-    | ExternalEventMessage
-    | LLMOutputPushMessage;
+    | Readonly<{ type: 'LLM_USAGE'; event: LLMUsageEvent }>;
 
 // ============================================================================
 // Worker → Main Messages
