@@ -3,9 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { createHash } from 'node:crypto';
 import { IDESession, filePage } from '../dist/core/ide-session.js';
-import { IDEHistory, readLegacyIDE } from '../dist/core/ide-history.js';
+import { IDEHistory } from '../dist/core/ide-history.js';
+import { resolveIDEOptions } from '../dist/core/app-options.js';
 import { ScopedSearch } from '../dist/core/scoped-search.js';
 import { ScopedLSP } from '../dist/core/scoped-lsp.js';
 import { readObservedFile, directoryIdentity } from '../dist/core/versioned-file-write.js';
@@ -18,7 +18,6 @@ const working = await fs.realpath(await fs.mkdtemp(path.join(tmpdir(), 'aotui-id
 const facts = { startedAt: new Date().toISOString(), working, cases: [], passed: false };
 let sequence = 0;
 const gate = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
-const hash = value => createHash('sha256').update(value).digest('hex');
 async function run(name, action) { const time = performance.now(); await action(); facts.cases.push({ name, ms: performance.now() - time, passed: true }); console.log('PASS', name); }
 async function workspace(name) { const root = path.join(working, name); await fs.mkdir(root, { recursive: true }); return root; }
 const code = expected => error => { assert.equal(error.code ?? error.message.split(':')[0], expected); return true; };
@@ -29,7 +28,7 @@ async function session(root, options = {}) {
     const opened = backend.open(id); assert.equal(opened.status, 'opened');
     const managed = createAppStatePersistence({ instanceId: id, desktopId: 'test', appKey: id, storage: options.storage ? options.storage(opened.storage) : opened.storage });
     const owner = new IDESession(options.port ? options.port(managed.port) : managed.port, { sessionKey: options.sessionKey ?? id,
-        historyPath: options.historyPath ?? path.join(working, id + '-history.json'), projectPath: root, legacyImportPath: options.legacy }, () => {});
+        historyPath: options.historyPath ?? path.join(working, id + '-history.json'), projectPath: root }, () => {});
     const call = (name, args, view = 'workspace') => owner.invoke(name, args, view);
     const close = async () => { owner.stop(); return managed.close(() => owner.close()); };
     return { owner, managed, backend, storage: opened.storage, namespace, call, close };
@@ -74,7 +73,7 @@ try {
                 const outcome = await x.call('write_file', { filePath: file, content: 'after' });
                 assert.equal(acquired.length, 1); assert.equal(acquired[0].handle.fd === -1, physicallyClosed);
                 facts.stagingClose ??= []; facts.stagingClose.push({ physicallyClosed, outcome, descriptorOpen: acquired[0].handle.fd !== -1 });
-                assert.equal(outcome.success, false); assert.equal(outcome.effects, undefined); assert.equal(outcome.error.code, 'RESOURCE_CLOSE_UNCERTAIN'); assert.equal(await fs.readFile(file, 'utf8'), 'before');
+                assert.equal(outcome.success, false); assert.equal(Object.hasOwn(outcome, 'effects'), false); assert.equal(outcome.error.code, 'RESOURCE_CLOSE_UNCERTAIN'); assert.equal(await fs.readFile(file, 'utf8'), 'before');
                 await assert.rejects(x.owner.close(), code('IDE_RESOURCE_CLEANUP_FAILED'));
             } finally {
                 fs.open = open;
@@ -128,14 +127,14 @@ try {
         const root = await workspace('batch'), file = path.join(root, 'a.ts'); await fs.writeFile(file, 'one');
         const x = await session(root); await x.owner.start(); await x.call('multi_open_file', { filePaths: [file] });
         const invalid = await x.call('batch_edit', { edits: [{ filePath: file, oldString: 'one', newString: 'two' }, { filePath: file, oldString: 1, newString: 'bad' }] });
-        assert.equal(invalid.effects, 'none'); assert.equal(await fs.readFile(file, 'utf8'), 'one');
+        assert.equal(invalid.success, false); assert.equal(Object.hasOwn(invalid, 'effects'), false); assert.equal(await fs.readFile(file, 'utf8'), 'one');
         const partial = await x.call('batch_edit', { edits: [{ filePath: file, oldString: 'one', newString: 'two' }, { filePath: file, oldString: 'missing', newString: 'bad' }, { filePath: file, oldString: 'two', newString: 'three' }] });
-        assert.equal(partial.effects, 'partial'); assert.equal(await fs.readFile(file, 'utf8'), 'two'); assert.deepEqual(x.owner.lastBatch.map(item => item.status), ['succeeded', 'failed', 'not-run']);
+        assert.equal(partial.success, false); assert.equal(Object.hasOwn(partial, 'effects'), false); assert.equal(await fs.readFile(file, 'utf8'), 'two'); assert.deepEqual(x.owner.lastBatch.map(item => item.status), ['succeeded', 'failed', 'not-run']);
         const entered = gate(), release = gate(), add = x.owner.history.add.bind(x.owner.history);
         x.owner.history.add = async (...args) => { entered.resolve(); await release.promise; return add(...args); };
         const pending = x.call('batch_edit', { edits: [{ filePath: file, oldString: 'two', newString: 'three' }, { filePath: file, oldString: 'three', newString: 'four' }] });
         await entered.promise; const extra = await workspace('batch-other'); assert.equal((await x.call('add_folder_to_workspace', { folderPath: extra })).success, true);
-        release.resolve(); const concurrent = await pending; assert.equal(concurrent.effects, 'partial'); assert.equal(await fs.readFile(file, 'utf8'), 'three');
+        release.resolve(); const concurrent = await pending; assert.equal(concurrent.success, false); assert.equal(Object.hasOwn(concurrent, 'effects'), false); assert.equal(await fs.readFile(file, 'utf8'), 'three');
         assert.equal((await x.close()).ok, true);
     });
     await run('conditional slice close failure stays unknown and prevents clean App release', async () => {
@@ -174,7 +173,7 @@ try {
                 assert.equal((await x.call('multi_open_file', { filePaths: [file] })).success, true);
                 const current = x.owner.files.get(file); assert.notEqual(current, record); assert.equal(current.viewId, record.viewId);
                 lateRelease.resolve(); const rejected = await late;
-                assert.equal(rejected.error.code, 'IDE_FILE_VIEW_STALE'); assert.equal(rejected.effects, 'none'); assert.deepEqual(current.panels, {});
+                assert.equal(rejected.error.code, 'IDE_FILE_VIEW_STALE'); assert.equal(Object.hasOwn(rejected, 'effects'), false); assert.deepEqual(current.panels, {});
                 x.owner.lsp.query = async (_kind, _file, content) => ({ documentVersion: 2, value: content });
                 const fresh = await x.call('lsp_hover', { file_path: file, line: 1, character: 1 }, current.viewId);
                 assert.equal(fresh.success, true); assert.equal(fresh.data.value, 'const x = 2;');
@@ -187,7 +186,7 @@ try {
         const record = x.owner.files.get(file), before = JSON.stringify(record);
         x.owner.lsp.query = async () => ({ documentVersion: 1, value: [{ range: { start: { line: -1, character: 0 }, end: { line: 0, character: 1 } }, message: 'bad' }] });
         const result = await x.call('lsp_get_diagnostics', { file_path: file }, record.viewId);
-        assert.equal(result.error.code, 'LSP_DIAGNOSTICS_INVALID'); assert.equal(result.effects, 'none'); assert.equal(JSON.stringify(record), before); await x.close();
+        assert.equal(result.error.code, 'LSP_DIAGNOSTICS_INVALID'); assert.equal(Object.hasOwn(result, 'effects'), false); assert.equal(JSON.stringify(record), before); await x.close();
     });
     await run('queued history cancellation has no disk effect and is a healthy close', async () => {
         const root = await workspace('cancel-history'), file = path.join(root, 'history.json'), history = new IDEHistory(file);
@@ -203,7 +202,7 @@ try {
         const x = await session(root); await x.owner.start(); await x.call('multi_open_file', { filePaths: [file] });
         const before = x.owner.files.get(file), version = x.owner.workspaceVersion;
         const outcome = await x.call('multi_open_file', { filePaths: [second, file, path.join(root, 'missing')] });
-        assert.equal(outcome.success, false); assert.equal(outcome.effects, 'none');
+        assert.equal(outcome.success, false); assert.equal(Object.hasOwn(outcome, 'effects'), false);
         assert.equal(x.owner.workspaceVersion, version); assert.equal(x.owner.files.get(file), before); assert.equal(x.owner.files.size, 1);
         assert.equal((await x.close()).ok, true);
     });
@@ -216,7 +215,8 @@ try {
         try { await arrived.promise; released.resolve(); const replies = await Promise.allSettled([first, second]); assert.equal(replies.filter(item => item.status === 'fulfilled').length, 1); }
         finally { released.resolve(); fs.open = reads; }
         assert.equal((await a.read()).workspaces[root].length, 2); await a.close(); await b.close();
-        await fs.writeFile(file, JSON.stringify({ version: 1, workspaces: {}, migration: false })); const invalidMarker = new IDEHistory(file); await assert.rejects(invalidMarker.add(root, path.join(root, 'x')), code('HISTORY_INVALID')); await invalidMarker.close();
+        await fs.writeFile(file, JSON.stringify({ version: 1, workspaces: {}, unexpected: false }));
+        const invalid = new IDEHistory(file); await assert.rejects(invalid.add(root, path.join(root, 'x')), code('HISTORY_INVALID')); await invalid.close();
         await fs.writeFile(file, '{broken'); const corrupt = new IDEHistory(file); await assert.rejects(corrupt.add(root, path.join(root, 'c'))); assert.equal(await fs.readFile(file, 'utf8'), '{broken'); await corrupt.close();
         await fs.unlink(file); const unknown = new IDEHistory(file), nativeOpen = fs.open; let attempts = 0;
         fs.open = async (p, flags, ...args) => { if (String(p) === file && flags === 'wx') { attempts++; throw Object.assign(Error(), { code: 'EIO', syscall: 'open', path: p }); } return nativeOpen(p, flags, ...args); };
@@ -359,23 +359,34 @@ try {
             for (const app of h.apps) if (!app.closed) { app.host.terminate(); await app.worker.terminate(); await app.host.waitForResourceRelease(); app.closed = true; }
         }
     });
-    await run('legacy import phases are reentrant, existing target wins and source bytes stay unchanged', async () => {
-        const root = await workspace('import-root'), other = await workspace('import-target'), source = path.join(working, 'legacy.json'), historyPath = path.join(working, 'import-history.json');
-        const bytes = JSON.stringify({ workspaceFolders: [root], workspaces: { [root]: { openFiles: [{ path: path.join(root, 'old'), lastOpened: 1 }] } } }); await fs.writeFile(source, bytes);
-        const history = new IDEHistory(historyPath); await history.add(root, path.join(root, 'new')); await history.close();
-        let fail = true; const sessionKey = 'import';
-        const x = await session(undefined, { sessionKey, legacy: source, historyPath, storage: base => ({ ...base, replace: async (...args) => fail ? { status: 'failed', effects: 'none', issue: { code: 'IO_FAILED', message: 'fixture' } } : base.replace(...args) }) });
-        await assert.rejects(x.owner.start(), code('IMPORT_SESSION_SAVE_FAILED'));
-        assert.equal(JSON.parse(await fs.readFile(historyPath, 'utf8')).migration.phase, 'history'); assert.equal(x.owner.ready, false); await x.close();
-        fail = false;
-        const y = await session(undefined, { backend: x.backend, sessionKey, legacy: source, historyPath }); await y.owner.start(); assert.equal(y.owner.ready, true); assert.equal(y.owner.roots[0].path, root); await y.close();
-        const imported = JSON.parse(await fs.readFile(historyPath, 'utf8')); assert.equal(imported.migration.phase, 'completed'); assert.equal(imported.workspaces[root][0].path, path.join(root, 'new'));
-        const prior = hash(await fs.readFile(historyPath)); const z = await session(undefined, { backend: x.backend, sessionKey, legacy: source, historyPath }); await z.owner.start(); await z.close(); assert.equal(hash(await fs.readFile(historyPath)), prior);
-        assert.equal(hash(await fs.readFile(source)), hash(bytes));
-        const existingKey = 'existing', initial = [{ address: { namespace: JSON.stringify(['test', existingKey]), key: 'workspaceFolders' },
-            text: JSON.stringify({ version: 1, updatedAt: 1, value: [other] }) }];
-        const existing = await session(undefined, { initial, sessionKey: existingKey, legacy: source, historyPath }); await existing.owner.start(); assert.deepEqual(existing.owner.roots.map(item => item.path), [other]); await existing.close();
-        await fs.appendFile(source, ' '); const changed = new IDEHistory(historyPath); await assert.rejects(changed.importHistory(await readLegacyIDE(source)), code('IMPORT_SOURCE_CONFLICT')); await changed.close();
+    await run('restores managed state and reads current history with retired metadata without rewriting it', async () => {
+        const root = await workspace('saved-root');
+        const recent = path.join(root, 'recent.txt');
+        const active = path.join(root, 'active.txt');
+        await fs.writeFile(active, 'managed active file');
+        const historyPath = path.join(working, 'saved-history.json');
+        const entries = [{ path: recent, lastOpened: 1 }];
+        const bytes = JSON.stringify({ version: 1, workspaces: { [root]: entries }, migration: { phase: 'completed', digest: 'a'.repeat(64) } });
+        await fs.writeFile(historyPath, bytes);
+        const sessionKey = 'saved-session';
+        const initial = sessionRecords(sessionKey, { workspaceFolders: [root], activeFiles: [active], expandedDirs: [root] });
+        const x = await session(undefined, { initial, sessionKey, historyPath });
+        try {
+            await x.owner.start();
+            assert.equal(x.owner.ready, true);
+            assert.deepEqual(x.owner.roots.map(item => item.path), [root]);
+            assert.deepEqual([...x.owner.files.keys()], [active]);
+            assert.deepEqual((await x.owner.history.read()).workspaces[root], entries);
+            assert.equal(await fs.readFile(historyPath, 'utf8'), bytes);
+            assert.deepEqual(await savedValue(x, 'workspaceFolders'), [root]);
+            await x.owner.history.add(root, active);
+            const updated = JSON.parse(await fs.readFile(historyPath, 'utf8'));
+            assert.deepEqual(Object.keys(updated), ['version', 'workspaces']);
+            assert.deepEqual(updated.workspaces[root].map(item => item.path), [active, recent]);
+        } finally { assert.equal((await x.close()).ok, true); }
+        for (const key of ['ideLegacyImportPath', 'ideLegacyDatabasePath']) {
+            assert.throws(() => resolveIDEOptions({ desktopId: 'test', appId: 'ide', launchConfig: { [key]: historyPath } }), code('IDE_LEGACY_IMPORT_RETIRED'));
+        }
     });
     await run('partial binding failure and stop during initialization cannot deadlock managed flush', async () => {
         const root = await workspace('init'), x = await session(root, { port: port => ({ ...port, bind(key, ...args) { return key === 'activeFiles' ? { status: 'rejected', issue: { code: 'CAPACITY_EXCEEDED' } } : port.bind(key, ...args); } }) });

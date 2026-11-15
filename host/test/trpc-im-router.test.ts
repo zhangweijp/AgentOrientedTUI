@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appRouter } from '../src/trpc/router.js';
 import { Config } from '../src/config/config.js';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 describe('tRPC im router', () => {
     let caller: ReturnType<typeof appRouter.createCaller>;
@@ -11,7 +14,16 @@ describe('tRPC im router', () => {
         getIMRuntime: ReturnType<typeof vi.fn>;
     };
 
-    beforeEach(() => {
+    let configDir: string;
+    let home: string;
+
+    beforeEach(async () => {
+        home = await mkdtemp(join(tmpdir(), 'host-im-config-'));
+        vi.stubEnv('HOME', home);
+        vi.stubEnv('USERPROFILE', home);
+        configDir = join(home, '.agentina');
+        await mkdir(configDir);
+
         hostManager = {
             getIMSessions: vi.fn(() => []),
             getIMSession: vi.fn(() => null),
@@ -26,33 +38,54 @@ describe('tRPC im router', () => {
         });
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         vi.restoreAllMocks();
+        vi.unstubAllEnvs();
+        await rm(home, { recursive: true, force: true });
     });
 
-    it('getConfig reads from Config.getGlobalIm and normalizes disabled fields', async () => {
-        vi.spyOn(Config, 'getGlobalIm').mockResolvedValue({
-            enabled: true,
+    it('keeps IM in mcp.json inactive and leaves the file intact', async () => {
+        const mcpFile = join(configDir, 'mcp.json');
+        const legacy = '{"im":{"disabled":true,"channels":{"feishu":{"enabled":true}}}}';
+        await writeFile(mcpFile, legacy);
+        const settings = await caller.im.getConfig();
+        expect(settings.im).toEqual({ enabled: false });
+        expect(settings.issue).toMatch(/mcp.json.*Reconfigure IM/);
+        expect((await Config.get()).im).toEqual({ enabled: false });
+        expect((await Config.getGlobal()).im).toBeUndefined();
+        expect(await readFile(mcpFile, 'utf8')).toBe(legacy);
+    });
+
+    it.each([
+        { disabled: true, channels: { feishu: { enabled: true } } },
+        { channels: { feishu: { enabled: true, disabled: true } } },
+        { channels: { feishu: { enabled: true, accounts: { main: { enabled: true, disabled: true } } } } },
+    ])('rejects retired disabled flags on read and write', async im => {
+        const file = join(configDir, 'im.json');
+        const legacy = JSON.stringify({ im });
+        await writeFile(file, legacy);
+        expect(await caller.im.getConfig()).toMatchObject({ im: { enabled: false }, issue: expect.stringContaining('Reconfigure IM') });
+        expect((await Config.get()).im?.enabled).toBe(false);
+        await expect(caller.im.updateConfig({ im })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(await readFile(file, 'utf8')).toBe(legacy);
+    });
+
+    it('replaces retired IM settings with the current switches and session policies', async () => {
+        const file = join(configDir, 'im.json');
+        await writeFile(file, '{"im":{"disabled":true}}');
+        const im = {
+            enabled: false,
             channels: {
                 feishu: {
-                    disabled: true,
-                    accounts: {
-                        main: {
-                            disabled: true,
-                            appId: 'cli_xxx',
-                        },
-                    },
+                    enabled: true, sessionScope: 'peer_sender', groupPolicy: 'disabled', allowFrom: ['someone'],
+                    accounts: { main: { enabled: false, sessionScope: 'peer_thread_sender', appId: 'synthetic' } },
                 },
             },
-        } as any);
-
-        const result = await caller.im.getConfig();
-
-        expect(Config.getGlobalIm).toHaveBeenCalledTimes(1);
-        expect(result.enabled).toBe(true);
-        expect(result.channels.feishu.enabled).toBe(false);
-        expect(result.channels.feishu.accounts.main.enabled).toBe(false);
-        expect(result.channels.feishu.accounts.main.appId).toBe('cli_xxx');
+        } as const;
+        await expect(caller.im.updateConfig({ im: { ...im, channels: { feishu: { ...im.channels.feishu, allowFrom: ['someone'] } } } }))
+            .resolves.toEqual({ success: true });
+        expect(await caller.im.getConfig()).toEqual({ im });
+        expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({ im });
     });
 
     it('getRuntime delegates to hostManager runtime surface', async () => {
@@ -93,98 +126,6 @@ describe('tRPC im router', () => {
                 },
             ],
         });
-    });
-
-    it('getImConfig remains available as compatibility alias', async () => {
-        vi.spyOn(Config, 'getGlobalIm').mockResolvedValue({
-            channels: {
-                feishu: {
-                    enabled: true,
-                },
-            },
-        } as any);
-
-        const result = await caller.im.getImConfig();
-
-        expect(result).toEqual({
-            channels: {
-                feishu: {
-                    enabled: true,
-                },
-            },
-        });
-    });
-
-    it('updateConfig writes normalized config via Config.replaceGlobalIm', async () => {
-        const replaceSpy = vi.spyOn(Config, 'replaceGlobalIm').mockResolvedValue(undefined);
-
-        await caller.im.updateConfig({
-            im: {
-                enabled: true,
-                channels: {
-                    feishu: {
-                        enabled: true,
-                        accounts: {
-                            main: {
-                                appId: 'cli_new',
-                                disabled: true,
-                            },
-                        },
-                    },
-                },
-            },
-        });
-
-        expect(replaceSpy).toHaveBeenCalledTimes(1);
-        expect(replaceSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                enabled: true,
-                channels: expect.objectContaining({
-                    feishu: expect.objectContaining({
-                        enabled: true,
-                        accounts: expect.objectContaining({
-                            main: expect.objectContaining({
-                                appId: 'cli_new',
-                                enabled: false,
-                            }),
-                        }),
-                    }),
-                }),
-            }),
-        );
-    });
-
-    it('saveImConfig preserves extended session scopes supported by IM runtime', async () => {
-        const replaceSpy = vi.spyOn(Config, 'replaceGlobalIm').mockResolvedValue(undefined);
-
-        await caller.im.saveImConfig({
-            channels: {
-                feishu: {
-                    sessionScope: 'peer_sender',
-                    accounts: {
-                        main: {
-                            sessionScope: 'peer_thread_sender',
-                            appId: 'cli_nested',
-                        },
-                    },
-                },
-            },
-        });
-
-        expect(replaceSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                channels: expect.objectContaining({
-                    feishu: expect.objectContaining({
-                        sessionScope: 'peer_sender',
-                        accounts: expect.objectContaining({
-                            main: expect.objectContaining({
-                                sessionScope: 'peer_thread_sender',
-                            }),
-                        }),
-                    }),
-                }),
-            }),
-        );
     });
 
     it('listSessions delegates to hostManager IM query surface', async () => {

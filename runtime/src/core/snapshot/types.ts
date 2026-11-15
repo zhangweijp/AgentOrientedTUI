@@ -1,5 +1,4 @@
 export const MARKDOWN_VIEW_FORMAT = 'markdown-v1' as const;
-export const SEMANTIC_VIEW_FORMAT = 'semantic-v1' as const;
 export const SNAPSHOT_SCHEMA_VERSION = 3 as const;
 /**
  * Runtime Core semantic snapshot types.
@@ -14,18 +13,9 @@ export type JsonValue =
     | readonly JsonValue[]
     | Readonly<{ [key: string]: JsonValue }>;
 
-export type ViewContent =
-    | Readonly<{ format: typeof MARKDOWN_VIEW_FORMAT; value: string }>
-    | Readonly<{ format: typeof SEMANTIC_VIEW_FORMAT; value: JsonValue }>;
+export type ViewContent = Readonly<{ format: typeof MARKDOWN_VIEW_FORMAT; value: string }>;
 
-export type RefTarget =
-    | Readonly<{ kind: 'snapshot-value'; payload: JsonValue }>
-    | Readonly<{
-          kind: 'entity';
-          entityType: string;
-          entityId: string;
-          entityVersion?: string;
-      }>;
+export type RefTarget = Readonly<{ kind: 'snapshot-value'; payload: JsonValue }>;
 
 /**
  * Semantic snapshots present the currently active ViewType capabilities alongside
@@ -188,7 +178,10 @@ export interface SnapshotLimits {
 
 export interface SnapshotStoreOptions {
     readonly now?: () => number;
-    readonly limits?: Partial<SnapshotLimits>;
+    /** Captured at Core creation. Omitted or undefined fields use their defaults.
+     * Overrides are safe integers from zero to their default, inclusive.
+     * Invalid property shapes throw TypeError; invalid values throw RangeError. */
+    readonly limits?: Partial<{ [Field in keyof SnapshotLimits]: SnapshotLimits[Field] | undefined }> | undefined;
     readonly maxHistoryEntries?: number;
     readonly maxHistoryBytes?: number;
     readonly historyTtlMs?: number;

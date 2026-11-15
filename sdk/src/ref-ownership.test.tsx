@@ -13,6 +13,7 @@ function setup(component: () => any) {
   const factory = createTUIApp({ app_name: 'ref_ownership', component });
   const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
   kernel.setId('ref_ownership_app' as any);
+  kernel.enableAppLifecycle();
   return {
     kernel,
     get container() { return document.getElementById('app-root-ref_ownership_app')!; },

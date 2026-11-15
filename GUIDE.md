@@ -176,7 +176,7 @@ What they do:
   - links local core packages into dependent folders for local development
   - builds the core packages in dependency order
   - globally links the `agentina` CLI from `runtime/`
-  - builds and registers the default apps (`aotui-ide`, `terminal-app`, and `lite-browser-app`) with `agentina link .`
+  - builds and registers `aotui-ide`, `planning-app`, `terminal-app`, and `lite-browser-app` with `agentina install . --force`
 - `run.sh`
   - refreshes local links
   - rebuilds the core packages and the default apps
@@ -192,15 +192,13 @@ Current CLI surface from `runtime/src/cli.ts`:
 ```bash
 agentina install <source>
 agentina search [query]
-agentina link <path>
 agentina remove <name>
-agentina uninstall <name>
 agentina list
 agentina enable <name>
 agentina disable <name>
 agentina autostart <name> <on|off>
 agentina run [name]
-agentina --version
+agentina --help
 ```
 
 ## Common Development Paths
@@ -230,14 +228,28 @@ agentina --version
 
 Use this layer for GUI work, desktop UX, settings, installation flow, IPC wiring, and local services.
 
+### Desktop Host chat and configuration
+
+Electron registers tRPC over IPC. The GUI reads Topic history through `db.getMessages` and receives live messages through `session.events`. Both carry AI SDK `ModelMessage` content. SQLite stores the current history in `messages_v2`. Startup leaves existing `messages` and `message_parts` tables and rows intact. The current GUI displays the `messages_v2` history.
+
+The standalone `createHostV2(port)` entry in `host/src/server/host-v2.ts` starts the HTTP server for `GET /api/health`, `POST /api/im/feishu/webhook` and `POST /api/im/feishu/webhook/:accountId`. Use the first webhook URL for the channel default Bot and append the URL-encoded account ID for a specific Bot. Electron initializes the same Host core for IPC and its configured IM channels.
+
+**Model routing** is resolved when the Host creates a session. Desktop checks the Topic model, the Agent model, then the active configuration. IM checks the Agent model, then the active configuration. Reopen the session after changing its model. The model catalog supplies the raw Provider model ID, which the Driver sends verbatim. Custom Provider settings supply that Provider's protocol, endpoint and key. Choose a Provider and model again in **Settings → Model** if the Host reports an ambiguous stored selection. [Driver configuration and migration](./agent-driver-v2/README.md#llm-配置)
+
+**IM settings** live under the `im` key in `~/.agentina/im.json`. Use **Settings → IM** to read or save them. The global, channel and account switches are named `enabled`. The Feishu group policy `groupPolicy: "disabled"` still controls group messages. Settings stored under `im` in `mcp.json` and configurations containing retired `disabled` switches require re-entry. The affected IM configuration stays off until you reconfigure and save it. Reload the Host to apply the IM settings.
+
+**MCP settings** live under the `mcp` key in `~/.agentina/mcp.json`. Local entries use `type: "local"`, a `command` array containing the executable and arguments, and optional `environment`. Remote entries use `type: "remote"`, an HTTP(S) `url`, and optional `headers` and `oauth`. Each server supports `enabled`, `timeout` and `disabledTools`. Use tool names exactly as the server publishes them in its own `disabledTools` list.
+
+Use **Settings → MCP → Add Server** to move an external `mcpServers` configuration into the current format. Setup issues appear in MCP settings. Agent and Topic tool permissions use keys such as `mcp-work-search` for the `search` tool from the `work` server. Topic server switches use keys such as `server:work`. An Agent-derived Topic saves its selected servers along with its other source controls. The selection survives shutdown and reopening. Use the Topic MCP controls to change its selection. For retired tool keys, reopen the Agent MCP settings or use the Topic MCP reset, then review and save the switches.
+
 ### I want to add a new app
 
-Use an existing `demo-apps/*` package as the template. Apps outside the default install set can still be linked manually. The current app build pattern is:
+Use an existing `demo-apps/*` package as the template. Apps outside the default install set can be registered manually.
 
 - export a `createTUIApp(...)` app factory from the app entry
 - compile with `tsc`
 - generate `aoapp.json` with `node ../../scripts/generate-aoapp.mjs .`
-- register the app locally with `agentina link <path>`
+- register the app locally with `agentina install local:<path>`
 
 ## Troubleshooting
 
@@ -277,8 +289,7 @@ agentina list
 If needed, re-register it:
 
 ```bash
-agentina remove <app-name>
-agentina link ./demo-apps/<app-folder>
+agentina install ./demo-apps/<app-folder> --force
 ```
 
 ## Further Reading

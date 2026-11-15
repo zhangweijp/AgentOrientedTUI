@@ -160,6 +160,8 @@ function toolError(result, status, code) {
     const end = outcome(result);
     assert.equal(end.status, status, JSON.stringify(end));
     assert.equal(end.details?.result.error.code, code);
+    assert.equal(Object.hasOwn(end, 'effects'), false);
+    assert.equal(Object.hasOwn(end.details.result, 'effects'), false);
     return end;
 }
 const view = (observation, id) => observation.views.find(view => view.id === id);
@@ -184,7 +186,7 @@ test('real Worker opens, conditionally writes, recovers a failed refresh, and cl
     assert.match(body(frame, 'detail'), /Check the public App and Host examples/);
 
     const wrongItem = toolError(await f.call(frame, 'set_status', { item: 'items.items[1]', status: 'done' }), 'failed', 'WORK_ITEM_NOT_SELECTED');
-    assert.equal(wrongItem.effects, 'none');
+    assert.match(wrongItem.details.result.error.message, /current detail View/);
     const invalid = await f.call(frame, 'set_status', { item: 'detail.current', status: "done'; SELECT 1; --" });
     assert.equal(outcome(invalid).status, 'rejected');
     assert.equal(await updates(f), 0);
@@ -201,7 +203,6 @@ test('real Worker opens, conditionally writes, recovers a failed refresh, and cl
 
     await f.sql("UPDATE work_items SET status = 'open', revision = revision + 1 WHERE id = 101;");
     const stale = toolError(await f.call(frame, 'set_status', { item: 'detail.current', status: 'done' }), 'failed', 'VERSION_CONFLICT');
-    assert.equal(stale.effects, 'none');
     assert.match(stale.details.result.error.message, /Refresh/);
     assert.deepEqual(await f.sql(currentItem), [{ status: 'open', revision: 2 }]);
     assert.equal(await updates(f), 2);
@@ -223,7 +224,7 @@ test('real Worker opens, conditionally writes, recovers a failed refresh, and cl
     assert.deepEqual(toolNames(frame), ['close_item', 'refresh']);
     assert.match(body(frame, 'items'), /SQLITE_OUTPUT_LIMIT.*Use refresh/);
     assert.equal(body(frame, 'detail'), 'Detail unavailable. Use refresh to read it again.');
-    assert.deepEqual(await f.client.readReceipt(write), written);
+    assert.deepEqual(await f.client.readReceipt({ observationId: write.observationId, invocationId: write.invocationId }), written);
     assert.equal(await updates(f), 3);
 
     await f.sql("DROP TRIGGER enlarge_detail; UPDATE work_items SET body = 'Repaired body' WHERE id = 101;");
@@ -240,7 +241,7 @@ test('real Worker opens, conditionally writes, recovers a failed refresh, and cl
     assert.equal((await f.runtime.beginShutdown().completion).ok, true);
 });
 
-test('reports partial effects when a real trigger skips the selected update', { timeout: 10_000 }, async t => {
+test('reports the SQLite changes when a real trigger skips the selected update', { timeout: 10_000 }, async t => {
     const f = await fixture(t);
     success(await f.call(await f.observe(), 'open_item', { item: 'items.items[0]' }));
     const frame = await f.observe();
@@ -259,8 +260,7 @@ test('reports partial effects when a real trigger skips the selected update', { 
     ];
     assert.deepEqual(await f.sql(rowsSql), rows);
     const partial = toolError(result, 'failed', 'SQLITE_WRITE_PARTIAL');
-    assert.equal(partial.effects, 'partial');
-    assert.match(partial.details.result.error.message, /Use refresh/);
+    assert.match(partial.details.result.error.message, /recorded row changes.*Use refresh/);
     assert.equal(await updates(f), 1);
 
     const diagnostic = await f.observe();
@@ -269,7 +269,7 @@ test('reports partial effects when a real trigger skips the selected update', { 
     assert.match(body(diagnostic, 'items'), /SQLITE_WRITE_PARTIAL.*Use refresh/);
     assert.doesNotMatch(body(diagnostic, 'items'), /Review SDK guide|Prepare release notes/);
     assert.equal(body(diagnostic, 'detail'), 'Detail unavailable. Use refresh to read it again.');
-    assert.deepEqual(await f.client.readReceipt(write), result);
+    assert.deepEqual(await f.client.readReceipt({ observationId: write.observationId, invocationId: write.invocationId }), result);
     assert.equal(await updates(f), 1);
 
     success(await f.call(diagnostic, 'refresh'));
@@ -282,14 +282,13 @@ test('reports partial effects when a real trigger skips the selected update', { 
     assert.deepEqual(await f.sql(rowsSql), rows);
 });
 
-test('real SQLite start failure is side-effect free; stderr overflow after writing is unknown', { timeout: 10_000 }, async t => {
+test('real SQLite start failure leaves the row unchanged and stderr overflow reports an unconfirmed write', { timeout: 10_000 }, async t => {
     const f = await fixture(t);
     success(await f.call(await f.observe(), 'open_item', { item: 'items.items[0]' }));
     const frame = await f.observe();
     await rename(f.executable, f.executable + '.held');
     const input = { item: 'detail.current', status: 'done' };
-    const failed = toolError(await f.call(frame, 'set_status', input), 'failed', 'SQLITE_START_FAILED');
-    assert.equal(failed.effects, 'none');
+    toolError(await f.call(frame, 'set_status', input), 'failed', 'SQLITE_START_FAILED');
     assert.equal(await updates(f), 0);
     assert.deepEqual(await f.sql(currentItem), [{ status: 'open', revision: 0 }]);
     await rename(f.executable + '.held', f.executable);
@@ -298,13 +297,16 @@ test('real SQLite start failure is side-effect free; stderr overflow after writi
     await f.sql(`CREATE TRIGGER fail_after_write AFTER UPDATE OF status ON work_items
         BEGIN SELECT RAISE(FAIL, '${'x'.repeat(70_000)}'); END;`);
     const uncertain = f.request(frame, 'set_status', input);
-    const unknown = await f.client.invoke(uncertain);
-    toolError(unknown, 'unknown', 'SQLITE_OUTPUT_LIMIT');
+    const unconfirmed = await f.client.invoke(uncertain);
+    const reported = toolError(unconfirmed, 'failed', 'SQLITE_OUTPUT_LIMIT');
+    assert.match(reported.details.result.error.message, /write effect is unknown.*Use refresh/);
     assert.deepEqual(await f.sql(currentItem), [{ status: 'done', revision: 1 }]);
     const recovery = await f.observe();
     assert.deepEqual(recovery.refs, []);
+    assert.deepEqual(toolNames(recovery), ['close_item', 'refresh']);
+    assert.equal(body(recovery, 'detail'), 'Detail unavailable. Use refresh to read it again.');
     assert.match(body(recovery, 'items'), /SQLITE_WRITE_UNCONFIRMED/);
-    assert.deepEqual(await f.client.readReceipt(uncertain), unknown);
+    assert.deepEqual(await f.client.readReceipt({ observationId: uncertain.observationId, invocationId: uncertain.invocationId }), unconfirmed);
     success(await f.call(recovery, 'refresh'));
     assert.equal(await updates(f), 1);
     assert.match(body(await f.observe(), 'detail'), /done · revision 1/);

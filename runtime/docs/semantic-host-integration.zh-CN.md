@@ -16,7 +16,7 @@
 
 `refParam` 是同一 ViewType Tool 的显式参数取值方式，不再注册实例 Tool。SDK 允许每个 Tool 声明多个显式顶层 Ref 参数，并通过 required 区分必填与可选，可与普通参数并用。缺席可选字段不产生 payload 或来源；有值但无效的字段拒绝整次调用。Runtime 从调用绑定的原 Observation 解析完整 Ref 名、校验真实业务类型和 payload Schema，授权与执行使用同一份冻结 effectiveInput。View/Ref 的实例身份仍保留；数据只读不要求 Tool 必须只读。App 用 payload 内部 ID 检查当前业务对象，不让模型另抄该 ID；文件路径、标题和编辑内容等有意义的普通字段保留。
 
-相关实现：[通用 Source](../../agent-driver-adapter/src/semantic-aotui-driven-source.ts)、[能力过滤](../src/adapters/semantic-capability-policy.ts)、[Worker 接入](../src/engine/app/worker-host.ts)。
+Source 从 `@aotui/agent-driver-adapter` 导入。Worker 与能力选择见 [Runtime App 交互](runtime-app-interaction.md)。
 
 ## 2. 一次 Context 固定本轮消息、工具和调用目标
 
@@ -31,7 +31,7 @@
 
 同一 Context 的 `messages`、`tools`、`executeTool` 是一组。不能分别获取新旧版本后混用，也不能在执行旧调用时悄悄换成最新 Binding。旧 Context 释放后继续调用会被拒绝。
 
-当前隔离候选的公开接入方式：Host 安装同批实际 tar 中的 `@aotui/agent-driver-adapter@0.4.0-srt.1`、`@aotui/runtime@7.0.0-srt.1` 与 `@aotui/agent-driver-v2@0.3.0`。适配包将 Runtime／Driver 声明为必需 peer；Runtime 和 SDK 不依赖具体 Driver。这些候选版本尚未发布。SRT-06 已通过实际 Host 集成和严格公开类型检查；外部 Host 必须沿用已验收的精确 AI SDK 版本及 pnpm 声明补丁，见[适配包说明](../../agent-driver-adapter/README.md)。
+Host 从同一套本地 tar 安装 Runtime、SDK、Adapter 和 Driver。Adapter 将 Runtime 和 Driver 声明为必需 peer。严格类型安装的补丁流程见 `@aotui/agent-driver-v2` 包内 `STRICT_TYPES.md`。 [当前配套与安装图](sdk-runtime-distribution.md#current-delivery)
 
 ```ts
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
@@ -47,6 +47,70 @@ const source = new SemanticAOTUIDrivenSource(desktop, kernel, {
 
 自定义 Driver 在实际消费前也必须调用 `context.adopt()`，并成对调用 `getContext()` / `release()`，并在模型生成及该轮工具执行全部结束后释放。Context 释放其观察，实例继续持有需要结算的执行与有限收据。自定义 Host 需要诊断预览时使用 `preview()`。
 
+<a id="source-host-example"></a>
+### 从本地 App 到一次工具调用
+
+先按 `@aotui/sdk` 包内 `docs/app-authoring.md` 编译工作项示例，生成 `app_name` 为 `work_items` 的 `aoapp.json`。运行以下 Node.js 脚本时，将 App 目录作为第一个参数传入，并设置 `AOTUI_DATA_DIR` 指向本次运行的数据目录。`registerTransient` 的 `installAll` 返回 `installed` 时，Worker 的 INIT 和 OPEN 已完成。代码继续等待所需 Tool 进入 Context。
+
+<!-- source-host-example:start -->
+```js
+import { AppRegistry, createRuntime, createDesktopId } from '@aotui/runtime';
+import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
+
+const runtime = createRuntime();
+const registry = new AppRegistry();
+try {
+    const appDirectory = process.argv[2];
+    if (!appDirectory) throw new Error('Pass the compiled Work Items App directory');
+    const appName = await registry.registerTransient(`local:${appDirectory}`);
+    const id = await runtime.createDesktop(createDesktopId('demo'));
+    const desktop = runtime.getDesktop(id);
+    const installed = (await registry.installAll(desktop, {
+        dynamicConfig: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR },
+    })).find(result => result.name === appName);
+    if (installed?.status !== 'installed') throw new Error(`Could not install ${appName}: ${JSON.stringify(installed)}`);
+
+    const source = new SemanticAOTUIDrivenSource(desktop, runtime);
+    const inspect = `${appName}-Item-inspect`;
+    const workspace = context => context.messages.find(({ content }) =>
+        String(content).startsWith('<view id="workspace"') && String(content).includes(`app_name="${appName}"`));
+    async function observe(ready) {
+        const deadline = Date.now() + 5_000;
+        do {
+            const context = await source.getContext();
+            if (ready(context)) return context;
+            await context.release();
+            await new Promise(resolve => setTimeout(resolve, 20));
+        } while (Date.now() < deadline);
+        throw new Error(`Timed out observing ${appName}`);
+    }
+    try {
+        const context = await observe(current => current.tools[inspect] && workspace(current));
+        let receipt;
+        try {
+            await context.adopt();
+            receipt = await context.executeTool(inspect, { selected: 'billing_export_2026_11.selected' }, 'inspect-1');
+            if (receipt.outcomeStatus !== 'succeeded') throw new Error(`Inspection failed: ${JSON.stringify(receipt)}`);
+        } finally {
+            await context.release();
+        }
+        const next = await observe(current => String(workspace(current)?.content).includes('Inspections: 1'));
+        try {
+            await next.adopt();
+            console.log(JSON.stringify({ receipt, workspace: workspace(next).content }));
+        } finally {
+            await next.release();
+        }
+    } finally {
+        source.dispose();
+    }
+} finally {
+    const report = await runtime.beginShutdown().completion;
+    if (!report.resourcesReleased || !report.ok) throw new Error(`Runtime shutdown failed: ${JSON.stringify(report)}`);
+}
+```
+<!-- source-host-example:end -->
+
 ### 模型可见呈现与内部身份分离
 
 Producer 输出不带框架 `<view>` 外壳的正文。Source 按已知的 View 元数据在 User Message 边界只包装一次；正文中恰好出现字面 `<view>` 字符串时也按正文保留，不猜测或拆除它。外壳使用 `id`、`type`、`kind`、`name`、`app_id`、`app_name`。`viewInstanceId`、Observation/Binding ID 和 App revision 留在执行通道，不注入正文。未变化内容保持其展示时间戳；缓存仅保存当前投影的内容摘要和时间，不保留历史 View 或执行权限。
@@ -57,11 +121,15 @@ Producer 输出不带框架 `<view>` 外壳的正文。Source 按已知的 View 
 
 把原本想表达的父/子页面分别声明为并列的独立 View，并在各自内容中清楚说明关联；不要把一个 SDK `View` 放进另一个 `View`，也不能通过手写 `data-view-id` 绕过 SDK 检查。嵌套内容修正后，下一份有效 Snapshot 会让 Semantic 健康恢复为 ready；auto、never、manual 的唤醒策略仍按原合同工作。
 
-普通工具别名严格为 `appName-ViewType-toolName`，例如 `system_ide-FileDetail-edit_file`。三个组成段各自只接受 ASCII 字母、数字和下划线；连字符 `-` 只用于分隔三段，不能出现在段内。组合后总长不得超过 64 个字符。不同 ViewType 的同名操作属于不同 Tool；同一 ViewType 的多个 View 实例共用一个逻辑 Tool。SDK 经 AppKernel 注册时校验，Source 发布前复核。非法名称报 `AOTUI_TOOL_NAME_INVALID`，组合后冲突报 `AOTUI_TOOL_NAME_COLLISION`，由开发者修正声明。不截断、不清洗字符、不追加摘要或 App ID。此格式只约束原生 Tool 别名，纯 Core 身份不受限制。
+Source 构造模型 Tools 时校验 `appName-ViewType-toolName`，例如 `system_ide-FileDetail-edit_file`。三个段分别使用 ASCII 字母、数字和下划线，以连字符分隔，整名最多 64 字符。不同 ViewType 的同名操作是不同 Tool，同类型多个 View 实例共享 Tool。非法名称报 `AOTUI_TOOL_NAME_INVALID`，组合后冲突报 `AOTUI_TOOL_NAME_COLLISION`，诊断隔离到对应 App。Source 保留合法原名，通过当前 Context 捕获的别名与 binding 映射路由调用。View id 不参与别名计算，纯 Core 使用自己的结构化身份规则。
 
 普通 ViewType Tool 使用应用声明的原始 Schema 和显式业务参数。Runtime 不读取 `target` 元数据、不依据 View 实例选择 Binding，也不猜测或解析 `filePath`；App Handler 负责业务对象选择及其有效性。多个同类型 View 共用 Tool，不会为每个实例生成新的别名或 Schema。对象关闭、过期或不具备业务授权时，由应用 Handler 按业务合同拒绝操作。
 
-Desktop 保留应用用途、状态、App ID 和最近 5 条系统日志。日志不提供时显示无近期活动；存在被 Source 禁用的应用时，不投影可能包含该应用信息的 Desktop 全局日志。系统控制工具使用 `system-open_app`、`system-close_app`、`system-collapse_app`、`system-show_app`，仅在当前状态可用时出现。close、collapse、show 绑定到生成该 Context 时的 App 执行实例；Runtime 在生命周期入口同步核对实例身份，实例变化或身份不可用时返回 `APP_INSTANCE_CHANGED`，不会操作同 App ID 的后继实例。当前实例身份缺失时不发布这些活动实例控制工具。open_app 面向已安装的逻辑应用，用于启动 pending/closed 应用，不绑定某个已运行实例。
+Source 的 Desktop 应用列表按话题启用状态筛选，呈现应用用途、状态和 App ID。没有单独禁用的应用时，还呈现最近 5 条系统日志。Host 的 Desktop 预览可显示整个桌面的安装状态，供诊断和展示使用。Agent 从同一份 Context 的应用列表和 Tools 选择操作。
+
+Apps Source 启用时，`system-open_app` 和 `system-close_app` 始终随 Context 提供。空 Desktop、没有符合条件的目标或所有 App 都被单项禁用时，两项定义也相同。调用只接受必填的字符串 `app_id`，使用本轮 Desktop 列表中的 App ID。`open_app` 启动 `pending` 或 `closed` 的已安装应用。`close_app` 关闭 `running`、`collapsed` 或 `paused` 的应用，目标须有当前执行实例。参数不合法或目标在该轮不符合条件时，返回 `INVALID_APP_TARGET`。关闭整个 Apps Source 会移除该 Source 的全部工具。
+
+`system-collapse_app` 与 `system-show_app` 随可用状态和实例动态提供。`close_app`、`collapse_app` 和 `show_app` 绑定到捕获 Context 时的执行实例。调用前重查应用状态和话题启用资格，Runtime 在生命周期入口再同步核对实例。状态变化时返回 `APP_STATE_CHANGED`，实例变化时返回 `APP_INSTANCE_CHANGED`。业务 View 和 App + ViewType Tool 继续随运行中的应用和当前观察发布。
 
 说明覆盖优先级为非空 `instruction` → `instructionPath` → 环境变量 `AOTUI_SYSTEM_INSTRUCTION_PATH` → Runtime 内置的 `DEFAULT_AOTUI_SYSTEM_INSTRUCTION`。指定文件不可读时记录诊断并使用内置说明；`includeInstruction: false` 不注入全局说明。应用自己的 instruction View 仍由应用声明。
 
@@ -79,12 +147,12 @@ Desktop 保留应用用途、状态、App ID 和最近 5 条系统日志。日�
 | --- | --- | --- |
 | `succeeded` | 工具定义的操作已成功 | 具体业务数据读 View；“启动命令成功”不等于该命令已经运行完毕 |
 | `rejected` | 调用被拒绝 | 结合 `executionPhase` 与错误码判断拒绝发生在哪一层；不计为成功 |
-| `failed` | 已进入的操作报告失败，并声明副作用为 `none` 或 `partial` | 保留副作用信息；不能统一当作未执行 |
-| `unknown` | 无法确认最终结果或副作用 | 保持未知，不自动重放；View 没有显示结果也不能单独证明操作未执行 |
+| `failed` | 已进入的 handler 正常返回合法业务失败收据 | 保留业务错误和恢复 data。查看当前 View 及 App 提示后再决定如何恢复 |
+| `unknown` | 尚无可信结果，或执行已终结但无法取得合法返回 | 保留原调用的观察 ID 和调用 ID，用于查询仍可读取的收据。 |
 
-`executionPhase` 和 `outcome` 分别回答“进入了哪个阶段”和“已知什么结果”。Core 内部保留完整 Receipt。Source 将成功 `ToolResult.data` 作为 Driver 工具结果，并将业务错误映射为可行动的错误；内部 `outcomeStatus` 供 Driver 区分终态，模型结果不包含 Receipt 或 `outcomeStatus` 包装，不能仅以有没有普通 result 字段判断成功。
+`executionPhase` 和 `outcome` 分别回答“进入了哪个阶段”和“已知什么结果”。Core 内部保留完整 Receipt。Source 将 `ToolResult.data` 和业务错误传给 Driver。内部 `outcomeStatus` 供 Driver 区分结果，模型结果不包含 Receipt 或 `outcomeStatus` 包装，不能仅以有没有普通 result 字段判断成功。
 
-实例内相同 Invocation ID、Observation、Binding 和请求指纹匹配原记录。不同指纹报告 `INVOCATION_ID_CONFLICT`。原观察已退出时，新调用会拒绝，可信 Host 仍可用 `readReceipt(originalRequest)` 读取原调用。首次返回及每次读取均通过 `AppInteractionPolicy.canReadReceipt`。
+重复执行时，`invoke` 以 Invocation ID 和完整请求指纹匹配原记录。不同指纹报告 `INVOCATION_ID_CONFLICT`。可信 Host 可在原观察退出后用 `readReceipt({ observationId, invocationId })` 读取仍在保留期内的收据。完整请求作为查询传入时会返回 `INVOCATION_INVALID`。首次返回和每次读取都按原调用记录执行 `AppInteractionPolicy.canReadReceipt`。
 
 每个实例最多一个真实执行。调用方等待截止后，原 handler 仍由实例跟踪，直到有效 terminal 或真实 Worker 退出。终态后的可读结果默认保留 60 秒，当前观察的防重指纹在采用期间继续保留。退出观察的结果按 TTL 释放，实例关闭撤销读取。标准 Source 将收据转换为 Driver 操作结果，模型从 View 获取业务数据。长期审计或业务任务进度分别由 Host 与 App 持有。
 
@@ -124,13 +192,11 @@ pnpm -C agent-driver-v2 exec vitest run \
 
 Semantic 的正式接入和清理以代码、当前 API 类型及定向验证共同确认；任何旧代码尚未删除的事实都不等于默认流程仍受支持。默认路径不通过回退掩盖 Semantic 接入缺口。
 
-本轮实际构建、定向回归与真实模型结果见 [2026-10-28 验证记录](./semantic-host-validation-2026-10-28.zh-CN.md)。这些自动化结果不替代项目所有者的最终验收。
-
 ## 参数 Schema 与公共别名
 
-SDK 将 TypeBox 声明编译为有界的 `view-type-parameters-v1` 参数合同。支持的 Schema 词汇贯通声明、模型参数和解引用校验。其他词汇会在 Tool 定义期带路径拒绝。完整支持范围见 SDK 的[`view-type-parameters-v1` 参数合同](../../sdk/docs/ordinary-v2.md)。Native Tool 的公共别名约束见上文；这不限制纯 Core 内部身份。
+SDK 将 TypeBox 声明编译为有界的 `view-type-parameters-v1` 参数合同。支持的 Schema 词汇贯通声明、模型参数和解引用校验。其他词汇会在 Tool 定义期带路径拒绝。完整支持范围见 `@aotui/sdk` 包内 `docs/tool-parameters.md`。Native Tool 的公共别名约束见上文。
 
-本候选的工厂作者标记为 `view-type-tools-v4`，Host/Worker mode 为 `view-type-parameters-v1`；旧 Hook、实例 Tool 执行、专属 profile 和旧 wire 成功路径退出。View/Ref owner、授权后重验、预算及释放保持。观察的准备与采用分开，显式采用新观察会撤销旧资格，规则见下节。历史验收记录保留各自日期和适用产物，未执行的新候选测试不能标成已通过。
+工厂作者标记为 `view-type-tools-v4`。Core 和 Worker 使用 `view-type-parameters-v1` 参数合同。View/Ref owner、授权后重验、预算及释放保持。观察的准备与采用分开，显式采用新观察会撤销旧资格，规则见下节。历史验收记录保留各自日期和适用产物，未执行的新候选测试不能标成已通过。
 
 ### 串行采用与失败
 
@@ -139,6 +205,6 @@ SDK 将 TypeBox 声明编译为有界的 `view-type-parameters-v1` 参数合同�
 Source 按 App 准备和诊断；后台通知、getContext 预览不换当前。若采用时跨 App 部分成功，错误 code 为 SEMANTIC_ADOPTION_PARTIAL，并保留逐 App 结果；不宣称整体回滚。Driver 不进入模型，仍在 finally 释放本轮资源。所有 App 采用失败时为 SEMANTIC_ADOPTION_FAILED。Source 不持有跨轮常驻 current。必要操作收据及完整请求防重不随旧观察撤销而删除。
 
 
-View.type 与 View.kind 必须显式声明，DOM Producer 不扫描正文分类。Snapshot 保存未转义 Markdown；消息边界将正文及 Ref 提示编码为 XML 文本，Host 预览识别外壳后解码一次，保留字面标签、实体文本和首尾空白。原样多行内容通过 pre/code 投影；完整合同见 [View](../../sdk/docs/views.md)。
+DOM Producer 使用显式声明的 `View.type` 与 `View.kind`。Snapshot 保存未转义的 Markdown。消息边界将正文及 Ref 提示编码为 XML 文本，Host 预览识别外壳后解码一次，保留字面标签、实体文本和首尾空白。原样多行内容通过 pre/code 投影。完整合同见 `@aotui/sdk` 包内 `docs/views.md`。
 
 Ref 调用按 View 定位：View 内显示 `[设计阶段](Phase:completed_phases[0])`，所在 XML id 为 plan_b 时输入 `plan_b.completed_phases[0]`；整列表输入 `plan_b.completed_phases`。类型提示不进入地址，业务类型仍由 Ref 元数据和参数合同检查。Host 不猜当前 View，不将 ViewType/name 当作 View id。此规则只适用于声明为 Ref 的参数。

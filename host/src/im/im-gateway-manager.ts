@@ -75,7 +75,7 @@ export class IMGatewayManager extends EventEmitter {
     for (const [channelId, channel] of this.channels.entries()) {
       const channelConfig = toRecord(channelsConfig[channelId])
 
-      if (!isEnabled(channelConfig)) {
+      if (im.enabled === false || !isEnabled(channelConfig)) {
         if (this.activeChannelIds.has(channelId)) {
           await this.stopChannel(channelId)
         }

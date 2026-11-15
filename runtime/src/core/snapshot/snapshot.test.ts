@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { copyJson } from './json.js';
 import { createSnapshotCore } from './store.js';
-import { refKey } from './snapshot-support.js';
+import { DEFAULT_SNAPSHOT_LIMITS, refKey } from './snapshot-support.js';
 import { validatePreparedV3Draft } from './v3-validator.js';
-import { compileOrdinaryParams } from '../tool/ordinary-parameter-contract.js';
+import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
 import type { PreparedAppSnapshotDraftV3, SnapshotCore, SnapshotStoreOptions } from './types.js';
 
 const KEY = refKey('workspace', 'mount_1', 'tasks[0]');
 const TOOL = JSON.stringify(['task_app', 'Workspace', 'complete_task']);
 const taskSchema = (() => {
-    const compiled = compileOrdinaryParams({ id: { type: 'string', required: false } }, { additionalProperties: false });
+    const compiled = compileOrdinarySchema({ type: 'object', properties: { id: { type: 'string' } }, additionalProperties: false });
     if (!compiled.ok) throw new Error('Fixture Tool Schema must compile');
     return ordinaryParameterProfile(compiled.contract);
 })();
@@ -75,6 +75,87 @@ function sourceRef(core: SnapshotCore, snapId: string) {
         viewId: 'workspace', viewInstanceId: 'mount_1', refId: 'tasks[0]',
     });
 }
+
+describe('Snapshot Store limits', () => {
+    it('uses its original limits after the caller mutates, replaces or deletes them', () => {
+        const limits = { maxViews: 1 };
+        const options: { limits?: typeof limits } = { limits };
+        const core = createSnapshotCore(options);
+        core.lifecycle.startApp('task_app', 'instance_a');
+        try {
+            const first = published(core, draft());
+            const views = [...draft().views, { ...draft().views[0]!, id: 'second', viewInstanceId: 'mount_2' }];
+            const rejectTwoViews = (seq: number) => {
+                expect(core.committer.accept(draft(seq, seq, 'task-a', { views }))).toMatchObject({
+                    status: 'rejected', issue: { path: '$.views' },
+                });
+                expect(core.store.readLatest('task_app')).toMatchObject({ status: 'degraded', lastGood: first });
+            };
+            limits.maxViews = 2;
+            rejectTwoViews(2);
+            options.limits = { maxViews: 2 };
+            rejectTwoViews(3);
+            delete options.limits;
+            rejectTwoViews(4);
+            expect(published(core, draft(5, 5, 'task-b')).revision).toBe(2);
+        } finally { core.lifecycle.dispose(); }
+    });
+
+    it('uses defaults for omitted and undefined values and accepts null-prototype limits and zero', () => {
+        for (const options of [{}, { limits: undefined }, { limits: { maxViews: undefined } },
+            Object.assign(Object.create(null), { limits: Object.assign(Object.create(null), DEFAULT_SNAPSHOT_LIMITS) })]) {
+            const core = createSnapshotCore(options);
+            core.lifecycle.startApp('task_app', 'instance_a');
+            try { expect(published(core, draft()).revision).toBe(1); }
+            finally { core.lifecycle.dispose(); }
+        }
+        const core = createSnapshotCore({ limits: { maxViews: 0 } });
+        core.lifecycle.startApp('task_app', 'instance_a');
+        try {
+            expect(core.committer.accept(draft())).toMatchObject({ status: 'rejected', issue: { path: '$.views' } });
+            expect(published(core, draft(2, 2, 'task-a', { views: [], refs: {}, tools: {} })).views).toEqual([]);
+        } finally { core.lifecycle.dispose(); }
+    });
+
+    it('rejects inherited, hidden and accessor options without reading limits', () => {
+        let reads = 0;
+        const accessor = { get limits() { reads++; return { maxViews: 1 }; } };
+        for (const options of [accessor, Object.create(accessor), Object.create({ limits: undefined }),
+            Object.defineProperty({}, 'limits', { value: undefined })]) {
+            expect(() => createSnapshotCore(options)).toThrow(expect.objectContaining({ name: 'TypeError', message: expect.stringContaining('limits') }));
+        }
+        expect(reads).toBe(0);
+    });
+
+    it('rejects invalid shapes and invalid field descriptors without reading values', () => {
+        let reads = 0;
+        const accessor = { get maxViews() { reads++; return 1; } };
+        class CustomLimits { maxViews = 1; }
+        const invalid: [unknown, string][] = [
+            [null, 'limits'], [[], 'limits'], [new CustomLimits(), 'limits'], ['wrong', 'limits'],
+            [Object.create({ maxViews: 1 }), 'limits'], [{ unexpected: 1 }, 'limits.unexpected'],
+            [{ [Symbol('extra')]: 1 }, 'limits.Symbol(extra)'],
+            [accessor, 'limits.maxViews'], [Object.defineProperty({}, 'maxViews', { value: undefined }), 'limits.maxViews'],
+        ];
+        for (const [limits, field] of invalid) {
+            expect(() => createSnapshotCore({ limits } as SnapshotStoreOptions))
+                .toThrow(expect.objectContaining({ name: 'TypeError', message: expect.stringContaining(field) }));
+        }
+        expect(reads).toBe(0);
+    });
+
+    it('enforces each default ceiling and accepts zero for every field', () => {
+        for (const [field, max] of Object.entries(DEFAULT_SNAPSHOT_LIMITS)) {
+            createSnapshotCore({ limits: { [field]: 0 } }).lifecycle.dispose();
+            expect(() => createSnapshotCore({ limits: { [field]: max + 1 } }))
+                .toThrow(expect.objectContaining({ name: 'RangeError', message: expect.stringContaining(`limits.${field}`) }));
+        }
+        for (const maxViews of [NaN, Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '1', null, false]) {
+            expect(() => createSnapshotCore({ limits: { maxViews } } as SnapshotStoreOptions))
+                .toThrow(expect.objectContaining({ name: 'RangeError', message: expect.stringContaining('limits.maxViews') }));
+        }
+    });
+});
 
 describe('B2-Q01 independent application lifecycle identity', () => {
     it('reports absent/unready/ready/degraded/stopped/new-unready without changing SnapshotRead shapes', () => {
@@ -197,13 +278,13 @@ describe('M1 pure Core — schema & safe value contract', () => {
         const deep = { a: { b: { c: { d: 1 } } } };
         expect(validatePreparedV3Draft({
             ...draft(), refs: { [KEY]: { ...draft().refs[KEY], target: { kind: 'snapshot-value', payload: deep } } },
-        }, { maxDepth: 6 }).ok).toBe(false);
+        }, { ...DEFAULT_SNAPSHOT_LIMITS, maxDepth: 6 }).ok).toBe(false);
         const big = 'x'.repeat(1_000);
         const value = { ...draft(), refs: {
             [KEY]: { ...draft().refs[KEY], target: { kind: 'snapshot-value', payload: { big } } },
         } };
-        expect(validatePreparedV3Draft(value, { maxRefPayloadBytes: 100 }).ok).toBe(false);
-        expect(validatePreparedV3Draft(value, { maxSnapshotBytes: 100 }).ok).toBe(false);
+        expect(validatePreparedV3Draft(value, { ...DEFAULT_SNAPSHOT_LIMITS, maxRefPayloadBytes: 100 }).ok).toBe(false);
+        expect(validatePreparedV3Draft(value, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: 100 }).ok).toBe(false);
     });
 });
 
@@ -397,11 +478,11 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
         expect(sourceRefWithGeneration(core, newer.id, 'mount_2').status).toBe('resolved');
     });
 
-    it('retains exact old Entity locator, including entityVersion', () => {
+    it('retains the exact historical payload, including its business version', () => {
         const core = createSnapshotCore();
         core.lifecycle.startApp('task_app', 'instance_a');
-        const target = { kind: 'entity' as const, entityType: 'Task', entityId: 'same-id', entityVersion: 'old-v1' };
-        const newerTarget = { ...target, entityVersion: 'new-v2' };
+        const target = { kind: 'snapshot-value' as const, payload: { id: 'same-id', version: 'old-v1' } };
+        const newerTarget = { ...target, payload: { ...target.payload, version: 'new-v2' } };
         const old = published(core, draft(1, 1, 'unused', {
             refs: { [KEY]: { ...draft().refs[KEY], target } },
         }));
@@ -412,9 +493,8 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
         const refOld = sourceRef(core, old.id);
         const refNew = sourceRef(core, newer.id);
         if (refOld.status !== 'resolved' || refNew.status !== 'resolved') throw Error('unexpected');
-        expect(refOld.target).toMatchObject({ entityId: 'same-id', entityVersion: 'old-v1' });
-        expect(refNew.target).toMatchObject({ entityId: 'same-id', entityVersion: 'new-v2' });
-        // Live resource CAS is an M4 concern; M1 must never swap the old locator.
+        expect(refOld.target).toEqual(target);
+        expect(refNew.target).toEqual(newerTarget);
         held.lease.release(); expect(core.store.inspect().historicalSnapshots).toBe(0);
     });
 });
@@ -602,8 +682,7 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
         core.lifecycle.startApp('task_app', 'instance_a');
         const first = published(core, draft());
         const changedSchema = (() => {
-            const compiled = compileOrdinaryParams({ id: { type: 'string', required: false, desc: 'Task identifier' } },
-                { additionalProperties: false });
+            const compiled = compileOrdinarySchema({ type: 'object', properties: { id: { type: 'string', description: 'Task identifier' } }, additionalProperties: false });
             if (!compiled.ok) throw new Error('Changed Tool Schema must compile');
             return ordinaryParameterProfile(compiled.contract);
         })();
@@ -728,7 +807,7 @@ describe('M1 Core — nonpublishable Producer input and explicit prepare failure
                 },
             },
         });
-        const validation = validatePreparedV3Draft(input, { maxSnapshotBytes: 1_024 });
+        const validation = validatePreparedV3Draft(input, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: 1_024 });
         expect(validation.ok).toBe(false);
         if (!validation.ok) expect(validation.issue.code).toBe('SNAPSHOT_SERIALIZATION_ERROR');
     });
@@ -766,9 +845,9 @@ describe('M1 Core — edge-case schema and retention gates', () => {
     });
 
     it('enforces maximum node and view counts instead of allowing unbounded cloning', () => {
-        const tooManyNodes = validatePreparedV3Draft(draft(), { maxNodes: 10 });
+        const tooManyNodes = validatePreparedV3Draft(draft(), { ...DEFAULT_SNAPSHOT_LIMITS, maxNodes: 10 });
         expect(tooManyNodes.ok).toBe(false);
-        const tooManyViews = validatePreparedV3Draft(draft(), { maxViews: 0 });
+        const tooManyViews = validatePreparedV3Draft(draft(), { ...DEFAULT_SNAPSHOT_LIMITS, maxViews: 0 });
         expect(tooManyViews.ok).toBe(false);
         if (!tooManyViews.ok) expect(tooManyViews.issue.path).toBe('$.views');
     });

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { compileOrdinaryParams } from '../../../runtime/src/core/tool/ordinary-parameter-contract.js';
+import { compileOrdinarySchema } from '../../../runtime/src/core/tool/ordinary-parameter-contract.js';
 import { invokeOrdinaryParameterTool } from './ordinary-parameter-tool.js';
 const compiled = () => {
-  const c = compileOrdinaryParams({ e: { type: 'enum', options: ['1'], required: true }, n: { type: 'number', default: 7 } }, { additionalProperties: false });
+  const c = compileOrdinarySchema({ type: 'object', properties: { e: { type: 'string', enum: ['1'] }, n: { type: 'number', default: 7 } }, required: ['e'], additionalProperties: false });
   if (!c.ok) throw Error('Fixture'); return c.contract;
 };
 describe('R16/R17 SDK single-contract helper', () => {
@@ -23,26 +23,16 @@ describe('R16/R17 SDK single-contract helper', () => {
     expect(await invokeOrdinaryParameterTool(compiled(), { e: '1' }, handler)).toEqual({ phase: 'entered-returned', result: { success: false, error: { code: 'BUSINESS', message: 'Unavailable' } } });
     expect(handler).toHaveBeenCalledOnce();
   });
-  it('sanitizes thrown handler exceptions without losing entered phase', async () => {
-    const r = await invokeOrdinaryParameterTool(compiled(), { e: '1' }, () => { throw Error('PRIVATE_EXCEPTION'); });
-    expect(r).toMatchObject({ phase: 'entered-returned', result: { error: { code: 'E_HANDLER_ERROR' } } });
-    expect(JSON.stringify(r)).not.toContain('PRIVATE_EXCEPTION');
-  });
-  it.each(['none', 'partial'] as const)('forwards only application-declared %s effects', async effects => {
-    const error = { code: 'APP_FAILED', message: 'Application failure' };
-    const result = { success: false, error, effects };
+  it('passes a normal E_HANDLER_ERROR receipt to Runtime with its business data', async () => {
+    const result = { success: false as const, error: { code: 'E_HANDLER_ERROR', message: 'Application failure' }, data: { refreshed: false } };
     expect(await invokeOrdinaryParameterTool(compiled(), { e: '1' }, async () => result)).toEqual({
-      phase: 'entered-returned', result: { success: false, error }, failureEffects: effects,
+      phase: 'entered-returned', result,
     });
-    expect(result.effects).toBe(effects);
   });
-  it.each(['success', 'invalid', 'getter'] as const)('does not trust an invalid effect declaration: %s', async kind => {
-    let reads = 0;
-    const result: any = { success: kind === 'success', effects: kind === 'invalid' ? 'all' : 'none' };
-    if (kind === 'getter') Object.defineProperty(result, 'effects', { enumerable: true, get() { reads++; return 'none'; } });
-    const terminal = await invokeOrdinaryParameterTool(compiled(), { e: '1' }, async () => result);
-    expect(terminal).toMatchObject({ phase: 'entered-returned', result: { success: false, error: { code: 'E_HANDLER_ERROR' } } });
-    expect(terminal).not.toHaveProperty('failureEffects'); expect(reads).toBe(0);
+  it.each([false, true])('leaves actual handler errors rejected for Runtime to finish, asynchronous=%s', async asynchronous => {
+    const error = new Error('PRIVATE_EXCEPTION');
+    const handler = asynchronous ? () => Promise.reject(error) : () => { throw error; };
+    await expect(invokeOrdinaryParameterTool(compiled(), { e: '1' }, handler)).rejects.toBe(error);
   });
   it('awaits an actual asynchronous handler before returning success', async () => {
     let finish!: () => void, settled = false;

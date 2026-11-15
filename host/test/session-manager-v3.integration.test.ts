@@ -75,7 +75,6 @@ const createMockModelRegistry = (): ModelRegistry => ({
         providerCount: 0,
         modelCount: 0,
     }),
-    getProviderRegistry: vi.fn().mockResolvedValue({}),
 } as any);
 
 // Mock Kernel
@@ -118,13 +117,13 @@ describe('SessionManager V3 Integration', () => {
         mockModelRegistry = createMockModelRegistry();
         llmConfigService = new LLMConfigService(mockModelRegistry);
         
-        // ✅ Mock getActiveLLMConfig to return a valid config
-        vi.spyOn(llmConfigService, 'getActiveLLMConfig').mockResolvedValue({
+        // ✅ Mock resolveLLMConfig to return a valid config
+        vi.spyOn(llmConfigService, 'resolveLLMConfig').mockResolvedValue({
             model: 'gpt-4',
             provider: { id: 'openai' },
             apiKey: 'test-key',
-        } as any);
-        
+        });
+
         mockKernel = createMockKernel();
 
         // Create SessionManager
@@ -169,9 +168,11 @@ describe('SessionManager V3 Integration', () => {
             vi.mocked(mockModelRegistry.getModels).mockResolvedValueOnce([{
                 id: 'topic-model', limit: { context: 12_000, input: 9_000, output: 2_000 }, tool_call: true,
             }] as Awaited<ReturnType<ModelRegistry['getModels']>>);
+            vi.mocked(llmConfigService.resolveLLMConfig).mockResolvedValueOnce({ model: 'topic-model', provider: { id: 'openai' } });
             const budget = vi.spyOn(llmConfigService, 'withModelInputBudget');
             await sessionManager.ensureSession('topic-budget');
-            expect(budget).toHaveBeenCalledWith(expect.objectContaining({ model: 'openai:topic-model' }));
+            expect(llmConfigService.resolveLLMConfig).toHaveBeenCalledWith('openai:topic-model');
+            expect(budget).toHaveBeenCalledWith(expect.objectContaining({ model: 'topic-model' }));
             expect(await budget.mock.results[0]!.value.inputBudget({ providerId: 'openai', modelId: 'topic-model' }))
                 .toMatchObject({ contextWindow: 12_000, maxInputTokens: 9_000, maxOutputTokens: 2_000 });
         });

@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { createSnapshotCore } from './store.js';
 import { validatePreparedV3Draft } from './v3-validator.js';
 import { canonicalJson } from './json.js';
-import { compileOrdinaryParams } from '../tool/ordinary-parameter-contract.js';
+import { DEFAULT_SNAPSHOT_LIMITS, VIEW_METADATA_BYTES } from './snapshot-support.js';
+import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
 
 const text = '中文😀\n"\\\ud800';
 const refId = '["view","mount","ref"]';
 const toolId = '["app","Type","read"]';
-const empty = compileOrdinaryParams({});
+const empty = compileOrdinarySchema({ type: 'object', properties: {} });
 if (!empty.ok) throw new Error('Fixture Tool schema must compile');
 const emptySchema = ordinaryParameterProfile(empty.contract);
 const expected = {
@@ -22,8 +23,8 @@ const expected = {
             inputSchema: emptySchema, 
             execution: { kind: 'view-type', activationId: 'ta:v1:["instance",1]' } } },
     } as any),
-    contentDigest: 'fnv1a64:dcccf17c487a9edd',
-    bytes: 814,
+    contentDigest: 'fnv1a64:96ea30e097d1651f',
+    bytes: 819,
     emptyCanonicalContent: '{"refs":{},"schemaVersion":3,"tools":{},"views":[]}',
     emptyContentDigest: 'fnv1a64:adb8bb3e2428af24',
     emptyBytes: 136,
@@ -109,9 +110,22 @@ describe('V3 complete metadata boundary', () => {
         expect(Object.isFrozen(checked)).toBe(true);
     });
 
+    it('accepts wider Core View IDs while keeping the canonical View metadata byte limit', () => {
+        const base = fixture();
+        const view = { ...base.views[0]!, id: '', name: 'Item' };
+        const draft = (id: string) => ({ ...base, views: [{ ...view, id }], refs: {}, tools: {} });
+        expect(validatePreparedV3Draft(draft('file-甲\n')).ok).toBe(true);
+        const { content: _content, ...metadata } = view;
+        const id = 'x'.repeat(VIEW_METADATA_BYTES - canonicalBytes(metadata));
+        expect(validatePreparedV3Draft(draft(id)).ok).toBe(true);
+        expect(validatePreparedV3Draft(draft(id + 'x'))).toMatchObject({
+            ok: false, issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$.views[0]' },
+        });
+    });
+
     it.each([-1, 0, 1])('keeps the final byte boundary at the fixed size %+i', delta => {
         const input = boundaryFixture(), bytes = canonicalBytes(input);
-        const checked = validatePreparedV3Draft(input, { maxSnapshotBytes: bytes + delta });
+        const checked = validatePreparedV3Draft(input, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: bytes + delta });
         expect(checked.ok).toBe(delta >= 0);
         if (!checked.ok) expect(checked).toEqual({ ok: false, issue: {
             code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$', message: 'V3 Snapshot byte budget exceeded',
@@ -159,7 +173,7 @@ it('retains complete metadata for a legal empty V3 application', () => {
 
 it('enforces the V3 whole-envelope byte limit directly', () => {
     const input = boundaryFixture();
-    const checked = validatePreparedV3Draft(input, { maxSnapshotBytes: canonicalBytes(input) - 1 });
+    const checked = validatePreparedV3Draft(input, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: canonicalBytes(input) - 1 });
     expect(checked).toMatchObject({ ok: false, issue: {
         code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$', message: 'V3 Snapshot byte budget exceeded',
     } });

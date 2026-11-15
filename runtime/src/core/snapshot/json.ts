@@ -12,6 +12,13 @@ export class SnapshotDataError extends Error {
     }
 }
 
+/** Internal reason for a strict JSON copy budget rejection. */
+export class JsonCopyLimitError extends SnapshotDataError {
+    constructor(path: string, message: string) {
+        super('SNAPSHOT_SERIALIZATION_ERROR', path, message);
+    }
+}
+
 export interface JsonCopyLimits {
     readonly maxDepth: number;
     readonly maxNodes: number;
@@ -38,20 +45,20 @@ export function createJsonCopier(limits: JsonCopyLimits): (input: unknown) => Js
     function reserve(bytes: number, path: string): void {
         approxBytes += bytes;
         if (approxBytes > byteLimit) {
-            throw new SnapshotDataError('SNAPSHOT_SERIALIZATION_ERROR', path, 'Approximate input byte budget exceeded');
+            throw new JsonCopyLimitError(path, 'Approximate input byte budget exceeded');
         }
     }
     function copy(value: unknown, path: string, depth: number): JsonValue {
         reserve(2, path); // minimum structural overhead; final canonical bytes are checked separately
         if (++nodes > limits.maxNodes) {
-            throw new SnapshotDataError('SNAPSHOT_SERIALIZATION_ERROR', path, 'Node budget exceeded');
+            throw new JsonCopyLimitError(path, 'Node budget exceeded');
         }
         if (depth > limits.maxDepth) {
-            throw new SnapshotDataError('SNAPSHOT_SERIALIZATION_ERROR', path, 'Depth budget exceeded');
+            throw new JsonCopyLimitError(path, 'Depth budget exceeded');
         }
         if (typeof value === 'string') {
             if (value.length > byteLimit) {
-                throw new SnapshotDataError('SNAPSHOT_SERIALIZATION_ERROR', path, 'String exceeds input byte budget');
+                throw new JsonCopyLimitError(path, 'String exceeds input byte budget');
             }
             reserve(utf8Size(value), path);
             return value;
@@ -99,7 +106,7 @@ export function createJsonCopier(limits: JsonCopyLimits): (input: unknown) => Js
                 const descriptor = descriptors[key]!;
                 const fieldPath = path + '[' + JSON.stringify(key) + ']';
                 if (key.length > byteLimit) {
-                    throw new SnapshotDataError('SNAPSHOT_SERIALIZATION_ERROR', fieldPath, 'Object key exceeds byte budget');
+                    throw new JsonCopyLimitError(fieldPath, 'Object key exceeds byte budget');
                 }
                 reserve(utf8Size(key) + 4, fieldPath);
                 if (!descriptor.enumerable || !('value' in descriptor)) {

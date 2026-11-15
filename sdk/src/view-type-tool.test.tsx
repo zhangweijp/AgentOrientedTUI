@@ -3,7 +3,7 @@ import { h } from 'preact';
 import { act, render } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import Type from 'typebox';
-import { compileOrdinarySchema } from '@aotui/runtime/core';
+import { compileOrdinarySchema, ordinaryParameterProfile, VIEW_TYPE_PARAMETERS_MODE } from '@aotui/runtime/core';
 import { AppRuntimeContext } from './context/AppRuntimeContext.js';
 import { defineViewTypeTool } from './tools/view-type-tool.js';
 import { AppTools } from './components/AppTools.js';
@@ -86,7 +86,35 @@ describe('defineViewTypeTool', () => {
         expect(() => defineViewTypeTool({
             viewType: 'Record', name: 'inspect', description: 'Inspect.',
             inputSchema: unsupported,
-        })).toThrow('$.properties.path.format');
+        })).toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_UNSUPPORTED', path: '$.properties.path.format' }));
+    });
+
+    it('checks the marked profile before returning the unmarked author Schema', () => {
+        const marker = 'x-aotui-parameter-contract';
+        const bare = { type: 'object', properties: {}, required: [], additionalProperties: true, description: '' };
+        const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+        const limit = 64 * 1024;
+        const unit = '界😀\n';
+        const padBytes = limit - bytes({ ...bare, [marker]: VIEW_TYPE_PARAMETERS_MODE });
+        const unitBytes = bytes(unit) - 2;
+        const description = unit.repeat(Math.floor(padBytes / unitBytes)) + 'x'.repeat(padBytes % unitBytes);
+        const define = (text: string) => defineViewTypeTool({ viewType: 'Record', name: 'inspect', description: 'Inspect.',
+            inputSchema: Type.Object({}, { description: text }),
+        });
+        const definition = define(description);
+        expect(definition.inputSchema).toEqual({ ...bare, description });
+        const compiled = compileOrdinarySchema(definition.inputSchema);
+        if (!compiled.ok) throw new Error(compiled.issue.message);
+        expect(bytes(ordinaryParameterProfile(compiled.contract))).toBe(limit);
+        expect(compileOrdinarySchema({ ...bare, description: description + 'x' }).ok).toBe(true);
+        expect(() => define(description + 'x')).toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_CAPACITY', path: '$' }));
+    });
+
+    it('reports capacity when a compact Tool declaration exceeds the Core copy budget', () => {
+        const inputSchema = Type.Object({ xs: Type.Array(Type.Number(), { default: Array(3_000).fill(0) }) });
+        expect(new TextEncoder().encode(JSON.stringify(inputSchema)).byteLength).toBeLessThan(7 * 1024);
+        expect(() => defineViewTypeTool({ viewType: 'Record', name: 'inspect', description: 'Inspect.', inputSchema }))
+            .toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_CAPACITY', path: expect.stringContaining('default') }));
     });
 
     it('rejects a malformed TypeBox pattern at definition time with its field path', () => {
@@ -125,10 +153,10 @@ describe('AppTools ordinary binding migration', () => {
         expect(registrations[0]!.definition).toEqual({ viewType: 'FileDetail', name: 'edit_file', description: 'Edit an opened file.',
             inputSchema: definition.edit.inputSchema });
         expect(Object.isFrozen(registrations[0]!.definition.inputSchema)).toBe(true);
-        const invoker = registrations[0]!.options.createSafeOrdinaryParametersInvoker({ validate(input: unknown) { return { ok: true, value: Object.freeze(input as object) }; }, fingerprint: 'contract' });
+        const invoker = registrations[0]!.options.createSafeOrdinaryParametersInvoker({ validateResolvedInput(input: unknown) { return { ok: true, value: Object.freeze(input as object) }; } });
         expect(await invoker({ filePath: '/workspace/a.txt' })).toMatchObject({ phase: 'entered-returned', result: { success: true } });
         expect(execute).toHaveBeenCalledWith({ filePath: '/workspace/a.txt' });
-        expect(registrations[0]!.options.safeOrdinaryParametersInvocationMode).toBe('ordinary-v2');
+        expect(registrations[0]!.options.safeOrdinaryParametersInvocationMode).toBe('ordinary-invoker/v4');
     });
 
     it('keeps the registration while replacing the committed handler and releases only when disabled or unmounted', async () => {
@@ -142,7 +170,7 @@ describe('AppTools ordinary binding migration', () => {
             return h(AppTools, { definition, bindings: { save: { execute: revision === 0 ? first : second, enabled } } }); }
         const view = mount(App, port); expect(registrations).toHaveLength(1);
         await act(async () => update(1)); expect(registrations).toHaveLength(1);
-        const captured = { validate(input: unknown) { return { ok: true, value: Object.freeze(input as object) }; }, fingerprint: 'contract' };
+        const captured = { validateResolvedInput(input: unknown) { return { ok: true, value: Object.freeze(input as object) }; } };
         const invoke = registrations[0]!.options.createSafeOrdinaryParametersInvoker(captured);
         expect(await invoke({ content: 'new' })).toMatchObject({ result: { data: { revision: 'second' } } });
         expect(first).not.toHaveBeenCalled(); expect(second).toHaveBeenCalledOnce();

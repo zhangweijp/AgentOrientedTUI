@@ -3,7 +3,6 @@ import type {
     IKernel,
     DesktopID,
     IDesktop,
-    DesktopState,
     IRuntimeContext, // New
     ReinitializeDesktopAppsOptions,
     ReinitializeDesktopAppsResult,
@@ -13,7 +12,7 @@ import type { IDesktopManager } from '../spi/runtime/desktop-manager.interface.j
 import { AOTUIError } from '../spi/core/errors.js';
 import type { DesktopCloseOptions, DesktopCloseHandle, RuntimeCloseHandle, RuntimeCloseReport, ShutdownOptions } from '../spi/runtime/close.interface.js';
 import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseHandle, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from '../engine/core/close-handle.js';
-import { captureInteractionModes } from '../engine/app/interaction-config.js';
+import { captureToolsEnabled } from '../engine/app/interaction-config.js';
 import { appInteractionUnavailable, type AppInteractionResult } from '../spi/runtime/app-interaction.interface.js';
 import type { AppInteractionPolicy } from '../core/invocation/app-interaction-types.js';
 
@@ -23,7 +22,7 @@ import type { AppInteractionPolicy } from '../core/invocation/app-interaction-ty
  * Responsibilities:
  * - Creates and manages Desktop instances (via IDesktopManager)
  * - Exposes App instance interaction
- * - Manages Desktop lifecycle (suspend, resume, serialize, restore)
+ * - Manages Desktop lifecycle (create, suspend, resume, close)
  * 
  */
 export class Kernel implements IKernel {
@@ -129,8 +128,8 @@ export class Kernel implements IKernel {
      */
     installDynamicWorkerApp(desktopId: DesktopID, appModulePath: string, options?: Parameters<IKernel['installDynamicWorkerApp']>[2]): Promise<string> {
         try {
-            const interactionModes = captureInteractionModes(options);
-            const captured = { ...options, interactionModes };
+            const toolsEnabled = captureToolsEnabled(options);
+            const captured = { ...options, toolsEnabled };
             return this.business(() => this.installDynamicWorkerAppAccepted(desktopId, appModulePath, captured));
         } catch (error) { return Promise.reject(error); }
     }
@@ -182,38 +181,6 @@ export class Kernel implements IKernel {
         await this.desktopManager.resume(desktopId);
     }
 
-    serialize(desktopId: DesktopID): DesktopState {
-        const info = this.desktopManager.getDesktopInfo(desktopId);
-        if (!info) {
-            throw new AOTUIError('DESKTOP_NOT_FOUND', { desktopId });
-        }
-
-        return {
-            id: desktopId,
-            status: info.status,
-            createdAt: info.createdAt,
-            serializedAt: Date.now(),
-            apps: this.desktopManager.getAppStates(desktopId)
-        };
-    }
-
-    /**
-     * [RFC-014] 优雅关闭 Desktop
-     * 
-     * 1. 等待 Desktop 及其 App 清理完成
-     * 2. 执行 beforeClose 回调（如持久化）
-     * 3. 销毁 Desktop
-     * 
-     * @param desktopId - Desktop ID
-     * @param options - 关闭选项
-     */
-    async gracefulShutdown(desktopId: DesktopID, options?: ShutdownOptions): Promise<void> {
-        const handle = this.beginDesktopShutdown(desktopId, options);
-        const result = await handle.wait(options);
-        if (result.status === 'deadline') throw closeError('CLOSE_DEADLINE_EXCEEDED', result.report);
-        if (result.report.hasFailures) throw closeError('DESKTOP_CLOSE_FAILED', result.report);
-    }
-
     deleteDesktop(desktopId: DesktopID): Promise<void> {
         try { return closeVoid(this.beginDesktopClose(desktopId, { intent: 'delete' }).completion, 'DESKTOP_CLOSE_FAILED'); }
         catch (error) { return Promise.reject(error); }
@@ -237,7 +204,7 @@ export class Kernel implements IKernel {
         return freezeClose({ ...snapshotClose(state), scope: 'runtime' as const, intent: 'close' as const });
     }
 
-    beginShutdown(_reason?: string): RuntimeCloseHandle {
+    beginShutdown(): RuntimeCloseHandle {
         if (this.closing) return this.closing;
         this.shutdownDesktopIds = new Set(this.desktopManager.listDesktopIds());
         let complete!: (value: RuntimeCloseReport) => void;
@@ -256,5 +223,5 @@ export class Kernel implements IKernel {
         return this.closing;
     }
 
-    shutdown(reason?: string): Promise<void> { return this.shutdownPromise ??= closeVoid(this.beginShutdown(reason).completion, 'RUNTIME_CLOSE_FAILED'); }
+    shutdown(): Promise<void> { return this.shutdownPromise ??= closeVoid(this.beginShutdown().completion, 'RUNTIME_CLOSE_FAILED'); }
 }

@@ -1,12 +1,12 @@
 import { buildPublicToolName } from '../../adapters/public-tool-name.js';
 import { describe, it, expect, vi } from 'vitest';
 import { AppKernel } from './AppKernel.js';
-import { compileOrdinaryParams, type OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
+import { compileOrdinarySchema, type OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
 import type { AppTypeToolRegistrationOptions, IAppTypeToolPort, IViewOwnedToolPort } from '../../spi/index.js';
 import type { SafeOrdinaryInvoker } from '../../core/tool/invocation-terminal.js';
 
 const compiledSchema = () => {
-  const result = compileOrdinaryParams({ q: { type: 'string', required: true, constraints: { minLength: 1 } } }, { additionalProperties: false });
+  const result = compileOrdinarySchema({ type: 'object', properties: { q: { type: 'string', minLength: 1 } }, required: ['q'], additionalProperties: false });
   if (!result.ok) throw new Error('Test schema must compile');
   return result.contract.schema;
 };
@@ -14,7 +14,7 @@ const compiledSchema = () => {
 const setup = async () => {
   let viewTools!: IViewOwnedToolPort;
   let appTypeTools!: IAppTypeToolPort;
-  const kernel = new AppKernel({ appName: 'ordinary', name: 'Read', factory: {
+  const kernel = new AppKernel({ appName: 'test_app', factory: {
     initialize: async (context) => {
       viewTools = context.viewTools!;
       appTypeTools = context.appTypeTools!;
@@ -31,7 +31,7 @@ const definition = (overrides: Record<string, unknown> = {}) => ({ viewType: 'Fi
   inputSchema: compiledSchema(),  ...overrides });
 const options = (factory: AppTypeToolRegistrationOptions['createSafeOrdinaryParametersInvoker'] = () =>
   async () => ({ phase: 'entered-returned', result: { success: true } })) => ({
-    safeOrdinaryParametersInvocationMode: 'ordinary-v2' as const,
+    safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4' as const,
     createSafeOrdinaryParametersInvoker: factory,
   });
 
@@ -66,7 +66,7 @@ describe('AppKernel ViewType Tool Runtime port', () => {
     const safeFactory = vi.fn((contract: OrdinaryParameterContract) => {
       captured = contract;
       const invoker: SafeOrdinaryInvoker = async args => {
-        const result = contract.validate(args);
+        const result = contract.validateResolvedInput(args);
         return { phase: result.ok ? 'entered-returned' : 'not-entered',
           result: result.ok ? { success: true } : { success: false, error: { code: 'E_INVALID_ARGS', message: 'bad input' } } };
       };
@@ -80,7 +80,7 @@ describe('AppKernel ViewType Tool Runtime port', () => {
       expect(safeFactory).toHaveBeenCalledOnce();
       expect(tool.execution.kind).toBe('view-type');
       expect(tool.inputSchema).toEqual({ ...captured.schema, 'x-aotui-parameter-contract': 'view-type-parameters-v1' });
-      expect(captured.validate({ q: 'x' }).ok).toBe(true);
+      expect(captured.validateResolvedInput({ q: 'x' }).ok).toBe(true);
       expect(x.kernel.validateBoundTypeTool(tool, tool.execution).success).toBe(true);
       declaration.name = 'mutated';
       expect(x.kernel.getToolDefinitions()[0]!.name).toBe('find');

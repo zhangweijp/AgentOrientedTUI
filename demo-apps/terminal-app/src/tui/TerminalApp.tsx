@@ -1,4 +1,4 @@
-import { createTUIApp, View, useCallback, useEffect, useMemo, useRef, useState, useAppRuntimeContext, AppTools } from '@aotui/sdk';
+import { createTUIApp, View, useCallback, useMemo, useRef, useState, useAppRuntimeContext, AppTools } from '@aotui/sdk';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import os from 'os';
 import { RootView } from './RootView.js';
@@ -34,21 +34,20 @@ function createCommand(commandId: string, command: string): CommandRecord {
 function TerminalRoot() {
     const envProjectPath = useAppRuntimeContext().launchConfig?.projectPath as string | undefined;
     const projectPath = useMemo(() => envProjectPath || os.homedir(), [envProjectPath]);
-    const [terminals, setTerminals] = useState<TerminalSession[]>([]);
     const terminalsRef = useRef<TerminalSession[]>([]);
+    const [terminals, renderTerminals] = useState(terminalsRef.current);
     const terminalCounter = useRef(0);
     const commandCounter = useRef(0);
     const processMap = useRef(new Map<string, ChildProcessWithoutNullStreams>());
 
-    useEffect(() => {
-        terminalsRef.current = terminals;
-    }, [terminals]);
+    const setTerminals = useCallback((next: TerminalSession[]) => {
+        terminalsRef.current = next;
+        renderTerminals(next);
+    }, []);
 
     const updateTerminal = useCallback((terminalId: string, updater: (terminal: TerminalSession) => TerminalSession) => {
-        setTerminals((prev: TerminalSession[]) =>
-            prev.map((terminal: TerminalSession) => (terminal.id === terminalId ? updater(terminal) : terminal))
-        );
-    }, []);
+        setTerminals(terminalsRef.current.map(terminal => terminal.id === terminalId ? updater(terminal) : terminal));
+    }, [setTerminals]);
 
     const addTerminal = useCallback((initialPath?: string) => {
         const terminalId = `terminal_${terminalCounter.current++}`;
@@ -62,13 +61,9 @@ function TerminalRoot() {
             commands: [],
             outputTail: DEFAULT_TAIL_LINES
         };
-        setTerminals((prev: TerminalSession[]) => {
-            const next = [...prev, terminal];
-            terminalsRef.current = next;
-            return next;
-        });
+        setTerminals([...terminalsRef.current, terminal]);
         return terminal;
-    }, [projectPath]);
+    }, [projectPath, setTerminals]);
 
     const closeTerminal = useCallback((terminalId: string) => {
         const target = terminalsRef.current.find((terminal: TerminalSession) => terminal.id === terminalId);
@@ -82,11 +77,9 @@ function TerminalRoot() {
                 processMap.current.delete(target.activeCommandId);
             }
         }
-        setTerminals((prev: TerminalSession[]) =>
-            prev.filter((terminal: TerminalSession) => terminal.id !== terminalId)
-        );
+        setTerminals(terminalsRef.current.filter(terminal => terminal.id !== terminalId));
         return true;
-    }, []);
+    }, [setTerminals]);
 
     const setOutputTail = useCallback((terminalId: string, tailLines: number) => {
         const normalized = Number.isFinite(tailLines) ? Math.max(1, Math.floor(tailLines)) : DEFAULT_TAIL_LINES;
@@ -113,8 +106,8 @@ function TerminalRoot() {
         });
     }, [updateTerminal]);
 
-    const sendCommand = useCallback(async (terminalId: string, command: string, terminalSnapshot?: TerminalSession) => {
-        const terminal = terminalsRef.current.find((item: TerminalSession) => item.id === terminalId) ?? terminalSnapshot;
+    const sendCommand = useCallback(async (terminalId: string, command: string) => {
+        const terminal = terminalsRef.current.find(item => item.id === terminalId);
         if (!terminal) {
             return { success: false, message: 'Terminal not found.' };
         }
@@ -208,7 +201,7 @@ function TerminalRoot() {
 
     const sendCommandNewTerminal = useCallback(async (command: string) => {
         const terminal = addTerminal();
-        const result = await sendCommand(terminal.id, command, terminal);
+        const result = await sendCommand(terminal.id, command);
         if (!result.success) {
             closeTerminal(terminal.id);
             return { success: false, message: result.message };
@@ -245,7 +238,4 @@ export default createTUIApp({
     whatItIs: 'A multi-terminal shell application with command history, working directory tracking, and output tailing for LLM workflows.',
     whenToUse: 'Run shell commands in the project workspace, manage terminal sessions, and inspect command status and output.',
     component: TerminalRoot,
-    launchConfig: {
-        projectPath: process.env.PROJECT_PATH || process.argv[2] || ''
-    }
 });

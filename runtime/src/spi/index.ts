@@ -9,9 +9,7 @@
 // Core identifiers, state values, results, errors, and notifications.
 export type {
     AppID,
-    AppState,
     DesktopID,
-    DesktopState,
     DesktopStatus,
     ViewID,
 } from './core/types.js';
@@ -70,11 +68,9 @@ export type {
     RuntimeCloseReport,
     ShutdownOptions,
 } from './runtime/close.interface.js';
-export { SEMANTIC_INTERACTION_MODES } from './runtime/app-interaction.interface.js';
 export type {
     AppInteractionOptions,
     AppInteractionResult,
-    InteractionMode,
 } from './runtime/app-interaction.interface.js';
 export type { IRuntimeContext } from './runtime/context.interface.js';
 export type { ILLMOutputChannelService } from './runtime/llm-output-channel.interface.js';
@@ -92,4 +88,4 @@ export type { AppMetadata } from './app/app-metadata.js';
 export { VIEW_TYPE_TOOL_PROTOCOL } from './runtime/app-type-tools.interface.js';
 export { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION } from './runtime/app-lifecycle.interface.js';
 export { STATE_SESSION_PROTOCOL, STATE_SESSION_VERSION } from './runtime/state-persistence.interface.js';
-export { SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY } from './worker-protocol/types.js';
+export { SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY } from './worker-protocol/types.js';

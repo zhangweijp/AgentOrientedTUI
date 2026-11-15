@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { performance } from 'node:perf_hooks';
 import { SemanticSnapshotReceiver } from './receiver.js';
 import { createViewOwnedTools } from '../../core/tool/view-owned-tools.js';
-import { compileOrdinaryParams } from '../../core/tool/ordinary-parameter-contract.js';
+import { compileOrdinarySchema } from '../../core/tool/ordinary-parameter-contract.js';
 import type { SnapshotCore } from '../../core/snapshot/types.js';
 import type { ExecutionBinding, AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
 
@@ -10,11 +10,11 @@ function defer<T>() { let resolve!: (v: T) => void; const promise = new Promise<
 function fixture(instance = 'i', stage?: 'authorize' | 'execute', now?: () => number) {
     const r = now ? new SemanticSnapshotReceiver('a', instance, now) : new SemanticSnapshotReceiver('a', instance), core: SnapshotCore = (r as any).core;
     const registry = createViewOwnedTools('a', instance), view = registry.mount('v', 'T');
-    const contract = compileOrdinaryParams({}, { additionalProperties: false });
-    if (!contract.ok) throw Error('Fixture ordinary-v2 contract');
+    const contract = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
+    if (!contract.ok) throw Error('Fixture ViewType contract');
     const handler = async () => ({ success: true });
     registry.registerTypeTool({ viewType: 'T', name: 'read', description: 'Read', inputSchema: contract.contract.schema }, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
         createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: await handler() }),
     });
     const tool = registry.listTools()[0]!;
@@ -23,7 +23,7 @@ function fixture(instance = 'i', stage?: 'authorize' | 'execute', now?: () => nu
         refs: {}, tools: { [tool.id]: tool } });
     expect(r.report().health).toBe('ready');
     const entered = defer<void>(), gate = defer<void>(); let handlers = 0, completed = 0;
-    const binding: ExecutionBinding = { identity: {}, mode: 'ordinary-v2', validateInput: (_source, input) => ({ ok: true, value: input }),
+    const binding: ExecutionBinding = { identity: {}, validateInput: (_source, input) => ({ ok: true, value: input }),
         isLive: source => ({ ok: registry.validateTypeToolBinding(tool, source.execution).success }),
         execute: async () => { handlers++; if (stage === 'execute') { entered.resolve(); await gate.promise; } completed++;
             return { kind: 'tool-result', phase: 'entered-returned', result: { success: true, data: { value: 19 } } }; } };

@@ -50,7 +50,7 @@ describe('Host model input budget', () => {
         }) };
         let contextWindow = 4_000;
         const inputBudget = vi.fn(() => ({ contextWindow, maxOutputTokens: 500 }));
-        const driver = setup({ model: 'openai:resolved-model', apiKey: 'unused', inputBudget }, [first.source, second.source, history]);
+        const driver = setup({ model: 'resolved-model', provider: { id: 'openai' }, apiKey: 'unused', inputBudget }, [first.source, second.source, history]);
         try {
             await driver.run();
             expect(driver.onRunError).toHaveBeenCalledWith(expect.objectContaining({ code: 'MODEL_INPUT_BUDGET_EXCEEDED',
@@ -84,7 +84,7 @@ describe('Host model input budget', () => {
 
     it('applies final tool capability filtering and refuses unknown windows without a request', async () => {
         const source = app('app');
-        const driver = setup({ model: 'custom:manual', apiKey: 'unused', inputBudget: () => ({
+        const driver = setup({ model: 'manual', provider: { id: 'custom' }, apiKey: 'unused', inputBudget: () => ({
             contextWindow: 9000, maxInputTokens: 5000, maxOutputTokens: 1000, capabilities: { toolCall: false },
         }) }, [source.source]);
         try {
@@ -92,7 +92,7 @@ describe('Host model input budget', () => {
             expect(driver.sent).toHaveLength(1);
             expect(driver.sent[0]!.tools ?? []).toEqual([]);
         } finally { driver.close(); }
-        const unknown = setup({ model: 'custom:unknown', apiKey: 'unused', inputBudget: () => undefined }, [source.source]);
+        const unknown = setup({ model: 'unknown', provider: { id: 'custom' }, apiKey: 'unused', inputBudget: () => undefined }, [source.source]);
         try {
             await unknown.run();
             expect(unknown.sent).toHaveLength(0);
@@ -109,7 +109,7 @@ describe('Host model input budget', () => {
                     output: { type: 'content', value: [{ type: 'image-data', data: 'AA==', mediaType: 'image/png' }] } }], timestamp: 3 },
             ], tools: {},
         }) };
-        const driver = setup({ model: 'openai:media', apiKey: 'unused', inputBudget: () => ({
+        const driver = setup({ model: 'media', provider: { id: 'openai' }, apiKey: 'unused', inputBudget: () => ({
             contextWindow: 30_000, maxOutputTokens: 1_000,
         }) }, [source.source, history]);
         try {
@@ -138,9 +138,7 @@ describe('Host model input budget', () => {
             getProviderConfig: async () => ({ baseURL: '' }),
         } as unknown as ModelRegistry;
         const service = new LLMConfigService(registry);
-        const model = providerId + ':' + modelId;
-        const limits = (endpoint?: string) => service.withModelInputBudget({ model,
-            ...(endpoint ? { provider: { id: providerId, baseURL: endpoint } } : {}),
+        const limits = (endpoint?: string) => service.withModelInputBudget({ model: modelId, provider: { id: providerId, baseURL: endpoint },
         }).inputBudget?.({ providerId, modelId });
         expect(await limits()).toMatchObject({ contextWindow: 200_000 });
         expect(await limits(baseURL + '/')).toEqual(await limits());
@@ -158,8 +156,8 @@ describe('Host model input budget', () => {
             getProviderConfig: async () => ({ baseURL: '' }),
         } as unknown as ModelRegistry;
         const service = new LLMConfigService(registry);
-        expect(await service.withModelInputBudget({ model: 'openai:o3' }).inputBudget?.({ providerId: 'openai', modelId: 'o3' })).toBeUndefined();
-        expect(await service.withModelInputBudget({ model: 'openai:o3',
+        expect(await service.withModelInputBudget({ model: 'o3', provider: { id: 'openai' } }).inputBudget?.({ providerId: 'openai', modelId: 'o3' })).toBeUndefined();
+        expect(await service.withModelInputBudget({ model: 'o3',
             provider: { id: 'openai', baseURL: 'https://api.openai.com/v1' },
         }).inputBudget?.({ providerId: 'openai', modelId: 'o3' })).toMatchObject({ contextWindow: 200_000 });
     });
@@ -170,12 +168,12 @@ describe('Host model input budget', () => {
         } });
         const getModels = vi.fn(async () => [{ id: 'actual', limit: { context: 64_000, input: 32_000, output: 8_000 }, tool_call: false }]);
         const service = new LLMConfigService({ getModels } as unknown as ModelRegistry);
-        const catalog = service.withModelInputBudget({ model: 'openai:actual' });
+        const catalog = service.withModelInputBudget({ model: 'actual', provider: { id: 'openai' } });
         expect(await catalog.inputBudget?.({ providerId: 'openai', modelId: 'actual' })).toMatchObject({
             contextWindow: 64_000, maxInputTokens: 32_000, maxOutputTokens: 4_096, capabilities: { toolCall: false },
         });
         expect(await catalog.inputBudget?.({ providerId: 'openai', modelId: 'unknown' })).toBeUndefined();
-        const custom = service.withModelInputBudget({ model: 'openai:actual', provider: { id: 'openai', baseURL: 'https://custom.example/v1/' } });
+        const custom = service.withModelInputBudget({ model: 'actual', provider: { id: 'openai', baseURL: 'https://custom.example/v1/' } });
         expect(await custom.inputBudget?.({ providerId: 'openai', modelId: 'actual' })).toEqual({ contextWindow: 8_000, maxOutputTokens: 500 });
         expect(getModels).toHaveBeenCalledWith({ providerId: 'openai' });
     });
@@ -226,7 +224,7 @@ it('preserves DeepSeek reasoning through successive tool calls and the next user
     }) };
     const onRunError = vi.fn();
     const driver = new AgentDriverV2({ sources: [source], llm: service.withModelInputBudget({
-        model: 'deepseek:' + modelId, apiKey: 'fixture-only', provider: { id: 'deepseek' },
+        model: modelId, apiKey: 'fixture-only', provider: { id: 'deepseek' },
     }), onAssistantMessage: remember, onToolResult: remember, onTextDelta: () => {}, onRunError });
     try {
         for (let number = 1; number <= 5; number++) {

@@ -1,54 +1,85 @@
 import { beforeAll, afterAll, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, realpath, symlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
 let directory: string, app: string, runtimePackage: any, adaptersPackage: any;
 const facts: any[] = [];
+const output = process.env.AOTUI_W08_C1_FACTS_DIR;
+const installedConsumer = process.env.AOTUI_PACKAGE_CONSUMER_DIR;
 const deferred = () => { let resolve!: (value?: any) => void, reject!: (error: unknown) => void;
     const promise = new Promise<any>((yes, no) => { resolve = yes;reject = no; });return { promise, resolve, reject }; };
 async function capture(path: string, body: string) {
-    await writeFile(path, body);const output = process.env.AOTUI_W08_C1_FACTS_DIR;
+    await writeFile(path, body);
     if (output) { const hash = createHash('sha256').update(body).digest('hex'), folder = join(output, 'b2-inputs');await mkdir(folder, { recursive: true });
         await writeFile(join(folder, hash), body);await writeFile(join(folder, hash + '.json'), JSON.stringify({ path, sha256: hash, capturedBeforeExecution: true })); }
 }
 beforeAll(async () => {
-    const repo = fileURLToPath(new URL('../../', import.meta.url));directory = await mkdtemp(join(tmpdir(), 'aotui-b2-public-'));
-    const modules = join(directory, 'node_modules');await mkdir(join(modules, '@aotui'), { recursive: true });
-    for (const pkg of ['runtime', 'sdk', 'agent-driver-adapter', 'agent-driver-v2']) {
-        const pack = join(directory, 'pack-' + pkg), target = join(modules, '@aotui', pkg);await mkdir(pack);await mkdir(target);
-        const argv = ['pack', '--ignore-scripts', '--json', '--pack-destination', pack];
-        await capture(join(directory, 'pack-' + pkg + '-before.json'), JSON.stringify({ cwd: join(repo, pkg), argv: ['npm', ...argv], env: { NPM_CONFIG_CACHE: join(directory, 'npm-cache') } }));
-        const result = JSON.parse(execFileSync('npm', argv, { cwd: join(repo, pkg), env: { ...process.env, NPM_CONFIG_CACHE: join(directory, 'npm-cache') }, encoding: 'utf8' }));
-        const archive = join(pack, result[0].filename);execFileSync('tar', ['-xzf', archive, '--strip-components', '1', '-C', target]);
-        facts.push({ package: pkg, archive, sha256: createHash('sha256').update(await readFile(archive)).digest('hex'), actualTar: true });
+    const repo = fileURLToPath(new URL('../../', import.meta.url));
+    if (output) await mkdir(output, { recursive: true });
+    let runtimeDocs: string;
+    if (installedConsumer) {
+        if (!isAbsolute(installedConsumer)) throw new Error('AOTUI_PACKAGE_CONSUMER_DIR must be absolute');
+        const consumer = await realpath(installedConsumer);
+        const modules = join(consumer, 'node_modules', '@aotui');
+        for (const pkg of ['runtime', 'sdk', 'agent-driver-adapter', 'agent-driver-v2']) {
+            const path = await realpath(join(modules, pkg));
+            expect(path.startsWith(join(consumer, 'node_modules') + '/')).toBe(true);
+            const manifest = JSON.parse(await readFile(join(path, 'package.json'), 'utf8'));
+            facts.push({ package: manifest.name, version: manifest.version, path });
+        }
+        directory = await mkdtemp(join(consumer, 'runtime-lifecycle-'));
+        await capture(join(directory, 'package.json'), JSON.stringify({ type: 'module', private: true }));
+        runtimeDocs = join(modules, 'runtime', 'docs');
+        facts.push({ consumer, mode: 'provided-installation', fixtures: directory });
+    } else {
+        directory = await mkdtemp(join(output ?? tmpdir(), 'aotui-b2-public-'));
+        await capture(join(directory, 'package.json'), JSON.stringify({ type: 'module', private: true }));
+        const modules = join(directory, 'node_modules');
+        await mkdir(join(modules, '@aotui'), { recursive: true });
+        for (const pkg of ['runtime', 'sdk', 'agent-driver-adapter', 'agent-driver-v2']) {
+            const pack = join(directory, 'pack-' + pkg), target = join(modules, '@aotui', pkg);await mkdir(pack);await mkdir(target);
+            const argv = ['pack', '--ignore-scripts', '--json', '--pack-destination', pack];
+            await capture(join(directory, 'pack-' + pkg + '-before.json'), JSON.stringify({ cwd: join(repo, pkg), argv: ['npm', ...argv], env: { NPM_CONFIG_CACHE: join(directory, 'npm-cache') } }));
+            const result = JSON.parse(execFileSync('npm', argv, { cwd: join(repo, pkg), env: { ...process.env, NPM_CONFIG_CACHE: join(directory, 'npm-cache') }, encoding: 'utf8' }));
+            const archive = join(pack, result[0].filename);execFileSync('tar', ['-xzf', archive, '--strip-components', '1', '-C', target]);
+            const manifest = JSON.parse(await readFile(join(target, 'package.json'), 'utf8'));
+            facts.push({ package: manifest.name, version: manifest.version, archive,
+                sha256: createHash('sha256').update(await readFile(archive)).digest('hex'), actualTar: true });
+        }
+        const links: any[] = [];
+        for (const pkg of ['runtime', 'sdk', 'agent-driver-adapter', 'agent-driver-v2']) for (const entry of await readdir(join(repo, pkg, 'node_modules'), { withFileTypes: true })) {
+            if (entry.name.startsWith('.') || entry.name === '@aotui') continue;
+            const target = join(modules, entry.name);try { await symlink(join(repo, pkg, 'node_modules', entry.name), target, 'dir');links.push({ path: target, source: join(repo, pkg, 'node_modules', entry.name) }); } catch (error: any) { if (error.code !== 'EEXIST') throw error; }
+        }
+        runtimeDocs = join(modules, '@aotui', 'runtime', 'docs');
+        facts.push({ consumer: directory, selfPackageLinks: false, thirdPartyLinks: links, completeCleanInstall: false });
     }
-    const links: any[] = [];
-    for (const pkg of ['runtime', 'sdk', 'agent-driver-adapter', 'agent-driver-v2']) for (const entry of await readdir(join(repo, pkg, 'node_modules'), { withFileTypes: true })) {
-        if (entry.name.startsWith('.') || entry.name === '@aotui') continue;
-        const target = join(modules, entry.name);try { await symlink(join(repo, pkg, 'node_modules', entry.name), target, 'dir');links.push({ path: target, source: join(repo, pkg, 'node_modules', entry.name) }); } catch (error: any) { if (error.code !== 'EEXIST') throw error; }
-    }
-    const document = await readFile(join(repo, 'runtime/docs/runtime-app-interaction.md'), 'utf8');
+    const document = await readFile(join(runtimeDocs, 'runtime-app-interaction.md'), 'utf8');
     const body = document.match(/<!-- b2-app:start -->\n```js\n([\s\S]*?)\n```\n<!-- b2-app:end -->/)?.[1];if (!body) throw Error('App example markers');
-    const executableBody = body.replace("if (args.filePath !== '/open/note.txt')", "if (args.text === 'throw') throw new Error('PRIVATE_CONTROLLED_FAILURE');\n      if (args.filePath !== '/open/note.txt')");
+    const executableBody = body.replace("if (args.filePath !== '/open/note.txt')", `if (args.text === 'throw') throw new Error('PRIVATE_CONTROLLED_FAILURE');
+      if (args.text === 'business') return { success: false, error: { code: 'E_HANDLER_ERROR', message: 'Application declined the edit.' },
+        data: { refreshed: false } };
+      if (args.filePath !== '/open/note.txt')`);
     if (executableBody === body) throw Error('Expected the documented ordinary Tool guard for the controlled failure fixture');
     app = join(directory, 'app.mjs');await capture(app, executableBody + '\n');
     const entry = join(directory, 'entry.mjs');await capture(entry, "export * from '@aotui/runtime';\n");runtimePackage = await import(pathToFileURL(entry).href);
     const adaptersEntry = join(directory, 'adapters.mjs');await capture(adaptersEntry, "export * from '@aotui/agent-driver-adapter';\n");adaptersPackage = await import(pathToFileURL(adaptersEntry).href);
-    facts.push({ selfPackageLinks: false, thirdPartyLinks: links, completeCleanInstall: false });
 }, 30000);
-afterAll(async () => { const output = process.env.AOTUI_W08_C1_FACTS_DIR;if (output) { await mkdir(output, { recursive: true });await writeFile(join(output, 'b2-public-e2e.json'), JSON.stringify(facts, null, 2)); }if (directory) await rm(directory, { recursive: true, force: true }); });
+afterAll(async () => {
+    if (output) await writeFile(join(output, 'b2-public-e2e.json'), JSON.stringify(facts, null, 2));
+    else if (directory) await rm(directory, { recursive: true, force: true });
+});
 
-const allModes = ['view-type-parameters-v1'] as const;
 function makeRuntime() { return runtimePackage.createRuntime({ worker: { timeoutMs: 4000, maxWorkers: 8 } }); }
-async function install(runtime: any, desktop = 'd', id = 'a', modes?: any, extra = {}, appPath = app) {
+async function install(runtime: any, desktop = 'd', id = 'a', toolsEnabled?: boolean, extra = {}, appPath = app) {
     try { runtime.getDesktop(desktop); } catch { await runtime.createDesktop(desktop); }
     return runtime.installDynamicWorkerApp(desktop, pathToFileURL(appPath).href, {
         appId: id, config: { AOTUI_DATA_DIR: join(directory, 'data', desktop, id) }, ...extra,
-        ...(modes === undefined ? {} : { interactionModes: modes }),
+        ...(toolsEnabled === undefined ? {} : { toolsEnabled }),
     });
 }
 function scope(runtime: any, desktop = 'd', id = 'a') {
@@ -91,7 +122,7 @@ async function waitForViewText(client: any, expected: string) {
     throw Error('View update deadline: ' + JSON.stringify({ expected, last }));
 }
 
-it('B2 C08/26 omitted interactionModes enables ordinary and Ref calls through the shared current contract in the tar package', async () => {
+it('B2 C08/26 omitted toolsEnabled enables ordinary and Ref calls through the shared current contract in the tar package', async () => {
     const runtime = makeRuntime();try {
         await install(runtime);const s = scope(runtime), observation = await s.observe(), outputs: any[] = [];
         for (const [index, [name, input]] of ([['ordinary', { text: 'change' }], ['ref', { file: 'detail.file' }]] as const).entries()) {
@@ -103,9 +134,9 @@ it('B2 C08/26 omitted interactionModes enables ordinary and Ref calls through th
     } finally { expect((await runtime.beginShutdown().completion).ok).toBe(true); }
 }, 15000);
 
-it('B2 C09 one qualified mode exposes ordinary and Ref tools through the same contract', async () => {
+it('B2 C09 toolsEnabled true exposes ordinary and Ref tools through the same contract', async () => {
     const runtime = makeRuntime();try {
-        await install(runtime, 'd', 'a', allModes);const s = scope(runtime), observation = await s.observe();
+        await install(runtime, 'd', 'a', true);const s = scope(runtime), observation = await s.observe();
         for (const [name, input] of [['ordinary', { text: 'change' }], ['ref', { file: 'detail.file' }]] as const) {
             expect(observation.bindings.some((binding: any) => binding.toolId === observation.tools.find((tool: any) => tool.name === name)?.id)).toBe(true);
             const first = await s.client.invoke(request(observation, name, input, name));
@@ -118,44 +149,153 @@ it('B2 C09 one qualified mode exposes ordinary and Ref tools through the same co
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);
 
-it('B2 C05 explicit empty interactionModes preserves Views but grants no executable bindings', async () => {
+it('B2 C05 toolsEnabled false preserves Views but grants no executable bindings', async () => {
     const runtime = makeRuntime();try {
-        await install(runtime, 'd', 'a', []);const s = scope(runtime), observation = await s.observe();
+        await install(runtime, 'd', 'a', false);const s = scope(runtime), observation = await s.observe();
         expect(observation.views.some((view: any) => view.id === 'detail')).toBe(true);
         expect(observation.bindings).toEqual([]);
 
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);
 
-it('B2 C05 invalid public interactionModes reject before registering the app', async () => {
-    const runtime = makeRuntime();try {
-        await expect(install(runtime, 'd', 'duplicate', ['view-type-parameters-v1', 'view-type-parameters-v1'])).rejects.toMatchObject({ code: 'INTERACTION_MODES_INVALID' });
-        await expect(install(runtime, 'd', 'unknown', ['view-type-parameters-v1', 'future-v3'])).rejects.toMatchObject({ code: 'INTERACTION_MODES_INVALID' });
-        for (const retired of ['ordinary-v2', 'snapshot-value-v2']) await expect(install(runtime, 'd', 'retired', [retired])).rejects.toMatchObject({ code: 'INTERACTION_MODES_INVALID' });
+it('rejects invalid tool settings and the retired Host key before registering an App', async () => {
+    const runtime = makeRuntime();
+    try {
+        await expect(install(runtime, 'd', 'bad-value', 'false' as any)).rejects.toMatchObject({ code: 'TOOLS_ENABLED_INVALID' });
+        for (const value of [[], ['view-type-parameters-v1'], undefined]) {
+            await expect(install(runtime, 'd', 'retired', undefined, { interactionModes: value })).rejects.toMatchObject({ code: 'TOOLS_ENABLED_INVALID' });
+        }
         expect(runtime.getDesktop('d').getInstalledApps()).toEqual([]);
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);
 
-it('B2 C09 source authorization denies entry and unknown handler results are not retried', async () => {
+it('packed SDK separates authorization, a returned E_HANDLER_ERROR and an actual throw', async () => {
     const runtime = makeRuntime();try {
         await install(runtime);const s = scope(runtime), observation = await s.observe();
         s.controls.authorize = () => false;
         const denied = await s.client.invoke(request(observation, 'ordinary', { text: 'change' }, 'denied'));
         expect(denied).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'not-dispatched', outcome: { status: 'rejected' } } });
         s.controls.authorize = () => true;
-        const first = await s.client.invoke(request(observation, 'ordinary', { text: 'throw' }, 'unknown'));
-        expect(first).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'entered-returned', outcome: { status: 'unknown' } } });
-        expect(await s.client.invoke(request(observation, 'ordinary', { text: 'throw' }, 'unknown'))).toEqual(first);
+        const business = request(observation, 'ordinary', { text: 'business' }, 'business');
+        const declined = await s.client.invoke(business);
+        expect(declined).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'entered-returned', outcome: {
+            status: 'failed', details: { result: { success: false, error: { code: 'E_HANDLER_ERROR', message: 'Application declined the edit.' },
+                data: { refreshed: false } } },
+        } } });
+        expect(declined.receipt.outcome).not.toHaveProperty('effects');
+        const query = { observationId: business.observationId, invocationId: business.invocationId };
+        expect(await s.client.readReceipt(query)).toEqual(declined);
+        expect(await s.client.readReceipt(business)).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_INVALID' });
+        const thrown = request(observation, 'ordinary', { text: 'throw' }, 'unknown');
+        const first = await s.client.invoke(thrown);
+        expect(first).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'unknown', outcome: { status: 'unknown' } } });
+        expect(first.receipt.outcome).not.toHaveProperty('details');
+        expect(JSON.stringify(first)).not.toContain('PRIVATE_CONTROLLED_FAILURE');
+        expect(await s.client.invoke(thrown)).toEqual(first);
         const later = await s.client.invoke(request(observation, 'ordinary', { text: 'change' }, 'after-unknown'));
         expect(later.receipt.outcome.status).toBe('succeeded');
         await waitForViewText(s.client, 'Completed actions: 1');
+        facts.push({ case: 'B01-packed-business-failure-and-throw', declined, unknown: first });
 
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);
 
-it.each(allModes)('B2 C09/24 missing or invalid ACK rejects public %s before installation', async mode => {
-    for (const wrong of [false, true]) {
-        const runtime = makeRuntime(), script = join(directory, `ack-${mode}-${wrong}.mjs`);
+it('checks the complete Tool profile at the packed SDK, Runtime and Snapshot boundaries', async () => {
+    const entry = join(directory, 'b03-profile.mjs');
+    await capture(entry, `import Type from 'typebox';
+import { createApp, defineToolSet, defineViewTypeTool } from '@aotui/sdk/app';
+import { VIEW_TYPE_PARAMETERS_MODE } from '@aotui/runtime/core';
+
+const limit = 64 * 1024, marker = 'x-aotui-parameter-contract';
+const base = { type: 'object', properties: {}, required: [], additionalProperties: true, description: '' };
+const bytes = value => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+const unit = '界😀\\n';
+const fill = limit - bytes({ ...base, [marker]: VIEW_TYPE_PARAMETERS_MODE });
+const unitBytes = bytes(unit) - 2;
+const description = unit.repeat(Math.floor(fill / unitBytes)) + 'x'.repeat(fill % unitBytes);
+const metadata = { viewType: 'Detail', name: 'wide', description: 'Exercise a Tool at its profile boundary' };
+export const define = delta => defineViewTypeTool({ ...metadata, inputSchema: Type.Object({}, { description: description + 'x'.repeat(delta) }) });
+const tools = defineToolSet({ wide: define(0) });
+export const oversizedProfile = { ...tools.wide.inputSchema, description: description + 'x', [marker]: VIEW_TYPE_PARAMETERS_MODE };
+export const profileBytes = bytes({ ...tools.wide.inputSchema, [marker]: VIEW_TYPE_PARAMETERS_MODE });
+export default createApp({ app_name: 'profile_capacity', tools, initialize({ publish }) {
+    publish({ views: [{ id: 'detail', type: 'Detail', kind: 'state', body: 'Profile ready' }],
+        bindings: { wide: { execute: () => ({ success: true }) } } });
+} });
+`);
+    const fixture = await import(pathToFileURL(entry).href);
+    expect(fixture.profileBytes).toBe(64 * 1024);
+    expect(() => fixture.define(1)).toThrow(expect.objectContaining({ name: 'TypeBoxSchemaExportError', code: 'TOOL_SCHEMA_CAPACITY', path: '$' }));
+    const coreEntry = join(directory, 'b03-profile-core.mjs');
+    await capture(coreEntry, "export { compileOrdinaryProfile } from '@aotui/runtime/core';\n");
+    const { compileOrdinaryProfile } = await import(pathToFileURL(coreEntry).href);
+    expect(compileOrdinaryProfile(fixture.oversizedProfile)).toBeNull();
+
+    const runtime = makeRuntime();
+    try {
+        await install(runtime, 'd', 'a', true, {}, entry);
+        const s = scope(runtime), observation = await s.observe();
+        const profile = observation.tools.find((tool: any) => tool.name === 'wide')?.inputSchema;
+        expect(new TextEncoder().encode(JSON.stringify(profile)).byteLength).toBe(fixture.profileBytes);
+        expect(compileOrdinaryProfile(profile)?.schema).toEqual(fixture.define(0).inputSchema);
+        const result = await s.client.invoke(request(observation, 'wide', {}, 'at-limit'));
+        expect(result).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'entered-returned', outcome: { status: 'succeeded' } } });
+        facts.push({ case: 'B03-complete-profile', bytes: fixture.profileBytes, oversized: 'TOOL_SCHEMA_CAPACITY', result });
+    } finally {
+        expect(await runtime.beginShutdown().completion).toMatchObject({ ok: true, resourcesReleased: true });
+    }
+}, 15000);
+
+it('rejects retired imports and an incompatible invoker ABI in a real Worker', async () => {
+    const exportsEntry = join(directory, 'b01-exports.mjs');
+    await capture(exportsEntry, "export * as core from '@aotui/runtime/core';\nexport * as spi from '@aotui/runtime/spi';\n");
+    const { core, spi } = await import(pathToFileURL(exportsEntry).href);
+    expect(core.ORDINARY_INVOKER_ABI_V4).toBe('ordinary-invoker/v4');
+    expect(core).not.toHaveProperty('ORDINARY_INVOKER_ABI_V3');
+    expect(core).not.toHaveProperty('ORDINARY_INVOCATION_MODE');
+    expect(spi.PARAMETERS_V5_CAPABILITY).toBe('view-tool-parameters-invoke/v5');
+    expect(spi).not.toHaveProperty('PARAMETERS_V4_CAPABILITY');
+
+    const runtime = makeRuntime();
+    try {
+        for (const variant of ['import', 'ordinary-v2', 'ordinary-invoker/v3']) {
+            const file = join(directory, `legacy-${variant.replace('/', '-')}.mjs`);
+            const declaration = variant === 'import'
+                ? "import { ORDINARY_INVOCATION_MODE as abi } from '@aotui/runtime/core';"
+                : `const abi = ${JSON.stringify(variant)};`;
+            await capture(file, `
+${declaration}
+export default {
+    kernelConfig: { appName: 'legacy_sdk' },
+    toolAuthoringProtocol: 'view-type-tools-v4', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
+    initialize({ appTypeTools }) {
+        appTypeTools.registerTypeTool({ viewType: 'Detail', name: 'old', description: 'Legacy Tool',
+            inputSchema: { type: 'object', properties: {}, additionalProperties: false } }, {
+            safeOrdinaryParametersInvocationMode: abi,
+            createSafeOrdinaryParametersInvoker: () => { throw Error('UNSUPPORTED_INVOKER_FACTORY_ENTERED'); },
+        });
+        return { close() {} };
+    }
+};\n`);
+            const issue = variant === 'import'
+                ? { code: 'E_INIT_FAILED', cause: { message: expect.stringContaining('ORDINARY_INVOCATION_MODE') } }
+                : { code: 'E_OPEN_FAILED', cause: { code: 'TOOL_INVOKER_ABI_UNSUPPORTED',
+                    message: expect.stringContaining('Expected ordinary-invoker/v4. Install matching Runtime and SDK packages') } };
+            await expect(install(runtime, 'd', variant, undefined, {}, file)).rejects.toMatchObject({
+                code: 'INSTALL_FAILED', cause: { code: 'INSTALL_FAILED', cause: issue },
+            });
+            expect(runtime.getDesktop('d').getInstalledApps()).toEqual([]);
+        }
+        facts.push({ case: 'rejects-retired-import-and-invoker-abi', variants: ['import', 'ordinary-v2', 'ordinary-invoker/v3'] });
+    } finally {
+        expect(await runtime.beginShutdown().completion).toMatchObject({ ok: true, resourcesReleased: true });
+    }
+}, 15000);
+
+it('rejects a missing, invalid or v4 ACK before installing an App', async () => {
+    for (const variant of ['missing', 'invalid', 'v4']) {
+        const capabilities = variant === 'invalid' ? ['unknown-capability'] : ['app-snapshot/v3', 'view-tool-parameters-invoke/v4'];
+        const runtime = makeRuntime(), script = join(directory, `ack-${variant}.mjs`);
         await capture(script, `import {parentPort} from 'node:worker_threads';
 let instanceId, closePending;
 function respond(m) {
@@ -167,7 +307,7 @@ function respond(m) {
     :completed?{protocol:'state-session-v1',instanceId,ok:true,unmount:'completed',flush,dispose:{status:'disposed',unsaved:[],release:{status:'released'}}}:undefined;
   const appCleanup=['APP_STOP','APP_SHUTDOWN','APP_CLOSE'].includes(m.type)?{protocol:'app-lifecycle-v2',instanceId,state:completed?'completed':'stopped',issues:[]}:undefined;
   parentPort.postMessage({type:init?'INIT_RESPONSE':'LIFECYCLE_RESPONSE',requestId:m.requestId,success:true,
-    ...(init?{appInstanceId:m.appInstanceId,appLifecycle:{protocol:'app-lifecycle-v2',version:2,instanceId:m.appInstanceId},persistence${wrong ? ",acceptedCapabilities:['unknown-capability']" : ''}}:{}),
+    ...(init?{appInstanceId:m.appInstanceId,appLifecycle:{protocol:'app-lifecycle-v2',version:2,instanceId:m.appInstanceId},persistence${variant === 'missing' ? '' : ',acceptedCapabilities:' + JSON.stringify(capabilities)}}:{}),
     ...(!init&&persistence?{persistence}:{}),...(appCleanup?{appCleanup}:{})});
   if(init) parentPort.postMessage({type:'SNAPSHOT_PREPARED',draft:{schemaVersion:3,appId:m.appId,instanceId:m.appInstanceId,producerSeq:1,sourceEpoch:1,capturedAt:Date.now(),
     views:[{id:'detail',viewInstanceId:'view-instance',type:'Detail',name:'Details',kind:'state',content:{format:'markdown-v1',value:'Available'} }],refs:{},
@@ -181,11 +321,11 @@ parentPort.on('message',m=>{
 });
 `);
         try {
-            await expect(install(runtime, 'd', 'a', [mode], { workerScriptPath: script })).rejects.toMatchObject({ code: 'INSTALL_FAILED' });
+            await expect(install(runtime, 'd', 'a', undefined, { workerScriptPath: script })).rejects.toMatchObject({ code: 'INSTALL_FAILED' });
             const installed = runtime.getDesktop('d').getInstalledApps().find((entry: any) => entry.appId === 'a');
             expect(installed).toBeUndefined();
             const report = await runtime.beginShutdown().completion;
-            facts.push({ case: `capability-ack-${mode}-${wrong ? 'invalid' : 'missing'}`, report, installedStatus: installed?.status });
+            facts.push({ case: `capability-ack-${variant}`, report, installedStatus: installed?.status });
             expect(report).toMatchObject({ resourcesReleased: true, hasFailures: false, verification: 'managed', interactions: { verified: true, retainedOperations: 0, retainedBytes: 0 } });
         } finally { await runtime.beginShutdown().completion; }
     }
@@ -259,11 +399,11 @@ it.each((['authorize', 'auto-read', 'duplicate-read'] as const).flatMap(stage =>
     }
 }, 25000);
 
-it('B2 C06/10–12/16 public pending/collapse/pause/reopen/reinitialize keeps modes and permanently closes old clients', async () => {
+it('B2 C06/10–12/16 public pending/collapse/pause/reopen/reinitialize keeps the trusted setting and permanently closes old clients', async () => {
     const runtime = makeRuntime();try {
-        const id = await runtime.createDesktop('d'), desktop = runtime.getDesktop(id), modes: Array<(typeof allModes)[number]> = ['view-type-parameters-v1'];
-        await desktop.registerPendingApp({ appId: 'a', modulePath: pathToFileURL(app).href, interactionModes: modes });modes.length = 0;
-        expect(desktop.getInstalledApps().find((entry: any) => entry.appId === 'a')?.interactionModes).toEqual(['view-type-parameters-v1']);
+        const id = await runtime.createDesktop('d'), desktop = runtime.getDesktop(id);
+        const pending = { appId: 'a', modulePath: pathToFileURL(app).href, toolsEnabled: true };
+        await desktop.registerPendingApp(pending); pending.toolsEnabled = false;
         expect(runtime.getAppInteraction(id, 'a', 'missing').issue.code).toBe('APP_INTERACTION_UNAVAILABLE');await desktop.openApp('a');
         const s = scope(runtime), first = await s.observe();await desktop.collapseApp('a');expect(runtime.getAppInteraction(id, 'a', s.instanceId).interaction).toBe(s.client);
         await runtime.suspend(id);expect(runtime.getAppInteraction(id, 'a', s.instanceId, s.policy).issue.code).toBe('APP_INTERACTION_UNAVAILABLE');
@@ -275,12 +415,94 @@ it('B2 C06/10–12/16 public pending/collapse/pause/reopen/reinitialize keeps mo
         expect((await reopened.client.observe({ viewIds: ['detail'] })).status).toBe('rejected');await reinitializing;
         const fresh = scope(runtime), last = await fresh.observe();expect(last.source.instanceId).not.toBe(next.source.instanceId);
         expect((await fresh.client.invoke(request(last))).receipt.outcome.status).toBe('succeeded');
-        facts.push({ case: 'instance-boundaries', instances: [first.source.instanceId, next.source.instanceId, last.source.instanceId], registeredModes: ['view-type-parameters-v1'] });
+        facts.push({ case: 'instance-boundaries', instances: [first.source.instanceId, next.source.instanceId, last.source.instanceId], toolsEnabled: true });
     } finally { await runtime.beginShutdown().completion; }
 }, 20000);
 
+it('preserves the SPI lifecycle callback receiver for cold restart and delete', async () => {
+    const desktopId = 'hook-desktop', name = 'callback_fixture';
+    const projectPath = join(directory, 'synthetic-project');
+    const trace = join(directory, 'factory-hooks.jsonl');
+    const fixture = join(directory, 'factory-hooks.mjs');
+    await capture(fixture, `
+import { appendFileSync } from 'node:fs';
+import { threadId } from 'node:worker_threads';
+
+function record(hook, receiver, context) {
+    const { appName, description, whatItIs, whenToUse, signalPolicy } = receiver;
+    const row = { hook, threadId, appName, description, whatItIs, whenToUse, signalPolicy,
+        copied: receiver !== kernelConfig, ...context };
+    appendFileSync(${JSON.stringify(trace)}, JSON.stringify(row) + '\\n');
+}
+const kernelConfig = {
+    appName: '${name}',
+    description: 'App metadata',
+    whatItIs: 'Lifecycle fixture',
+    whenToUse: 'Exercise SPI callbacks',
+    signalPolicy: 'never',
+    onReinitialize({ appId, desktopId, reason }) {
+        record('reinitialize', this, { appId, desktopId, reason });
+        this.description = 'Changed only in the first instance';
+    },
+    onDelete({ appId, desktopId }) {
+        record('delete', this, { appId, desktopId });
+    },
+};
+export default {
+    kernelConfig,
+    toolAuthoringProtocol: 'view-type-tools-v4',
+    persistenceSupport: 'state-session-v1',
+    appLifecycleSupport: 'app-lifecycle-v2',
+    initialize({ launchConfig, publishFrame }) {
+        if (launchConfig?.projectPath !== ${JSON.stringify(projectPath)}) throw Error('Host config missing');
+        publishFrame(() => ({ views: [], tools: [] }));
+        return { close() {} };
+    },
+};
+`);
+    const runtime = makeRuntime();
+    try {
+        const appId = await install(runtime, desktopId, 'hooks', undefined, {
+            name, config: { AOTUI_DATA_DIR: join(directory, 'hooks-state'), projectPath },
+        }, fixture);
+        const desktop = runtime.getDesktop(desktopId);
+        const originalInstance = desktop.getInstalledApps()[0]?.appInstanceId;
+        expect(originalInstance).toEqual(expect.any(String));
+        const reason = 'Refresh the workspace';
+        const reset = await runtime.reinitializeDesktopApps(desktopId, { reason });
+        expect(reset).toEqual({ desktopId, reinitializedAppIds: [appId], skippedAppIds: [], failedAppIds: [] });
+        const newInstance = desktop.getInstalledApps()[0]?.appInstanceId;
+        expect(newInstance).toEqual(expect.any(String));
+        expect(newInstance).not.toBe(originalInstance);
+        await runtime.deleteDesktop(desktopId);
+        expect(() => runtime.getDesktop(desktopId)).toThrow();
+
+        const hooks = (await readFile(trace, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+        const expected = { appName: name, description: 'App metadata', whatItIs: 'Lifecycle fixture',
+            whenToUse: 'Exercise SPI callbacks', signalPolicy: 'never', appId, desktopId, copied: true,
+            threadId: expect.any(Number) };
+        expect(hooks).toEqual([
+            { ...expected, hook: 'reinitialize', reason },
+            { ...expected, hook: 'delete' },
+        ]);
+        expect(hooks[0].threadId).not.toBe(hooks[1].threadId);
+        facts.push({ case: 'spi-lifecycle-receiver', hooks, reset, originalInstance, newInstance });
+    } finally {
+        expect(await runtime.beginShutdown().completion).toMatchObject({
+            ok: true, resourcesReleased: true, workers: { report: { total: 0 } },
+        });
+    }
+}, 15000);
+
 it('Semantic lifecycle controls stay bound to the App instance observed by each live Agent Context', async () => {
     const runtime = makeRuntime(), contexts: any[] = [], sources: any[] = [];
+    const definitions = (context: any) => ['system-open_app', 'system-close_app'].map(name => {
+        const tool = context.tools[name];
+        expect(tool).toBeDefined();
+        expect(tool.inputSchema.jsonSchema).toEqual({ type: 'object', properties: { app_id: { type: 'string' } },
+            required: ['app_id'], additionalProperties: false });
+        return { name, description: tool.description, schema: tool.inputSchema.jsonSchema };
+    });
     const call = async (context: any, name: string, args: any, callId: string) => {
         expect(context.tools[name]).toBeDefined();
         return context.executeTool(name, args, callId);
@@ -294,8 +516,17 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
         const value = await source.getContext();contexts.push(value);await value.adopt();return value;
     };
     try {
+        const empty = await context(), base = definitions(empty);
+        expect(Object.keys(empty.tools).sort()).toEqual(['system-close_app', 'system-open_app']);
+        for (const name of ['system-open_app', 'system-close_app']) {
+            expect((await call(empty, name, { app_id: 'a' }, 'empty-' + name))?.error?.code).toBe('INVALID_APP_TARGET');
+        }
+        expect(desktop.getInstalledApps()).toEqual([]);
         await install(runtime, desktopId, 'a', undefined, { name: 'interaction_example' });
         const first = await context();
+        expect(definitions(first)).toEqual(base);
+        expect((await call(first, 'system-open_app', { app_id: 'a' }, 'already-open'))?.error?.code).toBe('INVALID_APP_TARGET');
+        expect(first.tools['system-show_app']).toBeUndefined();
         const dynamicTool = Object.keys(first.tools).find(name => name === 'interaction_example-Detail-ordinary');
         expect(dynamicTool).toBeDefined();
         const firstInstance = desktop.getInstalledApps().find((entry: any) => entry.appId === 'a')?.appInstanceId;
@@ -305,13 +536,20 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
 
         expect((await call(first, 'system-collapse_app', { app_id: 'a' }, 'first-collapse'))?.outcomeStatus).toBe('succeeded');
         const collapsedFirst = await context();
+        expect(definitions(collapsedFirst)).toEqual(base);
+        expect(collapsedFirst.tools['system-collapse_app']).toBeUndefined();
+        expect(collapsedFirst.tools[dynamicTool!]).toBeUndefined();
         expect((await call(collapsedFirst, 'system-show_app', { app_id: 'a' }, 'first-show'))?.outcomeStatus).toBe('succeeded');
         expect((await call(first, 'system-close_app', { app_id: 'a' }, 'first-close'))?.outcomeStatus).toBe('succeeded');
         expect((await call(first, dynamicTool!, { filePath: '/open/note.txt', text: 'change' }, 'closed-read'))?.error?.code).toBe('APP_INTERACTION_UNAVAILABLE');
 
         const closed = await context();
+        expect(definitions(closed)).toEqual(base);
+        expect(closed.tools[dynamicTool!]).toBeUndefined();
+        expect((await call(closed, 'system-close_app', { app_id: 'a' }, 'already-closed'))?.error?.code).toBe('INVALID_APP_TARGET');
         expect((await call(closed, 'system-open_app', { app_id: 'a' }, 'reopen'))?.outcomeStatus).toBe('succeeded');
         const successor = await context();
+        expect(definitions(successor)).toEqual(base);
         const successorInstance = desktop.getInstalledApps().find((entry: any) => entry.appId === 'a')?.appInstanceId;
         expect(successorInstance).toEqual(expect.any(String));
         expect(successorInstance).not.toBe(firstInstance);
@@ -322,6 +560,9 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
         for (const [name, callId] of [['system-close_app', 'stale-close'], ['system-collapse_app', 'stale-collapse']] as const) {
             expect((await call(first, name, { app_id: 'a' }, callId))?.error?.code).toBe('APP_INSTANCE_CHANGED');
         }
+        expect(desktop.getInstalledApps().find((entry: any) => entry.appId === 'a')).toMatchObject({
+            status: 'running', appInstanceId: successorInstance,
+        });
 
         expect((await call(successor, 'system-collapse_app', { app_id: 'a' }, 'successor-collapse'))?.outcomeStatus).toBe('succeeded');
         const collapsedSuccessor = await context();
@@ -329,6 +570,8 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
         expect((await call(collapsedSuccessor, 'system-show_app', { app_id: 'a' }, 'successor-show'))?.outcomeStatus).toBe('succeeded');
         const runningSuccessor = await context();
         expect((await call(runningSuccessor, 'system-close_app', { app_id: 'a' }, 'successor-close'))?.outcomeStatus).toBe('succeeded');
+        facts.push({ case: 'persistent-lifecycle-controls', definitions: base, emptyDesktopRejected: true,
+            firstInstance, successorInstance, staleCloseRejected: true });
     } finally {
         for (const entry of contexts) await entry.release?.();
         for (const source of sources) source.dispose();
@@ -354,9 +597,9 @@ it('B2 C12/21 two Desktop/three App actual owners aggregate held callbacks witho
     } finally { for (const gate of gates) gate.resolve({ views: [], refs: [], toolBindings: [], content: [] });await runtime.beginShutdown().completion; }
 }, 20000);
 
-it('B2 C07 app launch config cannot grant modes disabled by the trusted Host', async () => {
+it('B2 C07 app launch config cannot grant tools disabled by the trusted Host', async () => {
     const runtime = makeRuntime();try {
-        await install(runtime, 'd', 'a', [], { config: { interactionModes: allModes } });
+        await install(runtime, 'd', 'a', false, { config: { toolsEnabled: true } });
         const s = scope(runtime), observation = await s.observe();
         expect(observation.views.find((view: any) => view.id === 'detail')?.content.value).toContain('Completed actions: 0');
         expect(observation.bindings).toEqual([]);

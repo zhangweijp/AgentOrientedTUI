@@ -4,10 +4,7 @@
 Install it in the host that uses both packages. Runtime and SDK consumers using
 another Agent system do not need this adapter or this Driver.
 
-The adapter requires matching Runtime and Driver peers. The current shared source uses adapter `0.4.0-srt.1`, Runtime `7.0.0-srt.1`, SDK `0.8.0-srt.1` and
-Driver `0.3.0`. These versions are not a claim of registry publication; use the matching artifacts. Do not substitute
-an older Runtime: it does not provide the neutral presentation exports required
-by this adapter.
+Adapter `0.4.0` requires Runtime `7.0.0` and Driver `0.3.1` as exact peers. Use the matching local artifacts recorded by the delivery manifest. The full package graph and installation instructions are in `@aotui/runtime` under `docs/sdk-runtime-distribution.md#current-delivery`.
 
 ```ts
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
@@ -38,6 +35,8 @@ in this Source; getContext and background publication only prepare data. Manual
 consumers must explicitly adopt too. An unadopted Context refuses tool calls. For diagnostic rendering, use Runtime
 `getAppInteraction(...).interaction.preview()` after checking the ready result.
 
+An enabled Apps Source always advertises `system-open_app` and `system-close_app` with a required string `app_id`. Choose an App ID from the current Context's Desktop list. Open accepts `pending` or `closed` apps. Close requires a live instance in `running`, `collapsed`, or `paused` state and uses the instance captured by the Context. An ineligible target is rejected. Disabling the whole Apps Source removes these tools. Desktop previews show installation state for inspection. Context tools and their targets are scoped to the conversation.
+
 The Source converts Runtime observations and operation receipts into Driver
 messages, tool declarations and results. Runtime owns Ref resolution, source
 binding, authorization, parameter validation and framework resources. Apps own
@@ -62,20 +61,6 @@ envelope functions also remain single implementations in Runtime.
 
 ## Verification boundary
 
-The adapter uses Runtime observations and the Driver Context contract. Build,
-behavior and normal package-consumption results apply to their recorded artifacts.
-The current compiler is TypeScript 7.0.2. The accepted SRT-06 integration passes
-`strict`, `exactOptionalPropertyTypes: true` and `skipLibCheck: false` with
-AI SDK `6.0.326`, `@ai-sdk/provider-utils` `4.0.65` and the Driver's exact
-pnpm declaration patch. An external Host must configure that patch in its own
-installation; installing the Driver tar does not propagate pnpm patch settings.
-See the Driver's shipped `STRICT_TYPES.md` and the
-[SDK package guide](../sdk/docs/runtime-compatibility.md) for the supported graph.
-The earlier unpatched eight-error result is historical, rather than a current
-integration blocker. Runtime and SDK consumers using another Agent system do not
-need the AI SDK patch.
+The full Source consumer uses TypeScript 7.0.2 with `strict`, `exactOptionalPropertyTypes: true` and `skipLibCheck: false`. Configure the temporary pnpm declaration patch in the consumer before installing. The exact dependency graph, patch, and removal condition are in `@aotui/agent-driver-v2` under `STRICT_TYPES.md`. Build, type and behavior results apply to the artifacts identified by the delivery manifest.
 
-
-当前 View 必须显式声明 `type` 和 `kind="instruction" | "state"`，实例 `id` 只标识页面实例。正文不携带框架外壳，XML 文本仅在最终呈现时转义一次；[View 声明与正文合同](../sdk/docs/views.md)说明两种 Producer、原样内容和迁移方式。
-
-Application authors start with the [SDK guide](../sdk/README.md). Matching packages and reproducible author examples are described in the [package guide](../sdk/docs/runtime-compatibility.md).
+Application authors start with `@aotui/sdk` under `docs/app-authoring.md`. View declaration and content contracts are in the same package under `docs/views.md`. The full Source tutorial is in `@aotui/runtime` under `docs/semantic-host-integration.zh-CN.md#source-host-example`.

@@ -82,7 +82,7 @@ afterAll(async () => { await rm(directory, { recursive: true, force: true }); })
 async function start() {
     const host = new AppWorkerHost({ appId: 'refresh_app' as any, desktopId: 'desktop' as any,
         appModulePath: appPath, workerScriptPath: workerPath, existingWorker: new Worker(workerPath),
-        config: { AOTUI_DATA_DIR: directory }, interactionModes: ['view-type-parameters-v1'] });
+        config: { AOTUI_DATA_DIR: directory } });
     hosts.push(host); host.onUpdateRequest = vi.fn(); await host.start(); await host.open();
     const opened = host.getAppInteraction(policy); if (opened.status !== 'ready') throw new Error(opened.issue.code);
     return { host, client: opened.interaction };

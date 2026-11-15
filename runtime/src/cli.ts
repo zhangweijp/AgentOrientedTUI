@@ -8,12 +8,10 @@ import { buildViewMessageMarkup } from './adapters/view-message.js';
  *   agentina install <source> 安装 App (local/npm)
  *   agentina search [query]   搜索可安装 App
  *   agentina remove <name>    卸载 App
- *   agentina uninstall <name> 卸载 App (remove alias)
  *   agentina list             列出已安装
  *   agentina enable <name>    启用 App
  *   agentina disable <name>   禁用 App
  *   agentina autostart <name> <on|off>  设置自动启动
- *   agentina link <path>      链接本地开发目录 (install alias)
  *   agentina run [name]       Run installed apps (or specific app)
  * 
  * @module @aotui/cli
@@ -38,9 +36,7 @@ Usage: agentina <command> [options]
 Commands:
   install <source>     Install app from local path or npm package
   search [query]       Search installable apps from catalog
-  link <path>          Link a local app directory (alias of install local)
   remove <name>        Uninstall an app
-  uninstall <name>     Uninstall an app (alias of remove)
   list                 List installed apps
   enable <name>        Enable an app
   disable <name>       Disable an app
@@ -54,9 +50,9 @@ Options:
 
 Examples:
   agentina install .                          # Install from local directory
+  agentina install local:./my-app             # Install from an explicit local path
   agentina install @scope/aotui-weather      # Install from npm
   agentina search weather                     # Search catalog
-  agentina link ./my-app                      # Dev shortcut for local install
   agentina list                               # Show all installed apps
   agentina run my-app                         # Run a specific app
 `;
@@ -78,7 +74,6 @@ async function main(): Promise<void> {
     try {
         switch (command) {
             case 'install':
-            case 'add':
                 await handleInstall(registry, args.slice(1));
                 break;
 
@@ -87,7 +82,6 @@ async function main(): Promise<void> {
                 break;
 
             case 'remove':
-            case 'uninstall':
                 await handleRemove(registry, args.slice(1));
                 break;
 
@@ -101,10 +95,6 @@ async function main(): Promise<void> {
 
             case 'disable':
                 await handleEnable(registry, args.slice(1), false);
-                break;
-
-            case 'link':
-                await handleLink(registry, args.slice(1));
                 break;
 
             case 'autostart':
@@ -136,7 +126,7 @@ interface ParsedInstallArgs {
     autoStart: boolean;
 }
 
-function parseInstallArgs(args: string[], commandName: 'install' | 'link'): ParsedInstallArgs {
+function parseInstallArgs(args: string[]): ParsedInstallArgs {
     let force = false;
     let autoStart = true;
     const positional: string[] = [];
@@ -158,7 +148,7 @@ function parseInstallArgs(args: string[], commandName: 'install' | 'link'): Pars
     }
 
     if (positional.length === 0) {
-        throw new Error(`Usage: agentina ${commandName} <${commandName === 'link' ? 'path' : 'source'}> [--force] [--no-autostart]`);
+        throw new Error('Usage: agentina install <source> [--force] [--no-autostart]');
     }
 
     return {
@@ -197,13 +187,9 @@ async function handleSearch(registry: AppRegistry, args: string[]): Promise<void
     }
 }
 
-async function handleInstall(registry: AppRegistry, args: string[], forceLocalOnly = false): Promise<void> {
-    const parsed = parseInstallArgs(args, forceLocalOnly ? 'link' : 'install');
+async function handleInstall(registry: AppRegistry, args: string[]): Promise<void> {
+    const parsed = parseInstallArgs(args);
     const resolvedSource = parseInstallSource(parsed.source);
-
-    if (forceLocalOnly && resolvedSource.kind !== 'local') {
-        throw new Error('agentina link only accepts local path');
-    }
 
     const name = await installAppFromSource(registry, resolvedSource, parsed);
     if (resolvedSource.kind === 'local') {
@@ -307,10 +293,6 @@ async function handleAutoStart(registry: AppRegistry, args: string[]): Promise<v
     console.log(`✅ Auto-start ${value === 'on' ? 'enabled' : 'disabled'}: ${name}`);
 }
 
-async function handleLink(registry: AppRegistry, args: string[]): Promise<void> {
-    await handleInstall(registry, args, true);
-}
-
 async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
     const targetApp = args[0]; // Optional: run specific app
 
@@ -344,7 +326,7 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
                 if (!view.content) continue;
                 console.log(buildViewMessageMarkup({ appId, appName: app.name || appId,
                     viewId: view.id, viewType: view.type, kind: view.kind, viewName: view.name,
-                    markup: view.content.format === 'markdown-v1' ? view.content.value : JSON.stringify(view.content.value) }));
+                    markup: view.content.value }));
             }
         }
     }
@@ -352,7 +334,7 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
     let stopping: Promise<void> | undefined;
     function stop(): Promise<void> {
         if (!stopping) {
-            stopping = runtime.beginShutdown('CLI stopped').completion.then(report => {
+            stopping = runtime.beginShutdown().completion.then(report => {
                 if (!report.ok || !report.resourcesReleased) process.exitCode = 1;
             });
             rl.close();

@@ -51,7 +51,7 @@ describe('refresh before the existing Scope observation', () => {
     it('ordinary TS publishes compatible View/Ref/Tool after a commit, reuses unchanged data, and reports projection failure without redoing business', async () => {
         const receiver = new SemanticSnapshotReceiver('app', 'instance');
         const owner = new AbortController();
-        const compiled = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false }, 'view-type-parameters-v1');
+        const compiled = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
         if (!compiled.ok) throw new Error('fixture Schema');
         const profile = ordinaryParameterProfile(compiled.contract);
         const target = { viewId: 'file', viewInstanceId: 'file-instance' };
@@ -76,7 +76,7 @@ describe('refresh before the existing Scope observation', () => {
             toolBindings: Object.values(source.tools).map((t: any) => ({ toolId: t.id, execution: t.execution })),
         }) };
         let businessCalls = 0;
-        const binding = { identity: {}, mode: 'view-type-parameters-v1' as const, validateInput: () => ({ ok: true as const, value: {} }),
+        const binding = { identity: {}, validateInput: () => ({ ok: true as const, value: {} }),
             isLive: () => ({ ok: true as const }), execute: () => ({ kind: 'tool-result' as const, phase: 'entered-returned' as const,
                 result: { success: true, data: { calls: ++businessCalls } } }) };
         try {

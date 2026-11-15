@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createSnapshotCore } from './store.js';
 import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
-const c = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: true }, 'view-type-parameters-v1');if (!c.ok) throw Error('fixture');
+const c = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: true });if (!c.ok) throw Error('fixture');
 describe('R01 qualified Ref Snapshot admission', () => {
     it.each(['valid', 'unknown-marker', 'malformed-profile', 'mutating'])('checks %s before publication', kind => {
         const core = createSnapshotCore();core.lifecycle.startApp('app', 'run');const id = JSON.stringify(['app', 'File', 'read']);

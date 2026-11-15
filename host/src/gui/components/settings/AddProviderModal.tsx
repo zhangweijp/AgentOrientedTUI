@@ -176,24 +176,37 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
 
     // ── fetch models for selected template provider ───────────────────────────
     useEffect(() => {
-        if (!selectedProviderId) { setAvailableModels([]); setModel(''); return; }
+        if (!isOpen || !selectedProviderId) return;
+        let cancelled = false;
         (async () => {
             setIsLoadingModels(true);
             try {
                 const models = await bridge.getTrpcClient().modelRegistry.getModels.query({ providerId: selectedProviderId });
-                const ids = models.map((m) => {
-                    const prefix = `${selectedProviderId}/`;
-                    return m.id.startsWith(prefix) ? m.id.slice(prefix.length) : m.id;
-                });
+                if (cancelled) return;
+                const ids = models.map(item => item.id);
                 setAvailableModels(ids);
-                if (ids.length > 0 && !model) setModel(ids[0]);
+                setModel(ids[0] ?? '');
             } catch {
-                setAvailableModels([]);
+                if (!cancelled) setAvailableModels([]);
             } finally {
-                setIsLoadingModels(false);
+                if (!cancelled) setIsLoadingModels(false);
             }
         })();
-    }, [selectedProviderId]);
+        return () => { cancelled = true; };
+    }, [bridge, isOpen, selectedProviderId]);
+
+    const selectTemplateProvider = (provider: AvailableProvider) => {
+        if (selectedProviderId !== provider.id) {
+            if (selectedProviderId) setApiKey('');
+            setModel('');
+            setAvailableModels([]);
+            setSelectedProviderId(provider.id);
+        }
+        setShowProviderDropdown(false);
+        setProviderSearchQuery('');
+        if (!customName) setCustomName(provider.name);
+        setTemplateErrors(({ providerId: _, ...rest }) => rest);
+    };
 
     // ── filtered lists ────────────────────────────────────────────────────────
     const filteredProviders = useMemo(() => {
@@ -216,7 +229,7 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
             return;
         }
         setIsSaving(true);
-        try { await onSave({ ...config, model: model.trim() || undefined }); onClose(); }
+        try { await onSave({ ...config, model: model.trim() }); onClose(); }
         catch { /* parent handles error */ } finally { setIsSaving(false); }
     };
 
@@ -254,7 +267,7 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
 
     // ── derived helpers ───────────────────────────────────────────────────────
     const selectedProviderObj = availableProviders.find(p => p.id === selectedProviderId);
-    const isTemplateSaveDisabled = !selectedProviderId || !customName.trim() || !apiKey.trim() || isSaving;
+    const isTemplateSaveDisabled = !selectedProviderId || !customName.trim() || !apiKey.trim() || !model.trim() || isSaving;
     const isCustomSaveDisabled = !customProviderName.trim() || !customBaseUrl.trim() || isSaving || !onSaveCustom;
 
     if (!isOpen) return null;
@@ -342,7 +355,7 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
                                                     )}
                                                     {filteredProviders.map((p) => (
                                                         <button key={p.id}
-                                                            onClick={() => { setSelectedProviderId(p.id); setShowProviderDropdown(false); setProviderSearchQuery(''); if (!customName) { setCustomName(p.name); } setTemplateErrors(prev => { const { providerId: _, ...r } = prev; return r; }); }}
+                                                            onClick={() => selectTemplateProvider(p)}
                                                             role="option" aria-selected={selectedProviderId === p.id}
                                                             className="w-full flex items-center gap-3 px-3 py-2 hover:bg-[var(--color-bg-surface)] text-left transition-colors">
                                                             <ProviderLogo providerId={p.id} providerName={p.name} size="sm" />
@@ -373,7 +386,7 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
                                 </Field>
 
                                 {selectedProviderId && (
-                                    <Field label="Default Model" htmlFor="t-model" hint="Leave empty to configure later in the Model tab.">
+                                    <Field label="Default Model" htmlFor="t-model" required>
                                         {isLoadingModels ? (
                                             <div className={`${inputBase} flex items-center text-[var(--color-text-tertiary)] text-[13px]`}>Loading models…</div>
                                         ) : availableModels.length > 0 ? (
@@ -397,10 +410,6 @@ export const AddProviderModal: React.FC<AddProviderModalProps> = ({
                                                                 className="w-full h-8 px-3 rounded-xl mat-content text-[13px] placeholder:text-[var(--color-text-tertiary)] focus:outline-none" />
                                                         </div>
                                                         <div className="max-h-[168px] overflow-y-auto">
-                                                            <button onClick={() => { setModel(''); setShowModelDropdown(false); }}
-                                                                className="w-full text-left px-3 py-2 text-[13px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-surface)] transition-colors">
-                                                                No default model
-                                                            </button>
                                                             {filteredModels.map((id) => (
                                                                 <button key={id} onClick={() => { setModel(id); setShowModelDropdown(false); setModelSearchQuery(''); }}
                                                                     className="w-full text-left px-3 py-2 text-[13px] hover:bg-[var(--color-bg-surface)] transition-colors">

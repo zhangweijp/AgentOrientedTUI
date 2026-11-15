@@ -10,7 +10,7 @@ function enter(name, view, args, revision) {
   const id = ++sequence;
   parentPort.postMessage({ type: 'TEST_HANDLER_ENTER', id, name, view, args, revision,
     frozen: Object.isFrozen(args), nestedFrozen: !args.flags || Object.isFrozen(args.flags) });
-  const result = () => behaviour === 'business' ? { success: false, error: { code: 'BUSINESS', message: 'Controlled failure' } }
+  const result = () => behaviour === 'business' ? { success: false, error: { code: 'E_HANDLER_ERROR', message: 'Controlled failure' }, data: { checked: true } }
     : behaviour === 'malformed' ? { success: true, data: [] }
     : behaviour === 'huge' ? { success: true, data: { text: 'x'.repeat(512 * 1024) } }
     : { success: true, data: name === 'flags' ? { count: args.flags.length, allTrue: args.flags.every(v => v === true) }

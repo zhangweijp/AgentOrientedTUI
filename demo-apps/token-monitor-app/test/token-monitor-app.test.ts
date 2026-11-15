@@ -10,8 +10,6 @@ describe('token monitor app factory', () => {
     });
 
     it('exposes canonical app_name metadata', () => {
-        const factory = TokenMonitorAppFactory as { displayName?: string; kernelConfig?: { appName?: string } };
-        expect(factory.displayName).toBe('token_monitor');
-        expect(factory.kernelConfig?.appName).toBe('token_monitor');
+        expect(TokenMonitorAppFactory.kernelConfig.appName).toBe('token_monitor');
     });
 });

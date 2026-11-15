@@ -89,7 +89,7 @@ it('C06 duplicate DOM, duplicate owned IDs, wrong instance/type, Ref owner and T
     expect(refs.commit(() => { refs.registerRef({ viewId: 'missing', viewInstanceId: 'different' }, 'file', { text: 'x' }); })).toBe('failed');
     expect(refs.nextPublication()).toMatchObject({ failure: { issue: { message: expect.stringMatching(/missing View instance/) } } });
 
-    const schema = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false }, 'view-type-parameters-v1');
+    const schema = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
     if (!schema.ok) throw new Error('Invalid fixture schema');
     const tools = new SemanticProjectionCoordinator({ identity, readFrame: () => ({
         views: f.capture(), tools: [{ id: JSON.stringify(['app', 'Missing', 'read']), name: 'read', viewType: 'Missing',

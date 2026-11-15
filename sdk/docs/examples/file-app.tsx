@@ -15,18 +15,18 @@ function AppRoot() {
   const bindings: ToolBindings<ToolSetMap<typeof fileTools>> = {
     open: { execute: ({ filePath }) => {
       const file = available.get(filePath);
-      if (!file) return { success: false, effects: 'none', error: { code: 'FILE_NOT_FOUND', message: 'Choose a.txt or b.txt.' } };
+      if (!file) return { success: false, error: { code: 'FILE_NOT_FOUND', message: 'Choose a.txt or b.txt.' } };
       setOpened(current => current[filePath] ? current : { ...current, [filePath]: { ...file } });
       return { success: true, data: { message: 'Read the opened FileDetail View.' } };
     } },
     close: { enabled: Object.keys(opened).length > 0, execute: ({ filePath }) => {
-      if (!Object.hasOwn(opened, filePath)) return { success: false, effects: 'none', error: { code: 'FILE_NOT_OPEN', message: 'This file is not open.' } };
+      if (!Object.hasOwn(opened, filePath)) return { success: false, error: { code: 'FILE_NOT_OPEN', message: 'This file is not open.' } };
       setOpened(current => Object.fromEntries(Object.entries(current).filter(([path]) => path !== filePath)));
       return { success: true, data: { message: 'File closed.' } };
     } },
     edit: { enabled: Object.keys(opened).length > 0, execute: ({ filePath, content }) => {
       const file = Object.hasOwn(opened, filePath) ? opened[filePath] : undefined;
-      if (!file) return { success: false, effects: 'none', error: { code: 'FILE_NOT_OPEN', message: 'Open this file before editing.' } };
+      if (!file) return { success: false, error: { code: 'FILE_NOT_OPEN', message: 'Open this file before editing.' } };
       setOpened(current => ({ ...current, [filePath]: { ...file, content } }));
       return { success: true, data: { message: 'Read the updated FileDetail View.' } };
     } },

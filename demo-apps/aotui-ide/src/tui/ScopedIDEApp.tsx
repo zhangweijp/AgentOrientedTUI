@@ -1,5 +1,5 @@
 import { View, AppTools, ToolCatalog, useAppRuntimeContext, useEffect, useMemo, useState, useAppLifecycle } from '@aotui/sdk';
-import { IDESession } from '../core/ide-session.js';
+import { IDESession, type IDEFile } from '../core/ide-session.js';
 import { createIDEToolBindings, ideTools, type IDEViewTool } from './ide-tool-contracts.js';
 import { WorkspaceCreateView } from './WorkspaceCreateView.js';
 import { requireIDE } from '../core/ide-errors.js';
@@ -26,11 +26,15 @@ function Workspace({ owner }: { owner: IDESession }) {
     </section>;
 }
 
-function FileDetail({ file }: { file: { viewId: string; observed: { path: string }; page: string; panels: Record<string, unknown> } }) {
+function FileDetail({ file }: { file: IDEFile }) {
     return <section>
         <h2>{file.observed.path}</h2><p>View ID: {file.viewId}. LSP positions use one-based lines and characters in the complete loaded document.</p>
         <h3>Content</h3><pre>{file.page}</pre>
-        {Object.entries(file.panels).map(([name, value]) => <section key={name}><h3>{name}</h3><pre>{JSON.stringify(value, null, 2)}</pre></section>)}
+        {Object.entries(file.panels).map(([name, panel]) => <section key={name}><h3>{name}</h3>
+            {name === 'hover' && panel && typeof panel === 'object' && 'value' in panel && panel.value === null &&
+                <p>No hover information at the queried position.</p>}
+            <pre>{JSON.stringify(panel, null, 2)}</pre>
+        </section>)}
     </section>;
 }
 

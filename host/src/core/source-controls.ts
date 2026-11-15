@@ -3,20 +3,14 @@ import type { McpDrivenSource } from '../mcp/source.js';
 import type { SkillDrivenSource } from '../skills/skill-driven-source.js';
 import {
     appSourceControls,
-    buildMcpServerItemKey,
-    buildMcpToolItemKey,
-    isMcpServerItemKey,
+    hasInvalidMcpToolKeys,
+    isMcpItemKey,
     parseMcpServerItemKey,
 } from '../shared/source-control-keys.js';
 
-type AOTUIControllableSource = {
-    setEnabled(enabled: boolean): void;
-    setAppEnabled(appName: string, enabled: boolean): void;
-};
-
 export type SourceControlsSnapshot = {
     apps: { enabled: boolean; disabledItems: string[] };
-    mcp: { enabled: boolean; disabledItems: string[] };
+    mcp: { enabled: boolean; disabledItems: string[]; allowedServers?: string[] };
     skill: { enabled: boolean; disabledItems: string[] };
 };
 
@@ -46,51 +40,35 @@ export function normalizeSourceControlsSnapshot(
             : fallback.disabledItems,
     });
 
+    const mcp: SourceControlsSnapshot['mcp'] = normalizeBucket(input.mcp, defaults.mcp);
+    const disabled = input.mcp?.disabledItems;
+    if (Array.isArray(disabled)) mcp.disabledItems = disabled.filter(key => typeof key === 'string');
+    if (disabled !== undefined && (!Array.isArray(disabled) || disabled.some(key => !isMcpItemKey(key)))) {
+        mcp.enabled = false;
+    }
+
+    const allowedServers = input.mcp?.allowedServers;
+    if (allowedServers !== undefined) {
+        const valid = Array.isArray(allowedServers)
+            && allowedServers.every(name => typeof name === 'string' && name.trim().length > 0);
+        mcp.allowedServers = valid ? [...new Set(allowedServers)] : [];
+        if (!valid) mcp.enabled = false;
+    }
     return {
         apps: normalizeBucket(input.apps, defaults.apps),
-        mcp: normalizeBucket(input.mcp, defaults.mcp),
+        mcp,
         skill: normalizeBucket(input.skill, defaults.skill),
     };
 }
 
-export function normalizeAgentDisabledMcpToolKeys(rawDisabledTools: unknown): string[] {
-    if (!Array.isArray(rawDisabledTools)) {
-        return [];
-    }
-
-    const normalized = new Set<string>();
-    for (const item of rawDisabledTools) {
-        if (typeof item !== 'string') {
-            continue;
-        }
-
-        const key = item.trim();
-        if (!key) {
-            continue;
-        }
-
-        if (key.startsWith('mcp-')) {
-            normalized.add(key);
-            continue;
-        }
-
-        const separatorIndex = key.indexOf('::');
-        if (separatorIndex > 0 && separatorIndex < key.length - 2) {
-            const serverName = key.slice(0, separatorIndex);
-            const toolName = key.slice(separatorIndex + 2);
-            normalized.add(buildMcpToolItemKey(serverName, toolName));
-            continue;
-        }
-
-        normalized.add(key);
-    }
-
-    return Array.from(normalized);
+function getAgentMcpServers(agent?: { enabledMCPs?: unknown }): string[] {
+    return Array.isArray(agent?.enabledMCPs)
+        ? agent.enabledMCPs.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        : [];
 }
 
 export function createSourceControlsFromAgent(
     agent: any,
-    config: { mcp?: Record<string, unknown> },
     registeredApps: readonly string[],
 ): SourceControlsSnapshot {
     const enabledApps = Array.isArray(agent?.enabledApps)
@@ -102,17 +80,9 @@ export function createSourceControlsFromAgent(
                 ? bucket.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
                 : [])
         : [];
-    const enabledMcpServers = Array.isArray(agent?.enabledMCPs)
-        ? agent.enabledMCPs.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
-        : [];
-
-    const enabledMcpSet = new Set(enabledMcpServers);
-    const allConfiguredMcpServers = Object.keys((config.mcp || {}) as Record<string, unknown>);
-    const disabledServerKeys = allConfiguredMcpServers
-        .filter((serverName) => !enabledMcpSet.has(serverName))
-        .map((serverName) => buildMcpServerItemKey(serverName));
-
-    const disabledToolKeys = normalizeAgentDisabledMcpToolKeys(agent?.disabledMcpTools);
+    const allowedServers = getAgentMcpServers(agent);
+    const invalidTools = hasInvalidMcpToolKeys(agent?.disabledMcpTools);
+    const disabledToolKeys: string[] = Array.isArray(agent?.disabledMcpTools) ? agent.disabledMcpTools : [];
 
     return normalizeSourceControlsSnapshot({
         apps: appSourceControls(enabledApps, registeredApps),
@@ -121,19 +91,11 @@ export function createSourceControlsFromAgent(
             disabledItems: [],
         },
         mcp: {
-            enabled: enabledMcpSet.size > 0,
-            disabledItems: Array.from(new Set([...disabledServerKeys, ...disabledToolKeys])),
+            enabled: allowedServers.length > 0 && !invalidTools,
+            allowedServers,
+            disabledItems: [...new Set(disabledToolKeys)],
         },
     });
-}
-
-function asAOTUIControllableSource(source: SemanticAOTUIDrivenSource): AOTUIControllableSource | null {
-    const candidate = source as unknown as Partial<AOTUIControllableSource>;
-    if (typeof candidate.setEnabled !== 'function' || typeof candidate.setAppEnabled !== 'function') {
-        return null;
-    }
-
-    return candidate as AOTUIControllableSource;
 }
 
 export function applySourceControlsToSources(
@@ -146,32 +108,26 @@ export function applySourceControlsToSources(
 ): SourceControlsSnapshot {
     const controls = normalizeSourceControlsSnapshot(controlsInput);
 
-    if (options.aotuiSource) {
-        const controllableSource = asAOTUIControllableSource(options.aotuiSource);
-        if (controllableSource) {
-            controllableSource.setEnabled(controls.apps.enabled);
-            controls.apps.disabledItems.forEach((item) => controllableSource.setAppEnabled(item, false));
+    const aotuiSource = options.aotuiSource;
+    if (aotuiSource) {
+        aotuiSource.setEnabled(controls.apps.enabled);
+        controls.apps.disabledItems.forEach((item) => aotuiSource.setAppEnabled(item, false));
+    }
+
+    const mcpSource = options.mcpSource;
+    if (mcpSource) {
+        mcpSource.setEnabled(controls.mcp.enabled);
+        for (const item of controls.mcp.disabledItems) {
+            const server = parseMcpServerItemKey(item);
+            if (server) mcpSource.setServerEnabled(server, false);
+            else mcpSource.setToolEnabled(item, false);
         }
     }
 
-    if (options.mcpSource) {
-        options.mcpSource.setEnabled(controls.mcp.enabled);
-        controls.mcp.disabledItems.forEach((item) => {
-            if (isMcpServerItemKey(item)) {
-                const serverName = parseMcpServerItemKey(item);
-                if (serverName) {
-                    options.mcpSource?.setServerEnabled(serverName, false);
-                }
-                return;
-            }
-
-            options.mcpSource?.setToolEnabled(item, false);
-        });
-    }
-
-    if (options.skillSource) {
-        options.skillSource.setEnabled(controls.skill.enabled);
-        controls.skill.disabledItems.forEach((item) => options.skillSource?.setSkillEnabled(item, false));
+    const skillSource = options.skillSource;
+    if (skillSource) {
+        skillSource.setEnabled(controls.skill.enabled);
+        controls.skill.disabledItems.forEach((item) => skillSource.setSkillEnabled(item, false));
     }
 
     return controls;

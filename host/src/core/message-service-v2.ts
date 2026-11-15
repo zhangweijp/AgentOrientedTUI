@@ -446,20 +446,4 @@ export class MessageServiceV2 {
             throw error;
         }
     }
-
-    /**
-     * 批量获取所有话题的消息
-     */
-    getAllMessagesGroupedByTopic(): Map<string, Message[]> {
-        try {
-            const db = getDb();
-            return dbV2.getAllMessagesGroupedByTopicV2(db);
-        } catch (error) {
-            console.error('[MessageServiceV2] Failed to get all messages:', error);
-            return new Map();
-        }
-    }
 }
-
-// Singleton instance
-export const messageServiceV2 = new MessageServiceV2();

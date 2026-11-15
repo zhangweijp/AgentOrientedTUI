@@ -77,7 +77,6 @@ const createMockModelRegistry = (): ModelRegistry => ({
         providerCount: 0,
         modelCount: 0,
     }),
-    getProviderRegistry: vi.fn().mockResolvedValue({}),
 } as any);
 
 describe('HostManagerV2 Integration', () => {
@@ -123,21 +122,19 @@ describe('HostManagerV2 Integration', () => {
     });
 
     it('should initialize SessionManager and register message handler', async () => {
-        const mockDesktop = {} as any;
         const mockKernel = {} as any;
         const mockDesktopManager = {} as any;
 
-        await hostManager.initAgentDriver(mockDesktop, mockKernel, mockDesktopManager);
+        await hostManager.initAgentDriver(mockKernel, mockDesktopManager);
 
         expect(sessionManagerMock.on).toHaveBeenCalledWith('message', expect.any(Function));
     });
 
     it('should delegate sendUserMessage to SessionManager', async () => {
-        const mockDesktop = {} as any;
         const mockKernel = {} as any;
         const mockDesktopManager = {} as any;
 
-        await hostManager.initAgentDriver(mockDesktop, mockKernel, mockDesktopManager);
+        await hostManager.initAgentDriver(mockKernel, mockDesktopManager);
 
         await hostManager.sendUserMessage('Hello World');
 
@@ -145,11 +142,10 @@ describe('HostManagerV2 Integration', () => {
     });
 
     it('should emit GUI update when session message is received', async () => {
-        const mockDesktop = {} as any;
         const mockKernel = {} as any;
         const mockDesktopManager = {} as any;
 
-        await hostManager.initAgentDriver(mockDesktop, mockKernel, mockDesktopManager);
+        await hostManager.initAgentDriver(mockKernel, mockDesktopManager);
 
         const assistantMessage: ModelMessage = {
             role: 'assistant',
@@ -173,7 +169,6 @@ describe('HostManagerV2 Integration', () => {
     });
 
     it('should apply IM compaction policy before dispatching inbound IM message', async () => {
-        const mockDesktop = {} as any;
         const mockKernel = {} as any;
         const mockDesktopManager = {} as any;
 
@@ -210,7 +205,7 @@ describe('HostManagerV2 Integration', () => {
             },
         });
 
-        await hostManager.initAgentDriver(mockDesktop, mockKernel, mockDesktopManager);
+        await hostManager.initAgentDriver(mockKernel, mockDesktopManager);
 
         const onGuiUpdateSpy = vi.fn();
         hostManager.onGuiUpdate(onGuiUpdateSpy);

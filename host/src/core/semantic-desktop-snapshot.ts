@@ -18,8 +18,7 @@ export async function readSemanticDesktopSnapshot(desktop: IDesktop, kernel: IKe
                     for (const view of preview.views) {
                         if (!view.content) continue;
                         views.push(buildViewMessageMarkup({ appId, appName: name, viewId: view.id, viewType: view.type,
-                            viewName: view.name, kind: view.kind, markup: view.content.format === 'markdown-v1'
-                                ? view.content.value : JSON.stringify(view.content.value) }));
+                            viewName: view.name, kind: view.kind, markup: view.content.value }));
                     }
                 } else {
                     const { code, message, path } = preview.issue;

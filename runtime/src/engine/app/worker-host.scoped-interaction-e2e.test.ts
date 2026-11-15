@@ -30,11 +30,11 @@ async function start() {
     worker.stdout!.on('data', b => logs.push(String(b))); worker.stderr!.on('data', b => logs.push(String(b)));
     const host = new Host({ appId: 'scoped_sdk' as any, desktopId: 'd' as any, appModulePath: appFile, existingWorker: worker,
         config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') },
-        timeout: 1500, interactionModes: ['view-type-parameters-v1'] });
+        timeout: 1500 });
     worker.on('message', m => messages.push(m));
     const x = { host, worker, messages, sent, logs,
         snapshot: () => (host as any).snapshotReceiver.core.store.readLatest('scoped_sdk').snapshot,
-        refs: () => sent.filter(m => m.type === 'VIEW_TOOL_INVOKE_V4' && m.argumentMode === 'view-type-parameters-v1') };
+        refs: () => sent.filter(m => m.type === 'VIEW_TOOL_INVOKE_V5' && m.argumentMode === 'view-type-parameters-v1') };
     running.push(x); await host.start(); await host.open(); return x;
 }
 function scope(x: Awaited<ReturnType<typeof start>>) {
@@ -134,7 +134,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         expect(await s.client.invoke(s.request(o))).toMatchObject({ code: 'RECEIPT_PERMISSION_DENIED' });
         const gate = deferred(), entered = deferred(); let signal: any;
         s.controls.read = (_m, value) => { signal = value; entered.resolve(undefined); return gate.promise; };
-        const reading = s.client.readReceipt(s.request(o));
+        const reading = s.client.readReceipt({ observationId: first.observationId, invocationId: first.invocationId });
         try {
             await entered.promise; x.host.beginInteractionClose(); expect(signal.aborted).toBe(true);
             expect(x.host.getInteractionReport()?.core.activeReads).toBe(1); gate.resolve(true); expect(await reading).toMatchObject({ code: 'APP_INTERACTION_UNAVAILABLE' });
@@ -154,7 +154,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
             value: { data: { args: { file: { text: 'B' } } } },
         });
         expect(await s.client.invoke(s.request(old, 'stale'))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
-        expect(receipt(await s.client.readReceipt(oldRequest))).toEqual(first);
+        expect(receipt(await s.client.readReceipt({ observationId: oldRequest.observationId, invocationId: oldRequest.invocationId }))).toEqual(first);
         facts.push({ id: 'C06', originalA: true, newB: true, afterDeletion: true, wire: x.refs().length });
     });
     it.each(['published', 'unpublished'])('rejects an actually disabled SDK binding after authorize (%s)', async visibility => {
@@ -181,7 +181,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         const before = receipt(await s.client.invoke(s.request(o, 'bad-param', { file: REF_A, choice: 'disallowed' })));
         const entered = receipt(await s.client.invoke(s.request(o, 'business', { file: REF_A, mode: 'false' })));
         expect(before).toMatchObject({ executionPhase: 'not-dispatched', outcome: { status: 'rejected', code: 'TOOL_INVALID_ARGS' } });
-        expect(entered).toMatchObject({ executionPhase: 'entered-returned', outcome: { status: 'unknown', details: { result: { error: { code: 'E_INVALID_ARGS' }, data: { calls: 1 } } } } });
+        expect(entered).toMatchObject({ executionPhase: 'entered-returned', outcome: { status: 'failed', details: { result: { error: { code: 'E_INVALID_ARGS' }, data: { calls: 1 } } } } });
         expect(x.host.getInteractionReport()?.workerToolPending).toBe(false);
         expect(receipt(await s.client.invoke(s.request(o, 'next'))).outcome.status).toBe('succeeded'); expect(x.refs()).toHaveLength(2);
         facts.push({ id: 'C08/C09', before: before.executionPhase, entered: entered.executionPhase, completedFalseNotTransportLoss: true, wire: 2 });
@@ -190,7 +190,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         const x = await start(), s = scope(x), o = await s.observe();
         const other = await start();
         expect(await scope(other).client.invoke(s.request(o, 'moved'))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
-        expect(x.host.getInteractionReport()?.negotiatedModes).toEqual(['view-type-parameters-v1']);
+        expect(x.host.getInteractionReport()?.toolsEnabled).toBe(true);
         expect(o.tools.some(tool => tool.name === 'read')).toBe(true);
         expect(o.tools.some(tool => ['optional', 'multi'].includes(tool.name))).toBe(false);
         expect(receipt(await s.client.invoke({ invocationId: 'plain', observationId: o.observationId,
@@ -229,7 +229,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         await x.host.sendExternalEvent('aa' as any, 'release-handler', {});
         const result = receipt(await pending);
         expect(result.outcome.status).toBe('succeeded');
-        expect(receipt(await s.client.readReceipt(request))).toEqual(result);
+        expect(receipt(await s.client.readReceipt({ observationId: request.observationId, invocationId: request.invocationId }))).toEqual(result);
         expect(x.host.getInteractionReport()?.core.activeInvocations).toBe(0);
         expect(receipt(await s.client.invoke(s.request(current))).outcome.status).toBe('succeeded');
         facts.push({ id: 'C11', releasedObservation: true, nextCallAfterTerminal: true, wire: x.refs().length });
@@ -253,18 +253,22 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         expect(store.inspect().historicalSnapshots).toBe(1);
         expect(store.inspect().activeLeases).toBe(2);
         expect(await s.client.invoke(s.request(currentView, 'busy'))).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
-        const wrong = { type: 'VIEW_TOOL_INVOKE_V4_RESPONSE', requestId: wire.requestId, appId: wire.appId,
-            instanceId: 'another-instance', argumentMode: wire.argumentMode, success: true,
+        const correlated = { type: 'VIEW_TOOL_INVOKE_V5_RESPONSE', requestId: wire.requestId, appId: wire.appId,
+            instanceId: wire.instanceId, argumentMode: wire.argumentMode, success: true,
             terminal: { phase: 'finished-unknown' } };
-        x.worker.emit('message', wrong);
-        x.worker.emit('message', { ...wrong, instanceId: wire.instanceId, requestId: 'another-request' });
+        x.worker.emit('message', { ...correlated, instanceId: 'another-instance' });
+        x.worker.emit('message', { ...correlated, requestId: 'another-request' });
+        x.worker.emit('message', { ...correlated, type: 'VIEW_TOOL_INVOKE_V4_RESPONSE' });
+        x.worker.emit('message', { ...correlated, terminal: { phase: 'entered-returned',
+            result: { success: false, error: { code: 'INVALID_REPLY', message: 'Premature' } }, failureEffects: 'none' } });
         expect((x.host as any).pendingRequests.has(wire.requestId)).toBe(true);
 
-        const replay = s.client.readReceipt(request);
-        const shorterReplay = receipt(await s.client.readReceipt(request, 25));
+        const query = { observationId: request.observationId, invocationId: request.invocationId };
+        const replay = s.client.readReceipt(query);
+        const shorterReplay = receipt(await s.client.readReceipt(query, 25));
         expect(shorterReplay.outcome.status).toBe('unknown');
         expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: true, core: { activeInvocations: 1 } });
-        const late = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE' && m.requestId === wire.requestId && m.instanceId === wire.instanceId);
+        const late = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE' && m.requestId === wire.requestId && m.instanceId === wire.instanceId);
         await x.host.sendExternalEvent('aa' as any, 'release-handler', {});
         const terminal = await late;
         expect(terminal.terminal.phase).toBe('entered-returned');
@@ -364,7 +368,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         const x = await start(), s = scope(x), o = await s.observe();
         const request = s.request(o, mode, { file: REF_A, mode }), r = receipt(await s.client.invoke(request));
         expect(r).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown' } });
-        const terminal = x.messages.find(m => m.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE' && m.requestId === x.refs()[0].requestId);
+        const terminal = x.messages.find(m => m.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE' && m.requestId === x.refs()[0].requestId);
         expect(terminal?.terminal).toEqual({ phase: 'finished-unknown' });
         expect(receipt(await s.client.invoke(request))).toEqual(r);
         expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: false, core: { activeInvocations: 0, sourceBytes: 0 } });

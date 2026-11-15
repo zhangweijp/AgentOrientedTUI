@@ -9,7 +9,6 @@ import type { AppKernelConfig } from './app-kernel.interface.js';
 /** Static App definition loaded from the manifest entry. */
 export interface TUIAppFactory {
     initialize(context: RuntimeContext): AppInstance | Promise<AppInstance>;
-    readonly displayName: string;
     readonly kernelConfig: AppKernelConfig;
     readonly toolAuthoringProtocol: typeof VIEW_TYPE_TOOL_PROTOCOL;
     readonly persistenceSupport: typeof STATE_SESSION_PROTOCOL;
@@ -21,13 +20,11 @@ export function isTUIAppFactory(value: unknown): value is TUIAppFactory {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
     try {
         const factory = Object.getOwnPropertyDescriptors(value);
-        const displayName = factory.displayName;
         const kernelConfig = factory.kernelConfig;
         const initialize = factory.initialize;
         const persistenceSupport = factory.persistenceSupport;
         const appLifecycleSupport = factory.appLifecycleSupport;
-        if (!displayName || !('value' in displayName) || typeof displayName.value !== 'string' || displayName.value.length === 0 ||
-            !kernelConfig || !('value' in kernelConfig) || typeof kernelConfig.value !== 'object' ||
+        if (!kernelConfig || !('value' in kernelConfig) || typeof kernelConfig.value !== 'object' ||
             kernelConfig.value === null || Array.isArray(kernelConfig.value) ||
             !initialize || !('value' in initialize) || typeof initialize.value !== 'function' ||
             !persistenceSupport || !('value' in persistenceSupport) || persistenceSupport.value !== STATE_SESSION_PROTOCOL ||

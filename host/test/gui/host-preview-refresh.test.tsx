@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { SessionManagerV3 } from '../../src/core/session-manager-v3.js';
 import { HostManagerV2 } from '../../src/core/host-manager-v2.js';
+import { deleteTopic as deleteStoredTopic } from '../../src/db/index.js';
 import { ChatBridge } from '../../src/gui/ChatBridge.js';
 import { TuiDesktopViewer } from '../../src/gui/components/TuiDesktopViewer.js';
 import { appRouter } from '../../src/trpc/router.js';
@@ -13,7 +14,7 @@ import { createSnapshotCore, createAppInteraction, createViewOwnedTools, compile
 // Existing DI boundaries: no singleton DesktopManager, user database/config,
 // Electron process/IPC, skills scan, MCP server or model is started by this test.
 vi.mock('../../src/core/desktop-manager.js', () => { throw Error('Forbidden ambient DesktopManager import'); });
-vi.mock('../../src/db/index.js', () => ({ getTopic: () => undefined, getDb: () => { throw Error('Unexpected DB access'); } }));
+vi.mock('../../src/db/index.js', () => ({ getTopic: () => undefined, deleteTopic: vi.fn(), getDb: () => { throw Error('Unexpected DB access'); } }));
 vi.mock('../../src/config/config.js', () => ({ Config: { get: async () => ({ agents: { list: [] }, mcp: {} }) } }));
 vi.mock('../../src/core/message-service-v2.js', () => ({ MessageServiceV2: class { getMessages() { return []; } } }));
 vi.mock('../../src/core/llm-config-service.js', () => ({ LLMConfigService: class {} }));
@@ -32,15 +33,15 @@ function assembly(topicId: string, instanceId: string) {
     const core = createSnapshotCore(); core.lifecycle.startApp('preview_app', instanceId);
     const registry = createViewOwnedTools('preview_app', instanceId);
     const view = registry.mount('work', 'Workspace');
-    const input = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false }, 'view-type-parameters-v1');
+    const input = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
     if (!input.ok) throw Error('Invalid controlled Schema');
     let entries = 0;
     const unregister = registry.registerTypeTool({ viewType: 'Workspace', name: 'inspect', description: 'Inspect current work.', inputSchema: input.contract.schema }, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: () => async () => {
+        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: () => async () => {
             entries++; return { phase: 'entered-returned', result: { success: true, data: { completed: true } } };
         },
     });
-    const binding: ExecutionBinding = { identity: {}, mode: 'view-type-parameters-v1',
+    const binding: ExecutionBinding = { identity: {},
         validateInput: (_source, value) => ({ ok: true, value }),
         isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.execution).success }),
         execute: async () => { entries++; return { kind: 'tool-result', phase: 'entered-returned', result: { success: true } }; },
@@ -106,11 +107,13 @@ function fixture() {
     const subscribed = deferred();
     const observers: any[] = [];
     let attach: Promise<void> | undefined;
-    const client = { session: {
+    const client = { db: {
+        getMessages: { query: async () => [] },
+        deleteTopic: { mutate: (input: { id: string }) => caller.db.deleteTopic(input) },
+    }, session: {
         create: { mutate: (value: { id: string }) => caller.session.create(value) },
         snapshot: { query: (value: { id: string }) => caller.session.snapshot(value) },
         shutdown: { mutate: (value: { id: string }) => caller.session.shutdown(value) },
-        destroy: { mutate: (value: { id: string }) => caller.session.destroy(value) },
         events: { subscribe: (input: { id: string }, observer: any) => {
             observers.push(observer);
             let inner: { unsubscribe(): void } | undefined, cancelled = false;
@@ -291,6 +294,35 @@ describe('current Host preview subscription', () => {
             expect(f.ensure).toHaveBeenCalledTimes(1);
             expect((f.host as any).guiEventEmitter.listenerCount('gui-update')).toBe(0);
         } finally { reply.resolve(); stop(); await f.dispose(); }
+    });
+
+    it('releases the deleted Topic’s subscription and ignores a preview already in flight', async () => {
+        const f = fixture();
+        const topicId = 'deleted';
+        const stop = f.bridge.subscribe(() => {});
+        try {
+            (f.bridge as any).topics.set(topicId, { id: topicId, title: 'Delete me' });
+            await f.bridge.setActiveTopic(topicId);
+            await f.bridge.requestSnapshot(topicId);
+            await f.subscribed.promise;
+            await vi.waitFor(() => expect(f.bridge.getSnapshot(topicId)).toContain('Initial deleted'));
+
+            const pending = f.sessions.get(topicId).app.holdNextRead();
+            const refresh = f.bridge.requestSnapshot(topicId);
+            await pending.started.promise;
+            await f.bridge.deleteTopic(topicId);
+            expect(deleteStoredTopic).toHaveBeenCalledExactlyOnceWith(topicId);
+            expect(f.bridge.getActiveTopicId()).toBeNull();
+            expect(f.bridge.getTopic(topicId)).toBeUndefined();
+            expect((f.host as any).guiEventEmitter.listenerCount('gui-update')).toBe(0);
+
+            pending.resume.resolve();
+            await refresh;
+            expect(f.bridge.getSnapshot(topicId)).toBe('');
+            expect(f.sessions.has(topicId)).toBe(true);
+            await f.bridge.shutdownDesktop(topicId);
+            expect(f.sessions.has(topicId)).toBe(false);
+        } finally { stop(); await f.dispose(); }
     });
 
     it('reports preview errors without clearing valid data or terminating chat, and recovers on publication', async () => {

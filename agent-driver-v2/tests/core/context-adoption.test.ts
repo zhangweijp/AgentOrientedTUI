@@ -12,7 +12,7 @@ function fixture(context: DrivenSourceContext, beforeCapture = async () => {}) {
     const source: ContextDrivenSource = { name: 'adoption', onUpdate: () => () => {},
         getContext: vi.fn(async () => { await beforeCapture(); return context; }) };
     const onRunError = vi.fn();
-    const driver = new AgentDriverV2({ sources: [source], llm: { model: 'openai:unused', apiKey: 'unused' }, onRunError });
+    const driver = new AgentDriverV2({ sources: [source], llm: { model: 'unused', provider: { id: 'openai' }, apiKey: 'unused' }, onRunError });
     // Exercise exactly one real run, with the same active owner as start(), without its scheduling timer.
     driver['running'] = true; drivers.push(driver);
     return { driver, source, onRunError };
@@ -93,7 +93,7 @@ describe('Driver serial adoption boundary', () => {
         const call = vi.spyOn(LLMClient.prototype, 'call').mockResolvedValue({
             text: '', toolCalls: [{ toolCallId: 'queued', toolName: 'apply', args: {} }], finishReason: 'tool-calls',
         });
-        driver = new AgentDriverV2({ sources: [source], llm: { model: 'openai:unused', apiKey: 'unused' },
+        driver = new AgentDriverV2({ sources: [source], llm: { model: 'unused', provider: { id: 'openai' }, apiKey: 'unused' },
             workLoop: { debounceMs: 0 }, onToolResult: () => driver.pause(), onRunError });
         drivers.push(driver);
         await driver.trigger(); await driver['runInFlight'];

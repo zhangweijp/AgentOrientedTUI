@@ -1,22 +1,19 @@
-export const ORDINARY_PARAMETER_REVISION = 'ordinary-params-v1' as const;
 export const VIEW_TYPE_PARAMETERS_MODE = 'view-type-parameters-v1' as const;
-import { canonicalJson, copyJson, SnapshotDataError, utf8Size } from '../snapshot/json.js';
+import { canonicalJson, copyJson, JsonCopyLimitError, SnapshotDataError, utf8Size } from '../snapshot/json.js';
 import type { JsonValue } from '../snapshot/types.js';
 import { RAW_TOOL_ARGUMENT_LIMITS as INPUT, RESOLVED_TOOL_ARGUMENT_LIMITS } from '../snapshot/snapshot-support.js';
 
 type JsonObject = Readonly<Record<string, JsonValue>>;
-type DeclarationCode = 'PARAMETER_DECLARATION_INVALID' | 'PARAMETER_DECLARATION_UNSUPPORTED';
+type DeclarationCode = 'PARAMETER_DECLARATION_INVALID' | 'PARAMETER_DECLARATION_UNSUPPORTED' | 'PARAMETER_DECLARATION_CAPACITY';
 export type ParameterDiagnostic = Readonly<{ parameter?: string; path?: string; message: string }>;
 export type OrdinaryValidation =
   | Readonly<{ ok: true; value: JsonObject }>
   | Readonly<{ ok: false; code: 'PARAMETER_INPUT_INVALID'; diagnostics: readonly ParameterDiagnostic[] }>;
 export interface OrdinaryParameterContract {
-  readonly revision: typeof ORDINARY_PARAMETER_REVISION | 'ref-value-specimen' | typeof VIEW_TYPE_PARAMETERS_MODE;
   readonly schema: JsonObject;
-  readonly fingerprint: string;
-  validate(input: unknown): OrdinaryValidation;
-  readonly validateModelInput?: (input: unknown) => OrdinaryValidation;
-  readonly validateResolvedInput?: (input: unknown) => OrdinaryValidation;
+  readonly hasRefs: boolean;
+  validateModelInput(input: unknown): OrdinaryValidation;
+  validateResolvedInput(input: unknown): OrdinaryValidation;
 }
 export type CompileResult =
   | Readonly<{ ok: true; contract: OrdinaryParameterContract }>
@@ -25,7 +22,6 @@ export type CompileResult =
 const DECLARATION = { maxDepth: 24, maxNodes: 5_000, maxApproxBytes: 64 * 1024 };
 const REF_VALUE = 'x-aotui-ref-value';
 const REF_KIND = 'x-aotui-ref-kind';
-const BASIC = ['string', 'number', 'boolean', 'object'];
 const object = (value: JsonValue | undefined): value is JsonObject =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 const has = (value: JsonObject, key: string) => Object.hasOwn(value, key);
@@ -56,7 +52,9 @@ function kind(value: JsonValue | undefined, allowed: readonly string[], path = '
 }
 function bounded(input: unknown, limits: typeof DECLARATION): JsonValue {
   const value = copyJson(input, limits);
-  if (utf8Size(canonicalJson(value)) > limits.maxApproxBytes) invalid();
+  if (utf8Size(canonicalJson(value)) > limits.maxApproxBytes) {
+    throw new DeclarationError('PARAMETER_DECLARATION_CAPACITY', 'Canonical JSON byte budget exceeded.', '$');
+  }
   return value;
 }
 type ValueIssue = Readonly<{ path: string; message: string }>;
@@ -108,10 +106,10 @@ interface CompiledValue {
   readonly members?: readonly (readonly [string, Check])[];
 }
 
-function compileValue(field: JsonValue, path: string, position: Position, allowRefs: boolean): CompiledValue {
+function compileValue(field: JsonValue, path: string, position: Position): CompiledValue {
   if (!object(field)) invalid(path);
   if (has(field, REF_VALUE) || has(field, REF_KIND)) {
-    if (!allowRefs || position !== 'parameter' && position !== 'ref-item') unsupported(childPath(path, REF_VALUE));
+    if (position !== 'parameter' && position !== 'ref-item') unsupported(childPath(path, REF_VALUE));
     if (field.type !== 'string' || typeof field[REF_KIND] !== 'string' || field[REF_KIND].trim().length === 0) {
       invalid(childPath(path, REF_KIND));
     }
@@ -119,8 +117,8 @@ function compileValue(field: JsonValue, path: string, position: Position, allowR
     const wire = { ...field };
     delete wire[REF_VALUE];
     delete wire[REF_KIND];
-    const model = compileValue(wire, path, 'nested', false);
-    const target = compileValue(field[REF_VALUE]!, childPath(path, REF_VALUE), 'nested', false);
+    const model = compileValue(wire, path, 'nested');
+    const target = compileValue(field[REF_VALUE]!, childPath(path, REF_VALUE), 'nested');
     return {
       schema: { ...model.schema, [REF_KIND]: field[REF_KIND], [REF_VALUE]: target.schema },
       check: (value, location, resolved) => (resolved ? target : model).check(value, location, false),
@@ -148,7 +146,7 @@ function compileValue(field: JsonValue, path: string, position: Position, allowR
     const properties: Record<string, JsonValue> = Object.create(null);
     const members = Object.keys(declared ?? {}).sort().map(name => {
       const member = compileValue((declared as JsonObject)[name]!, childPath(childPath(path, 'properties'), name),
-        position === 'root' ? 'parameter' : 'nested', allowRefs);
+        position === 'root' ? 'parameter' : 'nested');
       properties[name] = member.schema;
       hasRefs ||= member.hasRefs;
       return [name, member.check] as const;
@@ -182,7 +180,7 @@ function compileValue(field: JsonValue, path: string, position: Position, allowR
 
   if (type === 'array') {
     if (!object(field.items)) invalid(childPath(path, 'items'));
-    const item = compileValue(field.items, childPath(path, 'items'), position === 'parameter' ? 'ref-item' : 'nested', allowRefs);
+    const item = compileValue(field.items, childPath(path, 'items'), position === 'parameter' ? 'ref-item' : 'nested');
     schema.items = item.schema;
     hasRefs = item.hasRefs;
     const validLength = bounds(field, 'minItems', 'maxItems', path, true);
@@ -230,7 +228,7 @@ function compileValue(field: JsonValue, path: string, position: Position, allowR
   if (has(field, 'anyOf')) {
     const branchesPath = childPath(path, 'anyOf');
     if (!Array.isArray(field.anyOf) || field.anyOf.length === 0) invalid(branchesPath);
-    const alternatives = field.anyOf.map((branch, index) => compileValue(branch, branchesPath + '[' + index + ']', 'nested', false));
+    const alternatives = field.anyOf.map((branch, index) => compileValue(branch, branchesPath + '[' + index + ']', 'nested'));
     schema.anyOf = alternatives.map(alternative => alternative.schema);
     checks.push((value, location, resolved) => alternatives.some(alternative => !alternative.check(value, location, resolved))
       ? undefined : issue(location, 'Value does not match any declared alternative.'));
@@ -247,6 +245,9 @@ function compileValue(field: JsonValue, path: string, position: Position, allowR
 }
 
 function declarationIssue(error: unknown) {
+  if (error instanceof JsonCopyLimitError) {
+    return Object.freeze({ code: 'PARAMETER_DECLARATION_CAPACITY' as const, message: error.message, path: diagnosticPath(error.path) });
+  }
   return Object.freeze({
     code: error instanceof DeclarationError ? error.code : 'PARAMETER_DECLARATION_INVALID' as const,
     message: error instanceof DeclarationError ? error.message : 'Expected a valid bounded ordinary parameter declaration.',
@@ -259,17 +260,15 @@ export function compileValueSchema(input: unknown): Readonly<
   { ok: true; validate(value: JsonValue): ValueIssue | undefined } | { ok: false; issue: ReturnType<typeof declarationIssue> }
 > {
   try {
-    const compiled = compileValue(bounded(input, DECLARATION), '$', 'nested', false);
+    const compiled = compileValue(bounded(input, DECLARATION), '$', 'nested');
     return Object.freeze({ ok: true, validate: (value: JsonValue) => compiled.check(value, '$', false) });
   } catch (error) { return Object.freeze({ ok: false, issue: declarationIssue(error) }); }
 }
 
-function finish(root: JsonObject, allowRefs: boolean, qualified: boolean): CompileResult {
+function finish(root: JsonValue): CompileResult {
   // Compile fields once. The root assembles their diagnostics, retaining the
   // existing limit and the parameter name as well as the nested JSON path.
-  if (root.type !== 'object') kind(root.type, ['object'], '$.type');
-  if (!object(root.properties)) invalid('$.properties');
-  const compiled = compileValue(root, '$', 'root', allowRefs);
+  const compiled = compileValue(root, '$', 'root');
   const schema = bounded(compiled.schema, DECLARATION) as JsonObject;
   const fields = compiled.members!;
   const hasRefs = compiled.hasRefs;
@@ -283,7 +282,7 @@ function finish(root: JsonObject, allowRefs: boolean, qualified: boolean): Compi
       }));
     };
     let value: JsonValue | undefined;
-    try { value = bounded(input, resolved ? RESOLVED_TOOL_ARGUMENT_LIMITS : INPUT); }
+    try { value = bounded(input, resolved && hasRefs ? RESOLVED_TOOL_ARGUMENT_LIMITS : INPUT); }
     catch { add(issue('$', 'Expected bounded plain JSON parameters.')); }
     if (diagnostics.length === 0) {
       if (!object(value)) add(issue('$', 'Expected a parameter object.'));
@@ -303,22 +302,16 @@ function finish(root: JsonObject, allowRefs: boolean, qualified: boolean): Compi
     return diagnostics.length ? Object.freeze({ ok: false, code: 'PARAMETER_INPUT_INVALID', diagnostics: Object.freeze(diagnostics) })
       : Object.freeze({ ok: true, value: value as JsonObject });
   };
-  const validate = hasRefs ? (_input: unknown): OrdinaryValidation => Object.freeze({ ok: false, code: 'PARAMETER_INPUT_INVALID',
-    diagnostics: Object.freeze([Object.freeze({ message: 'Ref parameters require qualified resolution; this is not an ordinary execution contract.' })]) })
-    : (input: unknown) => check(input, false);
-  const revision = qualified ? VIEW_TYPE_PARAMETERS_MODE : hasRefs ? 'ref-value-specimen' : ORDINARY_PARAMETER_REVISION;
   return Object.freeze({ ok: true, contract: Object.freeze({
-    revision, schema, fingerprint: canonicalJson({ revision, schema }), validate,
-    ...(hasRefs ? { validateModelInput: (input: unknown) => check(input, false), validateResolvedInput: (input: unknown) => check(input, true) } : {}),
+    schema, hasRefs,
+    validateModelInput: (input: unknown) => check(input, false),
+    validateResolvedInput: (input: unknown) => check(input, true),
   }) });
 }
 
-function compile(input: unknown, convert: (captured: JsonValue) => JsonObject, allowRef = false, qualified = false): CompileResult {
-  try { return finish(convert(copyJson(input, DECLARATION)), allowRef, qualified); }
-  catch (error) { return Object.freeze({ ok: false, issue: declarationIssue(error) }); }
-}
-
 /** Derive the model descriptor without walking defaults, constants, or property names as keywords. */
+export function modelToolSchema(input: JsonObject): JsonObject;
+export function modelToolSchema(input: JsonValue): JsonValue;
 export function modelToolSchema(input: JsonValue): JsonValue {
   if (!object(input)) return input;
   const schema = Object.fromEntries(Object.entries(input).flatMap(([key, value]) => {
@@ -338,46 +331,8 @@ export function modelToolSchema(input: JsonValue): JsonValue {
   return schema;
 }
 
-/** Internal semantics only; this module neither grants execution eligibility nor changes a transport. */
-export function compileOrdinarySchema(schema: unknown, profile?: 'ref-value-specimen' | typeof VIEW_TYPE_PARAMETERS_MODE): CompileResult {
-  return compile(schema, captured => { if (!object(captured)) invalid(); return captured; }, profile === 'ref-value-specimen' || profile === VIEW_TYPE_PARAMETERS_MODE, profile === VIEW_TYPE_PARAMETERS_MODE);
-}
-
-export function compileOrdinaryParams(params: unknown, options?: { additionalProperties?: boolean }): CompileResult {
-  return compile(params, captured => {
-    if (!object(captured)) invalid();
-    const settings = copyJson(options === undefined ? {} : options, DECLARATION);
-    if (!object(settings)) invalid();
-    keys(settings, ['additionalProperties'], '$options');
-    if (has(settings, 'additionalProperties') && typeof settings.additionalProperties !== 'boolean') invalid();
-    const properties: Record<string, JsonValue> = Object.create(null);
-    const required: string[] = [];
-    for (const [name, field] of Object.entries(captured)) {
-      if (!object(field)) invalid();
-      keys(field, ['type', 'required', 'desc', 'default', 'constraints', 'options', 'itemType'], childPath('$params', name));
-      const type = kind(field.type, [...BASIC, 'enum', 'array'], childPath(childPath('$params', name), 'type'));
-      keys(field, ['type', 'required', 'desc', 'default', 'constraints',
-        ...(type === 'enum' ? ['options'] : []), ...(type === 'array' ? ['itemType'] : [])], childPath('$params', name));
-      if (has(field, 'required') && typeof field.required !== 'boolean') invalid();
-      if (field.required === true) required.push(name);
-      const schema: Record<string, JsonValue> = { type: type === 'enum' ? 'string' : type };
-      if (has(field, 'desc')) schema.description = field.desc!;
-      if (has(field, 'default')) schema.default = field.default!;
-      if (type === 'enum') {
-        if (!has(field, 'options')) invalid();
-        schema.enum = field.options!;
-      }
-      if (type === 'array') schema.items = { type: kind(field.itemType, BASIC) };
-      if (has(field, 'constraints')) {
-        if (!object(field.constraints)) invalid();
-        const mapping: Record<string, string> = type === 'number' ? { min: 'minimum', max: 'maximum' }
-          : type === 'array' ? { minLength: 'minItems', maxLength: 'maxItems' }
-          : type === 'string' || type === 'enum' ? { minLength: 'minLength', maxLength: 'maxLength' } : {};
-        keys(field.constraints, Object.keys(mapping), childPath(childPath('$params', name), 'constraints'));
-        for (const [key, value] of Object.entries(field.constraints)) schema[mapping[key]!] = value;
-      }
-      properties[name] = schema;
-    }
-    return { type: 'object', properties, required, additionalProperties: settings.additionalProperties ?? true };
-  });
+/** Compile the ViewType Tool schema for model arguments and resolved handler input. */
+export function compileOrdinarySchema(schema: unknown): CompileResult {
+  try { return finish(copyJson(schema, DECLARATION)); }
+  catch (error) { return Object.freeze({ ok: false, issue: declarationIssue(error) }); }
 }

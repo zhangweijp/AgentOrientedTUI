@@ -4,6 +4,8 @@
 
 普通 TypeScript 和 Preact 的完整可运行示例见 [App 作者指南](docs/app-authoring.md)。
 
+宿主可以用 Runtime 和 Adapter 安装 App、采用观察并调用工具。示例见 `@aotui/runtime` 包内 `docs/semantic-host-integration.zh-CN.md#source-host-example`。
+
 ## 从这里开始
 
 1. 读 [作者指南](docs/view-type-tools.md)，了解单一 Tool 声明、App 绑定和动态可用性。
@@ -12,7 +14,7 @@
 4. 读 [View 合同](docs/views.md)：显式 id/type/kind、独立页面、原样正文和唯一包装。
 5. 普通 TS 使用 [createApp 与 publish](docs/app-authoring.md)；迁移旧应用看 [迁移说明](docs/migration.md)。
 
-[API 参考](docs/api-status.md)、[参数规则](docs/ordinary-v2.md)、[生命周期](docs/tool-lifecycle.md)和[持久化](docs/persistence.md)用于查阅。匹配包与安装、构建、验证命令统一见 [包使用说明](docs/runtime-compatibility.md)。当前工作树的能力已采用；这不表示同版本的旧文件或 registry 包自动具备这些能力，也不表示已经发布。
+[API 参考](docs/api-status.md)、[参数规则](docs/tool-parameters.md)、[生命周期](docs/tool-lifecycle.md)和[持久化](docs/persistence.md)用于查阅。匹配包与安装、构建、验证命令统一见 [包使用说明](docs/runtime-compatibility.md)。当前工作树的能力已采用；这不表示同版本的旧文件或 registry 包自动具备这些能力，也不表示已经发布。
 
 ## 最小组件应用
 
@@ -29,7 +31,7 @@ function App() {
 export default createTUIApp({ app_name: 'example', component: App });
 ```
 
-应用模块 default 导出唯一托管工厂。`app_name` 匹配 `/^[a-z0-9_]+$/`；View id 在 App 内唯一，使用2–15位字母、数字或下划线。View 必须显式提供 type 和 kind（instruction/state），多个实例可共享 type，页面不能嵌套。
+应用模块 default 导出唯一托管工厂。`app_name` 匹配 `/^[a-z0-9_]+$/`。View id 在 App 内唯一，由一个或多个 ASCII 字母、数字或下划线组成。View 必须显式提供 type 和 kind（instruction/state），多个实例可共享 type，页面不能嵌套。
 
 ## 开发时记住的合同
 

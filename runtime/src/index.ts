@@ -5,7 +5,7 @@
  * 
  * ## Recommended Imports
  * 
- * ### For App Developers (SDK Layer)
+ * ### For Host Integrators
  * ```typescript
  * import { createRuntime } from '@aotui/runtime';
  * ```
@@ -34,6 +34,21 @@
 // ============================================================================
 export { createRuntime, type RuntimeConfig, type RuntimeOptions } from './facades/facades.js';
 export { defineRuntimeConfig, type RuntimeConfigInput } from './spi/config/index.js';
+export type {
+    AppInteraction,
+    AppInteractionPolicy,
+    AppInvocation,
+    ReceiptQuery,
+    InvocationReceipt,
+    ReceiptAccess,
+    InvokeResult,
+    ObserveResult,
+    AppPreviewResult,
+    InvocationContext,
+    ReceiptMetadata,
+    Issue as InteractionIssue,
+} from './core/invocation/app-interaction-types.js';
+export type { Observation, ObservationSelection, ObservationGrant } from './core/invocation/observation-types.js';
 
 export {
     AOTUIError,
@@ -41,7 +56,6 @@ export {
     createDesktopId,
     createAppId,
     createViewId,
-    SEMANTIC_INTERACTION_MODES,
 } from './spi/index.js';
 export type {
     AppContext,
@@ -50,7 +64,6 @@ export type {
     AppID,
     AppLaunchConfig,
     AppInteractionResult,
-    AppState,
     AppStatePersistence,
     CloseHandle,
     CloseReport,
@@ -58,12 +71,10 @@ export type {
     DesktopCloseOptions,
     DesktopCloseReport,
     DesktopID,
-    DesktopState,
     DesktopStatus,
     ErrorCode,
     IDesktop,
     IKernel,
-    InteractionMode,
     InteractionCloseReport,
     LLMOutputEvent,
     LLMOutputEventMeta,

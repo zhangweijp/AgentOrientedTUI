@@ -34,6 +34,7 @@ async function fixture(insideAct = false) {
     const factory = createTUIApp({ app_name: 'refresh_app', component: App });
     const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
     kernel.setId('refresh_app' as any);
+    kernel.enableAppLifecycle();
     const open = () => kernel.onOpen({ appId: 'refresh_app' as any, desktopId: 'desktop' as any,
          });
     if (insideAct) await act(async () => { await open(); }); else await open();
@@ -54,6 +55,7 @@ describe('SDK queued render commit completion', () => {
         const factory = createTUIApp({ app_name: 'render_capture', component: () =>
             h(View, { id: 'file', type: 'File', kind: 'state' }, [h(OtherLayout, { key: 'layout' }), h(Body, { key: 'body' })]) });
         const kernel = new AppKernel({ ...factory.kernelConfig, factory });
+        kernel.enableAppLifecycle();
         try {
             await kernel.onOpen({ appId: 'render_capture' as any, desktopId: 'desktop' as any });
             const publication = kernel.getProjectionCoordinator().nextPublication();
@@ -92,6 +94,7 @@ describe('SDK queued render commit completion', () => {
                 h(View, { id: 'bb', key: 'b', type: 'File', kind: 'state' }, h(B, {})),
             ] });
             const kernel = new AppKernel({ ...factory.kernelConfig, factory });
+            kernel.enableAppLifecycle();
             const core = createSnapshotCore();
             kernel.setAppExecutionInstanceId('run');
             core.lifecycle.startApp('failure_batch', 'run');
@@ -150,6 +153,7 @@ describe('SDK queued render commit completion', () => {
             h(View, { id: 'bb', type: 'File', kind: 'state', key: 'b' }, h(B, {})),
         ] });
         const kernel = new AppKernel({ ...factory.kernelConfig, factory });
+        kernel.enableAppLifecycle();
         const refs = () => Object.fromEntries(kernel.getViewRefs().map(({ refId, value }) => [refId, value]));
         try {
             await kernel.onOpen({ appId: 'ref_refresh' as any, desktopId: 'desktop' as any });

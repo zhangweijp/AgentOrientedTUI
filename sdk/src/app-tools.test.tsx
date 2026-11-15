@@ -38,7 +38,7 @@ function environment(name: string) {
     let registers = 0, releases = 0;
     const context = {
         appId: createAppId(name), desktopId: createDesktopId('cards'),
-        projection, toolCleanup: new Set<() => void>(),
+        projection, setViewReader: vi.fn(), toolCleanup: new Set<() => void>(),
         refExporter: { registerRef() { throw new Error('This fixture has no Refs'); } },
         appTypeTools: {
             protocol: 'view-type-tools-v4' as const,

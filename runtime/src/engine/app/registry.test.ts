@@ -5,7 +5,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AppRegistry } from './registry.js';
 import { isTUIAppFactory } from '../../spi/app/app-factory.interface.js';
-import { SEMANTIC_INTERACTION_MODES } from '../../spi/runtime/app-interaction.interface.js';
 import type { TUIAppFactory } from '../../spi/app/app-factory.interface.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -16,13 +15,10 @@ function createMockFactory(name: string): TUIAppFactory {
     return {
         persistenceSupport: 'state-session-v1',
         appLifecycleSupport: 'app-lifecycle-v2',
-        displayName: name,
         toolAuthoringProtocol: 'view-type-tools-v4',
         kernelConfig: {
             appName: name,
-            name,
             description: `${name} App`,
-            component: {},
         },
         initialize: vi.fn(async () => ({ close: vi.fn() })),
     };
@@ -283,9 +279,9 @@ describe('AppRegistry', () => {
             expect(isTUIAppFactory(factory)).toBe(true);
             expect(isTUIAppFactory({ manifest: { app_name: 'test' }, create: () => ({}) })).toBe(false);
             expect(isTUIAppFactory(() => ({}))).toBe(false);
-            expect(isTUIAppFactory({ displayName: 'test', kernelConfig: { appName: 'test' } })).toBe(false);
-            expect(isTUIAppFactory({ displayName: 'test', kernelConfig: {}, initialize() {} })).toBe(false);
-            expect(isTUIAppFactory({ displayName: '', kernelConfig: { appName: 'test' }, initialize() {} })).toBe(false);
+            expect(isTUIAppFactory({ ...factory, initialize: undefined })).toBe(false);
+            expect(isTUIAppFactory({ ...factory, kernelConfig: {} })).toBe(false);
+            expect(isTUIAppFactory({ ...factory, kernelConfig: { appName: '' } })).toBe(false);
             const { persistenceSupport: _persistence, ...withoutPersistence } = factory;
             const { appLifecycleSupport: _lifecycle, ...withoutLifecycle } = factory;
             expect(isTUIAppFactory(withoutPersistence)).toBe(false);
@@ -320,32 +316,32 @@ describe('AppRegistry', () => {
             registry.resolveModulePath = vi.fn().mockReturnValue('/mock/module/path');
         });
 
-        it.each([true, false])('negotiates Semantic capabilities and preserves launch config for autoStart=%s', async autoStart => {
+        it.each([true, false])('passes the trusted Tool setting and preserves launch config for autoStart=%s', async autoStart => {
             registry['apps'].set('semantic_app', {
                 name: 'semantic_app', source: 'local:/semantic', modulePath: '/mock/module/path', metadata: { app_name: 'semantic_app', description: 'semantic_app App' },
             });
             registry['config'].apps['semantic_app'] = { source: 'local:/semantic', enabled: true, autoStart };
             await registry.installAll(mockDesktop, {
                 dynamicConfig: { projectPath: '/test/workspace', AOTUI_DATA_DIR: '/test/data' },
-                interactionModes: SEMANTIC_INTERACTION_MODES,
+                toolsEnabled: false,
             });
             const options = autoStart ? mockDesktop.installDynamicWorkerApp.mock.calls[0][1]
                 : mockDesktop.registerPendingApp.mock.calls[0][0];
-            expect(options.interactionModes).toEqual(SEMANTIC_INTERACTION_MODES);
+            expect(options.toolsEnabled).toBe(false);
             expect(options.config).toMatchObject({
                 projectPath: '/test/workspace', AOTUI_DATA_DIR: '/test/data', AOTUI_APP_KEY: 'semantic_app',
             });
         });
 
-        it('does not accept capability negotiation from app launch data and rejects invalid Host modes before installation', async () => {
+        it('does not accept capability negotiation from app launch data and rejects the retired Host setting before installation', async () => {
             registry['apps'].set('semantic_app', {
                 name: 'semantic_app', source: 'local:/semantic', modulePath: '/mock/module/path', metadata: { app_name: 'semantic_app', description: 'semantic_app App' },
             });
-            await registry.installAll(mockDesktop, { dynamicConfig: { interactionModes: ['view-type-parameters-v1'] } });
-            expect(mockDesktop.installDynamicWorkerApp.mock.calls[0][1].interactionModes).toBeUndefined();
+            await registry.installAll(mockDesktop, { dynamicConfig: { toolsEnabled: false } });
+            expect(mockDesktop.installDynamicWorkerApp.mock.calls[0][1].toolsEnabled).toBeUndefined();
             mockDesktop.installDynamicWorkerApp.mockClear();
-            await expect(registry.installAll(mockDesktop, { interactionModes: ['unsupported'] as any }))
-                .rejects.toMatchObject({ code: 'INTERACTION_MODES_INVALID' });
+            await expect(registry.installAll(mockDesktop, { interactionModes: [] } as any))
+                .rejects.toMatchObject({ code: 'TOOLS_ENABLED_INVALID' });
             expect(mockDesktop.installDynamicWorkerApp).not.toHaveBeenCalled();
         });
 

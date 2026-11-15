@@ -25,21 +25,7 @@ describe('createTUIApp', () => {
         expect(reads).toBe(0);
         const input = { app_name: 'test_app', whatItIs: 'Before', component: () => null };
         const factory = createTUIApp(input);input.app_name = 'other';input.whatItIs = 'After';
-        expect(factory.displayName).toBe('test_app');
-        expect(factory.kernelConfig).toMatchObject({ appName: 'test_app', name: 'test_app', whatItIs: 'Before' });
-    });
-
-    it('does not require a separate display name', () => {
-        function RootComponent() {
-            return null;
-        }
-
-        expect(() =>
-            createTUIApp({
-                app_name: 'system_ide',
-                component: RootComponent,
-            } as any)
-        ).not.toThrow();
+        expect(factory.kernelConfig).toEqual({ appName: 'test_app', whatItIs: 'Before' });
     });
 
     it('advertises the managed lifecycle contract without requiring app cleanup callbacks', () => {
@@ -78,10 +64,11 @@ describe('createTUIApp', () => {
         expect(() => createTUIApp({ app_name: { toString: coercion }, component: () => null } as any)).toThrow(/app_name.*string/);
         expect(coercion).not.toHaveBeenCalled();
         const factory = createTUIApp({ app_name: 'valid_123', whatItIs: 'What', whenToUse: 'When', component: () => null });
-        expect(factory.displayName).toBe('valid_123');expect(factory.kernelConfig).toMatchObject({ appName: 'valid_123', name: 'valid_123', whatItIs: 'What', whenToUse: 'When' });
+        expect(factory.kernelConfig).toEqual({ appName: 'valid_123', whatItIs: 'What', whenToUse: 'When' });
         expect(typeof factory.initialize).toBe('function');
         expect(Object.hasOwn(factory, 'create')).toBe(false);
         expect(Object.hasOwn(factory, 'TUI_FACTORY')).toBe(false);
+        expect(Object.hasOwn(factory, 'displayName')).toBe(false);
         expect(typeof factory).toBe('object');
     });
 });

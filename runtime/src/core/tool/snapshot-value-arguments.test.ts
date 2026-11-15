@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
 import { refKey } from '../snapshot/snapshot-support.js';
-import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
+import { canonicalJson, utf8Size } from '../snapshot/json.js';
 import type { AppSnapshotV3, JsonValue, PreparedAppSnapshotDraftV3, SnapshotStoreOptions } from '../snapshot/types.js';
 import { acquireToolSource } from './source-binding.js';
 import { prepareViewTypeParameters } from './snapshot-value-arguments.js';
@@ -11,14 +11,14 @@ import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
 const schema = (refType = 'unknown', parameter = 'file'): JsonValue => {
     const result = compileOrdinarySchema({ type: 'object', properties: { [parameter]: {
         type: 'string', minLength: 1, 'x-aotui-ref-kind': refType, 'x-aotui-ref-value': { type: 'object' },
-    } }, required: [parameter], additionalProperties: true }, 'view-type-parameters-v1');
+    } }, required: [parameter], additionalProperties: true });
     if (!result.ok) throw Error('Invalid parameter fixture');
     return ordinaryParameterProfile(result.contract);
 };
 
 function fixture(options: {
     payload?: JsonValue; inputSchema?: JsonValue; refType?: string; refId?: string;
-    viewId?: string; viewInstanceId?: string; activationId?: string;  entity?: boolean;
+    viewId?: string; viewInstanceId?: string; activationId?: string;
     storeOptions?: SnapshotStoreOptions;
 } = {}) {
     const context = { appId: 'app', instanceId: 'run' };
@@ -36,9 +36,7 @@ function fixture(options: {
             [refKey(viewId, viewInstanceId, refId)]: {
                 id: refId, ownerViewId: viewId, ownerViewInstanceId: viewInstanceId,
                 refType: options.refType ?? 'unknown',
-                target: options.entity
-                    ? { kind: 'entity' as const, entityType: 'File', entityId: 'A', entityVersion: '1' }
-                    : { kind: 'snapshot-value' as const, payload: value },
+                target: { kind: 'snapshot-value' as const, payload: value },
             },
             [refKey('fd_B', 'mount_B', refId)]: {
                 id: refId, ownerViewId: 'fd_B', ownerViewInstanceId: 'mount_B', refType: 'unknown',
@@ -71,7 +69,7 @@ function fixture(options: {
         args: { file: `${viewId}.${refId}` } as Record<string, unknown> };
     const visibleRefs = [{ refId, viewId, viewInstanceId }];
     const sourceRequest = { ...context, snapshotId: source.id, toolId, execution: request.execution };
-    return { core, context, source, request, sourceRequest, visibleRefs, refs, publish, attempt, toolId, viewId, viewInstanceId, refId, activationId };
+    return { core, context, source, request, sourceRequest, visibleRefs, refs, publish, attempt, toolId, refId, activationId };
 
 }
 type Fixture = ReturnType<typeof fixture>;
@@ -190,9 +188,6 @@ describe('W01: narrow execution subset and fixed rejection classes', () => {
     });
     it.each([null, true, 12, 'text', []])('refuses snapshot-value shape %j', payload => {
         const f = fixture({ payload }); denied(f, f.request, 'REF_VALUE_UNSUPPORTED');
-    });
-    it('refuses an Entity without changing the versioned Entity path', () => {
-        const f = fixture({ entity: true }); denied(f, f.request, 'REF_TARGET_UNSUPPORTED');
     });
     it.each([
         [undefined, 'unknown', true], [undefined, 'File', false], ['File', 'File', true],
@@ -341,7 +336,7 @@ function escapedBytes(bytes: number): string {
     return '\0'.repeat(Math.floor(bytes / 6)) + 'x'.repeat(bytes % 6);
 }
 
-describe('W01 T07: reachable argument depth, nodes, approx and canonical boundaries', () => {
+describe('W01 T07: raw argument depth, nodes, approx and canonical boundaries', () => {
     it.each([23, 24, 25])('raw depth %i (request depth is raw+1)', depth => {
         const f = fixture({ payload: {} }); const args = { file: 'fd_A.selected', ordinary: nested(depth - 1) };
         expect(measure(args).depth).toBe(depth); expect(measure({ ...f.request, args } as JsonValue).depth).toBe(depth + 1);
@@ -353,17 +348,6 @@ describe('W01 T07: reachable argument depth, nodes, approx and canonical boundar
         expect(measure(args).nodes).toBe(nodes); expect(measure({ ...f.request, args } as JsonValue).nodes).toBe(nodes + 6);
         if (nodes > 10_000) denied(f, { ...f.request, args }, 'REF_ARGUMENT_BUDGET_EXCEEDED');
         else release(f, success(f, { ...f.request, args }));
-    });
-    it.each([23, 24, 25])('effective depth %i, recomputed from the args root', depth => {
-        const f = fixture({ payload: nested(depth - 1) });
-        if (depth > 24) denied(f, f.request, 'REF_ARGUMENT_BUDGET_EXCEEDED');
-        else { const result = success(f); expect(measure(result.effectiveArgs).depth).toBe(depth); release(f, result); }
-    });
-    it.each([9_999, 10_000, 10_001])('effective nodes %i', nodes => {
-        const f = fixture({ payload: { label: 'A' } }); const args = { file: 'fd_A.selected', values: Array(nodes - 4).fill(null) };
-        expect(measure(args).nodes).toBe(nodes - 1);
-        if (nodes > 10_000) denied(f, { ...f.request, args }, 'REF_ARGUMENT_BUDGET_EXCEEDED');
-        else { const result = success(f, { ...f.request, args }); expect(measure(result.effectiveArgs).nodes).toBe(nodes); release(f, result); }
     });
     it.each([131_071, 131_072, 131_073])('raw approx bytes %i', bytes => {
         const f = fixture({ payload: {} }); const base = { file: 'fd_A.selected', padding: '' };
@@ -379,34 +363,9 @@ describe('W01 T07: reachable argument depth, nodes, approx and canonical boundar
         if (bytes > 131_072) denied(f, { ...f.request, args }, 'REF_ARGUMENT_BUDGET_EXCEEDED');
         else release(f, success(f, { ...f.request, args }));
     });
-    it.each([131_071, 131_072, 131_073])('effective approx bytes %i', bytes => {
-        const base = { file: { text: '' } }; const payload = { text: 'x'.repeat(bytes - measure(base).approx) };
-        const f = fixture({ payload }); expect(measure({ file: payload }).approx).toBe(bytes);
-        if (bytes > 131_072) denied(f, f.request, 'REF_ARGUMENT_BUDGET_EXCEEDED');
-        else release(f, success(f));
-    });
-    it.each([131_071, 131_072, 131_073])('effective canonical UTF-8 bytes %i', bytes => {
-        const base = { file: { text: '' } }; const payload = { text: escapedBytes(bytes - measure(base).canonical) };
-        const f = fixture({ payload }); expect(measure({ file: payload }).canonical).toBe(bytes);
-        expect(measure({ file: payload }).approx).toBeLessThan(131_072);
-        if (bytes > 131_072) denied(f, f.request, 'REF_ARGUMENT_BUDGET_EXCEEDED');
-        else release(f, success(f));
-    });
-    it('refuses a Snapshot-legal 200 KiB payload before constructing an oversized prepared value', () => {
-        const f = fixture({ payload: { text: 'x'.repeat(200 * 1024) } });
-        denied(f, f.request, 'REF_ARGUMENT_BUDGET_EXCEEDED');
-    });
-    it('counts repeated aliases independently rather than taking a shared-object discount', () => {
-        const shared = { text: 'x'.repeat(65_536) }; const f = fixture({ payload: { a: shared, b: shared } });
-        denied(f, f.request, 'REF_ARGUMENT_BUDGET_EXCEEDED');
-    });
-    it('counts actual UTF-8 bytes rather than UTF-16 string length', () => {
-        const text = '🙂'.repeat(32_768); expect(text.length).toBe(65_536); expect(utf8Size(text)).toBe(131_072);
-        const f = fixture({ payload: { text } }); denied(f, f.request, 'REF_ARGUMENT_BUDGET_EXCEEDED');
-    });
 });
 
-describe('W01 T07: complete request and prepared envelope overhead', () => {
+describe('W01 T07: complete caller request boundaries', () => {
     it.each([139_263, 139_264, 139_265])('complete request approx bytes %i via a real long activation identity', bytes => {
         const template = fixture({ payload: {} });
         template.request.args = { file: 'fd_A.selected', numericPadding: [0, 0, 0, 0] };
@@ -415,51 +374,15 @@ describe('W01 T07: complete request and prepared envelope overhead', () => {
         const f = fixture({ payload: {}, activationId }); f.request.args = template.request.args;
         expect(measure(f.request as JsonValue).approx).toBe(bytes);
         expect(measure(f.request as JsonValue).canonical).toBeLessThan(139_264);
-        // Long source IDs occur again in provenance; lower input limits pass but envelope does not.
-        denied(f, f.request, bytes > 139_264 ? 'TOOL_INVALID_ARGS' : 'REF_ARGUMENT_BUDGET_EXCEEDED');
+        if (bytes > 139_264) denied(f, f.request, 'TOOL_INVALID_ARGS');
+        else release(f, success(f));
     });
     it.each([139_263, 139_264, 139_265])('complete request canonical bytes %i independently of approx', bytes => {
         const base = fixture({ payload: {} }); const emptyLength = measure(base.request as JsonValue).canonical;
         const activationId = escapedBytes(bytes - emptyLength + base.activationId.length);
         const f = fixture({ payload: {}, activationId });
         expect(measure(f.request as JsonValue).canonical).toBe(bytes); expect(measure(f.request as JsonValue).approx).toBeLessThan(139_264);
-        denied(f, f.request, bytes > 139_264 ? 'TOOL_INVALID_ARGS' : 'REF_ARGUMENT_BUDGET_EXCEEDED');
-    });
-
-    function envelopeFor(f: Fixture, refType: string, padding: string): JsonValue {
-        return { source: { ...f.context, snapshotId: f.source.id, toolId: f.toolId,
-            activationId: f.activationId },
-        effectiveArgs: { file: {}, padding, numbers: [0, 0, 0] }, refSources: [{ param: 'file', refId: f.refId, kind: 'snapshot-value',
-            refType, snapshotId: f.source.id, viewId: f.viewId, viewInstanceId: f.viewInstanceId }] };
-    }
-    it.each([139_263, 139_264, 139_265])('prepared envelope approx bytes %i includes source/provenance', bytes => {
-        const padding = 'x'.repeat(120 * 1024); const first = fixture({ payload: {} });
-        const refType = 'T'.repeat(bytes - measure(envelopeFor(first, '', padding)).approx);
-        const f = fixture({ payload: {}, refType }); expect(measure(envelopeFor(f, refType, padding)).approx).toBe(bytes);
-        expect(measure({ file: {}, padding }).approx).toBeLessThan(131_072);
-        if (bytes > 139_264) denied(f, { ...f.request, args: { file: 'fd_A.selected', padding, numbers: [0, 0, 0] } }, 'REF_ARGUMENT_BUDGET_EXCEEDED');
-        else release(f, success(f, { ...f.request, args: { file: 'fd_A.selected', padding, numbers: [0, 0, 0] } }));
-    });
-    it.each([139_263, 139_264, 139_265])('prepared envelope canonical bytes %i is checked separately', bytes => {
-        const padding = 'x'.repeat(120 * 1024); const first = fixture({ payload: {} });
-        const refType = escapedBytes(bytes - measure(envelopeFor(first, '', padding)).canonical);
-        const f = fixture({ payload: {}, refType });
-        expect(measure(envelopeFor(f, refType, padding)).canonical).toBe(bytes);
-        expect(measure(envelopeFor(f, refType, padding)).approx).toBeLessThan(139_264);
-        if (bytes > 139_264) denied(f, { ...f.request, args: { file: 'fd_A.selected', padding, numbers: [0, 0, 0] } }, 'REF_ARGUMENT_BUDGET_EXCEEDED');
-        else release(f, success(f, { ...f.request, args: { file: 'fd_A.selected', padding, numbers: [0, 0, 0] } }));
-    });
-    it('proves the reachable envelope node/depth maxima under the smaller args profile', () => {
-        const f = fixture({ payload: {} });
-        const result = success(f, { ...f.request, args: { file: 'fd_A.selected', values: Array(9_997).fill(null) } });
-        const envelope = { source: { ...f.context, snapshotId: f.source.id, toolId: f.toolId, activationId: f.activationId }, effectiveArgs: result.effectiveArgs, refSources: result.refSources };
-        expect(measure(result.effectiveArgs).nodes).toBe(10_000);
-        expect(measure(envelope).nodes).toBe(10_016);
-        expect(() => copyJson(envelope, { maxDepth: 26, maxNodes: 11_000, maxApproxBytes: 139_264 })).not.toThrow();
-        release(f, result);
-        const deep = fixture({ payload: nested(23) }); const prepared = success(deep);
-        const deepEnvelope = { source: { ...deep.context, snapshotId: deep.source.id, toolId: deep.toolId, activationId: deep.activationId }, effectiveArgs: prepared.effectiveArgs, refSources: prepared.refSources };
-        expect(measure(prepared.effectiveArgs).depth).toBe(24); expect(measure(deepEnvelope).depth).toBe(25);
-        release(deep, prepared);
+        if (bytes > 139_264) denied(f, f.request, 'TOOL_INVALID_ARGS');
+        else release(f, success(f));
     });
 });

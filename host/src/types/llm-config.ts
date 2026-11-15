@@ -4,8 +4,6 @@
  * LLM 配置管理相关的类型定义
  */
 
-import type { LLMConfig } from '@aotui/agent-driver-v2';
-
 /**
  * LLM 配置存储格式 (数据库)
  */
@@ -14,7 +12,7 @@ export interface LLMConfigRecord {
     id: number;
     /** 配置名称 */
     name: string;
-    /** 模型标识符 (e.g., "gpt-4", "claude-3-5-sonnet-20241022") */
+    /** Stored model ID. Older records may contain an explicit catalog key. */
     model: string;
     /** Provider ID (可选, e.g., "openai", "anthropic") */
     providerId?: string;
@@ -56,7 +54,7 @@ export interface ProviderInfo {
 export interface LLMConfigInput {
     name: string;
     model: string;
-    providerId?: string;
+    providerId: string;
     baseUrl?: string;
     apiKey?: string;
     temperature?: number;
@@ -64,55 +62,10 @@ export interface LLMConfigInput {
     skipValidation?: boolean;
 }
 
-/**
- * 转换 LLMConfigRecord 为 AgentDriverV2 的 LLMConfig
- */
-export function toLLMConfig(record: LLMConfigRecord): LLMConfig {
-    // 构建完整的 model ID (格式: "providerId:modelId")
-    let modelId = record.model;
-
-    if (record.providerId) {
-        const providerSlashPrefix = `${record.providerId}/`;
-        const providerColonPrefix = `${record.providerId}:`;
-
-        // models.dev 常见格式: "provider/model" -> "provider:model"
-        if (modelId.startsWith(providerSlashPrefix)) {
-            modelId = modelId.slice(providerSlashPrefix.length);
-        }
-
-        // 统一以 providerId 前缀输出，保留模型名中的层级与冒号后缀
-        // 例如 openrouter + z-ai/glm-4.5-air:free -> openrouter:z-ai/glm-4.5-air:free
-        if (!modelId.startsWith(providerColonPrefix)) {
-            modelId = `${record.providerId}:${modelId}`;
-        }
-    }
-
-    const config: LLMConfig = {
-        model: modelId,
-        temperature: record.temperature,
-        maxSteps: record.maxSteps,
-    };
-
-    if (record.apiKey) {
-        config.apiKey = record.apiKey;
-    }
-
-    if (record.providerId) {
-        config.provider = {
-            id: record.providerId,
-        };
-
-        if (record.baseUrl) {
-            config.provider.baseURL = record.baseUrl;
-        }
-    }
-
-    return config;
+/** Parse the Provider and model pair saved by the Topic and Agent selectors. */
+export function parseModelSelection(value: string): { providerId: string; modelId: string } | undefined {
+    const separator = value.indexOf(':', value.startsWith('custom:') ? 'custom:'.length : 0);
+    const slash = value.indexOf('/');
+    if (separator < 1 || (slash >= 0 && slash < separator)) return undefined;
+    return { providerId: value.slice(0, separator), modelId: value.slice(separator + 1) };
 }
-
-/**
- * 默认配置列表
- * 
- * 注意: 已移除默认配置，用户需要手动添加 Provider
- */
-export const DEFAULT_CONFIGS: Omit<LLMConfigRecord, 'id' | 'createdAt' | 'updatedAt' | 'isActive'>[] = [];

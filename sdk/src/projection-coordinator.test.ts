@@ -25,6 +25,7 @@ function setup(component: () => any) {
     const factory = createTUIApp({ app_name: 'm3_app', component });
     const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
     kernel.setId('m3_app_0' as any);
+    kernel.enableAppLifecycle();
     return {
         kernel, get container() { return document.getElementById('app-root-m3_app_0')!; },
         async open() {

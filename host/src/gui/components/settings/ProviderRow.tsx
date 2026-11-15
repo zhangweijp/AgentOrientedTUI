@@ -72,7 +72,6 @@ const AddProviderButton: React.FC<{ onClick: () => void }> = ({ onClick }) => (
 export const ProviderRow: React.FC<ProviderRowProps> = ({
     providers,
     selectedProviderId,
-    activeProviderId,
     onSelectProvider,
     onEditProvider,
     onDeleteProvider,

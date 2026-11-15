@@ -1,4 +1,4 @@
-import { SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY } from '../../spi/worker-protocol/types.js';
+import { SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY } from '../../spi/worker-protocol/types.js';
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
@@ -30,7 +30,7 @@ function make(options: any = {}) {
         existingWorker: worker as any, timeout: 100, ...options });
     hosts.push(host); return { host, worker };
 }
-const modes = [{ name: 'empty capability set', interactionModes: [] }, { name: 'qualified parameters', interactionModes: ['view-type-parameters-v1'] }];
+const modes = [{ name: 'read-only capability set', toolsEnabled: false }, { name: 'qualified parameters', toolsEnabled: true }];
 function draft(host: AppWorkerHost, producerSeq = 1) {
     return { schemaVersion: 3, appId: host.appId, instanceId: host.appInstanceId, producerSeq, sourceEpoch: producerSeq,
         capturedAt: producerSeq, views: [{ id: 'vv', viewInstanceId: 'vi', type: 'File', name: 'File', kind: 'state',
@@ -52,8 +52,8 @@ afterEach(() => { for (const host of hosts.splice(0)) host.terminate(); vi.useRe
 
 describe('Worker Host owns exactly one application initialization', () => {
     it.each(modes.flatMap(mode => ['ready', 'running', 'paused'].map(state => ({ ...mode, state }))))(
-        'rejects repeated start for $name in $state while preserving the first instance', async ({ interactionModes, state }) => {
-            const { host, worker } = make({ interactionModes }); const first = host.start(); worker.reply(worker.last); await first;
+        'rejects repeated start for $name in $state while preserving the first instance', async ({ toolsEnabled, state }) => {
+            const { host, worker } = make({ toolsEnabled }); const first = host.start(); worker.reply(worker.last); await first;
             if (state !== 'ready') { const opened = host.open(); worker.reply(worker.last); await opened; }
             if (state === 'paused') { const paused = host.pause(); worker.reply(worker.last); await paused; }
             worker.emit('message', { type: 'SNAPSHOT_PREPARED', draft: draft(host) });
@@ -66,10 +66,10 @@ describe('Worker Host owns exactly one application initialization', () => {
             expect(['message', 'error', 'exit'].map(name => worker.listenerCount(name))).toEqual(listeners);
             clean(host);
         });
-    it.each([{ name: 'default capability set', interactionModes: undefined }, ...modes])('claims the $name opportunity before the first INIT waits', async ({ interactionModes }) => {
-        const { host, worker } = make({ interactionModes }); const first = host.start(); const init = worker.last;
-        expect(init.requestedCapabilities).toEqual(interactionModes?.length === 0
-            ? [SNAPSHOT_CAPABILITY] : [SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY]);
+    it.each([{ name: 'default capability set', toolsEnabled: undefined }, ...modes])('claims the $name opportunity before the first INIT waits', async ({ toolsEnabled }) => {
+        const { host, worker } = make({ toolsEnabled }); const first = host.start(); const init = worker.last;
+        expect(init.requestedCapabilities).toEqual(toolsEnabled === false
+            ? [SNAPSHOT_CAPABILITY] : [SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY]);
         expect((host as any).pendingRequests.size).toBe(1); expect(vi.getTimerCount()).toBe(1);
         await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
         expect((host as any).pendingRequests.size).toBe(1); expect(vi.getTimerCount()).toBe(1);
@@ -78,7 +78,7 @@ describe('Worker Host owns exactly one application initialization', () => {
     });
     it.each(['response-error', 'timeout', 'post-throw', 'worker-error', 'worker-exit'])(
         'retires a first %s and ignores late ACK/prepared data', async failure => {
-            const { host, worker } = make({ interactionModes: ['view-type-parameters-v1'] });
+            const { host, worker } = make({ toolsEnabled: true });
             vi.spyOn(console, 'error').mockImplementation(() => {});
             if (failure === 'post-throw') worker.postMessage.mockImplementationOnce(message => {
                 worker.messages.push(message); throw new Error('SENTINEL');
@@ -97,14 +97,14 @@ describe('Worker Host owns exactly one application initialization', () => {
             savedListener({ type: 'INIT_RESPONSE', requestId: init.requestId, success: true,
                 appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: host.appInstanceId },
                 persistence: { protocol: 'state-session-v1', version: 1, instanceId: host.appInstanceId },
-                acceptedCapabilities: [PARAMETERS_V4_CAPABILITY], appInstanceId: host.appInstanceId });
+                acceptedCapabilities: [PARAMETERS_V5_CAPABILITY], appInstanceId: host.appInstanceId });
             savedListener({ type: 'SNAPSHOT_PREPARED', draft: draft(host, 2) });
             expect(host.hasOrdinaryParametersCapability()).toBe(false); expect(host.getSemanticSnapshotReport()).toEqual(retired);
             await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
             expect(worker.messages.filter(m => m.type === 'INIT')).toHaveLength(1); clean(host);
         });
     it('rejects a missing Snapshot ACK before accepting execution capabilities', async () => {
-        const { host, worker } = make({ interactionModes: ['view-type-parameters-v1'] });
+        const { host, worker } = make({ toolsEnabled: true });
         const starting = host.start();
         const init = worker.last;
         worker.emit('message', initAck(host, init, []));
@@ -114,17 +114,17 @@ describe('Worker Host owns exactly one application initialization', () => {
         clean(host);
     });
     it('requires every requested Tool capability even when Snapshot support is acknowledged', async () => {
-        const { host, worker } = make({ interactionModes: ['view-type-parameters-v1'] });
+        const { host, worker } = make({ toolsEnabled: true });
         const starting = host.start(), init = worker.last;
         worker.emit('message', initAck(host, init, [SNAPSHOT_CAPABILITY]));
         await expect(starting).rejects.toThrow('WORKER_CAPABILITY_UNAVAILABLE');
         expect(host.hasOrdinaryParametersCapability()).toBe(false);clean(host);
     });
-    it('accepts a requested qualified V4 capability', async () => {
-        const { host, worker } = make({ interactionModes: ['view-type-parameters-v1'] });
+    it('accepts a requested qualified V5 capability', async () => {
+        const { host, worker } = make({ toolsEnabled: true });
         const starting = host.start();
         const init = worker.last;
-        const ack = initAck(host, init, [SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY]);
+        const ack = initAck(host, init, [SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY]);
         worker.emit('message', { ...ack, type: 'UNSUPPORTED_RESPONSE' });
         expect((host as any).pendingRequests.has(init.requestId)).toBe(true);
         worker.emit('message', ack);
@@ -135,12 +135,12 @@ describe('Worker Host owns exactly one application initialization', () => {
     it.each([
         { label: 'duplicate ACK entries', accepted: [SNAPSHOT_CAPABILITY, SNAPSHOT_CAPABILITY], code: 'WORKER_CAPABILITY_INVALID' },
         { label: 'unknown capability', accepted: ['view-tool-future-invoke/v9'], code: 'WORKER_CAPABILITY_UNSUPPORTED' },
-        { label: 'an unrequested valid capability', accepted: [SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY], code: 'WORKER_CAPABILITY_ACK_INVALID' },
+        { label: 'an unrequested valid capability', accepted: [SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY], code: 'WORKER_CAPABILITY_ACK_INVALID' },
         { label: 'retired V2 capability', accepted: ['view-tool-ordinary-invoke/v2'], code: 'WORKER_CAPABILITY_UNSUPPORTED' },
         { label: 'retired V3 capability', accepted: ['view-tool-ref-invoke/v3'], code: 'WORKER_CAPABILITY_UNSUPPORTED' },
         { label: 'a malformed ACK', accepted: { capabilities: [] }, code: 'WORKER_CAPABILITY_INVALID' },
     ])('rejects $label rather than treating it as an empty capability set', async ({ accepted, code }) => {
-        const { host, worker } = make({ interactionModes: code === 'WORKER_CAPABILITY_ACK_INVALID' ? [] : ['view-type-parameters-v1'] });
+        const { host, worker } = make({ toolsEnabled: code === 'WORKER_CAPABILITY_ACK_INVALID' ? false : true });
         const starting = host.start();
         const init = worker.last;
         worker.emit('message', initAck(host, init, accepted));

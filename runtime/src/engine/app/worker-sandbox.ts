@@ -12,7 +12,7 @@ import type { WorkerCapacity } from './worker-capacity.js';
 import type { StateStorageBackend } from './state-storage-host.js';
 import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
 import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
-import { captureInteractionModes } from './interaction-config.js';
+import { captureToolsEnabled } from './interaction-config.js';
 
 /**
  * Sandbox 状态机
@@ -64,8 +64,6 @@ const lifecycleError = (code: 'SANDBOX_CLOSED' | 'SANDBOX_ALREADY_INSTALLED' | '
 export class WorkerSandbox {
     readonly appId: AppID;
     readonly desktopId: DesktopID;
-    readonly name?: string;
-    readonly createdAt: number;
 
     private workerHost: AppWorkerHost | null = null;
     private _status: SandboxStatus = 'created';
@@ -84,12 +82,10 @@ export class WorkerSandbox {
     onUpdateRequest?: () => void;
 
     constructor(private readonly config: WorkerSandboxConfig) {
-        const interactionModes = captureInteractionModes(config);
-        this.config = { ...config, interactionModes };
+        const toolsEnabled = captureToolsEnabled(config);
+        this.config = { ...config, toolsEnabled };
         this.appId = config.appId;
         this.desktopId = config.desktopId;
-        this.name = config.name;
-        this.createdAt = Date.now();
     }
 
     // ════════════════════════════════════════════════════════════════

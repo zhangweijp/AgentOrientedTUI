@@ -1,6 +1,6 @@
 # ViewType Tools, Ref parameters, and app cleanup
 
-The supported Worker interaction mode is `view-type-parameters-v1`. The trusted Host selects it through interactionModes; omission enables it, while [] disables execution. Host/Worker negotiation and per-binding qualification remain mandatory. Retired modes are explicitly rejected, not reinterpreted as new calls.
+The trusted Host can set `toolsEnabled: false` for read-only observation. Tool execution is enabled by default and requires the current Worker handshake and a live binding. The shared parameter profile is `view-type-parameters-v1`.
 
 Declare each Tool once per App/ViewType with defineViewTypeTool/defineToolSet, then bind its execute/enabled map through AppTools or createToolBindings. Matching Views activate one shared type Tool; the Observation pins its App instance, descriptor and activation. Opening multiple same-type Views does not duplicate the Tool or choose its business object.
 
@@ -8,7 +8,7 @@ Ordinary parameters retain their business meaning. `refParam` declares top-level
 
 Ref data being readonly does not restrict App business effects. The App uses internal IDs from the resolved value and rechecks existence, parent/state/permission or file conflicts. Meaningful paths/text remain ordinary parameters. If one file closes while another same-type View remains active, the shared Tool may still reach the App; its guard must reject a closed business target. Releasing an Observation and revoking a type activation are distinct actions.
 
-A failure may declare effects:none or partial only when the App knows that fact. Omitted effects, thrown handlers or lost responses do not prove that no business effect occurred. A caller can stop waiting while dispatched work remains active. Runtime does not retry unknown writes. Return a short receipt and put current data in Views; handler completion is distinct from projection publication.
+A normal, valid failure receipt is reported as failed. The receipt can carry App-specific recovery facts. A handler that throws or returns an invalid result finishes with an unknown outcome. A waiting deadline can also yield an interim unknown outcome while dispatched work remains active. Use the existing receipt and current View to recover. Return concise Tool data and publish current business data in Views.
 
 ## App lifecycle
 

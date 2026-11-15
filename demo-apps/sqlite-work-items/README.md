@@ -33,8 +33,8 @@ PATH="$PWD/runtime/node_modules/.bin:$PATH" pnpm --dir "$demo_app" build
 ## 调用与恢复
 
 - 列表中的 `[Review SDK guide](WorkItem:items[0])` 位于 `items` View。`open_item` 的 `item` 参数传 `items.items[0]`。打开后用 `detail.current` 调用 `set_status`。`close_item` 关闭详情并撤下更新 Tool。
-- App 校验 Ref 属于当前选中项，用安全整数和状态枚举执行一次 `WHERE id = … AND revision = …` 条件更新。在同一个新 SQLite 连接中，`changes()` 统计直接改动，`total_changes()` 统计包括触发器在内的连接行改动。命令成功退出且计数有效时，直接改动一行确认写入，两个计数都为零返回 `VERSION_CONFLICT`，只有总计数非零则返回 `SQLITE_WRITE_PARTIAL` 和 `effects: 'partial'`。
-- 已确认写入随后刷新失败时，收据为 `written: true, refreshed: false`。已启动的写命令无法确认结果时，收据表达 `unknown`。刷新失败、部分写入或效果未知时，诊断 View 撤下旧正文、Ref 和更新 Tool，保留刷新入口。`refresh` 只执行 `SELECT`，用原请求读取收据只读记录。
+- App 校验 Ref 属于当前选中项，用安全整数和状态枚举执行一次 `WHERE id = … AND revision = …` 条件更新。在同一个新 SQLite 连接中，`changes()` 统计直接改动，`total_changes()` 统计包括触发器在内的连接行改动。命令成功退出且计数有效时，直接改动一行确认写入，两个计数都为零返回 `VERSION_CONFLICT`，只有总计数非零则返回业务错误 `SQLITE_WRITE_PARTIAL`，提示刷新以核对 SQLite 中已经发生的行变更。
+- 已确认写入随后刷新失败时，收据为 `written: true, refreshed: false`。已启动的写命令无法确认结果时，App 返回业务失败，错误消息提示刷新，诊断 View 显示 `SQLITE_WRITE_UNCONFIRMED`。刷新失败、仅确认部分写入或写入未确认时，诊断 View 撤下旧正文、Ref 和更新 Tool，保留刷新入口。`refresh` 只执行 `SELECT`，用原请求读取收据只读记录。
 
 **业务数据合同。** `id` 在一个工作项的生命周期内固定，删除后也不得分配给新工作项。外部写入方每次修改工作项都须递增 `revision`。App 依靠这两条约束识别旧 Ref 和外部改动。
 

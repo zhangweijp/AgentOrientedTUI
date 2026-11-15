@@ -1,4 +1,4 @@
-import type { JsonValue } from '@aotui/runtime/core';
+import type { JsonValue, OrdinaryCompileResult } from '@aotui/runtime/core';
 
 /**
  * Export the JSON Schema portion of a TypeBox schema without invoking any
@@ -28,8 +28,18 @@ export class TypeBoxSchemaExportError extends Error {
     }
 }
 
+export function schemaDeclarationError({ code, path, message }: Extract<OrdinaryCompileResult, { ok: false }>['issue']): TypeBoxSchemaExportError {
+    const codes = {
+        PARAMETER_DECLARATION_INVALID: 'TOOL_SCHEMA_INVALID',
+        PARAMETER_DECLARATION_UNSUPPORTED: 'TOOL_SCHEMA_UNSUPPORTED',
+        PARAMETER_DECLARATION_CAPACITY: 'TOOL_SCHEMA_CAPACITY',
+    } as const;
+    return new TypeBoxSchemaExportError(codes[code], path, message);
+}
+
 const MAX_DEPTH = 24;
 const MAX_NODES = 5_000;
+// Charge JSON-encoded bytes as they are visited, including fields later removed by normalization.
 const MAX_UTF8_BYTES = 64 * 1024;
 const MAX_DIAGNOSTIC_PATH = 240;
 const encoder = new TextEncoder();
@@ -70,7 +80,7 @@ function encodedStringBytes(value: string, budget: Budget, path: string): number
     // Reject clearly oversized values before allocating escaped text or an
     // encoder buffer for an arbitrarily large declaration.
     if (value.length > MAX_UTF8_BYTES - budget.bytes) {
-        fail('TOOL_SCHEMA_CAPACITY', path, `Export exceeds ${MAX_UTF8_BYTES} UTF-8 bytes`);
+        fail('TOOL_SCHEMA_CAPACITY', path, `TypeBox export byte budget exceeded (${MAX_UTF8_BYTES})`);
     }
     // JSON.stringify is applied only to a primitive string. It cannot invoke
     // application properties, `toJSON`, or accessors, and is used only to
@@ -93,7 +103,7 @@ function propertyPath(path: string, key: string): string {
 function addBytes(budget: Budget, bytes: number, path: string): void {
     budget.bytes += bytes;
     if (budget.bytes > MAX_UTF8_BYTES) {
-        fail('TOOL_SCHEMA_CAPACITY', path, `Export exceeds ${MAX_UTF8_BYTES} UTF-8 bytes`);
+        fail('TOOL_SCHEMA_CAPACITY', path, `TypeBox export byte budget exceeded (${MAX_UTF8_BYTES})`);
     }
 }
 
@@ -223,14 +233,11 @@ function copyObject(input: object, position: Position, path: string, depth: numb
         fail('TOOL_SCHEMA_INVALID', path, 'Ref value annotations require a TypeBox static value witness');
     }
 
-    addBytes(budget, 2 + Math.max(0, keys.length - 1), path);
+    const exportedKeys = (keys as string[]).filter(key => descriptors[key]!.enumerable);
+    addBytes(budget, 2 + Math.max(0, exportedKeys.length - 1), path);
     const output: Record<string, unknown> = {};
-    for (const rawKey of keys) {
-        const key = rawKey as string;
+    for (const key of exportedKeys) {
         const descriptor = descriptors[key]!;
-        if (position === 'schema' && !descriptor.enumerable &&
-            (key === '~kind' || key === '~optional' || key === '~readonly' || key === '~unsafe' && descriptor.value === null && refWitness)) continue;
-
         const keyPath = propertyPath(path, key);
         addBytes(budget, encodedStringBytes(key, budget, keyPath) + 1, keyPath);
         const nextPosition = position === 'schema'
@@ -250,9 +257,8 @@ function copyObject(input: object, position: Position, path: string, depth: numb
             Object.defineProperty(output, 'type', {
                 value: 'string', enumerable: true, configurable: true, writable: true,
             });
-            addNode(budget, depth + 1, propertyPath(path, 'type'));
-            addNode(budget, depth + 2, propertyPath(path, 'type'));
             const typePath = propertyPath(path, 'type');
+            addNode(budget, depth + 1, typePath);
             addBytes(budget, encodedStringBytes('type', budget, typePath) + 1 + encodedStringBytes('string', budget, typePath) + 1, typePath);
         }
     }

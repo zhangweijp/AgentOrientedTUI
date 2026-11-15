@@ -680,7 +680,7 @@ describe('IMDrivenSource history initialization', () => {
       await entered.promise
       source.addMessage({ role: 'user', content: 'new request while restoring' }, 2_000)
       driver = new AgentDriverV2({
-        sources: [source], llm: { model: 'openai:controlled-im-history', apiKey: 'unused-no-network' },
+        sources: [source], llm: { model: 'controlled-im-history', provider: { id: 'openai' }, apiKey: 'unused-no-network' },
         onAssistantMessage, onRunError,
       })
       const requested = driver.trigger()

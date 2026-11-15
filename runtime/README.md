@@ -35,13 +35,15 @@ Use `runtime.getAppInteraction(desktopId, appId, expectedInstanceId, policy?)` f
 
 ## Current interaction contract
 
-The trusted `interactionModes` install option selects `view-type-parameters-v1`; omitting it enables that supported mode, while `[]` disables execution. One App/ViewType Tool contract covers ordinary parameters and multiple top-level object or object-list Refs, including optional fields and ordered arrays of Ref names. A whole-array Ref remains a single string input; a multi-selection is an array of strings. Runtime resolves the complete Ref name from the bound Observation and supplies frozen values. A read-only payload does not make the Tool read-only: the App owns business mutation and validation. Worker negotiation, activation, source checks and authorization still apply. Retired modes are rejected rather than dispatched through a fallback.
+Tool execution is enabled by default. The trusted Host can install with `toolsEnabled: false` to keep View observation and preview read-only. One App/ViewType Tool contract covers ordinary parameters and multiple top-level object or object-list Refs, including optional fields and ordered arrays of Ref names. A whole-array Ref remains a single string input; a multi-selection is an array of strings. Runtime resolves the complete Ref name from the bound Observation and supplies frozen values. A read-only payload does not make the Tool read-only: the App owns business mutation and validation. Worker negotiation, activation, source checks and authorization still apply. The retired `interactionModes` option is rejected.
 
 Preact Apps use `createTUIApp({ app_name, component })` and bind one App-level ToolSet with `AppTools`. Root lists names with `ToolCatalog`. Complete definitions belong in Context Tools. The factory advertises managed `app-lifecycle-v2` support by default. Apps that own resources register callbacks with `useAppLifecycle({ stop?, close? })`.
 
-The Core tracks one real operation per App instance. Call `readReceipt(originalRequest)` to read the original or late result under the instance policy. Each receipt describes success, failure with known effects, rejection, or unknown effects. A success result carries concise call data; business content belongs in the app's current View. Unknown outcomes do not imply that no side effect occurred and are not automatically retried.
+Each Snapshot Core captures its optional limits at creation. Overrides can only lower the default limits. The default Tool schema limit is 64 KiB of canonical JSON UTF-8 for the complete normalized profile, including its internal marker. [Pure Core configuration and migration](docs/core-public-entry.md#snapshot-limits)
 
-App authors start with the [SDK author guide](../sdk/README.md) and [matching package instructions](../sdk/docs/runtime-compatibility.md).
+The Core tracks one real operation per App instance. Use `readReceipt({ observationId, invocationId })` to read the original or late result under the instance policy. Both IDs come from the original invocation. A receipt records success, business failure, rejection before handler entry, or an unknown outcome. Read the App's error and recovery data alongside its current View before making another change. The caller's wait can end while the operation is still running.
+
+App authors start with `README.md` and `docs/app-authoring.md` in `@aotui/sdk`. See the [local delivery guide](docs/sdk-runtime-distribution.md#current-delivery) for matching packages.
 
 ## Documentation
 
@@ -58,4 +60,4 @@ App authors start with the [SDK author guide](../sdk/README.md) and [matching pa
 See the repository [guide](../GUIDE.md) for package build order and local development.
 
 
-当前 View 必须显式声明 `type` 和 `kind="instruction" | "state"`，实例 `id` 只标识页面实例。正文不携带框架外壳，XML 文本仅在最终呈现时转义一次；[View 声明与正文合同](../sdk/docs/views.md)说明两种 Producer、原样内容和迁移方式。
+当前 View 必须显式声明 `type` 和 `kind="instruction" | "state"`，实例 `id` 只标识页面实例。正文由最终消息边界包装并编码一次。两种 Producer、原样内容和迁移方式见 `@aotui/sdk` 包内 `docs/views.md`。

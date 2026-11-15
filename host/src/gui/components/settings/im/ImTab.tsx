@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useChatBridge } from '../../../ChatBridge.js';
 import { LoadingState } from '../LoadingState.js';
+import type { ImConfig } from '../../../../config/im-schema.js';
 
 interface AgentInfo {
     id: string;
@@ -16,37 +17,11 @@ interface AgentInfo {
 
 type ChannelKey = 'feishu' | 'lark';
 type ConnectionMode = 'websocket' | 'webhook';
-type DmPolicy = 'open' | 'allowlist' | 'pairing';
-type GroupPolicy = 'open' | 'allowlist' | 'disabled';
-type SessionScope = 'peer' | 'peer_sender' | 'peer_thread' | 'peer_thread_sender';
-
-interface FeishuAccountConfig {
-    enabled?: boolean;
-    appId?: string;
-    appSecret?: string;
-    verificationToken?: string;
-    botToken?: string;
-    botAgentId?: string;
-    domain?: string;
-    connectionMode?: ConnectionMode;
-    sessionScope?: SessionScope;
-    dmPolicy?: DmPolicy;
-    groupPolicy?: GroupPolicy;
-    requireMention?: boolean;
-    apiBaseUrl?: string;
-}
-
-interface FeishuChannelConfig extends FeishuAccountConfig {
-    accounts?: Record<string, FeishuAccountConfig>;
-}
-
-interface ImConfig {
-    enabled?: boolean;
-    channels?: {
-        feishu?: FeishuChannelConfig;
-        lark?: FeishuChannelConfig;
-    };
-}
+type FeishuChannelConfig = NonNullable<NonNullable<ImConfig['channels']>['feishu']>;
+type FeishuAccountConfig = Omit<FeishuChannelConfig, 'accounts'>;
+type DmPolicy = NonNullable<FeishuAccountConfig['dmPolicy']>;
+type GroupPolicy = NonNullable<FeishuAccountConfig['groupPolicy']>;
+type SessionScope = NonNullable<FeishuAccountConfig['sessionScope']>;
 
 interface ImRuntimeAccountState {
     accountId: string;
@@ -452,6 +427,7 @@ export const ImTab: React.FC = () => {
     const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
     const [imConfig, setImConfig] = useState<ImConfig>({});
+    const [configIssue, setConfigIssue] = useState<string>();
     const [imRuntime, setImRuntime] = useState<ImRuntimeResponse | null>(null);
     const [agents, setAgents] = useState<AgentInfo[]>([]);
     const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
@@ -460,13 +436,14 @@ export const ImTab: React.FC = () => {
     useEffect(() => {
         const load = async () => {
             try {
-                const [config, agentData, runtime] = await Promise.all([
+                const [{ im: config, issue }, agentData, runtime] = await Promise.all([
                     bridge.getImConfig(),
-                    bridge.getImAgents(),
+                    bridge.getAgents(),
                     bridge.getImRuntime(),
                 ]);
 
-                setImConfig(config ?? {});
+                setImConfig(config);
+                setConfigIssue(issue);
                 setAgents(agentData.list ?? []);
                 setActiveAgentId(agentData.activeAgentId ?? null);
                 setImRuntime(runtime ?? null);
@@ -476,6 +453,7 @@ export const ImTab: React.FC = () => {
                 }
             } catch (error) {
                 console.error('[ImTab] Failed to load IM config:', error);
+                setConfigIssue('无法读取 IM 设置，请重新配置并保存。');
             } finally {
                 setLoading(false);
             }
@@ -610,6 +588,7 @@ export const ImTab: React.FC = () => {
 
         try {
             await bridge.saveImConfig(imConfig);
+            setConfigIssue(undefined);
             const runtime = await bridge.getImRuntime();
             setImRuntime(runtime ?? null);
             setSaveMessage({ type: 'success', text: '已保存，新的多 Bot 配置会在 Host 重载后生效' });
@@ -640,6 +619,19 @@ export const ImTab: React.FC = () => {
                     自己维护 session 和上下文；群聊里只有被 @ 的 Bot 会真正触发 Agent 回复。
                 </p>
             </div>
+
+            {configIssue && <p role="alert" className="text-[12px] text-red-500">{configIssue}</p>}
+            <label className="flex items-center gap-2 text-[13px]">
+                <input
+                    type="checkbox"
+                    checked={imConfig.enabled !== false}
+                    onChange={(event) => {
+                        const enabled = event.target.checked;
+                        setImConfig(previous => ({ ...previous, enabled }));
+                    }}
+                />
+                启用 IM 客户端
+            </label>
 
             <div className="flex gap-2">
                 {CHANNEL_OPTIONS.map(({ key, label, description }) => (

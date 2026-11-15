@@ -24,7 +24,7 @@ describe('DOM producer preserves Ref payloads as snapshot data', () => {
         const node = root.querySelector('[data-view-id]')!;
         node.setAttribute('data-view-instance-id', 'vi:v1:["logical-run",1]');
         const toolId = JSON.stringify(['task_app', 'Workspace', 'replace_file']);
-        const compiled = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: false }, 'view-type-parameters-v1');
+        const compiled = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: false });
         if (!compiled.ok) throw Error('Ref Schema fixture');
         const owner = { viewId: 'workspace', viewInstanceId: 'vi:v1:["logical-run",1]', viewType: 'Workspace' };
         const projection = new SemanticProjectionCoordinator({

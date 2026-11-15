@@ -93,7 +93,7 @@ const conversation: ContextDrivenSource = {
 };
 const driver = new AgentDriverV2({
   sources: [new SemanticAOTUIDrivenSource(desktop, kernel), conversation],
-  llm: { model: 'openai:gpt-4', apiKey: process.env.OPENAI_API_KEY },
+  llm: { provider: { id: 'openai' }, model: 'gpt-4' },
   onAssistantMessage: message => console.log(message),
   onToolResult: message => console.log(message),
 });
@@ -107,120 +107,29 @@ IDrivenSource 及其导出已经退出。把原 getMessages/getTools 读取合�
 
 保留现有消息格式、timestamp/region、tool-call/result 读取及 compaction 行为；本次不迁移历史消息格式。需要降级的来源在自身捕获边界一次处理全部消息和工具，失败时不能返回半份状态；下一次显式捕获可重试。更新用已有 onUpdate 通知，不能为迁移新增自动业务重试。
 
-### LLM 配置格式
+### LLM 配置
 
-AgentDriverV2 支持灵活的 LLM 配置格式：
-
-```typescript
-// 格式 1: 简单格式（自动推断 Provider）
-const config: LLMConfig = {
-  model: 'gpt-4',  // 自动推断为 openai
-};
-
-// 格式 2: 显式指定 Provider
-const config: LLMConfig = {
-  model: 'openai:gpt-4',  // 使用冒号分隔
-};
-
-// 格式 3: 自定义 Provider 配置
-const config: LLMConfig = {
-  model: 'anthropic:claude-3-5-sonnet-20241022',
-  provider: {
-    id: 'anthropic',
-    baseURL: 'https://api.anthropic.com',  // 可选
-  },
-  apiKey: process.env.ANTHROPIC_API_KEY,
-  temperature: 0.7,
-  maxSteps: 10,
-};
-
-// 格式 4: 使用 OpenRouter
-const config: LLMConfig = {
-  model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-  provider: {
-    id: 'openrouter',
-    baseURL: 'https://openrouter.ai/api/v1',
-  },
-  apiKey: process.env.OPENROUTER_API_KEY,
-};
-```
-
-### 支持的 Provider
-
-- **OpenAI**: `openai:gpt-4`, `openai:gpt-4-turbo`
-- **Anthropic**: `anthropic:claude-3-5-sonnet-20241022`
-- **Google**: `google:gemini-2.5-flash`
-- **xAI**: `xai:grok-beta`
-- **自定义**: 任何 OpenAI 兼容的 API（通过 `provider.baseURL` 配置）
-
-## 迁移指南
-
-### 从旧版本迁移
-
-如果你之前使用 ModelRegistry，现在需要改为直接传递完整的 LLMConfig：
-
-**之前（使用 ModelRegistry）：**
+`LLMConfig` 要求显式提供 `provider.id` 和非空的 `model`。`model` 是供应商实际接受的 ID，路径、冒号后缀以及恰好与 Provider 同名的开头都会原样发送。宿主通过 `inputBudget` 收到同一对 `providerId` 和 `modelId`。
 
 ```typescript
-import { AgentDriverV2, ModelRegistry } from '@aotui/agent-driver-v2';
+import { createLanguageModel, type LLMConfig } from '@aotui/agent-driver-v2';
 
-const registry = new ModelRegistry();
-const driver = new AgentDriverV2({
-  sources: [...],
-  llm: {
-    model: 'gpt-4',
-  },
-  // ModelRegistry 会自动注入
-});
+const config: LLMConfig = {
+  provider: { id: 'openrouter' },
+  model: 'z-ai/glm-4.5-air:free',
+};
+const model = createLanguageModel(config);
 ```
 
-**现在（直接配置）：**
+OpenAI 的官方地址走 Responses API，明确配置的兼容地址走 Chat Completions。Anthropic、Google、DeepSeek、xAI 和 OpenRouter 各自按选定的 Provider 配置请求。通用 OpenAI-compatible 服务需要自己的 `provider.id` 和 `provider.baseURL`。
 
-```typescript
-import { AgentDriverV2 } from '@aotui/agent-driver-v2';
+`apiKey` 可以直接提供，或使用对应 Provider 的环境变量。OpenAI、Anthropic、Google、DeepSeek、xAI 和 OpenRouter 分别读取 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GOOGLE_API_KEY`（也支持 `GOOGLE_GENERATIVE_AI_API_KEY`）、`DEEPSEEK_API_KEY`、`XAI_API_KEY` 和 `OPENROUTER_API_KEY`。通用 Provider 使用其大写 ID 对应的 `<ID>_API_KEY`。
 
-const driver = new AgentDriverV2({
-  sources: [...],
-  llm: {
-    model: 'openai:gpt-4',  // 需要包含 provider 前缀
-    apiKey: process.env.OPENAI_API_KEY,  // 需要显式提供 API Key
-    temperature: 0.7,
-    maxSteps: 10,
-  },
-});
-```
+### 模型路由迁移
 
-**关键变化：**
+旧的 `model: 'openai:gpt-4'` 应迁移为 `provider: { id: 'openai' }, model: 'gpt-4'`。仅填写 `model: 'gpt-4'` 的调用需要补上实际 Provider。JavaScript 和 TypeScript 使用同一合同。直接构建模型的调用使用 `createLanguageModel(config)`。
 
-1. **ModelRegistry 已移除**: 不再从 `@aotui/agent-driver-v2` 导出
-2. **完整配置**: LLMConfig 需要包含所有必要字段（model, apiKey, provider 等）
-3. **Model 格式**: 推荐使用 `providerId:modelId` 格式（如 `openai:gpt-4`）
-4. **API Key**: 需要显式提供或通过环境变量设置
-
-### 在 Host 应用中使用
-
-如果你在 Host 应用中使用 AgentDriverV2，应该通过 LLMConfigService 获取配置：
-
-```typescript
-import { HostManagerV2 } from '@aotui/host';
-
-const hostManager = new HostManagerV2(topicId, modelRegistry);
-
-// LLMConfigService 会自动从 ModelRegistry 获取配置
-// 并转换为完整的 LLMConfig
-await hostManager.initAgentDriver(desktop, kernel, desktopManager);
-```
-
-## 环境变量
-
-AgentDriverV2 支持从环境变量自动读取 API Key：
-
-- `OPENAI_API_KEY`: OpenAI API Key
-- `ANTHROPIC_API_KEY`: Anthropic API Key
-- `GOOGLE_API_KEY`: Google AI API Key
-- `XAI_API_KEY`: xAI API Key
-
-如果在 LLMConfig 中没有提供 `apiKey`，会自动从对应的环境变量读取。
+Desktop Host 的 Topic、Agent 和外部模型目录值由 `LLMConfigService` 解析成上述配置。自定义 Provider 的 Host ID 由设置解析为所选协议、地址和 Key。
 
 ## 下一步
 

@@ -307,39 +307,46 @@ describe('McpVisualEditor 组件', () => {
     // ─── Server 管理 ─────────────────────────────────────────────────────────
 
     describe('Server 管理', () => {
-        it('点击 + 按钮应打开 JSON 导入并在导入后保存配置', async () => {
-            const onChange = vi.fn();
+        it('imports external MCP JSON and saves the canonical shape without reopening disabled servers', async () => {
             const onSave = vi.fn().mockResolvedValue(undefined);
             const api = makeRuntimeApi();
-            render(<McpVisualEditor {...makeProps(api, { onChange, onSave })} />);
+            render(<McpVisualEditor {...makeProps(api, { onSave })} />);
 
-            await waitFor(() => {
-                expect(screen.getByTitle('Import MCP JSON')).toBeInTheDocument();
-            });
-
-            const addBtn = screen.getByTitle('Import MCP JSON');
-            expect(addBtn).not.toBeNull();
-
-            fireEvent.click(addBtn);
-
-            await waitFor(() => {
-                expect(screen.getByText('Import MCP JSON')).toBeInTheDocument();
-            });
-
+            fireEvent.click(screen.getByRole('button', { name: 'Add Server' }));
+            fireEvent.change(screen.getByRole('textbox', { name: 'MCP server JSON' }), { target: { value: JSON.stringify({
+                mcpServers: {
+                    local: {
+                        command: 'synthetic', args: ['--read'], env: { MCP_PATH: '/fixture' },
+                        disabled: true, enabled: true, disabledTools: ['search'],
+                    },
+                    remote: {
+                        url: 'http://127.0.0.1:1/mcp', headers: { 'X-Test': 'fixture' }, oauth: false, timeout: 5000,
+                    },
+                },
+            }) } });
             fireEvent.click(screen.getByText('Import & Save'));
+            await waitFor(() => expect(onSave).toHaveBeenCalledExactlyOnceWith({
+                ...mockConfig,
+                local: {
+                    type: 'local', command: ['synthetic', '--read'], environment: { MCP_PATH: '/fixture' },
+                    enabled: false, disabledTools: ['search'],
+                },
+                remote: {
+                    type: 'remote', url: 'http://127.0.0.1:1/mcp', headers: { 'X-Test': 'fixture' }, oauth: false, timeout: 5000,
+                },
+            }));
+        });
 
-            await waitFor(() => {
-                expect(onChange).toHaveBeenCalledWith(
-                    expect.objectContaining({
-                        exa: expect.objectContaining({ type: 'local' }),
-                    })
-                );
-                expect(onSave).toHaveBeenCalledWith(
-                    expect.objectContaining({
-                        exa: expect.objectContaining({ type: 'local' }),
-                    })
-                );
-            });
+        it('keeps malformed import flags visible and leaves settings untouched', async () => {
+            const onSave = vi.fn();
+            render(<McpVisualEditor {...makeProps(makeRuntimeApi(), { onSave })} />);
+            fireEvent.click(screen.getByRole('button', { name: 'Add Server' }));
+            fireEvent.change(screen.getByRole('textbox', { name: 'MCP server JSON' }), { target: {
+                value: '{"mcpServers":{"example":{"command":"synthetic","disabled":"true"}}}',
+            } });
+            fireEvent.click(screen.getByText('Import & Save'));
+            expect(await screen.findByRole('alert')).toHaveTextContent('Invalid disabled flag');
+            expect(onSave).not.toHaveBeenCalled();
         });
     });
 });

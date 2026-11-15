@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
@@ -16,7 +16,7 @@ const adapters = ['plain', 'preact'] as const;
 let consumer: string;
 
 beforeAll(async () => {
-    consumer = await mkdtemp(join(tmpdir(), 'aotui-p2a-consumer-'));
+    consumer = await realpath(await mkdtemp(join(tmpdir(), 'aotui-p2a-consumer-')));
     await mkdir(join(consumer, 'node_modules/@aotui'), { recursive: true });
     for (const name of ['sdk', 'runtime']) {
         const source = join(repository, name), installed = join(consumer, 'node_modules/@aotui', name);
@@ -124,6 +124,9 @@ function request(observation: Observation, name: string, input: Readonly<Record<
 
 it.each(adapters)('loads and exercises the published %s SDK App through manifest and fresh Worker', async adapter => {
     const name = 'work_' + adapter;
+    const selectedId = 'billing_export_2026_11', otherId = 'b';
+    const selectedRef = selectedId + '.selected', otherRef = otherId + '.selected';
+    const itemRef = (index?: number) => selectedId + '.items' + (index === undefined ? '' : '[' + index + ']');
     const traceFile = join(consumer, name + '.trace'), gate = (which: string) => join(consumer, name + '-' + which);
     const folder = await appFolder(name, `
 import { appendFileSync, existsSync } from 'node:fs';
@@ -165,28 +168,28 @@ export default factory;
         const client = interaction(runtime, desktopId, appId);
         let current = await observe(client), serial = 0;
         const originalInstance = current.source.instanceId;
-        const originalView = current.views.find(view => view.id === 'item_a')!.viewInstanceId;
+        const originalView = current.views.find(view => view.id === selectedId)!.viewInstanceId;
         const call = (tool: string, input: Readonly<Record<string, JsonValue>>) => client.invoke(request(current, tool, input, 'work-' + ++serial));
         const success = (reply: Awaited<ReturnType<typeof call>>) => {
             expect(reply).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { success: true } } } });
             expect(JSON.stringify(reply)).not.toContain('Inspections:');
         };
-        expect(current.views.filter(view => view.type === 'Item')).toHaveLength(2);
+        expect(current.views.filter(view => view.type === 'Item').map(view => view.id)).toEqual([otherId, selectedId]);
         expect(current.tools.filter(tool => tool.name === 'inspect')).toHaveLength(1);
-        expect(body(current, 'item_a')).toContain('[Selected \\[work\\] \\\\ item](Data:selected)');
-        expect(current.refs.filter(ref => ref.viewId === 'item_a').map(ref => ref.refId)).toEqual(expect.arrayContaining(['items', 'items[0]', 'items[4]']));
+        expect(body(current, selectedId)).toContain('[Selected \\[work\\] \\\\ item](Data:selected)');
+        expect(current.refs.filter(ref => ref.viewId === selectedId).map(ref => ref.refId)).toEqual(expect.arrayContaining(['items', 'items[0]', 'items[4]']));
 
-        success(await call('inspect', { selected: 'item_a.selected', text: '$value view.items[0]', elements: ['item_a.items[0]', 'item_a.items[1]', 'item_a.items[2]'] }));
+        success(await call('inspect', { selected: selectedRef, text: '$value view.items[0]', elements: [itemRef(0), itemRef(1), itemRef(2)] }));
         current = await observe(client);
         expect(body(current)).toContain('{"selected":null,"elements":[0,false,""],"text":"$value view.items[0]","readonly":true}');
-        for (const [selected, value] of [['item_b.selected', 'false'], ['item_a.items[2]', '""'], ['item_a.items[3]', 'null'],
-            ['item_a.items[4]', '{"nested":[1,[false]]}'], ['item_a.items', '[0,false,"",null,{"nested":[1,[false]]}]']]) {
+        for (const [selected, value] of [[otherRef, 'false'], [itemRef(2), '""'], [itemRef(3), 'null'],
+            [itemRef(4), '{"nested":[1,[false]]}'], [itemRef(), '[0,false,"",null,{"nested":[1,[false]]}]']]) {
             success(await call('inspect', { selected: selected! }));
             current = await observe(client);
             expect(body(current)).toContain('"selected":' + value);
             expect(body(current)).not.toContain('"text":');
         }
-        expect(await call('count', { selected: 'item_b.selected' })).toMatchObject({ receipt: { executionPhase: 'not-dispatched',
+        expect(await call('count', { selected: otherRef })).toMatchObject({ receipt: { executionPhase: 'not-dispatched',
             outcome: { status: 'rejected', code: 'REF_VALUE_UNSUPPORTED', path: '$.selected' } } });
         expect(await call('update', { operation: 'reset', options: { mode: 'keep', numbers: [1, 9] } })).toMatchObject({
             receipt: { executionPhase: 'not-dispatched', outcome: { code: 'TOOL_INVALID_ARGS', path: '$.options.numbers[1]' } },
@@ -222,18 +225,18 @@ export default factory;
         current = await observe(client);
         const reset = request(current, 'update', { operation: 'reset', options: { mode: 'keep', numbers: [1, null] } }, 'reset');
         success(await client.invoke(reset)); success(await client.invoke(reset));
-        success(await call('inspect', { selected: 'item_a.selected' }));
+        success(await call('inspect', { selected: selectedRef }));
         current = await observe(client);
         expect(body(current)).toContain('"selected":null');
-        success(await call('count', { selected: 'item_a.selected' }));
+        success(await call('count', { selected: selectedRef }));
         success(await call('update', { operation: 'null' })); current = await observe(client);
-        success(await call('inspect', { selected: 'item_a.selected' })); current = await observe(client);
+        success(await call('inspect', { selected: selectedRef })); current = await observe(client);
         expect(body(current)).toContain('"selected":null');
         success(await call('update', { operation: 'reset' })); current = await observe(client);
-        success(await call('count', { selected: 'item_a.selected' }));
+        success(await call('count', { selected: selectedRef }));
 
         for (const [operation, issue] of [
-            ['invalid', { code: 'SNAPSHOT_INVALID', path: 'Ref item_a.selected $', message: 'Value does not match any declared alternative.' }],
+            ['invalid', { code: 'SNAPSHOT_INVALID', path: 'Ref ' + selectedRef + ' $', message: 'Value does not match any declared alternative.' }],
             ['oversized', { code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$.views[0].content.value', message: 'Serialized byte budget exceeded' }],
         ] as const) {
             const lastGood = current;
@@ -259,14 +262,14 @@ export default factory;
         }
 
         success(await call('update', { operation: 'reverse' })); current = await observe(client);
-        expect(current.refs.some(ref => ref.viewId === 'item_a' && ref.refId === 'items[3]')).toBe(false);
-        success(await call('inspect', { selected: 'item_a.items[0]' })); current = await observe(client);
+        expect(current.refs.some(ref => ref.viewId === selectedId && ref.refId === 'items[3]')).toBe(false);
+        success(await call('inspect', { selected: itemRef(0) })); current = await observe(client);
         expect(body(current)).toContain('"selected":{"nested":[1,[false]]}');
         success(await call('update', { operation: 'empty' })); current = await observe(client);
-        success(await call('inspect', { selected: 'item_a.items' })); current = await observe(client);
+        success(await call('inspect', { selected: itemRef() })); current = await observe(client);
         expect(body(current)).toContain('"selected":[]');
 
-        const stale = request(current, 'inspect', { selected: 'item_a.selected' }, 'stale');
+        const stale = request(current, 'inspect', { selected: selectedRef }, 'stale');
         success(await call('update', { operation: 'close' }));
         const closedPreview = await client.preview();
         expect(closedPreview).toMatchObject({ status: 'previewed' });
@@ -277,10 +280,10 @@ export default factory;
             receipt: { outcome: { code: 'REF_VIEW_UNAVAILABLE', path: '$.selected' } },
         });
         success(await call('update', { operation: 'close' })); current = await observe(client);
-        expect(body(current, 'item_a')).toBeUndefined();
+        expect(body(current, selectedId)).toBeUndefined();
         expect(current.tools.some(tool => tool.name === 'inspect')).toBe(true);
         success(await call('update', { operation: 'open' })); current = await observe(client);
-        expect(current.views.find(view => view.id === 'item_a')?.viewInstanceId).not.toBe(originalView);
+        expect(current.views.find(view => view.id === selectedId)?.viewInstanceId).not.toBe(originalView);
         expect(await client.invoke(stale)).not.toMatchObject({ receipt: { outcome: { status: 'succeeded' } } });
 
         const held = request(current, 'update', { operation: 'wait' }, 'held');
@@ -292,14 +295,14 @@ export default factory;
             kind: 'receipt', receipt: { invocationId: held.invocationId, observationId: held.observationId,
                 bindingId: held.bindingId, executionPhase: 'unknown', outcome: { status: 'unknown' } },
         });
-        expect(await call('count', { selected: 'item_a.selected' })).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
+        expect(await call('count', { selected: selectedRef })).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
         expect((await trace(traceFile)).filter(line => line === 'handler-entered')).toHaveLength(1);
         const prior = current;
         current = await observe(client);
         await writeFile(gate('work'), '');
-        const terminal = await client.readReceipt(held);
+        const terminal = await client.readReceipt({ observationId: held.observationId, invocationId: held.invocationId });
         success(terminal);
-        expect(await client.invoke(request(prior, 'count', { selected: 'item_a.selected' }, 'old-unseen'))).toMatchObject({
+        expect(await client.invoke(request(prior, 'count', { selected: selectedRef }, 'old-unseen'))).toMatchObject({
             kind: 'refused', code: 'OBSERVATION_UNAVAILABLE',
         });
         expect(terminal).toMatchObject({ receipt: { invocationId: held.invocationId, executionPhase: 'entered-returned' } });
@@ -711,7 +714,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, tools, initialize(
     }
 }, 15_000);
 
-it('serializes registered pending Apps while hiding a Worker whose first install is still in progress', async () => {
+it('lists registered pending Apps while hiding a Worker whose first install is still in progress', async () => {
     const name = 'install_visibility', log = join(consumer, name + '.trace'), release = log + '.release';
     const folder = await appFolder(name, `
 import { appendFileSync, existsSync } from 'node:fs';
@@ -727,15 +730,23 @@ export default createApp({ app_name: ${JSON.stringify(name)}, async initialize({
     try {
         const desktopId = await runtime.createDesktop(createDesktopId(name));
         const desktop = runtime.getDesktop(desktopId);
-        const pending = await desktop.registerPendingApp({ appId: createAppId('registered'), modulePath: join(folder, 'entry.mjs') });
-        installing = desktop.installDynamicWorkerApp(join(folder, 'entry.mjs'), { appId: createAppId(name) });
+        const pending = await desktop.registerPendingApp({ appId: createAppId('registered'),
+            name: 'registered', modulePath: join(folder, 'entry.mjs'), config: { projectPath: folder } });
+        installing = desktop.installDynamicWorkerApp(join(folder, 'entry.mjs'), { appId: createAppId(name), name });
         await waitFor(log, 'initializing');
-        const during = [{ appId: pending, status: 'pending' }];
+        const during = [{ appId: pending, name: 'registered', status: 'pending' }];
+        const first = desktop.getInstalledApps();
+        expect(first).toMatchObject(during);
+        for (const key of ['appInstanceId', 'modulePath', 'config', 'toolsEnabled', 'installedAt']) {
+            expect(first[0]).not.toHaveProperty(key);
+        }
+        Object.assign(first[0]!, { name: 'changed' });
         expect(desktop.getInstalledApps()).toMatchObject(during);
-        expect(runtime.serialize(desktopId).apps).toMatchObject(during);
         await writeFile(release, '');
         await installing;
-        expect(runtime.serialize(desktopId).apps).toMatchObject([...during, { appId: name, status: 'running' }]);
+        expect(desktop.getInstalledApps()).toMatchObject([...during, {
+            appId: name, name, status: 'running', appInstanceId: expect.any(String),
+        }]);
     } finally {
         await writeFile(release, '');
         await installing?.catch(() => {});
@@ -743,7 +754,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, async initialize({
     }
 }, 15_000);
 
-it('runs the installed CLI with a custom manifest entry and previews the published View', async () => {
+it('manages a local App through the installed CLI and previews its published View', async () => {
     const name = 'cli_manifest';
     const folder = await appFolder(name, `
 import { createApp } from '@aotui/sdk/app';
@@ -751,13 +762,30 @@ export default createApp({ app_name: ${JSON.stringify(name)}, initialize({ publi
     publish({ views: [{ id: 'current', type: 'Item', kind: 'state', body: 'View from the custom manifest entry' }] });
 }});
 `);
-    const config = join(folder, 'registry.json'), preload = join(folder, 'cli-test-config.mjs');
-    await writeFile(config, JSON.stringify({ version: 2, apps: { [name]: { source: 'local:' + folder, enabled: true, autoStart: false } } }));
-    await writeFile(preload, `import { AppRegistry } from '@aotui/runtime';
-AppRegistry.prototype.getDefaultConfigPath = () => ${JSON.stringify(config)};`);
+    const home = join(folder, 'home');
+    await mkdir(home);
+    const config = join(home, '.agentina/config.json');
     const cli = join(consumer, 'node_modules/@aotui/runtime/dist/cli.js');
-    const child = spawn(process.execPath, ['--import', pathToFileURL(preload).href, cli, 'run', name], {
-        cwd: consumer, stdio: ['pipe', 'pipe', 'pipe'],
+    const env = { ...process.env, HOME: home, USERPROFILE: home, AOTUI_DATA_DIR: join(home, 'data') };
+    const runCli = (...args: string[]) => execute(process.execPath, [cli, ...args], { cwd: folder, env, timeout: 5_000 });
+    await runCli('install', '.');
+    expect(JSON.parse(await readFile(config, 'utf8')).apps[name]).toMatchObject({
+        source: 'local:' + folder, enabled: true, autoStart: true, distribution: { type: 'local' },
+    });
+    await expect(runCli('install', '.')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('already registered') });
+    await runCli('install', 'local:.', '--force', '--no-autostart');
+    const forced = await readFile(config, 'utf8');
+    expect(JSON.parse(forced).apps[name].autoStart).toBe(false);
+    for (const [command, arg] of [['add', '.'], ['link', '.'], ['uninstall', name]]) {
+        await expect(runCli(command, arg)).rejects.toMatchObject({
+            code: 1, stderr: expect.stringContaining(`Unknown command: ${command}`),
+        });
+    }
+    expect(await readFile(config, 'utf8')).toBe(forced);
+    expect((await runCli('list')).stdout).toContain(name);
+
+    const child = spawn(process.execPath, [cli, 'run', name], {
+        cwd: folder, env, stdio: ['pipe', 'pipe', 'pipe'],
     });
     const finished = once(child, 'close');
     let output = '', errors = '';
@@ -775,4 +803,7 @@ AppRegistry.prototype.getDefaultConfigPath = () => ${JSON.stringify(config)};`);
         if (child.exitCode === null && child.signalCode === null) child.kill();
         await finished;
     }
+    await runCli('remove', name);
+    expect(JSON.parse(await readFile(config, 'utf8')).apps).toEqual({});
+    expect(await readFile(join(folder, 'entry.mjs'), 'utf8')).toContain('View from the custom manifest entry');
 }, 15_000);

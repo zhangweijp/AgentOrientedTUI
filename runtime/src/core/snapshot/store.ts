@@ -5,7 +5,7 @@ import type {
     SnapshotStoreOptions, SnapshotStoreStats, ToolLookup, ToolSelector, AppIdentityRead,
 } from './types.js';
 import { utf8Size } from './json.js';
-import { refKey } from './snapshot-support.js';
+import { captureSnapshotLimits, refKey } from './snapshot-support.js';
 import { validatePreparedV3Draft } from './v3-validator.js';
 
 interface SnapshotEntry {
@@ -86,6 +86,7 @@ function snapshotId(appId: string, instanceId: string, revision: number): string
  * Does NOT prove that a Producer's input represented an atomic SDK render; M3 owns that.
  */
 export function createSnapshotCore(options: SnapshotStoreOptions = {}): SnapshotCore {
+    const limits = captureSnapshotLimits(options);
     const now = options.now ?? Date.now;
     const maxHistoryEntries = options.maxHistoryEntries ?? DEFAULT_HISTORY_ENTRIES;
     const maxHistoryBytes = options.maxHistoryBytes ?? DEFAULT_HISTORY_BYTES;
@@ -270,7 +271,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
         accept(input: unknown): CommitResult {
             if (disposed) return rejected('APP_STOPPED', 'Snapshot Core is closed');
             const time = clock();
-            const checked = validatePreparedV3Draft(input, options.limits, (appId, instanceId) => {
+            const checked = validatePreparedV3Draft(input, limits, (appId, instanceId) => {
                 const app = apps.get(appId);
                 return app?.instanceId === instanceId ? app.current?.snapshot.tools : undefined;
             });

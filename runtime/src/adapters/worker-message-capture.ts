@@ -1,5 +1,5 @@
 import { isToolResultData } from '../spi/core/tool-result.js';
-import { SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY } from '../spi/worker-protocol/types.js';
+import { SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY } from '../spi/worker-protocol/types.js';
 import { canonicalJson, copyJson, utf8Size, type JsonCopyLimits } from '../core/snapshot/json.js';
 import type { JsonValue } from '../core/snapshot/types.js';
 import { VIEW_TYPE_PARAMETERS_MODE } from '../core/tool/ordinary-parameter-contract.js';
@@ -52,7 +52,7 @@ export function captureViewToolCapabilities(input: unknown): ViewToolCapabilityC
             !capabilities.every(item => text(item) && item.length <= 128) || new Set(capabilities).size !== capabilities.length) {
             return Object.freeze({ ok: false, code: 'WORKER_CAPABILITY_INVALID' });
         }
-        if (!capabilities.every(item => item === PARAMETERS_V4_CAPABILITY || item === SNAPSHOT_CAPABILITY)) {
+        if (!capabilities.every(item => item === PARAMETERS_V5_CAPABILITY || item === SNAPSHOT_CAPABILITY)) {
             return Object.freeze({ ok: false, code: 'WORKER_CAPABILITY_UNSUPPORTED' });
         }
         return Object.freeze({ ok: true, capabilities });
@@ -80,18 +80,15 @@ export function captureTypeParametersTerminal(
         const value = captureInvocationJson(input);
         if (!invocationObject(value) || !exact(value, [
             'type', 'requestId', 'appId', 'instanceId', 'argumentMode', 'success', 'terminal',
-        ]) || value.type !== 'VIEW_TOOL_INVOKE_V4_RESPONSE' || value.requestId !== expected.requestId ||
+        ]) || value.type !== 'VIEW_TOOL_INVOKE_V5_RESPONSE' || value.requestId !== expected.requestId ||
             value.appId !== expected.appId || value.instanceId !== expected.instanceId ||
             value.argumentMode !== VIEW_TYPE_PARAMETERS_MODE || value.success !== true || !invocationObject(value.terminal)) {
             return null;
         }
-        const { phase, result, failureEffects } = value.terminal;
+        const { phase, result } = value.terminal;
         if (phase === 'finished-unknown') return exact(value.terminal, ['phase']) ? { phase } : null;
-        if (!exact(value.terminal, ['phase', 'result', ...(Object.hasOwn(value.terminal, 'failureEffects') ? ['failureEffects'] : [])])) return null;
-        if (!['not-entered', 'entered-returned'].includes(phase as string) || !isToolResultData(result) ||
-            phase === 'not-entered' && result.success !== false ||
-            Object.hasOwn(value.terminal, 'failureEffects') &&
-                (phase !== 'entered-returned' || result.success !== false || failureEffects !== 'none' && failureEffects !== 'partial')) {
+        if (!exact(value.terminal, ['phase', 'result']) || (phase !== 'not-entered' && phase !== 'entered-returned') ||
+            !isToolResultData(result) || (phase === 'not-entered' && result.success !== false)) {
             return null;
         }
         return value.terminal as unknown as ViewToolInvocationTerminal;

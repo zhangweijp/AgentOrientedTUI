@@ -18,17 +18,17 @@ agentina install @agentina/aotui-ide
 
 ## Package default
 
-The package has one default managed factory built with `createTUIApp` and backed by `ScopedIDEApp`. Normal Host startup installs this package entry through AppRegistry and the generic Semantic Source; there is no route-specific app entry or IDE-only Runtime mode.
+The package exports its managed scoped IDE factory as the default entry. The Host installs it through AppRegistry and the generic Semantic Source. The standard launch configuration accepts `projectPath`, `ideSessionKey`, `AOTUI_DATA_DIR` and `ideHistoryPath`.
 
 Opening files publishes FileDetail Views and makes the IDE's FileDetail Tool set available. The IDE registers one App-level set for the `FileDetail` ViewType; ten open files still share one `edit_file`, one `write_file`, one `rename_file`, and one `delete_file` declaration. Each Tool call takes an explicit business path (`filePath`, or `oldPath`/`newPath` for rename), and the IDE checks it against its current loaded-file records. The SDK does not infer a file target from which View displayed the Tool.
 
 File contents, search matches and LSP results appear in their current Views. Successful search, LSP and batch Tool results carry receipts rather than duplicate result collections. Receipts point to the actual FileDetail ID while that View remains current; delete/close receipts point to Workspace, and a failed View refresh preserves its warning and points to Workspace for recovery.
 
-See [SCOPED_IDE.md](./SCOPED_IDE.md) for tool contracts, limits and cleanup, and [Semantic Host integration](../../runtime/docs/semantic-host-integration.zh-CN.md) for context ownership and outcomes. Legacy data import, when configured, is a data migration; it is not an alternate app entry.
+See [SCOPED_IDE.md](./SCOPED_IDE.md) for tool contracts, limits and cleanup, and [Semantic Host integration](../../runtime/docs/semantic-host-integration.zh-CN.md) for context ownership and outcomes.
 
 ## Runtime Requirements
 
-- Matching SDK 0.8.0-srt.1 and Runtime 7.0.0-srt.1 delivery artifacts with the `view-type-tools-v4` authoring protocol, `view-type-parameters-v1` ordinary/Ref parameters, Snapshot 3, and `app-lifecycle-v2` contracts. `createTUIApp` writes the authoring marker; Runtime rejects an older or mismatched factory before initialization. Version numbers alone are insufficient; install artifacts from one compatible delivery.
+- Matching SDK 0.8.0 and Runtime 7.0.0 artifacts from one delivery. The IDE uses `view-type-tools-v4` authoring, `view-type-parameters-v1` ordinary and Ref parameters, Snapshot 3, and `app-lifecycle-v2`. Runtime checks the `createTUIApp` authoring marker before initialization.
 - TypeBox 1.4.3 for the IDE's single-source Tool parameter declarations.
 - Optional local language servers for advanced code intelligence
 

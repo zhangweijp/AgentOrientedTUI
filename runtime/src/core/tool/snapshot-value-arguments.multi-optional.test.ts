@@ -25,14 +25,14 @@ function fixture(fields: Record<string, any> = { a: ref(), b: ref() }, required 
     values: Record<string, any> = { a: notes[0], b: notes[1] }, kinds: Record<string, string> = {}) {
     const schema = { type: 'object', properties: { ...fields, ordinary: { type: 'string', enum: ['keep'], default: 'keep' } },
         required, additionalProperties: false };
-    const compiled = compileOrdinarySchema(schema, 'view-type-parameters-v1');
+    const compiled = compileOrdinarySchema(schema);
     if (!compiled.ok) throw Error(JSON.stringify(compiled.issue));
     const core = createSnapshotCore(), registry = createViewOwnedTools('app', 'run');
     cleanup.push(() => { registry.dispose(); core.lifecycle.dispose(); });
     core.lifecycle.startApp('app', 'run'); const view = registry.mount('aa', 'NoteView');
     const entries: any[] = [], dispatches: any[] = [];
     const release = registry.registerTypeTool({ viewType: 'NoteView', name: 'inspect', description: 'Inspect refs',
-        inputSchema: schema }, { safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+        inputSchema: schema }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
         createSafeOrdinaryParametersInvoker: contract => async args => {
             const valid = contract.validateResolvedInput!(args);
             if (!valid.ok) return { phase: 'not-entered', result: { success: false, error: { code: 'E_INVALID_ARGS', message: 'Invalid' } } };
@@ -61,7 +61,7 @@ function fixture(fields: Record<string, any> = { a: ref(), b: ref() }, required 
         authorize: () => true, canReadReceipt: () => true,
     }, execution: { resolve: source => {
         if (bindings.has(source)) return bindings.get(source);
-        const binding = { identity: source, mode: 'view-type-parameters-v1',
+        const binding = { identity: source,
         isLive: () => ({ ok: registry.validateTypeToolBinding(source.tool, source.execution).success }),
         validateInput: (_source, input) => { const r = compiled.contract.validateResolvedInput!(input); return r.ok ? { ok: true, value: r.value } : { ok: false }; },
         execute: async context => { dispatches.push(context); const terminal = await registry.invokeTypeTool(source.tool, source.execution, context.effectiveInput);
@@ -111,7 +111,8 @@ describe('serial observation adoption with object and array Refs', () => {
         expect(f.client.adoptObservation(next.observation.observationId)).toEqual({ status: 'adopted' });
         expect(await f.client.invoke(request('stale'))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
         expect(f.entries).toHaveLength(1);
-        expect(await f.client.readReceipt(request('before-adopt'))).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
+        expect(await f.client.readReceipt({ observationId: first.observation.observationId, invocationId: 'before-adopt' }))
+            .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
         expect(f.entries).toHaveLength(1); // A receipt remains readable; it does not execute again.
         expect(await f.client.invoke({ invocationId: 'current', observationId: next.observation.observationId,
             bindingId: next.observation.bindings[0]!.bindingId, input: { a: 'aa.a', b: 'aa.b' } }))
@@ -291,7 +292,7 @@ describe('multi/optional: complete arguments and envelope retain cumulative limi
 
 function message(f: ReturnType<typeof fixture>, raw: any) {
     const p = f.prepared(raw);
-    return JSON.parse(JSON.stringify({ type: 'VIEW_TOOL_INVOKE_V4', requestId: 'test', appId: 'app', instanceId: 'run',
+    return JSON.parse(JSON.stringify({ type: 'VIEW_TOOL_INVOKE_V5', requestId: 'test', appId: 'app', instanceId: 'run',
         argumentMode: 'view-type-parameters-v1', snapshotId: f.original.id, tool: f.tool, execution: f.tool.execution,
         rawArgs: p.rawArgs, effectiveArgs: p.effectiveArgs, refSources: p.refSources }));
 }

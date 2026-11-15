@@ -2,7 +2,32 @@
 
 `@aotui/runtime/core` 提供 V3 Snapshot、App/ViewType Tool、App 实例交互与 Observation、参数合同与 StateSession；`@aotui/runtime/adapters/memory-state-storage` 提供内存存储。Core 不加载 DOM、Worker、Node 或模型 SDK。业务规则和外部副作用仍由 App/Host 负责。
 
-本例面向自建 Host／Producer 的低层装配者。普通 App 作者先读 [SDK 指南](../../sdk/README.md)，不需复制这里的绑定、授权或资源接线。本例只依赖 Runtime 的纯 Core 与内存存储入口；Agent Driver 用户通过独立 `@aotui/agent-driver-adapter` 接入。安装版本和 tar 身份以同次交付为准，版本号不能替代联合验证。
+本例面向自建 Host／Producer 的低层装配者，只使用 Runtime 的纯 Core 与内存存储入口。普通 App 作者可从 `@aotui/sdk` 包内 `docs/app-authoring.md` 开始。Agent Driver 用户通过独立 `@aotui/agent-driver-adapter` 接入。安装时使用同次交付记录的版本与 tar。[本地交付说明](sdk-runtime-distribution.md#current-delivery)
+
+B02 起，直接使用 `InstanceInteraction` 的 Core 集成者用 `inspect()` 替代 `sweepExpired()`。`inspect()` 仍会处理到期记录，自动回收仍由实例维护。
+
+<a id="snapshot-limits"></a>
+## Snapshot 限额
+
+B03 的 `createSnapshotCore({ limits })` 在构造时固定有效配置。`limits` 可省略或设为 `undefined`。提供时须是 `options` 自有可枚举的数据属性，值为普通对象或 null-prototype 对象。对象只接受下表的自有可枚举数据字段。省略或设为 `undefined` 的字段采用默认值。每个覆盖值是从 0 到默认值的安全整数，形状错误抛 `TypeError`，值超出范围或类型错误抛 `RangeError`。限额确定后，调用方可继续修改自己的对象。
+
+| 字段 | 默认值及硬上限 | 计量对象 |
+| --- | ---: | --- |
+| `maxDepth` | 48 | JSON 值深度，根为 0 |
+| `maxNodes` | 100,000 | 容器和每个子值，属性键不计节点 |
+| `maxSnapshotBytes` | 4 MiB | 完整 prepared draft，含 producer envelope，Store 之后生成 id 和 revision |
+| `maxViews` | 1,000 | View 条目数 |
+| `maxRefs` | 10,000 | Ref 条目数 |
+| `maxTools` | 1,000 | Tool 条目数 |
+| `maxViewContentBytes` | 512 KiB | `content.value`，包含 Markdown 的 JSON 引号与转义 |
+| `maxRefPayloadBytes` | 512 KiB | 单个 Ref payload |
+| `maxToolSchemaBytes` | 64 KiB | 完整 normalized Tool profile，含内部参数合同标记 |
+
+表中的字节限额使用 canonical JSON UTF-8，KiB 和 MiB 分别为 1,024 和 1,048,576 字节。复制时的近似成本另有限制。若旧 Host 依靠修改配置改变已有 Core 的限额，需要在创建 Core 前选定限额。原先高于默认值的覆盖须改为允许的范围。
+
+`compileOrdinarySchema` 和 `compileValueSchema` 的失败码包括 `PARAMETER_DECLARATION_INVALID`、`PARAMETER_DECLARATION_UNSUPPORTED` 和 `PARAMETER_DECLARATION_CAPACITY`。对 `OrdinaryCompileResult` 做穷尽判断时须处理容量分支。完整 Tool profile 超限时，`ordinaryParameterProfile` 抛 `SnapshotDataError`，其 code 为 `TOOL_SCHEMA_CAPACITY`，`compileOrdinaryProfile` 返回 `null`。Ref 自有的值 Schema 单独校验。
+
+## 完整 Core 示例
 
 两个 Tool 都注册一次到 `Note` ViewType，统一使用正式 `view-type-parameters-v1` profile。`add` 接收普通数值；`read` 接收一个必填 Note 对象 Ref。Note 是本例的内存业务数据，不是文件定位。下面的 JSON 注解与 SDK TypeBox `refParam` 对应，低层装配者不另造 Ref parser。Core 从原观察解析参数，授权与执行使用同一 effectiveInput。
 
@@ -24,6 +49,9 @@ function check(value: unknown, message: string): asserts value {
 
 const appId = 'notes', instanceId = 'tutorial-run-1';
 const snapshots = createSnapshotCore({ now: () => 0 });
+const previewLimits = { maxViews: 0 };
+const preview = createSnapshotCore({ limits: previewLimits });
+previewLimits.maxViews = 1;
 snapshots.lifecycle.startApp(appId, instanceId);
 const registry = createViewOwnedTools(appId, instanceId);
 const view = registry.mount('detail', 'Note');
@@ -44,8 +72,8 @@ const readSchema = {
     suffix: { type: 'string' },
   }, required: ['note', 'suffix'], additionalProperties: false,
 };
-check(compileOrdinarySchema(addSchema, 'view-type-parameters-v1').ok, 'Add Schema');
-check(compileOrdinarySchema(readSchema, 'view-type-parameters-v1').ok, 'Ref Schema');
+check(compileOrdinarySchema(addSchema).ok, 'Add Schema');
+check(compileOrdinarySchema(readSchema).ok, 'Ref Schema');
 
 let count = 1, noteText = 'old', handlerEntries = 0;
 const projection = new SemanticProjectionCoordinator({
@@ -75,15 +103,11 @@ function register(name: string, schema: Readonly<Record<string, unknown>>,
   execute: (args: Readonly<Record<string, unknown>>) => Promise<ToolResult>) {
   return registry.registerTypeTool({ viewType: 'Note', name, description: name === 'add' ? 'Add to the counter' : 'Inspect a displayed Note',
     inputSchema: schema }, {
-    safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+    safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
     createSafeOrdinaryParametersInvoker: contract => {
       contracts.set(name, contract);
       return async args => {
-        const result = await execute(args);
-        if (result.success) return { phase: 'entered-returned', result };
-        const { effects, ...data } = result;
-        return { phase: 'entered-returned', result: data,
-          ...(effects === undefined ? {} : { failureEffects: effects }) };
+        return { phase: 'entered-returned', result: await execute(args) };
       };
     },
   });
@@ -94,24 +118,16 @@ function installBinding(tool: ReturnType<typeof registry.listTools>[number]) {
   check(tool.execution.kind === 'view-type', 'One type-level execution identity');
   const contract = contracts.get(tool.name); check(contract, 'Captured registration contract');
   const binding: ExecutionBinding = {
-    identity: {}, mode: 'view-type-parameters-v1',
+    identity: {},
     validateInput: (_source, input) => {
-      const checked = (contract.validateResolvedInput ?? contract.validate)(input);
+      const checked = contract.validateResolvedInput(input);
       return checked.ok ? { ok: true, value: checked.value as Readonly<Record<string, JsonValue>> } : { ok: false };
     },
     isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.execution).success }),
     execute: async context => {
       const terminal = await registry.invokeTypeTool(context.source.tool, context.source.execution, context.effectiveInput);
-      if (terminal.result.success) {
-        check(terminal.result.data?.completed === true, 'Expected a concise completion receipt');
-        return { kind: 'tool-result', phase: terminal.phase,
-          result: { success: true, data: { completed: true } } } satisfies ExecutionFact;
-      }
-      return { kind: 'tool-result', phase: terminal.phase,
-        result: { success: false, error: { code: terminal.result.error?.code ?? 'BUSINESS',
-          message: terminal.result.error?.message ?? 'Business failure' } },
-        ...(terminal.phase === 'entered-returned' && terminal.failureEffects !== undefined
-          ? { failureEffects: terminal.failureEffects } : {}) } satisfies ExecutionFact;
+      if (terminal.result.success) check(terminal.result.data?.completed === true, 'Expected a concise completion receipt');
+      return { kind: 'tool-result', ...terminal } satisfies ExecutionFact;
     },
   };
   bindings.set(bindingKey(tool.id, tool.execution), binding);
@@ -128,6 +144,15 @@ function publish(text: string) {
   check(result.status === 'published', 'Expected a new source version');
 }
 publish('old');
+const sample = snapshots.store.readLatest(appId);
+check(sample.status === 'ready', 'Expected a published Note');
+preview.lifecycle.startApp(appId, instanceId);
+try {
+  const { views, refs, tools } = sample.snapshot;
+  const result = preview.committer.accept({ schemaVersion: 3, appId, instanceId,
+    producerSeq: 1, sourceEpoch: 1, capturedAt: 0, views, refs, tools });
+  check(result.status === 'rejected' && result.issue.path === '$.views', 'The Core retained maxViews: 0');
+} finally { preview.lifecycle.dispose(); }
 
 let authorizations = 0;
 const authority = createAppInteraction(snapshots.store, { namespace: 'tutorial:tutorial-run-1', now: () => 0, appId, instanceId, policy: {
@@ -177,6 +202,9 @@ try {
     'Independent witness confirms original frozen values');
   const current = fresh.views[0]?.content;
   check(current?.format === 'markdown-v1' && current.value === 'Counter: 3\nNote: new', 'Current data is presented in the View');
+  const prior = await client.readReceipt({ observationId: old.observationId, invocationId: 'add-1' });
+  check(prior.kind === 'receipt' && prior.receipt.outcome.status === 'succeeded' && count === 3,
+    'Reading the original receipt after adoption preserves the counter');
 
   const oldAdd = fresh.tools.find(tool => tool.name === 'add'); check(oldAdd, 'Observed add');
   const oldKey = bindingKey(oldAdd.id, oldAdd.execution), oldBinding = bindings.get(oldKey);
@@ -227,7 +255,7 @@ export const coreTutorialFacts = { handlerEntries, authorizations: beforeClosed,
 ```
 <!-- b1-example:end -->
 
-低层注册 SPI 的 `safeOrdinaryParametersInvocationMode: 'ordinary-v2'` 是既有可信 invoker 工厂字段；执行绑定、参数 profile 和 Host/Worker mode 使用 `view-type-parameters-v1`，不能把前者当作仍支持旧 Worker mode 的依据。
+低层注册 SPI 的 `safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4'` 声明 invoker 实现的 ABI。Core 与 Worker 共用 `view-type-parameters-v1` 参数 profile。`ExecutionBinding` 的 validator 可以拒绝输入，接受时返回等值参数。Snapshot View 正文使用 `markdown-v1`，Ref 发布 `snapshot-value` JSON payload。
 
 View 与 Ref 仍有实例/原快照来源身份，Tool 只有 App/ViewType activation；关闭最后一个匹配 View或替换注册会拒绝旧 activation。Ref 参数不把 Tool 隐式绑定某个文件。App 检查对象是否仍存在、当前业务权限和父子归属；有业务意义的路径/标题/内容不必包装成 Ref。当前合同同时支持多个顶层对象／对象列表 Ref 和可选 Ref；缺席字段保持缺席，出现的字段必须有效，整个参数与来源 envelope 共享既有预算。Type.Array(refParam(...)) 表达 Ref 名数组，多选按输入顺序解析；重复选择保留，空选择不触发解析。新观察先准备，再由显式 adopt 撤销旧资格；单纯 observe 不会换掉当前观察。
 

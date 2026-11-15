@@ -48,7 +48,7 @@ export async function mountPreactApp(RootComponent: ComponentType, container: HT
         toolOwners,
         appId: context.appId,
         desktopId: context.desktopId,
-        launchConfig: (context as { launchConfig?: Record<string, unknown> }).launchConfig,
+        launchConfig: context.launchConfig,
         refExporter: context.refExporter,
         persistence: context.persistence,
         appLifecycle: context.appLifecycle,
@@ -100,7 +100,7 @@ export async function mountPreactApp(RootComponent: ComponentType, container: HT
         }
     };
 
-    context.setViewReader?.(mounted => readDOMAppViews(container, mounted));
+    context.setViewReader(mounted => readDOMAppViews(container, mounted));
     try {
         renderCommitted(rootVNode());
     } catch (error) {

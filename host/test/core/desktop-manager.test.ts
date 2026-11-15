@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DesktopManager } from '../../src/core/desktop-manager.js';
-import { SEMANTIC_INTERACTION_MODES } from '@aotui/runtime';
 
 describe('DesktopManager', () => {
     let mockKernel: any;
@@ -9,13 +8,12 @@ describe('DesktopManager', () => {
     beforeEach(() => {
         mockKernel = {
             createDesktop: vi.fn().mockResolvedValue('dt_test'),
-            getDesktop: vi.fn().mockReturnValue({ id: 'dt_test' }),
+            getDesktop: vi.fn().mockReturnValue({ id: 'dt_test', getInstalledApps: () => [{ id: 'app' }] }),
         };
 
         mockRegistry = {
-            loadFromConfig: vi.fn().mockResolvedValue(undefined),
-            loadFromEntries: vi.fn().mockResolvedValue(undefined),
-            registerTransient: vi.fn().mockResolvedValue('dev-app'),
+            loadFromConfig: vi.fn().mockResolvedValue([]),
+            loadFromEntries: vi.fn().mockResolvedValue([]),
             list: vi.fn().mockReturnValue([]),
             installAll: vi.fn().mockResolvedValue([]),
             getEntries: vi.fn().mockReturnValue({
@@ -28,12 +26,12 @@ describe('DesktopManager', () => {
         };
     });
 
-    it('uses standard AppRegistry installation with the supported Semantic profiles by default', async () => {
+    it('uses standard AppRegistry installation without restating the Runtime tool default', async () => {
         const manager = new DesktopManager({ kernel: mockKernel, appRegistry: mockRegistry });
-        await manager.createDesktop(undefined, { projectPath: '/test/workspace' });
+        const desktop = await manager.createDesktop(undefined, { projectPath: '/test/workspace' });
+        expect(desktop.thirdPartyAppCount).toBe(1);
         expect(mockRegistry.installAll).toHaveBeenCalledWith(mockKernel.getDesktop(), {
             dynamicConfig: { projectPath: '/test/workspace' },
-            interactionModes: SEMANTIC_INTERACTION_MODES,
         });
     });
 
@@ -63,7 +61,6 @@ describe('DesktopManager', () => {
             }
         ]);
         expect(mockRegistry.loadFromConfig).not.toHaveBeenCalled();
-        expect(mockRegistry.registerTransient).not.toHaveBeenCalled();
     });
 
     it('should expose app config from registry entries instead of Config singleton', async () => {

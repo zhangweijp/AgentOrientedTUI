@@ -41,10 +41,9 @@ The App checks explicit business selectors such as filePath against its current 
 | Handler fact | ToolResult |
 |---|---|
 | Completed | success:true and a concise receipt; update the View for current data |
-| Known no side effect on failure | success:false with effects:'none' |
-| Known partial side effects | success:false with effects:'partial' and recovery information |
-| Failure with unknown effects | success:false without an invented effects guarantee |
-| Throw / malformed result / lost reply | Runtime reports the appropriate entered/unknown outcome; no automatic business retry |
+| App reports a failure | success:false with a business error and optional recovery data |
+| Throw or malformed result | The Worker reports an ended execution with unknown result |
+| Wait ends before a trusted reply | Runtime continues tracking the operation; the Host can read the original receipt |
 
 ## Ref and App cleanup
 
@@ -52,4 +51,4 @@ Use `refParam` in the ViewType definition. Publish JSON values in their owning V
 
 Applications that own external resources use plain TypeScript `registerCleanup({ stop, close })` or Preact `useAppLifecycle({ stop, close })`. Each callback is optional. The application releases its own processes, files and services. Runtime and SDK release their registrations, observations, renderer and Worker resources. Persistence has its own flush and close contract.
 
-[Migration](migration.md) removes the ordinary Hook and UI return path without a compatibility shell. Changing the SDK author API does not change the Runtime wire or Observation contract.
+[Package migration](migration.md) lists the current author, Host and Worker entry points.

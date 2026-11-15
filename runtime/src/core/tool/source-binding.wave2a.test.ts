@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
 import { acquireToolSource } from './source-binding.js';
-import { compileOrdinaryParams } from './ordinary-parameter-contract.js';
+import { compileOrdinarySchema } from './ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
 
-const compiled = compileOrdinaryParams({});
+const compiled = compileOrdinarySchema({ type: 'object', properties: {} });
 if (!compiled.ok) throw new Error('Fixture schema must compile');
 
 describe('Wave 2A: current Store lease and historical-source contract', () => {

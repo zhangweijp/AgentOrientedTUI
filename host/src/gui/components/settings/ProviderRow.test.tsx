@@ -49,7 +49,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -64,7 +63,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -78,7 +76,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={1}
-                    activeProviderId="anthropic"
                     {...mockHandlers}
                 />
             );
@@ -97,7 +94,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={[]}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -111,7 +107,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={[]}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -128,7 +123,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId="anthropic"
                     {...mockHandlers}
                 />
             );
@@ -146,7 +140,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={providersNoActive}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -167,7 +160,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={manyProviders}
                     selectedProviderId={null}
-                    activeProviderId="google"
                     {...mockHandlers}
                 />
             );
@@ -185,7 +177,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -199,7 +190,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -218,7 +208,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -232,7 +221,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -248,7 +236,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -265,7 +252,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -290,7 +276,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -315,7 +300,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -338,7 +322,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -352,7 +335,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -366,7 +348,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -385,7 +366,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={[mockProviders[0]]}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -400,7 +380,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -418,7 +397,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={providersNoActive}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                 />
             );
@@ -434,7 +412,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={2}
-                    activeProviderId="anthropic"
                     {...mockHandlers}
                 />
             );
@@ -452,7 +429,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                     onAddProvider={onAddProvider}
                 />
@@ -469,7 +445,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                     onAddProvider={onAddProvider}
                 />
@@ -486,7 +461,6 @@ describe('ProviderRow', () => {
                 <ProviderRow
                     providers={mockProviders}
                     selectedProviderId={null}
-                    activeProviderId={null}
                     {...mockHandlers}
                     onAddProvider={onAddProvider}
                 />

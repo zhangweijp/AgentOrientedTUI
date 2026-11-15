@@ -25,7 +25,8 @@ const mockDb = {
 let mockConfigs: any[] = [];
 
 vi.mock('../src/db/index.js', () => ({
-    getDb: () => mockDb
+    getDb: () => mockDb,
+    persistDatabase: vi.fn()
 }));
 
 // Mock ModelRegistry
@@ -42,9 +43,9 @@ const createMockModelRegistry = (): ModelRegistry => ({
         supportedModels: ['gpt-4', 'gpt-4o'],
     }),
     getModels: vi.fn().mockResolvedValue([
-        { id: 'openai/gpt-4', name: 'GPT-4', tool_call: true, reasoning: false },
-        { id: 'openai/gpt-4o', name: 'GPT-4o', tool_call: true, reasoning: false },
-        { id: 'anthropic/claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', tool_call: true, reasoning: false },
+        { id: 'gpt-4', catalogId: 'openai/gpt-4', name: 'GPT-4', tool_call: true, reasoning: false },
+        { id: 'gpt-4o', catalogId: 'openai/gpt-4o', name: 'GPT-4o', tool_call: true, reasoning: false },
+        { id: 'claude-3-5-sonnet-20241022', catalogId: 'anthropic/claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', tool_call: true, reasoning: false },
     ]),
     refresh: vi.fn().mockResolvedValue(undefined),
     getCacheStatus: vi.fn().mockReturnValue({
@@ -53,7 +54,6 @@ const createMockModelRegistry = (): ModelRegistry => ({
         providerCount: 2,
         modelCount: 3,
     }),
-    getProviderRegistry: vi.fn().mockResolvedValue({}),
 } as any);
 
 describe('LLMConfigService', () => {
@@ -145,6 +145,7 @@ describe('LLMConfigService', () => {
             const input: LLMConfigInput = {
                 name: 'Config 1',
                 model: 'gpt-4',
+                providerId: 'openai',
             };
 
             const result = await service.createConfig(input);
@@ -153,8 +154,8 @@ describe('LLMConfigService', () => {
         });
 
         it('should not set second config as active', async () => {
-            await service.createConfig({ name: 'Config 1', model: 'gpt-4' });
-            const result = await service.createConfig({ name: 'Config 2', model: 'claude-3' });
+            await service.createConfig({ name: 'Config 1', model: 'gpt-4', providerId: 'openai' });
+            const result = await service.createConfig({ name: 'Config 2', model: 'claude-3-5-sonnet-20241022', providerId: 'anthropic' });
 
             expect(result.isActive).toBe(false);
         });
@@ -197,28 +198,28 @@ describe('LLMConfigService', () => {
         });
     });
 
-    describe('getActiveLLMConfig', () => {
-        it('should return active config', () => {
-            service.createConfig({
+    describe('resolveLLMConfig', () => {
+        it('should return active config', async () => {
+            await service.createConfig({
                 name: 'Active Config',
                 model: 'gpt-4',
+                providerId: 'openai',
                 apiKey: 'sk-test'
             });
 
-            const config = service.getActiveLLMConfig();
+            const config = await service.resolveLLMConfig();
 
             expect(config).not.toBeNull();
             expect(config?.model).toBe('gpt-4');
             expect(config?.apiKey).toBe('sk-test');
         });
 
-        it('should return null when no active config', () => {
-            const config = service.getActiveLLMConfig();
-            expect(config).toBeNull();
+        it('reports missing active configuration', async () => {
+            await expect(service.resolveLLMConfig()).rejects.toThrow('Choose a Provider and model in Settings');
         });
 
-        it('should convert to AgentDriverV2 LLMConfig format', () => {
-            service.createConfig({
+        it('should convert to AgentDriverV2 LLMConfig format', async () => {
+            await service.createConfig({
                 name: 'OpenAI Config',
                 model: 'gpt-4',
                 providerId: 'openai',
@@ -228,7 +229,7 @@ describe('LLMConfigService', () => {
                 maxSteps: 15
             });
 
-            const config = service.getActiveLLMConfig();
+            const config = await service.resolveLLMConfig();
 
             expect(config).toMatchObject({
                 model: 'gpt-4',
@@ -244,9 +245,9 @@ describe('LLMConfigService', () => {
     });
 
     describe('getAllConfigs', () => {
-        it('should return all configs', () => {
-            service.createConfig({ name: 'Config 1', model: 'gpt-4' });
-            service.createConfig({ name: 'Config 2', model: 'claude-3' });
+        it('should return all configs', async () => {
+            await service.createConfig({ name: 'Config 1', model: 'gpt-4', providerId: 'openai' });
+            await service.createConfig({ name: 'Config 2', model: 'claude-3-5-sonnet-20241022', providerId: 'anthropic' });
 
             const configs = service.getAllConfigs();
 
@@ -260,9 +261,9 @@ describe('LLMConfigService', () => {
     });
 
     describe('setActiveConfig', () => {
-        it('should set config as active', () => {
-            const config1 = service.createConfig({ name: 'Config 1', model: 'gpt-4' });
-            const config2 = service.createConfig({ name: 'Config 2', model: 'claude-3' });
+        it('should set config as active', async () => {
+            const config1 = await service.createConfig({ name: 'Config 1', model: 'gpt-4', providerId: 'openai' });
+            const config2 = await service.createConfig({ name: 'Config 2', model: 'claude-3-5-sonnet-20241022', providerId: 'anthropic' });
 
             service.setActiveConfig(config2.id);
 
@@ -270,9 +271,9 @@ describe('LLMConfigService', () => {
             expect(activeRecord?.id).toBe(config2.id);
         });
 
-        it('should deactivate previous active config', () => {
-            const config1 = service.createConfig({ name: 'Config 1', model: 'gpt-4' });
-            const config2 = service.createConfig({ name: 'Config 2', model: 'claude-3' });
+        it('should deactivate previous active config', async () => {
+            const config1 = await service.createConfig({ name: 'Config 1', model: 'gpt-4', providerId: 'openai' });
+            const config2 = await service.createConfig({ name: 'Config 2', model: 'claude-3-5-sonnet-20241022', providerId: 'anthropic' });
 
             service.setActiveConfig(config2.id);
 
@@ -284,13 +285,14 @@ describe('LLMConfigService', () => {
     });
 
     describe('updateConfig', () => {
-        it('should update config', () => {
-            const config = service.createConfig({
+        it('should update config', async () => {
+            const config = await service.createConfig({
                 name: 'Original',
-                model: 'gpt-4'
+                model: 'gpt-4',
+                providerId: 'openai',
             });
 
-            service.updateConfig(config.id, {
+            await service.updateConfig(config.id, {
                 name: 'Updated',
                 temperature: 0.9
             });
@@ -302,9 +304,9 @@ describe('LLMConfigService', () => {
     });
 
     describe('deleteConfig', () => {
-        it('should delete config', () => {
-            const config = service.createConfig({ name: 'To Delete', model: 'gpt-4' });
-            const config2 = service.createConfig({ name: 'Keep', model: 'claude-3' });
+        it('should delete config', async () => {
+            const config = await service.createConfig({ name: 'To Delete', model: 'gpt-4', providerId: 'openai' });
+            const config2 = await service.createConfig({ name: 'Keep', model: 'claude-3-5-sonnet-20241022', providerId: 'anthropic' });
 
             service.setActiveConfig(config2.id); // Make config2 active
             service.deleteConfig(config.id);
@@ -314,8 +316,8 @@ describe('LLMConfigService', () => {
             expect(allConfigs[0].name).toBe('Keep');
         });
 
-        it('should allow deleting active config and clear active state', () => {
-            const config = service.createConfig({ name: 'Active', model: 'gpt-4' });
+        it('should allow deleting active config and clear active state', async () => {
+            const config = await service.createConfig({ name: 'Active', model: 'gpt-4', providerId: 'openai' });
 
             // Should not throw error
             expect(() => service.deleteConfig(config.id)).not.toThrow();
@@ -323,16 +325,6 @@ describe('LLMConfigService', () => {
             // Config should be deleted
             const allConfigs = service.getAllConfigs();
             expect(allConfigs.length).toBe(0);
-        });
-    });
-
-    describe('getAvailableProviders', () => {
-        it('should return provider list', async () => {
-            const providers = await service.getAvailableProviders();
-
-            expect(providers.length).toBeGreaterThan(0);
-            expect(providers.some(p => p.id === 'openai')).toBe(true);
-            expect(providers.some(p => p.id === 'anthropic')).toBe(true);
         });
     });
 });

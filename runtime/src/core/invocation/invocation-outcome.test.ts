@@ -53,9 +53,9 @@ describe('B2 bounded JSON byte measurement', () => {
 describe('B2 neutral fact mapping', () => {
     it.each([
         [{ kind: 'tool-result', phase: 'not-entered', result: { success: false, error } }, 'rejected', 'not-entered'],
-        [{ kind: 'tool-result', phase: 'entered-returned', result: { success: false, error } }, 'unknown', 'entered-returned'],
-        [{ kind: 'tool-result', phase: 'entered-returned', result: { success: false, error }, failureEffects: 'none' }, 'failed', 'entered-returned'],
-        [{ kind: 'tool-result', phase: 'entered-returned', result: { success: false, error }, failureEffects: 'partial' }, 'failed', 'entered-returned'],
+        [{ kind: 'tool-result', phase: 'entered-returned', result: { success: false, error } }, 'failed', 'entered-returned'],
+        [{ kind: 'tool-result', phase: 'entered-returned', result: { success: false, error: { ...error, code: 'E_HANDLER_ERROR' }, data: { effects: 'business data' } } }, 'failed', 'entered-returned'],
+        [{ kind: 'unknown' }, 'unknown', 'unknown'],
         [{ kind: 'tool-result', phase: 'entered-returned', result: { success: true, data: { value: 7 } } }, 'succeeded', 'entered-returned'],
     ])('preserves the trusted phase and maps %j', (fact, status, phase) => {
         const mapped = mapExecutionFact(fact, limits); expect(mapped.outcome.status).toBe(status); expect(mapped.executionPhase).toBe(phase);
@@ -63,17 +63,19 @@ describe('B2 neutral fact mapping', () => {
             const outcome = mapped.outcome;
             if (outcome.status === 'succeeded') expect(outcome.value).toEqual(fact.result);
             else if ('details' in outcome) expect(outcome.details).toMatchObject({ result: fact.result });
+            expect(outcome).not.toHaveProperty('effects');
         }
     });
     it.each([
         { kind: 'tool-result', phase: 'not-entered', result: { success: true } },
-        { kind: 'tool-result', phase: 'entered-returned', result: { success: true }, failureEffects: 'none' },
+        { kind: 'tool-result', phase: 'entered-returned', result: { success: false, error }, failureEffects: 'none' },
+        { kind: 'tool-result', phase: 'entered-returned', result: { success: false, error, effects: 'none' } },
         { kind: 'tool-result', phase: 'entered-returned', result: { success: false, extra: true } },
         { kind: 'action', phase: 'entered-returned', outcome: { status: 'succeeded', value: 1 } },
         { kind: 'action', phase: 'entered-returned', outcome: { status: 'accepted', taskId: 'removed' } },
         { kind: 'action', phase: 'entered-returned', outcome: { status: 'failed', effects: 'unknown', code: 'x', message: 'x' } },
         { kind: 'unknown', extra: 'secret' }, { success: false },
-    ])('does not infer safe effects from invalid facts %j', fact => {
+    ])('does not accept invalid execution facts %j', fact => {
         expect(mapExecutionFact(fact, limits)).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown', code: 'ACTION_OUTCOME_UNKNOWN' } });
     });
     it('does not read getters or salvage unbounded business output', () => {
@@ -91,15 +93,13 @@ describe('ToolResult discriminated JSON and lexical error data', () => {
     ];
     const variants = [
         { phase: 'not-entered', success: false, status: 'rejected' },
-        { phase: 'entered-returned', success: false, failureEffects: 'none', status: 'failed' },
-        { phase: 'entered-returned', success: false, status: 'unknown' },
+        { phase: 'entered-returned', success: false, status: 'failed' },
         { phase: 'entered-returned', success: true, status: 'succeeded' },
     ] as const;
     it.each(errors.flatMap(error => variants.map(variant => ({ error, variant }))))('preserves %j as detached business JSON', ({ error, variant }) => {
         const result = { success: variant.success, data: { retained: 'data' }, ...(variant.success ? {} : { error: { ...error, context: { retained: 'context' } } }) };
         const original = JSON.stringify(result);
-        const mapped = mapExecutionFact({ kind: 'tool-result', phase: variant.phase, result,
-            ...('failureEffects' in variant ? { failureEffects: variant.failureEffects } : {}) }, limits);
+        const mapped = mapExecutionFact({ kind: 'tool-result', phase: variant.phase, result }, limits);
         expect(mapped.executionPhase).toBe(variant.phase); expect(mapped.outcome.status).toBe(variant.status);
         const recovered = mapped.outcome.status === 'succeeded' ? mapped.outcome.value
             : 'details' in mapped.outcome && mapped.outcome.details?.kind === 'tool-result' ? mapped.outcome.details.result : undefined;

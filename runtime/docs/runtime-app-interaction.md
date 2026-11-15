@@ -2,7 +2,7 @@
 
 可信 Host 安装 App 并选择唯一当前执行 mode `view-type-parameters-v1`。所有 Tool 都是 App + ViewType 注册：普通值直接作为参数，Ref/ArrayRef 用 `refParam` 在同一合同中声明。一次观察固定 View、Ref 来源、类型 activation 与 Binding；当前数据通过 View，调用返回短收据。
 
-普通 App 作者从 [SDK 指南](../../sdk/README.md) 和完整文件／Ref 示例开始。本文面向安装 App、选择授权与管理资源的可信 Host；App 不承担这些装配职责。
+普通 App 作者从 `@aotui/sdk` 包内 `docs/app-authoring.md` 和完整文件／Ref 示例开始。本文面向安装 App、选择授权与管理资源的可信 Host。
 
 ## 应用声明
 
@@ -34,13 +34,13 @@ function Root() {
   const [count, setCount] = useState(0), [text, setText] = useState('original');
   return h(AppTools, { definition: tools, bindings: {
     ordinary: { execute: async args => {
-      if (args.filePath !== '/open/note.txt') return { success: false, effects: 'none',
+      if (args.filePath !== '/open/note.txt') return { success: false,
         error: { code: 'VIEW_NOT_OPEN', message: 'This Detail is not open.' } };
       setText(args.text); setCount(current => current + 1);
       return { success: true, data: { message: 'Change completed.' } };
     } },
     ref: { execute: async args => {
-      if (args.file.filePath !== '/open/note.txt') return { success: false, effects: 'none',
+      if (args.file.filePath !== '/open/note.txt') return { success: false,
         error: { code: 'VIEW_NOT_OPEN', message: 'Refresh the current File Ref.' } };
       return { success: true, data: { currentValueAvailable: true } };
     } },
@@ -62,23 +62,23 @@ SDK 工厂自动提供 `view-type-tools-v4`、托管状态和 `app-lifecycle-v2`
 
 ## Host installation and instance interaction
 
-The trusted Host selects an interaction mode at install. Omitting `interactionModes` enables execution. Passing `[]` keeps observation and preview available and disables Tool execution. Use the matched Runtime and SDK packages.
+Tool execution is enabled by default. Install with the trusted Host option `toolsEnabled: false` to keep observation and preview read-only. The retired `interactionModes` key is rejected with `TOOLS_ENABLED_INVALID`. Use the matched Runtime and SDK packages.
 
 Construct the Runtime with `createRuntime()`. The returned `IKernel` includes App interaction and shutdown reporting. Use `getDesktop()` for the `IDesktop` contract. These interfaces replace imports of the concrete `Kernel`, `IDesktopManager`, and the separate access and shutdown reporting interfaces.
 
-The Worker handshake requires `app-snapshot/v3`. The Host also requests `view-tool-parameters-invoke/v4` when execution is enabled. A malformed capability list receives `WORKER_CAPABILITY_INVALID`. Retired and unknown capabilities receive `WORKER_CAPABILITY_UNSUPPORTED`. Current Tool calls use `VIEW_TOOL_INVOKE_V4` and are correlated with the matching V4 terminal. V2/V3 invocation messages and the separate `REQUEST_UPDATE` push have retired. Snapshot publications notify the Host. The `ordinary-v2` identifier in the trusted invoker contract remains the invoker ABI.
+The Worker handshake requires `app-snapshot/v3`. The Host also requests `view-tool-parameters-invoke/v5` when execution is enabled. A malformed capability list receives `WORKER_CAPABILITY_INVALID`. Retired capabilities, including Tool IPC v4, receive `WORKER_CAPABILITY_UNSUPPORTED`. Current Tool calls use `VIEW_TOOL_INVOKE_V5` and its matching response. Snapshot publications notify the Host. The separate trusted invoker registration requires `ordinary-invoker/v4` for the shared ordinary and Ref parameter contract. `TOOL_INVOKER_ABI_UNSUPPORTED` in an installation cause means the App needs to be rebuilt with the matching SDK and Runtime.
+
+B03 validates the complete normalized Tool profile, including its internal marker, against the inclusive 64 KiB canonical JSON UTF-8 limit at generation, registration and consumption. A custom Snapshot Core can set a lower limit. SDK author diagnostics include a Schema path and distinguish invalid, unsupported and over-capacity declarations. [Core limits and declaration diagnostics](core-public-entry.md#snapshot-limits)
 
 <!-- b2-example:start -->
 ```ts
-import { createRuntime, type InteractionMode } from '@aotui/runtime';
-import type { AppInteraction, Observation } from '@aotui/runtime/core';
+import { createRuntime, type AppInteraction, type Observation, type ReceiptQuery } from '@aotui/runtime';
 
 export async function runExample(appUrl: string, dataDirectory: string) {
   const runtime = createRuntime({ worker: { timeoutMs: 4000, maxWorkers: 2 } });
   try {
     const desktopId = await runtime.createDesktop();
     const desktop = runtime.getDesktop(desktopId);
-    const modes: InteractionMode[] = ['view-type-parameters-v1'];
     async function observeReady(client: AppInteraction): Promise<Observation> {
       const deadline = Date.now() + 6000;
       while (Date.now() < deadline) {
@@ -101,7 +101,7 @@ export async function runExample(appUrl: string, dataDirectory: string) {
       throw Error('Snapshot readiness deadline');
     }
     const appId = await runtime.installDynamicWorkerApp(desktopId, appUrl, {
-      interactionModes: modes, config: { AOTUI_DATA_DIR: dataDirectory },
+      config: { AOTUI_DATA_DIR: dataDirectory },
     });
     const instanceId = desktop.getInstalledApps().find(app => app.appId === appId)?.appInstanceId;
     if (!instanceId) throw Error('App has no running instance');
@@ -130,9 +130,14 @@ export async function runExample(appUrl: string, dataDirectory: string) {
     } finally {
       client.releaseObservation(observation.observationId);
     }
+    const query: ReceiptQuery = { observationId: observation.observationId, invocationId: 'example-0' };
+    const original = await client.readReceipt(query);
+    if (original.kind !== 'receipt' || original.receipt.outcome.status !== 'succeeded') {
+      throw Error('Original receipt unavailable');
+    }
     const close = await runtime.beginShutdown().completion;
     if (!close.ok || !close.resourcesReleased) throw Error('Runtime shutdown did not complete successfully');
-    return { modes, outcomes, close };
+    return { outcomes, close };
   } finally {
     const close = await runtime.beginShutdown().completion;
     if (!close.resourcesReleased) throw Error('Runtime resource release is incomplete');
@@ -147,11 +152,13 @@ The granted views determine the visible Ref owners and matching type Tools. They
 
 Both example calls use one Observation: the Ref remains its original frozen value after the edit. The current View contains the updated business text. Receipts do not repeat either text. Observe prepares one candidate alongside the current observation. Adoption revokes the previous calling eligibility and releases its source. Use preview() for read-only rendering without reserving a candidate.
 
-Call IDs are deduplicated for the adopted observation and its retained history. Read a settled or late receipt with readReceipt(request, timeoutMs), using the original observation ID, binding ID, call ID and arguments. Each read uses the original instance policy. Callers can time out while execution remains active. The standard Source does not expose receipt polling or generic task queries. Unknown writes are not retried. Source is provided separately by `@aotui/agent-driver-adapter`; Context/release and Runtime shutdown are described in [Semantic Host integration](semantic-host-integration.zh-CN.md) and [shutdown](runtime-shutdown.md).
+A valid normal handler return maps to succeeded or failed according to its `success` field. The receipt retains the application's error and data. A real throw or an invalid result can end execution with an unknown result. Call IDs are deduplicated for the adopted observation and its retained history. The standard Source provides the tool result for the current turn. Use the current View and the App's recovery data for writes with an unknown result.
+
+The B02 Runtime adds the two-field `readReceipt({ observationId, invocationId }, timeoutMs?)` for a trusted Host to read a settled or late receipt. Use the IDs from the original invocation. Each read uses the original instance policy, and an old full invocation request returns `INVOCATION_INVALID`. Use the matched package artifacts to identify the build. [Semantic Host integration](semantic-host-integration.zh-CN.md) and [Runtime shutdown](runtime-shutdown.md)
 
 模块初始化或首次渲染失败时，宿主可检查本地 cause 链；见 [INIT / OPEN 诊断说明](initialization-diagnostics.md)。这些开发诊断不会自动进入 ToolResult 或 View。
 
-Host 可以用 `client.invoke(request, timeoutMs)` 为一次等待指定期限。已派发调用在等待截止时可返回 unknown，原执行在 Worker 内继续受 Runtime 跟踪。使用相同调用 ID 和原请求可以读取晚到收据。采用新观察后发起新调用须使用新的 Observation 及其绑定。关闭及存储释放合同见 [Worker 与 App 资源归属](worker-lifecycle.md)。
+Host 可以用 `client.invoke(request, timeoutMs)` 为一次等待指定期限。已派发调用在等待截止时可返回 unknown，原执行在 Worker 内继续受 Runtime 跟踪。采用新观察后发起新调用须使用新的 Observation 及其绑定。关闭及存储释放合同见 [Worker 与 App 资源归属](worker-lifecycle.md)。
 
 ## 身份与元数据来源
 
@@ -162,7 +169,7 @@ Host 可以用 `client.invoke(request, timeoutMs)` 为一次等待指定期限�
 | app_name | 作者；生成清单和 Registry 中唯一 | 逻辑应用名称可在重新安装时复用；标准 Source 的工具前缀；不是某次运行的权限或 ID |
 | App ID | Runtime/AppManager；Desktop 内唯一 | 安装对象身份，跨关闭／重开可保留；调用必须再匹配本次 instanceId |
 | App instanceId | Runtime；每次逻辑执行新建 | 旧 Context 不得命中同 App ID 的继任执行；每次使用全新 Worker |
-| View id/type/name | 作者；id 在 App 的当前挂载集合内唯一 | id 是逻辑页面，type 激活共享工具，name 是呈现标签；不能互相猜测或作为运行实例身份 |
+| View id/type/name | 作者；id 在 App 的当前挂载集合内唯一 | id 是逻辑页面，type 激活共享工具，name 是呈现标签。SDK 的 id 使用非空 ASCII 字母、数字或下划线；纯 Core 的 id 遵循非空、无点、唯一性与容量规则。 |
 | View instanceId | Runtime；每次挂载新建 | 同 id 重挂不恢复旧 Ref 资格；Core 的 owner 与实例来源检查使用它 |
 | Tool name 与内部 id | 作者声明 name，Runtime/Core 生成 `[appId, viewType, name]` 的结构化标识 | 同类型共享一个注册；内部身份不拆解外部工具名。注册／handler 更新与 activation 资格分别维护 |
 | 原生 Tool 别名 | Source 按三个字段确定生成 | ASCII 字母/数字/下划线，连字符只作分隔，总长至多64；这是原生入口约束，不是 Core 结构化名字的限制。失败只隔离对应 App，无覆盖、截断或自动别名 |
@@ -172,9 +179,9 @@ Host 可以用 `client.invoke(request, timeoutMs)` 为一次等待指定期限�
 | Binding/activation id | Runtime/Core；注册和类型活跃期 | handler-only 更新保留注册，禁用／最后 View 关闭后旧资格失效，重新激活产生新身份；Context 捕获执行目标 |
 | 状态 appKey | 可信 Host；既有 StateAddress 的 namespace | Registry 默认使用 canonical app_name；Host 可显式传 AOTUI_APP_KEY 选择独立 namespace，不改变注册名、调用目标或 Ref 资格。无通用数据作用域系统 |
 
-AppKernel 从 Runtime AppContext 接收 App ID，不再以逻辑 App 名兜底，也不允许更改已赋予的身份。SDK 的 displayName 和 Kernel.name 是派生呈现／调试标签，不是第二份执行定位来源。旧 AOTUI_APP_NAME 曾混用为持久化 namespace，本次退出；显式需要该能力的 Host 改用 AOTUI_APP_KEY，默认 Registry 生成同样的 namespace 值，不迁移或删除业务持久化数据。
+SDK 从作者声明的 `app_name` 生成 `kernelConfig.appName`。生成器用它写入 `aoapp.json`，Worker 校验工厂与安装时登记的名称一致。AppKernel 使用 Runtime 分配的 App ID。Host 可用 `AOTUI_APP_KEY` 显式指定持久化命名空间。
 
-当前常量随拥有合同的 Runtime SPI/Core 导出。工厂／端口使用 view-type-tools-v4，Snapshot 仍为3，工具 IPC 仍为 view-tool-parameters-invoke/v4，生命周期仍为2，持久化会话与记录各自仍为1。INIT 的请求／ACK 必须包含 app-snapshot/v3；启用工具时还必须确认工具能力。不支持的组合在加载／OPEN前明确拒绝，数据的后续严格捕获与来源检查依然独立；没有新 spec 包或通用协商平台。
+当前常量随拥有合同的 Runtime SPI/Core 导出。工厂／端口使用 view-type-tools-v4，Snapshot 仍为3，工具 IPC 使用 view-tool-parameters-invoke/v5，生命周期仍为2，持久化会话与记录各自仍为1。INIT 的请求／ACK 必须包含 app-snapshot/v3；启用工具时还必须确认工具能力。不支持的组合在加载／OPEN前明确拒绝，数据的后续严格捕获与来源检查依然独立；没有新 spec 包或通用协商平台。
 
 ## 2026-11-09 减法迁移
 

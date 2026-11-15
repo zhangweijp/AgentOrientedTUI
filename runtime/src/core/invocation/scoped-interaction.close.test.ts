@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
-import { compileOrdinaryParams, createSnapshotCore, createViewOwnedTools, createAppInteraction } from '../index.js';
+import { compileOrdinarySchema, createSnapshotCore, createViewOwnedTools, createAppInteraction } from '../index.js';
 import type { AppSnapshotV3, CancellationSignal, ExecutionBinding, ExecutionFact, InputValidation, InvocationContext,
-    ReceiptMetadata, AppInteractionPolicy } from '../index.js';
+    ReceiptMetadata, ReceiptQuery, AppInteractionPolicy } from '../index.js';
 
 function deferred<T = void>() {
     let resolve!: (value: T) => void, reject!: (error: unknown) => void;
@@ -9,17 +9,18 @@ function deferred<T = void>() {
 }
 type Maybe<T> = T | Promise<T>;
 const success = (): ExecutionFact => ({ kind: 'tool-result', phase: 'entered-returned', result: { success: true, data: { value: 19 } } });
+const receiptQuery = ({ observationId, invocationId }: ReceiptQuery): ReceiptQuery => ({ observationId, invocationId });
 function fixture(instanceId = 'run', namespace = 'close:run') {
     let time = 10;
     let clockMode = 'normal';
     const now = () => { if (clockMode === 'throw') throw Error('clock'); return clockMode === 'back' ? 9 : time; };
     const core = createSnapshotCore({ now }), registry = createViewOwnedTools('app', instanceId), view = registry.mount('v', 'Detail');
     core.lifecycle.startApp('app', instanceId);
-    const contract = compileOrdinaryParams({}, { additionalProperties: false });
-    if (!contract.ok) throw Error('Fixture ordinary-v2 contract');
+    const contract = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
+    if (!contract.ok) throw Error('Fixture ViewType contract');
     const handler = async () => ({ success: true });
     registry.registerTypeTool({ viewType: 'Detail', name: 'read', description: 'Read', inputSchema: contract.contract.schema }, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
         createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: await handler() }),
     });
     const tool = registry.listTools()[0];
@@ -37,7 +38,7 @@ function fixture(instanceId = 'run', namespace = 'close:run') {
         read: (_metadata: ReceiptMetadata, _signal: CancellationSignal): Maybe<boolean> => true,
     };
     const calls = { handler: 0, authorize: 0, validate: 0, project: 0, read: 0 };
-    const binding: ExecutionBinding = { identity: {}, mode: 'ordinary-v2',
+    const binding: ExecutionBinding = { identity: {},
         validateInput: (source, input, signal) => { calls.validate++; return controls.validate(source, input, signal); },
         isLive: source => ({ ok: registry.validateTypeToolBinding(tool, source.execution).success }),
         execute: context => { calls.handler++; return controls.execute(context); } };
@@ -107,7 +108,7 @@ const outcomes = ['success', 'business', 'throw', 'unknown'] as const;
 function fact(kind: typeof outcomes[number]): ExecutionFact {
     if (kind === 'throw') throw Error('business exception');
     if (kind === 'unknown') return { kind: 'unknown' };
-    if (kind === 'business') return { kind: 'tool-result', phase: 'entered-returned', failureEffects: 'none', result: { success: false, error: { code: 'BUSINESS', message: 'kept' } } };
+    if (kind === 'business') return { kind: 'tool-result', phase: 'entered-returned', result: { success: false, error: { code: 'BUSINESS', message: 'kept' } } };
     return success();
 }
 it.each(outcomes)('C05 preserves existing %s mapping and waits for an actually entered execution', async kind => {
@@ -159,7 +160,7 @@ it('abort reentry keeps one completion and duplicate waiters share one execution
         await gate.promise;
         return success();
     };
-    const pending = [f.client.invoke(a), f.client.readReceipt(a)];
+    const pending = [f.client.invoke(a), f.client.readReceipt(receiptQuery(a))];
     await entered.promise;
     expect(await f.client.invoke({ ...a, invocationId: 'other' })).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
     expect(await f.client.invoke({ invalid: true })).toMatchObject({ kind: 'refused', code: 'INVOCATION_INVALID' });
@@ -186,11 +187,27 @@ it.each(['project', 'validate', 'authorize', 'execute', 'read'].flatMap(stage =>
 });
 
 it('C10 completion is permanent; old clients cannot authorize a fresh identity domain', async () => {
-    const old = fixture(), request = await old.observe(); old.authority.close(); await old.zero();
-    expect((await old.client.observe({ all: true })).status).toBe('rejected'); expect(await old.client.invoke(request)).toMatchObject({ kind: 'refused' });
+    const old = fixture(), request = await old.observe();
+    const original = await old.client.invoke(request);
+    expect(original).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
     const next = fixture('fresh', 'close:fresh'), current = await next.observe(); expect(current.observationId).not.toBe(request.observationId);
     await next.client.invoke(request); expect(next.calls.handler).toBe(0);
-    expect(await next.client.invoke({ ...current, invocationId: 'fresh-call' })).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } }); next.authority.close(); await next.zero();
+    expect(current.invocationId).toBe(request.invocationId);
+    const replacement = await next.client.invoke(current);
+    expect(replacement).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
+    const originalReads = old.calls.read, replacementReads = next.calls.read;
+    expect(await next.client.readReceipt(receiptQuery(request))).toMatchObject({ kind: 'unavailable', code: 'RESULT_UNAVAILABLE' });
+    expect(await old.client.readReceipt(receiptQuery(current))).toMatchObject({ kind: 'unavailable', code: 'RESULT_UNAVAILABLE' });
+    expect(old.calls.read).toBe(originalReads);
+    expect(next.calls.read).toBe(replacementReads);
+    expect(await old.client.readReceipt(receiptQuery(request))).toEqual(original);
+    expect(await next.client.readReceipt(receiptQuery(current))).toEqual(replacement);
+    old.authority.close(); await old.zero();
+    expect((await old.client.observe({ all: true })).status).toBe('rejected');
+    expect(await old.client.invoke(request)).toMatchObject({ kind: 'refused' });
+    expect(await old.client.readReceipt(receiptQuery(request))).toMatchObject({ kind: 'unavailable', code: 'APP_INTERACTION_UNAVAILABLE' });
+    expect(next.calls.handler).toBe(1);
+    next.authority.close(); await next.zero();
 });
 
 
@@ -205,20 +222,20 @@ it('reads multiple authorized receipts after adoption and prunes retired calls a
         await entered.promise;
         const next = await f.observe();
         expect(await f.client.invoke(next)).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
-        expect(await f.client.readReceipt(settled)).toMatchObject({ kind: 'receipt' });
-        expect(await f.client.readReceipt({ ...settled, input: { extra: true } })).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_ID_CONFLICT' });
+        expect(await f.client.readReceipt(receiptQuery(settled))).toMatchObject({ kind: 'receipt' });
+        expect(await f.client.invoke({ ...settled, input: { extra: true } })).toMatchObject({ kind: 'refused', code: 'INVOCATION_ID_CONFLICT' });
         f.controls.read = () => false;
-        expect(await f.client.readReceipt(settled)).toMatchObject({ kind: 'unavailable', code: 'RECEIPT_PERMISSION_DENIED' });
+        expect(await f.client.readReceipt(receiptQuery(settled))).toMatchObject({ kind: 'unavailable', code: 'RECEIPT_PERMISSION_DENIED' });
         f.controls.read = () => true;
         f.setTime(30);
         gate.resolve(success());
         expect(await work).toMatchObject({ kind: 'receipt', receipt: { completedAt: 30 } });
-        expect(await f.client.readReceipt(held)).toMatchObject({ kind: 'receipt', receipt: { completedAt: 30 } });
+        expect(await f.client.readReceipt(receiptQuery(held))).toMatchObject({ kind: 'receipt', receipt: { completedAt: 30 } });
         expect(await f.client.invoke({ ...first, invocationId: 'unseen' })).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
         expect(f.calls.handler).toBe(2);
         f.setTime(60_010);
-        expect(await f.client.readReceipt(settled)).toMatchObject({ kind: 'unavailable', code: 'RESULT_UNAVAILABLE' });
-        expect(await f.client.readReceipt(held)).toMatchObject({ kind: 'receipt' });
+        expect(await f.client.readReceipt(receiptQuery(settled))).toMatchObject({ kind: 'unavailable', code: 'RESULT_UNAVAILABLE' });
+        expect(await f.client.readReceipt(receiptQuery(held))).toMatchObject({ kind: 'receipt' });
         f.setTime(60_030);
         expect(f.authority.inspect().receiptEntries).toBe(0);
         expect(await f.client.invoke(held)).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });

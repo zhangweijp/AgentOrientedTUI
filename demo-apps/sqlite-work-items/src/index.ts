@@ -48,7 +48,7 @@ const root: PublishedView = {
     ].join('\n'),
 };
 
-function failure(error: SqliteIssue): ToolResult { return { success: false, error, effects: 'none' }; }
+function failure(error: SqliteIssue): ToolResult { return { success: false, error }; }
 
 function itemLine(item: Item, localRef: string): string {
     return `${formatRef(item.title, localRef, 'WorkItem')} · ${item.status} · revision ${item.revision}`;
@@ -98,7 +98,7 @@ SELECT changes() AS direct, total_changes() AS total;`);
                         });
                         const issue = { code: 'SQLITE_WRITE_PARTIAL', message: 'SQLite recorded row changes while skipping the direct status update.' };
                         unavailable(issue);
-                        return { success: false, effects: 'partial', error: { ...issue, message: `${issue.message} Use refresh to check SQLite.` } };
+                        return failure({ ...issue, message: `${issue.message} Use refresh to check SQLite.` });
                     }
                     const refreshIssue = await refresh();
                     return { success: true, data: refreshIssue

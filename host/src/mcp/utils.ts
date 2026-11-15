@@ -25,8 +25,6 @@ export namespace Filesystem {
     }
 }
 
-import app from 'electron'; // or we can handle it dynamically
-
 export namespace Log {
     export function create({ service }: { service: string }) {
         return {

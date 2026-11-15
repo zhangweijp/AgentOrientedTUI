@@ -5,12 +5,13 @@
  * Model tab uses provider→model two-step selection.
  * "Add Model Provider →" link switches to Settings Model page.
  */
+import { parseModelSelection } from '../../../../types/llm-config.js';
 import React, { useEffect, useState, useCallback } from 'react';
 import { AgentEditorModal } from './AgentEditorModal.js';
 import { useChatBridge } from '../../../ChatBridge.js';
 import { IconBrain, IconPrompt, IconApps, IconSkills, IconPlug, IconAgentIdle, IconAgentWorking, IconAgentSleeping, IconAgentPaused } from '../../Icons.js';
 import type { AgentConfig } from './AgentTab.js';
-import { buildMcpToolItemKey } from '../../../../shared/source-control-keys.js';
+import { buildMcpToolItemKey, hasInvalidMcpToolKeys, isMcpToolItemKey, MCP_PERMISSION_RECONFIGURE } from '../../../../shared/source-control-keys.js';
 
 /* ── Tiny helper types ── */
 interface ModelGroup {
@@ -91,8 +92,8 @@ export const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
             setPrompt(initial.prompt);
             setEnabledApps([...initial.enabledApps]);
             setEnabledSkills({ ...initial.enabledSkills });
-            setEnabledMCPs([...initial.enabledMCPs]);
-            setDisabledMcpTools([...(initial.disabledMcpTools || [])]);
+            setEnabledMCPs(hasInvalidMcpToolKeys(initial.disabledMcpTools) ? [] : [...initial.enabledMCPs]);
+            setDisabledMcpTools(Array.isArray(initial.disabledMcpTools) ? initial.disabledMcpTools.filter(isMcpToolItemKey) : []);
             setSkin({ ...initial.skin });
         } else {
             setName('New Agent');
@@ -137,12 +138,7 @@ export const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
                     if (!isCustom) {
                         try {
                             const models = await trpc.modelRegistry.getModels.query({ providerId });
-                            (models as Array<{ id?: string; name?: string }>).forEach((item: any) => {
-                                const raw = item?.id || item?.name;
-                                if (!raw || typeof raw !== 'string') return;
-                                const normalized = raw.startsWith(`${providerId}/`) ? raw.slice(providerId.length + 1) : raw;
-                                if (normalized.trim()) mergedModels.add(normalized.trim());
-                            });
+                            for (const model of models) mergedModels.add(model.id);
                         } catch { /* skip */ }
                     }
                     return { providerId, models: Array.from(mergedModels).sort((a, b) => a.localeCompare(b)), displayName: customNameMap.get(providerId) };
@@ -187,18 +183,9 @@ export const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
         // MCPs
         (async () => {
             try {
-                const [cfg, runtime] = await Promise.all([trpc.mcp.getConfig.query(), trpc.mcp.getRuntime.query()]);
-                const configServers = (cfg as Record<string, any>) || {};
-                const runtimeServers = (runtime as Record<string, any>) || {};
-                const allNames = new Set([
-                    ...Object.keys(configServers).filter(k => typeof configServers[k] === 'object'),
-                    ...Object.keys(runtimeServers).filter(k => typeof runtimeServers[k] === 'object'),
-                ]);
-                const servers: McpServer[] = Array.from(allNames).map(name => ({
-                    name,
-                    connected: runtimeServers[name]?.status === 'connected',
-                    status: runtimeServers[name]?.status,
-                    tools: runtimeServers[name]?.tools || [],
+                const runtime = await trpc.mcp.getRuntime.query();
+                const servers: McpServer[] = Object.entries(runtime).map(([name, server]) => ({
+                    name, connected: server.status === 'connected', status: server.status, tools: server.tools,
                 }));
                 setMcpServers(servers);
                 if (!initial) {
@@ -228,9 +215,8 @@ export const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
     })).filter(g => g.models.length > 0);
 
     const currentModelSelection = (() => {
-        if (!modelId || !modelId.includes(':')) return { provider: '—', model: '—' };
-        const idx = modelId.indexOf(':');
-        return { provider: modelId.slice(0, idx), model: modelId.slice(idx + 1) };
+        const selected = parseModelSelection(modelId);
+        return { provider: selected?.providerId ?? '—', model: selected?.modelId ?? (modelId || '—') };
     })();
 
     const filteredTemplates = promptTemplates.filter(t =>
@@ -569,6 +555,7 @@ export const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
                             </div>
                             {renderToggle(mcpAnyEnabled, toggleAllMcp)}
                         </div>
+                        {hasInvalidMcpToolKeys(initial?.disabledMcpTools) && <p role="alert">{MCP_PERMISSION_RECONFIGURE}</p>}
                         {mcpServers.length === 0 ? (
                             <div className="py-6 text-center text-[14px] text-[var(--color-text-tertiary)]">No MCP servers configured</div>
                         ) : (
@@ -592,13 +579,13 @@ export const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
                                                         <div className={`mt-1 space-y-0.5 ${checked ? '' : 'opacity-45'}`}>
                                                             {srv.tools.map(tool => {
                                                                 const toolKey = buildMcpToolItemKey(srv.name, tool.name);
-                                                                const legacyToolKey = `${srv.name}::${tool.name}`;
-                                                                const toolEnabled = !disabledMcpTools.includes(toolKey) && !disabledMcpTools.includes(legacyToolKey) && !disabledMcpTools.includes(tool.name);
-                                                                const toggleTool = (val: boolean) => setDisabledMcpTools(prev =>
-                                                                    val
-                                                                        ? prev.filter(k => k !== toolKey && k !== legacyToolKey && k !== tool.name)
-                                                                        : [...prev.filter(k => k !== legacyToolKey && k !== tool.name), toolKey]
-                                                                );
+                                                                const toolEnabled = tool.enabled && !disabledMcpTools.includes(toolKey);
+                                                                const toggleTool = (enabled: boolean) => {
+                                                                    if (!tool.enabled || !checked) return;
+                                                                    setDisabledMcpTools(previous => enabled
+                                                                        ? previous.filter(key => key !== toolKey)
+                                                                        : [...new Set([...previous, toolKey])]);
+                                                                };
                                                                 return (
                                                                 <div key={`mcp-tool-${tool.name}`} className="flex items-center justify-between gap-2 px-1 py-0.5">
                                                                     <span className="text-[13px] text-[var(--color-text-secondary)] truncate">{tool.name}</span>

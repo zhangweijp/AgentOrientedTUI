@@ -26,6 +26,8 @@ export function Pages() {
 
 通过 `@aotui/sdk/app` 的 `createApp` 提交完整 App。View 提供 `id`、`type`、`kind`、可选 `name` 和 Markdown `body`，Ref 可随同一帧提交。Runtime 创建和验证真实 View 实例身份。普通 TS 与 Preact 共用发布、观察和调用合同。 [两种完整 App 与 Host 启动](app-authoring.md)
 
+两种 SDK 入口的 `id` 均由一个或多个 ASCII 字母、数字或下划线组成。View 元数据、Snapshot 和观察的字节限额仍适用。
+
 ## 唯一包装与 XML 文本
 
 Snapshot 的 Markdown 是未包装、未做 XML 转义的正文。Adapter 消费已观察的元数据，在 Runtime 的唯一消息边界生成 `<view id="…" type="…" kind="…" name="…" app_id="…" app_name="…">`，正文和 Ref 提示按 XML 文本转义一次：`&`、`<`、`>` 分别为 `&amp;`、`&lt;`、`&gt;`，回车 CR 编码为 `&#13;`，防止 XML 消费将 CRLF 或独立 CR 规范化为 LF；原有 LF 保留。字面 `</view>` 只能作为正文文本，不能关闭框架 envelope；原文中的 `&lt;` 解码一次后仍是原来的字面 `&lt;`。

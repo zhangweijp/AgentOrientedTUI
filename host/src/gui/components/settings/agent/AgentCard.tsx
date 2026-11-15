@@ -5,6 +5,7 @@
  * prompt preview (4 lines), tag row (Model / Apps / Skills / MCP),
  * and a text activate/deactivate button at the bottom.
  */
+import { parseModelSelection } from '../../../../types/llm-config.js';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { IconBrain, IconApps, IconSkills, IconPlug, IconAgentIdle, IconAgentWorking, IconAgentSleeping, IconAgentPaused } from '../../Icons.js';
 import type { AgentConfig } from './AgentTab.js';
@@ -83,7 +84,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
     /* ── Derived ── */
     const modelLabel = useMemo(() => {
         if (!agent.modelId) return '';
-        return agent.modelId.includes(':') ? agent.modelId.split(':').slice(1).join(':') : agent.modelId;
+        return parseModelSelection(agent.modelId)?.modelId ?? agent.modelId;
     }, [agent.modelId]);
 
     const skillCount = useMemo(() => {

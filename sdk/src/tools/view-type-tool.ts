@@ -1,11 +1,12 @@
-import { ORDINARY_INVOCATION_MODE } from '@aotui/runtime/core';
 import { VIEW_TYPE_TOOL_PROTOCOL } from '@aotui/runtime/spi';
 import Type from 'typebox';
-import { compileOrdinarySchema } from '@aotui/runtime/core';
+import { compileOrdinarySchema, ordinaryParameterProfile, SnapshotDataError } from '@aotui/runtime/core';
 import type { JsonValue } from '@aotui/runtime/core';
 import type { AppFrameTool, IAppTypeToolPort, ToolResult } from '@aotui/runtime/spi';
 import { invokeOrdinaryParameterTool } from '../utils/ordinary-parameter-tool.js';
-import { exportTypeBoxSchema, TypeBoxSchemaExportError } from './typebox-schema.js';
+import { exportTypeBoxSchema, schemaDeclarationError, TypeBoxSchemaExportError } from './typebox-schema.js';
+
+const ORDINARY_INVOKER_ABI = 'ordinary-invoker/v4' as const;
 
 /** JSON values captured from TypeBox and normalized by Runtime. */
 export type JsonSchemaValue = JsonValue;
@@ -63,8 +64,6 @@ export interface ToolCatalogEntry {
     readonly description: string;
     readonly inputSchema: JsonSchemaObject;
 }
-
-export type ToolCatalog = readonly ToolCatalogEntry[];
 
 interface CapturedDefinition extends ToolCatalogEntry {
     readonly tupleKey: string;
@@ -133,12 +132,15 @@ function nonEmptyString(value: unknown, field: string): asserts value is string 
 }
 
 function captureOrdinarySchema(schema: unknown): JsonSchemaObject {
-    const compiled = compileOrdinarySchema(schema, 'ref-value-specimen');
-    if (!compiled.ok) {
-        const code = compiled.issue.code === 'PARAMETER_DECLARATION_UNSUPPORTED'
-            ? 'TOOL_SCHEMA_UNSUPPORTED'
-            : 'TOOL_SCHEMA_INVALID';
-        throw new TypeBoxSchemaExportError(code, compiled.issue.path, compiled.issue.message);
+    const compiled = compileOrdinarySchema(schema);
+    if (!compiled.ok) throw schemaDeclarationError(compiled.issue);
+    try {
+        ordinaryParameterProfile(compiled.contract);
+    } catch (error) {
+        if (error instanceof SnapshotDataError && error.code === 'TOOL_SCHEMA_CAPACITY') {
+            throw new TypeBoxSchemaExportError(error.code, error.path, error.message);
+        }
+        throw error;
     }
     return compiled.contract.schema;
 }
@@ -237,7 +239,7 @@ export function defineToolSet<const Map extends ToolMap>(tools: Map): ToolSet<Ma
 }
 
 /** Return the immutable, sorted four-field static descriptor list for a ToolSet. */
-export function getToolCatalog<const Map extends ToolMap>(definition: ToolSet<Map>): ToolCatalog {
+export function getToolCatalog<const Map extends ToolMap>(definition: ToolSet<Map>): readonly ToolCatalogEntry[] {
     const entries = readToolSet(definition);
     const sorted = [...entries].sort((left, right) => {
         const leftViewType = left[1].viewType;
@@ -379,7 +381,7 @@ function toolRegistration(item: CapturedDefinition, current: () => CapturedBindi
     return {
         definition: { viewType: item.viewType, name: item.name, description: item.description, inputSchema: item.inputSchema },
         options: {
-            safeOrdinaryParametersInvocationMode: ORDINARY_INVOCATION_MODE,
+            safeOrdinaryParametersInvocationMode: ORDINARY_INVOKER_ABI,
             createSafeOrdinaryParametersInvoker: contract => async args => {
                 if (!current()) return {
                     phase: 'not-entered', result: { success: false,

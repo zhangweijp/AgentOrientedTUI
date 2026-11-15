@@ -1,79 +1,97 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { inspectPublicDocIdentity } from './verify-public-docs.mjs';
 const execute = promisify(execFile);
-const [consumer, evidence] = process.argv.slice(2);
+const [consumer, evidence, profile = 'full'] = process.argv.slice(2);
 assert.ok(consumer && evidence, 'consumer and evidence paths are required');
+assert.ok(['plain', 'full'].includes(profile), 'Select the plain or full documentation profile');
+const plain = profile === 'plain';
 const output = path.join(consumer, 'documentation-checks');
 await fs.mkdir(output, { recursive: true });
-const facts = { consumer, passed: false, commands: [], documents: [] };
+const facts = { consumer, profile, passed: false, commands: [], documents: [] };
+async function checked(kind, args, details = {}) {
+  const command = [process.execPath, ...args];
+  try {
+    const result = await execute(process.execPath, args, { cwd: consumer, maxBuffer: 8 * 1024 * 1024 });
+    facts.commands.push({ kind, command, exitCode: 0, ...details, ...result });
+    return result;
+  } catch (error) {
+    facts.commands.push({ kind, command, exitCode: error.code, ...details, stdout: error.stdout, stderr: error.stderr });
+    throw error;
+  } finally { await fs.writeFile(evidence, JSON.stringify(facts, null, 2) + '\n'); }
+}
 const identity = await inspectPublicDocIdentity(path.join(consumer, 'node_modules/@aotui/sdk'));
 facts.publicDocIdentity = identity;
 await fs.writeFile(evidence, JSON.stringify(facts, null, 2)+'\n');
 assert.ok(identity.passed, 'PUBLIC_DOC_IDENTITY: '+JSON.stringify(identity.references));
 const sdkRoot = path.join(consumer, 'node_modules/@aotui/sdk');
-for (const name of ['file-app.tsx', 'file-tools.ts', 'ref-app.tsx', 'work-items.ts', 'work-items-plain.ts', 'work-items-preact.tsx']) {
+const examples = ['work-items.ts', 'work-items-plain.ts'];
+if (!plain) examples.push('file-app.tsx', 'file-tools.ts', 'ref-app.tsx', 'work-items-preact.tsx');
+for (const name of examples) {
   await fs.copyFile(path.join(sdkRoot, 'docs/examples', name), path.join(output, name));
 }
-for (const [document, name, language] of [
+for (const [document, name, language] of plain ? [] : [
   ['README.md', 'readme-app.tsx', 'tsx'],
   ['docs/app-tools.md', 'app-tools.tsx', 'tsx'],
   ['docs/static-tools.md', 'static-tools.ts', 'ts'],
-  ['docs/app-authoring.md', 'public-app-host.mjs', 'js'],
 ]) {
   const text = await fs.readFile(path.join(sdkRoot, document), 'utf8');
   const source = text.split('```' + language + '\n')[1]?.split('\n```')[0];
   assert.ok(source, document + ' has a public author example');
   await fs.writeFile(path.join(output, name), source);
 }
-await execute(process.execPath, ['--check', path.join(output, 'public-app-host.mjs')]);
 const runtimeRoot = path.join(consumer, 'node_modules/@aotui/runtime');
 const runtimeGuide = await fs.readFile(path.join(runtimeRoot, 'docs/runtime-app-interaction.md'), 'utf8');
 const extract = (text, marker, language) => {
   const source = text.split(`<!-- ${marker}:start -->\n\`\`\`${language}\n`)[1]?.split(`\n\`\`\`\n<!-- ${marker}:end -->`)[0];
   assert.ok(source, marker + ' is an executable marked example'); return source;
 };
-await fs.writeFile(path.join(output, 'runtime-app.mjs'), extract(runtimeGuide, 'b2-app', 'js'));
-await fs.writeFile(path.join(output, 'runtime-host.ts'), extract(runtimeGuide, 'b2-example', 'ts'));
-const coreGuide = await fs.readFile(path.join(runtimeRoot, 'docs/core-public-entry.md'), 'utf8');
-await fs.writeFile(path.join(output, 'core-example.ts'), extract(coreGuide, 'b1-example', 'ts'));
-for (const [alias, version] of [['typescript', '7.0.2']]) {
-  const config = { compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext',
-    strict: true, exactOptionalPropertyTypes: true, skipLibCheck: false, lib: ['ES2022', 'DOM'], types: ['node'],
+const authorGuide = path.join(sdkRoot, 'docs/app-authoring.md');
+const hostGuide = path.join(runtimeRoot, 'docs/semantic-host-integration.zh-CN.md');
+const hostReference = '`@aotui/runtime` 包内 `docs/semantic-host-integration.zh-CN.md#source-host-example`';
+assert.ok((await fs.readFile(authorGuide, 'utf8')).includes(hostReference), 'The SDK author guide locates the packaged Host example');
+const hostGuideText = await fs.readFile(hostGuide, 'utf8');
+assert.ok(hostGuideText.includes('<a id="source-host-example"></a>'));
+const sourceHostExample = path.join(output, 'public-app-host.mjs');
+if (!plain) {
+  await fs.writeFile(sourceHostExample, extract(hostGuideText, 'source-host-example', 'js'));
+  await checked('host-example-syntax', ['--check', sourceHostExample], { source: hostGuide });
+  await fs.writeFile(path.join(output, 'runtime-app.mjs'), extract(runtimeGuide, 'b2-app', 'js'));
+  await fs.writeFile(path.join(output, 'runtime-host.ts'), extract(runtimeGuide, 'b2-example', 'ts'));
+}
+const coreGuidePath = path.join(await fs.realpath(runtimeRoot), 'docs/core-public-entry.md');
+const coreGuide = await fs.readFile(coreGuidePath, 'utf8');
+const coreSource = extract(coreGuide, 'b1-example', 'ts');
+await fs.writeFile(path.join(output, 'core-example.ts'), coreSource);
+const digest = value => createHash('sha256').update(value).digest('hex');
+facts.coreTutorial = { document: coreGuidePath, documentSha256: digest(coreGuide), sourceSha256: digest(coreSource) };
+const compiler = path.join(consumer, 'node_modules/typescript/bin/tsc');
+const version = JSON.parse(await fs.readFile(path.join(consumer, 'node_modules/typescript/package.json'), 'utf8')).version;
+assert.equal(version, '7.0.2');
+const strict = { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext',
+  strict: true, exactOptionalPropertyTypes: true, skipLibCheck: false };
+async function compile(kind, name, config) {
+  const file = path.join(output, name);
+  await fs.writeFile(file, JSON.stringify(config, null, 2));
+  await checked(kind, [compiler, '-p', file, '--pretty', 'false'], { version });
+}
+if (!plain) {
+  const config = { compilerOptions: { ...strict, lib: ['ES2022', 'DOM'], types: ['node'],
     jsx: 'react-jsx', jsxImportSource: 'preact', outDir: './out-' + version, rootDir: '.' }, files: ['./readme-app.tsx', './app-tools.tsx', './static-tools.ts', './file-app.tsx', './ref-app.tsx', './work-items-preact.tsx', './runtime-host.ts'] };
-  const file = path.join(output, 'tsconfig-' + version + '.json'); await fs.writeFile(file, JSON.stringify(config, null, 2));
-  const command = [path.join(consumer, 'node_modules', alias, 'bin/tsc'), '-p', file, '--pretty', 'false'];
-  try { const result = await execute(process.execPath, command, { cwd: consumer }); facts.commands.push({ kind: 'compile', version, command: [process.execPath, ...command], exitCode: 0, ...result }); }
-  catch (error) { facts.commands.push({ kind: 'compile', version, command: [process.execPath, ...command], exitCode: error.code, stdout: error.stdout, stderr: error.stderr }); }
-  await fs.writeFile(evidence, JSON.stringify(facts, null, 2)+'\n');
+  await compile('compile', 'tsconfig-' + version + '.json', config);
 }
-assert.ok(facts.commands.some(command => command.kind === 'compile' && command.version === '7.0.2' && command.exitCode === 0),
- 'TS 7.0.2 tutorial compilation failed; no emitted tutorial may execute. The compiler result was saved.');
-const coreConfig = { compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext',
-  strict: true, exactOptionalPropertyTypes: true, skipLibCheck: false, lib: ['ES2022'], types: [],
-  outDir: './core-out' }, files: ['./core-example.ts', './work-items-plain.ts'] };
-await fs.writeFile(path.join(output, 'tsconfig-core.json'), JSON.stringify(coreConfig, null, 2));
-const coreCommand = [path.join(consumer, 'node_modules/typescript/bin/tsc'), '-p', path.join(output, 'tsconfig-core.json'), '--pretty', 'false'];
-try {
-  const result = await execute(process.execPath, coreCommand, { cwd: consumer });
-  facts.commands.push({ kind: 'core-compile', command: [process.execPath, ...coreCommand], exitCode: 0, ...result });
-} catch (error) {
-  facts.commands.push({ kind: 'core-compile', command: [process.execPath, ...coreCommand], exitCode: error.code, stdout: error.stdout, stderr: error.stderr });
-  await fs.writeFile(evidence, JSON.stringify(facts, null, 2) + '\n'); throw error;
-}
-const test = String.raw`
-import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { createRuntime } from '@aotui/runtime';
+await compile('core-compile', 'tsconfig-core.json', {
+  compilerOptions: { ...strict, lib: ['ES2022'], types: [], outDir: './core-out' },
+  files: ['./core-example.ts', './work-items-plain.ts'],
+});
+await checked('core-execution', [path.join(output, 'core-out/core-example.js')]);
+facts.coreTutorial.moduleSha256 = digest(await fs.readFile(path.join(output, 'core-out/core-example.js')));
+const fullAuthorExamples = String.raw`
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
-import { runExample } from './out-7.0.2/runtime-host.js';
-import { coreTutorialFacts } from './core-out/core-example.js';
-const facts = { coreTutorialFacts, minimalExample: false, fileExample: false, refExample: false, runtimeExample: false, calls: [], reports: [] };
 const minimalRuntime = createRuntime({ worker: { timeoutMs: 45000, maxWorkers: 1 } });
 let minimalSource;
 try {
@@ -102,7 +120,7 @@ let source;
 try {
  const desktop = await runtime.createDesktop('published-docs');
  const url = new URL('./out-7.0.2/file-app.js', import.meta.url).href;
- for (const id of ['docfilesa', 'docfilesb']) await runtime.installDynamicWorkerApp(desktop, url, { appId: id, interactionModes: ['view-type-parameters-v1'], config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
+ for (const id of ['docfilesa', 'docfilesb']) await runtime.installDynamicWorkerApp(desktop, url, { appId: id, config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
  source = new SemanticAOTUIDrivenSource(runtime.getDesktop(desktop), runtime, { includeInstruction: false });
  const messages = c => c.messages.map(m => String(m.content));
  const views = (c, app, id) => messages(c).filter(m => m.startsWith('<view ') && m.includes('app_id="'+app+'"') && (!id || m.includes('id="'+id+'"')));
@@ -160,7 +178,7 @@ let refSource;
 try {
  const desktop = await refRuntime.createDesktop('published-ref-doc');
  await refRuntime.installDynamicWorkerApp(desktop, new URL('./out-7.0.2/ref-app.js', import.meta.url).href,
-  { appId: 'notes', interactionModes: ['view-type-parameters-v1'], config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
+  { appId: 'notes', config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
  refSource = new SemanticAOTUIDrivenSource(refRuntime.getDesktop(desktop), refRuntime, { includeInstruction: false });
  const text = c => c.messages.map(m => String(m.content)).join('\n');
  async function observe(ready) {
@@ -216,26 +234,116 @@ try {
  const report = await refRuntime.beginShutdown().completion;
  facts.reports.push(report); assert.equal(report.ok, true); assert.equal(report.resourcesReleased, true);
 }
-const data=await fs.mkdtemp(path.join(path.dirname(new URL(import.meta.url).pathname),'runtime-doc-data-'));
+`;
+const workItemsExamples = String.raw`
+const workRuntime = createRuntime({ worker: { timeoutMs: 45000, maxWorkers: 1 } });
+facts.workItemsExamples = [];
+try {
+ const desktop = await workRuntime.createDesktop('published-work-items');
+ const examples = [['plain', './core-out/work-items-plain.js']];
+ if (facts.profile === 'full') examples.push(['preact', './out-7.0.2/work-items-preact.js']);
+ for (const [author, example] of examples) {
+  const appId = 'work_' + author;
+  const entry = new URL('./work-' + author + '.mjs', import.meta.url);
+  await fs.writeFile(entry, 'import { workItemsApp } from ' + JSON.stringify(example) + ';\n' +
+    'export default workItemsApp(' + JSON.stringify(appId) + ');\n');
+  await workRuntime.installDynamicWorkerApp(desktop, entry.href, { appId, config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
+  const desktopHandle = workRuntime.getDesktop(desktop);
+  const instanceId = desktopHandle.getInstalledApps().find(app => app.appId === appId)?.appInstanceId;
+  assert.ok(instanceId);
+  const access = workRuntime.getAppInteraction(desktop, appId, instanceId);
+  assert.equal(access.status, 'ready');
+  const client = access.interaction;
+  let observation;
+  async function observe() {
+   if (observation) client.releaseObservation(observation.observationId);
+   const end = Date.now() + 15000;
+   for (;;) {
+    const captured = await client.observe({ all: true });
+    if (captured.status === 'observed') {
+     observation = captured.observation;
+     assert.equal(client.adoptObservation(observation.observationId).status, 'adopted');
+     return observation;
+    }
+    if (Date.now() > end) throw Error('Work Items projection unavailable: ' + JSON.stringify(captured.issue));
+    await new Promise(resolve => setTimeout(resolve, 20));
+   }
+  }
+  try {
+   for (const [index, [id, expected]] of [[otherViewId, false], [selectedViewId, null]].entries()) {
+    const current = observation ?? await observe();
+    assert.deepEqual(current.views.filter(view => view.type === 'Item').map(view => view.id), [otherViewId, selectedViewId]);
+    const tools = current.tools.filter(tool => tool.name === 'inspect');
+    assert.equal(tools.length, 1);
+    const binding = current.bindings.find(binding => binding.toolId === tools[0].id);
+    assert.ok(binding);
+    const result = await client.invoke({ observationId: current.observationId, bindingId: binding.bindingId,
+     invocationId: 'docs-work-' + index, input: { selected: id + '.selected' } });
+    assert.equal(result.receipt?.outcome.status, 'succeeded', JSON.stringify(result));
+    const updated = await observe();
+    const original = await client.readReceipt({ observationId: current.observationId, invocationId: 'docs-work-' + index });
+    assert.deepEqual(original, result);
+    assert.match(updated.views.find(view => view.id === 'workspace')?.content?.value ?? '',
+      expected === false ? /"selected":false/ : /"selected":null/);
+   }
+   facts.workItemsExamples.push({ author, views: [otherViewId, selectedViewId], selectedValues: [false, null] });
+  } finally {
+   if (observation) client.releaseObservation(observation.observationId);
+   await desktopHandle.closeApp(appId);
+  }
+ }
+} finally {
+ const report = await workRuntime.beginShutdown().completion;
+ facts.reports.push(report); assert.equal(report.ok, true); assert.equal(report.resourcesReleased, true);
+}
+`;
+const neutralHostExample = String.raw`
+import { runExample } from './out-7.0.2/runtime-host.js';
+const data=await fs.mkdtemp(fileURLToPath(new URL('./runtime-doc-data-', import.meta.url)));
 try {
  const result=await runExample(new URL('./runtime-app.mjs',import.meta.url).href,data);
  assert.equal(result.outcomes.length,2);assert.ok(result.outcomes.every(o=>o.status==='succeeded'));
  assert.equal(result.close.ok,true);assert.equal(result.close.resourcesReleased,true);
  facts.runtimeExample=true;facts.reports.push(result.close);facts.runtimeOutcomes=result.outcomes;
 } finally { await fs.rm(data,{recursive:true,force:true}); }
+`;
+const test = String.raw`
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { createRuntime } from '@aotui/runtime';
+import { coreTutorialFacts } from './core-out/core-example.js';
+import { selectedViewId, otherViewId } from './core-out/work-items.js';
+const facts = { profile: ${JSON.stringify(profile)}, coreTutorialFacts, calls: [], reports: [] };
+assert.equal(coreTutorialFacts.handlerEntries, 3);
+assert.deepEqual(coreTutorialFacts.witness, [{ text: 'old!', frozen: true }, { text: 'new!', frozen: true }]);
+for (const field of ['observationSlots', 'logicalBytes', 'leases', 'bindings', 'stateOwners']) assert.equal(coreTutorialFacts[field], 0, field);
+assert.equal(coreTutorialFacts.restoredValue, 41);
+assert.equal(coreTutorialFacts.storedKeys, 1);
+${workItemsExamples}
+${plain ? '' : fullAuthorExamples + neutralHostExample}
 await fs.writeFile(new URL('./runtime-facts.json',import.meta.url),JSON.stringify(facts,null,2)+'\n');
 console.log(JSON.stringify(facts));
 `;
-await fs.writeFile(path.join(output, 'execute.mjs'), test);
-const command = [path.join(output, 'execute.mjs')];
-try {
- const result = await execute(process.execPath, command, { cwd: consumer, maxBuffer: 8 * 1024 * 1024 });
- facts.commands.push({ command: [process.execPath, ...command], exitCode: 0, ...result });
- facts.documents = JSON.parse(await fs.readFile(path.join(output, 'runtime-facts.json'), 'utf8'));
- facts.passed = facts.commands.every(command => command.exitCode === 0);
- if (!facts.passed) process.exitCode = 1;
-} catch (error) { facts.commands.push({ command: [process.execPath, ...command], exitCode: error.code, stdout: error.stdout, stderr: error.stderr }); throw error; }
-finally { await fs.writeFile(evidence, JSON.stringify(facts, null, 2)+'\n'); }
-console.log(facts.passed
- ? 'Installed SDK and Runtime documentation: strict TypeScript 7.0.2 and real Worker scenarios passed.'
- : 'Documentation behavior passed using TS 7.0.2 output; a required compiler gate failed. See the preserved compiler results.');
+const workerExample = path.join(output, 'execute.mjs');
+await fs.writeFile(workerExample, test);
+await checked('worker-execution', [workerExample]);
+facts.documents = JSON.parse(await fs.readFile(path.join(output, 'runtime-facts.json'), 'utf8'));
+if (!plain) {
+  const app = path.join(output, 'source-host-app');
+  await fs.mkdir(app, { recursive: true });
+  await fs.writeFile(path.join(app, 'index.mjs'), "import { workItemsApp } from '../core-out/work-items-plain.js';\nexport default workItemsApp('work_items');\n");
+  const authorText = await fs.readFile(authorGuide, 'utf8');
+  const manifest = JSON.parse(authorText.split('```json\n')[1]?.split('\n```')[0]);
+  await fs.writeFile(path.join(app, 'aoapp.json'), JSON.stringify({ ...manifest, entry: { main: './index.mjs' } }));
+  const result = await checked('source-host-execution', [sourceHostExample, app], { source: hostGuide });
+  const { receipt, workspace } = JSON.parse(result.stdout.trim().split('\n').at(-1));
+  assert.equal(receipt.outcomeStatus, 'succeeded');
+  assert.match(workspace, /Inspections: 1\b/);
+  assert.match(workspace, /"selected":null/);
+  assert.doesNotMatch(JSON.stringify(receipt), /Inspections:/);
+  facts.documents.sourceHostExample = { receipt, workspace, resourcesReleased: true };
+}
+facts.passed = true;
+await fs.writeFile(evidence, JSON.stringify(facts, null, 2) + '\n');
+console.log(`Installed documentation (${profile}): strict TypeScript ${version}, pure Core and real Worker scenarios passed.`);

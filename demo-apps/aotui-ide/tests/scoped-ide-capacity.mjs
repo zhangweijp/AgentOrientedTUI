@@ -25,7 +25,7 @@ async function session(projectPath) {
         async close() { owner.stop(); return managed.close(() => owner.close()); } }; owners.push(x); await owner.start(); return x;
 }
 function succeeds(reply) { assert.equal(reply?.success, true, JSON.stringify(reply)); return reply; }
-function fails(reply, expected) { assert.equal(reply?.error?.code, expected, JSON.stringify(reply)); assert.equal(reply.effects, 'none'); }
+function fails(reply, expected) { assert.equal(reply?.error?.code, expected, JSON.stringify(reply)); assert.equal(Object.hasOwn(reply, 'effects'), false); }
 async function makeFiles(directory, from, to, body = '') { for (let offset = from; offset < to; offset += 64) await Promise.all(Array.from({ length: Math.min(64, to - offset) }, (_, i) => fs.writeFile(path.join(directory, 'f' + (offset + i)), body))); }
 async function searchSource(directory) { const identity = await directoryIdentity(directory); return { path: directory, identity, workspace: directory, workspaceIdentity: identity }; }
 try {
@@ -107,7 +107,7 @@ try {
         const y = await session(batchRoot); succeeds(await y.call('multi_open_file', { filePaths: [a, b] })); const rename = fs.rename; let attempts = 0;
         fs.rename = async (from, to) => { if (to === b) { attempts++; throw Object.assign(Error(), { code: 'EIO', syscall: 'rename' }); } return rename(from, to); };
         let reply; try { reply = await y.call('batch_edit', { edits: [{ filePath: a, oldString: 'one', newString: 'two' }, { filePath: b, oldString: 'one', newString: 'two' }, { filePath: a, oldString: 'two', newString: 'three' }] }); } finally { fs.rename = rename; }
-        assert.equal(reply.success, false); assert.equal(reply.effects, undefined); assert.equal(attempts, 1); assert.deepEqual(y.owner.lastBatch.map(item => item.status), ['succeeded', 'unknown', 'not-run']); assert.equal(await fs.readFile(a, 'utf8'), 'two'); assert.equal(await fs.readFile(b, 'utf8'), 'one'); await y.close();
+        assert.equal(reply.success, false); assert.equal(Object.hasOwn(reply, 'effects'), false); assert.equal(attempts, 1); assert.deepEqual(y.owner.lastBatch.map(item => item.status), ['succeeded', 'unknown', 'not-run']); assert.equal(await fs.readFile(a, 'utf8'), 'two'); assert.equal(await fs.readFile(b, 'utf8'), 'one'); await y.close();
     });
     await run('search pattern limits, single actual Worker, 10000 scans and 64MiB actual bytes', async () => {
         const directory = await root('search-empty'), source = await searchSource(directory), search = new ScopedSearch(); searches.push(search);

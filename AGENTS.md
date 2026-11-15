@@ -2,7 +2,7 @@
 
 ## 文档目的与状态
 
-本文件记录项目所有者明确的产品目标、交互约束，以及据此评审设计和实现的方法。初始基准为 2026-10-28，后续反馈按各节日期记录。自 2026-11-11 起，本机 SDK / Runtime 设计与验收索引位于 Git 忽略的 `docs/sdk-runtime-design/README.md`，最新范围见第十三节。仓库提供 [SDK 作者指南](sdk/docs/app-authoring.md) 和 [Runtime 集成合同](runtime/docs/runtime-app-interaction.md)。各节引用的旧评审 `deepseek_review.md` 可在提交 `60ee17785` 中查阅。
+本文件记录项目所有者明确的产品目标、交互约束，以及据此评审设计和实现的方法。初始基准为 2026-10-28，后续反馈按各节日期记录。自 2026-11-11 起，本机 SDK / Runtime 设计与验收索引位于 Git 忽略的 `docs/sdk-runtime-design/README.md`，当前三层主文档见第十五节，发布前兼容清理见第二十节。第十六至十九节保留 B01–B04 交接，第十三、十四节保留此前路线与交接事实。仓库提供 [SDK 作者指南](sdk/docs/app-authoring.md) 和 [Runtime 集成合同](runtime/docs/runtime-app-interaction.md)。各节引用的旧评审 `deepseek_review.md` 可在提交 `60ee17785` 中查阅。
 
 这些目标是设计基准，不表示现有实现已经满足全部要求。阅读代码时必须区分「目标」「当前实际行为」「提议中的改造」；发现冲突应明确指出，不能用现状反向改写目标。
 
@@ -37,9 +37,10 @@
 ### 2.3 View 与可用行为共同构成充血模型
 
 - View 不只是数据文本，也承载当前工作对象及其适用操作。
-- Tool 按 App + ViewType 声明与注册；同类型多个 View 实例共享一组 Tool，不为每个实例复制工具。实例选择由显式业务参数或 Ref 数据表达，业务有效性由 App 校验。
-- Tool 会随着 Agent 打开 View、进入某个对象上下文或发生状态转换而逐渐暴露。
+- App 业务 Tool 按 App + ViewType 声明与注册。同类型多个 View 实例共享一组 Tool，实例选择由显式业务参数或 Ref 数据表达，业务有效性由 App 校验。
+- App 业务 Tool 会随着 Agent 打开 View、进入某个对象上下文或发生状态转换而逐渐暴露。
 - 例如，尚未打开任何文件时，不暴露针对已打开文件的编辑能力；文件打开后，其 FileDetailView 才提供相应编辑操作。
+- 2026-11-13 项目所有者明确，`system-open_app` 与 `system-close_app` 是 Desktop 基础工具。Apps Source 启用时，两项工具的名称和参数 Schema 固定，即使当前没有可操作的 App 也可见。调用时从当前 Desktop 选取 App ID，按话题启用范围、App 状态和关闭所绑定的实例判断能否执行。
 - 操作的可发现性、当前可用性、执行时授权和业务前置条件是需要分别说明的概念。仅隐藏 Tool 不能代替执行时校验。
 - 动态可用性是产品语义。是否使用原生 Tool、CLI 或其他调用入口表达它，仍属于待评估的实现选择。
 
@@ -185,6 +186,8 @@ read file / edit file 在这里表示交互语义，不要求保留这些字面 
 
 据此执行时，同一份 Tool 声明仍是类型、注册、参数校验和工具目录的来源，不为简化正文新增一份手写定义或工具表。去掉分类不取消既有 Scope 授权、参数只读、Ref 绑定与失效、调用防重、结果 effects／partial／unknown 语义及清理责任；这些是独立合同，不得随字段删除一并弱化。
 
+**2026-11-12 更新：** 上段保留当时的合同背景，其中要求保留 `effects` 的部分已由项目所有者的新决定覆盖：删除 `effects` 及其同义框架分类。当前方向见第十五节与 `docs/sdk-runtime-design/01-concept-design.md` 的 C04；不表示代码已完成迁移，必要的调用、防重与清理责任不因此消失。
+
 本轮由 Clean 在独占副本连续完成实现、消费者／文档迁移与必要验证，再由 Owner 集中验收及采用。2026-11-08 已完成本轮工程验收并采用到实际根目录；原有历史验收事实保留，最终 Semantic 人工验收另记。交付与证据跟踪在 `deepseek_review.md` 的唯一索引。
 
 ## 十、2026-11-08 反馈：View 内局部 Ref，调用时指定 View
@@ -280,3 +283,168 @@ read file / edit file 在这里表示交互语义，不要求保留这些字面 
 - 本次核心工程边界与独立变量/字段协议里程碑按 11 明确执行，既不遗漏后续目标，也不因长期 Infra 定位无限扩张范围。
 - 此交接仅覆盖本次 SDK / Runtime 优化及直接消费者。前述 SRT/Clean/MC 分工和签收保留历史事实；本节更新本轮后续工作的负责人路由，不接管其他独立项目，不要求重复既有验收。
 - 唯一设计与进度入口仍为 docs/sdk-runtime-design。接手、阶段切换和中断恢复均维护现有主题文档及 06/07，不建立平行总计划。
+
+
+## 十五、2026-11-12 反馈：按三层维护 SDK / Runtime 讨论 SSOT
+
+项目所有者要求将问题、关键讨论和当前决定分别写入概念设计、系统设计、代码实现文档，持续讨论并更新。统一入口仍为 [SDK / Runtime 设计索引](docs/sdk-runtime-design/README.md)，主文档为：
+
+- [概念设计](docs/sdk-runtime-design/01-concept-design.md)：ViewType、Ref、两层公共接口、删除 effects。
+- [系统设计](docs/sdk-runtime-design/02-system-design.md)：发布与观察、既有调用查询、状态所有权、现有预算口径。
+- [代码实现](docs/sdk-runtime-design/03-code-implementation.md)：Preact 适配、现有 handler 绑定、Tool Schema、文档与产物合同，以及跨层改动的实施依据。
+
+本轮十二项反馈的原始编号保留在索引中，各主题按职责归入主文档；不能把重新归类理解为项目所有者已批准尚未讨论的系统或实现方案。旧章节引用的分主题文件与验收记录保留其历史含义。本次工作树未提供的旧文件不猜测重建；本轮讨论以三份主文档为准。
+
+### 当前决定摘要
+
+- ViewType 需要先解释清楚。保持既有 App + ViewType、同类型 View 共享工具模型；工具身份解耦仍是未获批准的候选。
+- Ref 统一解释为 View 展示数据的索引、当前观察中的只读值。展示与调用格式保持现状。TypeScript const / let 和可能的数据定义、数据结构区域属于后续议题，优先不改现有 Ref。
+- 认可 App 作者与 Host 集成者两层公共接口，尽可能简化公开概念；具体 API 尚未冻结。
+- **删除 effects** 是明确决定，覆盖第九节相反的旧要求；不得换名保留同一框架分类。最小失败与未知结果表达已由后续第十六节的 B01 细化，本次未修改实现。
+- 发布与收据查询的具体机制尚未批准。要求方案简单、正确，不由认可目标推导新增结果类型、查询签名或管理实体。
+- 认可每种真实状态只有一个所有者、每条状态转换只有一处权威判断。预算先统一已有定义、单位、来源、默认值与边界行为，不建设复杂预算系统。
+- Preact 是实现适配。第 10 项保持当前全量发布与 handler 绑定方式，本轮不实施初始化仅绑定一次等替代方案。
+- Tool 参数体系对齐 OpenAI / DeepSeek，可采用更严格的接受范围；具体 Provider 版本与兼容细节待核实。文档、模型指令、公共合同与可消费产物应一致。
+
+### 同日补充：例子、方案比较与整体一致性
+
+项目所有者要求每个议题先用具体例子深入浅出地讲清问题，再基于长期主义和 Minimalist 比较多个方案的优劣。文档按“具体例子、问题与证据边界、方案比较、当前建议、责任与最小验证”展开；比较必须说明真实收益、长期代价及适用条件，推荐不等于批准实施。
+
+共同目标、约束、判断准则及方案之间的关系统一维护在设计索引。所有建议继续服务 Agent 使用 App、Agent 开发 App 与通用 Infra 的目标，保持 View / Tool / Ref、最新投影和应用职责边界。Minimalist 以完整路径的正确性、单一所有者和总复杂度判断，不通过省略必要事实或把内核责任转给应用制造表面简洁。明确保持的 Ref 格式和 handler 绑定不因方案比较自动重开。
+
+### 更新与实施状态
+
+三份主文档分别维护问题、事实、用户反馈、当前决定、候选方案和实施状态；同一议题只有一个权威记录，其余文档引用。新决定应注明覆盖关系，“未理解”“认可方向”“保持现状”不得被改写为具体实现已获批准。
+
+本轮只建立和更新文档，没有启动候选代码改造、测试或发布。以后实施时再补充实际版本、修改与必要验证，不把建档视为已完成代码迁移，也不据此否定其他独立工作的历史授权与验收。
+
+
+## 十六、2026-11-12 反馈：分批技术方案与 B01 执行交接
+
+项目所有者要求由技术负责人分批给出详细技术方案、可行性、影响面、开发计划和可转交 Codex 的 Prompt，并设置里程碑检查点。本轮已形成新 B01 交接，入口如下：
+
+- [07 分批技术方案与开发计划](docs/sdk-runtime-design/07-delivery-plan.md)：当前详细技术合同、影响与连续准出条件；B02–B04 的后续方向。
+- [08 B01 Codex 执行 Prompt](docs/sdk-runtime-design/08-codex-b01-prompt.md)：本次单批执行指令。
+- [06 实施事实与交付记录](docs/sdk-runtime-design/06-implementation-evidence.md)：实际基线、后续修改、命令、产物及验证结果。
+
+本轮 B01 与第十三、十四节的历史 P0–P3 分开；旧验收保留历史事实，不视为本批已经完成。本次 Prompt 只实施 B01，完成后整批交付，不自动推进尚未下发的 B02–B04。三层主文档仍拥有各自议题；07 拥有批次任务，06 记录实际证据，不建立平行总计划。
+
+### B01 已选范围与执行方式
+
+- 完整删除 Tool 公共结果及调用链的 effects / failureEffects 分类，迁移 SDK、Runtime 与必要的 Adapter / IDE / SQLite 直接消费边界。具体最小结果、真实异常出口及局部 ABI / IPC 合同以 07 为准；不恢复更名后的分类，不扩大成统一结果框架。
+- 保留 App 自有业务恢复事实与独立资源合同。不能以全仓 effects 零命中为完成标准，也不能因同名保留项漏掉 Tool 边界的旧分类。
+- Ref 展示与调用格式、App + ViewType、完整 publish({views,bindings})、AppTools、handler 生命周期与闭包更新继续保持；不借本批重写 Preact、添加预算系统或业务自动重试。
+- M0–M4 是 Codex 连续自检点，通过后自动继续，不逐项等待确认。常规实现选择、消费者迁移和必要修复在本批完成；真实阻塞只暂停受影响部分，其他可完成工作继续。最后一次整批交付差异、验证证据、Breaking Change 和剩余限制。
+- 保留现有工作树修改。若建立隔离 worktree，确保本批依赖的 ignored SSOT 随工作可访问。先重建配套 Runtime / SDK，再验证实际消费者；不把旧 dist、同版本旧 tar 或历史通过当成本批证明。
+
+本轮实际完成的是针对性只读核对和文档交接；尚未修改 SDK / Runtime 源码、执行构建测试或发布。Codex 实施时按实际起点更新 06，未执行或被阻塞的验证如实记录，不冒充项目所有者人工验收。第十五节此前关于最小结果仍待讨论的状态，由本节 B01 细化覆盖；其余未下发设计继续保持原讨论边界。
+
+## 十七、2026-11-13 反馈：B01 完成后的 B02 技术交接
+
+项目所有者转交 B01 工程完成与负责人验收报告，要求继续提供 B02 的详细技术方案、可行性、影响面、开发计划和 Codex Prompt。已读取实际 B01 证据，并对相关源码做只读核对；B01 的验收与已知限制保留，B02 尚未实施或验证。
+
+### 当前权威入口
+
+- [09 B02 详细技术方案](docs/sdk-runtime-design/09-b02-technical-plan.md)：本批精确合同、选项取舍、源码依据、迁移范围、验证和 M0–M4。
+- [10 B02 Codex Prompt](docs/sdk-runtime-design/10-codex-b02-prompt.md)：当前可直接转交的连续实施指令。
+- [06 实施事实与交付记录](docs/sdk-runtime-design/06-implementation-evidence.md)：B01 已有证据及 B02 独立实施记录。
+- [07 分批路线](docs/sdk-runtime-design/07-delivery-plan.md)：总体 B01–B04 路线和 B01 历史详细方案；三层主文档仍拥有对应设计议题。
+
+当前执行 B02，08 是已完成 B01 的历史 Prompt。第十五节及早期候选中“仅调用 ID 查询”“Host 再加统一 Session”等建议不覆盖 09 的当前决定；没有下发的 B03 / B04 不自动执行。
+
+### B02 选定范围与保持条件
+
+1. `readReceipt` 改为严格两字段 `ReceiptQuery { observationId, invocationId }`，去掉查询中的 binding 和 input。旧观察的过期记录可忘记，新观察可复用 invocationId，故不能只按 invocationId 查询。复用原 Entry metadata、admitRead / read / permitted、策略、TTL、防重和真实在途持有；定位字段不恢复旧观察资格。旧完整请求运行时拒绝，不设兼容重载或静默裁剪。
+2. `createObservationOperations` 已绑定唯一 state，返回方法不再重复接收它；原 state、隔离、鉴别、取消 reservation、计量和 lease 释放保持。删除没有独立行为的 `sweepExpired` 别名，保留 inspect 与自动到期处理。不合并不同真实生命周期，不新增状态所有者。
+3. SDK 作者 API 保持。Runtime 根从既有 Core 定义显式 type-only 重导出 09 指定的 15 个 Host 类型；纯 Core 入口继续支持。完整 Host 示例移动到 Runtime 既有指南，SDK 保留作者内容并链接过去，实际包教程抽取与类型消费同步迁移。
+4. Source 和 preview 继续使用 desktop + kernel。Kernel 在全局与单 Desktop 关闭时有更早的准入撤回；本批不为了减参增加 isOwnerActive / 父级 gate、不改 Source options 严格度、不重排 Kernel / Manager / Desktop 关闭链。
+5. Ref 两种格式、App + ViewType、完整 publish({views,bindings})、AppTools、enabled 与最新闭包、单 Agent 串行合同继续保持。Preact 仅记录真实维护依赖，不重写 renderer 或改版本。B01 的结果语义、Tool IPC v5、ordinary-invoker/v3 和纯 Core ordinary-v2 保持，不恢复 effects 的同义分类。
+
+### 执行与证据
+
+B01 完成内容仍包含在当前 dirty 工作树和新增未跟踪 fixture 中，不能以裸 HEAD 作为 B02 起点。保留已有差异、试件和 ignored SSOT；隔离 worktree 必须带入它们。B01 的 tar、日志、补丁和历史 AGENTS 哈希保留，B02 使用独立证据目录并记录自己的实际基线。
+
+M0–M4 是连续自检点，通过后自动继续，最后整批集中复核和交付；不逐个 API、文件或里程碑请求确认。按实际依赖重建并消费配套产物，关键回归与已知限制分开记录。B01 的 17 项原有失败、IDE LSP 关闭问题和未验证的第三方干净安装不要求先全部修复，也不能豁免本批新回归。
+
+本次交接只更新文档和根指导，没有修改生产源码、构建、测试、发布或部署。后续实际结果写入 06 的 B02 部分，不能将方案完成或 B01 验收写成 B02 已通过。
+
+## 十八、2026-11-13 反馈：B02 完成后的 B03 技术交接
+
+项目所有者转交 B02 工程完成与负责人验收报告，要求技术负责人继续提供 B03 的详细技术方案、可行性、影响、开发计划和可直接转交 Codex 的 Prompt。已读取对应证据并针对当前源码做只读核对；本次只更新文档与根指导，B03 尚未实施、构建、测试或调用模型。
+
+### 当前权威入口
+
+- [11 B03 详细技术方案](docs/sdk-runtime-design/11-b03-technical-plan.md)：本批具体合同、方案取舍、影响、验证和 M0–M4。
+- [12 B03 Codex Prompt](docs/sdk-runtime-design/12-codex-b03-prompt.md)：本批连续实施指令。
+- [06 实施事实与交付记录](docs/sdk-runtime-design/06-implementation-evidence.md#b03)：B01 / B02 历史证据与 B03 的实施、验证和复核状态。
+- [07 分批路线](docs/sdk-runtime-design/07-delivery-plan.md#current-b03)：总体路线；三层主文档仍拥有各自议题。
+
+第十六、十七节及 08–10 保留历史；其中“当前执行 B01 / B02”和当时未实施、未清理的状态不再作为本批当前任务。当前仅下发 B03，完成后不自动实施 B04，不发布或部署。
+
+### B03 选定范围
+
+1. Snapshot Core 创建时一次捕获自己的 limits，不再每次提交重读调用方可变对象。保留公开 Partial 入口，验证九字段并保存独立冻结的完整配置；不冻结调用方对象。缺省或 undefined 使用默认值，0 合法，给定数值须是安全整数且不超过对应默认值。将默认值作为只能下调的硬上限是本批新的 Breaking Change，不能冒充已有合同。拒绝 getter / 非数据属性而不执行它们；仅处理 limits，不扩张为所有 options 的捕获框架。
+2. Schema 保留已有递归白名单、Ref 解析校验及分层复制 guard。完整含内部 marker 的 normalized Tool profile 统一使用现有 64 KiB canonical JSON UTF-8 上限，在原生成 / 消费路径检查，SDK 静态定义复用 Core 提前预检。新增声明 CAPACITY 分支，与 INVALID / UNSUPPORTED 区分；只映射真实容量失败。内部 copier 使用不可从 Core 公共入口导出的明确错误身份，不猜 message，不改变普通参数输入和业务错误合同。TypeBox 只修已定位的重复计量，并先验证全部 descriptor，再过滤输出；保守 guard 不宣称是精确最终 JSON。
+3. SDK View ID 删除独立的 2–15 长度要求，保留非空 ASCII 字母、数字、下划线子集，两种 SDK Producer 入口使用同一规则。Core 更宽的身份合同保持，不新增 64 / 128 / 256 等身份阈值。Ref 两种格式不变。外部 Tool 别名不包含 View ID，生产校验仍由 Source 执行；只修正 Host 指南中 AppKernel 先校验的错误陈述，不改变别名生成和回路由算法。
+
+九字段精确数值、计量对象、已有不同预算、完整错误映射、路径及验证条件以 11 为准。本批不增加 Schema 词汇，不启用 Provider strict，不改 optional / null / default 语义，不联网或调用真实模型来冒充 Provider 兼容验证；本地转换证据与最新云端接受性分开。
+
+### 保留合同与实施证据
+
+保持 B01 结果语义与 Tool IPC v5、ordinary-invoker/v3、Core ordinary-v2；保持 B02 两字段收据查询、实例绑定操作、Host 类型 / 教程归位及 Source / preview 的 Desktop + Kernel 关闭准入。App + ViewType、完整 publish({views,bindings})、AppTools、enabled 与最新 handler 闭包、单 Agent 串行、Preact 适配与 Ref 格式继续保持。业务状态、权限、外部写入和恢复仍由应用或真实资源适配器负责；不建设变量引擎、CLI、通用预算系统、统一会话或自动业务补偿。
+
+当前基线包含 B01 / B02 的 dirty 修改、未跟踪旧 SDK 试件、另行授权的 Runtime 测试清理与 ignored SSOT。不得 reset / clean 或从裸 HEAD 丢失这些前提；隔离 worktree 必须带入实际起点。原 17 项失败是历史证据，2006 项全量通过属于 B02 开工前，B02 最终执行的是定向验证；IDE 综合 LSP 关闭与第三方干净安装仍按实际验证边界记录。B03 记录自己的独立差异、实际产物身份和验证，不能套用历史通过数。
+
+M0–M4 是连续自检点，通过后自动继续，不逐个文件或里程碑请求确认；常规实现与直接消费者迁移属于本批。可以分派子 Agent，负责人统一合同并在整批完成后集中复核一次。真实阻塞只暂停受影响部分，其余工作继续；最后交付真实修改、验证、Breaking Change 与限制。后续实现事实统一更新 06，不把本次技术交接写作 B03 已验收。
+
+## 十九、2026-11-13 反馈：B03 完成后的 B04 技术交接
+
+项目所有者转交 B03 工程完成与负责人验收报告，随后下发 B04。B04 已完成 M0–M4 并通过本批工程验收。交付包括四份本地 tar、两次独立构建的比对结果、两套消费者的首次安装及同锁重装，以及随包原教程的执行报告。实际工具链、命令与验收范围见 [06 B04](docs/sdk-runtime-design/06-implementation-evidence.md#b04-review)。
+
+### 当前权威入口
+
+- [13 B04 详细技术方案](docs/sdk-runtime-design/13-b04-technical-plan.md)：确定版本与依赖合同、重建 / 重装、文档范围、影响和准出条件。
+- [14 B04 Codex Prompt](docs/sdk-runtime-design/14-codex-b04-prompt.md)：本批 M0–M4 的原始实施指令。
+- [06 B04 事实记录](docs/sdk-runtime-design/06-implementation-evidence.md#b04)：实际执行、产物、验证和验收状态。
+- [07 总体路线](docs/sdk-runtime-design/07-delivery-plan.md#current-b04)：当前 B04 与前三批历史关系。三层主文档继续拥有各自议题。
+
+第十六至十八节和 08–12 是前三批历史交接，其中“当前执行 B01 / B02 / B03”及当时尚未实施的表述不再作为当前任务。当前只下发 B04，不自动生成新的 B05 或启动其他长期议题。
+
+### B04 已选合同
+
+1. 冻结本地交付版本 Runtime 7.0.0、SDK 0.8.0、Adapter 0.4.0、Driver 0.3.1。SDK 的 Runtime dependency、Adapter 的 Runtime / Driver peers 精确匹配这组版本；Adapter Driver peer 收紧需记录。包版本、已有内部 ABI、tar 哈希分责，不新增运行时 SemVer gate 或兼容协商。目标版本未查询 registry，不宣称已发布或外部可用。
+2. Driver 正式 dependencies 补 @types/json-schema 7.0.15，dev Zod 与 lock 对齐精确 3.25.76；完整 Host 验证图保持 ai 6.0.326、provider-utils 4.0.65 及已有公开声明补丁。正常更新必要锁文件及直接版本消费者，不顺带升级其他 Provider、不重建全仓 workspace。严格类型不能靠 paths / shim / skipLibCheck 救场。
+3. Driver 补丁仍由消费者显式声明：从本次 Driver tar 取公开 patch，在首次安装前写入消费者自身配置，由 pnpm 正常应用。依赖包自己的配置不视为自动传递；不加 postinstall，不改 Driver 公共类型来隐藏上游问题。普通 SDK 作者不承担可选 Driver 的依赖图。
+4. 用一个有限交付 runner 串联现有构建、pack、pnpm 和消费者验证。两次隔离构建都来自同一实际 dirty 源码 / lock / patch，不复制旧 dist 或 node_modules，四包都重建。比较全量包 payload，分别记录原始 tar 哈希；同平台内容复现不等于跨平台或 tar 封装字节保证，不自造打包器。
+5. 两种独立消费者：A 是无 Preact / Adapter / Driver / AI 的普通 TS 作者与中立 Host，B 是 Preact 与完整 Source Host。各自正常安装最终 tar，再在第二空目录用同一 lock 重装并验证。包管理器正常缓存和内部链接允许；手工工作树链接、源码路径注入与原 node_modules 借用不构成干净安装。依赖获取可使用已配置 registry 或完整缓存，不搜索最新版本；真实阻塞如实记录。
+6. 复用 W10、verify-docs 与 runtime-lifecycle 原行为断言。verify-docs 增加有限 plain profile，runtime-lifecycle 提供已安装 consumer 模式；默认快速测试保留原 completeCleanInstall:false，不能混写发行证据。Source 原教程修正旧 Ref，并真实运行安装包中摘出的原文；当前 transient installAll 已等待 INIT / OPEN，不重复 openApp，按目标 Tool 可观察条件有界取得并采用 Context。
+
+精确版本表、依赖关系、脚本入口、文档归属和验证条件由 13 唯一定义。当前文档沿既有 SDK 作者、Runtime Host、Driver STRICT_TYPES 归位，不新建文档平台；迁移导航链接原权威指南，历史 W09/W10 与前三批证据保持。
+
+### 范围、保护与完成方式
+
+B03 完成工作树还包含 B01 / B02、独立 Runtime 测试清理、未跟踪旧 SDK 试件和 ignored SSOT。不得 reset / clean 或从裸 HEAD 遗漏这些输入；任何隔离构建与工作副本都必须以本批实际内容为依据。保存前三批产物与日志，B04 使用独立证据目录，首次修改前记录自己的 AGENTS 与文件身份。
+
+保持全部已收敛内核合同：View 最新投影、App + ViewType、Ref 两种格式、完整 publish({views,bindings})、AppTools、enabled 与最新闭包、Preact 适配、单 Agent 串行；保持 B01 结果与 IPC / invoker、B02 收据和实例绑定 / 关闭准入、B03 固定限额 / 容量诊断 / View ID。业务规则、外部写入及恢复仍由 App 或真实资源适配器承担。
+
+M0–M4 连续自检，通过后自动继续，最终集中复核一次；常规安装、编译、消费者迁移和实际问题修复属于本批，不逐文件等待确认。真正阻塞只暂停受影响工作，其他可完成工作继续。独立安装或关键声明验证仍 blocked 时，不把 B04 整体标记为通过。
+
+B04 止于确定的本地产物与证据。npm 发布、tag、push、部署和 B05 均未启动，本批没有调用真实 Provider、开展网络研究或检索外部记忆。IDE 综合 LSP、其他平台和项目所有者人工验收未执行。2,006 项全量属于 B02 开工前基线，B03 的通过数属于其定向验证，本次 Runtime 全量复跑和实际 tar 消费各有独立报告。[06 B04](docs/sdk-runtime-design/06-implementation-evidence.md#b04-execution)
+
+## 二十、2026-11-13 反馈：发布前清理旧版本兼容
+
+项目尚未正式发布，项目所有者明确要求清理只为兼容旧版本存在的概念和代码。先查受支持入口、实际消费者与职责，再删除无独立用途的分支、别名和旧产物路径。必要的 Breaking Change 同批迁移第一方代码、测试、公共声明及当前教程。现行的身份检查、调用授权、资源持有、持久化数据和真实业务规则仍由原所有者处理。
+
+当前盘点、删除范围、外围候选的证据条件及 M0–M4 见 [15 发布前兼容清理](docs/sdk-runtime-design/15-pre-release-cleanup-plan.md)。本次明确退役 B01–B04 当时保留的纯 Core `ordinary-v2` 分支和旧参数形态，现行 Worker 协议和执行保证照常验证。按真实工作树继续，保留 B01–B04、后续用户改动及历史证据；不得以裸 HEAD 覆盖。代码、直接消费者和验证交由「项目优化 Coding」整项执行，完成主动回报，负责人集中复核一次。实施事实写入 06。
+
+2026-11-14 继续盘点发布前遗留。项目所有者要求优先清理 SDK 和 Runtime，第一阶段只迁移两包删除所必须的第一方调用方。Host 的聊天、存储、IM/MCP 和 Driver 路由作为后续独立清理。按 [16 当前执行顺序](docs/sdk-runtime-design/16-remaining-compatibility-cleanup-plan.md#当前执行顺序) 先提交可独立复核的核心差异。实施与验证事实仍维护在 06。
+
+2026-11-15，SDK 与 Runtime 核心批通过研发负责人本地工程验收。当前基线是已核对的共享源码与本批修订 tar，后续以各批构建产物和源码身份验证。[核心批验收与配套清单](docs/sdk-runtime-design/06-implementation-evidence.md#remaining-sdk-runtime-cleanup-acceptance-20261115)
+
+同日已将 Host 聊天与存储、IM/MCP 和关联死代码的独立清理交由「项目优化 Coding」实施。按现有证据边界验收 Host，Driver 模型路由与 IDE 独立配置后续分批处理。[Host 实施顺序与准出](docs/sdk-runtime-design/16-remaining-compatibility-cleanup-plan.md#三host-实施顺序与准出)
+
+Host A–C 最终 r2 通过研发负责人本地工程验收。已将 Driver 模型路由清理作为独立批下发给「项目优化 Coding」。[Host 最终验收](docs/sdk-runtime-design/06-implementation-evidence.md#host-compatibility-acceptance-20261115) · [Driver 实施顺序与准出](docs/sdk-runtime-design/16-remaining-compatibility-cleanup-plan.md#driver-model-routing-delivery)
+
+Driver 模型路由的修订包通过研发负责人本地工程验收。IDE 启动配置清理已下发给「项目优化 Coding」。[Driver 最终验收](docs/sdk-runtime-design/06-implementation-evidence.md#driver-model-routing-acceptance-20261115) · [IDE 实施顺序](docs/sdk-runtime-design/16-remaining-compatibility-cleanup-plan.md#ide-launch-option-cleanup)
+
+IDE 启动配置已通过本地工程验收，[16](docs/sdk-runtime-design/16-remaining-compatibility-cleanup-plan.md) 所列四批完成。IDE 综合 LSP 后代组关闭仍保留历史失败，前后包均有常规权限下的独立对照。[IDE 最终验收](docs/sdk-runtime-design/06-implementation-evidence.md#ide-launch-option-acceptance-20261115) · [四批验收汇总](docs/sdk-runtime-design/06-implementation-evidence.md#remaining-compatibility-closure-20261115)

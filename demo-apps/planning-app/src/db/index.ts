@@ -12,17 +12,6 @@ const DB_FILE = join(DATA_DIR, 'planning.sqlite');
 let db: Database | null = null;
 let SQL: initSqlJs.SqlJsStatic | null = null;
 
-function createPhaseRecord(
-    input: Omit<Phase, 'tasks' | 'todos'>,
-    todos: TaskItem[]
-): Phase {
-    return {
-        ...input,
-        tasks: todos,
-        todos
-    };
-}
-
 export async function initDatabase(): Promise<Database> {
     if (db) return db;
 
@@ -222,15 +211,7 @@ export function getPlans(desktopId: string): Plan[] {
                 status: taskRow.status
             }));
 
-            return createPhaseRecord(
-                {
-                    id: phaseRow.id,
-                    title: phaseRow.title,
-                    description: phaseRow.description,
-                    status: phaseRow.status
-                },
-                tasks
-            );
+            return { ...phaseRow, tasks };
         });
 
         return {
@@ -308,15 +289,7 @@ export function createPhase(desktopId: string, planId: string, title: string, de
     }
     const db = getDb();
     const now = Date.now();
-    const phase = createPhaseRecord(
-        {
-            id: generateId('phase'),
-            title,
-            description,
-            status: 'pending'
-        },
-        []
-    );
+    const phase: Phase = { id: generateId('phase'), title, description, status: 'pending', tasks: [] };
     const position = getNextPosition('phases', 'plan_id', planId);
     db.run(
         `INSERT INTO phases (id, plan_id, title, description, status, position, created_at)

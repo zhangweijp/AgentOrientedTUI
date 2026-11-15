@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import { compileOrdinaryParams } from './ordinary-parameter-contract.js';
+import { compileOrdinarySchema } from './ordinary-parameter-contract.js';
 import { createViewOwnedTools } from './view-owned-tools.js';
 import type { SafeOrdinaryInvoker } from './invocation-terminal.js';
 import type { ToolResult } from '../../spi/core/tool-result.js';
 
 const schema = (() => {
-    const result = compileOrdinaryParams({
-        filePath: { type: 'string', required: true, desc: 'Business path interpreted by the App.' },
-        content: { type: 'string', required: true },
-    }, { additionalProperties: false });
+    const result = compileOrdinarySchema({ type: 'object', properties: {
+        filePath: { type: 'string', description: 'Business path interpreted by the App.' },
+        content: { type: 'string' },
+    }, required: ['filePath', 'content'], additionalProperties: false });
     if (!result.ok) throw new Error('Test schema must compile');
     return result.contract.schema;
 })();
@@ -24,7 +24,7 @@ function safe(handler: (args: Readonly<Record<string, unknown>>) => ToolResult):
 function register(registry: ReturnType<typeof createViewOwnedTools>, handler: (args: Readonly<Record<string, unknown>>) => ToolResult,
     createInvoker: (fallback: SafeOrdinaryInvoker) => SafeOrdinaryInvoker = fallback => fallback) {
     return registry.registerTypeTool(definition, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
         createSafeOrdinaryParametersInvoker: () => createInvoker(safe(handler)),
     });
 }
@@ -104,7 +104,7 @@ describe('ViewType Tools V3 Core registry', () => {
         tools.mount('file-a', 'FileDetail');
         const observed = tools.listTools()[0]!;
         expect(() => tools.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
             createSafeOrdinaryParametersInvoker: secondFactory,
         }))
             .toThrow(expect.objectContaining({ code: 'TOOL_DUPLICATE' }));
@@ -147,18 +147,18 @@ describe('ViewType Tools V3 Core registry', () => {
         const tools = registry();
         const createInvoker = vi.fn(() => safe(() => ({ success: true })));
         expect(() => tools.registerTypeTool({ ...definition, handler: () => ({ success: true }) } as never, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
             createSafeOrdinaryParametersInvoker: createInvoker,
         })).toThrow();
         expect(() => tools.registerTypeTool({ ...definition, inputSchema: { type: 'object', properties: {
             file: { type: 'reference' },
         } } }, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
             createSafeOrdinaryParametersInvoker: createInvoker,
         })).toThrow();
         expect(createInvoker).not.toHaveBeenCalled();
         expect(() => tools.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
         } as never)).toThrow(expect.objectContaining({ code: 'TOOL_INVALID' }));
         expect(tools.inspect()).toMatchObject({ bindings: 0 });
         tools.dispose();
@@ -167,11 +167,10 @@ describe('ViewType Tools V3 Core registry', () => {
     it('keeps input validation in the trusted invoker before handler entry', async () => {
         const tools = registry();
         const handler = vi.fn(() => ({ success: true }));
-        const compiled = compileOrdinaryParams({ filePath: { type: 'string', required: true }, content: { type: 'string', required: true } },
-            { additionalProperties: false });
+        const compiled = compileOrdinarySchema({ type: 'object', properties: { filePath: { type: 'string' }, content: { type: 'string' } }, required: ['filePath', 'content'], additionalProperties: false });
         if (!compiled.ok) throw new Error('Test schema must compile');
         const invoke: SafeOrdinaryInvoker = async input => {
-            const checked = compiled.contract.validate(input);
+            const checked = compiled.contract.validateModelInput(input);
             return checked.ok ? { phase: 'entered-returned', result: await handler() }
                 : { phase: 'not-entered', result: { success: false, error: { code: 'E_INVALID_ARGS', message: 'bad arguments' } } };
         };
@@ -188,18 +187,18 @@ describe('ViewType Tools V3 Core registry', () => {
     it('rejects getters, hidden option fields and custom prototypes without executing getters', () => {
         const tools = registry(); let getterCalls = 0;
         const accessor = {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
             get createSafeOrdinaryParametersInvoker() { getterCalls++; return () => safe(() => ({ success: true })); },
         };
         expect(() => tools.registerTypeTool(definition, accessor as never)).toThrow(expect.objectContaining({ code: 'TOOL_INVALID' }));
         const hidden = {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
             createSafeOrdinaryParametersInvoker: () => safe(() => ({ success: true })),
         };
         Object.defineProperty(hidden, 'internal', { value: true, enumerable: false });
         expect(() => tools.registerTypeTool(definition, hidden as never)).toThrow(expect.objectContaining({ code: 'TOOL_INVALID' }));
         const customPrototype = Object.assign(Object.create({ inherited: true }), {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
             createSafeOrdinaryParametersInvoker: () => safe(() => ({ success: true })),
         });
         expect(() => tools.registerTypeTool(definition, customPrototype)).toThrow(expect.objectContaining({ code: 'TOOL_INVALID' }));
@@ -212,7 +211,7 @@ describe('ViewType Tools V3 Core registry', () => {
         tools.mount('file-a', 'FileDetail');
         const innerRelease = { value: undefined as (() => void) | undefined };
         expect(() => tools.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
             createSafeOrdinaryParametersInvoker: () => {
                 innerRelease.value = register(tools, () => ({ success: true }));
                 return safe(() => ({ success: true }));
@@ -223,7 +222,7 @@ describe('ViewType Tools V3 Core registry', () => {
         innerRelease.value?.();
         expect(tools.inspect().bindings).toBe(0);
         expect(() => tools.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
             createSafeOrdinaryParametersInvoker: () => {
                 tools.dispose();
                 return safe(() => ({ success: true }));

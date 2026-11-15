@@ -10,7 +10,7 @@
  */
 
 import type { Database } from 'sql.js';
-import type { Message, MessageRow, Topic, Project } from './types-v2.js';
+import type { Message, MessageRow } from './types-v2.js';
 import { messageToRow, rowToMessage } from './types-v2.js';
 
 // ============================================================================
@@ -56,23 +56,6 @@ export function getMessagesV2(db: Database, topicId: string): Message[] {
 }
 
 /**
- * 获取单条消息 (V2 格式)
- */
-export function getMessageV2(db: Database, id: string): Message | null {
-    const stmt = db.prepare('SELECT * FROM messages_v2 WHERE id = ?');
-    stmt.bind([id]);
-
-    if (stmt.step()) {
-        const row = stmt.getAsObject() as unknown as MessageRow;
-        stmt.free();
-        return rowToMessage(row);
-    }
-
-    stmt.free();
-    return null;
-}
-
-/**
  * 删除消息 (V2 格式)
  */
 export function deleteMessageV2(db: Database, id: string): void {
@@ -98,32 +81,6 @@ export function updateMessageV2(db: Database, topicId: string, message: Message)
         row.topic_id,
     ]);
 }
-
-/**
- * 批量获取所有话题的消息 (V2 格式)
- */
-export function getAllMessagesGroupedByTopicV2(db: Database): Map<string, Message[]> {
-    const stmt = db.prepare('SELECT * FROM messages_v2 ORDER BY timestamp ASC');
-
-    const result = new Map<string, Message[]>();
-    while (stmt.step()) {
-        const row = stmt.getAsObject() as unknown as MessageRow;
-        const message = rowToMessage(row);
-        const topicId = row.topic_id;
-
-        if (!result.has(topicId)) {
-            result.set(topicId, []);
-        }
-        result.get(topicId)!.push(message);
-    }
-    stmt.free();
-
-    return result;
-}
-
-// ============================================================================
-// Schema Migration
-// ============================================================================
 
 /**
  * 创建 messages_v2 表

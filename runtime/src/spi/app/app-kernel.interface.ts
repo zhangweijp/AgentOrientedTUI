@@ -9,7 +9,6 @@
  *
  * @module @aotui/runtime/spi/app
  */
-import type { AppLaunchConfig } from './app-config.interface.js';
 import type { AppContext } from './store.interface.js';
 
 export interface AppReinitializeContext extends AppContext {
@@ -30,10 +29,7 @@ export type SignalPolicy = 'auto' | 'manual' | 'never';
 /**
  * App Kernel Configuration
  *
- * 由 SDK 生成的配置对象，传递给 AppKernel。
- *
- * @example
- * SDK 生成的组件配置由 Runtime AppKernel 消费。
+ * Lifecycle methods run with a per-instance shallow copy of this configuration as `this`.
  */
 export interface AppKernelConfig {
     /**
@@ -45,11 +41,6 @@ export interface AppKernelConfig {
      * 必须与 SDK 的 `app_name` 一致；缺少该值的工厂无效。
      */
     appName: string;
-
-    /**
-     * 派生的日志／调试标签；不用于注册、Ref 解析或调用定位
-     */
-    name: string;
 
     /**
      * [RFC-013] App 描述
@@ -67,16 +58,6 @@ export interface AppKernelConfig {
 
     /** 什么时候用 (用于 Desktop State 展示) */
     whenToUse?: string;
-
-    /**
-     * 运行时启动配置
-     * 
-     * 由 Worker Runtime 在实例化 AppKernel 时注入。
-     * 包含环境变量、初始状态等运行时信息。
-     * 
-     * 注意：这不是由 SDK 设置的，而是由 Runtime 注入。
-     */
-    launchConfig?: AppLaunchConfig;
 
     /**
      * [RFC-012] 信号策略

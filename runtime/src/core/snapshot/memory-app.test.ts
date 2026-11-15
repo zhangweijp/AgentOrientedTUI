@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createSnapshotCore } from './store.js';
 import { refKey } from './snapshot-support.js';
-import { compileOrdinaryParams } from '../tool/ordinary-parameter-contract.js';
+import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
 
-const taskToolSchema = compileOrdinaryParams({ target: { type: 'string', required: true } });
+const taskToolSchema = compileOrdinarySchema({ type: 'object', properties: { target: { type: 'string' } }, required: ['target'] });
 if (!taskToolSchema.ok) throw new Error('Fixture Tool schema must compile');
 
 /**
@@ -43,7 +43,7 @@ class MemoryTaskApp {
             refs[refKey('task_list', 'mount_1', refId)] = {
                 id: refId, ownerViewId: 'task_list', ownerViewInstanceId: 'mount_1',
                 refType: 'Task',
-                target: { kind: 'entity', entityType: 'Task', entityId: task.id, entityVersion: String(task.revision) },
+                target: { kind: 'snapshot-value', payload: { id: task.id, revision: task.revision } },
             };
             labels.push('[' + task.title + '](' + refId + ')');
         }
@@ -83,8 +83,8 @@ describe('M1 isolated in-memory App → Snapshot → Ref → Tool descriptor →
             viewId: 'task_list', viewInstanceId: 'mount_1', refId: 'pending[0]',
         });
         expect(old.status).toBe('resolved');
-        if (old.status !== 'resolved' || old.target.kind !== 'entity') return;
-        const observedTarget = old.target;
+        if (old.status !== 'resolved') throw Error('Expected historical Ref');
+        const observedTarget = old.target.payload as { id: string; revision: number };
         const publishedTool = core.store.getTool({
             snapshotId: originalId, appId: app.appId,
             instanceId: app.instanceId, toolId: JSON.stringify([app.appId, 'TaskList', 'complete_task']),
@@ -94,7 +94,7 @@ describe('M1 isolated in-memory App → Snapshot → Ref → Tool descriptor →
         app.reorder(['b', 'a']);
         const next = core.committer.accept(app.draft());
         expect(next.status).toBe('published');
-        expect(app.complete(observedTarget.entityId, Number(observedTarget.entityVersion))).toBe('completed');
+        expect(app.complete(observedTarget.id, observedTarget.revision)).toBe('completed');
         const final = core.committer.accept(app.draft());
         expect(final.status).toBe('published');
 
@@ -103,11 +103,8 @@ describe('M1 isolated in-memory App → Snapshot → Ref → Tool descriptor →
             viewId: 'task_list', viewInstanceId: 'mount_1', refId: 'pending[0]',
         });
         expect(stillOld.status).toBe('resolved');
-        if (stillOld.status === 'resolved' && stillOld.target.kind === 'entity') {
-            expect(stillOld.target.entityId).toBe('a');
-            expect(stillOld.target.entityVersion).toBe('1');
-        }
-        const staleAttempt = app.complete(observedTarget.entityId, Number(observedTarget.entityVersion));
+        expect(stillOld).toMatchObject({ target: { kind: 'snapshot-value', payload: { id: 'a', revision: 1 } } });
+        const staleAttempt = app.complete(observedTarget.id, observedTarget.revision);
         expect(staleAttempt).toBe('stale');
         expect(core.store.readLatest('tasks').status).toBe('ready');
         held.lease.release(); expect(core.store.inspect().activeLeases).toBe(0);

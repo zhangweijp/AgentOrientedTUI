@@ -80,7 +80,7 @@ describe('Semantic producer regression: a mutation during V3 preparation cannot 
                                 ctx.appTypeTools.registerTypeTool({
                                     viewType:'FileDetail', name:'late_inspect', description:'Reentrant registration',
                                     inputSchema:{ type:'object', properties:{}, required:[], additionalProperties:false },
-                                }, { safeOrdinaryParametersInvocationMode:'ordinary-v2',
+                                }, { safeOrdinaryParametersInvocationMode:'ordinary-invoker/v4',
                                     createSafeOrdinaryParametersInvoker: () => async () => ({
                                         phase:'entered-returned',result:{success:true},
                                     }),

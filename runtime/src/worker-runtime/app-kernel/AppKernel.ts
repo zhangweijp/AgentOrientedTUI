@@ -1,5 +1,5 @@
 import type { ToolResultData } from '../../spi/core/tool-result.js';
-import { APP_LIFECYCLE_PROTOCOL, VIEW_TYPE_TOOL_PROTOCOL, captureAppMetadata } from '../../spi/index.js';
+import { VIEW_TYPE_TOOL_PROTOCOL } from '../../spi/index.js';
 /**
  * AOTUI Runtime - App Kernel
  *
@@ -18,6 +18,7 @@ import type {
     AppID,
     AppContext,
     AppKernelConfig,
+    AppLaunchConfig,
     IRefExporter, AppInstance, ExternalAppEvent, RuntimeContext, TUIAppFactory,
 } from '../../spi/index.js';
 import type { IRefBinding, RefValueCheck } from '../../spi/app/ref-exporter.interface.js';
@@ -29,13 +30,11 @@ import { createViewOwnedTools } from '../../core/tool/view-owned-tools.js';
 import type { OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
 import type { ToolDescriptorV3, ObservedToolExecutionV3 } from '../../core/snapshot/types.js';
 import type { AppTypeToolDefinition, AppTypeToolRegistrationOptions } from '../../spi/runtime/app-type-tools.interface.js';
-import { hasViewTypeToolAuthoringProtocol } from '../../spi/app/app-factory.interface.js';
 import { createAppLifecycle } from '../app-lifecycle.js';
 import type { AppStatePersistence } from '../../spi/runtime/state-persistence.interface.js';
 import { SnapshotDataError } from '../../core/snapshot/json.js';
 import { randomUUID } from 'node:crypto';
 import { closeError } from '../../engine/core/close-handle.js';
-import { isTUIAppFactory } from '../../spi/app/app-factory.interface.js';
 import type { LLMOutputEvent } from '../../spi/core/llm-output.js';
 
 /**
@@ -45,9 +44,6 @@ import type { LLMOutputEvent } from '../../spi/core/llm-output.js';
  */
 export class AppKernel implements IRefExporter {
     private _id: AppID = '' as AppID;
-    readonly name: string;
-
-    private readonly config: AppKernelConfig & { factory: Pick<TUIAppFactory, 'initialize'> };
     private instance?: AppInstance;
     private readViews?: Parameters<RuntimeContext['setViewReader']>[0];
     private context!: AppContext;
@@ -149,24 +145,10 @@ export class AppKernel implements IRefExporter {
         return this.viewOwnedTools?.listViews() ?? Object.freeze([]);
     }
 
-    constructor(config: AppKernelConfig & { factory: Pick<TUIAppFactory, 'initialize'> }) {
-        if (typeof config.factory?.initialize !== 'function') {
-            throw new AOTUIError(
-                'CONFIG_INVALID',
-                { reason: 'App factory initialize(context) is required.' }
-            );
-        }
-        if (!config.appName) {
-            throw new AOTUIError('CONFIG_INVALID', {
-                reason: 'AppKernelConfig.appName is required.'
-            });
-        }
-
-        this.config = config;
-        this.name = config.name;
-        captureAppMetadata({ app_name: config.appName });
-
-    }
+    constructor(private readonly config: AppKernelConfig & {
+        factory: Pick<TUIAppFactory, 'initialize'>;
+        launchConfig?: AppLaunchConfig | undefined;
+    }) {}
 
     get id(): AppID {
         return this._id;
@@ -274,17 +256,6 @@ export class AppKernel implements IRefExporter {
     }
 
     private async initializeInstance(): Promise<void> {
-        const factory = this.config.factory;
-        if (isTUIAppFactory(factory) && !hasViewTypeToolAuthoringProtocol(factory)) {
-            throw new Error('APP_AUTHORING_PROTOCOL_UNSUPPORTED');
-        }
-        const lifecycleMarker = Object.getOwnPropertyDescriptor(factory, 'appLifecycleSupport');
-        if (lifecycleMarker) {
-            if (!('value' in lifecycleMarker) || lifecycleMarker.value !== APP_LIFECYCLE_PROTOCOL)
-                throw new Error('APP_LIFECYCLE_UNSUPPORTED');
-            if (!this.appLifecycle) this.enableAppLifecycle();
-        }
-
         // M4 Stage 1: the Core registry is scoped to the trusted App execution.
         const owned = this.viewOwnedTools ??= createViewOwnedTools(
             String(this._id), this.appExecutionInstanceId,
@@ -358,7 +329,7 @@ export class AppKernel implements IRefExporter {
             },
         };
 
-        const instance = await factory.initialize(runtimeContext);
+        const instance = await this.config.factory.initialize(runtimeContext);
         if (!instance || typeof instance.close !== 'function') {
             throw Object.assign(new Error('App initialize must return an instance with close()'),
                 { code: 'APP_INVALID_INSTANCE', path: 'initialize' });

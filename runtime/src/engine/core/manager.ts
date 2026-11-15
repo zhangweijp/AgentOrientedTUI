@@ -10,8 +10,6 @@ import { WorkerCapacity } from '../app/worker-capacity.js';
 
 import type {
     DesktopID,
-    AppState,
-    DesktopStatus,
     IDesktop,
     IRuntimeContext, // New
 } from '../../spi/index.js';
@@ -19,7 +17,7 @@ import type { IDesktopManager } from '../../spi/runtime/desktop-manager.interfac
 import { AOTUIError } from '../../spi/core/errors.js';
 import { Desktop } from './desktop.js';
 import type { DesktopCloseOptions, DesktopCloseHandle, DesktopCloseReport, RuntimeCloseHandle, RuntimeCloseReport } from '../../spi/runtime/close.interface.js';
-import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseHandle, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from './close-handle.js';
+import { addCloseFailure, closeError, closeTimeout, createCloseHandle, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from './close-handle.js';
 
 // ============================================================================
 // Desktop Manager Implementation
@@ -45,7 +43,6 @@ export class DesktopManager implements IDesktopManager {
     private config: RuntimeConfig;
     private readonly workerCapacity: WorkerCapacity;
     private closing?: RuntimeCloseHandle;
-    private shutdownPromise?: Promise<void>;
     private phase: 'active' | 'closing' | 'settled' = 'active';
     private closeState = newCloseState('runtime');
     private closeTargets?: Map<Desktop, DesktopCloseHandle>;
@@ -104,25 +101,6 @@ export class DesktopManager implements IDesktopManager {
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  当前状态查询
-    // ─────────────────────────────────────────────────────────────
-
-    getAppStates(desktopId: DesktopID): AppState[] {
-        const desktop = this.desktops.get(desktopId);
-        return desktop?.getAppStates() ?? [];
-    }
-
-    getDesktopInfo(desktopId: DesktopID): { status: DesktopStatus; createdAt: number } | undefined {
-        const desktop = this.desktops.get(desktopId);
-        if (!desktop) return undefined;
-
-        return {
-            status: desktop.status,
-            createdAt: desktop.createdAt
-        };
-    }
-
-    // ─────────────────────────────────────────────────────────────
     //  Desktop 生命周期
     // ─────────────────────────────────────────────────────────────
 
@@ -165,7 +143,6 @@ export class DesktopManager implements IDesktopManager {
         })();
         return this.closing;
     }
-    shutdown(): Promise<void> { return this.shutdownPromise ??= closeVoid(this.beginShutdown().completion, 'RUNTIME_CLOSE_FAILED'); }
 
     // ─────────────────────────────────────────────────────────────
     //  Internal Helpers

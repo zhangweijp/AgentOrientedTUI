@@ -10,7 +10,7 @@ it.each(['normal', 'sync-throw', 'async-reject', 'async-held'] as const)('A17 ac
         if (mode === 'async-reject') return Promise.reject(Error('renderer async'));
         if (mode === 'async-held') return unmountGate.promise;
     });
-    const kernel = new AppKernel({ name: 'test', appName: 'test', factory: { async initialize(context: any) {
+    const kernel = new AppKernel({ appName: 'test_app', factory: { async initialize(context: any) {
         runtime = context;
         context.projection.beginCommit();
         const view = context.viewTools.mount('v', 'Detail');
@@ -19,7 +19,7 @@ it.each(['normal', 'sync-throw', 'async-reject', 'async-held'] as const)('A17 ac
         const handler = async (_args: any) => { calls++; handlerStarted.resolve(); await handlerGate.promise; return { success: true, data: 19 }; };
         context.appTypeTools.registerTypeTool({ viewType: 'Detail', name: 'held', description: 'Held',
             inputSchema: { type: 'object', properties: {}, additionalProperties: false } }, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
             createSafeOrdinaryParametersInvoker: () => async args => ({ phase: 'entered-returned', result: await handler(args) }),
         });
         context.refExporter.registerRef('v', 'r', { value: 19 });

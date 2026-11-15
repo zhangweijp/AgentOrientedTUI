@@ -1,9 +1,9 @@
-import { ORDINARY_INVOCATION_MODE } from './invocation-terminal.js';
+import { ORDINARY_INVOKER_ABI_V4 } from './invocation-terminal.js';
 import { VIEW_TYPE_TOOL_PROTOCOL } from '../../spi/runtime/app-type-tools.interface.js';
-import { compileOrdinarySchema, VIEW_TYPE_PARAMETERS_MODE, type OrdinaryParameterContract } from './ordinary-parameter-contract.js';
+import { compileOrdinarySchema, type OrdinaryParameterContract } from './ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
 import type { ToolResultData } from '../../spi/core/tool-result.js';
-import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
+import { canonicalJson, copyJson, SnapshotDataError, utf8Size } from '../snapshot/json.js';
 import type { JsonValue, ObservedToolExecutionV3, ToolDescriptorV3 } from '../snapshot/types.js';
 import type { SafeOrdinaryInvoker, ViewToolInvocationTerminal } from './invocation-terminal.js';
 import type { AppFrameTool, AppTypeToolDefinition, AppTypeToolRegistrationOptions } from '../../spi/runtime/app-type-tools.interface.js';
@@ -317,12 +317,26 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                 throw new ViewToolContractError('TOOL_INVALID', 'Invalid ViewType Tool definition');
             }
             const optionFields = captureOptions(options, ['safeOrdinaryParametersInvocationMode', 'createSafeOrdinaryParametersInvoker'], 'ViewType Tool registration');
-            if (optionFields.safeOrdinaryParametersInvocationMode !== ORDINARY_INVOCATION_MODE ||
-                typeof optionFields.createSafeOrdinaryParametersInvoker !== 'function')
+            if (optionFields.safeOrdinaryParametersInvocationMode !== ORDINARY_INVOKER_ABI_V4) {
+                throw new ViewToolContractError('TOOL_INVOKER_ABI_UNSUPPORTED',
+                    `Expected ${ORDINARY_INVOKER_ABI_V4}. Install matching Runtime and SDK packages and rebuild the App.`);
+            }
+            if (typeof optionFields.createSafeOrdinaryParametersInvoker !== 'function')
                 throw new ViewToolContractError('TOOL_INVALID', 'Invalid trusted ViewType Tool registration options');
-            const compiled = compileOrdinarySchema(copied.inputSchema, VIEW_TYPE_PARAMETERS_MODE);
-            if (!compiled.ok) throw new ViewToolContractError(compiled.issue.code, compiled.issue.message, compiled.issue.path);
-            const inputSchema = ordinaryParameterProfile(compiled.contract);
+            const compiled = compileOrdinarySchema(copied.inputSchema);
+            if (!compiled.ok) {
+                const { code, message, path } = compiled.issue;
+                throw new ViewToolContractError(code === 'PARAMETER_DECLARATION_CAPACITY' ? 'TOOL_SCHEMA_CAPACITY' : code, message, path);
+            }
+            let inputSchema: JsonValue;
+            try {
+                inputSchema = ordinaryParameterProfile(compiled.contract);
+            } catch (error) {
+                if (error instanceof SnapshotDataError && error.code === 'TOOL_SCHEMA_CAPACITY') {
+                    throw new ViewToolContractError(error.code, error.message, error.path);
+                }
+                throw error;
+            }
             const publicDefinition = Object.freeze({ viewType: copied.viewType, name: copied.name, description: copied.description,
                 inputSchema });
             const declarationBytes = utf8Size(canonicalJson(publicDefinition as unknown as JsonValue));

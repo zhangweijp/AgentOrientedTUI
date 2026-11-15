@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # AOTUI Development Environment Setup Script
-# This script installs dependencies and links the default TUI applications
+# This script installs dependencies and registers the default TUI applications
 
 set -e  # Exit on error
 
@@ -105,20 +105,6 @@ install_electron_binary() {
     ELECTRON_MIRROR="$default_mirror" node "$install_script"
 }
 
-registered_app_name_from_link_output() {
-    local link_output="$1"
-    local registered_app_name
-    registered_app_name="$(printf '%s\n' "$link_output" | sed -n "s/.*App '\([^']*\)' is already registered.*/\1/p" | head -n 1)"
-    [ -n "$registered_app_name" ] || return 1
-    printf '%s\n' "$registered_app_name"
-}
-
-link_output_is_app_already_registered() {
-    local link_output="$1"
-    [[ "$link_output" == *APP_ALREADY_REGISTERED* ]] || \
-        printf '%s\n' "$link_output" | grep -Eq "App '[^']+' is already registered"
-}
-
 # Install root dependencies
 echo "📦 Installing root dependencies..."
 pnpm install --ignore-workspace
@@ -194,7 +180,7 @@ npm link
 cd ..
 
 if command -v agentina &> /dev/null; then
-    echo "✅ agentina CLI is now available ($(agentina --version 2>/dev/null || echo 'version check not available'))"
+    echo "✅ agentina CLI is now available"
 else
     echo "⚠️  agentina command may not be in PATH yet"
     echo "   Try running: source ~/.bashrc or source ~/.zshrc"
@@ -202,16 +188,15 @@ else
 fi
 
 echo ""
-echo "🔗 Linking default TUI applications..."
+echo "🔗 Registering default TUI applications..."
 echo "----------------------------------------------"
 
-# Array of apps to link
 apps=("${DEMO_APP_DIRS[@]}")
 
 for app in "${apps[@]}"; do
     if [ -d "$app" ]; then
         app_name="$(basename "$app")"
-        echo "🔗 Linking $app_name with agentina..."
+        echo "🔗 Registering $app_name with agentina..."
 
         (
             cd "$app"
@@ -221,43 +206,24 @@ for app in "${apps[@]}"; do
                 pnpm build
             fi
 
-            # Ensure dist exists before linking
+            # Ensure dist exists before registering
             if [ ! -d "dist" ]; then
                 echo "❌ $app_name build completed but dist directory was not found"
                 echo "   Please check the build output path before running setup again"
                 exit 1
             fi
 
-            # Link current app directory to agentina (idempotent on reruns)
-            if ! link_output=$(agentina link . 2>&1); then
-                if link_output_is_app_already_registered "$link_output"; then
-                    if registered_app_name=$(registered_app_name_from_link_output "$link_output"); then
-                        echo "ℹ️  App '$registered_app_name' is already registered, replacing link..."
-                        agentina remove "$registered_app_name"
-                        agentina link .
-                    else
-                        echo "$link_output"
-                        echo "❌ Failed to parse already-registered app name"
-                        exit 1
-                    fi
-                else
-                    echo "$link_output"
-                    echo "❌ Failed to link $app_name"
-                    exit 1
-                fi
-            else
-                echo "$link_output"
-            fi
+            agentina install . --force
         )
 
-        echo "✅ $app_name linked successfully"
+        echo "✅ $app_name registered successfully"
     else
         echo "⚠️  $app directory not found, skipping..."
     fi
 done
 
 echo ""
-echo "✅ Default apps linked successfully!"
+echo "✅ Default apps registered successfully!"
 echo ""
 echo "================================================================"
 echo "✨ Setup Complete! ✨"
@@ -274,5 +240,5 @@ done
 echo ""
 echo "To verify installation:"
 echo "  agentina list              # List all available apps"
-echo "  agentina link <path>       # Link additional apps manually"
+echo "  agentina install local:<path>  # Register additional local apps"
 echo ""

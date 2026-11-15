@@ -6,23 +6,23 @@ import type { JsonValue, PreparedAppSnapshotDraftV3 } from '../core/snapshot/typ
 import { compileOrdinarySchema } from '../core/tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profile.js';
 import { prepareViewTypeParameters } from '../core/tool/snapshot-value-arguments.js';
-import { validateVersionedToolRefDeclarations } from '../core/tool/versioned-ref-declarations.js';
 import { captureTypeParametersRequest } from './ordinary-invocation-v2.js';
 
 const ref = (value: JsonValue = { type: 'object', properties: { label: { type: 'string' } }, required: ['label'], additionalProperties: false }) =>
     ({ type: 'string', minLength: 1, 'x-aotui-ref-kind': 'Item', 'x-aotui-ref-value': value });
 
-function fixture(optional = false, payload: JsonValue = { label: 'A' }) {
+function fixture(optional = false) {
     const c = compileOrdinarySchema({ type: 'object', properties: {
         many: { type: 'array', items: ref(), maxItems: 3 },
         one: ref(), all: ref({ type: 'array', items: { type: 'object' } }),
         ordinary: { type: 'string' },
-    }, required: optional ? [] : ['many'], additionalProperties: false }, 'view-type-parameters-v1');
+    }, required: optional ? [] : ['many'], additionalProperties: false });
     if (!c.ok) throw Error(JSON.stringify(c.issue));
     const core = createSnapshotCore(); core.lifecycle.startApp('a', 'i');
     const toolId = JSON.stringify(['a', 'Items', 'choose']);
     const own = (id: string, value: JsonValue) => ({ id, ownerViewId: 'items', ownerViewInstanceId: 'mount',
         refType: 'Item', target: { kind: 'snapshot-value' as const, payload: value } });
+    const payload = { label: 'A' };
     const refs = { [refKey('items', 'mount', 'a')]: own('a', payload),
         [refKey('items', 'mount', 'b')]: own('b', { label: 'B' }),
         [refKey('items', 'mount', 'all')]: own('all', [payload, { label: 'B' }]) };
@@ -45,7 +45,7 @@ function fixture(optional = false, payload: JsonValue = { label: 'A' }) {
     const prepare = (args: unknown, snapshotId = source.id, granted = visible) => prepareViewTypeParameters(core.store,
         { appId: 'a', instanceId: 'i' }, { snapshotId, toolId, execution: { kind: 'view-type', activationId: 'active' }, args }, granted);
     const message = (prepared: Extract<ReturnType<typeof prepare>, { status: 'prepared' }>) => captureTypeParametersRequest({
-        type: 'VIEW_TOOL_INVOKE_V4', requestId: 'call', appId: 'a', instanceId: 'i', snapshotId: source.id,
+        type: 'VIEW_TOOL_INVOKE_V5', requestId: 'call', appId: 'a', instanceId: 'i', snapshotId: source.id,
         tool: source.tools[toolId], execution: { kind: 'view-type', activationId: 'active' },
         argumentMode: 'view-type-parameters-v1', rawArgs: prepared.rawArgs,
         effectiveArgs: prepared.effectiveArgs, refSources: prepared.refSources });
@@ -66,7 +66,7 @@ describe('shared Ref selections through Core and Worker parameter grammar', () =
             expect(Object.isFrozen(p.effectiveArgs.many)).toBe(true);
             expect(Object.isFrozen((p.effectiveArgs.many as readonly JsonValue[])[0])).toBe(true);
             expect(validateTypeParameters(f.message(p))).toEqual({ success: true });
-            expect(validateVersionedToolRefDeclarations(ordinaryParameterProfile(f.contract))).toBe(true);
+            expect(f.contract.hasRefs).toBe(true);
         } finally { p.release(); f.core.lifecycle.dispose(); }
         expect(f.core.store.inspect().activeLeases).toBe(0);
     });
@@ -95,18 +95,9 @@ describe('shared Ref selections through Core and Worker parameter grammar', () =
                 ...(kind === 'type' ? { refType: 'Other' } : { target: { kind: 'snapshot-value', payload: { label: 3 } } }),
             } }).id;
         }
-        const code = { missing: 'REF_NOT_VISIBLE', ambiguous: 'REF_TARGET_UNSUPPORTED', type: 'REF_TYPE_MISMATCH', payload: 'TOOL_INVALID_ARGS' }[kind];
+        const code = { missing: 'REF_NOT_VISIBLE', ambiguous: 'REF_TARGET_UNSUPPORTED', type: 'REF_TYPE_MISMATCH', payload: 'REF_VALUE_UNSUPPORTED' }[kind];
         expect(f.prepare(args, id, visible)).toMatchObject({ status: 'rejected', issue: { code } });
         expect(f.core.store.inspect().activeLeases).toBe(0); f.core.lifecycle.dispose();
-    });
-    it('budgets the complete repeated payload and releases the source on rejection', () => {
-        for (const [size, status] of [[59_000, 'prepared'], [66_000, 'rejected']] as const) {
-            const f = fixture(false, { label: 'x'.repeat(size) }), p = f.prepare({ many: ['items.a', 'items.a'] });
-            expect(p.status).toBe(status);
-            if (p.status === 'prepared') p.release();
-            else expect(p.issue.code).toBe('REF_ARGUMENT_BUDGET_EXCEEDED');
-            expect(f.core.store.inspect().activeLeases).toBe(0); f.core.lifecycle.dispose();
-        }
     });
     it('captures array entries without running getters or accepting sparse arrays', () => {
         const f = fixture(); let reads = 0;

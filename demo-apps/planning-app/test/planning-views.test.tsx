@@ -33,7 +33,6 @@ const currentPlan: Plan = {
         title: 'Current phase',
         status: 'pending',
         tasks: [{ id: 'task-current-2', title: 'Current task', status: 'pending' }],
-        todos: [],
     }],
 };
 

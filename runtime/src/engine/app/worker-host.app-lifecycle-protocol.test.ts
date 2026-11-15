@@ -52,14 +52,16 @@ it('accepts the callback result without owner counts or resource-proof fields', 
     expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true);
 });
 
-it.each(['wrong-type', 'wrong-instance', 'wrong-protocol', 'wrong-version', 'missing-lifecycle-ack', 'missing-persistence-ack'])('rejects %s INIT and never transfers it as legacy', async fault => {
-    const x = fixture((request, response) => request.type !== 'INIT' ? response : fault === 'wrong-type'
-        ? { requestId: response.requestId, type: 'VIEW_TOOL_INVOKE_RESPONSE', success: true }
+it.each(['wrong-response-type', 'wrong-instance', 'wrong-protocol', 'wrong-version', 'missing-lifecycle-ack', 'missing-persistence-ack'])('rejects %s INIT and retires the Worker', async fault => {
+    const x = fixture((request, response) => request.type !== 'INIT' ? response : fault === 'wrong-response-type'
+        ? { requestId: response.requestId, type: 'LIFECYCLE_RESPONSE', success: true }
         : fault === 'missing-lifecycle-ack' ? (({ appLifecycle, ...missing }) => missing)(response)
         : fault === 'missing-persistence-ack' ? (({ persistence, ...missing }) => missing)(response)
         : { ...response, appLifecycle: { ...response.appLifecycle, ...(fault === 'wrong-instance' ? { instanceId: 'other' }
             : fault === 'wrong-protocol' ? { protocol: 'app-lifecycle-v3' } : { version: 1 }) } });
-    await expect(x.host.start()).rejects.toThrow();
+    const error = fault === 'wrong-response-type' ? 'APP_INIT_ACK_INVALID'
+        : fault === 'missing-persistence-ack' ? 'PERSISTENCE_NEGOTIATION_FAILED' : 'APP_LIFECYCLE_NEGOTIATION_FAILED';
+    await expect(x.host.start()).rejects.toThrow(error);
     expect(x.host.getResourceReport().appCleanup?.support).toBe(fault === 'missing-persistence-ack' ? 'managed' : 'rejected');
     expect(x.host.getResourceReport().worker).toBe('exited');
     expect((await x.host.waitForResourceRelease()).resourcesReleased).toBe(true);

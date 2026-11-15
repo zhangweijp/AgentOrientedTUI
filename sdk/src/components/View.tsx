@@ -12,8 +12,7 @@ export interface ViewProps {
    * View ID (required, manually specified by developer)
    * 
    * Naming rules:
-   * - Only alphanumeric characters and underscore (_)
-   * - 2-15 characters long
+   * - Non-empty, using only ASCII letters, digits or underscores
    * - Must be unique within the app
    * 
    * Examples:
@@ -58,14 +57,14 @@ export function View({ id, type, kind, name, children }: ViewProps): JSX.Element
     throw new Error(
       '[AOTUI SDK] View "id" prop is required.\n' +
       'Example: <View kind="state" id="workspace" type="Workspace">\n' +
-      'Naming rules: alphanumeric and underscore (_) only, 2-15 characters'
+      'Use ASCII letters, digits or underscores'
     );
   }
 
   if (typeof id !== 'string' || !VIEW_ID_PATTERN.test(id)) {
     throw new Error(
       `[AOTUI SDK] Invalid View ID "${id}".\n` +
-      'ID must be 2-15 characters, alphanumeric and underscore (_) only.\n' +
+      'Use only ASCII letters, digits or underscores.\n' +
       'Examples: "workspace", "fd_0", "user_123"'
     );
   }

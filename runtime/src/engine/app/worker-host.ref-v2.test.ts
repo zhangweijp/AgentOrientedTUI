@@ -5,11 +5,10 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-const ALL = ['view-type-parameters-v1'] as const;
 const REF_A = 'aa.alpha', REF_B = 'bb.beta', BIG_A = 'aa.capacity_alpha';
 const NORMAL_HOST_TIMEOUT_MS = 3000;
 const FAULT_HOST_TIMEOUT_MS = 1500;
-const invokes = (m: any) => m.type === 'VIEW_TOOL_INVOKE_V4';
+const invokes = (m: any) => m.type === 'VIEW_TOOL_INVOKE_V5';
 const closing: Array<() => Promise<void> | void> = [], facts: any[] = [];
 let tag = 0;
 afterEach(async () => { for (const close of closing.splice(0)) await close();vi.restoreAllMocks(); });
@@ -71,15 +70,14 @@ async function start(options: any = {}) {
     worker.stdout?.on('data', (b: any) => logs.push(String(b)));worker.stderr?.on('data', (b: any) => logs.push(String(b)));
     const host = new Host({ appId: 'app', desktopId: 'd', appModulePath: appFile,
         existingWorker: worker, timeout: options.timeout ?? NORMAL_HOST_TIMEOUT_MS,
-        config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') },
-        interactionModes: options.modes ?? ALL });
+        config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } });
     worker.on('message', (m: any) => messages.push(m));
     const x: any = { host, worker, messages, rawMessages, sent, attempted, logs, transform(fn: any) { transform = fn; },
         entries: () => rawMessages.filter(m => m.type === 'REF_V2_HANDLER_ENTER'), handlerEntries: () => rawMessages.filter(m => m.type === 'REF_HANDLER_ENTRY'), guards: () => rawMessages.filter(m => m.type === 'REF_APP_GUARD'), posts: () => sent.filter(invokes), snapshot: () => host.snapshotReceiver.core.store.readLatest('app').snapshot };
     closing.push(async () => {
         const beforeCleanup = host.getInteractionReport?.(), owned = host.worker === worker;
         host.terminate(); if (owned) await worker.terminate(); await host.waitForResourceRelease();
-        facts.push({ kind: 'actual Node Worker V4 ordinary typed-Ref protocol run', caseId, workerFile, appModulePath: appFile,
+        facts.push({ kind: 'actual Node Worker V5 ordinary typed-Ref protocol run', caseId, workerFile, appModulePath: appFile,
             instanceId: host.appInstanceId, rawMessages, deliveredMessages: messages, sent, attempted, scopes: x.scopes, logs, workerErrors,
             counts: { dispatches: x.posts().length, handlerEntries: x.handlerEntries().length, guards: x.guards().length, businessEntries: x.entries().length },
             beforeCleanup, cleanup: { method: 'low-level Host/Worker termination', settled: true,
@@ -87,7 +85,7 @@ async function start(options: any = {}) {
     });
     await host.start();await host.open();await wait(x, m => m.type === 'SNAPSHOT_PREPARED');return x;
 }
-describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V4 wire', () => {
+describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V5 wire', () => {
     beforeAll(async () => {
         const runtime = resolve(process.cwd()), sdk = resolve(runtime, '../sdk');
         
@@ -106,12 +104,12 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V4 wire', (
         await writeFile(join(process.env.AOTUI_MIGRATION_INPUTS_DIR ?? temporary, 'ref-protocol.bundle.mjs'), await readFile(appFile), { flag: 'wx' });
         facts.push({ kind: 'current emitted inputs', runtime, sdk, appFile, workerFile, node: process.version });
     });
-    afterAll(async () => { if (process.env.AOTUI_W07_REF_V2_FACTS_FILE) await writeFile(process.env.AOTUI_W07_REF_V2_FACTS_FILE, JSON.stringify({ kind: 'Ref V4 wire / view-type-parameters-v1 controlled and actual evidence with explicit provenance', facts, afterAllReached: true }, null, 2), { flag: 'wx' }); });
+    afterAll(async () => { if (process.env.AOTUI_W07_REF_V2_FACTS_FILE) await writeFile(process.env.AOTUI_W07_REF_V2_FACTS_FILE, JSON.stringify({ kind: 'Ref V5 wire / view-type-parameters-v1 controlled and actual evidence with explicit provenance', facts, afterAllReached: true }, null, 2), { flag: 'wx' }); });
     it('R08/R09/R12 really enters only the original target with one substituted slot and no default fill', async () => {
         const x = await start(), s = scope(x), o = await s.observe(), input = { file: REF_A, choice: 'ok', text: '😀', tags: ['a', 'b'] };
         const a = value(await s.invoke(s.request(o, 'inspect', input, 'aa'))), b = value(await s.invoke(s.request(o, 'inspect', { ...input, file: REF_B }, 'bb')));
         expect(a.data.view).toBe('aa');expect(b.data.view).toBe('bb');expect(a.data.args.file).toMatchObject({ label: 'A', view: 'aa' });expect(Object.hasOwn(a.data.args, 'n')).toBe(false);
-        const post = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V4' && m.execution.kind === 'view-type' && m.refSources[0].viewId === 'aa');expect(post.rawArgs).toEqual(input);expect(post.effectiveArgs).toEqual(a.data.args);expect(post.tool.inputSchema['x-aotui-parameter-contract']).toBe('view-type-parameters-v1');
+        const post = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V5' && m.execution.kind === 'view-type' && m.refSources[0].viewId === 'aa');expect(post.rawArgs).toEqual(input);expect(post.effectiveArgs).toEqual(a.data.args);expect(post.tool.inputSchema['x-aotui-parameter-contract']).toBe('view-type-parameters-v1');
         expect(post.refSources[0]).toMatchObject({ refId: 'alpha', snapshotId: post.snapshotId, viewId: 'aa' });expect(s.authorizations.find(a => a.effectiveInput.file.view === 'aa').effectiveInput).toEqual(a.data.args);
         expect(x.entries().filter((e: any) => e.name === 'inspect')).toHaveLength(2);
     });
@@ -127,7 +125,7 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V4 wire', (
         const x = await start(), s = scope(x), o = await s.observe();const request = s.request(o);const binding = o.bindings.find((b: any) => b.bindingId === request.bindingId);
         await change(x, { text: 'B', revision: 2 }, d => Object.values(d.refs).some((r: any) => r.ownerViewId === 'aa' && r.id === 'alpha' && r.target.payload.label === 'B'));
         const output = value(await s.invoke(request));expect(output.data.args.file.label).toBe('A');expect(output.data.revision).toBe(2);
-        expect(x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V4' && m.argumentMode === 'view-type-parameters-v1').execution.activationId).toBe(binding.execution.activationId);
+        expect(x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V5' && m.argumentMode === 'view-type-parameters-v1').execution.activationId).toBe(binding.execution.activationId);
     });
     it('R21 preserves open ordinary literals and whitespace without treating data as Schema markers', async () => {
         const x = await start(), s = scope(x), o = await s.observe();const extra = { 'x-aotui-ref': { kind: 'DATA' }, 'x-aotui-parameter-contract': 'DATA', refSource: 'DATA', text: '  unchanged  ' };
@@ -138,7 +136,7 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V4 wire', (
         const x = await start(), s = scope(x), o = await s.observe();const names = ['', '__proto__', 'constructor', 'x-aotui-ref', 'x-aotui-parameter-contract', 'line\nname'];
         for (const [index, param] of names.entries()) {
             const result = value(await s.invoke(s.request(o, 'special_' + index, Object.fromEntries([[param, REF_A]]))));expect(Object.hasOwn(result.data.args, param)).toBe(true);expect(result.data.args[param]).toMatchObject({ label: 'A', view: 'aa' });
-            const request = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V4' && m.tool.name === 'special_' + index);expect(request.refSources[0].param).toBe(param);
+            const request = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V5' && m.tool.name === 'special_' + index);expect(request.refSources[0].param).toBe(param);
         }
         expect(x.entries()).toHaveLength(names.length);expect(x.entries().every((e: any) => e.frozen && e.refFrozen)).toBe(true);
     });
@@ -204,30 +202,42 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V4 wire', (
         await change(x, { show: true }, d => d.views.some((v: any) => v.id === 'aa'));expect(receipt(await s.invoke(stale)).outcome.status).toBe('rejected');expect(x.handlerEntries()).toHaveLength(handlersBeforeClose);value(await s.invoke(s.request(await s.observe(['aa']))));
     });
     it('R10 actual Worker rejects a foreign App instance before entering its callable', async () => {
-        const x = await start(), s = scope(x), o = await s.observe();value(await s.invoke(s.request(o)));const source = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V4');
+        const x = await start(), s = scope(x), o = await s.observe();value(await s.invoke(s.request(o)));const source = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V5');
         const requestId = 'foreign-' + (++tag), from = x.messages.length, count = x.entries().length, handlerCount = x.handlerEntries().length;
         x.worker.postMessage({ ...source, requestId, instanceId: 'other' });
-        const response = await wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE' && m.requestId === requestId, from);expect(response.terminal).toMatchObject({ phase: 'not-entered', result: { error: { code: 'APP_INSTANCE_MISMATCH' } } });expect(x.entries()).toHaveLength(count);expect(x.handlerEntries()).toHaveLength(handlerCount);
+        const response = await wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE' && m.requestId === requestId, from);expect(response.terminal).toMatchObject({ phase: 'not-entered', result: { error: { code: 'APP_INSTANCE_MISMATCH' } } });expect(x.entries()).toHaveLength(count);expect(x.handlerEntries()).toHaveLength(handlerCount);
     });
     it.each(['disable', 'replace'])('R15 Worker refuses the old binding after a queued request is %s', async kind => {
         const x = await start();await change(x, { showSecond: false }, d => !d.views.some((v: any) => v.id === 'bb'));const s = scope(x, ['aa']), o = await s.observe(), queued: any[] = [], held = deferred();
-        const physical = x.worker.postMessage.bind(x.worker);x.worker.postMessage = (m: any) => { if (m.type === 'VIEW_TOOL_INVOKE_V4') { queued.push(m);held.resolve(); }else physical(m); };
+        const physical = x.worker.postMessage.bind(x.worker);x.worker.postMessage = (m: any) => { if (m.type === 'VIEW_TOOL_INVOKE_V5') { queued.push(m);held.resolve(); }else physical(m); };
         const running = s.invoke(s.request(o));await held.promise;const beforeReplacement = x.snapshot();
         if (kind === 'disable') await change(x, { enabled: false }, d => !Object.values(d.tools).some((t: any) => t.name === 'inspect'));
         else { await change(x, { defaultValue: 3 }, d => Object.values(d.tools).some((t: any) => t.name === 'inspect' && t.inputSchema.properties.n.default === 3));assertDeclarationReplacement(x, beforeReplacement); }
         expect(queued).toHaveLength(1);expect(queued[0].tool.inputSchema['x-aotui-parameter-contract']).toBe('view-type-parameters-v1');physical(queued[0]);
         const result = receipt(await running);expect(result.outcome.status).toBe('rejected');expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);expect(x.host.getInteractionReport().workerToolPending).toBe(false);
-        const terminal = x.rawMessages.find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE' && m.requestId === queued[0].requestId);expect(terminal.terminal.phase).toBe('not-entered');
+        const terminal = x.rawMessages.find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE' && m.requestId === queued[0].requestId);expect(terminal.terminal.phase).toBe('not-entered');
     });
-    it.each(['business', 'throw'])('R16 keeps %s failure details and healthy transport', async mode => {
-        const x = await start();await control(x, 'mode', { mode });const s = scope(x), o = await s.observe(), result = receipt(await s.invoke(s.request(o)));
-        expect(result.executionPhase).toBe('entered-returned');expect(result.outcome.details.result.error.code).toBe(mode === 'business' ? 'BUSINESS' : 'E_HANDLER_ERROR');
-        expect(x.host.getInteractionReport().workerToolPending).toBe(false);expect(JSON.stringify(x.messages)).not.toContain('REF_V2_PRIVATE_EXCEPTION');
+    it.each(['business', 'throw'])('R16 distinguishes %s failure and settles the Worker request', async mode => {
+        const x = await start();
+        await control(x, 'mode', { mode });
+        const s = scope(x), o = await s.observe(), result = receipt(await s.invoke(s.request(o)));
+        const reply = x.rawMessages.find((message: any) => message.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE');
+        if (mode === 'business') {
+            expect(result).toMatchObject({ executionPhase: 'entered-returned', outcome: {
+                status: 'failed', details: { result: { error: { code: 'BUSINESS' } } },
+            } });
+            expect(reply.terminal.phase).toBe('entered-returned');
+        } else {
+            expect(result).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown' } });
+            expect(reply.terminal).toEqual({ phase: 'finished-unknown' });
+        }
+        expect(x.host.getInteractionReport().workerToolPending).toBe(false);
+        expect(JSON.stringify({ reply, result })).not.toContain('REF_V2_PRIVATE_EXCEPTION');
     });
     it.each(['drop', 'type', 'mode', 'instance', 'request', 'huge'])('R17 %s terminal cannot settle an active invocation', async kind => {
         const x = await start();
         x.host.timeout = FAULT_HOST_TIMEOUT_MS;
-        x.transform((m: any) => m.type !== 'VIEW_TOOL_INVOKE_V4_RESPONSE' ? m : kind === 'drop' ? null : kind === 'type' ? { ...m, type: 'VIEW_TOOL_INVOKE_REF_V1_RESPONSE' } : kind === 'mode' ? { ...m, argumentMode: 'snapshot-value-v1' } : kind === 'instance' ? { ...m, instanceId: 'other' } : kind === 'request' ? { ...m, requestId: 'other' }
+        x.transform((m: any) => m.type !== 'VIEW_TOOL_INVOKE_V5_RESPONSE' ? m : kind === 'drop' ? null : kind === 'type' ? { ...m, type: 'VIEW_TOOL_INVOKE_REF_V1_RESPONSE' } : kind === 'mode' ? { ...m, argumentMode: 'snapshot-value-v1' } : kind === 'instance' ? { ...m, instanceId: 'other' } : kind === 'request' ? { ...m, requestId: 'other' }
             : { ...m, terminal: { phase: 'entered-returned', result: { success: true, data: 'x'.repeat(9 * 1024 * 1024) } } });
         const s = scope(x), o = await s.observe(), result = receipt(await s.invoke(s.request(o)));expect(result.outcome.status).toBe('unknown');expect(x.host.getInteractionReport().workerToolPending).toBe(true);expect(x.entries()).toHaveLength(1);
         const count = x.posts().length;await s.invoke(s.request(o));expect(x.posts()).toHaveLength(count);x.host.terminate();expect((await x.host.waitForResourceRelease()).worker).toBe('exited');

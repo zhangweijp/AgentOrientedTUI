@@ -1,5 +1,5 @@
 import { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION, STATE_SESSION_VERSION, captureAppMetadata } from '../spi/index.js';
-import { SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY } from '../spi/worker-protocol/types.js';
+import { SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY } from '../spi/worker-protocol/types.js';
 import { initializationFailure } from '../adapters/initialization-error.js';
 import { captureAppLifecycleAck } from '../adapters/app-lifecycle-protocol.js';
 import { hasViewTypeToolAuthoringProtocol } from '../spi/app/app-factory.interface.js';
@@ -38,7 +38,7 @@ import type {
 
 // Runtime SPI types
 import type { AppContext, SignalPolicy } from '../spi/index.js';
-import { createAppId, createDesktopId, isTUIAppFactory } from '../spi/index.js';
+import { createAppId, isTUIAppFactory } from '../spi/index.js';
 import { AOTUIError } from '../spi/core/errors.js';
 import { captureSnapshotPrepareIssue } from '../core/snapshot/snapshot-support.js';
 
@@ -99,7 +99,7 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
         } catch { sendError(msg.requestId, 'PROJECTION_CLOSED', 'Projection source unavailable'); }
         return;
     }
-    if (msg.type === 'VIEW_TOOL_INVOKE_V4') {
+    if (msg.type === 'VIEW_TOOL_INVOKE_V5') {
         try {
             const kernel = app;
             const response = await invokeTypeParameters(msg, { appId, instanceId: appInstanceId,
@@ -227,15 +227,12 @@ async function handleInit(msg: InitMessage): Promise<void> {
                 'This Runtime requires a TUIAppFactory using view-type-tools-v4');
             return;
         }
-        const managedFactory = factory;
-        const metadata = captureAppMetadata({ app_name: managedFactory.kernelConfig.appName });
-        for (const [path, actual] of [
-            ['INIT.appName', msg.appName],
-        ] as const) {
-            if (actual !== undefined && actual !== metadata.app_name) {
-                const error = new AOTUIError('APP_IDENTITY_MISMATCH', { expected: metadata.app_name, actual, path });
-                sendError(msg.requestId, error.code, error.message);return;
-            }
+        const kernelConfig = factory.kernelConfig;
+        const metadata = captureAppMetadata({ app_name: kernelConfig.appName });
+        if (msg.appName !== undefined && msg.appName !== metadata.app_name) {
+            const error = new AOTUIError('APP_IDENTITY_MISMATCH', { expected: metadata.app_name, actual: msg.appName, path: 'INIT.appName' });
+            sendError(msg.requestId, error.code, error.message);
+            return;
         }
         const offerField = Object.getOwnPropertyDescriptor(msg, 'persistence');
         const offer = offerField && 'value' in offerField ? capturePersistenceOffer(offerField.value, msg.appInstanceId ?? '') : null;
@@ -245,11 +242,10 @@ async function handleInit(msg: InitMessage): Promise<void> {
         if (!lifecycleOffer || !('value' in lifecycleOffer) || !captureAppLifecycleAck(lifecycleOffer.value, msg.appInstanceId ?? ''))
             throw new Error('APP_LIFECYCLE_UNSUPPORTED');
 
-        if (managedFactory.kernelConfig.signalPolicy) {
-            signalPolicy = managedFactory.kernelConfig.signalPolicy as SignalPolicy;
-        }
+        const appSignalPolicy = kernelConfig.signalPolicy;
+        if (appSignalPolicy) signalPolicy = appSignalPolicy;
 
-        app = new AppKernel({ ...managedFactory.kernelConfig, factory: managedFactory, launchConfig });
+        app = new AppKernel({ ...kernelConfig, appName: metadata.app_name, factory, launchConfig });
 
         // Keep the SDK/AppKernel App identity equal to the authenticated
         // Worker INIT appId. Otherwise Tool IDs and SDK AppRuntimeContext use ''.
@@ -266,8 +262,8 @@ async function handleInit(msg: InitMessage): Promise<void> {
         app.setPersistence(session.port);
         persistenceRecord = { app, proxy, session };
 
-        parametersNegotiated = requested.capabilities.includes(PARAMETERS_V4_CAPABILITY);
-        const capabilities = parametersNegotiated ? [SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY] : [SNAPSHOT_CAPABILITY];
+        parametersNegotiated = requested.capabilities.includes(PARAMETERS_V5_CAPABILITY);
+        const capabilities = parametersNegotiated ? [SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY] : [SNAPSHOT_CAPABILITY];
         parentPort?.postMessage({ type: 'INIT_RESPONSE', requestId: msg.requestId, success: true,
             appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, version: APP_LIFECYCLE_VERSION, instanceId: msg.appInstanceId! },
             persistence: { protocol: STATE_SESSION_PROTOCOL, version: STATE_SESSION_VERSION, instanceId: session.port.instanceId },

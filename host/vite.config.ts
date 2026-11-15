@@ -19,7 +19,6 @@ export default defineConfig({
                 // Exclude backend-only local modules from the GUI bundle
                 if (/\/db\//.test(id)) return true;
                 if (/\/services\/model-registry\.js$/.test(id)) return true;
-                if (/\/services\/llm-config-manager\.js$/.test(id)) return true;
                 if (/\/server\//.test(id)) return true;
                 if (/\/electron\//.test(id)) return true;
                 return false;

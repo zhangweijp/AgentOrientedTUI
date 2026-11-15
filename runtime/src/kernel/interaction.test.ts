@@ -56,16 +56,16 @@ it.each(['replace', 'close'] as const)('B2 C13 Desktop keeps the captured AppMan
 
 it('B2 C04/05 Kernel/Desktop reject descriptors before dependency calls or environment config mutation', async () => {
     const f = kernelFixture(), install = vi.fn(async () => 'a');f.get().installDynamicWorkerApp = install;let getters = 0;
-    const invalid = Object.defineProperty({}, 'interactionModes', { enumerable: true, get() { getters++;return []; } });
-    await expect(f.kernel.installDynamicWorkerApp('d' as any, '/app', invalid)).rejects.toHaveProperty('code', 'INTERACTION_MODES_INVALID');expect(install).not.toHaveBeenCalled();expect(getters).toBe(0);
-    const input: any = { interactionModes: ['view-type-parameters-v1'] };await f.kernel.installDynamicWorkerApp('d' as any, '/app', input);input.interactionModes.push('view-type-parameters-v1');
-    expect(install.mock.calls[0][1].interactionModes).toEqual(['view-type-parameters-v1']);
+    const invalid = Object.defineProperty({}, 'toolsEnabled', { enumerable: true, get() { getters++;return false; } });
+    await expect(f.kernel.installDynamicWorkerApp('d' as any, '/app', invalid)).rejects.toHaveProperty('code', 'TOOLS_ENABLED_INVALID');expect(install).not.toHaveBeenCalled();expect(getters).toBe(0);
+    const input: any = { toolsEnabled: false };await f.kernel.installDynamicWorkerApp('d' as any, '/app', input);input.toolsEnabled = true;
+    expect(install.mock.calls[0][1].toolsEnabled).toBe(false);
     const runtime = createRuntime();
     try {
         const id = await runtime.createDesktop('real' as any, { env: { X: 'injected' } }), desktop = runtime.getDesktop(id);
         const config: any = {};Object.defineProperty(invalid, 'config', { value: config });
-        await expect(desktop.installDynamicWorkerApp('/app', invalid)).rejects.toHaveProperty('code', 'INTERACTION_MODES_INVALID');
-        await expect(desktop.registerPendingApp(Object.defineProperties({ modulePath: '/app' }, Object.getOwnPropertyDescriptors(invalid)))).rejects.toHaveProperty('code', 'INTERACTION_MODES_INVALID');
+        await expect(desktop.installDynamicWorkerApp('/app', invalid)).rejects.toHaveProperty('code', 'TOOLS_ENABLED_INVALID');
+        await expect(desktop.registerPendingApp(Object.defineProperties({ modulePath: '/app' }, Object.getOwnPropertyDescriptors(invalid)))).rejects.toHaveProperty('code', 'TOOLS_ENABLED_INVALID');
         expect(config).toEqual({});expect(getters).toBe(0);
     } finally { await runtime.beginShutdown().completion; }
 });

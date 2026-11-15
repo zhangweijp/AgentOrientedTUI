@@ -42,8 +42,8 @@ describe('installation errors across a real Worker and AppManager', () => {
 import { createTUIApp } from '@aotui/sdk';
 export default {
     persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
-    toolAuthoringProtocol: 'view-type-tools-v4', displayName: 'diagnostics',
-    kernelConfig: { name: 'diagnostics', appName: 'diagnostics' },
+    toolAuthoringProtocol: 'view-type-tools-v4',
+    kernelConfig: { appName: 'diagnostics' },
     initialize(context) {
         function InitialRender() { ${renderBody} }
         return createTUIApp({ app_name: 'diagnostics', component: () => h(InitialRender, {}) }).initialize(context);
@@ -89,7 +89,7 @@ export default {
                     });
                     expect(released.host?.storage.lifecycle?.flush).toMatchObject({ status: 'disposed', ok: false, entries: [] });
                 }
-                expect(f.manager.getDynamicAppIds()).toEqual([]);
+                expect(f.manager.getWorkerSandbox(id as any)).toBeUndefined();
             } finally {
                 expect((await f.manager.cleanupAsync()).resourcesReleased).toBe(true);
             }

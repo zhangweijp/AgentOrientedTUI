@@ -31,14 +31,15 @@ import { Logger } from '../utils/logger.js';
 import type { DesktopManager } from './desktop-manager.js';
 import * as db from '../db/index.js';
 import { projectService } from './project-service.js';
-import { toLLMConfig } from '../types/llm-config.js';
-import { isMcpServerItemKey, parseMcpServerItemKey } from '../shared/source-control-keys.js';
+import { isMcpItemKey, parseMcpServerItemKey, MCP_PERMISSION_RECONFIGURE } from '../shared/source-control-keys.js';
 import { Config } from '../config/config.js';
-import { createSourceControlsFromAgent, type SourceControlsSnapshot } from './source-controls.js';
+import { applySourceControlsToSources, createSourceControlsFromAgent, normalizeSourceControlsSnapshot, type SourceControlsSnapshot } from './source-controls.js';
 
-type AOTUIControllableSource = {
-    setEnabled(enabled: boolean): void;
-    setAppEnabled(appName: string, enabled: boolean): void;
+type SourceControl = { enabled: boolean; disabledItems: Set<string> };
+type TopicSourceControls = {
+    apps: SourceControl;
+    mcp: SourceControl & { allowedServers?: Set<string> };
+    skill: SourceControl;
 };
 
 /**
@@ -64,19 +65,7 @@ export class SessionManagerV3 extends EventEmitter {
             hardFallbackThresholdTokens?: number;
         };
     } | null = null;
-    private sourceControlsByTopic: Map<string, {
-        apps: { enabled: boolean; disabledItems: Set<string> };
-        mcp: { enabled: boolean; disabledItems: Set<string> };
-        skill: { enabled: boolean; disabledItems: Set<string> };
-    }> = new Map();
-    private asAOTUIControllableSource(source: SemanticAOTUIDrivenSource): AOTUIControllableSource | null {
-        const candidate = source as unknown as Partial<AOTUIControllableSource>;
-        if (typeof candidate.setEnabled !== 'function' || typeof candidate.setAppEnabled !== 'function') {
-            return null;
-        }
-
-        return candidate as AOTUIControllableSource;
-    }
+    private sourceControlsByTopic = new Map<string, TopicSourceControls>();
 
     // 配置
     private config: Required<SessionManagerConfig>;
@@ -175,6 +164,12 @@ export class SessionManagerV3 extends EventEmitter {
         const desktopId = topicId as any; // Topic ID = Desktop ID
 
         const topic = db.getTopic(topicId);
+        const config = topic?.agentId ? await Config.get() : undefined;
+        const agent = config?.agents?.list.find(item => item.id === topic?.agentId);
+        const modelSelection = topic?.modelOverride?.trim() ? topic.modelOverride : agent?.modelId;
+        const effectiveLLMConfig = await this.llmConfigService.resolveLLMConfig(modelSelection);
+        const effectiveSystemPrompt = agent?.prompt || topic?.promptOverride?.trim() || this.getSystemPrompt();
+
         const projectPath = topic?.projectId
             ? projectService.getProject(topic.projectId)?.path
             : undefined;
@@ -199,136 +194,6 @@ export class SessionManagerV3 extends EventEmitter {
             throw new Error(`Failed to create desktop for topic: ${topicId}`);
         }
 
-        // 2. 获取 LLM 配置（支持 topic-level override）
-        const llmConfig = await this.llmConfigService.getActiveLLMConfig();
-        if (!llmConfig) {
-            throw new Error('No active LLM config found. Please configure an LLM provider first.');
-        }
-
-        // [Agent Customization] Apply Agent Snapshot if agentId is present
-        const topicModelOverride = topic?.modelOverride?.trim();
-        let effectiveModelOverride = topicModelOverride;
-        let effectivePromptOverride = topic?.promptOverride?.trim();
-        let effectiveSourceControls = topic?.sourceControls;
-
-        if (topic?.agentId) {
-            const config = await Config.get();
-            const agents = (config as any).agents || { list: [] };
-            const agent = agents.list.find((a: any) => a.id === topic.agentId);
-            if (agent) {
-                // Topic-level model override must win over agent snapshot model.
-                // This allows users to switch models per topic (e.g. vision model) without being overridden by agent defaults.
-                if (!effectiveModelOverride && agent.modelId) {
-                    effectiveModelOverride = agent.modelId;
-                } else if (effectiveModelOverride && agent.modelId && effectiveModelOverride !== agent.modelId) {
-                    this.logger.info('Topic model override takes precedence over agent model snapshot', {
-                        topicId,
-                        topicModelOverride: effectiveModelOverride,
-                        agentModelId: agent.modelId,
-                    });
-                }
-                if (agent.prompt) effectivePromptOverride = agent.prompt;
-
-                if (!effectiveSourceControls) {
-                    effectiveSourceControls = createSourceControlsFromAgent(agent, config, Object.keys(await this.desktopManager.getAppsConfig()));
-                }
-            }
-        }
-
-        const modelOverride = effectiveModelOverride;
-        const effectiveLLMConfig = await (async () => {
-            if (!modelOverride) return llmConfig;
-
-            // Custom provider IDs are "custom:XXX", so the full model string is
-            // "custom:XXX:model-name". We must split at the SECOND colon, not the first.
-            let overrideProviderId: string | undefined;
-            let overrideModelId: string;
-
-            if (modelOverride.startsWith('custom:')) {
-                const secondColon = modelOverride.indexOf(':', 'custom:'.length);
-                if (secondColon > 0) {
-                    overrideProviderId = modelOverride.slice(0, secondColon);
-                    overrideModelId   = modelOverride.slice(secondColon + 1);
-                } else {
-                    // e.g. "custom:my-provider" with no model — treat whole thing as provider
-                    overrideProviderId = modelOverride;
-                    overrideModelId   = '';
-                }
-            } else {
-                const colonIndex = modelOverride.indexOf(':');
-                overrideProviderId = colonIndex > 0 ? modelOverride.slice(0, colonIndex) : llmConfig.provider?.id;
-                overrideModelId   = colonIndex > 0 ? modelOverride.slice(colonIndex + 1) : modelOverride;
-            }
-
-            const allConfigs = this.llmConfigService.getAllConfigs();
-            const providerConfigs = allConfigs.filter((record) => record.providerId === overrideProviderId);
-            const exactProviderModelConfig = providerConfigs.find((record) => {
-                const recordModel = (record.model || '').trim();
-                if (!recordModel) return false;
-                const normalizedRecordModel = recordModel.startsWith(`${overrideProviderId}/`)
-                    ? recordModel.slice((overrideProviderId || '').length + 1)
-                    : recordModel;
-                return normalizedRecordModel === overrideModelId;
-            });
-            const providerConfigRecord = exactProviderModelConfig || providerConfigs[0];
-
-            // Custom provider records (providerId = "custom:xxx") must be converted to
-            // runtime protocol providers (openai/anthropic). Otherwise AI SDK registry
-            // splits at the first colon and looks up "custom" instead of "custom:xxx".
-            if (overrideProviderId?.startsWith('custom:') && providerConfigRecord) {
-                const customProviders = await this.llmConfigService.listCustomProviders();
-                const customProvider = customProviders.find((provider) => provider.id === overrideProviderId);
-
-                if (customProvider) {
-                    const recordModel = (providerConfigRecord.model || '').trim();
-                    let normalizedRecordModel = recordModel;
-
-                    const slashPrefix = `${overrideProviderId}/`;
-                    const colonPrefix = `${overrideProviderId}:`;
-                    if (normalizedRecordModel.startsWith(slashPrefix)) {
-                        normalizedRecordModel = normalizedRecordModel.slice(slashPrefix.length);
-                    } else if (normalizedRecordModel.startsWith(colonPrefix)) {
-                        normalizedRecordModel = normalizedRecordModel.slice(colonPrefix.length);
-                    }
-
-                    const protocolPrefix = `${customProvider.protocol}:`;
-                    if (normalizedRecordModel.startsWith(protocolPrefix)) {
-                        normalizedRecordModel = normalizedRecordModel.slice(protocolPrefix.length);
-                    }
-
-                    const resolvedModelName = (overrideModelId || normalizedRecordModel).trim();
-
-                    return {
-                        ...llmConfig,
-                        model: `${customProvider.protocol}:${resolvedModelName}`,
-                        provider: {
-                            id: customProvider.protocol,
-                            baseURL: providerConfigRecord.baseUrl || customProvider.baseUrl,
-                        },
-                        apiKey: providerConfigRecord.apiKey || customProvider.apiKey || llmConfig.apiKey,
-                        temperature: providerConfigRecord.temperature,
-                        maxSteps: providerConfigRecord.maxSteps,
-                    };
-                }
-            }
-
-            const providerResolvedConfig = providerConfigRecord ? toLLMConfig(providerConfigRecord) : null;
-
-            return {
-                ...llmConfig,
-                model: overrideProviderId ? `${overrideProviderId}:${overrideModelId}` : overrideModelId,
-                provider: providerResolvedConfig?.provider
-                    ? {
-                        ...providerResolvedConfig.provider,
-                        id: overrideProviderId || providerResolvedConfig.provider.id,
-                    }
-                    : (overrideProviderId ? { id: overrideProviderId } : llmConfig.provider),
-                apiKey: providerResolvedConfig?.apiKey ?? llmConfig.apiKey,
-            };
-        })();
-
-        const effectiveSystemPrompt = effectivePromptOverride || this.getSystemPrompt();
-
         // 3. 创建 DrivenSources
         const systemPromptSource = new SystemPromptDrivenSource({
             systemPrompt: effectiveSystemPrompt,
@@ -343,39 +208,15 @@ export class SessionManagerV3 extends EventEmitter {
             topicId
         );
 
-        const mcpDrivenSource = new McpDrivenSource();
+        const sourceControls = await this.getOrInitSourceControls(topicId, config);
+        const mcpDrivenSource = new McpDrivenSource(sourceControls.mcp.allowedServers);
         const skillDrivenSource = new SkillDrivenSource({ projectPath });
-        this.getOrInitSourceControls(topicId, effectiveSourceControls);
-        this.applySourceControls(topicId, aotuiSource, mcpDrivenSource, skillDrivenSource);
+        const controls = applySourceControlsToSources(this.snapshotSourceControls(sourceControls), {
+            aotuiSource, mcpSource: mcpDrivenSource, skillSource: skillDrivenSource,
+        });
 
         // 4. 创建 AgentDriver
-        const { providerId, modelId, modelLabel } = (() => {
-            const rawModel = effectiveLLMConfig.model;
-            const inferredProvider = effectiveLLMConfig.provider?.id;
-            const colonIndex = rawModel.indexOf(':');
-            if (colonIndex > 0) {
-                const provider = rawModel.slice(0, colonIndex);
-                const model = rawModel.slice(colonIndex + 1);
-                return {
-                    providerId: inferredProvider ?? provider,
-                    modelId: model,
-                    modelLabel: model,
-                };
-            }
-            if (rawModel.includes('@')) {
-                const [model, provider] = rawModel.split('@');
-                return {
-                    providerId: inferredProvider ?? provider,
-                    modelId: model,
-                    modelLabel: model,
-                };
-            }
-            return {
-                providerId: inferredProvider,
-                modelId: rawModel,
-                modelLabel: rawModel,
-            };
-        })();
+        const { model: modelId, provider: { id: providerId } } = effectiveLLMConfig;
 
         const agentDriver = new AgentDriverV2({
             sources: [
@@ -412,7 +253,7 @@ export class SessionManagerV3 extends EventEmitter {
                 const payload = { content: undefined, reasoning: undefined };
                 const meta = {
                     usage,
-                    model: modelLabel,
+                    model: modelId,
                     providerId,
                     modelId,
                 };
@@ -445,7 +286,6 @@ export class SessionManagerV3 extends EventEmitter {
             },
         });
 
-        const controls = this.getOrInitSourceControls(topicId);
         agentDriver.setSourceEnabled(aotuiSource.name, controls.apps.enabled);
         agentDriver.setSourceEnabled(skillDrivenSource.name, controls.skill.enabled);
         agentDriver.setSourceEnabled(mcpDrivenSource.name, controls.mcp.enabled);
@@ -486,67 +326,36 @@ export class SessionManagerV3 extends EventEmitter {
         };
     }
 
-    private getOrInitSourceControls(topicId: string, initialSourceControls?: SourceControlsSnapshot) {
-        let existing = this.sourceControlsByTopic.get(topicId);
-        if (existing) {
-            return existing;
-        }
+    private async getOrInitSourceControls(topicId: string, config?: Config.InfoType): Promise<TopicSourceControls> {
+        const existing = this.sourceControlsByTopic.get(topicId);
+        if (existing) return existing;
 
-        const sourceControls = initialSourceControls || db.getTopic(topicId)?.sourceControls;
-        if (sourceControls) {
-            existing = {
-                apps: {
-                    enabled: sourceControls.apps?.enabled ?? true,
-                    disabledItems: new Set<string>(sourceControls.apps?.disabledItems ?? []),
-                },
-                mcp: {
-                    enabled: sourceControls.mcp?.enabled ?? true,
-                    disabledItems: new Set<string>(sourceControls.mcp?.disabledItems ?? []),
-                },
-                skill: {
-                    enabled: sourceControls.skill?.enabled ?? true,
-                    disabledItems: new Set<string>(sourceControls.skill?.disabledItems ?? []),
-                },
-            };
-            this.sourceControlsByTopic.set(topicId, existing);
-            return existing;
-        }
-
-        existing = {
-            apps: { enabled: true, disabledItems: new Set<string>() },
-            mcp: { enabled: true, disabledItems: new Set<string>() },
-            skill: { enabled: true, disabledItems: new Set<string>() },
-        };
-        this.sourceControlsByTopic.set(topicId, existing);
-        return existing;
-    }
-
-    private applySourceControls(topicId: string, aotuiSource?: SemanticAOTUIDrivenSource, mcpSource?: McpDrivenSource, skillSource?: SkillDrivenSource): void {
-        const controls = this.getOrInitSourceControls(topicId);
-        if (aotuiSource) {
-            const controllableSource = this.asAOTUIControllableSource(aotuiSource);
-            if (controllableSource) {
-                controllableSource.setEnabled(controls.apps.enabled);
-                controls.apps.disabledItems.forEach((item) => controllableSource.setAppEnabled(item, false));
+        const topic = db.getTopic(topicId);
+        let snapshot = topic?.sourceControls;
+        if (!snapshot && topic?.agentId) {
+            const agent = (config ?? await Config.get()).agents?.list.find(item => item.id === topic.agentId);
+            if (agent) {
+                snapshot = createSourceControlsFromAgent(agent, Object.keys(await this.desktopManager.getAppsConfig()));
             }
         }
-        if (mcpSource) {
-            mcpSource.setEnabled(controls.mcp.enabled);
-            controls.mcp.disabledItems.forEach((item) => {
-                if (isMcpServerItemKey(item)) {
-                    const serverName = parseMcpServerItemKey(item);
-                    if (serverName) {
-                        mcpSource.setServerEnabled(serverName, false);
-                    }
-                    return;
-                }
-                mcpSource.setToolEnabled(item, false);
-            });
-        }
-        if (skillSource) {
-            skillSource.setEnabled(controls.skill.enabled);
-            controls.skill.disabledItems.forEach((item) => skillSource.setSkillEnabled(item, false));
-        }
+
+        // Another read or update may have initialized this Topic while config was loading.
+        const initialized = this.sourceControlsByTopic.get(topicId);
+        if (initialized) return initialized;
+
+        const controls = normalizeSourceControlsSnapshot(snapshot);
+        const toControl = ({ enabled, disabledItems }: SourceControlsSnapshot['apps']): SourceControl =>
+            ({ enabled, disabledItems: new Set(disabledItems) });
+        const next = {
+            apps: toControl(controls.apps),
+            mcp: {
+                ...toControl(controls.mcp),
+                allowedServers: controls.mcp.allowedServers === undefined ? undefined : new Set(controls.mcp.allowedServers),
+            },
+            skill: toControl(controls.skill),
+        };
+        this.sourceControlsByTopic.set(topicId, next);
+        return next;
     }
 
     private normalizeCompactionPolicy(input?: {
@@ -651,39 +460,39 @@ export class SessionManagerV3 extends EventEmitter {
         };
     }
 
-    getSourceControlState(topicId: string): {
-        apps: { enabled: boolean; disabledItems: string[] };
-        mcp: { enabled: boolean; disabledItems: string[] };
-        skill: { enabled: boolean; disabledItems: string[] };
-    } {
-        const controls = this.getOrInitSourceControls(topicId);
-        return {
-            apps: {
-                enabled: controls.apps.enabled,
-                disabledItems: Array.from(controls.apps.disabledItems).sort((a, b) => a.localeCompare(b)),
-            },
-            mcp: {
-                enabled: controls.mcp.enabled,
-                disabledItems: Array.from(controls.mcp.disabledItems).sort((a, b) => a.localeCompare(b)),
-            },
-            skill: {
-                enabled: controls.skill.enabled,
-                disabledItems: Array.from(controls.skill.disabledItems).sort((a, b) => a.localeCompare(b)),
-            },
-        };
+    async getSourceControlState(topicId: string): Promise<SourceControlsSnapshot> {
+        return this.snapshotSourceControls(await this.getOrInitSourceControls(topicId));
     }
 
-    setSourceEnabled(topicId: string, source: 'apps' | 'mcp' | 'skill', enabled: boolean): void {
-        const controls = this.getOrInitSourceControls(topicId);
-        controls[source].enabled = enabled;
-        db.updateTopic(topicId, { sourceControls: this.getSourceControlState(topicId), updatedAt: Date.now() });
+    private snapshotSourceControls(controls: TopicSourceControls): SourceControlsSnapshot {
+        const snapshot = ({ enabled, disabledItems }: SourceControl): SourceControlsSnapshot['apps'] =>
+            ({ enabled, disabledItems: [...disabledItems].sort((a, b) => a.localeCompare(b)) });
+        const mcp: SourceControlsSnapshot['mcp'] = snapshot(controls.mcp);
+        if (controls.mcp.allowedServers) mcp.allowedServers = [...controls.mcp.allowedServers].sort((a, b) => a.localeCompare(b));
+        return { apps: snapshot(controls.apps), mcp, skill: snapshot(controls.skill) };
+    }
 
+    async setSourceEnabled(topicId: string, source: 'apps' | 'mcp' | 'skill', enabled: boolean): Promise<void> {
+        const controls = await this.getOrInitSourceControls(topicId);
         const session = this.sessions.get(topicId);
+        if (source === 'mcp') {
+            const invalid = Array.from(controls.mcp.disabledItems).filter(key => !isMcpItemKey(key));
+            if (enabled && invalid.length) throw new Error(MCP_PERMISSION_RECONFIGURE);
+            if (invalid.length) {
+                session?.sources.mcp.setEnabled(false);
+                for (const key of invalid) {
+                    controls.mcp.disabledItems.delete(key);
+                    session?.sources.mcp.setToolEnabled(key, true);
+                }
+            }
+        }
+        controls[source].enabled = enabled;
+        db.updateTopic(topicId, { sourceControls: this.snapshotSourceControls(controls), updatedAt: Date.now() });
+
         if (session) {
             if (source === 'apps') {
                 session.agentDriver.setSourceEnabled(session.sources.aotui.name, enabled);
-                const controllableSource = this.asAOTUIControllableSource(session.sources.aotui);
-                controllableSource?.setEnabled(enabled);
+                session.sources.aotui.setEnabled(enabled);
             } else if (source === 'mcp') {
                 session.agentDriver.setSourceEnabled(session.sources.mcp.name, enabled);
                 session.sources.mcp.setEnabled(enabled);
@@ -694,29 +503,29 @@ export class SessionManagerV3 extends EventEmitter {
         }
     }
 
-    setSourceItemEnabled(topicId: string, source: 'apps' | 'mcp' | 'skill', itemName: string, enabled: boolean): void {
-        const controls = this.getOrInitSourceControls(topicId);
-        if (enabled) {
+    async setSourceItemEnabled(topicId: string, source: 'apps' | 'mcp' | 'skill', itemName: string, enabled: boolean): Promise<void> {
+        if (source === 'mcp' && !isMcpItemKey(itemName)) throw new Error(MCP_PERMISSION_RECONFIGURE);
+        const controls = await this.getOrInitSourceControls(topicId);
+        const serverName = source === 'mcp' ? parseMcpServerItemKey(itemName) : null;
+        const allowedServers = controls.mcp.allowedServers;
+        if (serverName && allowedServers) {
+            if (enabled) allowedServers.add(serverName);
+            else allowedServers.delete(serverName);
+            controls.mcp.disabledItems.delete(itemName);
+        } else if (enabled) {
             controls[source].disabledItems.delete(itemName);
         } else {
             controls[source].disabledItems.add(itemName);
         }
-        db.updateTopic(topicId, { sourceControls: this.getSourceControlState(topicId), updatedAt: Date.now() });
+        db.updateTopic(topicId, { sourceControls: this.snapshotSourceControls(controls), updatedAt: Date.now() });
 
         const session = this.sessions.get(topicId);
         if (session) {
             if (source === 'apps') {
-                const controllableSource = this.asAOTUIControllableSource(session.sources.aotui);
-                controllableSource?.setAppEnabled(itemName, enabled);
+                session.sources.aotui.setAppEnabled(itemName, enabled);
             } else if (source === 'mcp') {
-                if (isMcpServerItemKey(itemName)) {
-                    const serverName = parseMcpServerItemKey(itemName);
-                    if (serverName) {
-                        session.sources.mcp.setServerEnabled(serverName, enabled);
-                    }
-                } else {
-                    session.sources.mcp.setToolEnabled(itemName, enabled);
-                }
+                if (serverName) session.sources.mcp.setServerEnabled(serverName, enabled);
+                else session.sources.mcp.setToolEnabled(itemName, enabled);
             } else {
                 session.sources.skill.setSkillEnabled(itemName, enabled);
             }
@@ -815,7 +624,7 @@ export class SessionManagerV3 extends EventEmitter {
             (userMessage as any).id = messageId;
         }
         (userMessage as any).timestamp = activityTimestamp;
-        this.messageService.addMessage(topicId, userMessage);
+        const saved = this.messageService.addMessage(topicId, userMessage);
 
         // 1.1 更新 Topic 活跃时间（用于会话列表排序与「x m ago」展示）
         db.updateTopic(topicId, { updatedAt: activityTimestamp });
@@ -827,7 +636,7 @@ export class SessionManagerV3 extends EventEmitter {
         const event: GuiUpdateEvent = {
             topicId,
             type: 'user',
-            message: userMessage,
+            message: saved,
         };
         this.emit('message', event);
 
@@ -893,8 +702,7 @@ export class SessionManagerV3 extends EventEmitter {
     /**
      * Gracefully shutdown a Session
      * 
-     * Uses kernel.gracefulShutdown to allow apps to flush state
-     * without deleting persistent data.
+     * Allows apps to flush state before closing the Desktop.
      */
     async shutdownSession(topicId: string): Promise<void> {
         const session = this.sessions.get(topicId);
@@ -907,7 +715,12 @@ export class SessionManagerV3 extends EventEmitter {
             session.agentDriver.stop();
             session.agentDriver.dispose();
             await session.sources.aotui.dispose();
-            await this.kernel.gracefulShutdown(session.desktop.id, { timeoutMs: 5000 });
+            const handle = this.kernel.beginDesktopShutdown(session.desktop.id, { timeoutMs: 5000 });
+            const result = await handle.wait({ timeoutMs: 5000 });
+            if (result.status === 'deadline' || result.report.hasFailures) {
+                const code = result.status === 'deadline' ? 'CLOSE_DEADLINE_EXCEEDED' : 'DESKTOP_CLOSE_FAILED';
+                throw Object.assign(new Error(code), { code, report: result.report });
+            }
             session.state = 'destroyed';
             this.sessions.delete(topicId);
             this.inFlightSessions.delete(topicId);
@@ -1080,7 +893,7 @@ export class SessionManagerV3 extends EventEmitter {
         const event: GuiUpdateEvent = {
             topicId,
             type,
-            message: saved as unknown as ModelMessage,
+            message: saved,
         };
         this.emit('message', event);
 

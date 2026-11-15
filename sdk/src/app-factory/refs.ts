@@ -1,7 +1,7 @@
 import { compileValueSchema, SnapshotDataError } from '@aotui/runtime/core';
 import type { IRefRegistry, RefValueCheck } from '@aotui/runtime/spi';
 import type Type from 'typebox';
-import { exportTypeBoxValueSchema, TypeBoxSchemaExportError } from '../tools/typebox-schema.js';
+import { exportTypeBoxValueSchema, schemaDeclarationError } from '../tools/typebox-schema.js';
 
 export interface RefOptions {
     readonly refType?: string | undefined;
@@ -39,12 +39,7 @@ function validator(schema: Type.TSchema): RefValueCheck {
     const existing = schemas.get(schema);
     if (existing) return existing;
     const compiled = compileValueSchema(exportTypeBoxValueSchema(schema));
-    if (!compiled.ok) {
-        const { code, path, message } = compiled.issue;
-        throw new TypeBoxSchemaExportError(
-            code === 'PARAMETER_DECLARATION_UNSUPPORTED' ? 'TOOL_SCHEMA_UNSUPPORTED' : 'TOOL_SCHEMA_INVALID', path, message,
-        );
-    }
+    if (!compiled.ok) throw schemaDeclarationError(compiled.issue);
     schemas.set(schema, compiled.validate);
     return compiled.validate;
 }

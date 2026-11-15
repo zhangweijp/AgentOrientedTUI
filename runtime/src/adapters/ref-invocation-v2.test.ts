@@ -7,16 +7,16 @@ import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profil
 import { captureTypeParametersRequest, typeParametersResponse } from './ordinary-invocation-v2.js';
 import { captureTypeParametersTerminal } from './worker-message-capture.js';
 function fixture() {
-    const c = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } }, choice: { type: 'string', enum: ['ok'] } }, required: ['file'], additionalProperties: false }, 'view-type-parameters-v1');
+    const c = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } }, choice: { type: 'string', enum: ['ok'] } }, required: ['file'], additionalProperties: false });
     if (!c.ok) throw Error('fixture');
     const execution = { kind: 'view-type' as const, activationId: 'active-1' };
-    return { type: 'VIEW_TOOL_INVOKE_V4', requestId: 'r', appId: 'app', instanceId: 'run', snapshotId: 'source', argumentMode: 'view-type-parameters-v1', execution,
+    return { type: 'VIEW_TOOL_INVOKE_V5', requestId: 'r', appId: 'app', instanceId: 'run', snapshotId: 'source', argumentMode: 'view-type-parameters-v1', execution,
         tool: { id: JSON.stringify(['app', 'File', 'read']), name: 'read', description: 'Read', viewType: 'File', inputSchema: JSON.parse(JSON.stringify(ordinaryParameterProfile(c.contract))), 
             execution },
         rawArgs: { file: 'v.id', choice: 'ok' }, effectiveArgs: { file: { opaque: true }, choice: 'ok' },
         refSources: [{ param: 'file', refId: 'id', kind: 'snapshot-value', refType: 'unknown', snapshotId: 'source', viewId: 'v', viewInstanceId: 'mount' }] };
 }
-describe('R03/R04 Ref V4 exact codec and pure correspondence projection', () => {
+describe('R03/R04 Ref V5 exact codec and pure correspondence projection', () => {
     it('retains the original profile and source while checking both complete argument stages', () => {
         const input = fixture(), before = canonicalJson(input as any), message = captureTypeParametersRequest(input);
         expect(validateTypeParameters(message)).toEqual({ success: true });
@@ -44,7 +44,7 @@ describe('R03/R04 Ref V4 exact codec and pure correspondence projection', () => 
     });
     it('correlates only exact new terminal type/mode/identity and preserves entered business failure', () => {
         const m = fixture(), terminal = { phase: 'entered-returned' as const, result: { success: false, error: { code: 'BUSINESS', message: 'Expected failure' } } };
-        const response = typeParametersResponse(m, terminal)!;expect(response.type).toBe('VIEW_TOOL_INVOKE_V4_RESPONSE');
+        const response = typeParametersResponse(m, terminal)!;expect(response.type).toBe('VIEW_TOOL_INVOKE_V5_RESPONSE');
         expect(captureTypeParametersTerminal(response, m)).toEqual(terminal);
         for (const patch of [{ type: 'VIEW_TOOL_INVOKE_REF_V1_RESPONSE' }, { argumentMode: 'snapshot-value-v1' }, { requestId: 'other' }, { instanceId: 'other' }, { extra: true }])
             expect(captureTypeParametersTerminal({ ...response, ...patch }, m)).toBe(null);

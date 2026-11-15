@@ -13,7 +13,7 @@ vi.mock('ai', async importOriginal => {
 });
 
 const drivers: AgentDriverV2[] = [];
-const config = { model: 'openai:controlled-owner', apiKey: 'unused-no-network' };
+const config = { model: 'controlled-owner', provider: { id: 'openai' }, apiKey: 'unused-no-network' };
 const input = { value: 1 };
 const schema = { type: 'object' as const, properties: { value: { type: 'number' as const } }, required: ['value'], additionalProperties: false };
 const assistantMessage = {

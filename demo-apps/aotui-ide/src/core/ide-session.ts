@@ -5,7 +5,7 @@ import { readObservedFile, directoryIdentity, checkedPath, inside, type Observed
 import { createFileWithParents, replaceObservedFile, deleteObservedFile, renameObservedFile } from './observed-file-actions.js';
 import { applyEditReplacement } from './file-system-service.js';
 import { createWorkspaceFileCreator, mapWorkspaceFileCreationResult, type WorkspaceFileCreator } from './conditional-file-create.js';
-import { IDEHistory, pathList, readLegacyIDE } from './ide-history.js';
+import { IDEHistory, pathList } from './ide-history.js';
 import { ScopedLSP, type LSPQuery } from './scoped-lsp.js';
 import { ScopedSearch } from './scoped-search.js';
 import { boundedJSON, closeDirectory, IDEError, nextVersion, requireIDE } from './ide-errors.js';
@@ -17,12 +17,11 @@ type Binding = Extract<ReturnType<Persistence['bind']>, { status: 'bound' }>['bi
 export interface IDEFile { viewId: string; observed: ObservedFile; offset: number; limit: number; page: string;
     diagnostics: LoadedDiagnosticsState; panels: Record<string, unknown> }
 type Root = { path: string; identity: string; creator: WorkspaceFileCreator };
-export interface IDEOptions { sessionKey: string; historyPath: string; projectPath?: string; legacyImportPath?: string }
+export interface IDEOptions { sessionKey: string; historyPath: string; projectPath?: string }
 const sessionKeys = ['workspaceFolders', 'activeFiles', 'expandedDirs'] as const;
 const fail = (error: IDEError): ToolResult => ({
     success: false, error: { code: error.code, message: error.message },
     ...(error.details ? { data: error.details } : {}),
-    ...(error.effects === 'unknown' ? {} : { effects: error.effects }),
 });
 const success = (data: NonNullable<ToolResult['data']> = {}): ToolResult => ({ success: true, data });
 const textPath = (input: unknown): string => {
@@ -169,12 +168,6 @@ export class IDESession {
                 } catch { binding.confirmInitialization(recovery, { status: 'failed' }); blocked = true; }
             });
             requireIDE(!blocked, 'IDE_RECOVERY_FAILED'); this.current();
-            let imported: Awaited<ReturnType<typeof readLegacyIDE>> | undefined;
-            if (this.options.legacyImportPath) {
-                imported = await readLegacyIDE(this.options.legacyImportPath); this.current();
-                await this.history.importHistory(imported); this.current();
-                if (recovered[0]?.status === 'missing') values.set('workspaceFolders', imported.workspaceFolders);
-            }
             const projectPath = this.options.projectPath ? textPath(this.options.projectPath) : undefined;
             const folders = [...new Set(mergeWorkspaceFolders(values.get('workspaceFolders')!, projectPath).map(textPath))];
             const roots: Root[] = [], unavailable: string[] = [];
@@ -203,22 +196,13 @@ export class IDESession {
             const initial = { workspaceFolders: this.workspaceFolders(), activeFiles: [...this.files.keys()], expandedDirs: this.expanded };
             recovered.forEach((recovery, index) => {
                 const key = sessionKeys[index]!, binding = this.bindings.get(key)!;
-                // Missing values are prepared before the first initialization
-                // acknowledgment. A stopped/failed import cannot persist [].
+                // Prepare missing values before acknowledging initialization.
                 if (recovery.status === 'missing') requireIDE(binding.update(initial[key]).status === 'accepted', 'IDE_RECOVERY_FAILED');
                 const confirmed = binding.confirmInitialization(recovery, recovery.status === 'found' ? { status: 'ready', value: values.get(key)! } : { status: 'ready' });
                 const status = binding.inspect();
                 requireIDE(confirmed.status === 'accepted' && !status.issue, 'IDE_RECOVERY_FAILED');
             });
             this.persist();
-            if (imported) {
-                const expected = sessionKeys.map((key, index) => ({ key, address: recovered[index]!.address,
-                    revision: (this.bindings.get(key)!.inspect() as { revision: number }).revision }));
-                const flushed = await this.persistence.flush(); this.current();
-                requireIDE(flushed.ok && expected.every(item => flushed.entries.some(entry => entry.address.namespace === item.address.namespace &&
-                    entry.address.key === item.address.key && entry.revision === item.revision && ['saved', 'unchanged'].includes(entry.status))), 'IMPORT_SESSION_SAVE_FAILED');
-                await this.history.completeImport(imported.digest); this.current();
-            }
             this.ready = true;
             this.publish();
         })());
@@ -501,8 +485,7 @@ export class IDESession {
                 else results.push({ index, status: issue.effects === 'unknown' ? 'unknown' : 'failed', code: issue.code });
                 for (let rest = index + 1; rest < edits.length; rest++) results.push({ index: rest, status: 'not-run' });
                 if (this.live) { this.lastBatch = boundedJSON(results); this.publish(); }
-                if (issue.effects === 'unknown') return fail(new IDEError(issue.code, 'unknown', { results }));
-                return fail(new IDEError(issue.code, results.some(item => item.status === 'succeeded') || issue.effects === 'partial' ? 'partial' : 'none', { results }));
+                return fail(new IDEError(issue.code, issue.effects, { results }));
             }
         }
         this.lastBatch = boundedJSON(results); this.publish(); return success({ results });

@@ -22,7 +22,7 @@
     "test:native-lsp": "node tests/native-lsp.e2e.mjs"
   },
   "dependencies": {
-    "@aotui/sdk": "0.8.0-srt.1",
+    "@aotui/sdk": "0.8.0",
     "glob": "^10.3.10",
     "preact": "^10.29.1",
     "typebox": "1.4.3",

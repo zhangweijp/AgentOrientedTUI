@@ -26,7 +26,7 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
   };
   try {
     const desktopId = await runtime.createDesktop('view-pipeline');
-    await runtime.installDynamicWorkerApp(desktopId, appURL, { appId: 'pipeline', interactionModes: ['view-type-parameters-v1'],
+    await runtime.installDynamicWorkerApp(desktopId, appURL, { appId: 'pipeline',
       config: { AOTUI_DATA_DIR: data } });
     source = new SemanticAOTUIDrivenSource(runtime.getDesktop(desktopId), runtime, { includeInstruction: false });
     async function observe() {

@@ -185,7 +185,6 @@ AppTools({ definition: readTools, bindings: { readRecord: { execute(args) {
 const failedToolResult = {
   success: false,
   error: { code: 'PARTIAL_WRITE', message: 'The application reports partial work.' },
-  effects: 'partial',
 } satisfies ToolResult;
 void failedToolResult;
 
@@ -205,16 +204,18 @@ import { useViewSnapshotTool } from '../src/index.js';
 
 // A receipt cannot simultaneously claim success and failure; failure requires a JSON error record.
 const shortReceipt: ToolResult = { success: true, data: { message: 'Done' } };
-const knownFailure: ToolResult = { success: false, error: { code: 'BUSINESS_FAILED', message: 'No write', context: { phase: 'invocation' } }, effects: 'none' };
+const knownFailure: ToolResult = { success: false, error: { code: 'BUSINESS_FAILED', message: 'No write', context: { phase: 'invocation' } } };
 const uncertainFailure: ToolResult = { success: false, error: { code: 'BUSINESS_UNKNOWN', message: 'Observe before deciding next action' } };
 // @ts-expect-error Success cannot carry an error.
 const successAndError: ToolResult = { success: true, error: { code: 'BAD', message: 'bad' } };
-// @ts-expect-error Success cannot declare failure effects.
+// @ts-expect-error Tool receipts have no effects field.
 const successAndEffects: ToolResult = { success: true, effects: 'none' };
+// @ts-expect-error Business failures use the same receipt shape.
+const failureAndEffects: ToolResult = { success: false, error: { code: 'BAD', message: 'bad' }, effects: 'none' };
 // @ts-expect-error Failed results require a transport error record.
 const missingError: ToolResult = { success: false };
 // @ts-expect-error Error context must be JSON, not an exception.
 const errorCause: ToolResult = { success: false, error: { code: 'BAD', message: 'bad', context: { cause: new Error('local only') } } };
 // @ts-expect-error Receipts cannot carry functions as current business data.
 const callbackData: ToolResult = { success: true, data: { callback() {} } };
-void [shortReceipt, knownFailure, uncertainFailure, successAndError, successAndEffects, missingError, errorCause, callbackData];
+void [shortReceipt, knownFailure, uncertainFailure, successAndError, successAndEffects, failureAndEffects, missingError, errorCause, callbackData];

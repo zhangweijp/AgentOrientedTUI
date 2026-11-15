@@ -18,7 +18,7 @@ describe('tRPC agents router', () => {
         vi.restoreAllMocks();
     });
 
-    it('getAgents returns disabledMcpTools when present', async () => {
+    it('reports legacy MCP permissions so the Agent can be reconfigured', async () => {
         vi.spyOn(Config, 'getGlobal').mockResolvedValue({
             agents: {
                 list: [
@@ -39,7 +39,10 @@ describe('tRPC agents router', () => {
         } as any);
 
         const result = await caller.agents.getAgents();
-        expect(result.list[0].disabledMcpTools).toEqual(['server-a::search']);
+        expect(result.list[0]).toMatchObject({
+            disabledMcpTools: ['server-a::search'],
+            mcpPermissionIssue: expect.stringContaining('Select servers and tools again and save.'),
+        });
     });
 
     it('saveAgents accepts and persists disabledMcpTools', async () => {
@@ -55,7 +58,7 @@ describe('tRPC agents router', () => {
                     enabledApps: [],
                     enabledSkills: {},
                     enabledMCPs: ['server-a'],
-                    disabledMcpTools: ['server-a::search'],
+                    disabledMcpTools: ['mcp-server-a-search'],
                     skin: {},
                 },
             ],
@@ -67,7 +70,7 @@ describe('tRPC agents router', () => {
                 list: [
                     expect.objectContaining({
                         id: 'agent_1',
-                        disabledMcpTools: ['server-a::search'],
+                        disabledMcpTools: ['mcp-server-a-search'],
                     }),
                 ],
                 activeAgentId: 'agent_1',

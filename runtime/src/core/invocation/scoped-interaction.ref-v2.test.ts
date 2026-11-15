@@ -7,7 +7,7 @@ function parameters(extra = false) {
     return compileOrdinarySchema({ type: 'object', properties: {
         file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } },
         choice: { type: 'string', enum: ['ok'] }, ...(extra ? { n: { type: 'number', default: 2 } } : {}),
-    }, required: ['file'], additionalProperties: true }, 'view-type-parameters-v1');
+    }, required: ['file'], additionalProperties: true });
 }
 
 import { createAppInteraction } from './app-interaction.js';
@@ -27,7 +27,7 @@ function fixture() {
         expect(r.status).toBe('published');if (r.status !== 'published') throw Error('publication');return r.snapshot;
     }
     const original = publish();
-    const binding = { identity: {}, mode: 'view-type-parameters-v1' as const, isLive: () => ({ ok: true }), validateInput: (_s: unknown, input: any) => {
+    const binding = { identity: {}, isLive: () => ({ ok: true }), validateInput: (_s: unknown, input: any) => {
         calls.validate++;if (!contract.ok) throw Error('fixture');const r = contract.contract.validateResolvedInput!(input);return r.ok ? { ok: true, value: r.value } : { ok: false };
     }, execute: (ctx: any) => { calls.execute++;seen.push(ctx);return { kind: 'tool-result' as const, phase: 'entered-returned' as const, result: { success: true, data: { label: ctx.effectiveInput.file.label } } }; } };
     const client = createAppInteraction(core.store, { namespace: 'ref-v2', now: () => 0, appId: 'app', instanceId: 'run', policy: { project: ({ source }) => ({

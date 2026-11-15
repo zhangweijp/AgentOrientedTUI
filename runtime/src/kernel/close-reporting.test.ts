@@ -13,12 +13,15 @@ function setup(manager: any = new DesktopManager()) {
 afterEach(() => { vi.restoreAllMocks();vi.useRealTimers(); });
 
 describe('Kernel close reporting', () => {
-    it('single Desktop close rejects new lifecycle work while serialization remains readable', async () => {
+    it('single Desktop close rejects new lifecycle work while the App catalog remains readable', async () => {
         const {kernel}=setup(),id=await kernel.createDesktop('single'),desktop=kernel.getDesktop(id),gate=barrier<void>();
+        await desktop.registerPendingApp({ appId: 'registered', name: 'pending_app', modulePath: '/pending' });
         const closing=kernel.beginDesktopShutdown(id,{beforeClose:()=>gate.promise});
         await expect(desktop.openApp('app')).rejects.toHaveProperty('code','DESKTOP_DISPOSED');
         for(const call of [()=>kernel.reinitializeDesktopApps(id),()=>kernel.suspend(id),()=>kernel.resume(id)])await expect(call()).rejects.toHaveProperty('code','DESKTOP_DISPOSED');
-        expect(kernel.getDesktop(id)).toBe(desktop);expect(kernel.serialize(id).id).toBe(id);gate.resolve();await closing.completion;await kernel.shutdown();
+        expect(kernel.getDesktop(id)).toBe(desktop);
+        expect(desktop.getInstalledApps()).toMatchObject([{ appId: 'registered', name: 'pending_app', status: 'pending' }]);
+        gate.resolve();await closing.completion;await kernel.shutdown();
     });
     it('missing Desktop destroy is reported by the managed manager as an idempotent no-op', async()=>{
         const {kernel}=setup();
@@ -32,12 +35,13 @@ describe('Kernel close reporting', () => {
         vi.spyOn((desktop as any).appManager,'beginClose').mockReturnValue(createCloseHandle(childReport,gate.promise.then(()=>{childState.state='settled';childState.resourcesReleased=true;return childReport();})));
         const install=vi.spyOn(desktop,'installDynamicWorkerApp'),shutdown=kernel.beginShutdown();
         for(const call of [()=>kernel.createDesktop(),()=>kernel.installDynamicWorkerApp(id,'/none'),()=>kernel.reinitializeDesktopApps(id),()=>kernel.suspend(id),()=>kernel.resume(id)])await expect(call()).rejects.toHaveProperty('code','RUNTIME_SHUTDOWN');
-        expect(install).not.toHaveBeenCalled();expect(kernel.getDesktop(id)).toBe(desktop);expect(kernel.serialize(id).id).toBe(id);
+        expect(install).not.toHaveBeenCalled();expect(kernel.getDesktop(id)).toBe(desktop);
+        expect(desktop.getInstalledApps()).toEqual([]);
         gate.resolve();await shutdown.completion;await original().completion;
     });
     it('default factory provides a managed close handle and stable void Promise', async () => {
         const kernel = createRuntime();const id = await kernel.createDesktop('empty');const handle = kernel.beginShutdown();
-        expect(kernel.beginShutdown('ignored')).toBe(handle);const first = kernel.shutdown();expect(kernel.shutdown()).toBe(first);
+        expect(kernel.beginShutdown()).toBe(handle);const first = kernel.shutdown();expect(kernel.shutdown()).toBe(first);
         await expect(kernel.createDesktop()).rejects.toMatchObject({ code: 'RUNTIME_SHUTDOWN' });
         expect(kernel.getAppInteraction(id, 'app', 'instance')).toMatchObject({ status: 'rejected', issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });
         const report = await handle.completion;await first;expect(report).toMatchObject({ ok: true, resourcesReleased: true, workers: { ownership: 'owned', report: { state: 'closed', total: 0 } } });
@@ -75,12 +79,19 @@ describe('Kernel close reporting', () => {
         gate.resolve();await expect(creating).rejects.toMatchObject({ code: 'RUNTIME_SHUTDOWN' });const report = await shutdown.completion;
         expect(desktops.size).toBe(0);expect(manager.beginDesktopShutdown).toHaveBeenCalledOnce();expect(report).toMatchObject({ ok: true, hasFailures: false, verification: 'managed', desktops: { accepted: 1, settled: 1 } });
     });
-    it('graceful observer deadline never repeats destroy or cancels an entered callback; callback can serialize', async () => {
+    it('close observer deadline never cancels the entered callback or prevents reading the App catalog', async () => {
         vi.useFakeTimers();const { kernel, manager } = setup();const id = await kernel.createDesktop('graceful'), gate = barrier();
-        const callback = vi.fn(async () => { expect(kernel.serialize(id).id).toBe(id);await gate.promise; });
-        const graceful = kernel.gracefulShutdown(id, { timeoutMs: 10, beforeClose: callback });const handled = graceful.catch(error => error);
-        await vi.advanceTimersByTimeAsync(0);expect(callback).toHaveBeenCalledOnce();const handle = kernel.beginDesktopShutdown(id, { beforeClose: callback });
-        const runtime = kernel.beginShutdown();await vi.advanceTimersByTimeAsync(11);expect(await handled).toMatchObject({ code: 'CLOSE_DEADLINE_EXCEEDED' });expect(manager.get(id)).toBeDefined();
+        const desktop = kernel.getDesktop(id);
+        await desktop.registerPendingApp({ appId: 'registered', modulePath: '/pending' });
+        const callback = vi.fn(async () => {
+            expect(kernel.getDesktop(id).getInstalledApps()).toMatchObject([{ appId: 'registered', status: 'pending' }]);
+            await gate.promise;
+        });
+        const handle = kernel.beginDesktopShutdown(id, { timeoutMs: 10, beforeClose: callback });
+        const waiting = handle.wait({ timeoutMs: 10 });
+        await vi.advanceTimersByTimeAsync(0);expect(callback).toHaveBeenCalledOnce();
+        expect(kernel.beginDesktopShutdown(id, { beforeClose: callback })).toBe(handle);
+        const runtime = kernel.beginShutdown();await vi.advanceTimersByTimeAsync(11);expect(await waiting).toMatchObject({ status: 'deadline', report: { state: 'closing', resourcesReleased: false } });expect(manager.get(id)).toBeDefined();
         expect(handle.inspect().beforeClose).toBe('running');gate.resolve();expect((await handle.completion).beforeClose).toBe('done');await runtime.completion;expect(vi.getTimerCount()).toBe(0);
     });
     it('a real Manager close exception remains a bounded failure fact', async () => {

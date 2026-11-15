@@ -53,7 +53,7 @@ try {
         const rejectedB = await invoke(a, 'edit_file', { filePath: second, oldString: '7', newString: '8' }, {
             view: onlyA[0].id, status: 'failed', changes: false,
         });
-        assert.equal(rejectedB.effects, 'none');
+        assert.equal(Object.hasOwn(rejectedB, 'effects'), false);
         assert.equal(rejectedB.details.result.error.code, 'IDE_FILE_NOT_LOADED', 'the app rejects b while only a is open');
         assert.equal(await fs.readFile(second, 'utf8'), secondBefore, 'the unopened b file is unchanged');
         await invoke(a, 'multi_close_file', { filePaths: [file] });
@@ -140,9 +140,14 @@ try {
         assert.deepEqual([...new Set(toolNames(a))].sort(), [...workspaceTools, ...fileMutations, ...languageTools,
             'close_file_detail', 'close_search_view', 'read_loaded_diagnostics', 'create_file_if_absent'].sort());
         await invoke(a, 'close_search_view', { view_id: 'search' }, { view: 'search' });
+        assert.equal(toolNames(a).includes('close_search_view'), false);
         await invoke(a, 'search_files_by_content', { pattern: 'caller\\(', include: '**/*.ts' });
-        await eventually(() => viewText(a, 'search').includes('close_search_view'), 'SearchResult Tool UI publication');
+        await eventually(() => viewText(a, 'search').includes(file) && toolNames(a).includes('close_search_view'),
+            'SearchResult matches and close Tool');
+        const search = await inspectTools(a, 'search');
+        assert.deepEqual(search.tools.map(tool => [tool.viewType, tool.name]), [['SearchResult', 'close_search_view']]);
         const before = viewText(a, 'search');
+        assert.doesNotMatch(before, /close_search_view/);
         await invoke(a, 'search_files_by_content', { pattern: '[' }, { status: 'failed', changes: false });
         assert.equal(viewText(a, 'search'), before);
         const createView = snapshot(a).views.find(view => view.type === 'WorkspaceCreate' && view.name === 'Workspace: ' + root).id;
@@ -154,11 +159,11 @@ try {
         } }, 'created file receipt');
         assert.equal(await fs.readFile(target, 'utf8'), content);
         const duplicate = await invoke(a, 'create_file_if_absent', { workspacePath: root, relativePath, content: 'overwrite' }, { view: createView, status: 'failed', changes: false });
-        assert.equal(duplicate.effects, 'none');
+        assert.equal(Object.hasOwn(duplicate, 'effects'), false);
         assertJsonRecord(duplicate.details.result, { success: false, error: { code: 'RESOURCE_ALREADY_EXISTS', message: 'Target already exists' } }, 'duplicate file result');
         assert.equal(await fs.readFile(target, 'utf8'), content, 'A duplicate request never overwrites the created file');
         const missingParent = await invoke(a, 'create_file_if_absent', { workspacePath: root, relativePath: 'missing/slice.ts', content }, { view: createView, status: 'failed', changes: false });
-        assert.equal(missingParent.effects, 'none');
+        assert.equal(Object.hasOwn(missingParent, 'effects'), false);
         assertJsonRecord(missingParent.details.result, { success: false, error: { code: 'RESOURCE_PARENT_UNAVAILABLE', message: 'Target parent must already exist' } }, 'missing parent result');
         await assert.rejects(fs.stat(path.join(root, 'missing')), { code: 'ENOENT' });
     });

@@ -37,7 +37,10 @@ vi.mock('../../src/core/message-service-v2.js', () => ({
 vi.mock('../../src/core/llm-config-service.js', async importOriginal => {
   const { LLMConfigService } = await importOriginal<typeof import('../../src/core/llm-config-service.js')>();
   return { LLMConfigService: class extends LLMConfigService {
-    override async getActiveLLMConfig() { return { model: 'openai:controlled-im-receipt', apiKey: 'unused-no-network' }; }
+    override getActiveLLMConfigRecord() {
+      return { id: 1, name: 'IM fixture', model: 'controlled-im-receipt', providerId: 'openai', apiKey: 'unused-no-network',
+        baseUrl: 'https://api.openai.com/v1', temperature: 0.7, maxSteps: 10, isActive: true, createdAt: 1, updatedAt: 1 };
+    }
     override getAllConfigs() { return []; }
   } };
 });
@@ -73,7 +76,11 @@ vi.mock('../../src/skills/skill-driven-source.js', () => ({
     async getContext() { return { messages: [], tools: {} }; }
   },
 }));
-vi.mock('../../src/mcp/index.js', () => ({ MCP: { tools: async () => fixture.mcpTools } }));
+vi.mock('../../src/mcp/index.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../../src/mcp/index.js')>(),
+  MCP: { tools: async () => Object.fromEntries(Object.entries(fixture.mcpTools)
+    .map(([key, tool]) => [key, { serverName: 'probe-server', tool }])) },
+}));
 vi.mock('@aotui/agent-driver-adapter', () => ({
   SemanticAOTUIDrivenSource: class {
     name = 'controlled-aotui';
@@ -163,7 +170,7 @@ describe('IM tool receipts continue through the real Host and Driver', () => {
     type Init = Parameters<HostManagerV2['initAgentDriver']>;
     const gui = vi.fn(), off = host.onGuiUpdate(gui);
     try {
-      await host.initAgentDriver(desktop as Init[0], kernel as unknown as Init[1], desktops as unknown as Init[2]);
+      await host.initAgentDriver(kernel as unknown as Init[0], desktops as unknown as Init[1]);
       const sessionKey = 'agent:probe-agent:controlled:direct:budget-peer';
       await host.sendIMMessage({ sessionKey, agentId: 'probe-agent', channel: 'controlled', chatType: 'direct',
         peerId: 'budget-peer', body: userInput, messageId: 'budget-1', senderId: 'budget-peer',
@@ -272,7 +279,7 @@ describe('IM tool receipts continue through the real Host and Driver', () => {
       const kernel = { getDesktop: () => desktop };
       const desktops = { createDesktop: async () => ({ desktopId: desktop.id }), deleteDesktop: async () => {}, getAppsConfig: async () => ({ 'probe-app': {} }) };
       type Init = Parameters<HostManagerV2['initAgentDriver']>;
-      await host.initAgentDriver(desktop as Init[0], kernel as unknown as Init[1], desktops as unknown as Init[2]);
+      await host.initAgentDriver(kernel as unknown as Init[0], desktops as unknown as Init[1]);
       const sessionKey = 'agent:probe-agent:controlled:direct:probe-peer';
       await host.sendIMMessage({
         sessionKey, agentId: 'probe-agent', channel: 'controlled', chatType: 'direct', peerId: 'probe-peer',

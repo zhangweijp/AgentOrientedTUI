@@ -1,6 +1,6 @@
 import type { StateStorageBackend } from '../app/state-storage-host.js';
 import type { WorkerCapacity } from '../app/worker-capacity.js';
-import type { IDesktop, DesktopID, AppID, UpdateSignal, AppState, DesktopStatus, ILLMOutputChannelService, IRuntimeContext, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
+import type { IDesktop, DesktopID, AppID, UpdateSignal, AppDiscoveryInfo, DesktopStatus, ILLMOutputChannelService, IRuntimeContext, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
 import { createDesktopId } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import { SignalBus, type SignalListener } from './signal-bus.js';
@@ -13,7 +13,7 @@ import { LLMOutputChannelService } from './llm-output-channel.js';
 import { RuntimeConfig, RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
 import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
-import { captureInteractionModes } from '../app/interaction-config.js';
+import { captureToolsEnabled } from '../app/interaction-config.js';
 
 
 /**
@@ -43,7 +43,6 @@ export interface DesktopOptions {
 
 export class Desktop implements IDesktop {
     public readonly id: DesktopID;
-    public readonly createdAt: number;
 
     // [RFC-026] Runtime Context
     public readonly context?: IRuntimeContext;
@@ -80,7 +79,6 @@ export class Desktop implements IDesktop {
 
     constructor(id?: DesktopID, options?: DesktopOptions) {
         this.id = id ?? createDesktopId();
-        this.createdAt = Date.now();
         this.config = options?.runtimeConfig ?? RUNTIME_DEFAULTS;
         this.context = options?.context;
 
@@ -233,7 +231,7 @@ export class Desktop implements IDesktop {
 
         }
     ): Promise<string> {
-        const interactionModes = captureInteractionModes(options);
+        const toolsEnabled = captureToolsEnabled(options);
         this.assertActive();
         // [RFC-026] Merge Runtime Context into AppLaunchConfig
         // Priority: App Specific Config > Runtime Context
@@ -260,7 +258,7 @@ export class Desktop implements IDesktop {
                 whenToUse: options?.whenToUse,
                 config: mergedConfig, // [RFC-026] Injected Config
                 runtimeConfig: this.config, // [RFC-005] Pass Runtime Config
-                interactionModes
+                toolsEnabled
             }
         );
     }
@@ -278,7 +276,7 @@ export class Desktop implements IDesktop {
         workerScriptPath?: string;
         config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
     }): Promise<string> {
-        const interactionModes = captureInteractionModes(options);
+        const toolsEnabled = captureToolsEnabled(options);
         this.assertActive();
         return this.appManager.registerPendingApp({
             appId: options.appId as any,
@@ -290,7 +288,7 @@ export class Desktop implements IDesktop {
             workerScriptPath: options.workerScriptPath,
             config: { ...this.context?.env, ...options.config },
             runtimeConfig: this.config,
-            interactionModes
+            toolsEnabled
         });
     }
     // --- Lifecycle Methods ---
@@ -318,14 +316,10 @@ export class Desktop implements IDesktop {
         }
     }
 
-    getAppStates(): AppState[] {
-        return this.appManager.getAppStates();
-    }
-
     /**
      * 获取已安装应用列表
      */
-    getInstalledApps(): ReturnType<AppManager['getInstalledApps']> {
+    getInstalledApps(): readonly AppDiscoveryInfo[] {
         return this.appManager.getInstalledApps();
     }
 
@@ -352,13 +346,6 @@ export class Desktop implements IDesktop {
      */
     logSystem(message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
         if (!this._isDraining) this.logger.logSystem(this.id, message, level);
-    }
-
-    /**
-     * 获取动态 App ID 列表（用于序列化恢复）
-     */
-    getDynamicAppIds(): AppID[] {
-        return this.appManager.getDynamicAppIds();
     }
 
     /**

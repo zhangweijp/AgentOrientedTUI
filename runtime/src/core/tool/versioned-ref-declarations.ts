@@ -1,7 +1,4 @@
-import { VIEW_TYPE_PARAMETERS_MODE } from './ordinary-parameter-contract.js';
-import { SnapshotDataError } from '../snapshot/json.js';
 import type { JsonValue } from '../snapshot/types.js';
-import { compileOrdinaryProfile } from './ordinary-parameter-profile.js';
 
 type JsonObject = Readonly<Record<string, JsonValue>>;
 const object = (value: JsonValue | undefined): value is JsonObject =>
@@ -24,13 +21,4 @@ export function selectedRefParameters(fields: JsonObject, args: JsonObject): rea
         }
         return [];
     });
-}
-
-/** Admission accepts normalized ordinary profiles only; it never grants execution. */
-export function validateVersionedToolRefDeclarations(schema: JsonValue, path = '$.inputSchema'): boolean {
-    const compiled = compileOrdinaryProfile(schema);
-    if (!compiled) throw new SnapshotDataError('REF_CONTRACT_UNSUPPORTED', path, 'Invalid or retired parameter profile');
-    return compiled.revision === VIEW_TYPE_PARAMETERS_MODE &&
-        Object.values(compiled.schema.properties as Readonly<Record<string, JsonValue>>)
-            .some(field => refField(field) || object(field) && refField(field.items));
 }
