@@ -1,274 +1,17 @@
-/**
- * Host V2 - 完全基于 HostManager V2 的架构
- * 
- * 核心组件:
- * - HostManagerV2: 核心管理器
- * - LLMConfigService: LLM 配置管理
- * - WebSocketHandlerV2: WebSocket 处理
- * - GUIBridge: GUI 事件桥接
- */
-
-import { WebSocketServer } from 'ws';
-import express, { type Request, type Response, type NextFunction } from 'express';
-import cors from 'cors';
-import { createServer as createHttpServer } from 'http';
-
-// ✅ V2 Core Services
+import { once } from 'node:events';
+import { createServer, type Server } from 'node:http';
+import express from 'express';
 import { desktopManager, desktopManagerReady } from '../core/desktop-manager.js';
-import { MessageServiceV2 } from '../core/message-service-v2.js';
+import { initializeLLMConfigService, type LLMConfigService } from '../core/llm-config-service.js';
 import { HostManagerV2 } from '../core/host-manager-v2.js';
-import { LLMConfigService, initializeLLMConfigService } from '../core/llm-config-service.js';
-import { WebSocketHandlerV2 } from './websocket-handler-v2.js';
-import { GUIBridge } from './gui-bridge.js';
 import * as db from '../db/index.js';
-import { ModelRegistry } from '../services/model-registry.js';
-import { IMRuntimeBridge } from '../im/im-runtime-bridge.js';
 import { FeishuChannelPlugin } from '../im/channels/feishu/channel.js';
-
-// ═══════════════════════════════════════════════════════════════
-//  Express Routes (REST API for Topics/Messages)
-// ═══════════════════════════════════════════════════════════════
-
-function setupExpressRoutes(
-    app: express.Application,
-    hostManager?: HostManagerV2,
-    options?: {
-        setupPreJsonRoutes?: (app: express.Application) => void;
-        imRuntimeBridge?: IMRuntimeBridge;
-    },
-): void {
-    app.use(cors());
-    options?.setupPreJsonRoutes?.(app);
-    app.use(express.json());
-
-    // Logging middleware
-    app.use((req: Request, _res: Response, next: NextFunction) => {
-        console.log(`[HostV2] ${req.method} ${req.path}`);
-        next();
-    });
-
-    // Topics CRUD
-    app.get('/api/topics', (_req: Request, res: Response) => {
-        try {
-            const topics = db.getAllTopics();
-            res.json({ success: true, data: topics });
-        } catch (error) {
-            console.error('[HostV2] Error getting topics:', error);
-            res.status(500).json({ success: false, error: 'Failed to get topics' });
-        }
-    });
-
-    app.post('/api/topics', async (req: Request, res: Response) => {
-        try {
-            const { title } = req.body as { title?: string };
-            if (!title || typeof title !== 'string') {
-                res.status(400).json({ success: false, error: 'Title is required' });
-                return;
-            }
-            const topicId = `desktop_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-            const topic = {
-                id: topicId,
-                title,
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-                status: 'hot' as const
-            };
-            db.createTopic(topic);
-            
-            // ✅ Initialize Session for the new Topic
-            if (hostManager) {
-                try {
-                    await hostManager.ensureSessionForTopic(topicId);
-                    console.log(`[HostV2] Session initialized for topic: ${topicId}`);
-                } catch (error) {
-                    console.error(`[HostV2] Failed to initialize session for topic ${topicId}:`, error);
-                    // Continue even if session initialization fails
-                }
-            }
-            
-            res.status(201).json({ success: true, data: topic });
-        } catch (error) {
-            console.error('[HostV2] Error creating topic:', error);
-            res.status(500).json({ success: false, error: 'Failed to create topic' });
-        }
-    });
-
-    app.get('/api/topics/:id', (req: Request, res: Response) => {
-        try {
-            const topic = db.getTopic(req.params.id);
-            if (!topic) {
-                res.status(404).json({ success: false, error: 'Topic not found' });
-                return;
-            }
-            res.json({ success: true, data: topic });
-        } catch (error) {
-            console.error('[HostV2] Error getting topic:', error);
-            res.status(500).json({ success: false, error: 'Failed to get topic' });
-        }
-    });
-
-    app.delete('/api/topics/:id', (req: Request, res: Response) => {
-        try {
-            db.deleteTopic(req.params.id);
-            res.json({ success: true });
-        } catch (error) {
-            console.error('[HostV2] Error deleting topic:', error);
-            res.status(500).json({ success: false, error: 'Failed to delete topic' });
-        }
-    });
-
-    // Messages CRUD
-    app.get('/api/topics/:id/messages', (req: Request, res: Response) => {
-        try {
-            const topic = db.getTopic(req.params.id);
-            if (!topic) {
-                res.status(404).json({ success: false, error: 'Topic not found' });
-                return;
-            }
-            const messageService = new MessageServiceV2();
-            const messages = messageService.getMessages(req.params.id);
-            res.json({ success: true, data: messages });
-        } catch (error) {
-            console.error('[HostV2] Error getting messages:', error);
-            res.status(500).json({ success: false, error: 'Failed to get messages' });
-        }
-    });
-
-    app.post('/api/topics/:id/messages', (req: Request, res: Response) => {
-        try {
-            const topicId = req.params.id;
-            const { role, content } = req.body as { role?: string; content?: string };
-
-            if (!role || !content) {
-                res.status(400).json({ success: false, error: 'Role and content are required' });
-                return;
-            }
-            if (!['user', 'assistant', 'system', 'tool'].includes(role)) {
-                res.status(400).json({ success: false, error: 'Invalid role' });
-                return;
-            }
-
-            const topic = db.getTopic(topicId);
-            if (!topic) {
-                res.status(404).json({ success: false, error: 'Topic not found' });
-                return;
-            }
-
-            const messageService = new MessageServiceV2();
-            const message = messageService.addMessage(topicId, { role, content } as any);
-            db.updateTopic(topicId, { updatedAt: Date.now() });
-
-            res.status(201).json({ success: true, data: message });
-        } catch (error) {
-            console.error('[HostV2] Error creating message:', error);
-            res.status(500).json({ success: false, error: 'Failed to create message' });
-        }
-    });
-
-    app.get('/api/im/sessions', (_req: Request, res: Response) => {
-        try {
-            if (!hostManager) {
-                res.status(503).json({ success: false, error: 'Host manager is not ready' });
-                return;
-            }
-
-            const sessions = hostManager.getIMSessions();
-            res.json({ success: true, data: sessions });
-        } catch (error) {
-            console.error('[HostV2] Error getting IM sessions:', error);
-            res.status(500).json({ success: false, error: 'Failed to get IM sessions' });
-        }
-    });
-
-    app.get('/api/im/sessions/:sessionKey', (req: Request, res: Response) => {
-        try {
-            if (!hostManager) {
-                res.status(503).json({ success: false, error: 'Host manager is not ready' });
-                return;
-            }
-
-            const sessionKey = decodeURIComponent(req.params.sessionKey);
-            const session = hostManager.getIMSession(sessionKey);
-            if (!session) {
-                res.status(404).json({ success: false, error: 'IM session not found' });
-                return;
-            }
-
-            res.json({ success: true, data: session });
-        } catch (error) {
-            console.error('[HostV2] Error getting IM session:', error);
-            res.status(500).json({ success: false, error: 'Failed to get IM session' });
-        }
-    });
-
-    app.get('/api/im/sessions/:sessionKey/messages', (req: Request, res: Response) => {
-        try {
-            if (!hostManager) {
-                res.status(503).json({ success: false, error: 'Host manager is not ready' });
-                return;
-            }
-
-            const sessionKey = decodeURIComponent(req.params.sessionKey);
-            const session = hostManager.getIMSession(sessionKey);
-            if (!session) {
-                res.status(404).json({ success: false, error: 'IM session not found' });
-                return;
-            }
-
-            const messages = hostManager.getIMMessages(sessionKey);
-            res.json({ success: true, data: messages });
-        } catch (error) {
-            console.error('[HostV2] Error getting IM session messages:', error);
-            res.status(500).json({ success: false, error: 'Failed to get IM session messages' });
-        }
-    });
-
-    app.post('/api/im/feishu/webhook', async (req: Request, res: Response) => {
-        try {
-            if (!options?.imRuntimeBridge) {
-                res.status(503).json({ success: false, error: 'IM runtime bridge is not ready' });
-                return;
-            }
-
-            const result = await options.imRuntimeBridge.processFeishuWebhook(req.body);
-            res.status(result.status).json(result.body);
-        } catch (error) {
-            console.error('[HostV2] Error processing Feishu webhook:', error);
-            res.status(500).json({ code: 1, msg: 'Failed to process Feishu webhook' });
-        }
-    });
-
-    app.post('/api/im/feishu/webhook/:accountId', async (req: Request, res: Response) => {
-        try {
-            if (!options?.imRuntimeBridge) {
-                res.status(503).json({ success: false, error: 'IM runtime bridge is not ready' });
-                return;
-            }
-
-            const accountId = decodeURIComponent(req.params.accountId);
-            const result = await options.imRuntimeBridge.processFeishuWebhook(req.body, accountId);
-            res.status(result.status).json(result.body);
-        } catch (error) {
-            console.error('[HostV2] Error processing Feishu account webhook:', error);
-            res.status(500).json({ code: 1, msg: 'Failed to process Feishu account webhook' });
-        }
-    });
-
-    // Health check
-    app.get('/api/health', (_req: Request, res: Response) => {
-        res.json({ status: 'ok', service: 'host-v2', timestamp: Date.now() });
-    });
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  Main: Create Host V2 Core
-// ═══════════════════════════════════════════════════════════════
+import { IMRuntimeBridge } from '../im/im-runtime-bridge.js';
+import { ModelRegistry } from '../services/model-registry.js';
 
 export async function createHostV2Core(modelRegistry: ModelRegistry): Promise<{
     hostManager: HostManagerV2;
     llmConfigService: LLMConfigService;
-    guiBridge: GUIBridge;
-    wsHandler: WebSocketHandlerV2;
     imRuntimeBridge: IMRuntimeBridge;
 }> {
     // 1. Wait for Runtime initialization
@@ -293,11 +36,7 @@ export async function createHostV2Core(modelRegistry: ModelRegistry): Promise<{
     const kernel = desktopManager.getKernel();
     console.log('[HostV2] Kernel ready for Session-based Desktop creation');
 
-    // 6. 初始化 SessionManagerV3（与是否已有 active LLM 配置解耦）
-    // ⚠️ 不再需要提前创建 Desktop，SessionManagerV3 会按需创建
-    // initAgentDriver 内部会创建 SessionManagerV3，并在 ensureSession/createSession 时读取当前 active config
-    const desktop = {} as any; // Placeholder - no longer needed
-    await hostManager.initAgentDriver(desktop, kernel, desktopManager);
+    await hostManager.initAgentDriver(kernel, desktopManager);
 
     const activeConfig = await llmConfigService.getActiveLLMConfig();
     if (activeConfig) {
@@ -306,15 +45,6 @@ export async function createHostV2Core(modelRegistry: ModelRegistry): Promise<{
         console.warn('[HostV2] SessionManagerV3 initialized without active LLM config; awaiting user configuration');
     }
 
-    // 7. Create GUIBridge
-    const guiBridge = new GUIBridge(hostManager);
-    console.log('[HostV2] GUIBridge initialized');
-
-    // 8. Create WebSocket Handler V2
-    const wsHandler = new WebSocketHandlerV2(hostManager, guiBridge);
-    console.log('[HostV2] WebSocketHandler V2 initialized');
-
-    // 9. Boot IM runtime bridge (channels like Feishu)
     const imRuntimeBridge = new IMRuntimeBridge({
       hostManager,
       createChannelPlugins: (dispatch) => [
@@ -325,37 +55,50 @@ export async function createHostV2Core(modelRegistry: ModelRegistry): Promise<{
     hostManager.setIMRuntimeProvider(() => imRuntimeBridge.getRuntime());
     console.log('[HostV2] IM Runtime Bridge initialized');
 
-
-    return { hostManager, llmConfigService, guiBridge, wsHandler, imRuntimeBridge };
+    return { hostManager, llmConfigService, imRuntimeBridge };
 }
 
-export async function createHostV2(port: number = 8080, modelRegistry?: ModelRegistry): Promise<WebSocketServer> {
-    console.log('[HostV2] Starting Host V2 with AgentDriver V2 architecture...');
-
-    const registry = modelRegistry || new ModelRegistry();
-    const { hostManager, llmConfigService, wsHandler, imRuntimeBridge } = await createHostV2Core(registry);
-
-    // 3. Setup Express (pass hostManager for Session initialization on Topic creation)
+export async function createHostV2(port = 8080, modelRegistry = new ModelRegistry()): Promise<Server> {
+    const { hostManager, imRuntimeBridge } = await createHostV2Core(modelRegistry);
     const app = express();
-    setupExpressRoutes(app, hostManager, { imRuntimeBridge });
+    app.use(express.json());
 
-    // 4. Create HTTP + WebSocket servers
-    const server = createHttpServer(app);
-    const wss = new WebSocketServer({ server });
-
-    // ✅ 使用 WebSocketHandlerV2
-    wss.on('connection', (ws) => {
-        wsHandler.handleConnection(ws);
+    app.post(['/api/im/feishu/webhook', '/api/im/feishu/webhook/:accountId'], async (req, res) => {
+        const { accountId } = req.params as { accountId?: string };
+        try {
+            const result = await imRuntimeBridge.processFeishuWebhook(req.body, accountId);
+            res.status(result.status).json(result.body);
+        } catch (error) {
+            console.error('[HostV2] Error processing Feishu webhook:', error);
+            res.status(500).json({ code: 1, msg: accountId
+                ? 'Failed to process Feishu account webhook'
+                : 'Failed to process Feishu webhook' });
+        }
     });
 
-    // Expose httpServer for testing
-    (wss as any).httpServer = server;
-
-    return new Promise((resolve) => {
-        server.listen(port, () => {
-            console.log(`[HostV2] Server listening on port ${port}`);
-            console.log(`[HostV2] ✅ AgentDriver V2 architecture fully integrated`);
-            resolve(wss);
-        });
+    app.get('/api/health', (_req, res) => {
+        res.json({ status: 'ok', service: 'host-v2', timestamp: Date.now() });
     });
+
+    const server = createServer(app);
+    const dispose = async () => {
+        try {
+            await imRuntimeBridge.stop();
+        } finally {
+            await hostManager.dispose();
+        }
+    };
+
+    try {
+        const listening = once(server, 'listening');
+        server.listen(port);
+        await listening;
+    } catch (error) {
+        await dispose();
+        throw error;
+    }
+    server.once('close', () => {
+        void dispose().catch(error => console.error('[HostV2] Shutdown failed:', error));
+    });
+    return server;
 }

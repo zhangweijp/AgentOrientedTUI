@@ -63,24 +63,53 @@ describe('ChatBridge Host-only', () => {
         expect(notify).toHaveBeenCalledWith({ type: 'snapshot', topicId: topic.id });
     });
 
-    it('reconstructs stored tool parts and streams only the current Topic event shape', async () => {
+    it('loads current ModelMessages and merges live updates by id during history retrieval', async () => {
         const bridge = ChatBridge.getInstance();
-        const stored = [{ id: 'stored', role: 'tool', timestamp: 1, content: '', parts: [
-            { partType: 'tool-result', toolName: 'edit', toolCallId: 'call1', output: { type: 'text', value: 'Saved' }, isError: false },
-        ] }];
-        (bridge as any).getTrpcClient = () => ({ db: { getMessagesWithParts: { query: vi.fn().mockResolvedValue(stored) } } });
-        await (bridge as any).loadMessagesForTopic(topic.id);
-        expect(bridge.getMessages(topic.id)[0]).toMatchObject({ messageType: 'tool_result', metadata: { toolName: 'edit', toolCallId: 'call1' } });
+        const stored = [
+            { id: 'user', role: 'user', timestamp: 1, content: 'Edit two files' },
+            { id: 'calls', role: 'assistant', timestamp: 2, content: [
+                { type: 'reasoning', text: 'Inspect both files' },
+                { type: 'text', text: 'I will update both.' },
+                { type: 'tool-call', toolName: 'edit', toolCallId: 'one', input: { file: 'one.txt' } },
+                { type: 'tool-call', toolName: 'edit', toolCallId: 'two', input: { file: 'two.txt' } },
+            ] },
+            { id: 'results', role: 'tool', timestamp: 3, content: [
+                { type: 'tool-result', toolName: 'edit', toolCallId: 'one', output: { type: 'text', value: 'Saved' } },
+                { type: 'tool-result', toolName: 'edit', toolCallId: 'two', output: { type: 'error-text', value: 'Conflict' } },
+            ] },
+        ];
+        let resolveHistory!: (history: typeof stored) => void;
+        const query = vi.fn(() => new Promise<typeof stored>(resolve => { resolveHistory = resolve; }));
+        (bridge as any).getTrpcClient = () => ({ db: { getMessages: { query } } });
+        (bridge as any).topics.set(topic.id, topic);
+        const loading = bridge.setActiveTopic(topic.id);
 
-        const receive = (event: object) => (bridge as any).handleSessionEvent(event, topic.id);
-        receive({ type: 'message_delta', desktopId: topic.id, delta: 'retired' });
-        expect(bridge.getMessages(topic.id)).toHaveLength(1);
-        receive({ type: 'text_delta', topicId: topic.id, delta: 'Working' });
-        receive({ type: 'reasoning_delta', topicId: topic.id, delta: 'Reading' });
+        const receive = (event: object) => (bridge as any).handleSessionEvent({ topicId: topic.id, ...event });
+        receive({ type: 'text_delta', delta: 'Working' });
+        receive({ type: 'reasoning_delta', delta: 'Reading' });
         expect(bridge.getAgentThinking(topic.id)).toBe('Working');
         expect(bridge.getAgentReasoning(topic.id)).toBe('Reading');
-        receive({ type: 'assistant', topicId: topic.id, message: { id: 'final', role: 'assistant', content: 'Done' } });
-        expect(bridge.getMessages(topic.id).at(-1)).toMatchObject({ id: 'final', content: 'Done' });
+
+        const final = { id: 'final', role: 'assistant', timestamp: 4, content: '[{"type":"text","text":"literal"}]' };
+        receive({ type: 'assistant', message: final });
+        receive({ type: 'tool', message: stored[2] });
+        resolveHistory(stored);
+        await loading;
+
+        expect(query).toHaveBeenCalledExactlyOnceWith({ id: topic.id });
+        const messages = bridge.getMessages(topic.id);
+        expect(messages.map(message => message.id)).toEqual(['user', 'calls', 'results', 'final']);
+        expect(messages[1]).toMatchObject({ messageType: 'tool_call', metadata: {
+            reasoning: 'Inspect both files', text: 'I will update both.',
+            toolCalls: [{ toolCallId: 'one', toolName: 'edit' }, { toolCallId: 'two', toolName: 'edit' }],
+        } });
+        expect(messages[2]).toMatchObject({ messageType: 'tool_result', metadata: {
+            toolResults: [
+                { toolName: 'edit', toolCallId: 'one', result: 'Saved', isError: false },
+                { toolName: 'edit', toolCallId: 'two', result: 'Conflict', isError: true },
+            ],
+        } });
+        expect(messages[3].content).toBe(final.content);
         expect(bridge.getAgentThinking(topic.id)).toBe('');
         expect(bridge.getAgentReasoning(topic.id)).toBe('');
     });
@@ -176,7 +205,7 @@ describe('ChatBridge Host-only', () => {
 
     it('normalizes assistant reasoning + text without prefixing Reasoning block', () => {
         const bridge = ChatBridge.getInstance();
-        const normalized = (bridge as any).normalizeMessages([
+        const normalized = [
             {
                 role: 'assistant',
                 content: [
@@ -184,7 +213,7 @@ describe('ChatBridge Host-only', () => {
                     { type: 'text', text: 'Final answer' },
                 ],
             },
-        ]);
+        ].map(message => (bridge as any).toDisplayMessage(message));
 
         expect(normalized).toHaveLength(1);
         expect(normalized[0].messageType).toBe('text');
@@ -194,12 +223,12 @@ describe('ChatBridge Host-only', () => {
 
     it('keeps reasoning-only assistant message as raw reasoning text', () => {
         const bridge = ChatBridge.getInstance();
-        const normalized = (bridge as any).normalizeMessages([
+        const normalized = [
             {
                 role: 'assistant',
                 content: [{ type: 'reasoning', text: 'Thinking in progress' }],
             },
-        ]);
+        ].map(message => (bridge as any).toDisplayMessage(message));
 
         expect(normalized).toHaveLength(1);
         expect(normalized[0].messageType).toBe('reasoning');
@@ -209,7 +238,7 @@ describe('ChatBridge Host-only', () => {
 
     it('normalizes user file parts into attachment metadata for image and pdf', () => {
         const bridge = ChatBridge.getInstance();
-        const normalized = (bridge as any).normalizeMessages([
+        const normalized = [
             {
                 id: 'msg_with_files',
                 role: 'user',
@@ -219,7 +248,7 @@ describe('ChatBridge Host-only', () => {
                     { type: 'file', mediaType: 'application/pdf', data: 'efgh', filename: 'design.pdf' },
                 ],
             },
-        ]);
+        ].map(message => (bridge as any).toDisplayMessage(message));
 
         expect(normalized).toHaveLength(1);
         expect(normalized[0].content).toBe('Please inspect attachments');
@@ -241,12 +270,11 @@ describe('ChatBridge Host-only', () => {
 
     it('strips attachments from non-user messages (tool-result bridge disabled)', () => {
         const bridge = ChatBridge.getInstance();
-        const normalized = (bridge as any).normalizeMessages([
+        const normalized = [
             {
                 id: 'tool_result_1',
                 role: 'tool',
-                messageType: 'tool_result',
-                content: 'ok',
+                content: [{ type: 'tool-result', toolCallId: 'call', toolName: 'mock_tool', output: { type: 'text', value: 'ok' } }],
                 metadata: {
                     attachments: [
                         {
@@ -256,15 +284,14 @@ describe('ChatBridge Host-only', () => {
                             filename: 'tool.png',
                         },
                     ],
-                    toolName: 'mock_tool',
                 },
             },
-        ]);
+        ].map(message => (bridge as any).toDisplayMessage(message));
 
         expect(normalized).toHaveLength(1);
         expect(normalized[0].role).toBe('tool');
         expect(normalized[0].metadata?.attachments).toBeUndefined();
-        expect(normalized[0].metadata?.toolName).toBe('mock_tool');
+        expect(normalized[0].metadata?.toolResults[0].toolName).toBe('mock_tool');
     });
 
     it('hides IM session-shaped topics from GUI topic list', () => {

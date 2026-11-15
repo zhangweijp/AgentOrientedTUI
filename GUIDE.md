@@ -228,6 +228,18 @@ agentina --help
 
 Use this layer for GUI work, desktop UX, settings, installation flow, IPC wiring, and local services.
 
+### Desktop Host chat and configuration
+
+Electron registers tRPC over IPC. The GUI reads Topic history through `db.getMessages` and receives live messages through `session.events`. Both carry AI SDK `ModelMessage` content. SQLite stores the current history in `messages_v2`. Startup leaves existing `messages` and `message_parts` tables and rows intact. The current GUI displays the `messages_v2` history.
+
+The standalone `createHostV2(port)` entry in `host/src/server/host-v2.ts` starts the HTTP server for `GET /api/health`, `POST /api/im/feishu/webhook` and `POST /api/im/feishu/webhook/:accountId`. Use the first webhook URL for the channel default Bot and append the URL-encoded account ID for a specific Bot. Electron initializes the same Host core for IPC and its configured IM channels.
+
+**IM settings** live under the `im` key in `~/.agentina/im.json`. Use **Settings → IM** to read or save them. The global, channel and account switches are named `enabled`. The Feishu group policy `groupPolicy: "disabled"` still controls group messages. Settings stored under `im` in `mcp.json` and configurations containing retired `disabled` switches require re-entry. The affected IM configuration stays off until you reconfigure and save it. Reload the Host to apply the IM settings.
+
+**MCP settings** live under the `mcp` key in `~/.agentina/mcp.json`. Local entries use `type: "local"`, a `command` array containing the executable and arguments, and optional `environment`. Remote entries use `type: "remote"`, an HTTP(S) `url`, and optional `headers` and `oauth`. Each server supports `enabled`, `timeout` and `disabledTools`. Use tool names exactly as the server publishes them in its own `disabledTools` list.
+
+Use **Settings → MCP → Add Server** to move an external `mcpServers` configuration into the current format. Setup issues appear in MCP settings. Agent and Topic tool permissions use keys such as `mcp-work-search` for the `search` tool from the `work` server. Topic server switches use keys such as `server:work`. An Agent-derived Topic saves its selected servers along with its other source controls. The selection survives shutdown and reopening. Use the Topic MCP controls to change its selection. For retired tool keys, reopen the Agent MCP settings or use the Topic MCP reset, then review and save the switches.
+
 ### I want to add a new app
 
 Use an existing `demo-apps/*` package as the template. Apps outside the default install set can be registered manually.

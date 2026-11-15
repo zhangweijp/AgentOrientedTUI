@@ -17,6 +17,7 @@ import type { HostDrivenSourceV2 } from '../adapters/host-driven-source.js';
 import type { SkillDrivenSource } from '../skills/skill-driven-source.js';
 import type { McpDrivenSource } from '../mcp/source.js';
 import type { ModelMessage } from 'ai';
+import type { Message } from '../types.js';
 
 /**
  * Session 状态
@@ -89,7 +90,7 @@ export interface GuiUpdateEvent {
     error?: string;
 
     /** 消息内容 (AI SDK v6 ModelMessage) */
-    message?: ModelMessage;
+    message?: ModelMessage & Partial<Pick<Message, 'id' | 'timestamp' | 'metadata'>>;
 
     /** Agent 状态 (thinking/executing/idle) */
     state?: string;

@@ -306,7 +306,6 @@ export interface ProviderRowProps {
     /** Database ID of the selected provider config */
     selectedProviderId: number | null;
     /** Provider ID of the active provider (for backward compatibility, not used) */
-    activeProviderId: string | null;
     /** Callback when provider is selected */
     onSelectProvider: (providerConfigId: number) => void;
     /** Callback when edit button is clicked */

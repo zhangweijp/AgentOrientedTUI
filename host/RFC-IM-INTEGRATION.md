@@ -1,5 +1,7 @@
 # RFC: Host 多 IM 对接集成方案
 
+> 当前 Host 的配置格式、Webhook 路由与迁移步骤见[仓库指南](../GUIDE.md#desktop-host-chat-and-configuration)。本 RFC 记录原方案。
+
 > **状态**: Draft  
 > **作者**: AOTUI Team  
 > **日期**: 2026-03-01  

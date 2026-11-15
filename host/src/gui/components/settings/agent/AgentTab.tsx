@@ -16,7 +16,7 @@ import { AgentAppsEditor } from './AgentAppsEditor.js';
 import { AgentSkillsEditor } from './AgentSkillsEditor.js';
 import { AgentMcpEditor } from './AgentMcpEditor.js';
 import { AgentSkinEditor } from './AgentSkinEditor.js';
-import { appSourceControls, buildMcpToolItemKey } from '../../../../shared/source-control-keys.js';
+import { appSourceControls, hasInvalidMcpToolKeys, MCP_PERMISSION_RECONFIGURE } from '../../../../shared/source-control-keys.js';
 
 export interface AgentConfig {
     id: string;
@@ -59,6 +59,7 @@ export const AgentTab: React.FC<{ projectPath?: string | null; onSwitchTab?: (ta
     const [agents, setAgents] = useState<AgentConfig[]>([]);
     const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
+    const [saveError, setSaveError] = useState<string>();
 
     // Modal state
     const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
@@ -116,6 +117,9 @@ export const AgentTab: React.FC<{ projectPath?: string | null; onSwitchTab?: (ta
             source: 'skill',
             enabled: enabledSkillNames.size > 0,
         });
+        if (currentCaps.mcp.issue) {
+            await trpc.sourceControl.setSourceEnabled.mutate({ id: activeTopicId, source: 'mcp', enabled: false });
+        }
         await trpc.sourceControl.setSourceEnabled.mutate({
             id: activeTopicId,
             source: 'mcp',
@@ -158,15 +162,7 @@ export const AgentTab: React.FC<{ projectPath?: string | null; onSwitchTab?: (ta
             }
 
             for (const item of group.items) {
-                const canonicalKey = buildMcpToolItemKey(group.serverName, item.name);
-                const legacyScopedKey = `${group.serverName}::${item.name}`;
-                const legacyUnscopedKey = item.name;
-                const toolShouldEnable = !(
-                    disabledToolsSet.has(item.key)
-                    || disabledToolsSet.has(canonicalKey)
-                    || disabledToolsSet.has(legacyScopedKey)
-                    || disabledToolsSet.has(legacyUnscopedKey)
-                );
+                const toolShouldEnable = !disabledToolsSet.has(item.key);
 
                 if (item.enabled !== toolShouldEnable) {
                     await trpc.sourceControl.setItemEnabled.mutate({
@@ -181,14 +177,16 @@ export const AgentTab: React.FC<{ projectPath?: string | null; onSwitchTab?: (ta
     }, [bridge, projectPath]);
 
     const saveAgents = useCallback(async (nextAgents: AgentConfig[], nextActiveId: string | null) => {
-        setAgents(nextAgents);
-        setActiveAgentId(nextActiveId);
         setSaving(true);
+        setSaveError(undefined);
         try {
             await bridge.saveAgents(nextAgents, nextActiveId);
+            setAgents(nextAgents);
+            setActiveAgentId(nextActiveId);
             await syncActiveTopicAgentSources(nextAgents);
         } catch (error) {
-            console.error('[AgentTab] Failed to save agents:', error);
+            console.error('[AgentTab] Failed to apply Agent settings:', error);
+            setSaveError(error instanceof Error ? error.message : 'Could not apply Agent settings.');
         } finally {
             setSaving(false);
         }
@@ -244,6 +242,11 @@ export const AgentTab: React.FC<{ projectPath?: string | null; onSwitchTab?: (ta
                 </button>
                 {saving && <span className="text-[11px] text-[var(--color-text-tertiary)]">Saving…</span>}
             </div>
+
+            {saveError && <p role="alert" className="text-[12px] text-[var(--color-danger)]">{saveError}</p>}
+            {agents.some(agent => hasInvalidMcpToolKeys(agent.disabledMcpTools)) && (
+                <p role="alert" className="text-[12px] text-[var(--color-danger)]">{MCP_PERMISSION_RECONFIGURE}</p>
+            )}
 
             {/* Card list */}
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">

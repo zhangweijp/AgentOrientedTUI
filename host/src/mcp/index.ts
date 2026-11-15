@@ -10,7 +10,9 @@ import {
   type Tool as MCPToolDef,
   ToolListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js"
-import { Config } from "./config.js"
+import { isDeepStrictEqual } from "node:util"
+import { Config } from "../config/config.js"
+import type { Mcp } from "../config/mcp-schema.js"
 import { Log, NamedError, Instance, Installation, withTimeout, BusEvent, Bus, TuiEvent } from "./utils.js"
 import z from "zod"
 import { McpOAuthProvider } from "./oauth-provider.js"
@@ -18,6 +20,8 @@ import { McpOAuthCallback } from "./oauth-callback.js"
 import { McpAuth } from "./auth.js"
 import open from "open"
 import { buildMcpToolItemKey } from "../shared/source-control-keys.js"
+
+export class McpToolUnavailableError extends Error {}
 
 export namespace MCP {
   const log = Log.create({ service: "mcp" })
@@ -86,11 +90,8 @@ export namespace MCP {
     })
   }
 
-  // Convert MCP tool definition to AI SDK Tool type
-  async function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number): Promise<Tool> {
+  function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, serverName: string, timeout?: number): Tool {
     const inputSchema = mcpTool.inputSchema
-
-    // Spread first, then override type to ensure it's always "object"
     const schema: JSONSchema7 = {
       ...(inputSchema as JSONSchema7),
       type: "object",
@@ -102,17 +103,21 @@ export namespace MCP {
       description: mcpTool.description ?? "",
       inputSchema: jsonSchema(schema),
       execute: async (args: unknown) => {
-        return client.callTool(
-          {
-            name: mcpTool.name,
-            arguments: (args || {}) as Record<string, unknown>,
-          },
-          CallToolResultSchema,
-          {
-            resetTimeoutOnProgress: true,
-            timeout,
-          },
-        )
+        const s = await state()
+        const { mcp } = await Config.getMcp()
+        const config = Object.hasOwn(mcp, serverName) ? mcp[serverName] : undefined
+        if (s.clients[serverName] !== client || !config || config.enabled === false
+          || !sameConnection(config, s.connectedConfig[serverName]) || config.disabledTools?.includes(mcpTool.name)) {
+          throw new McpToolUnavailableError("The MCP tool is no longer available. Refresh the current tool list.")
+        }
+
+        return client.callTool({
+          name: mcpTool.name,
+          arguments: (args || {}) as Record<string, unknown>,
+        }, CallToolResultSchema, {
+          resetTimeoutOnProgress: true,
+          timeout,
+        })
       },
       type: "dynamic",
     }
@@ -126,26 +131,21 @@ export namespace MCP {
   type PromptInfo = Awaited<ReturnType<MCPClient["listPrompts"]>>["prompts"][number]
 
   type ResourceInfo = Awaited<ReturnType<MCPClient["listResources"]>>["resources"][number]
-  type McpEntry = NonNullable<Config.Info["mcp"]>[string]
-  function isMcpConfigured(entry: McpEntry): entry is Config.Mcp {
-    return typeof entry === "object" && entry !== null && "type" in entry
+  function sameConnection(a: Mcp, b: Mcp): boolean {
+    const { enabled: _aEnabled, disabledTools: _aDisabled, ...aConnection } = a
+    const { enabled: _bEnabled, disabledTools: _bDisabled, ...bConnection } = b
+    return isDeepStrictEqual(aConnection, bConnection)
   }
 
   const state = Instance.state(
     async () => {
-      const cfg = await Config.get()
-      const config = cfg.mcp ?? {}
-      const clients: Record<string, MCPClient> = {}
-      const status: Record<string, Status> = {}
+      const { mcp: config } = await Config.getMcp()
+      const clients: Record<string, MCPClient> = Object.create(null)
+      const connectedConfig: Record<string, Mcp> = Object.create(null)
+      const status: Record<string, Status> = Object.create(null)
 
       await Promise.all(
         Object.entries(config).map(async ([key, mcp]) => {
-          if (!isMcpConfigured(mcp)) {
-            log.error("Ignoring MCP config entry without type", { key })
-            return
-          }
-
-          // If disabled by config, mark as disabled without trying to connect
           if (mcp.enabled === false) {
             status[key] = { status: "disabled" }
             return
@@ -158,12 +158,14 @@ export namespace MCP {
 
           if (result.mcpClient) {
             clients[key] = result.mcpClient
+            connectedConfig[key] = mcp
           }
         }),
       )
       return {
         status,
         clients,
+        connectedConfig,
       }
     },
     async (state) => {
@@ -225,41 +227,7 @@ export namespace MCP {
     return commands
   }
 
-  export async function add(name: string, mcp: Config.Mcp) {
-    const s = await state()
-    const result = await create(name, mcp)
-    if (!result) {
-      const status = {
-        status: "failed" as const,
-        error: "unknown error",
-      }
-      s.status[name] = status
-      return {
-        status,
-      }
-    }
-    if (!result.mcpClient) {
-      s.status[name] = result.status
-      return {
-        status: s.status,
-      }
-    }
-    // Close existing client if present to prevent memory leaks
-    const existingClient = s.clients[name]
-    if (existingClient) {
-      await existingClient.close().catch((error) => {
-        log.error("Failed to close existing MCP client", { name, error })
-      })
-    }
-    s.clients[name] = result.mcpClient
-    s.status[name] = result.status
-
-    return {
-      status: s.status,
-    }
-  }
-
-  async function create(key: string, mcp: Config.Mcp) {
+  async function create(key: string, mcp: Mcp) {
     if (mcp.enabled === false) {
       log.info("mcp server disabled", { key })
       return {
@@ -464,119 +432,98 @@ export namespace MCP {
     }
   }
 
-  export async function status() {
+  export async function status(): Promise<Record<string, Status>> {
+    const { mcp, invalid } = await Config.getMcp()
     const s = await state()
-    const cfg = await Config.get()
-    const config = cfg.mcp ?? {}
-    const result: Record<string, Status> = {}
+    const entries = Object.entries(mcp).map(([name, config]): [string, Status] => {
+      if (config.enabled === false) return [name, { status: "disabled" }]
+      if (s.clients[name] && !sameConnection(config, s.connectedConfig[name])) {
+        return [name, { status: "failed", error: "MCP settings changed. Re-enable this server in Settings → MCP." }]
+      }
+      return [name, s.status[name] ?? { status: "disabled" }]
+    })
+    for (const [name, error] of Object.entries(invalid)) entries.push([name, { status: "failed", error }])
+    return Object.fromEntries(entries)
+  }
 
-    // Include all configured MCPs from config, not just connected ones
-    for (const [key, mcp] of Object.entries(config)) {
-      if (!isMcpConfigured(mcp)) continue
-      result[key] = s.status[key] ?? { status: "disabled" }
-    }
-
-    return result
+  function activeClients(s: Awaited<ReturnType<typeof state>>, config: Record<string, Mcp>) {
+    return Object.fromEntries(Object.entries(s.clients).filter(([name]) =>
+      Object.hasOwn(config, name) && config[name].enabled !== false && sameConnection(config[name], s.connectedConfig[name]),
+    ))
   }
 
   export async function clients() {
-    return state().then((state) => state.clients)
+    const { mcp } = await Config.getMcp()
+    return activeClients(await state(), mcp)
   }
 
-  export async function connect(name: string) {
-    const cfg = await Config.get()
-    const config = cfg.mcp ?? {}
-    const mcp = config[name]
-    if (!mcp) {
-      log.error("MCP config not found", { name })
-      return
-    }
+  async function closeClient(s: Awaited<ReturnType<typeof state>>, name: string) {
+    const client = s.clients[name]
+    delete s.clients[name]
+    delete s.connectedConfig[name]
+    await client?.close().catch(error => log.error("Failed to close MCP client", { name, error }))
+  }
 
-    if (!isMcpConfigured(mcp)) {
-      log.error("Ignoring MCP connect request for config without type", { name })
-      return
-    }
-
-    const result = await create(name, { ...mcp, enabled: true })
-
-    if (!result) {
-      const s = await state()
-      s.status[name] = {
-        status: "failed",
-        error: "Unknown error during connection",
-      }
-      return
-    }
-
+  export async function connect(name: string): Promise<Status> {
     const s = await state()
-    s.status[name] = result.status
-    if (result.mcpClient) {
-      // Close existing client if present to prevent memory leaks
-      const existingClient = s.clients[name]
-      if (existingClient) {
-        await existingClient.close().catch((error) => {
-          log.error("Failed to close existing MCP client", { name, error })
-        })
-      }
-      s.clients[name] = result.mcpClient
+    const { mcp, invalid } = await Config.getMcp()
+    const config = Object.hasOwn(mcp, name) ? mcp[name] : undefined
+    if (!config || config.enabled === false) {
+      await closeClient(s, name)
+      return s.status[name] = Object.hasOwn(invalid, name)
+        ? { status: "failed", error: invalid[name] }
+        : { status: "disabled" }
     }
+    if (s.clients[name] && sameConnection(config, s.connectedConfig[name])) return s.status[name]
+
+    await closeClient(s, name)
+    const result = await create(name, config)
+    if (result.mcpClient) {
+      s.clients[name] = result.mcpClient
+      s.connectedConfig[name] = config
+    }
+    return s.status[name] = result.status
   }
 
   export async function disconnect(name: string) {
     const s = await state()
-    const client = s.clients[name]
-    if (client) {
-      await client.close().catch((error) => {
-        log.error("Failed to close MCP client", { name, error })
-      })
-      delete s.clients[name]
-    }
+    await closeClient(s, name)
     s.status[name] = { status: "disabled" }
   }
 
-  export async function tools() {
-    const result: Record<string, Tool> = {}
+  export async function tools(): Promise<Record<string, { serverName: string; tool: Tool }>> {
+    const { mcp, timeout } = await Config.getMcp()
     const s = await state()
-    const cfg = await Config.get()
-    const config = cfg.mcp ?? {}
-    const clientsSnapshot = await clients()
-    const defaultTimeout = cfg.experimental?.mcp_timeout
+    const listed = await Promise.all(Object.entries(activeClients(s, mcp)).map(async ([serverName, client]) => {
+      try {
+        const { tools } = await client.listTools()
+        return { serverName, client, tools }
+      } catch (error) {
+        if (s.clients[serverName] === client) {
+          await closeClient(s, serverName)
+          s.status[serverName] = { status: "failed", error: error instanceof Error ? error.message : String(error) }
+        }
+        return { serverName, client, tools: [] }
+      }
+    }))
 
-    const connectedClients = Object.entries(clientsSnapshot).filter(
-      ([clientName]) => s.status[clientName]?.status === "connected",
-    )
-
-    const toolsResults = await Promise.all(
-      connectedClients.map(async ([clientName, client]) => {
-        const toolsResult = await client.listTools().catch((e) => {
-          log.error("failed to get tools", { clientName, error: e.message })
-          const failedStatus = {
-            status: "failed" as const,
-            error: e instanceof Error ? e.message : String(e),
-          }
-          s.status[clientName] = failedStatus
-          delete s.clients[clientName]
-          return undefined
-        })
-        return { clientName, client, toolsResult }
-      }),
-    )
-
-    for (const { clientName, client, toolsResult } of toolsResults) {
-      if (!toolsResult) continue
-      const mcpConfig = config[clientName]
-      const entry = isMcpConfigured(mcpConfig) ? mcpConfig : undefined
-      const timeout = entry?.timeout ?? defaultTimeout
-      const disabledTools = new Set(entry?.disabledTools ?? [])
-      for (const mcpTool of toolsResult.tools) {
-        if (disabledTools.has(mcpTool.name)) {
+    const byKey = new Map<string, { serverName: string; tool: Tool }>()
+    const seen = new Set<string>()
+    for (const { serverName, client, tools } of listed) {
+      const config = mcp[serverName]
+      for (const definition of tools) {
+        const key = buildMcpToolItemKey(serverName, definition.name)
+        if (seen.has(key)) {
+          byKey.delete(key)
+          log.warn("MCP tool key is ambiguous", { key })
           continue
         }
-        const toolItemKey = buildMcpToolItemKey(clientName, mcpTool.name)
-        result[toolItemKey] = await convertMcpTool(mcpTool, client, timeout)
+        seen.add(key)
+        if (config.disabledTools?.includes(definition.name)) continue
+        byKey.set(key, { serverName, tool: convertMcpTool(definition, client, serverName, config.timeout ?? timeout) })
       }
     }
-    return result
+    return Object.fromEntries(byKey)
   }
 
   export async function prompts() {
@@ -681,14 +628,14 @@ export namespace MCP {
    * Returns the authorization URL that should be opened in a browser.
    */
   export async function startAuth(mcpName: string): Promise<{ authorizationUrl: string }> {
-    const cfg = await Config.get()
+    const cfg = await Config.getMcp()
     const mcpConfig = cfg.mcp?.[mcpName]
 
     if (!mcpConfig) {
       throw new Error(`MCP server not found: ${mcpName}`)
     }
 
-    if (!isMcpConfigured(mcpConfig)) {
+    if (mcpConfig.enabled === false) {
       throw new Error(`MCP server ${mcpName} is disabled or missing configuration`)
     }
 
@@ -834,30 +781,17 @@ export namespace MCP {
     }
 
     try {
-      // Call finishAuth on the transport
+      const { mcp } = await Config.getMcp()
+      const config = Object.hasOwn(mcp, mcpName) ? mcp[mcpName] : undefined
+      if (!config || config.enabled === false || config.type !== "remote" || config.oauth === false) {
+        throw new Error(`MCP server ${mcpName} has no enabled OAuth configuration`)
+      }
+
       await transport.finishAuth(authorizationCode)
-
-      // Clear the code verifier after successful auth
       await McpAuth.clearCodeVerifier(mcpName)
-
-      // Now try to reconnect
-      const cfg = await Config.get()
-      const mcpConfig = cfg.mcp?.[mcpName]
-
-      if (!mcpConfig) {
-        throw new Error(`MCP server not found: ${mcpName}`)
-      }
-
-      if (!isMcpConfigured(mcpConfig)) {
-        throw new Error(`MCP server ${mcpName} is disabled or missing configuration`)
-      }
-
-      // Re-add the MCP server to establish connection
       pendingOAuthTransports.delete(mcpName)
-      const result = await add(mcpName, mcpConfig)
-
-      const statusRecord = result.status as Record<string, Status>
-      return statusRecord[mcpName] ?? { status: "failed", error: "Unknown error after auth" }
+      await disconnect(mcpName)
+      return await connect(mcpName)
     } catch (error) {
       log.error("failed to finish oauth", { mcpName, error })
       return {
@@ -882,10 +816,10 @@ export namespace MCP {
    * Check if an MCP server supports OAuth (remote servers support OAuth by default unless explicitly disabled).
    */
   export async function supportsOAuth(mcpName: string): Promise<boolean> {
-    const cfg = await Config.get()
+    const cfg = await Config.getMcp()
     const mcpConfig = cfg.mcp?.[mcpName]
     if (!mcpConfig) return false
-    if (!isMcpConfigured(mcpConfig)) return false
+    if (mcpConfig.enabled === false) return false
     return mcpConfig.type === "remote" && mcpConfig.oauth !== false
   }
 

@@ -15,12 +15,6 @@ function createBridgeWithMcpData() {
     return {
         getTrpcClient: vi.fn().mockReturnValue({
             mcp: {
-                getConfig: {
-                    query: vi.fn().mockResolvedValue({
-                        'server-a': {},
-                        'server-b': {},
-                    }),
-                },
                 getRuntime: {
                     query: vi.fn().mockResolvedValue({
                         'server-a': {
@@ -78,7 +72,7 @@ describe('AgentMcpEditor tool-key persistence', () => {
         expect(disabledMcpTools).not.toContain('search');
     });
 
-    it('normalizes legacy unscoped tool keys to scoped keys on save', async () => {
+    it('keeps MCP off when saving an Agent with ambiguous tool permissions', async () => {
         const onSave = vi.fn();
 
         render(
@@ -92,11 +86,12 @@ describe('AgentMcpEditor tool-key persistence', () => {
         );
 
         await waitFor(() => expect(screen.queryByText('Loading MCP servers...')).not.toBeInTheDocument());
+        expect(screen.getByRole('alert')).toHaveTextContent('Select servers and tools again and save.');
+        for (const label of ['server-a', 'server-b']) {
+            const server = screen.getByText(label).closest('summary') as HTMLElement;
+            expect(within(server).getByRole('switch')).toHaveAttribute('aria-checked', 'false');
+        }
         fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-        expect(onSave).toHaveBeenCalledTimes(1);
-        const [, disabledMcpTools] = onSave.mock.calls[0];
-        expect(disabledMcpTools).toEqual(expect.arrayContaining(['mcp-server-a-search', 'mcp-server-b-search']));
-        expect(disabledMcpTools).not.toContain('search');
+        expect(onSave).toHaveBeenCalledExactlyOnceWith([], []);
     });
 });

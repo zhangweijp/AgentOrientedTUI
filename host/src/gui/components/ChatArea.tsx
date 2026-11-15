@@ -21,6 +21,7 @@ type CapabilityGroup = {
 type TopicCapabilities = {
     mcp: {
         enabled: boolean;
+        issue?: string;
         groups: Array<{
             key: string;
             serverName: string;
@@ -570,35 +571,6 @@ export function ChatArea({ messages, agentThinking, agentReasoning, onSendMessag
         <MarkdownRenderer content={content} />
     );
 
-    // 解析多部分消息内容
-    const parseMultiPartContent = (content: any): Array<{ type: string; text?: string; toolCallId?: string; toolName?: string; input?: any }> => {
-        if (!content) return [];
-        
-        // 如果是字符串，当作普通文本
-        if (typeof content === 'string') {
-            return [{ type: 'text', text: content }];
-        }
-        
-        // 如果是数组，解析每个部分
-        if (Array.isArray(content)) {
-            return content.map(part => {
-                if (part?.type === 'text' && part?.text) {
-                    return { type: 'text', text: part.text };
-                } else if (part?.type === 'tool-call' && part?.toolName) {
-                    return { 
-                        type: 'tool-call', 
-                        toolCallId: part.toolCallId,
-                        toolName: part.toolName,
-                        input: part.input
-                    };
-                }
-                return null;
-            }).filter(Boolean) as Array<{ type: string; text?: string; toolCallId?: string; toolName?: string; input?: any }>;
-        }
-        
-        return [];
-    };
-
     const renderLiveReasoningBlock = () => (
         <div className="flex justify-start">
             <Card className="max-w-[85%] bg-[var(--mat-content-bubble-bg)] rounded-2xl rounded-tl-sm !border-0 shadow-none">
@@ -967,31 +939,24 @@ export function ChatArea({ messages, agentThinking, agentReasoning, onSendMessag
                                         text: msg.metadata.text.trim(),
                                     });
                                 }
-                                traceItems.push({
-                                    kind: 'tool',
-                                    step: {
-                                        toolCallId: msg.metadata?.toolCallId,
-                                        toolName: msg.metadata?.toolName || 'Unknown Tool',
-                                        status: 'called',
-                                        args: msg.metadata?.args ?? msg.metadata?.input,
-                                    },
-                                });
+                                for (const call of msg.metadata?.toolCalls ?? []) {
+                                    traceItems.push({
+                                        kind: 'tool',
+                                        step: { ...call, status: 'called', args: call.input },
+                                    });
+                                }
                             } else if (isToolResult) {
-                                traceItems.push({
-                                    kind: 'tool',
-                                    step: {
-                                        toolCallId: msg.metadata?.toolCallId,
-                                        toolName: msg.metadata?.toolName || 'Unknown Tool',
-                                        status: msg.metadata?.isError ? 'error' : 'success',
-                                        result: msg.metadata?.result,
-                                        isError: Boolean(msg.metadata?.isError),
-                                    },
-                                });
+                                for (const receipt of msg.metadata?.toolResults ?? []) {
+                                    traceItems.push({
+                                        kind: 'tool',
+                                        step: { ...receipt, status: receipt.isError ? 'error' : 'success' },
+                                    });
+                                }
                             }
                             return;
                         }
 
-                        if (!hasVisibleText) {
+                        if (!hasVisibleText && !(msg.role === 'user' && msg.metadata?.attachments?.length)) {
                             return;
                         }
 
@@ -1599,8 +1564,16 @@ export function ChatArea({ messages, agentThinking, agentReasoning, onSendMessag
                                                 <div className="absolute bottom-[52px] left-1/2 -translate-x-1/2 w-[320px] max-h-[360px] overflow-auto rounded-2xl p-3 z-40" style={popoverMaterialStyle}>
                                                     <div className="flex items-center justify-between mb-2">
                                                         <span className="text-[12px] font-medium text-[var(--color-text-primary)]">MCP</span>
-                                                        {renderToggle(mcpEnabled, (value) => onToggleCapabilityGroup?.('mcp', value))}
+                                                        {renderToggle(mcpEnabled, (value) => onToggleCapabilityGroup?.('mcp', value), Boolean(topicCapabilities?.mcp.issue))}
                                                     </div>
+                                                    {topicCapabilities?.mcp.issue && (
+                                                        <div role="alert" className="mb-2 space-y-1 text-[11px]">
+                                                            <p>{topicCapabilities.mcp.issue}</p>
+                                                            <button type="button" className="underline" onClick={() => onToggleCapabilityGroup?.('mcp', false)}>
+                                                                Reset MCP permissions and keep MCP off
+                                                            </button>
+                                                        </div>
+                                                    )}
                                                     {capabilityHint && (
                                                         <div className="mb-2 flex items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)]">
                                                             <span aria-hidden="true" className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-[var(--mat-border)] text-[9px] leading-none">i</span>

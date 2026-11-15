@@ -9,153 +9,15 @@
 import fs from "fs/promises"
 import path from "path"
 import os from "os"
-import { z } from "zod"
 import type { ModelInputLimits } from "@aotui/agent-driver-v2"
-import type { IMSessionScope } from "../im/types.js"
 
-// ─── MCP Zod 类型定义 ─────────────────────────────────────────────────────────
-
-export const McpLocal = z
-  .object({
-    type: z.literal("local").describe("Type of MCP server connection"),
-    command: z.string().array().describe("Command and arguments to run the MCP server"),
-    environment: z
-      .record(z.string(), z.string())
-      .optional()
-      .describe("Environment variables to set when running the MCP server"),
-    enabled: z.boolean().optional().describe("Enable or disable the MCP server on startup"),
-    timeout: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe("Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified."),
-  })
-  .strict()
-
-export const McpOAuth = z
-  .object({
-    clientId: z
-      .string()
-      .optional()
-      .describe("OAuth client ID. If not provided, dynamic client registration (RFC 7591) will be attempted."),
-    clientSecret: z.string().optional().describe("OAuth client secret (if required by the authorization server)"),
-    scope: z.string().optional().describe("OAuth scopes to request during authorization"),
-  })
-  .strict()
-export type McpOAuth = z.infer<typeof McpOAuth>
-
-export const McpRemote = z
-  .object({
-    type: z.literal("remote").describe("Type of MCP server connection"),
-    url: z.string().describe("URL of the remote MCP server"),
-    enabled: z.boolean().optional().describe("Enable or disable the MCP server on startup"),
-    headers: z.record(z.string(), z.string()).optional().describe("Headers to send with the request"),
-    oauth: z
-      .union([McpOAuth, z.literal(false)])
-      .optional()
-      .describe(
-        "OAuth authentication configuration for the MCP server. Set to false to disable OAuth auto-detection.",
-      ),
-    timeout: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe("Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified."),
-  })
-  .strict()
-
-export const Mcp = z.discriminatedUnion("type", [McpLocal, McpRemote])
-export type Mcp = z.infer<typeof Mcp>
-
-type ConfigImSessionScope = IMSessionScope
-
-// ─── 全局配置 Info 类型 ───────────────────────────────────────────────────────
+import { ImConfig } from "./im-schema.js"
+import { Mcp, McpConfig } from "./mcp-schema.js"
 
 export interface Info {
   $schema?: string
-  im?: {
-    channels?: {
-      lark?: {
-        enabled?: boolean
-        sessionScope?: ConfigImSessionScope
-        domain?: "feishu" | "lark" | string
-        connectionMode?: "webhook" | "websocket"
-        appId?: string
-        appSecret?: string
-        botToken?: string
-        botAgentId?: string
-        verificationToken?: string
-        encryptKey?: string
-        signingSecret?: string
-        apiBaseUrl?: string
-        requestTimeoutMs?: number
-        accounts?: Record<string, {
-          enabled?: boolean
-          sessionScope?: ConfigImSessionScope
-          domain?: "feishu" | "lark" | string
-          connectionMode?: "webhook" | "websocket"
-          appId?: string
-          appSecret?: string
-          botToken?: string
-          botAgentId?: string
-          verificationToken?: string
-          encryptKey?: string
-          signingSecret?: string
-          apiBaseUrl?: string
-          requestTimeoutMs?: number
-        }>
-      }
-      feishu?: {
-        enabled?: boolean
-        sessionScope?: ConfigImSessionScope
-        domain?: "feishu" | "lark" | string
-        connectionMode?: "webhook" | "websocket"
-        appId?: string
-        appSecret?: string
-        botToken?: string
-        botAgentId?: string
-        verificationToken?: string
-        encryptKey?: string
-        signingSecret?: string
-        apiBaseUrl?: string
-        requestTimeoutMs?: number
-        dmPolicy?: "open" | "allowlist" | "pairing"
-        allowFrom?: Array<string | number>
-        pairingApprovers?: Array<string | number>
-        pairingCodeTtlMs?: number
-        pairingMaxPending?: number
-        groupPolicy?: "open" | "allowlist" | "disabled"
-        groupAllowFrom?: Array<string | number>
-        requireMention?: boolean
-        accounts?: Record<string, {
-          enabled?: boolean
-          sessionScope?: ConfigImSessionScope
-          domain?: "feishu" | "lark" | string
-          connectionMode?: "webhook" | "websocket"
-          appId?: string
-          appSecret?: string
-          botToken?: string
-          botAgentId?: string
-          verificationToken?: string
-          encryptKey?: string
-          signingSecret?: string
-          apiBaseUrl?: string
-          requestTimeoutMs?: number
-          dmPolicy?: "open" | "allowlist" | "pairing"
-          allowFrom?: Array<string | number>
-          pairingApprovers?: Array<string | number>
-          pairingCodeTtlMs?: number
-          pairingMaxPending?: number
-          groupPolicy?: "open" | "allowlist" | "disabled"
-          groupAllowFrom?: Array<string | number>
-          requireMention?: boolean
-        }>
-      }
-    }
-  }
-  mcp?: Record<string, Mcp | { enabled: boolean }>
+  im?: ImConfig
+  mcp?: Record<string, Mcp>
   skills?: {
     enabled?: boolean
     disabledSkills?: string[]
@@ -172,6 +34,7 @@ export interface Info {
     }>
   }
   experimental?: {
+    mcp_timeout?: number
     contextCompaction?: {
       enabled?: boolean
       minMessages?: number
@@ -222,10 +85,6 @@ export interface TuiInfo {
 /** 全局 MCP 配置文件路径 (~/.agentina/mcp.json) */
 function getGlobalConfigPath(): string {
   return path.join(os.homedir(), ".agentina", "mcp.json")
-}
-
-function getProjectConfigPath(projectPath: string): string {
-  return path.join(projectPath, ".agentina", "mcp.json")
 }
 
 /** 全局 TUI 配置文件路径 (~/.agentina/config.json) */
@@ -352,124 +211,122 @@ async function readTuiConfigFile(filepath: string): Promise<TuiInfo> {
 
 // ─── Config namespace ─────────────────────────────────────────────────────────
 
+function readMcp(config: Info) {
+  const entries: Array<[string, Mcp]> = []
+  const invalid: Array<[string, string]> = []
+  const issues: string[] = []
+  const servers: unknown = config.mcp
+  if (servers != null && typeof servers === "object" && !Array.isArray(servers)) {
+    for (const [name, value] of Object.entries(servers)) {
+      const parsed = Mcp.safeParse(value)
+      if (name && parsed.success) entries.push([name, parsed.data])
+      else {
+        const message = `MCP server "${name}" has invalid settings. Reconfigure or explicitly import it in Settings → MCP.`
+        invalid.push([name, message])
+        issues.push(message)
+      }
+    }
+  } else if (servers !== undefined) {
+    issues.push("Invalid mcp section in ~/.agentina/mcp.json. Reconfigure it in Settings → MCP.")
+  }
+  if (config.mcpServers !== undefined) {
+    issues.push("The mcpServers section in ~/.agentina/mcp.json is retired. Import it explicitly in Settings → MCP.")
+  }
+  return { mcp: Object.fromEntries(entries), invalid: Object.fromEntries(invalid), issues, timeout: config.experimental?.mcp_timeout }
+}
+
 export namespace Config {
-  export type McpType = Mcp
-  export type McpOAuthType = McpOAuth
   export type InfoType = Info
   export type TuiInfoType = TuiInfo
   export type TuiAppConfigEntryType = TuiAppConfigEntry
 
-  /** 获取全局配置（从 ~/.agentina/mcp.json 读取） */
   export async function getGlobal(): Promise<Info> {
-    return readConfigFile(getGlobalConfigPath())
+    const { im: _retiredIm, mcpServers: _retiredMcp, ...config } = await readConfigFile(getGlobalConfigPath())
+    return { ...config, mcp: readMcp(config).mcp }
   }
 
-  /** 获取项目配置（从 <projectPath>/.agentina/mcp.json 读取） */
-  export async function getProject(projectPath: string): Promise<Info> {
-    return readConfigFile(getProjectConfigPath(projectPath))
+  export async function getMcp() {
+    return readMcp(await readConfigFile(getGlobalConfigPath()))
   }
 
-  /** 获取当前运行时配置（与 getGlobal 等价，无内存缓存） */
-  export async function get(): Promise<Info & { experimental?: Record<string, unknown> }> {
-    const globalConfig = await getGlobal()
-    const im = await getGlobalIm(globalConfig)
-    if (im === undefined) {
-      return globalConfig
-    }
-    return {
-      ...globalConfig,
-      im,
-    }
+  export async function get(): Promise<Info> {
+    const [global, { im }] = await Promise.all([getGlobal(), getGlobalIm()])
+    return { ...global, im }
   }
 
-  /**
-   * 获取全局 IM 配置（优先读取 ~/.agentina/im.json）。
-   * 兼容策略：若 im.json 不存在或不含 `im` 字段，则回退到 ~/.agentina/mcp.json 的 `im`。
-   */
-  export async function getGlobalIm(legacyGlobalConfig?: Info): Promise<Info["im"] | undefined> {
-    const imConfig = await readConfigFile(getImConfigPath())
-    if (imConfig.im !== undefined) {
-      return imConfig.im
-    }
-    const legacy = legacyGlobalConfig ?? (await getGlobal())
-    return legacy.im
-  }
-
-  /** 替换写入全局 IM 配置到 ~/.agentina/im.json */
-  export async function replaceGlobalIm(im: Info["im"]): Promise<Info["im"] | undefined> {
-    const filepath = getImConfigPath()
-    await fs.mkdir(path.dirname(filepath), { recursive: true })
-
-    const existing = await readConfigFile(filepath)
-    const next: Info = {}
-
-    if (existing.$schema) {
-      next.$schema = existing.$schema
-    }
-    if (im !== undefined) {
-      next.im = im
+  export async function getGlobalIm(): Promise<{ im: ImConfig; issue?: string }> {
+    let file: Info
+    try {
+      file = await readConfigFile(getImConfigPath())
+    } catch (error) {
+      console.error("[IM] Cannot read im.json:", error instanceof Error ? error.name : "read error")
+      return { im: { enabled: false }, issue: "~/.agentina/im.json could not be read. Reconfigure IM in Settings and save." }
     }
 
-    await fs.writeFile(filepath, JSON.stringify(next, null, 2), "utf8")
-    return next.im
-  }
-
-  /** 合并 patch 并写回全局配置文件 */
-  export async function updateGlobal(patch: Partial<Info>): Promise<Info> {
-    const filepath = getGlobalConfigPath()
-    await fs.mkdir(path.dirname(filepath), { recursive: true })
-
-    const existing = await readConfigFile(filepath)
-
-    // 深 merge：mcp 字段对象合并，其他字段直接覆盖
-    const merged: Info = { ...existing }
-    for (const [key, value] of Object.entries(patch)) {
-      if (value === undefined) continue
-      if (key === "mcp" && existing.mcp != null && typeof value === "object" && value !== null) {
-        merged.mcp = {
-          ...existing.mcp,
-          ...(value as Record<string, Mcp | { enabled: boolean }>),
-        }
-      } else {
-        merged[key] = value
+    if (file && !Array.isArray(file) && typeof file === "object" && file.im === undefined) {
+      const global = await readConfigFile(getGlobalConfigPath())
+      if (global?.im === undefined) return { im: {} }
+      return {
+        im: { enabled: false },
+        issue: "IM settings in ~/.agentina/mcp.json are retired. Reconfigure IM in Settings and save to im.json.",
       }
     }
 
-    if (!merged.$schema) {
-      merged.$schema = "https://opencode.ai/config.json"
-    }
+    const parsed = ImConfig.safeParse(file?.im)
+    if (parsed.success) return { im: parsed.data }
 
-    await fs.writeFile(filepath, JSON.stringify(merged, null, 2), "utf8")
-    return merged
+    const location = parsed.error.issues[0]?.path.map(String).join(".")
+    return {
+      im: { enabled: false },
+      issue: `Invalid ~/.agentina/im.json configuration${location ? ` at im.${location}` : ""}. Reconfigure IM in Settings using enabled and save.`,
+    }
   }
 
-  /**
-   * 以“替换”语义更新 MCP 配置。
-   *
-   * 注意：MCP 管理场景（可删除 server）不能使用 merge 语义，
-   * 否则旧 key 会残留，导致 Delete/Save 看起来不生效。
-   */
-  export async function replaceGlobalMcp(mcp: Info["mcp"]): Promise<Info> {
-    const filepath = getGlobalConfigPath()
+  export async function replaceGlobalIm(im: ImConfig): Promise<void> {
+    const valid = ImConfig.parse(im)
+    const filepath = getImConfigPath()
     await fs.mkdir(path.dirname(filepath), { recursive: true })
 
-    const existing = await readConfigFile(filepath)
-    const merged: Info = {
-      ...existing,
-      mcp: mcp ?? {},
+    let schema: string | undefined
+    try {
+      schema = (await readConfigFile(filepath))?.$schema
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error
     }
+    await fs.writeFile(filepath, JSON.stringify({ $schema: schema, im: valid }, null, 2), "utf8")
+  }
 
-    // 清理历史字段，避免双源配置不一致（mcp 优先 / mcpServers 残留）
-    if ("mcpServers" in merged) {
-      delete (merged as Record<string, unknown>).mcpServers
-    }
+  // Queue complete read/modify/write operations for settings that share mcp.json.
+  let globalWrites = Promise.resolve()
+  function writeGlobal(edit: (existing: Info) => Info): Promise<Info> {
+    const filepath = getGlobalConfigPath()
+    const written = globalWrites.then(async () => {
+      const existing = await readConfigFile(filepath)
+      const next = edit(existing)
+      next.$schema ??= "https://opencode.ai/config.json"
+      await fs.mkdir(path.dirname(filepath), { recursive: true })
+      await fs.writeFile(filepath, JSON.stringify(next, null, 2), "utf8")
+      return next
+    })
+    globalWrites = written.then(() => {}, () => {})
+    return written
+  }
 
-    if (!merged.$schema) {
-      merged.$schema = "https://opencode.ai/config.json"
-    }
+  export function updateGlobal(patch: Partial<Info> | ((existing: Info) => Partial<Info>)): Promise<Info> {
+    return writeGlobal(existing => {
+      const changes = typeof patch === "function" ? patch(existing) : patch
+      const merged: Info = { ...existing }
+      for (const [key, value] of Object.entries(changes)) {
+        if (value === undefined) continue
+        if (key === "mcp") merged.mcp = { ...existing.mcp, ...McpConfig.parse(value) }
+        else merged[key] = value
+      }
+      return merged
+    })
+  }
 
-    await fs.writeFile(filepath, JSON.stringify(merged, null, 2), "utf8")
-    return merged
+  export function replaceGlobalMcp(mcp: NonNullable<Info["mcp"]>): Promise<Info> {
+    return writeGlobal(({ mcpServers: _retired, ...existing }) => ({ ...existing, mcp: McpConfig.parse(mcp) }))
   }
 
   export async function getAppsConfig(): Promise<Record<string, TuiAppConfigEntry>> {

@@ -4,6 +4,8 @@
  * Core data models for the chat application
  */
 
+import type { SourceControlsSnapshot } from './core/source-controls.js';
+
 /**
  * Message role - who sent the message
  */
@@ -42,28 +44,15 @@ export interface Message {
         /** For reasoning messages */
         reasoning?: string;
         /** For tool call messages */
-        toolName?: string;
-        toolCallId?: string;
-        args?: any;
+        toolCalls?: Array<{ toolCallId: string; toolName: string; input: unknown }>;
         /** For tool result messages */
-        result?: any;
-        isError?: boolean;
+        toolResults?: Array<{ toolCallId: string; toolName: string; result: unknown; isError: boolean }>;
         /** For snapshot messages */
         appId?: string;
         /** Generic metadata */
         attachments?: ImageAttachment[];
         [key: string]: any;
     };
-}
-
-/**
- * Chat session state
- */
-export interface ChatState {
-    /** List of messages in chronological order */
-    messages: Message[];
-    /** Current session ID (maps to Desktop ID) */
-    sessionId?: string;
 }
 
 /**
@@ -100,11 +89,7 @@ export interface Topic {
     /** Topic-level agent override */
     agentId?: string;
     /** Topic-level capability/source control override snapshot */
-    sourceControls?: {
-        apps: { enabled: boolean; disabledItems: string[] };
-        mcp: { enabled: boolean; disabledItems: string[] };
-        skill: { enabled: boolean; disabledItems: string[] };
-    };
+    sourceControls?: SourceControlsSnapshot;
     /** Topic-level context compaction policy override */
     contextCompaction?: {
         enabled?: boolean;
@@ -120,125 +105,4 @@ export interface Project {
     name: string;
     lastOpenedAt?: number;
     createdAt: number;
-}
-
-/**
- * External event types from Product Layer
- */
-export interface UserMessageEvent {
-    /** Event type identifier */
-    type: 'user_message';
-    /** Message data */
-    message: Omit<Message, 'id'> & { id?: string };
-}
-
-/**
- * Input parameter types
- */
-export interface SendMessageArgs {
-    /** Message content to send */
-    content: string;
-}
-
-/**
- * Helper to create a new message
- */
-export function createMessage(role: MessageRole, content: string): Message {
-    return {
-        id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        role,
-        content,
-        timestamp: Date.now()
-    };
-}
-
-/**
- * Helper to ensure message has an ID
- */
-export function ensureMessageId(msg: Omit<Message, 'id'> & { id?: string }): Message {
-    return {
-        ...msg,
-        id: msg.id || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
-    };
-}
-
-// ============================================================================
-// Message Parts - Structured Content Storage
-// ============================================================================
-
-/**
- * Message Part Type
- */
-export type MessagePartType =
-    | 'text'           // 纯文本内容
-    | 'reasoning'      // LLM推理过程
-    | 'tool-call'      // 工具调用
-    | 'tool-result';   // 工具执行结果
-
-/**
- * Base Message Part
- */
-export interface MessagePartBase {
-    id: string;
-    messageId: string;
-    partType: MessagePartType;
-    partOrder: number;
-    createdAt: number;
-}
-
-/**
- * Text Part
- */
-export interface TextMessagePart extends MessagePartBase {
-    partType: 'text';
-    textContent: string;
-}
-
-/**
- * Reasoning Part
- */
-export interface ReasoningMessagePart extends MessagePartBase {
-    partType: 'reasoning';
-    textContent: string;
-}
-
-/**
- * Tool Call Part
- */
-export interface ToolCallMessagePart extends MessagePartBase {
-    partType: 'tool-call';
-    toolCallId: string;
-    toolName: string;
-    input: Record<string, unknown>;
-}
-
-/**
- * Tool Result Part
- */
-export interface ToolResultMessagePart extends MessagePartBase {
-    partType: 'tool-result';
-    toolCallId: string;
-    toolName: string;
-    output: {
-        type: 'json' | 'text' | 'execution-denied';
-        value?: unknown;
-        reason?: string;
-    };
-    isError: boolean;
-}
-
-/**
- * Union type for all parts
- */
-export type MessagePart =
-    | TextMessagePart
-    | ReasoningMessagePart
-    | ToolCallMessagePart
-    | ToolResultMessagePart;
-
-/**
- * Extended Message with parts
- */
-export interface MessageWithParts extends Message {
-    parts?: MessagePart[];
 }

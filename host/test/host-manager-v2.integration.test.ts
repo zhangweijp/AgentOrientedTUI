@@ -87,23 +87,21 @@ describe('HostManager V2 Integration', () => {
 
     describe('Message Flow Closure', () => {
         it('should delegate user message to SessionManager', async () => {
-            const mockDesktop = {} as any;
             const mockKernel = {} as any;
             const mockDesktopManager = {} as any;
 
-            await hostManager.initAgentDriver(mockDesktop, mockKernel, mockDesktopManager);
+            await hostManager.initAgentDriver(mockKernel, mockDesktopManager);
 
             await hostManager.sendUserMessage('Search for AI news');
 
-            expect(sessionManagerMock.sendMessage).toHaveBeenCalledWith(testTopicId, 'Search for AI news', undefined);
+            expect(sessionManagerMock.sendMessage).toHaveBeenCalledWith(testTopicId, 'Search for AI news', undefined, undefined);
         });
 
         it('should emit GUI update events for message types', async () => {
-            const mockDesktop = {} as any;
             const mockKernel = {} as any;
             const mockDesktopManager = {} as any;
 
-            await hostManager.initAgentDriver(mockDesktop, mockKernel, mockDesktopManager);
+            await hostManager.initAgentDriver(mockKernel, mockDesktopManager);
 
             const guiEvents: any[] = [];
             hostManager.onGuiUpdate((event) => {
@@ -147,11 +145,10 @@ describe('HostManager V2 Integration', () => {
 
     describe('Topic Switching', () => {
         it('should route messages to current topic', async () => {
-            const mockDesktop = {} as any;
             const mockKernel = {} as any;
             const mockDesktopManager = {} as any;
 
-            await hostManager.initAgentDriver(mockDesktop, mockKernel, mockDesktopManager);
+            await hostManager.initAgentDriver(mockKernel, mockDesktopManager);
 
             const topic1 = 'topic_1';
             const topic2 = 'topic_2';
@@ -162,8 +159,8 @@ describe('HostManager V2 Integration', () => {
             await hostManager.switchTopic(topic2);
             await hostManager.sendUserMessage('Message in topic 2');
 
-            expect(sessionManagerMock.sendMessage).toHaveBeenNthCalledWith(1, topic1, 'Message in topic 1', undefined);
-            expect(sessionManagerMock.sendMessage).toHaveBeenNthCalledWith(2, topic2, 'Message in topic 2', undefined);
+            expect(sessionManagerMock.sendMessage).toHaveBeenNthCalledWith(1, topic1, 'Message in topic 1', undefined, undefined);
+            expect(sessionManagerMock.sendMessage).toHaveBeenNthCalledWith(2, topic2, 'Message in topic 2', undefined, undefined);
         });
     });
 });

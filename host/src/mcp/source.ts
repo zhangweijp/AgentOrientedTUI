@@ -1,8 +1,7 @@
 import type { ContextDrivenSource, DrivenSourceContext } from "@aotui/agent-driver-v2";
-import { MCP } from "./index.js";
-import { Bus, BusEvent } from "./utils.js";
+import { MCP, McpToolUnavailableError } from "./index.js";
 import { Log } from "./utils.js";
-import { buildMcpToolKeyPrefix } from "../shared/source-control-keys.js";
+import { isMcpToolItemKey } from "../shared/source-control-keys.js";
 
 const log = Log.create({ service: "mcp-driven-source" });
 
@@ -12,10 +11,7 @@ export class McpDrivenSource implements ContextDrivenSource {
     private sourceEnabled = true;
     private disabledTools = new Set<string>();
     private disabledServers = new Set<string>();
-
-    constructor() {
-        // Assume MCP updates will be polled or events emitted
-    }
+    constructor(private readonly allowedServers?: ReadonlySet<string>) {}
 
     public triggerUpdate() {
         for (const listener of this.listeners) {
@@ -53,22 +49,13 @@ export class McpDrivenSource implements ContextDrivenSource {
         };
     }
 
-    private buildServerPrefix(serverName: string): string {
-        return buildMcpToolKeyPrefix(serverName);
+    private isAvailable(): boolean {
+        return this.sourceEnabled && [...this.disabledTools].every(isMcpToolItemKey);
     }
 
-    private isToolAllowed(toolKey: string): boolean {
-        if (this.disabledTools.has(toolKey)) {
-            return false;
-        }
-
-        for (const serverName of this.disabledServers) {
-            if (toolKey.startsWith(this.buildServerPrefix(serverName))) {
-                return false;
-            }
-        }
-
-        return true;
+    private isToolAllowed(toolKey: string, serverName: string): boolean {
+        return (this.allowedServers?.has(serverName) ?? true)
+            && !this.disabledTools.has(toolKey) && !this.disabledServers.has(serverName);
     }
 
     onUpdate(callback: () => void): () => void {
@@ -80,27 +67,36 @@ export class McpDrivenSource implements ContextDrivenSource {
 
     async getContext(): Promise<DrivenSourceContext> {
         log.info("Fetching tools from MCP manager");
-        if (!this.sourceEnabled) return { messages: [], tools: {} };
+        if (!this.isAvailable()) return { messages: [], tools: {} };
         try {
-            const allTools: DrivenSourceContext['tools'] = await MCP.tools();
-            const tools = Object.fromEntries(Object.entries(allTools)
-                .filter(([name]) => this.sourceEnabled && this.isToolAllowed(name)));
+            const catalog = await MCP.tools();
+            if (!this.isAvailable()) return { messages: [], tools: {} };
+            const eligible = Object.entries(catalog)
+                .filter(([name, entry]) => this.isToolAllowed(name, entry.serverName));
+            const tools = Object.fromEntries(eligible.map(([name, entry]) => [name, entry.tool]));
             // Binding fixes both the function and its original Tool receiver.
-            const executors = new Map(Object.entries(tools).map(([name, tool]) => [name, tool.execute?.bind(tool)]));
+            const executors = new Map(eligible.map(([name, entry]) => [name, {
+                serverName: entry.serverName, run: entry.tool.execute?.bind(entry.tool),
+            }]));
             return {
                 messages: [], tools,
                 executeTool: async (toolName, args, toolCallId) => {
-                    if (!Object.hasOwn(tools, toolName)) return undefined;
-                    if (!this.sourceEnabled || !this.isToolAllowed(toolName)) {
+                    const executor = executors.get(toolName);
+                    if (!executor?.run) return undefined;
+                    if (!this.isAvailable() || !this.isToolAllowed(toolName, executor.serverName)) {
                         return { toolName, toolCallId, outcomeStatus: 'rejected',
                             error: { code: 'E_SOURCE_UNAVAILABLE', message: 'The MCP tool source is no longer active' } };
                     }
                     log.info("Executing MCP tool", toolName);
                     try {
-                        const result = await executors.get(toolName)!(args, { toolCallId, messages: [] });
+                        const result = await executor.run(args, { toolCallId, messages: [] });
                         log.info(`MCP tool ${toolName} executed successfully, triggering update signal`);
                         return { toolCallId, toolName, result: typeof result === 'string' ? result : JSON.stringify(result) };
                     } catch (error) {
+                        if (error instanceof McpToolUnavailableError) {
+                            return { toolName, toolCallId, outcomeStatus: 'rejected',
+                                error: { code: 'E_SOURCE_UNAVAILABLE', message: error.message } };
+                        }
                         log.error(`Error executing MCP tool ${toolName}`, error);
                         log.info(`MCP tool ${toolName} execution failed, triggering update signal with error`);
                         return { toolCallId, toolName, result: `Error: ${(error as Error).message}` };

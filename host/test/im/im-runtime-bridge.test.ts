@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { GuiUpdateEvent } from '../../src/core/host-manager-v2.js'
+import type { GuiUpdateEvent } from '../../src/types/session.js'
 import { IMRuntimeBridge } from '../../src/im/im-runtime-bridge.js'
 import type { IReplyHandler } from '../../src/im/channel-plugin.js'
 

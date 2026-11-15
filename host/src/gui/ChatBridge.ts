@@ -4,6 +4,10 @@
  * - IPC (Electron tRPC): Topics/Messages/Snapshot/Agent 状态
  */
 import type { Message, Topic, Project, ImageAttachment } from '../types.js';
+import type { GuiUpdateEvent } from '../types/session.js';
+import type { ImConfig } from '../config/im-schema.js';
+import type { SourceControlsSnapshot } from '../core/source-controls.js';
+import { createMessageId } from '../types-v2.js';
 import { createTRPCProxyClient } from '@trpc/client';
 import type { Unsubscribable } from '@trpc/server/observable';
 import { ipcLink } from 'electron-trpc/renderer';
@@ -80,11 +84,14 @@ export class ChatBridge {
 
     private async loadMessagesForTopic(topicId: string): Promise<void> {
         try {
-            // [RFC-026] Use getMessagesWithParts to retrieve complete structured data
-            // Same data source as LLM (ConversationManager.getHistory)
-            const messages = await this.getTrpcClient().db.getMessagesWithParts.query({ id: topicId });
-            const normalized = this.normalizeMessages(messages);
-            this.messages.set(topicId, normalized);
+            const messages = await this.getTrpcClient().db.getMessages.query({ id: topicId });
+            if (!this.topics.has(topicId)) return;
+
+            const history = new Map(messages.map(message => [message.id, this.toDisplayMessage(message)]));
+            for (const live of this.getMessages(topicId)) {
+                if (!history.has(live.id)) history.set(live.id, live);
+            }
+            this.messages.set(topicId, Array.from(history.values()).sort((a, b) => a.timestamp - b.timestamp));
         } catch (error) {
             console.error(`[ChatBridge] Failed to load messages for topic ${topicId}:`, error);
         }
@@ -103,11 +110,7 @@ export class ChatBridge {
             modelOverride?: string;
             promptOverride?: string;
             agentId?: string;
-            sourceControls?: {
-                apps: { enabled: boolean; disabledItems: string[] };
-                mcp: { enabled: boolean; disabledItems: string[] };
-                skill: { enabled: boolean; disabledItems: string[] };
-            };
+            sourceControls?: SourceControlsSnapshot;
         }
     ): Promise<Topic | null> {
         try {
@@ -140,7 +143,7 @@ export class ChatBridge {
             // 1. Ensure Desktop is active (Lazy Activation)
             await this.activateDesktop(topicId);
 
-            const messageId = `msg_${Date.now()}`;
+            const messageId = createMessageId();
 
             await this.ensureSessionReady(topicId, true);
 
@@ -223,13 +226,6 @@ export class ChatBridge {
         await this.getTrpcClient().chat.resume.mutate({ id: topicId });
     }
 
-    async destroyDesktop(topicId: string): Promise<void> {
-        this.releaseSessionSubscription(topicId);
-        this.snapshots.delete(topicId);
-        this.notify({ type: 'snapshot', topicId });
-        await this.getTrpcClient().session.destroy.mutate({ id: topicId });
-    }
-
     // ============ [RFC-025] Project Management ============
 
     getProjects(): Project[] {
@@ -274,6 +270,11 @@ export class ChatBridge {
             this.topics.delete(topicId);
             this.messages.delete(topicId);
             this.snapshots.delete(topicId);
+            this.agentStates.delete(topicId);
+            this.agentPaused.delete(topicId);
+            this.streamingTexts.delete(topicId);
+            this.streamingReasonings.delete(topicId);
+            if (this.activeTopicId === topicId) this.activeTopicId = null;
             this.notify({ type: 'topic', topicId });
         } catch (error) {
             console.error('[ChatBridge] Failed to delete topic:', error);
@@ -342,8 +343,7 @@ export class ChatBridge {
     }
 
     getMessages(topicId: string): Message[] {
-        const msgs = this.messages.get(topicId) || [];
-        return this.normalizeMessages(msgs);
+        return this.messages.get(topicId) ?? [];
     }
 
     getSnapshot(topicId: string): string {
@@ -374,10 +374,9 @@ export class ChatBridge {
 
     async setActiveTopic(topicId: string): Promise<void> {
         if (this.topics.has(topicId)) {
+            const reloadHistory = this.activeTopicId !== topicId || !this.messages.has(topicId);
             this.activeTopicId = topicId;
-
-            // Load messages if not already loaded
-            if (!this.messages.has(topicId)) {
+            if (reloadHistory) {
                 await this.loadMessagesForTopic(topicId);
             }
 
@@ -435,359 +434,85 @@ export class ChatBridge {
         if (this.trpcSubscriptions.get(topicId) === owner) this.ensureSessionSubscription(topicId, owner);
     }
 
-    /**
-     * ✅ 修复：适配 AI SDK v6 的 ModelMessage 格式
-     * 
-     * AI SDK v6 格式：
-     * - UserMessage: { role: 'user', content: string | Array<TextPart | ImagePart | FilePart> }
-     * - AssistantMessage: { role: 'assistant', content: string | Array<TextPart | ToolCallPart | ReasoningPart> }
-     * - ToolMessage: { role: 'tool', content: Array<ToolResultPart> }
-     */
-    private normalizeMessages(messages: any[]): Message[] {
-        const toolNamesByCallId = new Map<string, string>();
-
-        return messages.map(m => {
-            let normalized: Message;
-            if (m?.messageType) {
-                normalized = m as Message;
-                return this.enforceAttachmentBoundary(normalized);
-            }
-            if (Array.isArray(m.parts) && m.parts.length) {
-                return this.enforceAttachmentBoundary(this.rebuildMessageFromParts(m));
-            }
-            // AI SDK ModelMessage format.
-            if (m.role === 'user') {
-                normalized = this.normalizeUserMessage(m);
-                return this.enforceAttachmentBoundary(normalized);
-            } else if (m.role === 'assistant') {
-                normalized = this.normalizeAssistantMessage(m, toolNamesByCallId);
-                return this.enforceAttachmentBoundary(normalized);
-            } else if (m.role === 'tool') {
-                normalized = this.normalizeToolMessage(m, toolNamesByCallId);
-                return this.enforceAttachmentBoundary(normalized);
-            } else if (m.role === 'system') {
-                normalized = this.normalizeSystemMessage(m);
-                return this.enforceAttachmentBoundary(normalized);
-            }
-
-            return this.enforceAttachmentBoundary(m);
-        });
-    }
-
-    private enforceAttachmentBoundary(message: Message): Message {
-        if (message?.role === 'user') {
-            return message;
-        }
-
-        const metadata = (message as any)?.metadata;
-        if (!metadata || !Array.isArray(metadata.attachments)) {
-            return message;
-        }
-
-        const { attachments: _attachments, ...restMetadata } = metadata as Record<string, unknown>;
-        const hasOtherMetadata = Object.keys(restMetadata).length > 0;
-
-        if (!hasOtherMetadata) {
-            const nextMessage = { ...(message as any) };
-            delete (nextMessage as any).metadata;
-            return nextMessage as Message;
-        }
-
-        return {
-            ...(message as any),
-            metadata: restMetadata,
-        } as Message;
-    }
-
-    /**
-     * 规范化 User 消息
-     */
-    private normalizeUserMessage(m: any): Message {
-        let contentText = '';
-        const attachments: ImageAttachment[] = [];
-        const isSupportedAttachmentMime = (mime: unknown): mime is string => {
-            return typeof mime === 'string' && (mime.startsWith('image/') || mime === 'application/pdf');
+    private toDisplayMessage(message: NonNullable<GuiUpdateEvent['message']>): Message {
+        const { id = createMessageId(), timestamp = Date.now(), metadata, role, content } = message;
+        const { attachments: _attachments, ...metadataWithoutAttachments } = metadata ?? {};
+        const base: Message = {
+            id, timestamp, role, messageType: 'text',
+            content: typeof content === 'string' ? content : '',
+            metadata: role === 'user' ? metadata : metadataWithoutAttachments,
         };
-        const toDataUrl = (rawValue: string, mediaType: string): string => {
-            if (!rawValue) return '';
-            if (rawValue.startsWith('data:')) {
-                return rawValue;
-            }
-            if (/^https?:\/\//i.test(rawValue) || rawValue.startsWith('file://')) {
-                return rawValue;
-            }
-            return `data:${mediaType};base64,${rawValue}`;
-        };
-        const addAttachment = (mime: string, rawValue: string, filename?: string) => {
-            const normalizedUrl = toDataUrl(rawValue, mime);
-            if (!normalizedUrl) return;
-            attachments.push({
-                id: `${m.id || 'msg'}_att_${attachments.length}`,
-                mime,
-                url: normalizedUrl,
-                filename,
-            });
-        };
+        if (typeof content === 'string') return base;
 
-        if (typeof m.content === 'string') {
-            contentText = m.content;
-        } else if (Array.isArray(m.content)) {
-            // 提取所有 text parts
-            const textParts = m.content.filter((part: any) => part.type === 'text').map((part: any) => part.text || '');
-            contentText = textParts.join('\n');
-            for (const part of m.content) {
-                if (part?.type === 'image') {
-                    const imageValue = typeof part.image === 'string'
-                        ? part.image
-                        : (part.image instanceof URL ? part.image.toString() : '');
-                    if (!imageValue) continue;
-                    addAttachment(part.mediaType || 'image/*', imageValue, part.filename);
-                } else if (part?.type === 'file' && isSupportedAttachmentMime(part.mediaType)) {
-                    const rawValue = typeof part.data === 'string'
-                        ? part.data
-                        : (part.data instanceof URL ? part.data.toString() : (typeof part.url === 'string' ? part.url : ''));
-                    if (!rawValue) continue;
-                    addAttachment(part.mediaType, rawValue, part.filename);
+        if (message.role === 'user') {
+            const attachments: ImageAttachment[] = [];
+            const lines: string[] = [];
+            for (const part of message.content as Exclude<typeof message.content, string>) {
+                if (part.type === 'text') {
+                    lines.push(part.text);
+                    continue;
                 }
-            }
-        }
-
-        return {
-            ...m,
-            content: contentText,
-            messageType: 'text',
-            metadata: attachments.length > 0
-                ? {
-                    ...(m.metadata || {}),
-                    attachments,
-                }
-                : m.metadata,
-        };
-    }
-
-    /**
-     * 规范化 Assistant 消息
-     */
-    private normalizeAssistantMessage(m: any, toolNamesByCallId: Map<string, string>): Message {
-        if (typeof m.content === 'string') {
-            const parsedParts = this.tryParseContentParts(m.content);
-            if (parsedParts) {
-                return this.normalizeAssistantMessage({ ...m, content: parsedParts }, toolNamesByCallId);
-            }
-            return {
-                ...m,
-                content: m.content,
-                messageType: 'text'
-            };
-        }
-
-        if (!Array.isArray(m.content)) {
-            return m;
-        }
-
-        // 解析 content parts
-        const textParts: string[] = [];
-        let reasoning = '';
-        const toolCalls: any[] = [];
-
-        for (const part of m.content) {
-            const partTyped = part as any;
-
-            if (partTyped.type === 'text') {
-                textParts.push(partTyped.text || '');
-            } else if (partTyped.type === 'tool-call') {
-                const toolInput = partTyped.args ?? partTyped.input;
-                toolCalls.push({
-                    toolCallId: partTyped.toolCallId,
-                    toolName: partTyped.toolName,
-                    args: toolInput,
-                    input: toolInput,
+                const mime = part.mediaType ?? 'image/*';
+                if (!mime.startsWith('image/') && mime !== 'application/pdf') continue;
+                const value = part.type === 'image' ? part.image : part.data;
+                if (!value) continue;
+                const raw = value instanceof URL ? value.href : value;
+                if (typeof raw !== 'string') continue;
+                const url = /^(data:|https?:\/\/|file:\/\/)/i.test(raw) ? raw : `data:${mime};base64,${raw}`;
+                attachments.push({
+                    id: `${id}_att_${attachments.length}`, mime, url,
+                    filename: part.type === 'file' ? part.filename : undefined,
                 });
-                // 记录 tool call ID → tool name 映射
-                toolNamesByCallId.set(partTyped.toolCallId, partTyped.toolName);
-            } else if (partTyped.type === 'reasoning' || partTyped.type === '思考链') {
-                reasoning += (partTyped.text || '');
             }
-        }
-
-        // 决定消息类型
-        if (toolCalls.length > 0) {
-            const toolDetails = toolCalls
-                .map(tc => {
-                    const args = tc.args ? `\nArgs: ${JSON.stringify(tc.args)}` : '';
-                    return `Tool Call: ${tc.toolName}${args}`;
-                })
-                .join('\n');
-
-            const textBlock = textParts.join('\n').trim();
-
-            // Tool call 消息
             return {
-                ...m,
-                content: toolDetails,
-                messageType: 'tool_call',
-                metadata: {
-                    toolName: toolCalls[0].toolName,
-                    toolCallId: toolCalls[0].toolCallId,
-                    args: toolCalls[0].args,
-                    input: toolCalls[0].input,
-                    reasoning: reasoning || undefined,
-                    text: textBlock || undefined
-                }
+                ...base,
+                content: lines.join('\n'),
+                metadata: attachments.length ? { ...metadata, attachments } : metadata,
             };
         }
 
-        if (reasoning && textParts.length > 0) {
+        if (message.role === 'assistant') {
+            const parts = message.content as Exclude<typeof message.content, string>;
+            const text = parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n');
+            const reasoning = parts.flatMap(part => part.type === 'reasoning' ? [part.text] : []).join('');
+            const toolCalls = parts.flatMap(part => part.type === 'tool-call'
+                ? [{ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input }]
+                : []);
+            if (toolCalls.length) {
+                return {
+                    ...base,
+                    content: text,
+                    messageType: 'tool_call',
+                    metadata: { ...base.metadata, toolCalls, text, reasoning },
+                };
+            }
             return {
-                ...m,
-                content: textParts.join('\n'),
-                messageType: 'text',
-                metadata: {
-                    ...(m.metadata || {}),
-                    reasoning,
-                }
+                ...base,
+                content: text || reasoning,
+                messageType: !text && reasoning ? 'reasoning' : 'text',
+                metadata: reasoning ? { ...base.metadata, reasoning } : base.metadata,
             };
         }
 
-        if (reasoning) {
-            // Reasoning-only 消息
-            return {
-                ...m,
-                content: reasoning,
-                messageType: 'reasoning',
-                metadata: {
-                    ...(m.metadata || {}),
-                    reasoning
-                }
-            };
-        }
-
-        // 纯文本消息
-        return {
-            ...m,
-            content: textParts.join('\n'),
-            messageType: 'text'
-        };
-    }
-
-    /**
-     * 规范化 Tool 消息
-     */
-    private normalizeToolMessage(m: any, toolNamesByCallId: Map<string, string>): Message {
-        if (!Array.isArray(m.content)) {
-            return m;
-        }
-
-        // 提取第一个 tool-result part
-        const resultPart = m.content.find((part: any) => part.type === 'tool-result');
-        if (!resultPart) {
-            return m;
-        }
-
-        const toolCallId = resultPart.toolCallId;
-        const toolName = resultPart.toolName || toolNamesByCallId.get(toolCallId) || 'Unknown Tool';
-        const rawOutput = resultPart.output ?? resultPart.result;
-        const { result, displayContent, isError } = this.normalizeToolOutput(rawOutput, resultPart.isError);
-
-        // 构造显示内容
-        return {
-            ...m,
-            content: displayContent,
-            messageType: 'tool_result',
-            metadata: {
-                toolCallId,
-                toolName,
-                result,
-                isError
-            }
-        };
-    }
-
-    /**
-     * 规范化 System 消息
-     */
-    private normalizeSystemMessage(m: any): Message {
-        return {
-            ...m,
-            content: typeof m.content === 'string' ? m.content : '',
-            messageType: 'text'
-        };
-    }
-
-    /**
-     * [RFC-026] Rebuild message content from message_parts
-     */
-    private rebuildMessageFromParts(msg: any): Message {
-        const parts = msg.parts || [];
-
-        // Build displayable content from parts
-        const contentParts: string[] = [];
-        let reasoning = '';
-        let hasToolCalls = false;
-        let firstToolCall: { toolName?: string; toolCallId?: string; args?: unknown } | null = null;
-        let firstToolResult: { toolName?: string; toolCallId?: string; result?: unknown; isError?: boolean } | null = null;
-        const textOnlyParts: string[] = [];
-
-        for (const part of parts) {
-            if (part.partType === 'text') {
-                contentParts.push(part.textContent);
-                textOnlyParts.push(part.textContent);
-            } else if (part.partType === 'reasoning') {
-                reasoning = part.textContent;
-                contentParts.push(`💭 Thinking: ${part.textContent}`);
-            } else if (part.partType === 'tool-call') {
-                hasToolCalls = true;
-                contentParts.push(`🔧 Called ${part.toolName}`);
-                if (!firstToolCall) {
-                    firstToolCall = {
-                        toolName: part.toolName,
-                        toolCallId: part.toolCallId,
-                        args: part.input,
-                    };
-                }
-            } else if (part.partType === 'tool-result') {
-                const status = part.isError ? '❌' : '✅';
-                contentParts.push(`${status} Result`);
-                if (!firstToolResult) {
-                    firstToolResult = {
-                        toolName: part.toolName,
-                        toolCallId: part.toolCallId,
-                        result: part.output,
-                        isError: Boolean(part.isError),
-                    };
-                }
+        if (message.role === 'tool') {
+            const toolResults = message.content.flatMap(part => {
+                if (part.type !== 'tool-result') return [];
+                // V2 history from Host compaction could store a raw receipt.
+                const output = part.output ?? (part as { result?: unknown }).result;
+                const { result, isError } = this.normalizeToolOutput(output);
+                return [{ toolCallId: part.toolCallId, toolName: part.toolName, result, isError }];
+            });
+            if (toolResults.length) {
+                return {
+                    ...base,
+                    content: toolResults.map(({ result }) => typeof result === 'string' ? result : JSON.stringify(result, null, 2)).join('\n'),
+                    messageType: 'tool_result',
+                    metadata: { ...base.metadata, toolResults },
+                };
             }
         }
 
-        const displayContent = contentParts.join('\n');
-        const textBlock = textOnlyParts.join('\n').trim();
-
-        return {
-            ...msg,
-            content: displayContent,
-            messageType: hasToolCalls ? 'tool_call' : (firstToolResult ? 'tool_result' : undefined),
-            metadata: {
-                ...(msg.metadata || {}),
-                reasoning,
-                ...(hasToolCalls && textBlock ? { text: textBlock } : {}),
-                ...(firstToolCall
-                    ? {
-                        toolName: firstToolCall.toolName,
-                        toolCallId: firstToolCall.toolCallId,
-                        args: firstToolCall.args,
-                        input: firstToolCall.args,
-                    }
-                    : {}),
-                ...(firstToolResult
-                    ? {
-                        toolName: firstToolResult.toolName,
-                        toolCallId: firstToolResult.toolCallId,
-                        result: firstToolResult.result,
-                        isError: firstToolResult.isError,
-                    }
-                    : {}),
-            }
-        };
+        return base;
     }
 
     private releaseSessionSubscription(topicId: string): void {
@@ -812,18 +537,16 @@ export class ChatBridge {
             transport = this.getTrpcClient().session.events.subscribe(
                 { id: topicId },
                 {
-                    onData: (event: unknown) => {
-                        if (!active || this.trpcSubscriptions.get(topicId) !== owner) return;
-                        const update = event as Record<string, unknown>;
-                        if (update.topicId !== undefined && update.topicId !== topicId) return;
-                        this.handleSessionEvent(update, topicId);
+                    onData: (event) => {
+                        if (!active || this.trpcSubscriptions.get(topicId) !== owner || event.topicId !== topicId) return;
+                        this.handleSessionEvent(event);
                     },
                     onError: (error: unknown) => {
                         if (!active || this.trpcSubscriptions.get(topicId) !== owner) return;
                         subscription.unsubscribe();
                         console.error('[ChatBridge] tRPC session events error:', error);
                         this.handleSessionEvent({ type: 'snapshot_error', topicId,
-                            error: error instanceof Error ? error.message : String(error) }, topicId);
+                            error: error instanceof Error ? error.message : String(error) });
                     },
                 }
             );
@@ -834,21 +557,8 @@ export class ChatBridge {
         }
     }
 
-    private handleSessionEvent(event: Record<string, unknown>, contextTopicId?: string): void {
-        // GuiUpdateEvent format: { topicId, type: 'assistant'|'tool'|'user', message: ModelMessage }
-        const eventType = (event as any).type;
-        const topicId = (event as any).topicId || contextTopicId;
-        const message = (event as any).message;
-
-        console.log('[ChatBridge] SessionEvent:', {
-            eventType,
-            topicId,
-            role: message?.role,
-            contentType: Array.isArray(message?.content) ? 'parts' : typeof message?.content,
-            partTypes: Array.isArray(message?.content)
-                ? message.content.map((part: any) => part?.type).filter(Boolean)
-                : undefined,
-        });
+    private handleSessionEvent(event: GuiUpdateEvent): void {
+        const { type: eventType, topicId, message } = event;
 
         if (eventType === 'snapshot' && topicId) {
             const owner = this.trpcSubscriptions.get(topicId);
@@ -856,7 +566,7 @@ export class ChatBridge {
             else if (owner) void this.refreshSnapshot(topicId, owner).catch(error => {
                 if (this.trpcSubscriptions.get(topicId) === owner) this.handleSessionEvent({
                     type: 'snapshot_error', topicId, error: error instanceof Error ? error.message : String(error),
-                }, topicId);
+                });
             });
             return;
         }
@@ -869,7 +579,7 @@ export class ChatBridge {
 
         // Handle AI SDK v6 GuiUpdateEvent (from SessionManagerV3 → HostManagerV2)
         if (eventType === 'agent_state' && topicId) {
-            const state = (event as any).state as string | undefined;
+            const state = event.state;
             if (state) {
                 this.agentStates.set(topicId, state.toUpperCase());
                 this.notify({ type: 'agent_state', topicId, data: state.toUpperCase() });
@@ -891,7 +601,7 @@ export class ChatBridge {
 
         // Handle streaming text deltas from LLM — pipe through agentThinking
         if (eventType === 'text_delta' && topicId) {
-            const delta = (event as any).delta as string;
+            const delta = event.delta;
             if (delta) {
                 this.handleTextDelta(topicId, delta);
             }
@@ -900,7 +610,7 @@ export class ChatBridge {
 
         // Handle streaming reasoning deltas from LLM — pipe through agentReasoning
         if (eventType === 'reasoning_delta' && topicId) {
-            const delta = (event as any).delta as string;
+            const delta = event.delta;
             if (delta) {
                 this.handleReasoningDelta(topicId, delta);
             }
@@ -908,8 +618,7 @@ export class ChatBridge {
         }
 
         if ((eventType === 'assistant' || eventType === 'tool' || eventType === 'user') && message) {
-            console.log(`[ChatBridge] GuiUpdateEvent: type=${eventType}, topicId=${topicId}, role=${message?.role}`);
-            this.handleGuiUpdateEvent(topicId, eventType, message);
+            this.receiveMessage(topicId, message);
             return;
         }
     }
@@ -919,7 +628,7 @@ export class ChatBridge {
      * 
      * 将增量文本追加到 streamingText 缓冲区，并通过 agentThinking 路径
      * 实时显示在 "Generating Response..." 区域。
-     * 当最终 assistant 完整消息到达时（handleGuiUpdateEvent），
+     * 当最终 assistant 完整消息到达时（receiveMessage），
      * 缓冲区被清空，agentThinking 恢复为空。
      */
     private handleTextDelta(topicId: string, delta: string): void {
@@ -939,126 +648,36 @@ export class ChatBridge {
         this.notify({ type: 'agent_reasoning', topicId, data: updated });
     }
 
-    /**
-     * 处理 GuiUpdateEvent (AI SDK v6 ModelMessage 格式)
-     * 将 LLM 返回的消息实时添加到聊天界面
-     */
-    private handleGuiUpdateEvent(topicId: string, type: string, modelMessage: any): void {
-        if (!topicId) return;
-
-        const msgs = this.messages.get(topicId) || [];
-
-        const normalized = this.normalizeMessages([modelMessage]);
-        const normalizedMessage = normalized[0];
-
-        // 将 AI SDK v6 ModelMessage 转换为 GUI Message
-        const guiMessage: Message = {
-            ...(normalizedMessage || {}),
-            id: normalizedMessage?.id || modelMessage.id || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-            role: normalizedMessage?.role || modelMessage.role || type,
-            content: normalizedMessage?.content ?? this.extractContentFromModelMessage(modelMessage),
-            timestamp: normalizedMessage?.timestamp || modelMessage.timestamp || Date.now(),
-        };
-
-        // Dedup: 检查消息是否已存在
-        // 当最终 assistant 消息到达时，清除流式缓冲区
-        if (type === 'assistant') {
+    private receiveMessage(topicId: string, message: NonNullable<GuiUpdateEvent['message']>): void {
+        const display = this.toDisplayMessage(message);
+        if (message.role === 'assistant') {
             this.streamingTexts.delete(topicId);
             this.streamingReasonings.delete(topicId);
         }
 
-        const existingIdx = msgs.findIndex(m => m.id === guiMessage.id);
-        if (existingIdx !== -1) {
-            msgs[existingIdx] = guiMessage;
-        } else {
-            msgs.push(guiMessage);
-        }
+        const messages = this.getMessages(topicId).slice();
+        const index = messages.findIndex(existing => existing.id === display.id);
+        if (index < 0) messages.push(display);
+        else messages[index] = display;
 
-        this.messages.set(topicId, msgs);
-        this.notify({ type: 'message', topicId, data: guiMessage });
+        this.messages.set(topicId, messages.sort((a, b) => a.timestamp - b.timestamp));
+        this.notify({ type: 'message', topicId, data: display });
     }
 
-    /**
-     * 从 AI SDK v6 ModelMessage 提取可显示的文本内容
-     */
-    private extractContentFromModelMessage(msg: any): string {
-        if (!msg) return '';
-
-        // content 是 string
-        if (typeof msg.content === 'string') return msg.content;
-
-        // content 是 Array (AI SDK v6 content parts)
-        if (Array.isArray(msg.content)) {
-            const parts: string[] = [];
-            for (const part of msg.content) {
-                if (typeof part === 'string') {
-                    parts.push(part);
-                } else if (part.type === 'text') {
-                    parts.push(part.text || '');
-                } else if (part.type === 'reasoning') {
-                    // 推理内容也显示
-                    parts.push(part.text || '');
-                } else if (part.type === 'tool-call') {
-                    parts.push(`[Tool Call: ${part.toolName}]`);
-                } else if (part.type === 'tool-result') {
-                    const rawOutput = part.output ?? part.result;
-                    const { displayContent } = this.normalizeToolOutput(rawOutput);
-                    const resultStr = displayContent || '';
-                    parts.push(`[Tool Result: ${resultStr}]`);
-                }
+    private normalizeToolOutput(output: unknown): { result: unknown; isError: boolean } {
+        if (output && typeof output === 'object' && 'type' in output) {
+            if (output.type === 'execution-denied') return { result: output, isError: true };
+            if ('value' in output && ['json', 'text', 'error-json', 'error-text', 'content'].includes(String(output.type))) {
+                const isError = output.type === 'error-json' || output.type === 'error-text';
+                const result = output.value;
+                return { result, isError: isError || this.isFailedReceipt(result) };
             }
-            return parts.join('');
         }
-
-        return String(msg.content || '');
+        return { result: output, isError: this.isFailedReceipt(output) };
     }
 
-    private tryParseContentParts(content: string): any[] | null {
-        if (!content || content[0] !== '[') {
-            return null;
-        }
-
-        try {
-            const parsed = JSON.parse(content);
-            if (Array.isArray(parsed) && parsed.every(item => typeof item === 'object' && item !== null && 'type' in item)) {
-                return parsed;
-            }
-        } catch {
-            return null;
-        }
-
-        return null;
-    }
-
-    private normalizeToolOutput(rawOutput: any, isErrorFlag?: boolean): { result: any; displayContent: string; isError: boolean } {
-        let isError = Boolean(isErrorFlag);
-        let result = rawOutput;
-
-        if (rawOutput && typeof rawOutput === 'object' && 'type' in rawOutput) {
-            const output = rawOutput as { type: string; value?: unknown; reason?: string };
-            if (output.type === 'json' || output.type === 'text') {
-                result = output.value ?? '';
-            } else if (output.type === 'error-json') {
-                result = output.value ?? '';
-                isError = true;
-            } else if (output.type === 'execution-denied') {
-                result = { type: output.type, reason: output.reason };
-                isError = true;
-            }
-        }
-
-        if (!isError && result && typeof result === 'object' && 'success' in result) {
-            const successValue = (result as { success?: unknown }).success;
-            if (typeof successValue === 'boolean' && successValue === false) {
-                isError = true;
-            }
-        }
-
-        const displayContent = typeof result === 'string'
-            ? result
-            : JSON.stringify(result, null, 2);
-
-        return { result, displayContent, isError };
+    private isFailedReceipt(result: unknown): boolean {
+        return result !== null && typeof result === 'object' && 'success' in result && result.success === false;
     }
 
     // ============ LLM Config Methods ============
@@ -1121,20 +740,16 @@ export class ChatBridge {
 
     // ============ IM Config Methods ============
 
-    async getImConfig(): Promise<any> {
-        return this.getTrpcClient().im.getImConfig.query();
+    async getImConfig() {
+        return this.getTrpcClient().im.getConfig.query();
     }
 
     async getImRuntime(): Promise<any> {
         return this.getTrpcClient().im.getRuntime.query();
     }
 
-    async saveImConfig(config: any): Promise<any> {
-        return this.getTrpcClient().im.saveImConfig.mutate(config);
-    }
-
-    async getImAgents(): Promise<{ list: any[]; activeAgentId: string | null }> {
-        return this.getTrpcClient().im.getAgents.query();
+    async saveImConfig(im: ImConfig) {
+        return this.getTrpcClient().im.updateConfig.mutate({ im });
     }
 }
 

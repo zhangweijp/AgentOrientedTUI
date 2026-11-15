@@ -169,7 +169,7 @@ try {
     const registeredApps = await manager.getAppsConfig();
     const oldAgent = { id: 'old-agent', name: 'Old Agent', prompt: '', modelId: '', skin: {},
         enabledApps: ['aotui-ide', 'terminal-app', 'lite-browser-app'], enabledSkills: {}, enabledMCPs: [] };
-    const broken = createSourceControlsFromAgent(oldAgent, {}, Object.keys(registeredApps));
+    const broken = createSourceControlsFromAgent(oldAgent, Object.keys(registeredApps));
     applySourceControlsToSources(broken, { aotuiSource: source });
     const filtered = await observe();
     assert.equal(filtered.messages.filter((message: any) => String(message.content).startsWith('<view ')).length, 0);
@@ -178,7 +178,7 @@ try {
     assert.equal((await preview()).length, 3, 'Inspection still sees installed apps');
     release(filtered);
     const selectedAgent = { ...oldAgent, enabledApps: ['system_ide', 'terminal', 'lite_browser'] };
-    const fixed = createSourceControlsFromAgent(selectedAgent, {}, Object.keys(registeredApps));
+    const fixed = createSourceControlsFromAgent(selectedAgent, Object.keys(registeredApps));
     assert.deepEqual(fixed.apps, appSourceControls(selectedAgent.enabledApps, Object.keys(registeredApps)), 'GUI and backend app controls agree');
     for (const name of Object.keys(registeredApps)) source.setAppEnabled(name, !fixed.apps.disabledItems.includes(name));
     applySourceControlsToSources(fixed, { aotuiSource: source });

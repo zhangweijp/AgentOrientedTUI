@@ -8,7 +8,7 @@
 import React, { useEffect, useState } from 'react';
 import { AgentEditorModal } from './AgentEditorModal.js';
 import { useChatBridge } from '../../../ChatBridge.js';
-import { buildMcpToolItemKey } from '../../../../shared/source-control-keys.js';
+import { buildMcpToolItemKey, hasInvalidMcpToolKeys, isMcpToolItemKey, MCP_PERMISSION_RECONFIGURE } from '../../../../shared/source-control-keys.js';
 
 interface McpTool { name: string; description: string; enabled: boolean; }
 interface McpServer { name: string; connected: boolean; status?: string; tools: McpTool[]; }
@@ -31,38 +31,29 @@ export const AgentMcpEditor: React.FC<AgentMcpEditorProps> = ({
     const [disabledToolSet, setDisabledToolSet] = useState<Set<string>>(new Set(disabledTools));
     const [loading, setLoading] = useState(true);
 
-    const buildToolKey = (serverName: string, toolName: string) => buildMcpToolItemKey(serverName, toolName);
-    const buildLegacyToolKey = (serverName: string, toolName: string) => `${serverName}::${toolName}`;
+    const needsRepair = hasInvalidMcpToolKeys(disabledTools);
 
     useEffect(() => {
         if (!isOpen) return;
-        setEnabledServers(new Set(value));
-        setDisabledToolSet(new Set(disabledTools));
+        setEnabledServers(new Set(needsRepair ? [] : value));
+        setDisabledToolSet(new Set(Array.isArray(disabledTools) ? disabledTools.filter(isMcpToolItemKey) : []));
         (async () => {
             setLoading(true);
             try {
-                const trpc = bridge.getTrpcClient();
-                const [cfg, runtime] = await Promise.all([trpc.mcp.getConfig.query(), trpc.mcp.getRuntime.query()]);
-                const configServers = (cfg as Record<string, any>) || {};
-                const runtimeServers = (runtime as Record<string, any>) || {};
-                const allNames = new Set([
-                    ...Object.keys(configServers).filter(k => typeof configServers[k] === 'object'),
-                    ...Object.keys(runtimeServers).filter(k => typeof runtimeServers[k] === 'object'),
-                ]);
-                const list: McpServer[] = Array.from(allNames).map(name => ({
-                    name,
-                    connected: runtimeServers[name]?.status === 'connected',
-                    status: runtimeServers[name]?.status,
-                    tools: runtimeServers[name]?.tools || [],
+                const runtime = await bridge.getTrpcClient().mcp.getRuntime.query();
+                const list: McpServer[] = Object.entries(runtime).map(([name, server]) => ({
+                    name, connected: server.status === 'connected', status: server.status, tools: server.tools,
                 }));
                 setServers(list);
-                // Trim enabledServers to connected servers only — inactive ones have no toggle
-                const connectedNames = new Set(list.filter(s => s.connected).map(s => s.name));
-                setEnabledServers(prev => new Set([...prev].filter(n => connectedNames.has(n))));
-            } catch { /* skip */ }
-            finally { setLoading(false); }
+                const connected = new Set(list.filter(server => server.connected).map(server => server.name));
+                setEnabledServers(previous => new Set([...previous].filter(name => connected.has(name))));
+            } catch {
+                setServers([]);
+            } finally {
+                setLoading(false);
+            }
         })();
-    }, [isOpen, value, disabledTools, bridge]);
+    }, [isOpen, value, disabledTools, needsRepair, bridge]);
 
     const toggleServer = (name: string) =>
         setEnabledServers(prev => { const n = new Set(prev); n.has(name) ? n.delete(name) : n.add(name); return n; });
@@ -70,49 +61,14 @@ export const AgentMcpEditor: React.FC<AgentMcpEditorProps> = ({
     const toggleTool = (serverName: string, toolName: string, nextEnabled: boolean) =>
         setDisabledToolSet(prev => {
             const next = new Set(prev);
-            const scopedKey = buildToolKey(serverName, toolName);
-            const legacyScopedKey = buildLegacyToolKey(serverName, toolName);
-            if (nextEnabled) {
-                next.delete(scopedKey);
-                next.delete(legacyScopedKey);
-                next.delete(toolName); // cleanup legacy unscoped key
-            } else {
-                next.add(scopedKey);
-                next.delete(legacyScopedKey);
-                next.delete(toolName); // replace legacy unscoped key with scoped key
-            }
+            const key = buildMcpToolItemKey(serverName, toolName);
+            if (nextEnabled) next.delete(key);
+            else next.add(key);
             return next;
         });
 
     const handleSave = () => {
-        // Normalize legacy keys to canonical sourceControl key format (mcp-...)
-        const normalizedDisabledToolSet = new Set<string>();
-        for (const key of disabledToolSet) {
-            if (key.startsWith('mcp-')) {
-                normalizedDisabledToolSet.add(key);
-                continue;
-            }
-
-            if (key.includes('::')) {
-                const [serverName, toolName] = key.split('::');
-                if (serverName && toolName) {
-                    normalizedDisabledToolSet.add(buildToolKey(serverName, toolName));
-                    continue;
-                }
-            }
-
-            const matches = servers.flatMap((srv) =>
-                srv.tools
-                    .filter((tool) => tool.name === key)
-                    .map((tool) => buildToolKey(srv.name, tool.name))
-            );
-            if (matches.length > 0) {
-                matches.forEach((match) => normalizedDisabledToolSet.add(match));
-            } else {
-                normalizedDisabledToolSet.add(key);
-            }
-        }
-        onSave(Array.from(enabledServers), Array.from(normalizedDisabledToolSet));
+        onSave(Array.from(enabledServers), Array.from(disabledToolSet));
         onClose();
     };
 
@@ -120,7 +76,7 @@ export const AgentMcpEditor: React.FC<AgentMcpEditorProps> = ({
     const inactiveServers = servers.filter(s => !s.connected);
 
     const anyEnabled = enabledServers.size > 0;
-    const toggleAll = (v: boolean) => setEnabledServers(v ? new Set(servers.map(s => s.name)) : new Set());
+    const toggleAll = (v: boolean) => setEnabledServers(v ? new Set(activeServers.map(s => s.name)) : new Set());
 
     const renderToggle = (checked: boolean, onChange: (v: boolean) => void, disabled = false) => (
         <button type="button" role="switch" aria-checked={checked} disabled={disabled}
@@ -151,6 +107,7 @@ export const AgentMcpEditor: React.FC<AgentMcpEditorProps> = ({
                 </div>
                 {renderToggle(anyEnabled, toggleAll)}
             </div>
+            {needsRepair && <p role="alert" className="text-[12px] text-[var(--color-danger)]">{MCP_PERMISSION_RECONFIGURE}</p>}
             {loading ? (
                 <div className="py-6 text-center text-[14px] text-[var(--color-text-tertiary)]">Loading MCP servers...</div>
             ) : servers.length === 0 ? (
@@ -175,17 +132,11 @@ export const AgentMcpEditor: React.FC<AgentMcpEditorProps> = ({
                                             </summary>
                                             <div className={`mt-1 space-y-1 ${srvEnabled ? '' : 'opacity-45'}`}>
                                                 {srv.tools.map(tool => {
-                                                    const scopedToolKey = buildToolKey(srv.name, tool.name);
-                                                    const legacyScopedToolKey = buildLegacyToolKey(srv.name, tool.name);
-                                                    const toolEnabled = !(
-                                                        disabledToolSet.has(scopedToolKey)
-                                                        || disabledToolSet.has(legacyScopedToolKey)
-                                                        || disabledToolSet.has(tool.name)
-                                                    );
+                                                    const toolEnabled = tool.enabled && !disabledToolSet.has(buildMcpToolItemKey(srv.name, tool.name));
                                                     return (
                                                         <label key={`mcp-tool-${srv.name}-${tool.name}`} className="flex items-center justify-between gap-2 text-[13px] text-[var(--color-text-secondary)]">
                                                             <span className="truncate">{tool.name}</span>
-                                                            {renderToggle(toolEnabled, (v) => toggleTool(srv.name, tool.name, v), !srvEnabled)}
+                                                            {renderToggle(toolEnabled, (v) => toggleTool(srv.name, tool.name, v), !srvEnabled || !tool.enabled)}
                                                         </label>
                                                     );
                                                 })}

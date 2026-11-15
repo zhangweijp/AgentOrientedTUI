@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import { resolve, join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
@@ -37,7 +37,6 @@ if (app.isPackaged) {
     }
 }
 
-let serverPort = 0;
 let ipcHandler: ReturnType<typeof createIPCHandler> | null = null;
 let hostCore: Awaited<ReturnType<typeof createHostV2Core>> | null = null;
 let modelRegistry: ModelRegistry | null = null;
@@ -142,9 +141,6 @@ app.whenReady().then(async () => {
 
     await ensureHostCore();
     createWindow();
-
-    // IPC Handlers
-    ipcMain.handle('get-server-port', () => serverPort);
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {

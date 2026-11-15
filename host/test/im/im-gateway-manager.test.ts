@@ -49,6 +49,19 @@ describe('IMGatewayManager', () => {
     expect(lark.start).not.toHaveBeenCalled()
   })
 
+  it('honors the global off switch for enabled channels', async () => {
+    const manager = new IMGatewayManager()
+    const plugin = createPlugin('feishu')
+    manager.register(plugin)
+
+    await manager.startAll({ im: { enabled: true, channels: { feishu: { enabled: true } } } })
+    await manager.startAll({ im: { enabled: false, channels: { feishu: { enabled: true } } } })
+
+    expect(plugin.start).toHaveBeenCalledTimes(1)
+    expect(plugin.stop).toHaveBeenCalledTimes(1)
+    expect(manager.getActiveChannelIds()).toEqual([])
+  })
+
   it('is idempotent when startAll is called repeatedly', async () => {
     const manager = new IMGatewayManager()
     const feishu = createPlugin('feishu')

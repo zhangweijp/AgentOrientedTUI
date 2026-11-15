@@ -4,45 +4,7 @@ import { McpVisualEditor } from './McpVisualEditor.js';
 import { McpJsonEditor } from './McpJsonEditor.js';
 import { LoadingState } from '../LoadingState.js';
 
-function toObject(value: unknown): Record<string, any> {
-    return value && typeof value === 'object' ? (value as Record<string, any>) : {};
-}
-
-function normalizeServerEntry(entry: Record<string, any>): Record<string, any> {
-    const normalized: Record<string, any> = { ...entry };
-
-    if (normalized.enabled === undefined && typeof normalized.disabled === 'boolean') {
-        normalized.enabled = !normalized.disabled;
-    }
-
-    if (typeof normalized.command === 'string') {
-        const args = Array.isArray(normalized.args)
-            ? normalized.args.filter((arg: unknown): arg is string => typeof arg === 'string')
-            : [];
-        normalized.command = [normalized.command, ...args];
-    }
-
-    if (!normalized.type && Array.isArray(normalized.command)) {
-        normalized.type = 'local';
-    }
-
-    if (!normalized.environment && normalized.env && typeof normalized.env === 'object') {
-        normalized.environment = normalized.env;
-    }
-
-    return normalized;
-}
-
-function normalizeMcpConfig(input: unknown): Record<string, any> {
-    const obj = toObject(input);
-    const rawServers = toObject(obj.mcpServers ?? obj);
-
-    const entries = Object.entries(rawServers)
-        .filter(([, value]) => value && typeof value === 'object')
-        .map(([name, value]) => [name, normalizeServerEntry(value as Record<string, any>)]);
-
-    return Object.fromEntries(entries);
-}
+import { McpConfig } from '../../../../config/mcp-schema.js';
 
 /**
  * MCP Tab Root Component
@@ -53,14 +15,18 @@ export const McpTab: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [savedBanner, setSavedBanner] = useState(false);
+    const [issues, setIssues] = useState<string[]>([]);
+    const [saveError, setSaveError] = useState<string>();
 
     const bridge = useChatBridge();
 
     const fetchConfig = async () => {
         try {
             const data = await bridge.getTrpcClient().mcp.getConfig.query();
-            setMcpConfig(normalizeMcpConfig(data));
+            setMcpConfig(data.mcp);
+            setIssues(data.issues);
         } catch (err) {
+            setIssues(['Could not load ~/.agentina/mcp.json. Correct the file and reopen MCP Settings.']);
             console.error('Failed to load MCP config:', err);
         } finally {
             setIsLoading(false);
@@ -74,15 +40,19 @@ export const McpTab: React.FC = () => {
     const handleSave = async (updatedConfig: Record<string, any>) => {
         setIsSaving(true);
         setSavedBanner(false);
-        const normalizedConfig = normalizeMcpConfig(updatedConfig);
+        setSaveError(undefined);
         try {
-            await bridge.getTrpcClient().mcp.updateConfig.mutate({ mcp: normalizedConfig });
-            setMcpConfig(normalizedConfig); // Sync local state
+            const mcp = McpConfig.parse(updatedConfig);
+            await bridge.getTrpcClient().mcp.updateConfig.mutate({ mcp });
+            setMcpConfig(mcp);
+            setIssues([]);
             setSavedBanner(true);
             setTimeout(() => setSavedBanner(false), 3000);
         } catch (err) {
             console.error('[McpTab] Failed to save MCP config:', err);
-            alert('Failed to save MCP configuration. Check the console for details.');
+            const message = err instanceof Error ? err.message : 'Could not save MCP settings.';
+            setSaveError(message);
+            throw err;
         } finally {
             setIsSaving(false);
         }
@@ -121,6 +91,12 @@ export const McpTab: React.FC = () => {
                 </div>
             </div>
 
+            {issues.length > 0 && (
+                <ul role="alert" className="space-y-1 text-[12px] text-[var(--color-danger)]">
+                    {issues.map(issue => <li key={issue}>{issue}</li>)}
+                </ul>
+            )}
+            {saveError && <p role="alert" className="text-[12px] text-[var(--color-danger)]">{saveError}</p>}
             <div
                 className="flex-1 min-h-0 relative mat-content rounded-[16px] overflow-hidden"
                 style={{
@@ -144,7 +120,7 @@ export const McpTab: React.FC = () => {
                 ) : (
                     <McpJsonEditor
                         config={mcpConfig}
-                        onSave={handleSave}
+                        onSave={async config => { await handleSave(config).catch(() => undefined); }}
                         isSaving={isSaving}
                     />
                 )}

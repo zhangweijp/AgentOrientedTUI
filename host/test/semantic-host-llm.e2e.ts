@@ -275,7 +275,7 @@ try {
     runtime.execute = legacyForbidden;
     const desktopManager = new DesktopManager({ kernel: runtime,
         appRegistry: new AppRegistry({ configPath: path.join(work, 'apps.json') }) });
-    await desktopManager.initialize({ loadFromConfig: false, enableDevAutoDiscovery: false, appEntries: [{
+    await desktopManager.initialize({ loadFromConfig: false, appEntries: [{
         name: 'system_ide', source: `local:${path.join(repo, 'demo-apps/aotui-ide')}`,
         enabled: true, autoStart: true,
     }] });
@@ -326,7 +326,7 @@ try {
     requireFact(session.agentDriver instanceof AgentDriverV2, 'DEFAULT_AGENT_DRIVER_MISSING');
     facts.defaultSemanticSource = session.sources.aotui instanceof SemanticAOTUIDrivenSource;
     requireFact(facts.defaultSemanticSource, 'DEFAULT_SEMANTIC_SOURCE_MISSING');
-    requireFact(desktopManager.getAppIds(session.desktop.id).length === 1, 'DEFAULT_IDE_INSTALLATION_FAILED');
+    requireFact(session.desktop.getInstalledApps().length === 1, 'DEFAULT_IDE_INSTALLATION_FAILED');
 
     // Readiness only; the script never invokes app tools on the model's behalf.
     const readyDeadline = Date.now() + 20_000;

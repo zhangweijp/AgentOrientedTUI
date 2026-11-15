@@ -453,7 +453,6 @@ export const ModelTab: React.FC = () => {
                     <ProviderRow
                         providers={filteredProviders}
                         selectedProviderId={selectedProviderConfigId}
-                        activeProviderId={activeProviderId}
                         onSelectProvider={handleSelectProvider}
                         onEditProvider={handleEditProvider}
                         onDeleteProvider={handleDeleteProvider}

@@ -119,7 +119,7 @@ async function waitFor<T>(read: () => Promise<T>, ready: (value: T) => boolean, 
 
 try {
     await db.initDatabase();
-    await installation.initialize({ loadFromConfig: false, enableDevAutoDiscovery: false, appEntries: [
+    await installation.initialize({ loadFromConfig: false, appEntries: [
         { name: ideName, source: `local:${idePackage}`, enabled: true, autoStart: false },
         { name: planningName, source: `local:${planning}`, enabled: true, autoStart: true },
         { name: 'lite_browser', source: `local:${browserPackage}`, enabled: true, autoStart: false },
@@ -234,7 +234,7 @@ try {
         assert.equal((await invoke(current, close, { app_id: ide })).outcomeStatus, 'succeeded');
     });
     await checkInactive('closed');
-    manager.setSourceItemEnabled(topicId, 'apps', ideName, false);
+    await manager.setSourceItemEnabled(topicId, 'apps', ideName, false);
     const disabled = await context(async current => {
         checkControls(current);
         assert.equal(current.tools[workspace], undefined);
@@ -250,7 +250,7 @@ try {
     checkWireControls(disabledRequest);
     assert.ok(!disabledRequest.messages.some(message => message.content.includes(`App ID: ${ide}`)));
     lifecycle.disabled = { projected: disabled, preview: await preview(ideName), request: disabledRequest };
-    manager.setSourceItemEnabled(topicId, 'apps', planningName, false);
+    await manager.setSourceItemEnabled(topicId, 'apps', planningName, false);
     const noTargets = await context(async current => {
         checkControls(current);
         assert.deepEqual(Object.keys(current.tools).sort(), [close, open]);
@@ -261,11 +261,11 @@ try {
     const noTargetsRequest = await wire('all apps filtered', { present: [open, close], absent: [create, workspace] });
     checkWireControls(noTargetsRequest);
     lifecycle.noTargets = { projected: noTargets, request: noTargetsRequest };
-    manager.setSourceEnabled(topicId, 'apps', false);
+    await manager.setSourceEnabled(topicId, 'apps', false);
     assert.deepEqual(await source.getContext(), { messages: [], tools: {} });
     lifecycle.sourceDisabled = await wire('apps source disabled', { present: [], absent: [open, close, create, workspace] });
-    manager.setSourceItemEnabled(topicId, 'apps', planningName, true);
-    manager.setSourceEnabled(topicId, 'apps', true);
+    await manager.setSourceItemEnabled(topicId, 'apps', planningName, true);
+    await manager.setSourceEnabled(topicId, 'apps', true);
     const planningFacts: Record<string, unknown> = cases.planning = {};
     const unchanged = await waitFor(async () => database().catch(error => {
         if (error.code !== 'ENOENT') throw error;
@@ -346,7 +346,7 @@ try {
     planningFacts.final = await context(current => view(current, planningName, 'plan_detail'),
         current => view(current, planningName, 'plan_detail').includes('[Added task](Task:completed_tasks[0])'));
 
-    manager.setSourceItemEnabled(topicId, 'apps', ideName, true);
+    await manager.setSourceItemEnabled(topicId, 'apps', ideName, true);
     await context(async current => {
         assert.equal((await invoke(current, open, { app_id: ide })).outcomeStatus, 'succeeded');
     });

@@ -17,18 +17,16 @@ describe('DesktopManager', () => {
     });
 
     describe('createDesktop', () => {
-        it('should create a Desktop with ChatApp installed', async () => {
+        it('creates a Desktop with the reported number of installed Apps', async () => {
             const { desktopId, thirdPartyAppCount } = await desktopManager.createDesktop();
 
             // Verify Desktop was created
             expect(desktopId).toBeDefined();
             expect(desktopId).toMatch(/^dt_/);
 
-            expect(thirdPartyAppCount).toBeGreaterThanOrEqual(0);
-
-            // Verify Desktop is retrievable
             const desktop = desktopManager.getDesktop(desktopId);
             expect(desktop).not.toBeNull();
+            expect(thirdPartyAppCount).toBe(desktop?.getInstalledApps().length);
         });
 
         it('should set StoreFactory on Kernel (fix for E_NO_STORE_FACTORY)', async () => {
@@ -91,20 +89,6 @@ describe('DesktopManager', () => {
             // deleteDesktop is idempotent - calling on non-existent Desktop is safe
             const result = await desktopManager.deleteDesktop('non-existent' as DesktopID);
             expect(result).toBe(true);
-        });
-    });
-
-    describe('getAllDesktopIds', () => {
-        it('should return all Desktop IDs', async () => {
-            // Create multiple Desktops
-            const d1 = await desktopManager.createDesktop();
-            const d2 = await desktopManager.createDesktop();
-
-            const allIds = desktopManager.getAllDesktopIds();
-
-            expect(allIds).toContain(d1.desktopId);
-            expect(allIds).toContain(d2.desktopId);
-            expect(allIds.length).toBe(2);
         });
     });
 });

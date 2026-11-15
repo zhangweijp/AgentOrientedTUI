@@ -52,11 +52,6 @@ import {
 } from './source-controls.js';
 
 /**
- * Re-export GuiUpdateEvent for backward compatibility
- */
-export type { GuiUpdateEvent };
-
-/**
  * HostManager V2 (Simplified)
  */
 export class HostManagerV2 {
@@ -86,10 +81,8 @@ export class HostManagerV2 {
      * 使用 SessionManagerV3 替代直接创建 AgentDriver
      */
     async initAgentDriver(
-        aotuiDesktop: IDesktop,
         kernel: IKernel,
         desktopManager: import('./desktop-manager.js').DesktopManager,
-        llmConfigOverride?: LLMConfig
     ): Promise<void> {
         this.kernel = kernel;
         this.desktopManager = desktopManager;
@@ -351,11 +344,7 @@ export class HostManagerV2 {
         return this.sessionManager;
     }
 
-    getSourceControlState(topicId: string): {
-        apps: { enabled: boolean; disabledItems: string[] };
-        mcp: { enabled: boolean; disabledItems: string[] };
-        skill: { enabled: boolean; disabledItems: string[] };
-    } {
+    getSourceControlState(topicId: string): Promise<SourceControlsSnapshot> {
         if (!this.sessionManager) {
             throw new Error('SessionManager not initialized. Call initAgentDriver first.');
         }
@@ -368,20 +357,20 @@ export class HostManagerV2 {
         this.sessionManager.syncTopicPromptOverride(topicId);
     }
 
-    setSourceEnabled(topicId: string, source: 'apps' | 'mcp' | 'skill', enabled: boolean): void {
+    setSourceEnabled(topicId: string, source: 'apps' | 'mcp' | 'skill', enabled: boolean): Promise<void> {
         if (!this.sessionManager) {
             throw new Error('SessionManager not initialized. Call initAgentDriver first.');
         }
 
-        this.sessionManager.setSourceEnabled(topicId, source, enabled);
+        return this.sessionManager.setSourceEnabled(topicId, source, enabled);
     }
 
-    setSourceItemEnabled(topicId: string, source: 'apps' | 'mcp' | 'skill', itemName: string, enabled: boolean): void {
+    setSourceItemEnabled(topicId: string, source: 'apps' | 'mcp' | 'skill', itemName: string, enabled: boolean): Promise<void> {
         if (!this.sessionManager) {
             throw new Error('SessionManager not initialized. Call initAgentDriver first.');
         }
 
-        this.sessionManager.setSourceItemEnabled(topicId, source, itemName, enabled);
+        return this.sessionManager.setSourceItemEnabled(topicId, source, itemName, enabled);
     }
 
     async getAppsConfig(): Promise<Record<string, AppConfigEntry>> {
@@ -451,7 +440,7 @@ export class HostManagerV2 {
             includeInstruction: true,
         });
         const skillDrivenSource = new SkillDrivenSource();
-        const mcpDrivenSource = new McpDrivenSource();
+        const mcpDrivenSource = new McpDrivenSource(new Set(sourceControls.mcp.allowedServers));
         applySourceControlsToSources(sourceControls, {
             aotuiSource,
             mcpSource: mcpDrivenSource,
@@ -533,9 +522,8 @@ export class HostManagerV2 {
         let systemPrompt = this.getDefaultSystemPrompt();
 
         const config = await Config.get();
-        const agents = (config as any).agents || { list: [] };
-        const agent = agents.list.find((item: any) => item.id === agentId);
-        const sourceControls = createSourceControlsFromAgent(agent || {}, config, Object.keys(await this.getAppsConfig()));
+        const agent = config.agents?.list.find(item => item.id === agentId);
+        const sourceControls = createSourceControlsFromAgent(agent, Object.keys(await this.getAppsConfig()));
 
         if (agent?.prompt) {
             systemPrompt = agent.prompt;

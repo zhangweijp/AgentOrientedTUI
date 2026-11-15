@@ -18,12 +18,8 @@ export function buildMcpServerItemKey(serverName: string): string {
     return `${MCP_SERVER_ITEM_PREFIX}${serverName}`;
 }
 
-export function isMcpServerItemKey(itemKey: string): boolean {
-    return itemKey.startsWith(MCP_SERVER_ITEM_PREFIX);
-}
-
-export function parseMcpServerItemKey(itemKey: string): string | null {
-    if (!isMcpServerItemKey(itemKey)) {
+export function parseMcpServerItemKey(itemKey: unknown): string | null {
+    if (typeof itemKey !== 'string' || !itemKey.startsWith(MCP_SERVER_ITEM_PREFIX)) {
         return null;
     }
 
@@ -37,7 +33,16 @@ export function buildMcpToolItemKey(serverName: string, toolName: string): strin
     return `${MCP_TOOL_ITEM_PREFIX}${sanitizedServer}-${sanitizedTool}`;
 }
 
-export function buildMcpToolKeyPrefix(serverName: string): string {
-    const sanitizedServer = sanitizeMcpKeySegment(serverName);
-    return `${MCP_TOOL_ITEM_PREFIX}${sanitizedServer}-`;
+export function isMcpToolItemKey(itemKey: unknown): itemKey is string {
+    return typeof itemKey === 'string' && /^mcp-[a-zA-Z0-9_-]+-[a-zA-Z0-9_-]+$/.test(itemKey);
+}
+
+export function isMcpItemKey(itemKey: unknown): itemKey is string {
+    return isMcpToolItemKey(itemKey) || parseMcpServerItemKey(itemKey) !== null;
+}
+
+export const MCP_PERMISSION_RECONFIGURE = 'MCP permissions need to be reconfigured. Select servers and tools again and save.';
+
+export function hasInvalidMcpToolKeys(keys: unknown): boolean {
+    return keys !== undefined && (!Array.isArray(keys) || keys.some(key => !isMcpToolItemKey(key)));
 }

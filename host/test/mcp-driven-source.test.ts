@@ -11,11 +11,14 @@ import { LLMClient } from '@aotui/agent-driver-v2/dist/core/llm-client.js';
 import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 
 // Mock MCP Manager
-vi.mock('../src/mcp/index.js', () => ({
-    MCP: {
-        tools: vi.fn(),
-    }
+vi.mock('../src/mcp/index.js', async importOriginal => ({
+    ...await importOriginal<typeof import('../src/mcp/index.js')>(),
+    MCP: { tools: vi.fn() },
 }));
+
+function advertisedTools(tools: Record<string, Tool>, serverName = 'controlled') {
+    return Object.fromEntries(Object.entries(tools).map(([key, tool]) => [key, { serverName, tool }]));
+}
 
 beforeEach(() => vi.mocked(MCP.tools).mockReset().mockResolvedValue({}));
 afterEach(() => vi.restoreAllMocks());
@@ -38,7 +41,7 @@ describe('McpDrivenSource', () => {
             inputSchema: jsonSchema({ type: 'object', properties: {} }),
             execute: vi.fn().mockResolvedValue('tool_success_result')
         };
-        vi.mocked(MCP.tools).mockResolvedValue({ 'test-tool': mockTool });
+        vi.mocked(MCP.tools).mockResolvedValue(advertisedTools({ 'test-tool': mockTool }));
 
         const tools = (await source.getContext()).tools;
         expect(MCP.tools).toHaveBeenCalled();
@@ -50,7 +53,7 @@ describe('McpDrivenSource', () => {
             inputSchema: jsonSchema({ type: 'object', properties: {} }),
             execute: vi.fn().mockResolvedValue('tool_success_result')
         };
-        vi.mocked(MCP.tools).mockResolvedValue({ 'test-tool': mockTool });
+        vi.mocked(MCP.tools).mockResolvedValue(advertisedTools({ 'test-tool': mockTool }));
         const context = await source.getContext();
 
         const result = await context.executeTool!('test-tool', { arg1: 'value' }, 'call_123');
@@ -71,7 +74,7 @@ describe('McpDrivenSource', () => {
             inputSchema: jsonSchema({ type: 'object', properties: {} }),
             execute: vi.fn().mockRejectedValue(new Error('Tool failed'))
         };
-        vi.mocked(MCP.tools).mockResolvedValue({ 'error-tool': mockTool });
+        vi.mocked(MCP.tools).mockResolvedValue(advertisedTools({ 'error-tool': mockTool }));
         const context = await source.getContext();
 
         const result = await context.executeTool!('error-tool', {}, 'call_456');
@@ -102,7 +105,7 @@ describe('McpDrivenSource through the current Driver and model SDK', () => {
             type: 'dynamic' as const, description: 'Controlled MCP counter', execute,
             inputSchema: jsonSchema({ type: 'object', properties: { value: { type: 'number' } }, required: ['value'], additionalProperties: false }),
         });
-        vi.mocked(MCP.tools).mockResolvedValue({ counter: original });
+        vi.mocked(MCP.tools).mockResolvedValue(advertisedTools({ counter: original }));
         const source = new McpDrivenSource();
         const originalCapture = source.getContext.bind(source);
         const route = vi.fn<NonNullable<DrivenSourceContext['executeTool']>>();
@@ -181,7 +184,7 @@ describe('MCP capture failure and live controls', () => {
         const original = vi.fn(async function (this: { label: string }) { calls.push(this.label); return this.label; });
         const a = { label: 'A', description: 'A descriptor', inputSchema: schema(), execute: original };
         const b = { label: 'B', description: 'B descriptor', inputSchema: schema(), execute: vi.fn(async function (this: { label: string }) { calls.push(this.label); return this.label; }) };
-        vi.mocked(MCP.tools).mockResolvedValueOnce({ action: a }).mockResolvedValueOnce({ action: b });
+        vi.mocked(MCP.tools).mockResolvedValueOnce(advertisedTools({ action: a })).mockResolvedValueOnce(advertisedTools({ action: b }));
         const source = new McpDrivenSource();
         let inspector: DrivenSourceContext | undefined;
         const model = vi.spyOn(LLMClient.prototype, 'call').mockImplementation(async (_messages, tools) => {
@@ -208,7 +211,7 @@ describe('MCP capture failure and live controls', () => {
     it('returns a full empty context on list failure and never reuses prior executors', async () => {
         const source = new McpDrivenSource(), failure = new Error('list failed');
         const execute = vi.fn(async () => 'original');
-        vi.mocked(MCP.tools).mockResolvedValueOnce({ action: { inputSchema: schema(), execute } })
+        vi.mocked(MCP.tools).mockResolvedValueOnce(advertisedTools({ action: { inputSchema: schema(), execute } }))
             .mockRejectedValueOnce(failure).mockResolvedValueOnce({});
         const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
         try {
@@ -228,7 +231,7 @@ describe('MCP capture failure and live controls', () => {
         if (control === 'source') source.setEnabled(false);
         if (control === 'tool') source.setToolEnabled('mcp-controlled-action', false);
         if (control === 'server') source.setServerEnabled('controlled', false);
-        resolve({ 'mcp-controlled-action': { inputSchema: schema(), execute } });
+        resolve(advertisedTools({ 'mcp-controlled-action': { inputSchema: schema(), execute } }));
         expect((await pending).tools).toEqual({});
         expect(execute).not.toHaveBeenCalled();
     });
@@ -247,10 +250,10 @@ describe('MCP capture failure and live controls', () => {
         };
         const first = vi.fn(async () => { disable(); return 'first finished'; });
         const second = vi.fn(async () => 'must not enter');
-        vi.mocked(MCP.tools).mockResolvedValue({
+        vi.mocked(MCP.tools).mockResolvedValue(advertisedTools({
             'mcp-controlled-first': { inputSchema: schema(), execute: first },
             'mcp-controlled-second': { inputSchema: schema(), execute: second },
-        });
+        }));
         const model = vi.spyOn(LLMClient.prototype, 'call').mockImplementation(async () => {
             started.resolve();
             if (phase === 'model') await proceed.promise;
@@ -286,7 +289,7 @@ describe('MCP identity scope proof', () => {
       if (mode === 'throw') throw new Error('effect may have happened');
       return mode === 'text' ? 'original text' : { value: 7 };
     });
-    vi.mocked(MCP.tools).mockResolvedValue({ action: { description: 'Original', inputSchema: schema(), execute } });
+    vi.mocked(MCP.tools).mockResolvedValue(advertisedTools({ action: { description: 'Original', inputSchema: schema(), execute } }));
     const source = new McpDrivenSource(), update = vi.fn();
     source.onUpdate(update);
     const context = await source.getContext();
@@ -300,7 +303,7 @@ describe('MCP identity scope proof', () => {
     const calls: string[] = [];
     const a = { label: 'A', inputSchema: schema(), execute: vi.fn(async function (this: { label: string }) { calls.push(this.label); return this.label; }) };
     const b = { label: 'B', inputSchema: schema(), execute: vi.fn(async function (this: { label: string }) { calls.push(this.label); return this.label; }) };
-    vi.mocked(MCP.tools).mockResolvedValueOnce({ action: a }).mockResolvedValueOnce({ action: b });
+    vi.mocked(MCP.tools).mockResolvedValueOnce(advertisedTools({ action: a })).mockResolvedValueOnce(advertisedTools({ action: b }));
     const source = new McpDrivenSource();
     const first = await source.getContext(), second = await source.getContext();
     const firstResult = await first.executeTool?.('action', {}, 'first');
@@ -313,7 +316,7 @@ describe('MCP identity scope proof', () => {
     const calls: string[] = [];
     const original = vi.fn(async function (this: { label: string }) { calls.push(this.label); return this.label; });
     const tool = { label: 'original', inputSchema: schema(), execute: original };
-    vi.mocked(MCP.tools).mockResolvedValue({ action: tool });
+    vi.mocked(MCP.tools).mockResolvedValue(advertisedTools({ action: tool }));
     const source = new McpDrivenSource(), context = await source.getContext();
     tool.execute = vi.fn(async () => 'replacement');
     const result = await context.executeTool?.('action', {}, 'pinned');
@@ -324,7 +327,7 @@ describe('MCP identity scope proof', () => {
   it.each(['source', 'tool', 'server'] as const)('rechecks %s controls after capture', async control => {
     const execute = vi.fn(async () => 'must not enter');
     const key = 'mcp-controlled-action';
-    vi.mocked(MCP.tools).mockResolvedValue({ [key]: { inputSchema: schema(), execute } });
+    vi.mocked(MCP.tools).mockResolvedValue(advertisedTools({ [key]: { inputSchema: schema(), execute } }));
     const source = new McpDrivenSource(), context = await source.getContext(), update = vi.fn();
     source.onUpdate(update);
     if (control === 'source') source.setEnabled(false);
@@ -369,7 +372,7 @@ describe('MCP completion subscriber isolation candidate', () => {
         const tool = Object.freeze({ description: 'Controlled MCP action', type: 'dynamic' as const,
             inputSchema: jsonSchema({ type: 'object', properties: { value: { type: 'number' } }, required: ['value'], additionalProperties: false }),
             execute: client });
-        vi.mocked(MCP.tools).mockResolvedValue({ 'mcp-controlled-action': tool });
+        vi.mocked(MCP.tools).mockResolvedValue(advertisedTools({ 'mcp-controlled-action': tool }));
         const source = new McpDrivenSource();
         const before = () => { counts.before++; events.push({ kind: 'subscriber', name: 'before', call: counts.before }); };
         const throwing = () => {
@@ -469,7 +472,7 @@ describe('MCP completion subscriber isolation candidate', () => {
 
     it.each(['source', 'server', 'tool'] as const)('keeps control notification failure and rejects a disabled %s without a completion notification', async control => {
         const client = vi.fn(async () => 'must not enter'), throwing = vi.fn(() => { throw new Error('control subscriber unavailable'); }), healthy = vi.fn();
-        vi.mocked(MCP.tools).mockResolvedValue({ 'mcp-controlled-action': { inputSchema: schema(), execute: client } });
+        vi.mocked(MCP.tools).mockResolvedValue(advertisedTools({ 'mcp-controlled-action': { inputSchema: schema(), execute: client } }));
         const source = new McpDrivenSource(), context = await source.getContext();
         source.onUpdate(throwing); source.onUpdate(healthy);
         const disable = () => {
@@ -507,10 +510,10 @@ it('still attempts completion once when the installed MCP transport rejects null
             return send(message, options);
         });
         expect((await client.listTools()).tools[0].name).toBe('act');
-        vi.mocked(MCP.tools).mockResolvedValue({ 'mcp-local-act': {
+        vi.mocked(MCP.tools).mockResolvedValue(advertisedTools({ 'mcp-local-act': {
             inputSchema: schema(),
             execute: () => client.callTool({ name: 'act', arguments: {} }, CallToolResultSchema),
-        } });
+        } }, 'local'));
         const source = new McpDrivenSource();
         source.onUpdate(healthy);
         const context = await source.getContext();

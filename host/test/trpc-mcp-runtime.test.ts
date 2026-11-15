@@ -1,322 +1,124 @@
-/**
- * 测试：tRPC mcpRouter 新增端点
- * - getRuntime：正确合并 status + 工具列表
- * - setServerEnabled：更新 config 并调用 connect/disconnect
- * - setToolEnabled：更新 config 中的 disabledTools 数组
- */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { fileURLToPath } from 'node:url';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { expect, it, vi } from 'vitest';
+import { AgentDriverV2 } from '@aotui/agent-driver-v2';
+import { LLMClient } from '@aotui/agent-driver-v2/dist/core/llm-client.js';
+import { Config } from '../src/config/config.js';
+import type { Mcp } from '../src/config/mcp-schema.js';
+import { MCP } from '../src/mcp/index.js';
+import { McpDrivenSource } from '../src/mcp/source.js';
+import { appRouter } from '../src/trpc/router.js';
+import { createSourceControlsFromAgent, applySourceControlsToSources } from '../src/core/source-controls.js';
+import { buildMcpServerItemKey, buildMcpToolItemKey } from '../src/shared/source-control-keys.js';
 
-// ── mock MCP 模块 ────────────────────────────────────────────────────────────
+const fixture = fileURLToPath(new URL('./fixtures/mcp-same-name.mjs', import.meta.url));
+const west = buildMcpToolItemKey('west', 'search');
+const archive = buildMcpToolItemKey('west-archive', 'search');
+const replacement = buildMcpToolItemKey('replacement', 'search');
+const localServer = (label: string): Mcp => ({ type: 'local', command: [process.execPath, fixture, label], enabled: true });
 
-const mockStatus = vi.fn();
-const mockClients = vi.fn();
-const mockConnect = vi.fn();
-const mockDisconnect = vi.fn();
-
-vi.mock('../src/mcp/index.js', () => ({
-    MCP: {
-        status: mockStatus,
-        clients: mockClients,
-        connect: mockConnect,
-        disconnect: mockDisconnect,
-    },
-}));
-
-// ── mock Config ──────────────────────────────────────────────────────────────
-
-const mockGetGlobal = vi.fn();
-const mockUpdateGlobal = vi.fn();
-
-vi.mock('../src/config/config.js', () => ({
-    Config: {
-        getGlobal: mockGetGlobal,
-        updateGlobal: mockUpdateGlobal,
-    },
-}));
-
-// ── 辅助函数：构建模拟 MCP client ────────────────────────────────────────────
-
-function makeMockClient(tools: Array<{ name: string; description: string }>) {
-    return {
-        listTools: vi.fn().mockResolvedValue({ tools }),
-    };
+async function driverToolNames(source: McpDrivenSource): Promise<string[]> {
+    const seen: string[][] = [];
+    const model = vi.spyOn(LLMClient.prototype, 'call').mockImplementation(async (_messages, tools) => {
+        seen.push(Object.keys(tools).sort());
+        return { text: '', toolCalls: [], finishReason: 'stop' };
+    });
+    const driver = new AgentDriverV2({ llm: { model: 'openai:local-probe' }, sources: [source] });
+    try {
+        await driver.trigger();
+        await driver['runInFlight'];
+        expect(seen).toHaveLength(1);
+        return seen[0];
+    } finally {
+        driver.stop();
+        driver.dispose();
+        model.mockRestore();
+    }
 }
 
-// ── 测试套件 ─────────────────────────────────────────────────────────────────
+it('validates configuration and exposes exact Agent, Topic and global permissions to the Driver', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'host-mcp-config-'));
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    const configDir = join(home, '.agentina');
+    const file = join(configDir, 'mcp.json');
+    const caller = appRouter.createCaller({} as Parameters<typeof appRouter.createCaller>[0]);
+    try {
+        await mkdir(configDir);
+        const retired = { enabled: true, disabled: true, command: process.execPath, args: [fixture, 'retired'] };
+        const original = JSON.stringify({
+            mcp: { west: localServer('west'), 'west-archive': localServer('archive'), retired },
+            mcpServers: { 'old-shape': retired },
+        });
+        await writeFile(file, original);
 
-describe('tRPC mcpRouter - 运行时端点', () => {
-    const sampleConfig = {
-        mcp: {
-            context7: { type: 'local', command: ['npx', '-y', '@upstash/context7-mcp'], enabled: true },
-            Git: { type: 'local', command: ['uvx', 'mcp-server-git'], enabled: false, disabledTools: ['git_log'] },
-        },
-    };
+        const config = await caller.mcp.getConfig();
+        expect(Object.keys(config.mcp)).toEqual(['west', 'west-archive']);
+        expect(config.issues).toEqual([expect.stringContaining('retired'), expect.stringContaining('mcpServers')]);
+        expect(await readFile(file, 'utf8')).toBe(original);
+        expect(await caller.mcp.getRuntime()).toMatchObject({
+            west: { status: 'connected', tools: [{ name: 'search', enabled: true }] },
+            'west-archive': { status: 'connected', tools: [{ name: 'search', enabled: true }] },
+            retired: { status: 'failed', tools: [] },
+        });
+        await expect(caller.mcp.setServerEnabled({ name: 'retired', enabled: true })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        await expect(caller.mcp.updateConfig({ mcp: { retired } })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(await readFile(file, 'utf8')).toBe(original);
 
-    beforeEach(() => {
-        vi.clearAllMocks();
-        mockGetGlobal.mockResolvedValue(sampleConfig);
-        mockUpdateGlobal.mockResolvedValue(undefined);
-    });
+        const agent = {
+            id: 'agent', name: 'Agent', prompt: '', modelId: '', enabledMCPs: ['west-archive'],
+            enabledApps: [], enabledSkills: {}, disabledMcpTools: [], skin: {},
+        };
+        const agentControls = createSourceControlsFromAgent(agent, []);
+        const agentSource = new McpDrivenSource(new Set(agentControls.mcp.allowedServers));
+        applySourceControlsToSources(agentControls, { mcpSource: agentSource });
+        expect(await driverToolNames(agentSource)).toEqual([archive]);
+        const scoped = await agentSource.getContext();
+        const receipt = await scoped.executeTool?.(archive, {}, 'archive');
+        expect(receipt?.result).toBe('{"content":[{"type":"text","text":"archive"}]}');
+        expect(await scoped.executeTool?.(west, {}, 'denied')).toBeUndefined();
 
-    // ─── getRuntime ─────────────────────────────────────────────────────────
+        const topicSource = new McpDrivenSource();
+        applySourceControlsToSources({ ...agentControls, mcp: { enabled: true, disabledItems: [archive] } }, { mcpSource: topicSource });
+        expect(await driverToolNames(topicSource)).toEqual([west]);
+        topicSource.setServerEnabled('west', false);
+        expect(await driverToolNames(topicSource)).toEqual([]);
 
-    describe('mcp.getRuntime', () => {
-        it('should return status and tools for connected servers', async () => {
-            const context7Client = makeMockClient([
-                { name: 'search', description: 'Search docs' },
-                { name: 'resolve', description: 'Resolve IDs' },
-            ]);
+        await expect(caller.agents.saveAgents({ list: [{ ...agent, disabledMcpTools: ['west::search'] }], activeAgentId: agent.id }))
+            .rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        const legacy = new McpDrivenSource();
+        applySourceControlsToSources(createSourceControlsFromAgent({ ...agent, disabledMcpTools: ['search'] }, []), { mcpSource: legacy });
+        expect(await driverToolNames(legacy)).toEqual([]);
 
-            mockStatus.mockResolvedValue({
-                context7: { status: 'connected' },
-                Git: { status: 'disabled' },
-            });
-            mockClients.mockResolvedValue({
-                context7: context7Client,
-            });
-
-            // 直接测试处理逻辑（绕过 tRPC 调用栈）
-            const { MCP } = await import('../src/mcp/index.js');
-            const { Config } = await import('../src/config/config.js');
-
-            const config = await Config.getGlobal();
-            const mcpConfig: Record<string, any> = config.mcp || {};
-            const statusMap = await MCP.status();
-            const clientsMap = await MCP.clients();
-
-            const result: Record<string, any> = {};
-
-            for (const [serverName, serverStatus] of Object.entries(statusMap)) {
-                const serverConfig = mcpConfig[serverName] || {};
-                const disabledTools: string[] = serverConfig.disabledTools || [];
-                let tools: any[] = [];
-
-                if ((serverStatus as any).status === 'connected') {
-                    const client = (clientsMap as any)[serverName];
-                    if (client) {
-                        const toolsResult = await client.listTools();
-                        tools = toolsResult.tools.map((t: any) => ({
-                            name: t.name,
-                            description: t.description || '',
-                            enabled: !disabledTools.includes(t.name),
-                        }));
-                    }
-                }
-
-                result[serverName] = {
-                    status: (serverStatus as any).status,
-                    error: 'error' in serverStatus ? (serverStatus as any).error : undefined,
-                    tools,
-                };
-            }
-
-            // context7 应有工具列表
-            expect(result.context7.status).toBe('connected');
-            expect(result.context7.tools).toHaveLength(2);
-            expect(result.context7.tools[0]).toEqual({ name: 'search', description: 'Search docs', enabled: true });
-
-            // Git 为 disabled，无工具
-            expect(result.Git.status).toBe('disabled');
-            expect(result.Git.tools).toHaveLength(0);
+        const originalContext = await new McpDrivenSource().getContext();
+        expect(Object.keys(originalContext.tools).sort()).toEqual([archive, west]);
+        await Promise.all([
+            caller.mcp.setToolEnabled({ serverName: 'west', toolName: 'search', enabled: false }),
+            caller.mcp.setToolEnabled({ serverName: 'west', toolName: 'retired-tool', enabled: false }),
+        ]);
+        expect(new Set((await Config.getMcp()).mcp.west.disabledTools)).toEqual(new Set(['search', 'retired-tool']));
+        expect(JSON.parse(await readFile(file, 'utf8')).mcp.retired).toEqual(retired);
+        expect(await driverToolNames(new McpDrivenSource())).toEqual([archive]);
+        expect(await originalContext.executeTool?.(west, {}, 'revoked')).toMatchObject({
+            outcomeStatus: 'rejected', error: { code: 'E_SOURCE_UNAVAILABLE' },
         });
 
-        it('should respect disabledTools from config', async () => {
-            const gitClient = makeMockClient([
-                { name: 'git_log', description: 'Show git log' },
-                { name: 'git_diff', description: 'Show git diff' },
-            ]);
+        await caller.mcp.setServerEnabled({ name: 'west-archive', enabled: false });
+        expect(await driverToolNames(new McpDrivenSource())).toEqual([]);
+        expect(await scoped.executeTool?.(archive, {}, 'stale')).toMatchObject({ outcomeStatus: 'rejected' });
+        expect(buildMcpServerItemKey('west')).toBe('server:west');
 
-            mockStatus.mockResolvedValue({
-                Git: { status: 'connected' },
-            });
-            mockClients.mockResolvedValue({ Git: gitClient });
-
-            const { MCP } = await import('../src/mcp/index.js');
-            const { Config } = await import('../src/config/config.js');
-
-            const config = await Config.getGlobal();
-            const mcpConfig: Record<string, any> = config.mcp || {};
-            const statusMap = await MCP.status();
-            const clientsMap = await MCP.clients();
-
-            const gitStatus: any = (statusMap as any).Git;
-            const gitConfig = mcpConfig.Git || {};
-            const disabledTools: string[] = gitConfig.disabledTools || [];
-            const gitClientMock = (clientsMap as any).Git;
-            const toolsResult = await gitClientMock.listTools();
-            const tools = toolsResult.tools.map((t: any) => ({
-                name: t.name,
-                description: t.description,
-                enabled: !disabledTools.includes(t.name),
-            }));
-
-            // git_log 在 disabledTools 中，应为 disabled
-            expect(tools.find((t: any) => t.name === 'git_log')?.enabled).toBe(false);
-            // git_diff 不在 disabledTools 中，应为 enabled
-            expect(tools.find((t: any) => t.name === 'git_diff')?.enabled).toBe(true);
-        });
-
-        it('should handle client.listTools() failure gracefully', async () => {
-            const brokenClient = {
-                listTools: vi.fn().mockRejectedValue(new Error('Connection broken')),
-            };
-
-            mockStatus.mockResolvedValue({
-                context7: { status: 'connected' },
-            });
-            mockClients.mockResolvedValue({ context7: brokenClient });
-
-            const { MCP } = await import('../src/mcp/index.js');
-            const { Config } = await import('../src/config/config.js');
-
-            const config = await Config.getGlobal();
-            const mcpConfig: Record<string, any> = config.mcp || {};
-            const statusMap = await MCP.status();
-            const clientsMap = await MCP.clients();
-
-            const result: Record<string, any> = {};
-
-            for (const [serverName, serverStatus] of Object.entries(statusMap)) {
-                const serverConfig = mcpConfig[serverName] || {};
-                const disabledTools: string[] = serverConfig.disabledTools || [];
-                let tools: any[] = [];
-
-                if ((serverStatus as any).status === 'connected') {
-                    const client = (clientsMap as any)[serverName];
-                    if (client) {
-                        try {
-                            const toolsResult = await client.listTools();
-                            tools = toolsResult.tools.map((t: any) => ({
-                                name: t.name,
-                                description: t.description || '',
-                                enabled: !disabledTools.includes(t.name),
-                            }));
-                        } catch (_e) {
-                            // swallow error, return empty tools
-                        }
-                    }
-                }
-
-                result[serverName] = { status: (serverStatus as any).status, tools };
-            }
-
-            // 出错时工具列表应为空，不能抛出异常
-            expect(result.context7.tools).toHaveLength(0);
-        });
-    });
-
-    // ─── setServerEnabled ───────────────────────────────────────────────────
-
-    describe('mcp.setServerEnabled', () => {
-        it('should call MCP.connect when enabling a server', async () => {
-            mockConnect.mockResolvedValue(undefined);
-
-            const { MCP } = await import('../src/mcp/index.js');
-            const { Config } = await import('../src/config/config.js');
-
-            const config = await Config.getGlobal();
-            const mcpConfig: Record<string, any> = { ...(config.mcp || {}) };
-
-            // 模拟 setServerEnabled 逻辑
-            mcpConfig['Git'] = { ...mcpConfig['Git'], enabled: true };
-            await Config.updateGlobal({ mcp: mcpConfig });
-            await MCP.connect('Git');
-
-            expect(mockUpdateGlobal).toHaveBeenCalledWith({
-                mcp: expect.objectContaining({
-                    Git: expect.objectContaining({ enabled: true }),
-                }),
-            });
-            expect(mockConnect).toHaveBeenCalledWith('Git');
-            expect(mockDisconnect).not.toHaveBeenCalled();
-        });
-
-        it('should call MCP.disconnect when disabling a server', async () => {
-            mockDisconnect.mockResolvedValue(undefined);
-
-            const { MCP } = await import('../src/mcp/index.js');
-            const { Config } = await import('../src/config/config.js');
-
-            const config = await Config.getGlobal();
-            const mcpConfig: Record<string, any> = { ...(config.mcp || {}) };
-
-            // 模拟 setServerEnabled 逻辑（enabled = false）
-            mcpConfig['context7'] = { ...mcpConfig['context7'], enabled: false };
-            await Config.updateGlobal({ mcp: mcpConfig });
-            await MCP.disconnect('context7');
-
-            expect(mockUpdateGlobal).toHaveBeenCalledWith({
-                mcp: expect.objectContaining({
-                    context7: expect.objectContaining({ enabled: false }),
-                }),
-            });
-            expect(mockDisconnect).toHaveBeenCalledWith('context7');
-            expect(mockConnect).not.toHaveBeenCalled();
-        });
-    });
-
-    // ─── setToolEnabled ─────────────────────────────────────────────────────
-
-    describe('mcp.setToolEnabled', () => {
-        it('should add tool to disabledTools when disabling', async () => {
-            const { Config } = await import('../src/config/config.js');
-
-            const config = await Config.getGlobal();
-            const mcpConfig: Record<string, any> = { ...(config.mcp || {}) };
-            const serverConfig = { ...mcpConfig['context7'] };
-            const disabledTools: string[] = [...(serverConfig.disabledTools || [])];
-
-            // 禁用 'search' 工具
-            if (!disabledTools.includes('search')) disabledTools.push('search');
-            serverConfig.disabledTools = disabledTools;
-            mcpConfig['context7'] = serverConfig;
-            await Config.updateGlobal({ mcp: mcpConfig });
-
-            expect(mockUpdateGlobal).toHaveBeenCalledWith({
-                mcp: expect.objectContaining({
-                    context7: expect.objectContaining({
-                        disabledTools: expect.arrayContaining(['search']),
-                    }),
-                }),
-            });
-        });
-
-        it('should remove tool from disabledTools when enabling', async () => {
-            const { Config } = await import('../src/config/config.js');
-
-            const config = await Config.getGlobal();
-            const mcpConfig: Record<string, any> = { ...(config.mcp || {}) };
-            const serverConfig = { ...mcpConfig['Git'] };
-            const disabledTools: string[] = [...(serverConfig.disabledTools || [])];
-
-            // 'git_log' 已在 disabledTools，启用时应移除
-            const idx = disabledTools.indexOf('git_log');
-            if (idx !== -1) disabledTools.splice(idx, 1);
-            serverConfig.disabledTools = disabledTools;
-            mcpConfig['Git'] = serverConfig;
-            await Config.updateGlobal({ mcp: mcpConfig });
-
-            const callArg = mockUpdateGlobal.mock.calls[0][0];
-            expect(callArg.mcp.Git.disabledTools).not.toContain('git_log');
-        });
-
-        it('should not duplicate tools in disabledTools', async () => {
-            const { Config } = await import('../src/config/config.js');
-
-            const config = await Config.getGlobal();
-            const mcpConfig: Record<string, any> = { ...(config.mcp || {}) };
-            const serverConfig = { ...mcpConfig['Git'] }; // disabledTools: ['git_log']
-            const disabledTools: string[] = [...(serverConfig.disabledTools || [])];
-
-            // 再次禁用 'git_log'（已在列表中）
-            if (!disabledTools.includes('git_log')) disabledTools.push('git_log');
-            serverConfig.disabledTools = disabledTools;
-            mcpConfig['Git'] = serverConfig;
-            await Config.updateGlobal({ mcp: mcpConfig });
-
-            const callArg = mockUpdateGlobal.mock.calls[0][0];
-            const gitLog = callArg.mcp.Git.disabledTools.filter((t: string) => t === 'git_log');
-            expect(gitLog).toHaveLength(1); // 不重复
-        });
-    });
-});
+        await caller.mcp.updateConfig({ mcp: { replacement: localServer('replacement') } });
+        expect((await caller.mcp.getConfig()).issues).toEqual([]);
+        const current = await new McpDrivenSource().getContext();
+        expect((await current.executeTool?.(replacement, {}, 'new'))?.result).toContain('replacement');
+        expect(await originalContext.executeTool?.(west, {}, 'old')).toMatchObject({ outcomeStatus: 'rejected' });
+        expect(await driverToolNames(agentSource)).toEqual([]);
+    } finally {
+        await Promise.all(['west', 'west-archive', 'replacement'].map(name => MCP.disconnect(name)));
+        vi.unstubAllEnvs();
+        await rm(home, { recursive: true, force: true });
+    }
+}, 15_000);

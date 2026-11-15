@@ -1,3 +1,4 @@
+import { McpConfig, type Mcp } from '../../../../config/mcp-schema.js';
 /**
  * McpVisualEditor - MCP Server 管理界面（完全重写）
  *
@@ -48,49 +49,34 @@ interface McpVisualEditorProps {
     runtimeApi: McpRuntimeApi;
 }
 
-function toObject(value: unknown): Record<string, any> {
-    return value && typeof value === 'object' ? (value as Record<string, any>) : {};
-}
-
-function normalizeImportedServerEntry(entry: Record<string, any>): Record<string, any> {
-    const normalized: Record<string, any> = { ...entry };
-
-    if (normalized.enabled === undefined && typeof normalized.disabled === 'boolean') {
-        normalized.enabled = !normalized.disabled;
+function importServerConfig(text: string): Record<string, Mcp> {
+    const root = JSON.parse(text);
+    const servers = root?.mcpServers ?? root?.mcp ?? root;
+    if (!servers || typeof servers !== 'object' || Array.isArray(servers)) {
+        throw new Error('Import a JSON object containing MCP server definitions.');
     }
 
-    if (typeof normalized.command === 'string') {
-        const args = Array.isArray(normalized.args)
-            ? normalized.args.filter((arg: unknown): arg is string => typeof arg === 'string')
-            : [];
-        normalized.command = [normalized.command, ...args];
-    }
-
-    if (!normalized.type) {
-        if (typeof normalized.url === 'string') {
-            normalized.type = 'remote';
-        } else if (Array.isArray(normalized.command)) {
-            normalized.type = 'local';
+    const entries = Object.entries(servers).map(([name, input]) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+            throw new Error(`Invalid MCP server "${name}".`);
         }
-    }
-
-    if (!normalized.environment && normalized.env && typeof normalized.env === 'object') {
-        normalized.environment = normalized.env;
-    }
-
-    return normalized;
-}
-
-function extractServersFromImportJson(input: string): Record<string, any> {
-    const parsed = JSON.parse(input);
-    const obj = toObject(parsed);
-    const container = toObject(obj.mcpServers ?? obj.mcp ?? obj);
-
-    const entries = Object.entries(container)
-        .filter(([, value]) => value && typeof value === 'object')
-        .map(([name, value]) => [name, normalizeImportedServerEntry(value as Record<string, any>)]);
-
-    return Object.fromEntries(entries);
+        const { command, args, env, environment, disabled, enabled, type, ...rest } = input as Record<string, unknown>;
+        if (disabled !== undefined && typeof disabled !== 'boolean') {
+            throw new Error(`Invalid disabled flag for MCP server "${name}".`);
+        }
+        if (args !== undefined && (!Array.isArray(args) || args.some(arg => typeof arg !== 'string'))) {
+            throw new Error(`Invalid command arguments for MCP server "${name}".`);
+        }
+        const canonicalCommand = typeof command === 'string' ? [command, ...((args as string[] | undefined) ?? [])] : command;
+        const canonicalType = type ?? (typeof rest.url === 'string' ? 'remote' : 'local');
+        return [name, {
+            ...rest, type: canonicalType,
+            ...(command === undefined ? {} : { command: canonicalCommand }),
+            ...(environment === undefined && env === undefined ? {} : { environment: environment ?? env }),
+            ...(disabled === true || enabled !== undefined || disabled === false ? { enabled: disabled === true ? false : (enabled ?? true) } : {}),
+        }];
+    });
+    return McpConfig.parse(Object.fromEntries(entries));
 }
 
 // ── 子组件：状态徽章 ──────────────────────────────────────────────────────────
@@ -233,7 +219,7 @@ export const McpVisualEditor: React.FC<McpVisualEditorProps> = ({
         setImportError(null);
         setIsImporting(true);
         try {
-            const imported = extractServersFromImportJson(importText);
+            const imported = importServerConfig(importText);
             const importedNames = Object.keys(imported);
             if (importedNames.length === 0) {
                 setImportError('No valid MCP servers found. Expecting { "mcpServers": { "name": { ... } } }.');
@@ -245,9 +231,8 @@ export const McpVisualEditor: React.FC<McpVisualEditorProps> = ({
                 ...imported,
             };
 
-            commitChange(nextConfig);
-            setSelectedKey(importedNames[0]);
             await onSave(nextConfig);
+            setSelectedKey(importedNames[0]);
             setShowImportDialog(false);
             await fetchRuntime();
         } catch (err) {
@@ -282,16 +267,7 @@ export const McpVisualEditor: React.FC<McpVisualEditorProps> = ({
                 },
             };
             commitChange(nextConfig);
-            // 乐观更新 runtime
-            setRuntime(prev => ({
-                ...prev,
-                [serverName]: {
-                    ...(prev[serverName] || { tools: [] }),
-                    status: enabled ? 'connected' : 'disabled',
-                },
-            }));
-            // 同步刷新（有延迟，连接需要时间）
-            setTimeout(() => fetchRuntime(), 1500);
+            await fetchRuntime();
         } catch (err) {
             console.error(`[McpVisualEditor] Failed to toggle server ${serverName}:`, err);
         } finally {
@@ -399,7 +375,7 @@ export const McpVisualEditor: React.FC<McpVisualEditorProps> = ({
                         Refresh
                     </button>
                     <button
-                        onClick={() => onSave(config)}
+                        onClick={() => { void Promise.resolve(onSave(config)).catch(() => undefined); }}
                         disabled={isSaving}
                         className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] rounded-full bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent)]/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors active:scale-95"
                     >
@@ -637,13 +613,14 @@ export const McpVisualEditor: React.FC<McpVisualEditorProps> = ({
                                 Paste JSON like {'{ "mcpServers": { "exa": { ... } } }'}. Imported servers are saved immediately.
                             </p>
                             <textarea
+                                aria-label="MCP server JSON"
                                 value={importText}
                                 onChange={(e) => setImportText(e.target.value)}
                                 spellCheck={false}
                                 className="flex-1 min-h-[240px] w-full font-mono text-[12px] p-3 rounded-xl resize-none outline-none mat-content border border-[var(--mat-border)] focus:border-[var(--color-accent)]"
                             />
                             {importError && (
-                                <div className="text-[11px] px-3 py-2 rounded-lg bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/20 text-[var(--color-danger)] break-words">
+                                <div role="alert" className="text-[11px] px-3 py-2 rounded-lg bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/20 text-[var(--color-danger)] break-words">
                                     {importError}
                                 </div>
                             )}

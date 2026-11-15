@@ -100,9 +100,6 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
-      cors:
-        specifier: ^2.8.5
-        version: 2.8.6
       dotenv:
         specifier: ^17.2.3
         version: 17.3.1
@@ -164,9 +161,6 @@ importers:
       '@types/adm-zip':
         specifier: ^0.5.7
         version: 0.5.7
-      '@types/cors':
-        specifier: ^2.8.17
-        version: 2.8.19
       '@types/express':
         specifier: ^4.17.21
         version: 4.17.25
@@ -185,9 +179,6 @@ importers:
       '@types/react-dom':
         specifier: ^19.0.0
         version: 19.2.3(@types/react@19.2.14)
-      '@types/ws':
-        specifier: ^8.18.1
-        version: 8.18.1
       '@vitejs/plugin-react':
         specifier: ^5.1.2
         version: 5.1.4(vite@6.4.6(@types/node@22.19.11)(jiti@2.6.1)(lightningcss@1.31.1)(tsx@4.21.0))
@@ -224,9 +215,6 @@ importers:
       wait-on:
         specifier: ^9.5.1
         version: 9.5.1
-      ws:
-        specifier: ^8.22.2
-        version: 8.22.2
 
 packages:
 
@@ -2494,9 +2482,6 @@ packages:
 
   '@types/connect@3.4.38':
     resolution: {integrity: sha512-K6uROf1LD88uDQqJCktA4yzL1YYAK6NgfsI0v/mTgyPKWsX1CnJ0XPSDhViejru1GcRkLWb8RlzFYJRqGUbaug==}
-
-  '@types/cors@2.8.19':
-    resolution: {integrity: sha512-mFNylyeyqN93lfe/9CSxOGREz8cpzAhH+E93xJ4xWQf62V8sQ/24reV2nyzUWM6H6Xji+GGHpkbLe7pVoUEskg==}
 
   '@types/debug@4.1.12':
     resolution: {integrity: sha512-vIChWdVG3LG1SMxEvI/AK+FWJthlrqlTu7fbrlywTkkaONwk/UAGaULXRlf8vkzFBLVm0zkMdCquhL5aOjhXPQ==}
@@ -7964,10 +7949,6 @@ snapshots:
       assertion-error: 2.0.1
 
   '@types/connect@3.4.38':
-    dependencies:
-      '@types/node': 22.19.11
-
-  '@types/cors@2.8.19':
     dependencies:
       '@types/node': 22.19.11
 

@@ -1,9 +1,8 @@
 
-import { initTRPC } from '@trpc/server';
+import { initTRPC, TRPCError } from '@trpc/server';
 import { observable } from '@trpc/server/observable';
 import superjson from 'superjson';
 import { z } from 'zod';
-import { dialog } from 'electron';
 import * as db from '../db/index.js';
 import { projectService } from '../core/project-service.js';
 // ✅ V2: Use HostManagerV2
@@ -12,12 +11,17 @@ import type { LLMConfigService } from '../core/llm-config-service.js';
 import type { ModelRegistry } from '../services/model-registry.js';
 import { MessageServiceV2 } from '../core/message-service-v2.js';
 import { Config } from '../config/config.js';
+import { ImConfig } from '../config/im-schema.js';
+import { McpConfig, Mcp } from '../config/mcp-schema.js';
 import { SkillCatalogService } from '../skills/skill-catalog-service.js';
 import { getGlobalSkillsDir, getProjectSkillsDir } from '../skills/skill-config.js';
 import { importSkillZipToDirectory } from '../skills/skill-importer.js';
-import { buildMcpServerItemKey, buildMcpToolItemKey } from '../shared/source-control-keys.js';
+import {
+    buildMcpServerItemKey, buildMcpToolItemKey, hasInvalidMcpToolKeys,
+    isMcpItemKey, isMcpToolItemKey, MCP_PERMISSION_RECONFIGURE,
+} from '../shared/source-control-keys.js';
 
-import type { GuiUpdateEvent } from '../core/host-manager-v2.js';
+import type { GuiUpdateEvent } from '../types/session.js';
 import type { Session } from '../types/session.js';
 
 // ✅ V2: 使用 HostManager V2 的 GuiUpdateEvent 类型
@@ -36,6 +40,16 @@ const t = initTRPC.context<Context>().create({
 export const router = t.router;
 export const publicProcedure = t.procedure;
 
+const sourceControlsSchema = z.object({
+    apps: z.object({ enabled: z.boolean(), disabledItems: z.array(z.string()) }),
+    mcp: z.object({
+        enabled: z.boolean(),
+        disabledItems: z.array(z.string().refine(isMcpItemKey, MCP_PERMISSION_RECONFIGURE)),
+        allowedServers: z.array(z.string().refine(name => name.trim().length > 0)).optional(),
+    }),
+    skill: z.object({ enabled: z.boolean(), disabledItems: z.array(z.string()) }),
+});
+
 const dbRouter = router({
     getTopics: publicProcedure
         .query(async () => {
@@ -48,16 +62,6 @@ const dbRouter = router({
             console.log('[TRPC] getMessages called for topic:', input.id);
             const messages = ctx.messageService.getMessages(input.id);
             console.log('[TRPC] getMessages returned:', messages.length, 'messages');
-            return messages;
-        }),
-    // [RFC-026] New endpoint for complete message data with parts
-    // ✅ 修复: 使用 MessageServiceV2 从 messages_v2 表读取（返回 AI SDK v6 ModelMessage 格式）
-    getMessagesWithParts: publicProcedure
-        .input(z.object({ id: z.string() }))
-        .query(async ({ input, ctx }) => {
-            console.log('[TRPC] getMessagesWithParts called for topic:', input.id);
-            const messages = ctx.messageService.getMessages(input.id);
-            console.log('[TRPC] getMessagesWithParts returned:', messages.length, 'messages');
             return messages;
         }),
     createTopic: publicProcedure
@@ -73,11 +77,7 @@ const dbRouter = router({
                 keepRecentMessages: z.number().int().positive().optional(),
                 hardFallbackThresholdTokens: z.number().int().positive().optional(),
             }).optional(),
-            sourceControls: z.object({
-                apps: z.object({ enabled: z.boolean(), disabledItems: z.array(z.string()) }),
-                mcp: z.object({ enabled: z.boolean(), disabledItems: z.array(z.string()) }),
-                skill: z.object({ enabled: z.boolean(), disabledItems: z.array(z.string()) }),
-            }).optional(),
+            sourceControls: sourceControlsSchema.optional(),
         }))
         .mutation(async ({ input, ctx }) => {
             console.log('[TRPC] createTopic called:', input.title);
@@ -127,19 +127,13 @@ const dbRouter = router({
                 keepRecentMessages: z.number().int().positive().optional(),
                 hardFallbackThresholdTokens: z.number().int().positive().optional(),
             }).optional(),
-            sourceControls: z.object({
-                apps: z.object({ enabled: z.boolean(), disabledItems: z.array(z.string()) }),
-                mcp: z.object({ enabled: z.boolean(), disabledItems: z.array(z.string()) }),
-                skill: z.object({ enabled: z.boolean(), disabledItems: z.array(z.string()) }),
-            }).optional(),
-        }))
+        }).strict())
         .mutation(async ({ input, ctx }) => {
             db.updateTopic(input.id, {
                 modelOverride: input.modelOverride,
                 promptOverride: input.promptOverride,
                 agentId: input.agentId,
                 contextCompaction: input.contextCompaction,
-                sourceControls: input.sourceControls,
                 updatedAt: Date.now(),
             });
 
@@ -272,13 +266,6 @@ const sessionRouter = router({
             return ctx.hostManager.getSnapshot(input.id);
         }),
 
-    destroy: publicProcedure
-        .input(z.object({ id: z.string() }))
-        .mutation(async ({ input, ctx }) => {
-            // ✅ V2: 暂时不实现 destroy
-            console.log('[TRPC] session.destroy called:', input.id);
-        }),
-
     shutdown: publicProcedure
         .input(z.object({ id: z.string() }))
         .mutation(async ({ input, ctx }) => {
@@ -307,6 +294,7 @@ const projectRouter = router({
         }),
     pickFolder: publicProcedure
         .mutation(async () => {
+            const { dialog } = await import('electron');
             const result = await dialog.showOpenDialog({
                 properties: ['openDirectory', 'createDirectory']
             });
@@ -509,35 +497,6 @@ const appsRouter = router({
         }),
 });
 
-function normalizeMcpServerEntry(entry: Record<string, any>): Record<string, any> {
-    const normalized: Record<string, any> = { ...entry };
-
-    if (normalized.enabled === undefined && typeof normalized.disabled === 'boolean') {
-        normalized.enabled = !normalized.disabled;
-    }
-
-    if (typeof normalized.command === 'string') {
-        const args = Array.isArray(normalized.args)
-            ? normalized.args.filter((arg: unknown): arg is string => typeof arg === 'string')
-            : [];
-        normalized.command = [normalized.command, ...args];
-    }
-
-    if (!normalized.type) {
-        if (typeof normalized.url === 'string') {
-            normalized.type = 'remote';
-        } else if (Array.isArray(normalized.command)) {
-            normalized.type = 'local';
-        }
-    }
-
-    if (!normalized.environment && normalized.env && typeof normalized.env === 'object') {
-        normalized.environment = normalized.env;
-    }
-
-    return normalized;
-}
-
 function normalizeSkillsConfig(rawSkills: unknown): {
     enabled: boolean;
     disabledSkills: string[];
@@ -553,159 +512,77 @@ function normalizeSkillsConfig(rawSkills: unknown): {
     };
 }
 
-function normalizeMcpConfig(rawMcp: unknown): Record<string, any> {
-    const raw = rawMcp && typeof rawMcp === 'object' ? (rawMcp as Record<string, any>) : {};
-    const container = raw.mcpServers && typeof raw.mcpServers === 'object'
-        ? (raw.mcpServers as Record<string, any>)
-        : raw;
-
-    const entries = Object.entries(container)
-        .filter(([, value]) => value && typeof value === 'object')
-        .map(([serverName, value]) => [serverName, normalizeMcpServerEntry(value as Record<string, any>)]);
-
+async function readMcpRuntime() {
+    const { MCP } = await import('../mcp/index.js');
+    const [{ mcp }, status, clients] = await Promise.all([Config.getMcp(), MCP.status(), MCP.clients()]);
+    const entries = await Promise.all(Object.entries(status).map(async ([name, entry]) => {
+        const client = Object.hasOwn(clients, name) ? clients[name] : undefined;
+        const server = Object.hasOwn(mcp, name) ? mcp[name] : undefined;
+        const tools = [];
+        if (entry.status === 'connected' && client && server) {
+            try {
+                for (const tool of (await client.listTools()).tools) {
+                    tools.push({ name: tool.name, description: tool.description ?? '', enabled: !server.disabledTools?.includes(tool.name) });
+                }
+            } catch (error) {
+                console.error(`[MCP] Failed to list tools for ${name}:`, error);
+            }
+        }
+        return [name, { status: entry.status, error: 'error' in entry ? entry.error : undefined,
+            enabled: Boolean(server && server.enabled !== false), tools }] as const;
+    }));
     return Object.fromEntries(entries);
 }
 
+async function updateMcpServer(name: string, update: (server: Mcp) => Mcp) {
+    await Config.updateGlobal(config => {
+        const mcp = config.mcp ?? {};
+        const current = Mcp.safeParse(Object.hasOwn(mcp, name) ? mcp[name] : undefined);
+        if (!current.success) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: `Configure MCP server "${name}" in Settings → MCP before enabling it.` });
+        }
+        return { mcp: { [name]: update(current.data) } };
+    });
+}
+
 const mcpRouter = router({
-    getConfig: publicProcedure
-        .query(async () => {
-            const config = await Config.getGlobal();
-            return normalizeMcpConfig(config.mcp ?? (config as Record<string, any>).mcpServers ?? {});
-        }),
+    getConfig: publicProcedure.query(async () => {
+        const { mcp, issues } = await Config.getMcp();
+        return { mcp, issues };
+    }),
     updateConfig: publicProcedure
-        .input(z.object({
-            mcp: z.record(z.string(), z.any())
-        }))
+        .input(z.object({ mcp: McpConfig }).strict())
         .mutation(async ({ input }) => {
-            await Config.replaceGlobalMcp(normalizeMcpConfig(input.mcp));
+            const { MCP } = await import('../mcp/index.js');
+            const previous = await Config.getMcp();
+            await Config.replaceGlobalMcp(input.mcp);
+            for (const name of new Set([...Object.keys(previous.mcp), ...Object.keys(previous.invalid), ...Object.keys(input.mcp)])) {
+                const before = Object.hasOwn(previous.mcp, name) ? previous.mcp[name] : undefined;
+                const after = Object.hasOwn(input.mcp, name) ? input.mcp[name] : undefined;
+                if (!after || after.enabled === false) await MCP.disconnect(name);
+                else if (JSON.stringify(before) !== JSON.stringify(after)) await MCP.connect(name);
+            }
             return { success: true };
         }),
-
-    /**
-     * getRuntime: 返回所有已配置 MCP Server 的运行时状态和工具列表
-     * 为每个 server 合并：连接状态 + 工具列表 + 每个工具的 enabled 状态
-     */
-    getRuntime: publicProcedure
-        .query(async () => {
-            const { MCP } = await import('../mcp/index.js');
-            const config = await Config.getGlobal();
-            const mcpConfig: Record<string, any> = normalizeMcpConfig(config.mcp ?? (config as Record<string, any>).mcpServers ?? {});
-
-            // 获取运行时 status（包含所有已配置的 server）
-            const statusMap = await MCP.status();
-            // 获取已连接的 clients，以便查询工具列表
-            const clientsMap = await MCP.clients();
-
-            const result: Record<string, {
-                status: string;
-                error?: string;
-                tools: Array<{ name: string; description: string; enabled: boolean }>;
-            }> = {};
-
-            const serverNames = new Set<string>([
-                ...Object.keys(mcpConfig),
-                ...Object.keys(statusMap),
-            ]);
-
-            for (const serverName of serverNames) {
-                const serverStatus = (statusMap as Record<string, { status: string; error?: string }>)[serverName]
-                    ?? { status: mcpConfig[serverName]?.enabled === false ? 'disabled' : 'failed', error: 'Runtime status unavailable' };
-                const serverConfig = mcpConfig[serverName] || {};
-                const disabledTools: string[] = serverConfig.disabledTools || [];
-                let tools: Array<{ name: string; description: string; enabled: boolean }> = [];
-
-                // 仅对已连接的 server 查询工具列表
-                if (serverStatus.status === 'connected') {
-                    const client = clientsMap[serverName];
-                    if (client) {
-                        try {
-                            const toolsResult = await client.listTools();
-                            tools = toolsResult.tools.map((t: any) => ({
-                                name: t.name,
-                                description: t.description || '',
-                                enabled: !disabledTools.includes(t.name),
-                            }));
-                        } catch (e) {
-                            console.error(`[MCP.getRuntime] Failed to list tools for ${serverName}:`, e);
-                        }
-                    }
-                }
-
-                result[serverName] = {
-                    status: serverStatus.status,
-                    error: serverStatus.error,
-                    tools,
-                };
-            }
-
-            return result;
-        }),
-
-    /**
-     * setServerEnabled: Enable / Disable 一个 MCP Server
-     * 1. 更新 config 并持久化
-     * 2. enabled=true → MCP.connect()；enabled=false → MCP.disconnect()
-     */
+    getRuntime: publicProcedure.query(readMcpRuntime),
     setServerEnabled: publicProcedure
-        .input(z.object({
-            name: z.string(),
-            enabled: z.boolean(),
-        }))
+        .input(z.object({ name: z.string(), enabled: z.boolean() }))
         .mutation(async ({ input }) => {
             const { MCP } = await import('../mcp/index.js');
-            const config = await Config.getGlobal();
-            const mcpConfig: Record<string, any> = { ...normalizeMcpConfig(config.mcp ?? (config as Record<string, any>).mcpServers ?? {}) };
-
-            if (!mcpConfig[input.name]) {
-                throw new Error(`MCP server "${input.name}" not found in config`);
-            }
-
-            mcpConfig[input.name] = { ...mcpConfig[input.name], enabled: input.enabled };
-            await Config.replaceGlobalMcp(mcpConfig);
-
-            if (input.enabled) {
-                await MCP.connect(input.name);
-            } else {
-                await MCP.disconnect(input.name);
-            }
-
+            await updateMcpServer(input.name, server => ({ ...server, enabled: input.enabled }));
+            if (input.enabled) await MCP.connect(input.name);
+            else await MCP.disconnect(input.name);
             return { success: true };
         }),
-
-    /**
-     * setToolEnabled: Enable / Disable 某个 MCP Server 下的特定工具
-     * 通过维护 config 中该 server 的 disabledTools 数组实现。
-     */
     setToolEnabled: publicProcedure
-        .input(z.object({
-            serverName: z.string(),
-            toolName: z.string(),
-            enabled: z.boolean(),
-        }))
+        .input(z.object({ serverName: z.string(), toolName: z.string().min(1), enabled: z.boolean() }))
         .mutation(async ({ input }) => {
-            const config = await Config.getGlobal();
-            const mcpConfig: Record<string, any> = { ...normalizeMcpConfig(config.mcp ?? (config as Record<string, any>).mcpServers ?? {}) };
-
-            if (!mcpConfig[input.serverName]) {
-                throw new Error(`MCP server "${input.serverName}" not found in config`);
-            }
-
-            const serverConfig = { ...mcpConfig[input.serverName] };
-            const disabledTools: string[] = [...(serverConfig.disabledTools || [])];
-
-            if (input.enabled) {
-                const idx = disabledTools.indexOf(input.toolName);
-                if (idx !== -1) disabledTools.splice(idx, 1);
-            } else {
-                if (!disabledTools.includes(input.toolName)) {
-                    disabledTools.push(input.toolName);
-                }
-            }
-
-            serverConfig.disabledTools = disabledTools;
-            mcpConfig[input.serverName] = serverConfig;
-            await Config.replaceGlobalMcp(mcpConfig);
-
+            await updateMcpServer(input.serverName, server => {
+                const disabledTools = new Set(server.disabledTools);
+                if (input.enabled) disabledTools.delete(input.toolName);
+                else disabledTools.add(input.toolName);
+                return { ...server, disabledTools: [...disabledTools] };
+            });
             return { success: true };
         }),
 });
@@ -758,6 +635,7 @@ const skillsRouter = router({
                 throw new Error('Project path is required for project-scoped skill import');
             }
 
+            const { dialog } = await import('electron');
             const result = await dialog.showOpenDialog({
                 properties: ['openFile'],
                 filters: [{ name: 'ZIP files', extensions: ['zip'] }],
@@ -836,55 +714,28 @@ const skillsRouter = router({
         }),
 });
 
+async function readMcpGroups(controls?: { disabledItems: string[]; allowedServers?: string[] }) {
+    const disabled = new Set(controls?.disabledItems);
+    const allowedServers = controls?.allowedServers && new Set(controls.allowedServers);
+    const runtime = await readMcpRuntime();
+    return Object.entries(runtime).sort(([a], [b]) => a.localeCompare(b)).map(([serverName, server]) => {
+        const key = buildMcpServerItemKey(serverName);
+        return {
+            key, serverName, connected: server.status === 'connected',
+            enabled: server.enabled && (allowedServers?.has(serverName) ?? true) && !disabled.has(key),
+            items: server.tools.map(tool => {
+                const key = buildMcpToolItemKey(serverName, tool.name);
+                return { key, name: tool.name, enabled: tool.enabled && !disabled.has(key) };
+            }).sort((a, b) => a.name.localeCompare(b.name)),
+        };
+    });
+}
+
 const sourceControlRouter = router({
     getDraft: publicProcedure
         .input(z.object({ projectPath: z.string().optional() }).optional())
         .query(async ({ input, ctx }) => {
-            const { MCP } = await import('../mcp/index.js');
-            const config = await Config.getGlobal();
-            const mcpConfig: Record<string, any> = normalizeMcpConfig(config.mcp ?? (config as Record<string, any>).mcpServers ?? {});
-            const statusMap = await MCP.status();
-            const clientsMap = await MCP.clients();
-
-            const serverNames = Array.from(new Set<string>([
-                ...Object.keys(mcpConfig),
-                ...Object.keys(statusMap),
-            ])).sort((a, b) => a.localeCompare(b));
-
-            const mcpGroups: Array<{
-                key: string;
-                serverName: string;
-                enabled: boolean;
-                connected: boolean;
-                items: Array<{ key: string; name: string; enabled: boolean }>;
-            }> = [];
-
-            for (const serverName of serverNames) {
-                const serverStatus = (statusMap as Record<string, { status: string; error?: string }>)[serverName]
-                    ?? { status: mcpConfig[serverName]?.enabled === false ? 'disabled' : 'failed' };
-                const connected = serverStatus.status === 'connected';
-                const client = clientsMap[serverName];
-                const serverItems: Array<{ key: string; name: string; enabled: boolean }> = [];
-
-                if (connected && client) {
-                    try {
-                        const toolsResult = await client.listTools();
-                        for (const tool of toolsResult.tools) {
-                            const key = buildMcpToolItemKey(serverName, tool.name);
-                            serverItems.push({ key, name: tool.name, enabled: true });
-                        }
-                    } catch {
-                    }
-                }
-
-                mcpGroups.push({
-                    key: buildMcpServerItemKey(serverName),
-                    serverName,
-                    enabled: mcpConfig[serverName]?.enabled !== false,
-                    connected,
-                    items: serverItems.sort((a, b) => a.name.localeCompare(b.name)),
-                });
-            }
+            const mcpGroups = await readMcpGroups();
 
             const skillService = new SkillCatalogService({ projectPath: input?.projectPath });
             const skillEntries = await skillService.listSkills();
@@ -920,64 +771,11 @@ const sourceControlRouter = router({
     getTopic: publicProcedure
         .input(z.object({ id: z.string(), projectPath: z.string().optional() }))
         .query(async ({ input, ctx }) => {
-            const sourceState = ctx.hostManager.getSourceControlState(input.id);
+            const sourceState = await ctx.hostManager.getSourceControlState(input.id);
             const topic = db.getTopic(input.id);
 
-            const { MCP } = await import('../mcp/index.js');
-            const config = await Config.getGlobal();
-            const mcpConfig: Record<string, any> = normalizeMcpConfig(config.mcp ?? (config as Record<string, any>).mcpServers ?? {});
-            const statusMap = await MCP.status();
-            const clientsMap = await MCP.clients();
-
-            const serverNames = Array.from(new Set<string>([
-                ...Object.keys(mcpConfig),
-                ...Object.keys(statusMap),
-            ])).sort((a, b) => a.localeCompare(b));
-
-            const mcpGroups: Array<{
-                key: string;
-                serverName: string;
-                enabled: boolean;
-                connected: boolean;
-                items: Array<{ key: string; name: string; enabled: boolean }>;
-            }> = [];
-
-            for (const serverName of serverNames) {
-                const serverKey = buildMcpServerItemKey(serverName);
-                // Combine global config enabled state with topic-level override
-                const isGloballyEnabled = mcpConfig[serverName]?.enabled !== false;
-                const isTopicOverrideDisabled = sourceState.mcp.disabledItems.includes(serverKey);
-                const serverEnabled = isGloballyEnabled && !isTopicOverrideDisabled;
-
-                const serverStatus = (statusMap as Record<string, { status: string; error?: string }>)[serverName]
-                    ?? { status: mcpConfig[serverName]?.enabled === false ? 'disabled' : 'failed' };
-                const connected = serverStatus.status === 'connected';
-                const client = clientsMap[serverName];
-                const serverItems: Array<{ key: string; name: string; enabled: boolean }> = [];
-
-                if (connected && client) {
-                    try {
-                        const toolsResult = await client.listTools();
-                        for (const tool of toolsResult.tools) {
-                            const key = buildMcpToolItemKey(serverName, tool.name);
-                            serverItems.push({
-                                key,
-                                name: tool.name,
-                                enabled: !sourceState.mcp.disabledItems.includes(key),
-                            });
-                        }
-                    } catch {
-                    }
-                }
-
-                mcpGroups.push({
-                    key: serverKey,
-                    serverName,
-                    enabled: serverEnabled,
-                    connected,
-                    items: serverItems.sort((a, b) => a.name.localeCompare(b.name)),
-                });
-            }
+            const mcpGroups = await readMcpGroups(sourceState.mcp);
+            const invalidMcp = sourceState.mcp.disabledItems.some(key => !isMcpItemKey(key));
 
             const skillService = new SkillCatalogService({ projectPath: input.projectPath });
             const skillEntries = await skillService.listSkills();
@@ -996,7 +794,8 @@ const sourceControlRouter = router({
                     items: appItems,
                 },
                 mcp: {
-                    enabled: sourceState.mcp.enabled,
+                    enabled: sourceState.mcp.enabled && !invalidMcp,
+                    issue: invalidMcp ? MCP_PERMISSION_RECONFIGURE : undefined,
                     groups: mcpGroups,
                 },
                 skill: {
@@ -1018,7 +817,7 @@ const sourceControlRouter = router({
             enabled: z.boolean(),
         }))
         .mutation(async ({ input, ctx }) => {
-            ctx.hostManager.setSourceEnabled(input.id, input.source, input.enabled);
+            await ctx.hostManager.setSourceEnabled(input.id, input.source, input.enabled);
             return { success: true };
         }),
 
@@ -1030,7 +829,10 @@ const sourceControlRouter = router({
             enabled: z.boolean(),
         }))
         .mutation(async ({ input, ctx }) => {
-            ctx.hostManager.setSourceItemEnabled(input.id, input.source, input.itemName, input.enabled);
+            if (input.source === 'mcp' && !isMcpItemKey(input.itemName)) {
+                throw new TRPCError({ code: 'BAD_REQUEST', message: MCP_PERMISSION_RECONFIGURE });
+            }
+            await ctx.hostManager.setSourceItemEnabled(input.id, input.source, input.itemName, input.enabled);
             return { success: true };
         }),
 });
@@ -1051,7 +853,7 @@ const agentConfigSchema = z.object({
     enabledApps: z.array(z.string()),
     enabledSkills: z.record(z.string(), z.array(z.string())),
     enabledMCPs: z.array(z.string()),
-    disabledMcpTools: z.array(z.string()).optional().default([]),
+    disabledMcpTools: z.array(z.string().refine(isMcpToolItemKey, MCP_PERMISSION_RECONFIGURE)).optional().default([]),
     skin: z.object({
         working: z.string().optional(),
         idle: z.string().optional(),
@@ -1065,7 +867,10 @@ const agentsRouter = router({
         .query(async () => {
             const config = await Config.getGlobal();
             return {
-                list: config.agents?.list ?? [],
+                list: (config.agents?.list ?? []).map(agent => ({
+                    ...agent,
+                    mcpPermissionIssue: hasInvalidMcpToolKeys(agent.disabledMcpTools) ? MCP_PERMISSION_RECONFIGURE : undefined,
+                })),
                 activeAgentId: config.agents?.activeAgentId ?? null,
             };
         }),
@@ -1122,94 +927,14 @@ const promptsRouter = router({
 
 // ─── IM Configuration Router ──────────────────────────────────────────────────
 
-const feishuAccountSchema = z.object({
-    enabled: z.boolean().optional(),
-    disabled: z.boolean().optional(),
-    appId: z.string().optional(),
-    appSecret: z.string().optional(),
-    domain: z.string().optional(),
-    connectionMode: z.enum(['websocket', 'webhook']).optional(),
-    sessionScope: z.enum(['peer', 'peer_sender', 'peer_thread', 'peer_thread_sender']).optional(),
-    verificationToken: z.string().optional(),
-    botToken: z.string().optional(),
-    botAgentId: z.string().optional(),
-    apiBaseUrl: z.string().optional(),
-    dmPolicy: z.enum(['open', 'allowlist', 'pairing']).optional(),
-    groupPolicy: z.enum(['open', 'allowlist', 'disabled']).optional(),
-    requireMention: z.boolean().optional(),
-});
-
-const feishuChannelSchema = feishuAccountSchema.extend({
-    accounts: z.record(z.string(), feishuAccountSchema).optional(),
-});
-
-const imConfigSchema = z.object({
-    enabled: z.boolean().optional(),
-    disabled: z.boolean().optional(),
-    channels: z.object({
-        feishu: feishuChannelSchema.optional(),
-        lark: feishuChannelSchema.optional(),
-    }).optional(),
-});
-
-function normalizeImEnabledState<T extends Record<string, any> | undefined>(value: T): T {
-    if (!value || typeof value !== 'object') {
-        return (value ?? {}) as T;
-    }
-
-    const normalized: Record<string, any> = { ...value };
-    if ('disabled' in normalized && normalized.enabled === undefined) {
-        normalized.enabled = normalized.disabled !== true;
-    }
-
-    for (const [key, nestedValue] of Object.entries(normalized)) {
-        if (!nestedValue || typeof nestedValue !== 'object' || Array.isArray(nestedValue)) {
-            continue;
-        }
-        normalized[key] = normalizeImEnabledState(nestedValue as Record<string, any>);
-    }
-
-    return normalized as T;
-}
-
 const imRouter = router({
-    getConfig: publicProcedure
-        .query(async () => {
-            const im = await Config.getGlobalIm();
-            return normalizeImEnabledState(im ?? {});
-        }),
-    getRuntime: publicProcedure
-        .query(async ({ ctx }) => {
-            return ctx.hostManager.getIMRuntime();
-        }),
+    getConfig: publicProcedure.query(() => Config.getGlobalIm()),
+    getRuntime: publicProcedure.query(({ ctx }) => ctx.hostManager.getIMRuntime()),
     updateConfig: publicProcedure
-        .input(z.object({
-            im: imConfigSchema,
-        }))
+        .input(z.object({ im: ImConfig }).strict())
         .mutation(async ({ input }) => {
-            const normalized = normalizeImEnabledState(input.im);
-            await Config.replaceGlobalIm(normalized);
+            await Config.replaceGlobalIm(input.im);
             return { success: true };
-        }),
-    getImConfig: publicProcedure
-        .query(async () => {
-            const im = await Config.getGlobalIm();
-            return normalizeImEnabledState(im ?? {});
-        }),
-    saveImConfig: publicProcedure
-        .input(imConfigSchema)
-        .mutation(async ({ input }) => {
-            const normalized = normalizeImEnabledState(input);
-            await Config.replaceGlobalIm(normalized);
-            return { success: true };
-        }),
-    getAgents: publicProcedure
-        .query(async () => {
-            const config = await Config.getGlobal();
-            return {
-                list: config.agents?.list ?? [],
-                activeAgentId: config.agents?.activeAgentId ?? null,
-            };
         }),
     listSessions: publicProcedure
         .query(async ({ ctx }) => {

@@ -80,13 +80,11 @@ export interface DesktopManagerOptions {
 export interface DesktopManagerInitializeOptions {
     appEntries?: AppRegistryEntry[];
     loadFromConfig?: boolean;
-    enableDevAutoDiscovery?: boolean;
 }
 
 export class DesktopManager {
     private kernel: IKernel;
     private appRegistry: AppRegistry;
-    private desktopAppMap = new Map<DesktopID, string[]>(); // desktopId -> installed app IDs
 
     constructor(options?: DesktopManagerOptions) {
         // [SDK 标准化] 使用 createRuntime() 代替手动实例化 Engine 组件
@@ -104,27 +102,10 @@ export class DesktopManager {
     async initialize(options?: DesktopManagerInitializeOptions): Promise<void> {
         const hasExplicitEntries = Array.isArray(options?.appEntries);
         const shouldLoadFromConfig = options?.loadFromConfig ?? !hasExplicitEntries;
-        const enableDevAutoDiscovery = options?.enableDevAutoDiscovery ?? !hasExplicitEntries;
 
         const discovery = hasExplicitEntries ? await this.appRegistry.loadFromEntries(options?.appEntries ?? [])
             : shouldLoadFromConfig ? await this.appRegistry.loadFromConfig() : [];
         for (const result of discovery) if (result.status === 'failed') this.reportAppFailure(result);
-
-        // [Dev Experience] Auto-discover system-todo in development environment
-        if (enableDevAutoDiscovery) {
-            try {
-                const fs = await import('fs');
-                const path = await import('path');
-                const devTodoPath = path.resolve(process.cwd(), '../system-todo');
-                
-                if (fs.existsSync(devTodoPath) && fs.statSync(devTodoPath).isDirectory()) {
-                    console.log('[DesktopManager] Found system-todo in dev environment, registering...');
-                    await this.appRegistry.registerTransient(`local:${devTodoPath}`);
-                }
-            } catch (e) {
-                console.warn('[DesktopManager] Failed to auto-register system-todo:', e);
-            }
-        }
 
         console.log(`[DesktopManager] Initialized with ${this.appRegistry.list().length} third-party apps`);
     }
@@ -162,11 +143,6 @@ export class DesktopManager {
         };
 
         const actualDesktopId = await this.kernel.createDesktop(desktopId, runtimeContext);
-        const installedAppIds: string[] = [];
-
-        // [RFC-021] No more ChatApp installation
-        // Desktop is now a pure TUI container for tool applications
-
         try {
             const desktop = this.kernel.getDesktop(actualDesktopId);
             const results = await this.appRegistry.installAll(desktop, {
@@ -174,21 +150,15 @@ export class DesktopManager {
             });
             for (const result of results) {
                 if (result.status === 'failed') this.reportAppFailure(result);
-                else installedAppIds.push(result.appId);
             }
-            console.log(`[DesktopManager] Created Desktop ${actualDesktopId} with ${installedAppIds.length} third-party apps (Semantic)`);
+            const thirdPartyAppCount = desktop.getInstalledApps().length;
+            console.log(`[DesktopManager] Created Desktop ${actualDesktopId} with ${thirdPartyAppCount} third-party apps (Semantic)`);
+            return { desktopId: actualDesktopId, thirdPartyAppCount };
         } catch (error) {
             console.error('[DesktopManager] Failed to install apps:', error);
             await this.kernel.destroyDesktop(actualDesktopId);
             throw error;
         }
-
-        this.desktopAppMap.set(actualDesktopId, installedAppIds);
-
-        return {
-            desktopId: actualDesktopId,
-            thirdPartyAppCount: installedAppIds.length
-        };
     }
 
     private reportAppFailure(result: AppRegistryFailure): void {
@@ -207,19 +177,11 @@ export class DesktopManager {
     }
 
     /**
-     * Get app IDs for a Desktop
-     */
-    getAppIds(desktopId: DesktopID): string[] {
-        return this.desktopAppMap.get(desktopId) || [];
-    }
-
-    /**
      * Delete Desktop
      */
     async deleteDesktop(desktopId: DesktopID): Promise<boolean> {
         try {
             await this.kernel.destroyDesktop(desktopId);
-            this.desktopAppMap.delete(desktopId);
             return true;
         } catch {
             return false;
@@ -238,25 +200,6 @@ export class DesktopManager {
         } catch {
             return null;
         }
-    }
-
-    /**
-     * Get all Desktop IDs
-     */
-    getAllDesktopIds(): DesktopID[] {
-        return Array.from(this.desktopAppMap.keys());
-    }
-
-    /**
-     * Get third-party apps configuration (module paths)
-     * Used by SessionManager to configure AgentSession
-     */
-    getThirdPartyAppsConfig(): { modulePath: string }[] {
-        return this.appRegistry.list()
-            .map(app => ({
-                modulePath: this.appRegistry.resolveModulePath(app.source)
-            }))
-            .filter(app => app.modulePath !== null) as { modulePath: string }[];
     }
 
     async getAppsConfig(): Promise<Record<string, AppConfigEntry>> {

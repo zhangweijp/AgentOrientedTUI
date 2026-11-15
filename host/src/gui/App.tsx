@@ -17,13 +17,15 @@ import { DeleteConfirmModal } from './components/DeleteConfirmModal.js';
 import { Toast } from './components/Toast.js';
 import { SettingsPanel } from './components/settings/SettingsPanel.js';
 import type { AgentConfig } from './components/settings/agent/AgentTab.js';
-import { appSourceControls, buildMcpToolItemKey } from '../shared/source-control-keys.js';
+import { appSourceControls, hasInvalidMcpToolKeys, MCP_PERMISSION_RECONFIGURE, parseMcpServerItemKey } from '../shared/source-control-keys.js';
 
 type ViewMode = 'chat' | 'tui';
 
 type TopicCapabilities = {
     mcp: {
         enabled: boolean;
+        issue?: string;
+        allowedServers?: string[];
         groups: Array<{
             key: string;
             serverName: string;
@@ -254,8 +256,9 @@ export function App() {
     const applyAgentConfigToDraftCaps = useCallback((agent: AgentConfig, caps: TopicCapabilities | null) => {
         if (!caps) return;
         const appControls = appSourceControls(agent.enabledApps || [], caps.apps.items.map(item => item.name));
-        const enabledMCPsSet = new Set(agent.enabledMCPs || []);
-        const disabledToolsSet = new Set(agent.disabledMcpTools || []);
+        const invalidMcp = hasInvalidMcpToolKeys(agent.disabledMcpTools);
+        const enabledMCPsSet = new Set(invalidMcp ? [] : agent.enabledMCPs ?? []);
+        const disabledToolsSet = new Set(invalidMcp ? [] : agent.disabledMcpTools ?? []);
         const enabledSkillNames = new Set(Object.values(agent.enabledSkills || {}).flat());
         setDraftModelOverride(agent.modelId || null);
         setDraftPromptOverride(agent.prompt || '');
@@ -271,19 +274,12 @@ export function App() {
             },
             mcp: {
                 enabled: enabledMCPsSet.size > 0,
+                allowedServers: [...enabledMCPsSet],
+                issue: invalidMcp ? MCP_PERMISSION_RECONFIGURE : undefined,
                 groups: caps.mcp.groups.map((group) => ({
                     ...group,
                     enabled: enabledMCPsSet.has(group.serverName),
-                    items: group.items.map((item) => {
-                        const canonicalKey = buildMcpToolItemKey(group.serverName, item.name);
-                        const legacyScopedKey = `${group.serverName}::${item.name}`;
-                        const legacyUnscopedKey = item.name;
-                        const isDisabled = disabledToolsSet.has(item.key)
-                            || disabledToolsSet.has(canonicalKey)
-                            || disabledToolsSet.has(legacyScopedKey)
-                            || disabledToolsSet.has(legacyUnscopedKey);
-                        return { ...item, enabled: !isDisabled };
-                    }),
+                    items: group.items.map(item => ({ ...item, enabled: item.enabled && !disabledToolsSet.has(item.key) })),
                 })),
             },
         });
@@ -502,6 +498,8 @@ export function App() {
                     },
                     mcp: {
                         enabled: draftCapabilities.mcp.enabled,
+                        ...(draftCapabilities.mcp.allowedServers !== undefined
+                            ? { allowedServers: draftCapabilities.mcp.allowedServers } : {}),
                         disabledItems: [
                             ...draftCapabilities.mcp.groups.filter((group) => !group.enabled).map((group) => group.key),
                             ...draftCapabilities.mcp.groups.flatMap((group) => group.items.filter((item) => !item.enabled).map((item) => item.key)),
@@ -559,11 +557,9 @@ export function App() {
     }, [bridge, activeTopicId]);
 
     const handleDeleteTopicById = useCallback(async (topicId: string) => {
-        await bridge.destroyDesktop(topicId);
         await bridge.deleteTopic(topicId);
 
         if (topicId === activeTopicId) {
-            bridge.clearActiveTopic();
             setActiveTopicId(null);
             setSelectedAgentId(null);
             setMessages([]);
@@ -616,7 +612,7 @@ export function App() {
             setDraftCapabilities((prev) => {
                 if (!prev) return prev;
                 if (source === 'apps') return { ...prev, apps: { ...prev.apps, enabled } };
-                if (source === 'mcp') return { ...prev, mcp: { ...prev.mcp, enabled } };
+                if (source === 'mcp') return { ...prev, mcp: { ...prev.mcp, enabled, issue: undefined } };
                 return { ...prev, skill: { ...prev.skill, enabled } };
             });
             return;
@@ -655,10 +651,16 @@ export function App() {
                         },
                     };
                 }
+                const server = parseMcpServerItemKey(itemName);
+                const allowedServers = prev.mcp.allowedServers;
+                const selection = server && allowedServers
+                    ? enabled ? [...new Set([...allowedServers, server])] : allowedServers.filter(name => name !== server)
+                    : allowedServers;
                 return {
                     ...prev,
                     mcp: {
                         ...prev.mcp,
+                        allowedServers: selection,
                         groups: prev.mcp.groups.map((group) => {
                             if (group.key === itemName) {
                                 return { ...group, enabled };
@@ -754,11 +756,15 @@ export function App() {
                 // 2. Source-level toggles: enable/disable each driven source
                 const appControls = appSourceControls(agent.enabledApps || [], topicCapabilities?.apps.items.map(item => item.name) ?? []);
                 const enabledSkillNames = new Set(Object.values(agent.enabledSkills || {}).flat());
-                const enabledMCPsSet = new Set(agent.enabledMCPs || []);
-                const disabledToolsSet = new Set(agent.disabledMcpTools || []);
+                const invalidMcp = hasInvalidMcpToolKeys(agent.disabledMcpTools);
+                const enabledMCPsSet = new Set(invalidMcp ? [] : agent.enabledMCPs ?? []);
+                const disabledToolsSet = new Set(invalidMcp ? [] : agent.disabledMcpTools ?? []);
 
                 await trpc.sourceControl.setSourceEnabled.mutate({ id: activeTopicId, source: 'apps', enabled: appControls.enabled });
                 await trpc.sourceControl.setSourceEnabled.mutate({ id: activeTopicId, source: 'skill', enabled: enabledSkillNames.size > 0 });
+                if (topicCapabilities?.mcp.issue) {
+                    await trpc.sourceControl.setSourceEnabled.mutate({ id: activeTopicId, source: 'mcp', enabled: false });
+                }
                 await trpc.sourceControl.setSourceEnabled.mutate({ id: activeTopicId, source: 'mcp', enabled: enabledMCPsSet.size > 0 });
 
                 // 3. Item-level toggles
@@ -788,15 +794,7 @@ export function App() {
                             });
                         }
                         for (const item of group.items) {
-                            const canonicalKey = buildMcpToolItemKey(group.serverName, item.name);
-                            const legacyScopedKey = `${group.serverName}::${item.name}`;
-                            const legacyUnscopedKey = item.name;
-                            const toolShouldEnable = !(
-                                disabledToolsSet.has(item.key)
-                                || disabledToolsSet.has(canonicalKey)
-                                || disabledToolsSet.has(legacyScopedKey)
-                                || disabledToolsSet.has(legacyUnscopedKey)
-                            );
+                            const toolShouldEnable = !disabledToolsSet.has(item.key);
                             if (item.enabled !== toolShouldEnable) {
                                 await trpc.sourceControl.setItemEnabled.mutate({
                                     id: activeTopicId, source: 'mcp', itemName: item.key, enabled: toolShouldEnable,
@@ -821,13 +819,9 @@ export function App() {
 
     const handleDeleteTopic = useCallback(async () => {
         if (!activeTopicId) return;
-        await bridge.destroyDesktop(activeTopicId);
-        await bridge.deleteTopic(activeTopicId);
-        setActiveTopicId(null);
-        setMessages([]);
-        setTuiSnapshot('');
+        await handleDeleteTopicById(activeTopicId);
         setShowDeleteConfirm(false);
-    }, [bridge, activeTopicId]);
+    }, [handleDeleteTopicById, activeTopicId]);
 
     const activeTopic = (activeTopicId && bridge.getTopic(activeTopicId)) || null;
     const currentProject: Project | null = currentProjectId

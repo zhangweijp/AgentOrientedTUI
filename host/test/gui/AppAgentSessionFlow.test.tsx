@@ -79,8 +79,10 @@ function createMockBridge() {
         requestSnapshot: vi.fn().mockResolvedValue(undefined),
         pauseAgent: vi.fn(),
         resumeAgent: vi.fn(),
-        destroyDesktop: vi.fn().mockResolvedValue(undefined),
-        deleteTopic: vi.fn().mockResolvedValue(undefined),
+        deleteTopic: vi.fn(async (topicId: string) => {
+            state.topics.delete(topicId);
+            if (state.activeTopicId === topicId) state.activeTopicId = null;
+        }),
         renameTopic: vi.fn().mockResolvedValue(undefined),
         getAgents: vi.fn().mockResolvedValue({
             list: [
@@ -160,10 +162,18 @@ vi.mock('../../src/gui/components/ChatArea.js', () => ({
     },
 }));
 
-vi.mock('../../src/gui/components/WorkspaceHeader.js', () => ({ WorkspaceHeader: () => <div data-testid="workspace-header" /> }));
+vi.mock('../../src/gui/components/WorkspaceHeader.js', () => ({
+    WorkspaceHeader: ({ activeTopic, onDeleteActiveTopic }: any) => (
+        <button disabled={!activeTopic} onClick={onDeleteActiveTopic}>Delete Topic</button>
+    ),
+}));
 vi.mock('../../src/gui/components/ConnectionScreen.js', () => ({ ConnectionScreen: () => <div data-testid="connection-screen" /> }));
 vi.mock('../../src/gui/components/TuiDesktopViewer.js', () => ({ TuiDesktopViewer: () => <div data-testid="tui-viewer" /> }));
-vi.mock('../../src/gui/components/DeleteConfirmModal.js', () => ({ DeleteConfirmModal: () => null }));
+vi.mock('../../src/gui/components/DeleteConfirmModal.js', () => ({
+    DeleteConfirmModal: ({ isOpen, onConfirm }: any) => isOpen
+        ? <button onClick={onConfirm}>Confirm deletion</button>
+        : null,
+}));
 vi.mock('../../src/gui/components/settings/SettingsPanel.js', () => ({ SettingsPanel: () => null }));
 
 import { App } from '../../src/gui/App.js';
@@ -173,14 +183,17 @@ describe('App agent flow around New Session', () => {
         mockRef.bridge = createMockBridge();
     });
 
-    it('creates a Topic from registered App keys while preserving an unselected application', async () => {
+    it('creates a Topic from registered App keys and preserves the Agent’s MCP server selection', async () => {
         const registry = Object.fromEntries(['system_ide', 'terminal', 'lite_browser'].map(name => [name, { source: name, enabled: true }]));
         const stored = await mockRef.bridge.getAgents();
         stored.list[0].enabledApps = ['system_ide', 'lite_browser'];
+        stored.list[0].enabledMCPs = ['west'];
         mockRef.bridge.getAgents.mockResolvedValue(stored);
         mockRef.bridge.getTrpcClient().sourceControl.getDraft.query.mockResolvedValue({
             apps: { enabled: true, items: Object.keys(registry).map(name => ({ name, enabled: true })) },
-            mcp: { enabled: true, groups: [] }, skill: { enabled: true, items: [] },
+            mcp: { enabled: true, groups: ['west', 'archive'].map(serverName => ({
+                key: 'server:' + serverName, serverName, enabled: true, connected: true, items: [],
+            })) }, skill: { enabled: true, items: [] },
         });
         render(<App />);
         await waitFor(() => expect(screen.getByTestId('select-project')).toBeInTheDocument());
@@ -191,8 +204,9 @@ describe('App agent flow around New Session', () => {
         ]));
         fireEvent.click(screen.getByTestId('send-message'));
         await waitFor(() => expect(mockRef.bridge.createTopic).toHaveBeenCalled());
-        expect(mockRef.bridge.createTopic.mock.calls.at(-1)[2].sourceControls.apps)
-            .toEqual({ enabled: true, disabledItems: ['terminal'] });
+        const controls = mockRef.bridge.createTopic.mock.calls.at(-1)[2].sourceControls;
+        expect(controls.apps).toEqual({ enabled: true, disabledItems: ['terminal'] });
+        expect(controls.mcp).toMatchObject({ enabled: true, allowedServers: ['west'] });
     });
 
     it('updates agent pill immediately before first send and persists selected agent into createTopic', async () => {
@@ -232,5 +246,21 @@ describe('App agent flow around New Session', () => {
         expect(screen.getByText('TUI preview failed: Controlled capture failure')).toBeInTheDocument();
         expect(mockRef.bridge.getActiveTopicId()).toBe('topic_legacy');
     });
+
+    it('confirms deletion through the Topic action and clears the active Topic', async () => {
+        render(<App />);
+        fireEvent.click(await screen.findByTestId('select-project'));
+        fireEvent.click(await screen.findByTestId('open-legacy-topic'));
+        const remove = screen.getByRole('button', { name: 'Delete Topic' });
+        await waitFor(() => expect(remove).toBeEnabled());
+        fireEvent.click(remove);
+        fireEvent.click(await screen.findByRole('button', { name: 'Confirm deletion' }));
+
+        await waitFor(() => expect(remove).toBeDisabled());
+        expect(mockRef.bridge.deleteTopic).toHaveBeenCalledExactlyOnceWith('topic_legacy');
+        expect(mockRef.bridge.getActiveTopicId()).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Confirm deletion' })).toBeNull();
+    });
+
 
 });

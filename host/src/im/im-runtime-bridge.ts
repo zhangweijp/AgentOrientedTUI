@@ -1,5 +1,6 @@
 import type { ModelMessage } from 'ai'
-import type { HostManagerV2, GuiUpdateEvent } from '../core/host-manager-v2.js'
+import type { HostManagerV2 } from '../core/host-manager-v2.js'
+import type { GuiUpdateEvent } from '../types/session.js'
 import { Config, type Info } from '../config/config.js'
 import { parseFeishuConfig } from './channels/feishu/config-schema.js'
 import { parseFeishuWebhookPayload } from './channels/feishu/webhook.js'
@@ -193,7 +194,7 @@ export class IMRuntimeBridge {
       processWebhook?: (event: any) => Promise<{ accepted: boolean; reason?: string }>
     }) | undefined
 
-    if (!plugin?.processWebhook) {
+    if (!this.started || this.currentConfig?.im?.enabled === false || !plugin?.processWebhook) {
       return {
         status: 503,
         body: { code: 1, msg: 'feishu channel is not available' },
