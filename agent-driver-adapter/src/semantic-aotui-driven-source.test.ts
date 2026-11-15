@@ -6,26 +6,24 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SemanticAOTUIDrivenSourceOptions } from './semantic-aotui-driven-source.js';
 import type { IDesktop, IKernel, AppDiscoveryInfo } from '@aotui/runtime/spi';
-import type { Observation } from '@aotui/runtime/core';
+import { modelToolSchema, type Observation } from '@aotui/runtime/core';
 import type { InvocationOutcome, InvocationReceipt, InvokeResult, AppInvocation, AppInteraction } from '@aotui/runtime/core';
 
 const app = (id: string, status: AppDiscoveryInfo['status'] = 'running', appInstanceId: string | null =
     status === 'pending' || status === 'closed' ? null : `${id}-instance`): AppDiscoveryInfo => ({ appId: id as any, name: id, status,
         ...(appInstanceId === null ? {} : { appInstanceId }) });
 function observation(appId: string, revision = 1, name = 'multi_open_file'): Observation {
-    const execution = { kind: 'view-type' as const, activationId: `${appId}-type-tool-activation` };
     return {
         observationId: `${appId}-observation-${revision}`, expiresAt: null,
         source: { appId, instanceId: `${appId}-instance`, snapshotId: `${appId}-snapshot-${revision}`, revision },
         views: [{ id: 'workspace', viewInstanceId: `${appId}-view`, type: 'AnyView', name: 'Workspace', kind: 'state',
             content: { format: 'markdown-v1', value: `current ${appId} revision ${revision}` } }],
         refs: [], tools: [{ id: 'tool', name, viewType: 'AnyView', description: 'Current View Tool',
-            inputSchema: { type: 'object', properties: {}, additionalProperties: false },  execution }],
-        bindings: [{ bindingId: `${appId}-binding-${revision}`, toolId: 'tool', execution }],
+            inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } }],
     };
 }
 function receipt(request: AppInvocation, outcome: InvocationOutcome = { status: 'succeeded', value: null }): InvocationReceipt {
-    return { invocationId: request.invocationId, observationId: request.observationId, bindingId: request.bindingId,
+    return { invocationId: request.invocationId, observationId: request.observationId, toolId: request.toolId,
         source: null, completedAt: 1, expiresAt: 60001, executionPhase: 'entered-returned', outcome };
 }
 function harness(installed = [app('one')], options: SemanticAOTUIDrivenSourceOptions = {}) {
@@ -150,8 +148,8 @@ describe('SemanticAOTUIDrivenSource', () => {
         for (const entry of h.clients) expect(entry.client.observe).toHaveBeenCalledWith({ all: true });
         await context.executeTool!(one, {}, 'one-call');
         await context.executeTool!(two, {}, 'two-call');
-        expect(h.clients[0].client.invoke).toHaveBeenCalledWith(expect.objectContaining({ observationId: 'one-observation-1', bindingId: 'one-binding-1' }));
-        expect(h.clients[1].client.invoke).toHaveBeenCalledWith(expect.objectContaining({ observationId: 'two-observation-1', bindingId: 'two-binding-1' }));
+        expect(h.clients[0].client.invoke).toHaveBeenCalledWith(expect.objectContaining({ observationId: 'one-observation-1', toolId: 'tool' }));
+        expect(h.clients[1].client.invoke).toHaveBeenCalledWith(expect.objectContaining({ observationId: 'two-observation-1', toolId: 'tool' }));
         expect((await context.executeTool!('system-open_app', { app_id: 'pending' }, 'open'))?.outcomeStatus).toBe('succeeded');
         expect(h.desktop.openApp).toHaveBeenCalledWith('pending');
         expect(h.kernel.acquireSnapshot).not.toHaveBeenCalled();
@@ -288,7 +286,7 @@ describe('SemanticAOTUIDrivenSource', () => {
         await first.executeTool!(tool, {}, 'old');
         await second.adopt!();
         await second.executeTool!(tool, {}, 'new');
-        expect(h.clients[0].client.invoke.mock.calls.map(args => args[0].bindingId)).toEqual(['one-binding-1', 'one-binding-2']);
+        expect(h.clients[0].client.invoke.mock.calls.map(args => args[0].toolId)).toEqual(['tool', 'tool']);
         await first.release!();
 
         expect((await first.executeTool!(tool, {}, 'late'))?.error?.code).toBe('SEMANTIC_CONTEXT_RELEASED');
@@ -300,7 +298,7 @@ describe('SemanticAOTUIDrivenSource', () => {
 
     it('supports a ready app with no views or view tools', async () => {
         const h = harness(), empty = observation('one');
-        h.observations.set('one', { ...empty, views: [], refs: [], tools: [], bindings: [] });
+        h.observations.set('one', { ...empty, views: [], refs: [], tools: [] });
         const context = await consume(h.source);
         expect(context.messages.some(message => String(message.content).startsWith('<view '))).toBe(false);
         expect(Object.keys(context.tools).some(name => name.includes('-multi_open_file'))).toBe(false);
@@ -435,7 +433,7 @@ describe('SemanticAOTUIDrivenSource', () => {
 
 describe('semantic receipt mapping', () => {
     it('unwraps ordinary completion and preserves the business error and recovery details through executeTool', async () => {
-        const request = { invocationId: 'c', observationId: 'o', bindingId: 'b', input: {} };
+        const request = { invocationId: 'c', observationId: 'o', toolId: 'tool', input: {} };
         const completed = await executeMappedResult({ kind: 'receipt', receipt: receipt(request,
             { status: 'succeeded', value: { success: true, data: { message: 'Edited.', view_id: 'file' } } }) });
         expect(completed.result).toEqual({ message: 'Edited.', view_id: 'file' });
@@ -452,7 +450,7 @@ describe('semantic receipt mapping', () => {
         { status: 'unknown', code: 'UNKNOWN', message: 'uncertain' },
     ];
     it.each(outcomes)('keeps $status internal without leaking a receipt', async outcome => {
-        const value = receipt({ invocationId: 'call', observationId: 'obs', bindingId: 'binding', input: {} }, outcome);
+        const value = receipt({ invocationId: 'call', observationId: 'obs', toolId: 'tool', input: {} }, outcome);
         const result = await executeMappedResult({ kind: 'receipt', receipt: value });
         expect(result.outcomeStatus).toBe(outcome.status);
         expect(JSON.stringify(result)).not.toContain('observationId');
@@ -472,10 +470,7 @@ describe('model-visible presentation contract', () => {
         const h = harness(), source = observation('one', 1, 'inspect');
         h.observations.set('one', { ...source,
             views: [...source.views, { ...source.views[0]!, id: 'other', viewInstanceId: 'other-instance', type: 'OtherType' }],
-            tools: [...source.tools, { ...source.tools[0]!, id: 'other-tool', viewType: 'OtherType',
-                execution: { kind: 'view-type', activationId: 'other-activation' } }],
-            bindings: [...source.bindings, { bindingId: 'other-binding', toolId: 'other-tool',
-                execution: { kind: 'view-type', activationId: 'other-activation' } }],
+            tools: [...source.tools, { ...source.tools[0]!, id: 'other-tool', viewType: 'OtherType' }],
         });
         const context = await consume(h.source);
         expect(Object.keys(context.tools).filter(name => name.endsWith('-inspect'))).toEqual(['one-AnyView-inspect', 'one-OtherType-inspect']);
@@ -502,7 +497,7 @@ describe('model-visible presentation contract', () => {
         expect(views.map(view => view.region)).toEqual(['static', 'dynamic']);
         expect(views[0].content).toContain('Available references: items[0] (Item)');
         expect(Object.keys(context.tools)).toContain('one-AnyView-multi_open_file');
-        expect((context.tools['one-AnyView-multi_open_file'].inputSchema as any).jsonSchema).toEqual(source.tools[0].inputSchema);
+        expect((context.tools['one-AnyView-multi_open_file'].inputSchema as any).jsonSchema).toEqual(modelToolSchema(source.tools[0].inputSchema, 'AnyView'));
         await context.release!(); h.source.dispose();
     });
 
@@ -600,7 +595,7 @@ describe('model-visible presentation contract', () => {
         } finally { rmSync(directory, {recursive: true, force: true}); }
     });
 
-    it('exposes one ViewType binding for many Views and passes business IDs to the application unchanged', async () => {
+    it('exposes one Tool for many Views and forwards the requested receiver and business arguments', async () => {
         const h = harness(), source = observation('one');
         const schema = { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'], additionalProperties: false };
         const single = { ...source, tools: [{ ...source.tools[0]!, inputSchema: schema }] };
@@ -611,39 +606,28 @@ describe('model-visible presentation contract', () => {
         });
         const two = await consume(h.source);
         expect(Object.keys(two.tools).filter(key => key.endsWith('-multi_open_file'))).toEqual([name]);
-        expect((one.tools[name].inputSchema as any).jsonSchema).toEqual(schema);
-        expect((two.tools[name].inputSchema as any).jsonSchema).toEqual(schema);
-        await two.executeTool!(name, { filePath: '/b.txt' }, 'business-id');
+        expect((one.tools[name].inputSchema as any).jsonSchema).toEqual(modelToolSchema(schema, 'AnyView'));
+        expect((two.tools[name].inputSchema as any).jsonSchema).toEqual(modelToolSchema(schema, 'AnyView'));
+        await two.executeTool!(name, { view_id: 'second', filePath: '/b.txt' }, 'business-id');
         expect(h.clients[0].client.invoke).toHaveBeenCalledWith(expect.objectContaining({
-            observationId: 'two-views', bindingId: 'one-binding-1', input: { filePath: '/b.txt' },
+            observationId: 'two-views', toolId: 'tool', input: { view_id: 'second', filePath: '/b.txt' },
         }));
         await one.release!(); await two.release!(); h.source.dispose();
     });
 
-    it('rejects retired instance-owned Tool bindings before dispatch', async () => {
+    it('uses the observed receiver choices while preserving every open View body', async () => {
         const h = harness(), source = observation('one');
-        const first = { viewId: 'workspace', viewInstanceId: 'one-view', bindingVersion: 1, selector: { param: 'filePath', value: '/a.txt' } };
-        const other = { viewId: 'second', viewInstanceId: 'second-instance', bindingVersion: 2, selector: { param: 'filePath', value: '/b.txt' } };
-        const execution = { kind: 'view-instance' as const, targets: [first] };
-        const tool = { ...source.tools[0]!, inputSchema: {
-            type: 'object', properties: { filePath: { type: 'string' }, item: { type: 'object' } },
-            required: ['filePath', 'item'], additionalProperties: false,
-        },  execution };
         h.observations.set('one', { ...source,
-            tools: [{ ...tool, execution: { kind: 'view-instance', targets: [first, other] } }],
-            bindings: [
-                { bindingId: 'first-binding', toolId: 'tool', execution: { kind: 'view-instance', target: first } },
-                { bindingId: 'second-binding', toolId: 'tool', execution: { kind: 'view-instance', target: other } },
-            ],
             views: [...source.views, { ...source.views[0]!, id: 'second', viewInstanceId: 'second-instance' }],
+            tools: [{ ...source.tools[0]!, eligibleViewIds: ['second'] }],
         });
         const context = await consume(h.source), name = 'one-AnyView-multi_open_file';
-        expect(context.tools[name]).toBeUndefined();
-        expect(JSON.stringify(context.messages)).toContain('TOOL_SOURCE_CONFLICT');
-        expect(await context.executeTool!(name, { filePath: '/unseen.txt', item: {} }, 'unseen')).toBeUndefined();
-        expect(await context.executeTool!(name, { filePath: '/a.txt', item: {} }, 'first')).toBeUndefined();
-        expect(await context.executeTool!(name, { filePath: '/b.txt', item: {} }, 'second')).toBeUndefined();
-        expect(h.clients[0].client.invoke).not.toHaveBeenCalled();
+        expect((context.tools[name].inputSchema as any).jsonSchema.properties.view_id.enum).toEqual(['second']);
+        expect(context.messages.filter(message => String(message.content).startsWith('<view '))).toHaveLength(2);
+        await context.executeTool!(name, { view_id: 'second' }, 'receiver');
+        expect(h.clients[0].client.invoke).toHaveBeenCalledWith(expect.objectContaining({
+            observationId: 'one-observation-1', toolId: 'tool', input: { view_id: 'second' },
+        }));
         await context.release!(); h.source.dispose();
     });
 

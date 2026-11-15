@@ -36,7 +36,7 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
       return context;
     }
     async function call(context, type, tool, input) {
-      const result = await context.executeTool(`pipeline-${type}-${tool}`, input, `pipeline-${facts.calls.length}`);
+      const result = await context.executeTool(`pipeline-${type}-${tool}`, { view_id: type === 'Guide' ? 'guide' : 'file_a', ...input }, `pipeline-${facts.calls.length}`);
       facts.calls.push({ type, tool, input, result });
       return result;
     }
@@ -60,23 +60,24 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
     const core = createSnapshotCore();
     core.lifecycle.startApp('pipeline', 'plain-run');
     const registry = createViewOwnedTools('pipeline', 'plain-run');
-    const guideView = registry.mount('guide', 'Guide');
-    const fileView = registry.mount('file_a', 'FileDetail');
+    const frame = registry.prepareFrame([
+      { id: 'guide', type: 'Guide', owner: {}, bindings: [] },
+      { id: 'file_a', type: 'FileDetail', owner: {}, bindings: [] },
+    ]);
+    frame.accept();
+    const [guideView, fileView] = frame.instances;
     const projection = new SemanticProjectionCoordinator({
       identity: () => ({ appId: 'pipeline', instanceId: 'plain-run' }),
       readFrame: () => ({ views: [
-        { id: guideView.viewId, viewInstanceId: guideView.viewInstanceId, type: guideView.viewType, kind: 'instruction', name: 'guide', content: { format: 'markdown-v1', value: '\nRead the current file.\n' } },
-        { id: fileView.viewId, viewInstanceId: fileView.viewInstanceId, type: fileView.viewType, kind: 'state', name: 'A > B & "C"\nnext', content: { format: 'markdown-v1', value: expectedBody } },
-      ], tools: registry.listTools() }),
+        { toolBindings: [], id: guideView.viewId, viewInstanceId: guideView.viewInstanceId, type: guideView.viewType, kind: 'instruction', name: 'guide', content: { format: 'markdown-v1', value: '\nRead the current file.\n' } },
+        { toolBindings: [], id: fileView.viewId, viewInstanceId: fileView.viewInstanceId, type: fileView.viewType, kind: 'state', name: 'A > B & "C"\nnext', content: { format: 'markdown-v1', value: expectedBody } },
+      ], tools: frame.tools }),
     });
     assert.equal(projection.commit(() => {}), 'prepared');
     const published = projection.publishTo(core.committer);
     assert.equal(published.status, 'published');
     const authority = createAppInteraction(core.store, { namespace: 'plain-pipeline', now: Date.now, appId: 'pipeline', instanceId: 'plain-run',
-      policy: { project({ source }) {
-        const views = source.views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
-        return { views, refs: [], toolBindings: [], content: views.map(view => ({ view, decision: 'retain' })) };
-      }, authorize: () => true, canReadReceipt: () => true }, execution: { resolve: () => null } });
+      policy: { project: () => ({ refs: [], toolIds: [] }), authorize: () => true, canReadReceipt: () => true }, execution: { resolve: () => null } });
     const plainDesktop = { id: 'plain', getInstalledApps: () => [{ appId: 'pipeline', appInstanceId: 'plain-run', name: 'pipeline', status: 'running' }], getSystemLogs: () => [], output: { subscribe() {}, unsubscribe() {} } };
     const plainSource = new SemanticAOTUIDrivenSource(plainDesktop, {
       getAppInteraction: () => ({ status: 'ready', interaction: authority }),

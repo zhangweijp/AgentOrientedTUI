@@ -31,7 +31,7 @@ export default createApp({ app_name: '${name}', initialize({ publish }) {
 }});
 `);
     await writeFile(join(folder, 'aoapp.json'), JSON.stringify({
-        app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v4',
+        app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v5',
         persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './entry.mjs' },
     }));
     await runCli('install', '.');

@@ -71,6 +71,8 @@ export interface DrivenSourceContext {
     tools: Record<string, Tool>;
     /** Adopt this prepared context for a model turn; diagnostic reads do not call it. */
     adopt?: () => void | Promise<void>;
+    /** Request admission must preserve the tools supplied by this context. */
+    preserveTools?: boolean;
     /** Uses the bindings captured with this context, rather than a later source read. */
     executeTool?: (
         toolName: string,

@@ -12,7 +12,7 @@ function fixture() {
         { appId: 'app_1', appInstanceId: 'app_1-run', name: 'terminal', status: 'running' },
         { appId: 'app_2', appInstanceId: 'app_2-run', name: 'lite_browser', status: 'pending' },
     ];
-    const view = (id: string, name: string, body: string) => ({ id, viewInstanceId: id + '-instance', type: name, name,
+    const view = (id: string, name: string, body: string) => ({ toolBindings: [], id, viewInstanceId: id + '-instance', type: name, name,
         kind: id === 'root' ? 'instruction' : 'state', content: { format: 'markdown-v1', value: body } });
     const views = new Map([
         ['app_0', [view('root', 'Root', 'IDE instructions'), view('workspace', 'Workspace', 'Workspace folders')]],

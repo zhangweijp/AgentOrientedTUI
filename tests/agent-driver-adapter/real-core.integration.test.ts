@@ -7,7 +7,6 @@ import { compileOrdinarySchema } from '../../runtime/src/core/tool/ordinary-para
 import type { AppDiscoveryInfo, IDesktop, IKernel } from '../../runtime/src/spi/runtime/kernel.interface.js';
 import type { ExecutionBinding, InvocationContext, InvocationSource, AppInteractionPolicy } from '@aotui/runtime/core';
 import type { ViewToolInvocationTerminal } from '../../runtime/src/core/tool/invocation-terminal.js';
-import type { AppTypeToolDefinition } from '../../runtime/src/spi/runtime/app-type-tools.interface.js';
 import type { SnapshotCore } from '../../runtime/src/core/snapshot/types.js';
 
 type ReceiverCoreInspection = { core: SnapshotCore };
@@ -22,24 +21,16 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
     if (!input.ok) throw new Error('The real registry fixture requires a valid ordinary Tool contract.');
 
     const invoked: string[] = [];
-    let view = registry.mount('workspace', viewType);
-    let releaseTypeTool: () => void;
-    const register = (type: string) => {
-        const definition: AppTypeToolDefinition = { viewType: type, name: 'run', description: 'Run the current App Tool.',
-            inputSchema: input.contract.schema };
-        return registry.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
-            createSafeOrdinaryParametersInvoker: contract => async args => {
-                const checked = contract.validateResolvedInput(args);
-                if (!checked.ok) return { phase: 'not-entered', result: { success: false,
-                    error: { code: checked.code, message: 'Input did not match the registered Tool contract.' } } };
-                const value = String(checked.value.value);
-                invoked.push(value);
-                return { phase: 'entered-returned', result: { success: true, data: { appId, value } } };
-            },
-        });
+    let type = viewType;
+    let owner = {};
+    registry.defineTools([...new Set([viewType, 'Workspace'])].map(viewType => ({
+        viewType, name: 'run', description: 'Run the current App Tool.', inputSchema: input.contract.schema,
+    })));
+    const execute = async (args: Readonly<Record<string, unknown>>) => {
+        const value = String(args.value);
+        invoked.push(value);
+        return { success: true, data: { appId, value } };
     };
-    releaseTypeTool = register(viewType);
 
     const receiver = new SemanticSnapshotReceiver(appId, instanceId, () => 100);
     const binding: ExecutionBinding = {
@@ -48,26 +39,28 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
             const checked = input.contract.validateModelInput(value);
             return checked.ok ? { ok: true, value: checked.value } : { ok: false };
         },
-        isLive: source => registry.validateTypeToolBinding(source.tool, source.execution).success
+        isLive: source => registry.validateTypeToolBinding(source.tool, source.receiver).success
             ? { ok: true } : { ok: false },
         execute: async (context: InvocationContext) => {
             const terminal: ViewToolInvocationTerminal = await registry.invokeTypeTool(
-                context.source.tool, context.source.execution, context.effectiveInput);
+                context.source.tool, context.source.receiver, context.effectiveInput);
             return { kind: 'tool-result', phase: terminal.phase, result: terminal.result };
         },
     };
     const execution = {
-        resolve: (source: InvocationSource) => registry.listTools().some(tool => tool.id === source.tool.id) ? binding : null,
+        resolve: () => binding,
     };
 
     let sequence = 0;
     const publish = (nextBody = body) => {
         sequence++;
-        const views = registry.listViews().map(item => ({ id: item.viewId, viewInstanceId: item.viewInstanceId,
+        const frame = registry.prepareFrame([{ id: 'workspace', type, owner, bindings: [{ name: 'run', enabled: true, execute }] }]);
+        frame.accept();
+        const views = frame.instances.map(item => ({ toolBindings: item.toolBindings, id: item.viewId, viewInstanceId: item.viewInstanceId,
             type: item.viewType, name: viewName, kind: 'state' as const,
             content: { format: 'markdown-v1' as const, value: nextBody } }));
-        const tools = Object.fromEntries(registry.listTools().map(tool => [tool.id, tool]));
-        const accepted = receiver.acceptPrepared({ schemaVersion: 3, appId, instanceId, producerSeq: sequence,
+        const tools = Object.fromEntries(frame.tools.map(tool => [tool.id, tool]));
+        const accepted = receiver.acceptPrepared({ schemaVersion: 4, appId, instanceId, producerSeq: sequence,
             sourceEpoch: sequence, capturedAt: sequence, views, refs: {}, tools });
         if (accepted.status !== 'published' && accepted.status !== 'unchanged') {
             throw new Error(`The real Snapshot Receiver rejected ${appId}: ${accepted.issue.code}`);
@@ -77,12 +70,10 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
 
     return {
         app: { appId: appId as AppDiscoveryInfo['appId'], appInstanceId: instanceId, name, status: 'running' as const },
-        registry, receiver, execution, invoked, view: () => view,
-        repairViewType(type: string) {
-            releaseTypeTool();
-            registry.unmount(view.viewInstanceId);
-            view = registry.mount('workspace', type);
-            releaseTypeTool = register(type);
+        registry, receiver, execution, invoked,
+        repairViewType(next: string) {
+            type = next;
+            owner = {};
             publish(`${appId} repaired View content.`);
         },
     };
@@ -118,11 +109,10 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
     const contexts: Awaited<ReturnType<typeof source.getContext>>[] = [];
 
     try {
-        // Core V3 accepts this identity. The stricter native alias rule belongs
+        // Core V4 accepts this identity. The stricter native alias rule belongs
         // to Semantic Source, which must isolate only this App at projection time.
         expect(bad.receiver.report()).toMatchObject({ health: 'ready', published: 1 });
         expect(bad.registry.listViews()[0]?.viewType).toBe('A-B');
-        expect(bad.registry.listTools()[0]?.viewType).toBe('A-B');
         expect(JSON.stringify(bad.receiver.report())).not.toContain('AOTUI_TOOL_NAME_INVALID');
 
         const first = await source.getContext();
@@ -142,9 +132,9 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         expect(firstText).toContain('AOTUI_TOOL_NAME_INVALID: viewType');
         expect(firstText).toContain('AOTUI_TOOL_NAME_COLLISION');
 
-        expect(await first.executeTool!('shared_app-Workspace-run', { value: 'winner' }, 'collision-winner'))
+        expect(await first.executeTool!('shared_app-Workspace-run', { view_id: 'workspace', value: 'winner' }, 'collision-winner'))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { appId: 'collision_a', value: 'winner' } });
-        expect(await first.executeTool!('healthy_app-Workspace-run', { value: 'usable' }, 'healthy-call'))
+        expect(await first.executeTool!('healthy_app-Workspace-run', { view_id: 'workspace', value: 'usable' }, 'healthy-call'))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { appId: 'healthy_app', value: 'usable' } });
         expect(collidingA.invoked).toEqual(['winner']);
         expect(collidingB.invoked).toEqual([]);
@@ -171,7 +161,7 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         await recovered.adopt!();
         expect(recovered.tools['bad_app-Workspace-run']).toBeDefined();
         expect(JSON.stringify(recovered.messages)).toContain('bad_app repaired View content.');
-        expect(await recovered.executeTool!('bad_app-Workspace-run', { value: 'recovered' }, 'bad-recovered'))
+        expect(await recovered.executeTool!('bad_app-Workspace-run', { view_id: 'workspace', value: 'recovered' }, 'bad-recovered'))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { appId: 'bad_app', value: 'recovered' } });
         expect(bad.invoked).toEqual(['recovered']);
 

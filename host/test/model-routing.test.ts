@@ -18,7 +18,8 @@ const routerURL = 'https://openrouter.ai/api/v1';
 const customURL = 'https://compatible.test/v1';
 const anthropicURL = 'https://anthropic-proxy.test/v1';
 const providerModel = (id: string, output: number, tool_call: boolean) => ({
-    id, name: id, tool_call, modalities: { input: ['text'] }, limit: { context: 32_000, output },
+    // The routing fixture loads the standard desktop Apps and their complete Tool inventory.
+    id, name: id, tool_call, modalities: { input: ['text'] }, limit: { context: 64_000, output },
 });
 const catalog = {
     openai: { id: 'openai', name: 'OpenAI', api: openaiURL, models: {

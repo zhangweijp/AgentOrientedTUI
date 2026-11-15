@@ -5,8 +5,7 @@ import { buildPublicToolName } from '@aotui/runtime/adapters';
 import { DEFAULT_AOTUI_SYSTEM_INSTRUCTION } from '@aotui/runtime/adapters';
 import { loadAOTUIInstruction } from './load-aotui-instruction.js';
 import { formatAppStatus, formatTimestamp } from './presentation.js';
-import { modelToolSchema } from '@aotui/runtime/core';
-import type { ObservedToolExecutionV3, ToolDescriptorV3 } from '@aotui/runtime/core';
+import { modelToolSchema, SnapshotDataError } from '@aotui/runtime/core';
 import type { ContextDrivenSource, DrivenSourceContext, MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2';
 import type { AppID } from '@aotui/runtime/spi';
 import type { IDesktop, IKernel, AppDiscoveryInfo } from '@aotui/runtime/spi';
@@ -47,8 +46,7 @@ function semanticToolResult(toolName: string, toolCallId: string, result: Invoke
     };
 }
 
-interface Binding { app: AppDiscoveryInfo; client: AppInteraction; observationId: string; bindingId: string; execution: ObservedToolExecutionV3 }
-interface ToolGroup { app: AppDiscoveryInfo; tool: ToolDescriptorV3; bindings: Map<string, Binding> }
+interface ToolRoute { app: AppDiscoveryInfo; client: AppInteraction; observationId: string; toolId: string }
 interface AppIssue { code: string; message: string; path?: string }
 interface CapturedObservation { client: AppInteraction; observation: Observation; released: boolean }
 interface AppProjection {
@@ -56,7 +54,7 @@ interface AppProjection {
     captured: CapturedObservation;
     messages: MessageWithTimestamp[];
     tools: Map<string, Tool>;
-    bindings: Map<string, ToolGroup>;
+    routes: Map<string, ToolRoute>;
     presentations: Map<string, { digest: string; timestamp: number }>;
 }
 
@@ -215,7 +213,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
             for (const id of this.policies.keys()) if (!installedIds.has(id)) this.policies.delete(id);
             const messages: MessageWithTimestamp[] = [];
             const tools: Record<string, Tool> = {};
-            const bindings = new Map<string, ToolGroup>();
+            const routes = new Map<string, ToolRoute>();
             const presentations = new Map<string, { digest: string; timestamp: number }>();
             const timestamp = (target: Map<string, { digest: string; timestamp: number }>, id: string, content: string) => {
                 const digest = createHash('sha256').update(content).digest('hex');
@@ -245,31 +243,11 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                         continue;
                     }
 
-                    const byId = new Map<string, ToolGroup>(observation.tools.map(tool => [tool.id,
-                        { app, tool, bindings: new Map<string, Binding>() }]));
-                    if (byId.size !== observation.tools.length)
-                        throw new AppProjectionError('AOTUI_APP_PROJECTION_INVALID', 'The App declared duplicate Tool identities.');
-                    for (const sourceBinding of observation.bindings) {
-                        const group = byId.get(sourceBinding.toolId);
-                        if (!group) throw new AppProjectionError('AOTUI_APP_PROJECTION_INVALID', 'The App observation contains a Tool binding without a Tool declaration.');
-                        if (sourceBinding.execution.kind === 'view-type') {
-                            if (group.tool.execution.kind !== 'view-type' || group.tool.execution.activationId !== sourceBinding.execution.activationId ||
-                                group.bindings.size > 0) throw new AppProjectionError('TOOL_SOURCE_CONFLICT', 'The App ViewType Tool binding does not match its observation.');
-                            const value = 'view-type:' + sourceBinding.execution.activationId;
-                            group.bindings.set(value, { app, client: interaction, observationId: observation.observationId,
-                                bindingId: sourceBinding.bindingId, execution: sourceBinding.execution });
-                            continue;
-                        }
-                        throw new AppProjectionError('TOOL_SOURCE_CONFLICT', 'The App observation contains an unsupported Tool execution kind.');
-                    }
-
-                    const localGroups = [...byId.values()].filter(group => group.bindings.size);
                     const localMessages: MessageWithTimestamp[] = [];
                     const localTools = new Map<string, Tool>();
-                    const localBindings = new Map<string, ToolGroup>();
+                    const localRoutes = new Map<string, ToolRoute>();
                     const localPresentations = new Map<string, { digest: string; timestamp: number }>();
                     for (const view of observation.views) {
-                        if (!view.content) continue;
                         const content = view.content.value;
                         const refs = observation.refs.filter(ref => ref.viewId === view.id && ref.viewInstanceId === view.viewInstanceId);
                         const markup = buildViewMessageMarkup({ appId, appName: app.name || appId,
@@ -278,23 +256,27 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                         localMessages.push({ role: 'user', region: view.kind === 'instruction' ? 'static' : 'dynamic',
                             timestamp: timestamp(localPresentations, JSON.stringify([app.appId, view.viewInstanceId]), markup), content: markup });
                     }
-                    for (const group of localGroups) {
-                        const name = buildPublicToolName(group.app.name || appId, group.tool.viewType, group.tool.name);
-                        if (localBindings.has(name)) throw new AppProjectionError('AOTUI_TOOL_NAME_COLLISION',
+                    for (const tool of observation.tools) {
+                        const name = buildPublicToolName(app.name || appId, tool.viewType, tool.name);
+                        if (localRoutes.has(name)) throw new AppProjectionError('AOTUI_TOOL_NAME_COLLISION',
                             `Public Tool alias ${JSON.stringify(name)} is declared more than once by this App. Rename its ViewType or Tool.`);
-                        if (!object(group.tool.inputSchema)) throw new AppProjectionError('AOTUI_TOOL_SCHEMA_INVALID',
+                        if (!object(tool.inputSchema)) throw new AppProjectionError('AOTUI_TOOL_SCHEMA_INVALID',
                             'This App Tool has an invalid input schema. Declare a JSON Schema object and refresh the context.');
                         let inputSchema: ReturnType<typeof jsonSchema>;
-                        try { inputSchema = jsonSchema(modelToolSchema(group.tool.inputSchema)); }
-                        catch { throw new AppProjectionError('AOTUI_TOOL_SCHEMA_INVALID',
-                            'This App Tool schema is not supported by the Agent Driver. Simplify its JSON Schema and refresh the context.'); }
-                        localBindings.set(name, group);
-                        localTools.set(name, { description: `${group.tool.description}\nApplication: ${group.app.name || appId}; View type: ${group.tool.viewType}.`,
+                        try { inputSchema = jsonSchema(modelToolSchema(tool.inputSchema, tool.viewType, tool.eligibleViewIds)); }
+                        catch (error) {
+                            if (error instanceof SnapshotDataError && error.code === 'TOOL_SCHEMA_CAPACITY')
+                                throw new AppProjectionError('OBSERVATION_CAPACITY', 'The Tool schema and eligible Views exceed the observation limit. Close a View or simplify the declaration.');
+                            throw new AppProjectionError('AOTUI_TOOL_SCHEMA_INVALID',
+                            'This App Tool schema is not supported by the Agent Driver. Simplify its JSON Schema and refresh the context.');
+                        }
+                        localRoutes.set(name, { app, client: interaction, observationId: observation.observationId, toolId: tool.id });
+                        localTools.set(name, { description: `${tool.description}\nApplication: ${app.name || appId}; View type: ${tool.viewType}.`,
                             inputSchema });
                     }
                     const captured: CapturedObservation = { client: interaction, observation, released: false };
                     observations.push(captured);
-                    projections.push({ app, captured, messages: localMessages, tools: localTools, bindings: localBindings,
+                    projections.push({ app, captured, messages: localMessages, tools: localTools, routes: localRoutes,
                         presentations: localPresentations });
                 } catch (error) {
                     if (observation && interaction) interaction.releaseObservation(observation.observationId);
@@ -327,7 +309,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                 messages.push(...projection.messages);
                 for (const [name, tool] of projection.tools) {
                     tools[name] = tool;
-                    bindings.set(name, projection.bindings.get(name)!);
+                    routes.set(name, projection.routes.get(name)!);
                 }
                 for (const [id, entry] of projection.presentations) presentations.set(id, entry);
             }
@@ -349,6 +331,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
             if (released || this.generation !== generation) { owner.release(); return { messages: [], tools: {} }; }
             this.presentations = presentations;
             return { messages, tools, release: owner.release,
+                ...(routes.size > 0 ? { preserveTools: true } : {}),
                 adopt: () => {
                     if (released || this.disposed || !this.enabled || this.generation !== generation)
                         throw Object.assign(new Error('This prepared context is no longer available.'), { code: 'SEMANTIC_CONTEXT_RELEASED' });
@@ -380,17 +363,12 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                     if (!adopted) return name in tools ? unavailable(name, callId, 'SEMANTIC_CONTEXT_NOT_ADOPTED', 'Adopt this prepared context before invoking its tools.') : undefined;
                     const handler = control.get(name);
                     if (handler) return handler(args, callId);
-                    const group = bindings.get(name);
-                    if (!group) return undefined;
-                    if (!this.allowed(group.app)) return unavailable(name, callId, 'APP_DISABLED', 'This application is disabled.');
+                    const route = routes.get(name);
+                    if (!route) return undefined;
+                    if (!this.allowed(route.app)) return unavailable(name, callId, 'APP_DISABLED', 'This application is disabled.');
                     if (!object(args)) return unavailable(name, callId, 'INVOCATION_INVALID', 'Tool input must be an object.');
-                    const fields = Object.getOwnPropertyDescriptors(args);
-                    if (Reflect.ownKeys(fields).some(key => typeof key !== 'string' || !fields[key]!.enumerable || !('value' in fields[key]!)))
-                        return unavailable(name, callId, 'INVOCATION_INVALID', 'Tool input must contain ordinary JSON properties.');
-                    const binding = group.bindings.get('view-type:' + group.tool.execution.activationId);
-                    if (!binding) return unavailable(name, callId, 'TOOL_UNAVAILABLE', 'The observed Tool binding is unavailable.');
-                    try { return semanticToolResult(name, callId, await binding.client.invoke({ invocationId: callId,
-                        observationId: binding.observationId, bindingId: binding.bindingId, input: args })); }
+                    try { return semanticToolResult(name, callId, await route.client.invoke({ invocationId: callId,
+                        observationId: route.observationId, toolId: route.toolId, input: args })); }
                     catch { return unavailable(name, callId, 'INVOCATION_RESULT_UNKNOWN', 'Execution could not be confirmed. Do not blindly retry.', 'unknown'); }
                 },
             };

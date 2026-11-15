@@ -345,7 +345,7 @@ export function modelToolSchema(input: JsonValue, viewType: string, eligibleView
     properties: Object.freeze({
       view_id: Object.freeze({
         type: 'string',
-        description: 'XML id of the observed ' + viewType + ' View that will execute this operation.',
+        description: 'Receiving ' + viewType + ' View XML id.',
         ...(eligibleViewIds === undefined ? {} : { enum: Object.freeze([...eligibleViewIds]) }),
       }),
       ...schema.properties,

@@ -1,14 +1,14 @@
-import { arrayRef, createApp, formatRef, ref, type PublishedView } from '@aotui/sdk/app';
-import { bindings, initialState, itemValue, label, otherViewId, selectedViewId, tools, workspaceText, type WorkItemOptions } from './work-items.js';
+import { arrayRef, createApp, createView, formatRef, ref } from '@aotui/sdk/app';
+import { itemBindings, workspaceBindings, ItemType, WorkspaceType, initialState, itemValue, label, otherViewId, selectedViewId, workViewTypes, workspaceText, type State, type WorkItemOptions } from './work-items.js';
 
 export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
     return createApp({
         app_name,
-        tools,
+        viewTypes: workViewTypes,
         initialize({ publish, signal, registerCleanup }) {
             let state = initialState();
             registerCleanup({ stop: () => options.onStop?.(), close: () => options.onClose?.() });
-            const execute = bindings(update => {
+            const change = (update: (value: State) => State) => {
                 if (signal.aborted) return;
                 state = update(state);
                 try { publishState(); }
@@ -16,21 +16,27 @@ export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
                     if (!options.onPublicationError) throw error;
                     options.onPublicationError(error);
                 }
-            }, options);
-
-            function publishState() {
-                const views: PublishedView[] = [
-                    { id: 'workspace', type: 'Workspace', kind: 'state', body: workspaceText(state) },
-                    { id: otherViewId, type: 'Item', kind: 'state', body: formatRef('Other item', 'selected', 'Data'),
-                        refs: [ref('selected', false, { refType: 'Data', schema: itemValue })] },
-                ];
-                if (state.open) views.push({
-                    id: selectedViewId, type: 'Item', kind: 'state',
+            };
+            const workspace = createView(WorkspaceType, {
+                id: 'workspace', kind: 'state', render: () => ({ body: workspaceText(state), bindings: workspaceBindings(change, options) }),
+            });
+            const other = createView(ItemType, {
+                id: otherViewId, kind: 'state', render: () => ({
+                    body: formatRef('Other item', 'selected', 'Data'),
+                    refs: [ref('selected', false, { refType: 'Data', schema: itemValue })],
+                    bindings: itemBindings(change),
+                }),
+            });
+            const selected = createView(ItemType, {
+                id: selectedViewId, kind: 'state', render: () => ({
                     body: [formatRef(label, 'selected', 'Data'), formatRef('All items', 'items', 'Data[]'),
                         ...state.items.map((_, index) => formatRef(`Item ${index + 1}`, `items[${index}]`, 'Data'))].join('\n'),
                     refs: [ref('selected', state.value, { refType: 'Data', schema: itemValue }), arrayRef('items', state.items, { itemType: 'Data' })],
-                });
-                publish({ views, bindings: execute });
+                    bindings: itemBindings(change),
+                }),
+            });
+            function publishState() {
+                return publish({ views: state.open ? [workspace, other, selected] : [workspace, other] });
             }
             publishState();
         },

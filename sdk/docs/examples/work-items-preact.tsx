@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
-import { AppTools, createTUIApp, useAppLifecycle, useArrayRef, useDataRef, View } from '@aotui/sdk';
+import { createTUIApp, useAppLifecycle, useArrayRef, useDataRef, View } from '@aotui/sdk';
 import type { JsonValue } from '@aotui/sdk/app';
-import { bindings, initialState, itemValue, label, otherViewId, selectedViewId, tools, workspaceText, type WorkItemOptions } from './work-items.js';
+import { itemBindings, workspaceBindings, ItemType, WorkspaceType, initialState, itemValue, label, otherViewId, selectedViewId, workViewTypes, workspaceText, type WorkItemOptions } from './work-items.js';
 
 function Item({ value, items }: { readonly value: JsonValue; readonly items?: readonly JsonValue[] }) {
     const selected = useDataRef('selected', value, { refType: 'Data', schema: itemValue });
@@ -23,13 +23,13 @@ export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
     function WorkItems() {
         const [state, setState] = useState(initialState);
         useAppLifecycle({ stop: () => options.onStop?.(), close: () => options.onClose?.() });
-        return <AppTools definition={tools} bindings={bindings(setState, options)}>
-            <View id="workspace" type="Workspace" kind="state"><p>{workspaceText(state)}</p></View>
-            <View id={otherViewId} type="Item" kind="state"><Item value={false} /></View>
-            {state.open && <View id={selectedViewId} type="Item" kind="state"><Item value={state.value} items={state.items} /></View>}
-        </AppTools>;
+        return <>
+            <View id="workspace" type={WorkspaceType} bindings={workspaceBindings(setState, options)} kind="state"><p>{workspaceText(state)}</p></View>
+            <View id={otherViewId} type={ItemType} bindings={itemBindings(setState)} kind="state"><Item value={false} /></View>
+            {state.open && <View id={selectedViewId} type={ItemType} bindings={itemBindings(setState)} kind="state"><Item value={state.value} items={state.items} /></View>}
+        </>;
     }
-    return createTUIApp({ app_name, component: WorkItems });
+    return createTUIApp({ app_name, component: WorkItems, viewTypes: workViewTypes });
 }
 
 export default workItemsApp('work_items');

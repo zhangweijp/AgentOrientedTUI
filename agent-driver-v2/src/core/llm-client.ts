@@ -71,6 +71,7 @@ export class LLMClient {
             onTextDelta?: (delta: string) => void;
             onReasoningDelta?: (delta: string) => void;
             beforeRequest?: (signature: string) => void | Promise<void>;
+            preserveTools?: boolean;
         }
     ): Promise<LLMResponse> {
         let requestFailure: unknown;
@@ -87,6 +88,7 @@ export class LLMClient {
             );
 
             if (shouldDisableTools) {
+                if (callbacks?.preserveTools) throw new Error('The selected model does not support tools required by the current context.');
                 this.logger.warn('Tool calls disabled by model capability metadata', {
                     model: this.config.model,
                     providerId: this.config.provider.id,
@@ -112,7 +114,9 @@ export class LLMClient {
                 throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'This Host cannot count media inputs. Remove the attachment to continue.');
             }
             const provider = this.createProvider();
-            const retryWithoutTools = this.config.provider.id === 'openrouter' && Object.keys(effectiveTools).length > 0;
+            // A request with adopted context must keep the same tools at the provider boundary.
+            const retryWithoutTools = !callbacks?.preserveTools &&
+                this.config.provider.id === 'openrouter' && Object.keys(effectiveTools).length > 0;
             let admitted: Promise<void> | undefined;
             const model = budget || callbacks?.beforeRequest || retryWithoutTools ? wrapLanguageModel({ model: provider, middleware: {
                 specificationVersion: 'v3',

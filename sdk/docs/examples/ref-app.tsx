@@ -1,31 +1,40 @@
 import Type from 'typebox';
 import {
-  AppTools, ToolCatalog, View, createTUIApp, defineToolSet, defineViewTypeTool,
+  ToolCatalog, View, createTUIApp, defineViewType,
   refParam, useArrayRef, useDataRef, useState,
 } from '@aotui/sdk';
 
 const NoteSchema = Type.Object({ id: Type.String(), title: Type.String(), text: Type.String() },
   { additionalProperties: false });
-const tools = defineToolSet({
-  open: defineViewTypeTool({ viewType: 'Workspace', name: 'open_notes',
-    description: 'Open the Notes page.', inputSchema: Type.Object({}, { additionalProperties: false }) }),
-  close: defineViewTypeTool({ viewType: 'Workspace', name: 'close_notes',
-    description: 'Close the Notes page.', inputSchema: Type.Object({}, { additionalProperties: false }) }),
-  inspect: defineViewTypeTool({ viewType: 'NoteDetail', name: 'inspect_note',
-    description: 'Inspect a Note Ref; read the result in Note Detail.',
-    inputSchema: Type.Object({ note: refParam('Note', NoteSchema) }, { additionalProperties: false }) }),
-  inspectList: defineViewTypeTool({ viewType: 'NoteDetail', name: 'inspect_notes',
-    description: 'Inspect one complete Note list Ref; read Note Detail.',
-    inputSchema: Type.Object({ notes: refParam('Note', Type.Array(NoteSchema, { maxItems: 50 })) },
-      { additionalProperties: false }) }),
-  inspectSelection: defineViewTypeTool({ viewType: 'NoteDetail', name: 'inspect_selection',
-    description: 'Inspect ordered Note Refs, optionally with a primary Note and whole list; read Note Detail.',
-    inputSchema: Type.Object({
+export const RootType = defineViewType({ name: 'Root', tools: {} });
+
+export const WorkspaceType = defineViewType({ name: 'Workspace', tools: {
+        open_notes: { description: 'Open the Notes page.',
+            inputSchema: Type.Object({}, { additionalProperties: false }),
+        },
+        close_notes: { description: 'Close the Notes page.',
+            inputSchema: Type.Object({}, { additionalProperties: false }),
+        },
+} });
+
+export const NoteDetailType = defineViewType({ name: 'NoteDetail', tools: {
+        inspect_note: { description: 'Inspect a Note Ref; read the result in Note Detail.',
+            inputSchema: Type.Object({ note: refParam('Note', NoteSchema) }, { additionalProperties: false }),
+        },
+        inspect_notes: { description: 'Inspect one complete Note list Ref; read Note Detail.',
+            inputSchema: Type.Object({ notes: refParam('Note', Type.Array(NoteSchema, { maxItems: 50 })) },
+      { additionalProperties: false }),
+        },
+        inspect_selection: { description: 'Inspect ordered Note Refs, optionally with a primary Note and whole list; read Note Detail.',
+            inputSchema: Type.Object({
       selected: Type.Array(refParam('Note', NoteSchema), { maxItems: 50 }),
       primary: Type.Optional(refParam('Note', NoteSchema)),
       whole: Type.Optional(refParam('Note', Type.Array(NoteSchema, { maxItems: 50 }))),
-    }, { additionalProperties: false }) }),
-});
+    }, { additionalProperties: false }),
+        },
+} });
+
+export const noteViewTypes = [RootType, WorkspaceType, NoteDetailType] as const;
 const notes = [
   { id: 'internal_a', title: 'First note', text: 'First line\nSecond line' },
   { id: 'internal_b', title: 'Second note', text: 'Another note' },
@@ -53,27 +62,28 @@ function App() {
     setInspection(selected.length ? selected.map(note => `${note.title}: ${note.text}`).join('\n') : 'No notes selected.');
     return { success: true as const, data: { view_id: 'detail', inspected: true } };
   }
-  return <AppTools definition={tools} bindings={{
-    open: { execute: () => { setOpened(true); return { success: true, data: { message: 'Read Notes.' } }; } },
-    close: { enabled: opened, execute: () => { setOpened(false); return { success: true, data: { message: 'Notes closed.' } }; } },
-    inspect: { enabled: opened, execute: ({ note }) => inspect([note]) },
-    inspectList: { enabled: opened, execute: ({ notes: selected }) => inspect(selected) },
-    inspectSelection: { enabled: opened, execute: ({ selected, primary, whole }) =>
-      inspect([...selected, ...(primary ? [primary] : []), ...(whole ?? [])]) },
-  }}>
-    <View kind="instruction" id="root" type="Root" name="Notes instructions">
+  return <>
+    <View kind="instruction" id="root" type={RootType} name="Notes instructions">
       <h1>Notes Example Application Instruction</h1>
-      <p>Open Notes from Workspace. Select objects using the containing View id plus its local Ref name:
+      <p>Open Notes from Workspace. Pass the receiving page’s XML id as view_id. Select objects using the containing View id plus its local Ref name:
         detail.current, detail.notes or detail.notes[0]. The displayed Note: prefix is a type hint only.
         Do not copy internal IDs. Read the Inspection section after a receipt. Close Notes when finished.</p>
-      <ToolCatalog definition={tools} />
+      <ToolCatalog viewTypes={noteViewTypes} />
     </View>
-    <View kind="state" id="workspace" type="Workspace" name="Notes workspace">
+    <View kind="state" id="workspace" type={WorkspaceType} name="Notes workspace" bindings={{
+      open_notes: { execute: () => { setOpened(true); return { success: true, data: { message: 'Read Notes.' } }; } },
+      close_notes: { enabled: opened, execute: () => { setOpened(false); return { success: true, data: { message: 'Notes closed.' } }; } },
+    }}>
       <p>Notes are an in-memory example. Open the page to inspect them.</p>
     </View>
-    {opened && <View kind="state" id="detail" type="NoteDetail" name="Notes">
+    {opened && <View kind="state" id="detail" type={NoteDetailType} name="Notes" bindings={{
+      inspect_note: { execute: ({ note }) => inspect([note]) },
+      inspect_notes: { execute: ({ notes: selected }) => inspect(selected) },
+      inspect_selection: { execute: ({ selected, primary, whole }) =>
+        inspect([...selected, ...(primary ? [primary] : []), ...(whole ?? [])]) },
+    }}>
       <Detail inspection={inspection} />
     </View>}
-  </AppTools>;
+  </>;
 }
-export default createTUIApp({ app_name: 'notes_example', component: App });
+export default createTUIApp({ app_name: 'notes_example', component: App, viewTypes: noteViewTypes });
