@@ -17,7 +17,7 @@ export interface TuiDesktop {
 export interface TuiApplication {
     id: string;
     name: string;
-    status?: 'pending' | 'running' | 'paused' | 'closed' | 'collapsed';
+    status?: 'pending' | 'running' | 'closed' | 'collapsed';
     infoContent: string;      // <application_info> 内容
     views: TuiView[];
     rawContent: string;       // 原始内容（不含 views）
@@ -103,7 +103,7 @@ function parseApplications(content: string): TuiApplication[] {
         const nameMatch = attrText.match(/\bname="([^"]*)"/);
         const id = idMatch && decodeXmlText(idMatch[1]);
         const name = decodeXmlText(nameMatch?.[1] ?? idMatch?.[1] ?? '');
-        const status = attrText.match(/\bstatus="(pending|running|paused|closed|collapsed)"/)?.[1] as TuiApplication['status'];
+        const status = attrText.match(/\bstatus="(pending|running|closed|collapsed)"/)?.[1] as TuiApplication['status'];
         if (!id) continue;
 
         const infoMatch = appContent.match(/<application_info>([\s\S]*?)<\/application_info>/);

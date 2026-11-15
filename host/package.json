@@ -4,12 +4,15 @@
   "description": "AOTUI System Chat Application - Agent-Human conversation interface",
   "type": "module",
   "main": "dist/electron/main.mjs",
+  "bin": {
+    "agentina": "./dist/app-distribution/cli.js"
+  },
   "types": "dist/index.d.ts",
   "engines": {
     "node": ">=22.12.0"
   },
   "scripts": {
-    "build": "tsc && ELECTRON_BUILD_TARGET=main vite build -c vite.electron.config.ts && ELECTRON_BUILD_TARGET=preload vite build -c vite.electron.config.ts",
+    "build": "tsc && chmod +x dist/app-distribution/cli.js && ELECTRON_BUILD_TARGET=main vite build -c vite.electron.config.ts && ELECTRON_BUILD_TARGET=preload vite build -c vite.electron.config.ts",
     "dev": "vite",
     "build:all": "npm run build && npm run build:gui",
     "build:gui": "vite build",

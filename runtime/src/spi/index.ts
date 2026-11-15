@@ -10,7 +10,6 @@
 export type {
     AppID,
     DesktopID,
-    DesktopStatus,
     ViewID,
 } from './core/types.js';
 export {

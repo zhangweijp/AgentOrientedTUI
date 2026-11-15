@@ -9,6 +9,7 @@
 | `defineViewTypeTool`, `defineToolSet`, `getToolCatalog` | 静态定义只写一次 ViewType/name/description/Schema；不含 execute 或业务 owner |
 | `ToolCatalog` | Root 按 ViewType 展示工具名；当前可调用的工具由上下文 Tools 提供 |
 | `useDataRef`, `useArrayRef` | Preact 在 View 内发布 JSON 值，支持可选 TypeBox 源 schema，并保留 owner 与旧 cleanup 隔离 |
+| `useLLMUsage` | Preact 订阅 Desktop 投递的时间、Provider、模型 ID 与用量。App 自己维护业务历史 |
 | `refParam` | 支持顶层 JSON 值 Ref、可选字段和 `Type.Array(refParam(...))` 多选。Runtime 从原观察解析、检查来源和目标 schema，向 handler 提供深只读值 |
 | `registerCleanup` / `useAppLifecycle`, `persistence` / `usePersistentState` | 普通 TS / Preact 的应用资源登记和实例持久化入口 |
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderInstalledAppLines } from './cli-list.js';
+import { renderInstalledAppLines } from '../../src/app-distribution/cli-list.js';
 
 describe('renderInstalledAppLines', () => {
     it('renders the raw app_name instead of manifest or factory display names', () => {

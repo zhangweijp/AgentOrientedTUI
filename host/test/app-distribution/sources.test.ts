@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import os from 'os';
 import path from 'path';
-import { parseInstallSource, parseNpmSpecifier } from './sources.js';
+import { parseInstallSource, parseNpmSpecifier } from '../../src/app-distribution/sources.js';
 
 describe('parseNpmSpecifier', () => {
     it('parses unscoped package', () => {

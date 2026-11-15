@@ -406,16 +406,15 @@ it.each((['authorize', 'auto-read', 'duplicate-read'] as const).flatMap(stage =>
     }
 }, 25000);
 
-it('B2 C06/10–12/16 public pending/collapse/pause/reopen/reinitialize keeps the trusted setting and permanently closes old clients', async () => {
+it('B2 C06/10–12/16 public pending/collapse/show/reopen/reinitialize keeps the trusted setting and permanently closes old clients', async () => {
     const runtime = makeRuntime();try {
         const id = await runtime.createDesktop('d'), desktop = runtime.getDesktop(id);
         const pending = { appId: 'a', modulePath: pathToFileURL(app).href, toolsEnabled: true };
         await desktop.registerPendingApp(pending); pending.toolsEnabled = false;
         expect(runtime.getAppInteraction(id, 'a', 'missing').issue.code).toBe('APP_INTERACTION_UNAVAILABLE');await desktop.openApp('a');
         const s = scope(runtime), first = await s.observe();await desktop.collapseApp('a');expect(runtime.getAppInteraction(id, 'a', s.instanceId).interaction).toBe(s.client);
-        await runtime.suspend(id);expect(runtime.getAppInteraction(id, 'a', s.instanceId, s.policy).issue.code).toBe('APP_INTERACTION_UNAVAILABLE');
-        const paused = await s.client.invoke(request(first));expect(paused).toMatchObject({ kind: 'refused', code: 'APP_INTERACTION_UNAVAILABLE' });await runtime.resume(id);
-        expect((await s.client.invoke(request(first, 'ordinary', { text: 'change' }, 'resumed'))).receipt.outcome.status).toBe('succeeded');
+        await desktop.showApp('a');
+        expect((await s.client.invoke(request(first, 'ordinary', { text: 'change' }, 'shown'))).receipt.outcome.status).toBe('succeeded');
         await desktop.closeApp('a');expect((await s.client.observe({ viewIds: ['detail'] })).status).toBe('rejected');await desktop.openApp('a');
         const reopened = scope(runtime), next = await reopened.observe();expect(next.source.instanceId).not.toBe(first.source.instanceId);
         const reinitializing = runtime.reinitializeDesktopApps(id);expect(runtime.getAppInteraction(id, 'a', s.instanceId, s.policy).status).toBe('rejected');

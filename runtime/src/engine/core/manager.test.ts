@@ -66,26 +66,4 @@ describe('DesktopManager', () => {
     //  生命周期控制
     // ─────────────────────────────────────────────────────────────
 
-    describe('suspend() and resume()', () => {
-        it('should suspend desktop', async () => {
-            const id = await manager.create();
-            await manager.suspend(id);
-
-            expect((manager.get(id) as Desktop).status).toBe('suspended');
-        });
-
-        it('should resume suspended desktop', async () => {
-            const id = await manager.create();
-            await manager.suspend(id);
-            await manager.resume(id);
-
-            expect((manager.get(id) as Desktop).status).toBe('active');
-        });
-
-        it('should throw E_NOT_FOUND for non-existent desktop', async () => {
-            await expect(manager.suspend('non_existent')).rejects.toThrow(/DESKTOP_NOT_FOUND|not found/);
-            await expect(manager.resume('non_existent')).rejects.toThrow(/DESKTOP_NOT_FOUND|not found/);
-        });
-    });
 });
-

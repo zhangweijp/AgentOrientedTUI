@@ -39,7 +39,7 @@ export interface AppDiscoveryInfo {
     /** Runtime-owned identity of the current Worker execution, absent when no execution is active. */
     readonly appInstanceId?: string;
     readonly name?: string;
-    readonly status: 'pending' | 'running' | 'paused' | 'closed' | 'collapsed';
+    readonly status: 'pending' | 'running' | 'closed' | 'collapsed';
     readonly description?: string;
     readonly whatItIs?: string;
     readonly whenToUse?: string;
@@ -170,9 +170,6 @@ export interface IKernel {
         options?: ReinitializeDesktopAppsOptions
     ): Promise<ReinitializeDesktopAppsResult>;
 
-    // [H3 FIX] Changed from void to Promise<void> - Desktop methods are async
-    suspend(desktopId: DesktopID): Promise<void>;
-    resume(desktopId: DesktopID): Promise<void>;
 
     /**
      * [RFC-015] 删除 Desktop

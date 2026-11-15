@@ -4,6 +4,7 @@ import fs from 'fs';
 import fsp from 'fs/promises';
 import { execFile as nodeExecFile } from 'child_process';
 import { promisify } from 'util';
+import type { AppRegistry } from '@aotui/runtime';
 import { parseNpmSpecifier } from './sources.js';
 
 const execFile = promisify(nodeExecFile);
@@ -68,6 +69,23 @@ export async function installNpmPackage(packageInput: string, options?: NpmInsta
 
 function getDefaultAppCacheRoot(): string {
     return path.join(os.homedir(), '.agentina', 'apps', 'npm');
+}
+
+/** Remove the product-owned npm package before removing its registry entry. */
+export async function removeInstalledApp(registry: AppRegistry, name: string, cacheRoot = getDefaultAppCacheRoot()): Promise<void> {
+    const distribution = registry.getConfig().apps[name]?.distribution;
+    if (distribution?.type === 'npm' && typeof distribution.installRoot === 'string' && distribution.installRoot.trim()) {
+        const managed = path.resolve(cacheRoot) + path.sep;
+        const installed = path.resolve(distribution.installRoot);
+        if (installed.startsWith(managed)) {
+            await fsp.rm(installed, { recursive: true, force: true });
+            for (let parent = path.dirname(installed); parent.startsWith(managed); parent = path.dirname(parent)) {
+                try { await fsp.rmdir(parent); }
+                catch { break; }
+            }
+        }
+    }
+    await registry.remove(name);
 }
 
 async function ensureInstallWorkspace(workspaceRoot: string): Promise<void> {

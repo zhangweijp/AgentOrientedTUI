@@ -22,7 +22,7 @@ import type { AppInteractionPolicy } from '../core/invocation/app-interaction-ty
  * Responsibilities:
  * - Creates and manages Desktop instances (via IDesktopManager)
  * - Exposes App instance interaction
- * - Manages Desktop lifecycle (create, suspend, resume, close)
+ * - Manages Desktop lifecycle (create and close)
  * 
  */
 export class Kernel implements IKernel {
@@ -157,26 +157,6 @@ export class Kernel implements IKernel {
         }
 
         this.assertDesktopAvailable(desktop);return desktop.reinitializeApps(options);
-    }
-
-    /**
-     * [C1 FIX] Now type-safe via IDesktopManager
-     */
-    suspend(desktopId: DesktopID): Promise<void> { return this.business(() => this.suspendAccepted(desktopId)); }
-    private async suspendAccepted(desktopId: DesktopID): Promise<void> {
-        this.assertRuntimeAvailable();
-        const desktop = this.desktopManager.get(desktopId);if (desktop) this.assertDesktopAvailable(desktop);
-        await this.desktopManager.suspend(desktopId);
-    }
-
-    /**
-     * [C1 FIX] Now type-safe via IDesktopManager
-     */
-    resume(desktopId: DesktopID): Promise<void> { return this.business(() => this.resumeAccepted(desktopId)); }
-    private async resumeAccepted(desktopId: DesktopID): Promise<void> {
-        this.assertRuntimeAvailable();
-        const desktop = this.desktopManager.get(desktopId);if (desktop) this.assertDesktopAvailable(desktop);
-        await this.desktopManager.resume(desktopId);
     }
 
     deleteDesktop(desktopId: DesktopID): Promise<void> {

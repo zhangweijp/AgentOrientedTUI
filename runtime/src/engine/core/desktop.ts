@@ -1,7 +1,7 @@
 import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
 import type { StateStorageBackend } from '../app/state-storage-host.js';
 import type { WorkerCapacity } from '../app/worker-capacity.js';
-import type { IDesktop, DesktopID, AppID, UpdateSignal, AppDiscoveryInfo, DesktopStatus, IRuntimeContext, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
+import type { IDesktop, DesktopID, AppID, UpdateSignal, AppDiscoveryInfo, IRuntimeContext, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
 import { createDesktopId } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import { SignalBus, type SignalListener } from './signal-bus.js';
@@ -42,7 +42,6 @@ export class Desktop implements IDesktop {
     // [RFC-026] Runtime Context
     public readonly context?: IRuntimeContext;
 
-    private _status: DesktopStatus = 'active';
     private _disposed = false;
     private _isDraining = false;  // [RFC-014] Draining 状态标志
     private closeHandle?: DesktopCloseHandle;
@@ -88,10 +87,6 @@ export class Desktop implements IDesktop {
         }
     }
 
-    get status(): DesktopStatus {
-        return this._status;
-    }
-    /** Internal admission fact; status keeps its existing public domain. */
     get isClosing(): boolean { return this._isDraining || this._disposed; }
 
 
@@ -241,29 +236,6 @@ export class Desktop implements IDesktop {
     // --- Lifecycle Methods ---
 
     /**
-     * 暂停 Desktop
-     * 会调用所有动态 App 的 onPause()
-     */
-    async suspend(): Promise<void> {
-        this.assertActive();
-        this._status = 'suspended';
-
-        await this.appManager.pauseAll();
-    }
-
-    /**
-     * 恢复 Desktop
-     * 会调用所有动态 App 的 onResume()
-     */
-    async resume(): Promise<void> {
-        this.assertActive();
-        if (this._status === 'suspended') {
-            this._status = 'active';
-            await this.appManager.resumeAll();
-        }
-    }
-
-    /**
      * 获取已安装应用列表
      */
     getInstalledApps(): readonly AppDiscoveryInfo[] {
@@ -272,7 +244,7 @@ export class Desktop implements IDesktop {
 
     getAppInteraction(appId: string, expectedInstanceId: string, policy?: AppInteractionPolicy): AppInteractionResult {
         const manager = this.appManager;
-        const current = () => !this._isDraining && !this._disposed && this._status === 'active' && this.appManager === manager;
+        const current = () => !this._isDraining && !this._disposed && this.appManager === manager;
         if (!current()) return appInteractionUnavailable();
         const create = manager.getAppInteraction;
         if (!current()) return appInteractionUnavailable();

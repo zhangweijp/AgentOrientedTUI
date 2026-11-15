@@ -87,18 +87,6 @@ describe('AppManager', () => {
     // 生命周期方法（空状态）
     // ════════════════════════════════════════════════════════════════
 
-    describe('pauseAll', () => {
-        it('空状态下不抛出错误', async () => {
-            await expect(manager.pauseAll()).resolves.toBeUndefined();
-        });
-    });
-
-    describe('resumeAll', () => {
-        it('空状态下不抛出错误', async () => {
-            await expect(manager.resumeAll()).resolves.toBeUndefined();
-        });
-    });
-
     describe('beginClose', () => {
         it('空状态下完成并返回关闭报告', async () => {
             await expect(manager.beginClose().completion).resolves.toMatchObject({ state: 'settled', resourcesReleased: true });
@@ -106,11 +94,10 @@ describe('AppManager', () => {
     });
 
     describe('reinitializeAll', () => {
-        it('对 running / paused / collapsed app 重新初始化，并跳过 closed / pending', async () => {
+        it('对 running / collapsed app 重新初始化，并跳过 closed / pending', async () => {
             const startSpy = vi.spyOn(WorkerSandbox.prototype, 'installDynamic').mockResolvedValue(undefined);
 
             const runningWorker = c1Worker();
-            const pausedWorker = c1Worker();
             const collapsedWorker = c1Worker();
 
             (manager as any).installedApps.set('app_running', {
@@ -120,13 +107,6 @@ describe('AppManager', () => {
                 installedAt: Date.now(),
                 modulePath: '/running',
                 config: { projectPath: '/repo' },
-            });
-            (manager as any).installedApps.set('app_paused', {
-                appId: 'app_paused',
-                name: 'paused-app',
-                status: 'paused',
-                installedAt: Date.now(),
-                modulePath: '/paused',
             });
             (manager as any).installedApps.set('app_collapsed', {
                 appId: 'app_collapsed',
@@ -151,24 +131,21 @@ describe('AppManager', () => {
             });
 
             (manager as any).workers.set('app_running', runningWorker);
-            (manager as any).workers.set('app_paused', pausedWorker);
             (manager as any).workers.set('app_collapsed', collapsedWorker);
 
             const result = await manager.reinitializeAll({ reason: 'context_compaction' });
 
             expect(result).toEqual({
-                reinitializedAppIds: ['app_running', 'app_paused', 'app_collapsed'],
+                reinitializedAppIds: ['app_running', 'app_collapsed'],
                 skippedAppIds: ['app_closed', 'app_pending'],
                 failedAppIds: [],
             });
             expect(runningWorker.reinitialize).toHaveBeenCalledWith('context_compaction');
-            expect(pausedWorker.reinitialize).toHaveBeenCalledWith('context_compaction');
             expect(collapsedWorker.reinitialize).toHaveBeenCalledWith('context_compaction');
             expect(runningWorker.close).toHaveBeenCalledTimes(1);
-            expect(pausedWorker.close).toHaveBeenCalledTimes(1);
             expect(collapsedWorker.close).toHaveBeenCalledTimes(1);
-            expect(startSpy).toHaveBeenCalledTimes(3);
-            for (const [appId, modulePath] of [['app_running','/running'],['app_paused','/paused'],['app_collapsed','/collapsed']]) {
+            expect(startSpy).toHaveBeenCalledTimes(2);
+            for (const [appId, modulePath] of [['app_running', '/running'], ['app_collapsed', '/collapsed']]) {
                 expect(launchConfig(manager, appId)).toMatchObject({ appId, appModulePath: modulePath,
                     config: { __aotuiLifecycle: { startupKind: 'reinitialize', reason: 'context_compaction' } } });
             }

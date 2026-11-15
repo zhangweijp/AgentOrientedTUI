@@ -18,10 +18,9 @@ import { captureToolsEnabled } from './interaction-config.js';
  * 
  * 状态转换:
  * created → running (installDynamic)
- * running ↔ paused
- * running/paused → closed
+ * running → closed
  */
-export type SandboxStatus = 'created' | 'running' | 'paused' | 'closed';
+export type SandboxStatus = 'created' | 'running' | 'closed';
 
 /**
  * WorkerSandbox 配置
@@ -129,42 +128,10 @@ export class WorkerSandbox {
         void this.installPromise.catch(() => {});return this.installPromise;
     }
 
-    /**
-     * 暂停 App
-     */
-    async pause(): Promise<void> {
-        this.ensureNotClosed();
-
-        if (this._status !== 'running') {
-            return;
-        }
-
-        if (this.workerHost) {
-            await this.workerHost.pause();
-        }
-        if (!this.intent) this._status = 'paused';
-    }
-
-    /**
-     * 恢复 App
-     */
-    async resume(): Promise<void> {
-        this.ensureNotClosed();
-
-        if (this._status !== 'paused') {
-            return;
-        }
-
-        if (this.workerHost) {
-            await this.workerHost.resume();
-        }
-        if (!this.intent) this._status = 'running';
-    }
-
     async reinitialize(reason?: string): Promise<void> {
         this.ensureNotClosed();
 
-        if (this._status !== 'running' && this._status !== 'paused') {
+        if (this._status !== 'running') {
             return;
         }
 

@@ -24,7 +24,6 @@ import { createDefaultConfig, validateConfig } from './config.js';
 // [Option C] ESM-compatible imports for file system access
 import * as fs from 'fs';
 import * as pathModule from 'path';
-import * as os from 'os';
 
 // Re-export
 export type { TUIConfig, AppConfigEntry } from './config.js';
@@ -245,7 +244,6 @@ export class AppRegistry {
             throw new AOTUIError('APP_NOT_FOUND', { appId: name });
         }
 
-        await this.cleanupInstalledArtifacts(entry);
         const shouldPersistRemoval = this.config.apps[name] !== undefined;
         delete this.config.apps[name];
         this.apps.delete(name);
@@ -492,87 +490,6 @@ export class AppRegistry {
 
         return results;
     }
-
-    private async cleanupInstalledArtifacts(entry: AppConfigEntry): Promise<void> {
-        if (entry.distribution?.type !== 'npm') {
-            return;
-        }
-
-        const installRoot = this.resolveNpmInstallRoot(entry);
-        if (!installRoot) {
-            return;
-        }
-
-        const allowedRoot = this.getDefaultNpmCacheRoot();
-        const normalizedAllowedRoot = pathModule.resolve(allowedRoot);
-        const normalizedInstallRoot = pathModule.resolve(installRoot);
-
-        if (
-            normalizedInstallRoot !== normalizedAllowedRoot &&
-            !normalizedInstallRoot.startsWith(`${normalizedAllowedRoot}${pathModule.sep}`)
-        ) {
-            console.warn(`[AppRegistry] Skip deleting npm cache outside managed root: ${normalizedInstallRoot}`);
-            return;
-        }
-
-        const fsPromises = await import('fs/promises');
-        await fsPromises.rm(normalizedInstallRoot, { recursive: true, force: true });
-        await this.pruneEmptyParentDirs(pathModule.dirname(normalizedInstallRoot), normalizedAllowedRoot);
-    }
-
-    private resolveNpmInstallRoot(entry: AppConfigEntry): string | null {
-        const explicitInstallRoot = entry.distribution?.installRoot;
-        if (typeof explicitInstallRoot === 'string' && explicitInstallRoot.trim()) {
-            return explicitInstallRoot;
-        }
-
-        const installedPath = entry.distribution?.installedPath;
-        if (typeof installedPath !== 'string' || !installedPath.trim()) {
-            return null;
-        }
-
-        const packageName = entry.distribution?.packageName;
-        if (typeof packageName === 'string' && packageName.trim()) {
-            const nodeModulesSuffix = pathModule.join('node_modules', ...packageName.split('/'));
-            const normalizedInstalledPath = pathModule.normalize(installedPath);
-            if (normalizedInstalledPath.endsWith(nodeModulesSuffix)) {
-                return normalizedInstalledPath.slice(0, normalizedInstalledPath.length - nodeModulesSuffix.length - 1);
-            }
-        }
-
-        const segments = pathModule.normalize(installedPath).split(pathModule.sep);
-        const nodeModulesIndex = segments.lastIndexOf('node_modules');
-        if (nodeModulesIndex > 0) {
-            return segments.slice(0, nodeModulesIndex).join(pathModule.sep) || pathModule.sep;
-        }
-
-        return null;
-    }
-
-    private getDefaultNpmCacheRoot(): string {
-        return pathModule.join(os.homedir(), '.agentina', 'apps', 'npm');
-    }
-
-    private async pruneEmptyParentDirs(startDir: string, stopDir: string): Promise<void> {
-        const fsPromises = await import('fs/promises');
-        let current = pathModule.resolve(startDir);
-        const normalizedStop = pathModule.resolve(stopDir);
-
-        while (current.startsWith(`${normalizedStop}${pathModule.sep}`)) {
-            try {
-                const entries = await fsPromises.readdir(current);
-                if (entries.length > 0) {
-                    break;
-                }
-                await fsPromises.rmdir(current);
-                current = pathModule.dirname(current);
-            } catch {
-                break;
-            }
-        }
-    }
-
-
 }
 
 export type { TUIAppFactory } from '../../spi/index.js';

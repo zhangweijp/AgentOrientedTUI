@@ -1,5 +1,4 @@
-import type { AppRegistry } from './engine/app/registry.js';
-import type { TUIConfig } from './engine/app/config.js';
+import type { AppRegistry, TUIConfig } from '@aotui/runtime';
 
 export function renderInstalledAppLines(
     config: TUIConfig,

@@ -174,8 +174,8 @@ echo ""
 echo "🔗 Setting up agentina CLI..."
 echo "----------------------------------------------"
 
-# Link runtime as global agentina command
-cd runtime
+# Link the Host product's agentina command
+cd host
 npm link
 cd ..
 

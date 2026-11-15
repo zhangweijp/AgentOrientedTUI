@@ -7,7 +7,7 @@ import type { StateStorageBackend } from './state-storage-host.js';
  * 
  * 职责:
  * - App 安装 (Worker 模式)
- * - App 生命周期 (open/close/pause/resume)
+ * - App 生命周期 (open/close)
  * - App 状态查询
  * - 管理 WorkerSandbox 集合
  * 
@@ -45,11 +45,10 @@ interface InstalledApp extends AppInteractionOptions {
      * [RFC-014] App 状态
      * - 'pending': 已注册但未启动 (懒加载)
      * - 'running': 正在运行
-     * - 'paused': 已暂停
      * - 'closed': 已关闭
      * - 'collapsed': 已折叠
      */
-    status: 'pending' | 'running' | 'paused' | 'closed' | 'collapsed';
+    status: 'pending' | 'running' | 'closed' | 'collapsed';
 
     /** [RFC-014] 懒加载: 模块路径 */
     modulePath?: string;
@@ -359,16 +358,6 @@ export class AppManager {
         }
         const mapped = this.contribution(record);if (mapped.hasFailures || !report.resourcesReleased) throw closeError('APP_CLOSE_FAILED', mapped);
         this.desktop.logSystem(`Closed application: ${id}`);this.desktop.emitSignal('dom_mutation');
-    }
-    async pauseAll(): Promise<void> {
-        this.assertActive();for (const [id, worker] of this.workers) if (worker.status === 'running') {
-            const meta = this.installedApps.get(id);await worker.pause();this.assertActive();if (this.workers.get(id) === worker && this.installedApps.get(id) === meta && meta) meta.status = 'paused';
-        }
-    }
-    async resumeAll(): Promise<void> {
-        this.assertActive();for (const [id, worker] of this.workers) if (worker.status === 'paused') {
-            const meta = this.installedApps.get(id);await worker.resume();this.assertActive();if (this.workers.get(id) === worker && this.installedApps.get(id) === meta && meta) meta.status = 'running';
-        }
     }
     async collapseApp(id: AppID, expectedInstanceId?: string): Promise<void> { this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'collapsed';this.desktop.logSystem(`Collapsed application: ${id}`);this.desktop.emitSignal('dom_mutation'); }
     async showApp(id: AppID, expectedInstanceId?: string): Promise<void> { this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'running';this.desktop.logSystem(`Shown application: ${id}`);this.desktop.emitSignal('dom_mutation'); }

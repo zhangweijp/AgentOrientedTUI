@@ -16,7 +16,7 @@ function inFlightHost() {
 }
 
 describe('Worker Host lifecycle and physical resource release', () => {
-    it('does not push new fire-and-forget LLM output during or after shutdown', async () => {
+    it('does not push new model usage during or after shutdown', async () => {
         const { host, worker, request } = inFlightHost();
         const closing = host.close();
         host.pushLLMUsage({ timestamp: 0, providerId: 'p', modelId: 'm', promptTokens: 0, completionTokens: 0, totalTokens: 0 });
@@ -30,20 +30,20 @@ describe('Worker Host lifecycle and physical resource release', () => {
         const { host, request } = inFlightHost();
         let finishLifecycle!: () => void;
         request.mockImplementationOnce(() => new Promise<void>(resolve => { finishLifecycle = resolve; }));
-        const pending = host.pause().then(
+        const pending = host.open().then(
             () => ({ completed: true }),
             (error: Error) => ({ completed: false, message: error.message }),
         );
         await Promise.resolve();
         const closing = host.close();
         expect(host.getStatus()).toBe('closing');
-        expect(request.mock.calls.map(([message]) => message.type)).toEqual(['APP_PAUSE']);
+        expect(request.mock.calls.map(([message]) => message.type)).toEqual(['APP_OPEN']);
         finishLifecycle();
         await Promise.all([pending, closing]);
         expect(await pending).toMatchObject({ completed: false });
         expect(host.getStatus()).toBe('closed');
         expect(request.mock.calls.map(([message]) => message.type))
-            .toEqual(['APP_PAUSE', 'APP_SHUTDOWN', 'APP_CLOSE']);
+            .toEqual(['APP_OPEN', 'APP_SHUTDOWN', 'APP_CLOSE']);
     });
 
     it('a failed shutdown kills the Worker instead of leaving it stranded in closing', async () => {
@@ -70,10 +70,9 @@ describe('Worker Host lifecycle and physical resource release', () => {
         expect(request).toHaveBeenCalledTimes(2);
     });
 
-    it('pause and reinitialize cannot send IPC after close starts', async () => {
+    it('reinitialize cannot send IPC after close starts', async () => {
         const { host, request } = inFlightHost();
         const closing = host.close();
-        await expect(host.pause()).rejects.toThrow(/shutdown is pending/);
         await expect(host.reinitialize('concurrent maintenance')).rejects.toThrow(/shutdown is pending/);
         await closing;
         expect(request.mock.calls.map(([message]) => message.type))

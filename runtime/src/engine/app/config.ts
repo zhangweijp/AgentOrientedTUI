@@ -54,45 +54,16 @@ export interface AppConfigEntry {
     };
 }
 
-export interface CatalogTrustKeyConfig {
-    keyId: string;
-    algorithm?: 'ed25519';
-    publicKey: string;
-}
-
-export interface CatalogConfig {
-    /**
-     * 远端应用目录地址（静态 JSON / API）
-     */
-    url?: string;
-
-    /**
-     * 目录缓存文件路径
-     * 为空时使用 ~/.agentina/cache/app-catalog.json
-     */
-    cachePath?: string;
-
-    /**
-     * 是否强制要求远端目录签名有效
-     */
-    requireSignature?: boolean;
-
-    /**
-     * 受信任的签名公钥集合
-     */
-    trustedKeys?: CatalogTrustKeyConfig[];
-}
-
 /** Registry file shared with product configuration. */
 export interface TUIConfig {
     /** 配置版本 */
     version: number;
 
-    /** 远端目录配置 */
-    catalog?: CatalogConfig;
-
     /** 已安装的 App */
     apps: Record<string, AppConfigEntry>;
+
+    /** Preserve other product-owned settings in the shared file. */
+    [key: string]: unknown;
 }
 
 /**

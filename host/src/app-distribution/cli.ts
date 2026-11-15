@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { buildViewMessageMarkup } from './adapters/view-message.js';
+import { buildViewMessageMarkup } from '@aotui/runtime/adapters';
 
 /**
  * agentina CLI - Third-Party App Management
@@ -17,15 +17,13 @@ import { buildViewMessageMarkup } from './adapters/view-message.js';
  * @module @aotui/cli
  */
 
-import { AppRegistry } from './engine/app/registry.js';
-import { createRuntime } from './facades/facades.js';
-import type { AppID } from './spi/core/types.js';
+import { AppRegistry, createRuntime, type AppID } from '@aotui/runtime';
 import * as readline from 'readline';
 import fs from 'fs';
-import { installNpmPackage } from './cli/npm-installer.js';
-import { searchCatalog } from './cli/catalog.js';
-import { parseInstallSource, type ParsedInstallSource } from './cli/sources.js';
-import { resolveCatalog, resolveCatalogOptionsFromConfig } from './cli/catalog-resolver.js';
+import { installNpmPackage, removeInstalledApp } from './npm-installer.js';
+import { searchCatalog } from './catalog.js';
+import { parseInstallSource, type ParsedInstallSource } from './sources.js';
+import { resolveCatalog, resolveCatalogOptionsFromConfig } from './catalog-resolver.js';
 import { renderInstalledAppLines } from './cli-list.js';
 
 const HELP = `
@@ -250,7 +248,7 @@ async function handleRemove(registry: AppRegistry, args: string[]): Promise<void
     }
 
     const name = args[0];
-    await registry.remove(name);
+    await removeInstalledApp(registry, name);
     console.log(`✅ Successfully removed: ${name}`);
 }
 

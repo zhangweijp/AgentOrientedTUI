@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { execFile, spawn } from 'node:child_process';
-import { once } from 'node:events';
+import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -752,58 +751,4 @@ export default createApp({ app_name: ${JSON.stringify(name)}, async initialize({
         await installing?.catch(() => {});
         await runtime.beginShutdown().completion;
     }
-}, 15_000);
-
-it('manages a local App through the installed CLI and previews its published View', async () => {
-    const name = 'cli_manifest';
-    const folder = await appFolder(name, `
-import { createApp } from '@aotui/sdk/app';
-export default createApp({ app_name: ${JSON.stringify(name)}, initialize({ publish }) {
-    publish({ views: [{ id: 'current', type: 'Item', kind: 'state', body: 'View from the custom manifest entry' }] });
-}});
-`);
-    const home = join(folder, 'home');
-    await mkdir(home);
-    const config = join(home, '.agentina/config.json');
-    const cli = join(consumer, 'node_modules/@aotui/runtime/dist/cli.js');
-    const env = { ...process.env, HOME: home, USERPROFILE: home, AOTUI_DATA_DIR: join(home, 'data') };
-    const runCli = (...args: string[]) => execute(process.execPath, [cli, ...args], { cwd: folder, env, timeout: 5_000 });
-    await runCli('install', '.');
-    expect(JSON.parse(await readFile(config, 'utf8')).apps[name]).toMatchObject({
-        source: 'local:' + folder, enabled: true, autoStart: true, distribution: { type: 'local' },
-    });
-    await expect(runCli('install', '.')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('already registered') });
-    await runCli('install', 'local:.', '--force', '--no-autostart');
-    const forced = await readFile(config, 'utf8');
-    expect(JSON.parse(forced).apps[name].autoStart).toBe(false);
-    for (const [command, arg] of [['add', '.'], ['link', '.'], ['uninstall', name]]) {
-        await expect(runCli(command, arg)).rejects.toMatchObject({
-            code: 1, stderr: expect.stringContaining(`Unknown command: ${command}`),
-        });
-    }
-    expect(await readFile(config, 'utf8')).toBe(forced);
-    expect((await runCli('list')).stdout).toContain(name);
-
-    const child = spawn(process.execPath, [cli, 'run', name], {
-        cwd: folder, env, stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    const finished = once(child, 'close');
-    let output = '', errors = '';
-    child.stdout.setEncoding('utf8').on('data', chunk => { output += chunk; });
-    child.stderr.setEncoding('utf8').on('data', chunk => { errors += chunk; });
-    try {
-        await expect.poll(() => output + errors, { timeout: 5_000 }).toContain('Runtime ready.');
-        child.stdin.write('snapshot\n');
-        await expect.poll(() => output, { timeout: 5_000 }).toContain('View from the custom manifest entry');
-        expect(output).toContain('<view id="current"');
-        child.stdin.end('exit\n');
-        await expect(finished).resolves.toEqual([0, null]);
-        expect(errors).toBe('');
-    } finally {
-        if (child.exitCode === null && child.signalCode === null) child.kill();
-        await finished;
-    }
-    await runCli('remove', name);
-    expect(JSON.parse(await readFile(config, 'utf8')).apps).toEqual({});
-    expect(await readFile(join(folder, 'entry.mjs'), 'utf8')).toContain('View from the custom manifest entry');
 }, 15_000);

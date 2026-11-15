@@ -82,7 +82,7 @@ const createMockKernel = () => {
     const desktops = new Map<string, IDesktop>();
     return {
         createDesktop: vi.fn(async (desktopId: string) => {
-            if (!desktops.has(desktopId)) desktops.set(desktopId, { id: desktopId } as IDesktop);
+            if (!desktops.has(desktopId)) desktops.set(desktopId, { id: desktopId, broadcastLLMUsage: vi.fn() } as unknown as IDesktop);
             return desktops.get(desktopId)!;
         }),
         getDesktop: vi.fn((desktopId: string) => desktops.get(desktopId)),
@@ -254,12 +254,14 @@ describe('SessionManager V3 Integration', () => {
             expect(aotuiMsg).toBeDefined();
         });
 
-        it('should save user message to database', async () => {
+        it('saves the user message and forwards the completed request usage', async () => {
             const topicId = 'topic_test_message_2';
             const content = 'Hello, AI!';
+            const usage = { promptTokens: 11, completionTokens: 7, totalTokens: 18 };
+            vi.mocked(LLMClient.prototype.call).mockResolvedValueOnce({ text: 'Hello!', toolCalls: [], finishReason: 'stop', usage });
 
             // Act
-            await sessionManager.ensureSession(topicId);
+            const session = await sessionManager.ensureSession(topicId);
             await sessionManager.sendMessage(topicId, content);
 
             // Assert
@@ -271,6 +273,9 @@ describe('SessionManager V3 Integration', () => {
                     content,
                 })
             );
+            await vi.waitFor(() => expect(session.desktop.broadcastLLMUsage).toHaveBeenCalledExactlyOnceWith({
+                timestamp: expect.any(Number), providerId: 'openai', modelId: 'gpt-4', ...usage,
+            }));
         });
 
         it('delivers a structured budget diagnostic without writing it to Topic history', async () => {

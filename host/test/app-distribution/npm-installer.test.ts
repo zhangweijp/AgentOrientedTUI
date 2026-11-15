@@ -1,9 +1,10 @@
+import { AppRegistry } from '@aotui/runtime';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs/promises';
 import fssync from 'fs';
 import os from 'os';
 import path from 'path';
-import { installNpmPackage } from './npm-installer.js';
+import { installNpmPackage, removeInstalledApp } from '../../src/app-distribution/npm-installer.js';
 
 describe('installNpmPackage', () => {
     let tmpDir: string;
@@ -14,6 +15,26 @@ describe('installNpmPackage', () => {
 
     afterEach(async () => {
         await fs.rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it.each(['managed', 'external', 'cache-root'])('removes only an owned App package in the %s case', async ownership => {
+        const cacheRoot = path.join(tmpDir, 'npm');
+        const installRoot = ownership === 'managed' ? path.join(cacheRoot, 'demo-app', 'latest')
+            : ownership === 'external' ? path.join(tmpDir, 'external', 'latest') : cacheRoot;
+        const installedPath = path.join(installRoot, 'node_modules', 'demo-app');
+        await fs.mkdir(installedPath, { recursive: true });
+        const configPath = path.join(tmpDir, 'registry.json');
+        await fs.writeFile(configPath, JSON.stringify({ version: 2, apps: { demo: {
+            source: 'local:' + installedPath, enabled: false,
+            distribution: { type: 'npm', installRoot, installedPath },
+        } } }));
+        const registry = new AppRegistry({ configPath });
+        await registry.loadFromConfig();
+
+        await removeInstalledApp(registry, 'demo', cacheRoot);
+
+        expect(fssync.existsSync(installRoot)).toBe(ownership !== 'managed');
+        expect(registry.getConfig().apps).toEqual({});
     });
 
     it('installs package into cache and returns local source', async () => {

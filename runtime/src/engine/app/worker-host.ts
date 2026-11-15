@@ -98,7 +98,7 @@ export interface AppWorkerHostConfig {
 /**
  * Worker 状态
  */
-export type WorkerStatus = 'starting' | 'ready' | 'running' | 'paused' | 'closing' | 'closed' | 'error';
+export type WorkerStatus = 'starting' | 'ready' | 'running' | 'closing' | 'closed' | 'error';
 export interface HostResourceReport {
     readonly state: 'active' | 'closing' | 'settled';
     readonly worker: 'not-created' | 'owned' | 'retiring' | 'exited';
@@ -515,26 +515,6 @@ export class AppWorkerHost {
         }
         await this.sendLifecycleRequest({
             type: 'APP_OPEN',
-            requestId: generateRequestId(),
-        }, 'running');
-    }
-
-    async pause(): Promise<void> {
-        if (this.status === 'closing' || this.status === 'closed') {
-            throw new Error('Cannot pause an App while shutdown is pending');
-        }
-        await this.sendLifecycleRequest({
-            type: 'APP_PAUSE',
-            requestId: generateRequestId(),
-        }, 'paused');
-    }
-
-    async resume(): Promise<void> {
-        if (this.status === 'closing') {
-            throw new Error('Cannot resume an App while shutdown is pending');
-        }
-        await this.sendLifecycleRequest({
-            type: 'APP_RESUME',
             requestId: generateRequestId(),
         }, 'running');
     }

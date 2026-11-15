@@ -192,7 +192,7 @@ describe('SemanticAOTUIDrivenSource', () => {
             for (const name of rejected) {
                 expect(await current.executeTool!(name, { app_id: 'one' }, 'ineligible')).toMatchObject({
                     outcomeStatus: 'rejected', error: { code: 'INVALID_APP_TARGET',
-                        message: expect.stringContaining(name === openApp ? 'pending or closed' : 'running, collapsed, or paused') },
+                        message: expect.stringContaining(name === openApp ? 'pending or closed' : 'running or collapsed') },
                 });
             }
             await current.release!();

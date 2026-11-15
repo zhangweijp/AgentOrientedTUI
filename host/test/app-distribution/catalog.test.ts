@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { searchCatalog } from './catalog.js';
-import { DEFAULT_APP_CATALOG } from './default-catalog.js';
+import { searchCatalog } from '../../src/app-distribution/catalog.js';
+import { DEFAULT_APP_CATALOG } from '../../src/app-distribution/default-catalog.js';
 
 describe('searchCatalog', () => {
     it('returns all apps when query is empty', () => {

@@ -7,7 +7,6 @@ vi.mock('./worker-sandbox.js', () => ({ WorkerSandbox: class {
     getCloseReport() { return { state: this.closed ? 'settled' : 'active', intent: 'close', resourcesReleased: this.closed, issues: [] }; }
     async disposeAsync() { this.closed = true;this.status = 'closed';return this.getCloseReport(); }
     getAppInteraction() { control.create(this);return { status: 'ready', interaction: { close: () => { this.closedClients++; } } }; }
-    async pause() { this.status = 'paused'; }async resume() { this.status = 'running'; }
     async reinitialize() { control.reinitialize(this); }
 } }));
 import { AppManager } from './manager.js';
@@ -85,11 +84,10 @@ it('preserves trusted Tool disablement across pending, open, reopen and reinitia
     await manager.cleanupAsync();
 });
 
-it('B2 C11 collapsed is presentation while pending/paused/closed/current closing stop scope creation', async () => {
+it('B2 C11 collapsed is presentation while pending/closed/current closing stop scope creation', async () => {
     const manager = new AppManager(desktop), id = await manager.install('/app');
     expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('ready');await manager.collapseApp(id);
-    expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('ready');await manager.pauseAll();
-    expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('rejected');await manager.resumeAll();
+    expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('ready');await manager.showApp(id);
     expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('ready');const closing = manager.closeApp(id);
     expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('rejected');await closing;
     expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('rejected');await manager.cleanupAsync();

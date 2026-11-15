@@ -6,7 +6,7 @@ import { Worker } from 'node:worker_threads';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppWorkerHost, type WorkerStatus } from './worker-host.js';
 
-const methods = ['start', 'open', 'pause', 'resume', 'reinitialize'] as const;
+const methods = ['start', 'open', 'reinitialize'] as const;
 type Request = { type: string; requestId?: string };
 const managedInstances = new WeakMap<EventEmitter, string>();
 const settle = (task: Promise<void>) => task.then(
@@ -124,7 +124,7 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
     });
 
     it.each(methods)('a later INIT on the same Worker invalidates an old %s continuation', async method => {
-        const { host, worker, sent } = controlledHost('paused');
+        const { host, worker, sent } = controlledHost('ready');
         const old = settle(host[method]());
         respond(worker, sent[0]);
         expect((host as any).pendingRequests.size).toBe(0);
@@ -140,7 +140,7 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
             }
             expect(sent[1].type).toBe('INIT');
             expect(await old).toMatchObject({ status: 'rejected' });
-            expect(host.getStatus()).toBe('paused');
+            expect(host.getStatus()).toBe('ready');
             respond(worker, sent[1]);
             expect(await fresh).toMatchObject({ status: 'fulfilled' });
             expect(host.getStatus()).toBe('ready');
@@ -177,9 +177,6 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
             expect(host.getPersistenceReport().support).toBe('managed');
             await host.open();
             expect(host.getStatus()).toBe('running');
-            await host.pause();
-            expect(host.getStatus()).toBe('paused');
-            await host.resume();
             await host.reinitialize();
             expect(host.getStatus()).toBe('running');
             await host.close();
@@ -249,7 +246,7 @@ describe('Stage 8 R1: real node:worker_threads response ordering', () => {
             });
             const currentHost = host;
             (host as any).status = 'running';
-            const old = settle(host.pause());
+            const old = settle(host.open());
             initial.once('message', () => {
                 currentHost.terminate();
                 closedRestart = settle(currentHost.start());

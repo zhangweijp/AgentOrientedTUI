@@ -128,8 +128,6 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
             case 'APP_OPEN':
                 await handleAppOpen(msg.requestId);
                 break;
-            case 'APP_PAUSE':
-            case 'APP_RESUME':
             case 'APP_STOP':
                 sendLifecycleResponse(msg.requestId);
                 break;

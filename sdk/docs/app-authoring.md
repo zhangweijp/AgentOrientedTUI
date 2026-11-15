@@ -49,3 +49,4 @@ Tool handler 返回收据，业务状态通过下一次 View 发布呈现。普�
 ## 迁移
 
 现有 Preact App 仍使用 `createTUIApp({ component, ... })`。使用 SPI 的自定义 factory 从 `initializeComponent(container, context)` 迁移到 `initialize(context)`，返回带 `close()` 的实例。旧 `ComponentFactory`、`ComponentRenderer` 及 `kernelConfig.component` 退出，SDK 和 Runtime 需要配套重建。同版本且采用本批静态声明格式的 SDK 构建副本可以互用 Tool / ToolSet，注册的 handler 与 View 实例仍由各自 Worker 持有。
+Preact App 可以用 `useLLMUsage` 读取所属 Desktop 的模型用量。需被动更新的 App 可设 `signalPolicy: 'never'`，使新投影进入下一次观察，同时抑制自动更新信号。

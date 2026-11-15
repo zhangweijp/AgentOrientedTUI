@@ -22,15 +22,15 @@ Host -> Runtime -> SDK -> Apps
    Agent Driver
 ```
 
-- `host/` is the desktop product shell and GUI.
-- `runtime/` is the execution core that manages apps, views, workers, and the CLI.
+- `host/` is the desktop product shell. It owns the GUI, App distribution, and the `agentina` CLI.
+- `runtime/` is the execution core that manages resolved Apps, Views, and Workers.
 - `sdk/` is the app authoring layer used to build AOTUI apps.
 - `agent-driver-v2/` is the model execution and tool orchestration layer used by the runtime and host.
 - `demo-apps/` contains apps that exercise the SDK/runtime stack inside the host.
 
 Dependency direction in the codebase is:
 
-- `runtime` depends on `agent-driver-v2`
+- `runtime` can be consumed independently of `agent-driver-v2`
 - `sdk` depends on `runtime`
 - `host` depends on `agent-driver-v2`, `runtime`, and `sdk`
 - most `demo-apps/*` depend on `sdk`; some also rely on `runtime` at local-dev link time
@@ -46,9 +46,9 @@ agent-driver-v2 -> runtime -> sdk -> host -> demo-apps
 | Folder | What it is for |
 | --- | --- |
 | `agent-driver-v2/` | LLM execution layer: provider setup, streaming, message aggregation, and tool-call orchestration. |
-| `runtime/` | Core execution substrate: app registry, app lifecycle, worker runtime, kernel, view exposure, and the `agentina` CLI. |
+| `runtime/` | App registry, app lifecycle, Worker runtime, kernel, and View exposure. |
 | `sdk/` | Developer-facing app API: `createTUIApp`, `View`, hooks, refs, and Tool definitions and result types used by app authors. |
-| `host/` | Electron desktop shell plus web UI, local services, and product integration points. |
+| `host/` | Electron desktop shell, web UI, local services, App catalog, npm installs, and the `agentina` CLI. |
 | `demo-apps/` | Reference apps that run on the stack. The setup scripts auto-install `aotui-ide`, `planning-app`, `terminal-app`, and `lite-browser-app` by default. |
 | `scripts/` | Repo-level helper scripts such as `generate-aoapp.mjs`, which writes app manifests during app builds. |
 | `resource/` | Static assets used by the project. |
@@ -65,9 +65,9 @@ Notes:
 Think in five layers:
 
 1. **Host**
-   The Electron application and GUI that users interact with locally. It packages the product, renders the main interface, and wires together local services and runtime integration.
+   The Electron application and GUI that users interact with locally. The Host and CLI share App catalog resolution, npm installation, and managed package cleanup.
 2. **Runtime**
-   The work layer. It owns app loading, app registry, view/state exposure, worker isolation, kernels, adapters, and the `agentina` CLI.
+   The execution layer owns the App registry, Worker lifecycle, View projection, and interaction.
 3. **SDK**
    The app authoring model. It provides `createTUIApp()`, component primitives, hooks, refs, and typed Tools for building agent-facing apps.
 4. **Apps**
@@ -78,17 +78,18 @@ Think in five layers:
 ### Responsibility Boundaries
 
 - `agent-driver-v2/`: model loop, provider wiring, streaming, tool dispatch
-- `runtime/`: app lifecycle, workers, view exposure, CLI, adapters
+- `runtime/` handles app lifecycle, Workers, View exposure, and adapters
 - `sdk/`: app-authoring APIs and ergonomics
-- `host/`: Electron shell, GUI, IPC, install flow, local services
+- `host/` handles the Electron shell, GUI, IPC, CLI, App distribution, and local services
 - `demo-apps/`: app behavior built on the shared stack
 
 ### Key Entry Points
 
 - Agent driver: `agent-driver-v2/src/core/agent-driver-v2.ts`, `agent-driver-v2/src/core/llm-client.ts`
-- Runtime: `runtime/src/facades/facades.ts`, `runtime/src/kernel/index.ts`, `runtime/src/cli.ts`
+- Runtime: `runtime/src/facades/facades.ts`, `runtime/src/kernel/index.ts`
 - SDK: `sdk/src/app-factory/createTUIApp.ts`, `sdk/src/components/View.tsx`
 - Host: `host/src/`
+- Agentina CLI and App distribution: `host/src/app-distribution/`
 - App manifests: `scripts/generate-aoapp.mjs`
 
 ## Tech Stack
@@ -175,7 +176,7 @@ What they do:
   - installs dependencies package by package
   - links local core packages into dependent folders for local development
   - builds the core packages in dependency order
-  - globally links the `agentina` CLI from `runtime/`
+  - globally links the `agentina` CLI from `host/`
   - builds and registers `aotui-ide`, `planning-app`, `terminal-app`, and `lite-browser-app` with `agentina install . --force`
 - `run.sh`
   - refreshes local links
@@ -187,7 +188,7 @@ What they do:
 
 ### `agentina` CLI
 
-Current CLI surface from `runtime/src/cli.ts`:
+The `@aotui/system-chat` package provides the `agentina` executable. From a checkout, build and link `host/` as in `setup.sh`. Use `snapshot` to read the current Views and `exit` to close the Desktop during an interactive run.
 
 ```bash
 agentina install <source>
