@@ -1,6 +1,6 @@
 # Semantic Host 接入契约
 
-默认 Host 通过通用 `SemanticAOTUIDrivenSource` 接入 Semantic Core。应用统一经 AppRegistry 安装，Agent 使用 Observation 中的 View 和 Tool Binding 发起 Invocation，并接收完成状态、必要提示与恢复信息；完整 Receipt 保留在 Core 内部。
+默认 Host 通过通用 `SemanticAOTUIDrivenSource` 接入 Semantic Core。应用统一经 AppRegistry 安装，Agent 使用 Observation 中的 View 和可用 Tool 发起 Invocation，并接收完成状态、必要提示与恢复信息；完整 Receipt 保留在 Core 内部。
 
 本文记录当前支持的 Semantic 接入合同。项目所有者已验收 Semantic 路径，Legacy 下线按已授权的清理任务推进；旧验收记录仍保留其当时的状态和日期。当前消费文档只描述 Semantic 入口。
 
@@ -9,10 +9,10 @@
 | 层 | 职责 | 边界 |
 | --- | --- | --- |
 | App / SDK | 声明 View、Ref 和 View 所属的 Tool；处理业务状态与副作用；把最新业务数据和后台进度投影到 View | 应用决定业务授权、事务、任务完成和业务幂等；无需编写专属 DrivenSource，也无需了解模型供应商 |
-| Runtime / Semantic Core | 管理 App、Worker、View 实例；发布 Semantic Snapshot；校验 App 实例、Observation、Binding 和执行时有效性；分发调用并记录 Receipt | 提供有界内存与生命周期管理；不承诺外部业务事务、跨进程恢复或持久任务调度 |
+| Runtime / Semantic Core | 管理 App、Worker、View 实例；发布 Semantic Snapshot；校验 App 实例、Observation、接收页与执行时有效性；分发调用并记录 Receipt | 提供有界内存与生命周期管理；不承诺外部业务事务、跨进程恢复或持久任务调度 |
 | Host / Agent Driver | 安装应用、配置可信策略和能力协商；通过通用 Source 聚合多个 App；组织 Messages / Tools，调用模型并释放本轮 Context | 模型只能使用本轮暴露的工具；Host 不硬编码 IDE 的 View 类型或业务工具名单 |
 
-普通 Tool 属于 App + ViewType，不属于某一个 View 实例。同类型的多个 View 共用一份 Tool 声明、注册和 Handler；App 用有业务意义的普通参数或显式 Ref 选择对象，并自行验证该对象当前是否可操作。至少一个匹配 View 存在时，对应类型的 Tool 才激活；最后一个匹配 View 关闭后，该类型的能力退出观察。旧 Observation 的 Binding 不能继续执行。工具在投影时还必须符合 Worker 实际协商的能力与 Host 策略。展示时可用不替代执行前校验：状态在模型思考期间变化时，Runtime 仍会拒绝失效调用。
+同类型的 View 共用一份工具声明，各自提供本页的执行和可用性。模型填写 XML 中的 `view_id` 选择接收页。显式 Ref 可以从同一观察内的另一页选择，App 检查该值的当前业务有效性。
 
 `refParam` 是同一 ViewType Tool 的显式参数取值方式，不再注册实例 Tool。SDK 允许每个 Tool 声明多个显式顶层 Ref 参数，并通过 required 区分必填与可选，可与普通参数并用。缺席可选字段不产生 payload 或来源；有值但无效的字段拒绝整次调用。Runtime 从调用绑定的原 Observation 解析完整 Ref 名、校验真实业务类型和 payload Schema，授权与执行使用同一份冻结 effectiveInput。View/Ref 的实例身份仍保留；数据只读不要求 Tool 必须只读。App 用 payload 内部 ID 检查当前业务对象，不让模型另抄该 ID；文件路径、标题和编辑内容等有意义的普通字段保留。
 
@@ -25,11 +25,11 @@ Source 从 `@aotui/agent-driver-adapter` 导入。Worker 与能力选择见 [Run
 1. Host 从 Desktop 读取安装的应用，按 App ID 和当前执行 instance ID 取得交互入口。尚未打开的应用通过通用应用控制工具打开。
 2. Source 对每个 App 调用 `observe({ all: true })`，从该 App 当前 Semantic Snapshot 选择 View。准备完成但没有 View 的 App 可以返回空 Observation。
 3. Source 把观察到的 View 编排为单层 XML + Markdown User Messages，并从同一 Observation 构造模型可见工具。instruction View 放入 static 区，业务状态放入 dynamic 区；两者都是应用数据，不提升为新的用户指令。
-4. Driver 完成请求编排、能力过滤及整轮输入预算校验后，调用 Context 的 `adopt()`。Source 同步调用各 App 的 `adoptObservation(id)`，成功后旧 Observation／Binding 退出。仅准备或诊断预览不采用，也不能调用其工具。
-5. 模型选择工具后，Source 使用本轮保存的 AppInteraction、Observation ID 和 Binding ID 调用 `invoke()`。模型不负责构造内部身份。
+4. Driver 完成请求编排、能力过滤及整轮输入预算校验后，调用 Context 的 `adopt()`。Source 同步调用各 App 的 `adoptObservation(id)`，成功后旧 Observation 的调用资格撤销。仅准备或诊断预览不采用，也不能调用其工具。
+5. 模型选择工具后，Source 使用本轮保存的 AppInteraction、Observation ID、Tool ID 和模型传入的 `view_id` 调用 `invoke()`。模型不负责构造内部身份。
 6. Driver 等待模型调用和本批 Tool 调用结束，在 `finally` 中释放 Context。后续轮次重新读取最新 View。
 
-同一 Context 的 `messages`、`tools`、`executeTool` 是一组。不能分别获取新旧版本后混用，也不能在执行旧调用时悄悄换成最新 Binding。旧 Context 释放后继续调用会被拒绝。
+同一 Context 的 `messages`、`tools`、`executeTool` 是一组。不能分别获取新旧版本后混用，也不能在执行旧调用时悄悄换成其他页面或最新观察。旧 Context 释放后继续调用会被拒绝。
 
 Host 从同一套本地 tar 安装 Runtime、SDK、Adapter 和 Driver。Adapter 将 Runtime 和 Driver 声明为必需 peer。严格类型安装的补丁流程见 `@aotui/agent-driver-v2` 包内 `STRICT_TYPES.md`。 [当前配套与安装图](sdk-runtime-distribution.md#current-delivery)
 
@@ -89,7 +89,7 @@ try {
         let receipt;
         try {
             await context.adopt();
-            receipt = await context.executeTool(inspect, { selected: 'billing_export_2026_11.selected' }, 'inspect-1');
+            receipt = await context.executeTool(inspect, { view_id: 'billing_export_2026_11', selected: 'billing_export_2026_11.selected' }, 'inspect-1');
             if (receipt.outcomeStatus !== 'succeeded') throw new Error(`Inspection failed: ${JSON.stringify(receipt)}`);
         } finally {
             await context.release();
@@ -123,7 +123,7 @@ Producer 输出不带框架 `<view>` 外壳的正文。Source 按已知的 View 
 
 Source 构造模型 Tools 时校验 `appName-ViewType-toolName`，例如 `system_ide-FileDetail-edit_file`。三个段分别使用 ASCII 字母、数字和下划线，以连字符分隔，整名最多 64 字符。不同 ViewType 的同名操作是不同 Tool，同类型多个 View 实例共享 Tool。非法名称报 `AOTUI_TOOL_NAME_INVALID`，组合后冲突报 `AOTUI_TOOL_NAME_COLLISION`，诊断隔离到对应 App。Source 保留合法原名，通过当前 Context 捕获的别名与 binding 映射路由调用。View id 不参与别名计算，纯 Core 使用自己的结构化身份规则。
 
-普通 ViewType Tool 使用应用声明的原始 Schema 和显式业务参数。Runtime 不读取 `target` 元数据、不依据 View 实例选择 Binding，也不猜测或解析 `filePath`；App Handler 负责业务对象选择及其有效性。多个同类型 View 共用 Tool，不会为每个实例生成新的别名或 Schema。对象关闭、过期或不具备业务授权时，由应用 Handler 按业务合同拒绝操作。
+模型 Schema 从业务 Schema 派生，始终要求 `view_id`。只有部分同类型页面启用操作时，Schema 附带该轮观察的候选 ID。Runtime 验证并剥离 `view_id` 后，将业务参数交给接收页的 handler。
 
 Source 的 Desktop 应用列表按话题启用状态筛选，呈现应用用途、状态和 App ID。没有单独禁用的应用时，还呈现最近 5 条系统日志。Host 的 Desktop 预览可显示整个桌面的安装状态，供诊断和展示使用。Agent 从同一份 Context 的应用列表和 Tools 选择操作。
 
@@ -186,7 +186,7 @@ pnpm -C agent-driver-v2 exec vitest run \
 
 - 普通 `./run.sh` 启动后，IDE、Terminal、Browser 通过同一 AppRegistry / Semantic Source 接入，无需 Semantic 开发环境变量。
 - 打开文件后出现 FileDetail View 和相应工具；编辑后下一轮看到最新 View；默认调用链没有 Legacy `acquireSnapshot()` / `execute()` 回退。
-- 模型思考超过 30 秒仍可调用未变更的 Binding；关闭最后一个匹配 View、禁用工具或替换 App 实例后，旧 activation 调用被拒绝；单个业务对象关闭但同类型仍活跃时，App guard 校验该对象。
+- 模型思考超过 30 秒仍可使用保持有效的观察与接收页。关闭、禁用或替换接收页后，原 activation 会被拒绝。
 - 失败、拒绝和未知结果没有被统计成成功；后台任务启动成功不等于任务完成；未知写入不被自动重试；不暴露当前能力无法执行的工具。
 - Context 正常结束、异常结束和会话停止均释放观察；多轮采用和结果过期会回收不再使用的记录；后台命令的进度继续由应用 View 展示。
 
@@ -196,7 +196,7 @@ Semantic 的正式接入和清理以代码、当前 API 类型及定向验证共
 
 SDK 将 TypeBox 声明编译为有界的 `view-type-parameters-v1` 参数合同。支持的 Schema 词汇贯通声明、模型参数和解引用校验。其他词汇会在 Tool 定义期带路径拒绝。完整支持范围见 `@aotui/sdk` 包内 `docs/tool-parameters.md`。Native Tool 的公共别名约束见上文。
 
-工厂作者标记为 `view-type-tools-v4`。Core 和 Worker 使用 `view-type-parameters-v1` 参数合同。View/Ref owner、授权后重验、预算及释放保持。观察的准备与采用分开，显式采用新观察会撤销旧资格，规则见下节。历史验收记录保留各自日期和适用产物，未执行的新候选测试不能标成已通过。
+工厂作者标记为 `view-type-tools-v5`。Core 和 Worker 使用 `view-type-parameters-v1` 参数合同。View/Ref owner、授权后重验、预算及释放保持。观察的准备与采用分开，显式采用新观察会撤销旧资格，规则见下节。历史验收记录保留各自日期和适用产物，未执行的新候选测试不能标成已通过。
 
 ### 串行采用与失败
 

@@ -1,36 +1,24 @@
-# 静态 Tool 声明与实例绑定
+# 静态 ViewType 与工具目录
 
-`@aotui/sdk/app` 提供静态定义、类型推导、ToolSet 和目录数据；它不加载 Preact、DOM 或 Worker。Preact 根入口复用同一份静态声明实现。
+`defineViewType` 由 `@aotui/sdk/app` 和 Preact 根入口共享。类型名和工具名各声明一次，工具值只描述业务参数和说明。
 
 ```ts
 import Type from 'typebox';
-import { defineViewTypeTool, defineToolSet, getToolCatalog } from '@aotui/sdk/app';
-import type { ArgsOf, SchemaOf } from '@aotui/sdk/app';
+import { defineViewType, getToolCatalog, type ArgsOf } from '@aotui/sdk/app';
 
-const input = Type.Object({
-  filePath: Type.String(),
-  content: Type.String(),
-}, { additionalProperties: false });
-const editFile = defineViewTypeTool({
-  viewType: 'FileDetail',
-  name: 'edit_file',
-  description: 'Edit an opened file and read its updated View.',
-  inputSchema: input,
+export const FileDetail = defineViewType({
+  name: 'FileDetail',
+  tools: {
+    edit_file: {
+      description: 'Edit the selected file and read its updated View.',
+      inputSchema: Type.Object({ text: Type.String() }, { additionalProperties: false }),
+    },
+  },
 });
-const tools = defineToolSet({ editFile });
-const catalog = getToolCatalog(tools);
-type EditArgs = ArgsOf<typeof editFile>;
-type EditSchema = SchemaOf<typeof editFile>;
+export type EditArgs = ArgsOf<typeof FileDetail.tools.edit_file>;
+export const catalog = getToolCatalog([FileDetail]);
 ```
 
-`EditArgs` 是从原始 TypeBox Schema 推导的递归只读参数；`EditSchema` 保留原始 Schema 的具体类型。definition 的运行时 `inputSchema` 是 Runtime 规范化的深冻结 JSON，和输入 Schema 分离。声明不划分工具读写类别；业务权限与副作用由 App/Host 校验。
+工厂在 `viewTypes` 中登记 descriptor。相同类型的多个页面复用它。不同类型可以使用相同工具名。SDK 捕获并冻结声明，构造目录时生成要求 `view_id` 的模型 Schema。同一 App 内的类型名必须唯一。
 
-静态声明只接受 viewType、name、description、inputSchema。旧 execute 在编译期通过 `execute?: never` 拒绝，在运行时也由字段检查拒绝。definition 和 ToolSet 不读取 App、不持有业务 handler、不注册工具。输入及 Schema 的 getter 不会在捕获中执行。
-
-ToolSet 的本地键只关联定义，不是第二个公开工具名。结构化 `(viewType, name)` 必须唯一；不同 ViewType 可使用相同名称。集合捕获并冻结输入，使用相同版本和静态声明格式的 SDK 构建可以互用 Tool / ToolSet。接收方捕获并校验声明结构，真实执行绑定由 App 实例注册。
-
-catalog 是按 viewType/name 稳定排序、冻结的纯 JSON 列表，每项只有 viewType、name、description、inputSchema。它描述“已定义能力”，不表示当前存在匹配 View 或已经获得调用资格。
-
-旧 `useViewTypeTool` 已退出。普通 TypeScript 绑定见 [App 作者指南](app-authoring.md)，AppTools 和 ToolCatalog 见[组件指南](app-tools.md)。Ref、观察和执行资格遵循既有 Runtime 合同。配套包与当前安装步骤统一见 [包使用说明](runtime-compatibility.md)。
-
-Root 可用 ToolCatalog 呈现按 ViewType 分组的工具名称；组件不呈现 description、inputSchema 或输入输出结构。getToolCatalog 仍返回冻结的四字段静态数据，供程序复用，不应将其 JSON 写入 View。完整说明与参数合同只由 Context Tools 提供。数据 View 只呈现业务状态及 Ref，避免重复列工具表。
+目录用于文档、Root 说明与类型检查。运行时的原生工具可用性由当前页面的绑定决定。Root 的 `ToolCatalog` 读取 descriptor 并只列出名称。[Preact 页面操作](app-tools.md)

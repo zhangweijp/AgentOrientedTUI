@@ -22,8 +22,8 @@ try {
     const example = coreDoc.match(/<!-- b1-example:start -->\n```ts\n([\s\S]*?)\n```\n<!-- b1-example:end -->/)?.[1]; assert.ok(example);
     await fs.writeFile(path.join(folder, 'core-example.ts'), example);
     }
-    await fs.writeFile(path.join(folder, 'tool-types.ts'), `import type { RefTarget, ToolResult, ViewToolInvocationTerminal, SafeOrdinaryInvoker, AppSnapshotV4, SnapshotRead } from '@aotui/runtime/core';
-import { ORDINARY_INVOKER_ABI_V4, type OrdinaryCompileResult, type SnapshotStoreOptions, type SnapshotLimits } from '@aotui/runtime/core';
+    await fs.writeFile(path.join(folder, 'tool-types.ts'), `import type { RefTarget, ToolResult, ViewToolInvocationTerminal, ExecutionBinding, AppSnapshotV4, SnapshotRead } from '@aotui/runtime/core';
+import { SNAPSHOT_SCHEMA_VERSION, type OrdinaryCompileResult, type SnapshotStoreOptions, type SnapshotLimits } from '@aotui/runtime/core';
 // @ts-expect-error The JSON copy budget reason is internal to Core.
 import { JsonCopyLimitError } from '@aotui/runtime/core';
 export const defaultLimits: SnapshotStoreOptions = { limits: undefined };
@@ -42,7 +42,9 @@ export function declarationCategory(result: OrdinaryCompileResult) {
 }
 // @ts-expect-error The former SDK registration export is retired.
 import { ORDINARY_INVOCATION_MODE } from '@aotui/runtime/core';
-// @ts-expect-error V3 is the sole public AppSnapshot DTO.
+// @ts-expect-error The former invoker ABI is retired.
+import type { SafeOrdinaryInvoker } from '@aotui/runtime/core';
+// @ts-expect-error V4 is the sole public AppSnapshot DTO.
 import type { AppSnapshotV2 } from '@aotui/runtime/core';
 // @ts-expect-error AppSnapshotV4 is the only public AppSnapshot type name.
 import type { AppSnapshot } from '@aotui/runtime/core';
@@ -80,16 +82,18 @@ const ref: RefTarget = { kind: 'snapshot-value', payload: { id: 'one', version: 
 ref.payload = {};
 // @ts-expect-error Business identity belongs inside the captured payload.
 const oldRef: RefTarget = { kind: 'entity', entityId: 'one' };
-const abi: 'ordinary-invoker/v4' = ORDINARY_INVOKER_ABI_V4;
+const schemaVersion: 4 = SNAPSHOT_SCHEMA_VERSION;
 const result: ToolResult = { success: false, error: { code: 'PARTIAL', message: 'Application reports partial work' } };
 // @ts-expect-error The former Tool failure classification is retired.
 const oldResult: ToolResult = { ...result, effects: 'none' };
 const terminal: ViewToolInvocationTerminal = { phase: 'entered-returned', result };
 // @ts-expect-error The former terminal field is retired.
 const oldTerminal: ViewToolInvocationTerminal = { ...terminal, failureEffects: 'partial' };
-const invoke: SafeOrdinaryInvoker = async _args => terminal;
+const execute: ExecutionBinding['execute'] = ({ source }) => source.receiver.viewId
+  ? { kind: 'tool-result', ...terminal }
+  : { kind: 'unknown' };
 const readySnapshot = (read: SnapshotRead): AppSnapshotV4 | undefined => read.status === 'ready' ? read.snapshot : undefined;
-void [ref, oldRef, abi, result, oldResult, oldTerminal, invoke, readySnapshot];
+void [ref, oldRef, schemaVersion, result, oldResult, oldTerminal, execute, readySnapshot];
 `);
     const compiler = { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, exactOptionalPropertyTypes: true, skipLibCheck: false,
         lib: ['ES2022'], types: [], outDir: './core-out' };
@@ -126,22 +130,24 @@ export function readFromHost(client: AppInteraction, request: AppInvocation): Pr
   const hostQuery: ReceiptQuery = query;
   return client.readReceipt(hostQuery);
 }
-import { createTUIApp, defineViewTypeTool, View, useDataRef, refParam, AppTools, defineToolSet, type ArgsOf, type ToolSetMap, type ToolBindings, useAppLifecycle, type AppLifecycleCallbacks } from '@aotui/sdk';
+import { createTUIApp, defineViewType, View, useDataRef, refParam, type ArgsOf, type ViewBindings, useAppLifecycle, type AppLifecycleCallbacks } from '@aotui/sdk';
 ${refOnly ? '' : ideTypeImports}
 import type { TUIAppFactory } from '@aotui/runtime/spi';
 // @ts-expect-error Removed entity-only Hook is not a public API.
 import { experimental_useVersionedEntityTool } from '@aotui/sdk';
 import type { AppLifecyclePort, AppCleanupReport } from '@aotui/runtime/spi';
-const incrementTool = defineViewTypeTool({ viewType: 'Counter', name: 'increment', description: 'Increment counter',
- inputSchema: Type.Object({ amount: Type.Number() }, { additionalProperties: false }), });
-const inspectTool = defineViewTypeTool({ viewType: 'Counter', name: 'inspect_record', description: 'Inspect the displayed original record.', inputSchema: Type.Object({ record: refParam('Record', Type.Object({ id: Type.String() }, { additionalProperties: false })) }, { additionalProperties: false }) });
-const tools = defineToolSet({ increment: incrementTool, inspect: inspectTool });
+const Counter = defineViewType({ name: 'Counter', tools: {
+ increment: { description: 'Increment counter', inputSchema: Type.Object({ amount: Type.Number() }, { additionalProperties: false }) },
+ inspect_record: { description: 'Inspect the displayed record.', inputSchema: Type.Object({
+  record: refParam('Record', Type.Object({ id: Type.String() }, { additionalProperties: false })),
+ }, { additionalProperties: false }) },
+} });
 function Detail() { return 'Counter'; }
 function RefDetail() {
  const current = useDataRef('current_record', { id: 'record-1' }, { refType: 'Record' });
  return h('p', {}, current('Current record'));
 }
-const inspectBinding: ToolBindings<ToolSetMap<typeof tools>>['inspect'] = { execute(args: ArgsOf<typeof inspectTool>) {
+const inspectBinding: ViewBindings<typeof Counter>['inspect_record'] = { execute(args: ArgsOf<typeof Counter.tools.inspect_record>) {
  const id: string = args.record.id;
  // @ts-expect-error Ref input is an object, not the model's name string.
  args.record.toUpperCase();
@@ -152,19 +158,25 @@ const inspectBinding: ToolBindings<ToolSetMap<typeof tools>>['inspect'] = { exec
  void id; return { success: true };
 } };
 const owner: AppLifecycleCallbacks = { stop() {}, async close() {} };
-function Root() { useAppLifecycle(owner); return h(AppTools<ToolSetMap<typeof tools>, ToolBindings<ToolSetMap<typeof tools>>>, {definition: tools, bindings: {inspect: inspectBinding, increment: {async execute(args: ArgsOf<typeof tools.increment>): Promise<import('@aotui/sdk').ToolResult> {
-  args.amount.toFixed();
-  // @ts-expect-error Numeric B1 inference remains precise.
-  args.amount.toUpperCase();
-  if (args.amount < 0) return { success: false, error: { code: 'NEGATIVE', message: 'Application rejects a negative amount' } };
-  return { success: true, data: { amount: args.amount } };
- }}}}, h(View, {kind: 'state', id: 'counter', type: 'Counter' }, h(Detail, {}))); }
+function Root() {
+ useAppLifecycle(owner);
+ return h(View<typeof Counter>, { kind: 'state', id: 'counter', type: Counter, bindings: {
+  inspect_record: inspectBinding,
+  increment: { async execute(args) {
+   args.amount.toFixed();
+   // @ts-expect-error Numeric inference remains precise.
+   args.amount.toUpperCase();
+   if (args.amount < 0) return { success: false, error: { code: 'NEGATIVE', message: 'Application rejects a negative amount' } };
+   return { success: true, data: { amount: args.amount } };
+  } },
+ } }, h(Detail, {}));
+}
 ${refOnly ? '' : ideTypeAssertions}
-const managedFactory = createTUIApp({ app_name: 'package_types', component: Root });
+const managedFactory = createTUIApp({ app_name: 'package_types', component: Root, viewTypes: [Counter] });
 const lifecycleSupport: 'app-lifecycle-v2' = managedFactory.appLifecycleSupport;
 const toolAuthoringProtocol: 'view-type-tools-v5' = managedFactory.toolAuthoringProtocol;
 // @ts-expect-error Managed lifecycle support is the default factory contract, not a config flag.
-createTUIApp({ app_name: 'retired_lifecycle_flag', component: Root, experimentalAppLifecycle: true });
+createTUIApp({ app_name: 'retired_lifecycle_flag', component: Root, viewTypes: [Counter], experimentalAppLifecycle: true });
 export default managedFactory;
 const writable: AppInteractionOptions = { toolsEnabled: true };
 const readOnly: AppInteractionOptions = { toolsEnabled: false };
@@ -207,38 +219,41 @@ export const interaction = (kernel: IKernel, desktopId: DesktopID, appId: string
 import { useState } from 'preact/hooks';
 import { appendFileSync } from 'node:fs';
 import Type from 'typebox';
-import { createTUIApp, defineViewTypeTool, useDataRef, refParam, AppTools, defineToolSet, View } from '@aotui/sdk';
+import { createTUIApp, defineViewType, useDataRef, refParam, View } from '@aotui/sdk';
 const filePath = '/open/a.txt';
 // This test-only witness is outside Tool Result and the App projection.
 const witnessFile = ${JSON.stringify(witnessPath)};
 const witness = data => appendFileSync(witnessFile, JSON.stringify(data) + '\\n');
-const tools = defineToolSet({
- EditUI: defineViewTypeTool({ viewType: 'FileDetail', name: 'edit_file', description: 'Replace the contents of an opened file.', inputSchema: Type.Object({ filePath: Type.String(), content: Type.String() }, { additionalProperties: false }) }),
- InspectUI: defineViewTypeTool({ viewType: 'FileDetail', name: 'inspect_snapshot', description: 'Inspect a complete File Ref from the current View.', inputSchema: Type.Object({ record: refParam('File', Type.Object({ filePath: Type.String(), content: Type.String() }, { additionalProperties: false })) }, { additionalProperties: false }) }),
-});
+const Guide = defineViewType({ name: 'Root', tools: {} });
+const File = defineViewType({ name: 'FileDetail', tools: {
+ edit_file: { description: 'Replace the contents of an opened file.', inputSchema: Type.Object({ filePath: Type.String(), content: Type.String() }, { additionalProperties: false }) },
+ inspect_snapshot: { description: 'Inspect a complete File Ref.', inputSchema: Type.Object({
+   record: refParam('File', Type.Object({ filePath: Type.String(), content: Type.String() }, { additionalProperties: false })),
+ }, { additionalProperties: false }) },
+} });
 function FileDetail({ content }) {
  const current = useDataRef('current_file', { filePath, content }, { refType: 'File' });
  return h('section', {}, [h('p', {}, current('Current file')), h('pre', {}, content)]);
 }
 function App() {
  const [content, setContent] = useState('OLD_PACKAGE_VIEW_VALUE');
- return h(AppTools, { definition: tools, bindings: {
-  EditUI: { execute: args => {
+ return h('main', {}, [h(View, { kind: 'instruction', id: 'root', type: Guide }, h('p', {}, 'Package consumer tool test.')),
+  h(View, { kind: 'state', id: 'file_a', type: File, bindings: {
+  edit_file: { execute: args => {
    witness({ stage: 'handler-entry', name: 'edit_file' });
    if (args.filePath !== filePath) { witness({ stage: 'app-guard', name: 'edit_file', stateBefore: content, stateAfter: content });
     return { success: false, error: { code: 'FILE_NOT_OPEN', message: 'The selected file is not open.' } }; }
    setContent(args.content); witness({ stage: 'business', name: 'edit_file', previous: content, requested: args.content });
    return { success: true, data: { message: 'Editor state updated.' } };
   } },
-  InspectUI: { execute: args => {
+  inspect_snapshot: { execute: args => {
    witness({ stage: 'handler-entry', name: 'inspect_snapshot' });
    witness({ stage: 'ref-payload', name: 'inspect_snapshot', payload: args.record, frozen: Object.isFrozen(args.record) });
    return { success: true, data: { message: 'Snapshot inspected.' } };
   } },
- } }, h('main', {}, [h(View, {kind: 'instruction', id: 'root', type: 'Root' }, h('p', {}, 'Package consumer tool test.')),
-  h(View, {kind: 'state', id: 'file_a', type: 'FileDetail' }, h(FileDetail, { content }))]));
+ } }, h(FileDetail, { content }))]);
 }
-export default createTUIApp({ app_name: 'package_type_tool_consumer', component: App });
+export default createTUIApp({ app_name: 'package_type_tool_consumer', component: App, viewTypes: [Guide, File] });
 `);
     await fs.writeFile(path.join(folder, 'public-tools.mjs'), `import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -278,7 +293,7 @@ try {
  }
  context = await captureReady();
  const editName = toolName(context, 'edit_file'), refName = toolName(context, 'inspect_snapshot');
- const inspected = await context.executeTool(refName, { record: 'file_a.current_file' }, 'snapshot-before-edit');
+ const inspected = await context.executeTool(refName, { view_id: 'file_a', record: 'file_a.current_file' }, 'snapshot-before-edit');
  assert.equal(inspected?.outcomeStatus, 'succeeded', JSON.stringify(inspected));
  assert.equal(inspected.result?.message, 'Snapshot inspected.');
  assert.ok(!JSON.stringify(inspected).includes('OLD_PACKAGE_VIEW_VALUE'));
@@ -286,12 +301,12 @@ try {
  assert.equal(beforeWitness.length, 1); assert.equal(beforeWitness[0].payload.filePath, '/open/a.txt');
  assert.equal(beforeWitness[0].payload.content, 'OLD_PACKAGE_VIEW_VALUE'); assert.equal(beforeWitness[0].frozen, true);
  calls.push({ name: 'inspect-before', result: inspected });
- const denied = await context.executeTool(editName, { filePath: '/open/b.txt', content: 'MUST_NOT_APPEAR' }, 'edit-closed-file');
+ const denied = await context.executeTool(editName, { view_id: 'file_a', filePath: '/open/b.txt', content: 'MUST_NOT_APPEAR' }, 'edit-closed-file');
  calls.push({ name: 'edit_file-b', result: denied });
  assert.equal(denied?.outcomeStatus, 'failed', JSON.stringify(denied));
  assert.equal(denied.error?.code, 'FILE_NOT_OPEN', JSON.stringify(denied));
  assert.ok(!JSON.stringify(denied).includes('MUST_NOT_APPEAR'));
- const changed = await context.executeTool(editName, { filePath: '/open/a.txt', content: 'NEW_PACKAGE_VIEW_VALUE' }, 'edit-open-file');
+ const changed = await context.executeTool(editName, { view_id: 'file_a', filePath: '/open/a.txt', content: 'NEW_PACKAGE_VIEW_VALUE' }, 'edit-open-file');
  calls.push({ name: 'edit_file-a', result: changed });
  assert.equal(changed?.outcomeStatus, 'succeeded', JSON.stringify(changed));
  assert.ok(!JSON.stringify(changed).includes('NEW_PACKAGE_VIEW_VALUE'), 'Tool receipt must not duplicate View data');
@@ -300,7 +315,7 @@ try {
  const latest = context.messages.map(message => String(message.content)).join('\\n');
  assert.ok(latest.includes('NEW_PACKAGE_VIEW_VALUE'), 'A fresh Source context observes the updated FileDetail View');
  assert.ok(!latest.includes('OLD_PACKAGE_VIEW_VALUE'), 'The old FileDetail snapshot is not retained as current');
- const latestRef = await context.executeTool(toolName(context, 'inspect_snapshot'), { record: 'file_a.current_file' }, 'snapshot-after-edit');
+ const latestRef = await context.executeTool(toolName(context, 'inspect_snapshot'), { view_id: 'file_a', record: 'file_a.current_file' }, 'snapshot-after-edit');
  assert.equal(latestRef?.outcomeStatus, 'succeeded', JSON.stringify(latestRef));
  assert.equal(latestRef.result?.message, 'Snapshot inspected.');
  assert.ok(!JSON.stringify(latestRef).includes('NEW_PACKAGE_VIEW_VALUE'));
@@ -345,18 +360,18 @@ try {
    await new Promise(resolve=>setTimeout(resolve,20));
   }
  }
- async function invoke(current,suffix,input,expectedStatus='succeeded'){const name=Object.keys(current.tools).find(key=>key.endsWith('-'+suffix));assert.ok(name,'Semantic context includes '+suffix+': '+Object.keys(current.tools));const result=await current.executeTool(name,input,'public-'+outcomes.length);assert.ok(result);outcomes.push(result);assert.equal(result.outcomeStatus,expectedStatus,JSON.stringify(result));return result;}
+ async function invoke(current,suffix,input,expectedStatus='succeeded'){const name=Object.keys(current.tools).find(key=>key.endsWith('-'+suffix));assert.ok(name,'Semantic context includes '+suffix+': '+Object.keys(current.tools));const receiver=suffix==='multi_open_file'?'workspace':current.messages.map(message=>String(message.content)).find(text=>text.startsWith('<view id=')&&text.includes('type="FileDetail"'))?.match(/id="([^"]+)"/)?.[1];assert.ok(receiver);const result=await current.executeTool(name,{view_id:receiver,...input},'public-'+outcomes.length);assert.ok(result);outcomes.push(result);assert.equal(result.outcomeStatus,expectedStatus,JSON.stringify(result));return result;}
  context=await captureWhenToolIsAvailable('multi_open_file');
  const opened=await invoke(context,'multi_open_file',{filePaths:[file]});assert.equal(opened.result?.message,'multi_open_file completed. Read the current IDE Views for the updated state.');
  await context.release?.();context=undefined;
  context=await capture();assert.ok(context.messages.some(message=>String(message.content).includes('export const answer = 1;')),'New Context observes the opened FileDetail');
- const denied=await invoke(context,'write_file',{filePath:unopenedFile,content:'MUST_NOT_BE_CREATED'},'failed');
- assert.equal(denied.error?.code,'IDE_FILE_NOT_LOADED',JSON.stringify(denied));assert.equal(await fs.stat(unopenedFile).catch(error=>error.code),'ENOENT','write_file cannot create an unopened path');
- const written=await invoke(context,'write_file',{filePath:file,content:'export const answer = 2;\\n'});assert.ok(written.result);assert.equal(await fs.readFile(file,'utf8'),'export const answer = 2;\\n');
+ const denied=await invoke(context,'write_file',{filePath:unopenedFile,content:'MUST_NOT_BE_CREATED'},'rejected');
+ assert.equal(denied.error?.code,'TOOL_INVALID_ARGS',JSON.stringify(denied));assert.equal(await fs.stat(unopenedFile).catch(error=>error.code),'ENOENT','write_file cannot create an unopened path');
+ const written=await invoke(context,'write_file',{content:'export const answer = 2;\\n'});assert.ok(written.result);assert.equal(await fs.readFile(file,'utf8'),'export const answer = 2;\\n');
  await context.release?.();context=undefined;
  context=await capture();const updatedFileView=context.messages.map(message=>String(message.content)).join('\\n');
  assert.ok(updatedFileView.includes('export const answer = 2;'),'New Context observes the completed write');assert.ok(!updatedFileView.includes('export const answer = 1;'),'Only the latest FileDetail snapshot remains current');
- const hover=await invoke(context,'lsp_hover',{file_path:file,line:1,character:15});
+ const hover=await invoke(context,'lsp_hover',{line:1,character:15});
  const detailId=hover.result?.view_id;assert.match(detailId,/^fd_/);
  assert.equal(hover.result?.message,'Hover information available at 1:15. See FileDetail '+detailId+', hover section.');
  assert.deepEqual(Object.keys(hover.result).sort(),['message','view_id'],'Hover data stays in FileDetail');

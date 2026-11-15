@@ -7,7 +7,7 @@
 - `README.md` explains the idea and the interface model.
 - `GUIDE.md` explains the repository layout, architecture, stack, and local development flow.
 
-If you want a deeper source-level walkthrough after this file, read [docs/runtime-sdk-driven-source-analysis.md](./docs/runtime-sdk-driven-source-analysis.md).
+The App authoring guide covers runnable TypeScript and Preact Apps, including the current Tool and Ref contracts. [App authoring guide](./sdk/docs/app-authoring.md)
 
 For the current Runtime Host, Core, and Semantic Source entry points, start with the [Runtime package guide](./runtime/README.md).
 
@@ -103,7 +103,7 @@ Core stack:
   - `host/` uses React 19, Vite, Tailwind CSS 4, and related UI libraries
   - `sdk/` and app-side authoring center on Preact
 - **Agent / model integration**: Vercel AI SDK (`ai`) and provider packages such as `@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/google`, `@ai-sdk/xai`
-- **Validation / schemas**: `zod`, `zod-to-json-schema`
+- **App Tool and Ref schemas** use TypeBox and JSON Schema.
 - **Testing**: `vitest` across most packages; `demo-apps/aotui-ide` currently uses `jest`
 - **Build tooling**: `tsc`, Vite, `electron-builder`
 - **DOM simulation / rendering helpers**: `linkedom`, `happy-dom`, `preact-render-to-string`
@@ -114,8 +114,8 @@ Core stack:
 | Layer | Main technologies |
 | --- | --- |
 | `host/` | Electron, React 19, Vite, Tailwind CSS 4, TRPC, Express, SQLite-related tooling |
-| `runtime/` | Node.js, Worker Threads, Preact, `linkedom`, `happy-dom`, `zod` |
-| `sdk/` | TypeScript, Preact, `@preact/signals`, `linkedom` |
+| `runtime/` | Node.js, Worker Threads, `linkedom`, JSON Schema validation |
+| `sdk/` | TypeScript, Preact, `@preact/signals`, `linkedom`, TypeBox |
 | `agent-driver-v2/` | Vercel AI SDK (`ai`), OpenAI / Anthropic / Google / xAI / OpenRouter provider packages |
 | `demo-apps/` | TypeScript + SDK-based app packages; mostly Preact-powered app definitions |
 
@@ -128,7 +128,7 @@ This stack is opinionated. It is optimized for an agent-facing desktop runtime, 
 - **Preact in `sdk/` and runtime-facing app code** keeps the app model component-based without paying the full weight of a larger client framework inside worker-rendered app execution.
 - **React in `host/`** is a separate choice from Preact in the app layer. The host is a conventional GUI product surface, while the SDK is an embedded app-authoring surface. They solve different problems, so the stack intentionally splits here.
 - **Vercel AI SDK and provider adapters in `agent-driver-v2/`** give the project one abstraction point for multi-model support, streaming, and tool-call execution. That keeps provider churn out of the rest of the runtime.
-- **`zod` and JSON-schema tooling** matter because the system has to expose typed tool surfaces and runtime contracts reliably across host, runtime, apps, and model-facing execution.
+- **TypeBox** lets App authors declare typed business parameters and Refs. Runtime validates inputs against that contract and derives the model-facing JSON Schema.
 
 ### Trade-Offs
 

@@ -8,7 +8,7 @@
 
 ## 从这里开始
 
-1. 读 [作者指南](docs/view-type-tools.md)，了解单一 Tool 声明、App 绑定和动态可用性。
+1. 读 [作者指南](docs/view-type-tools.md)，了解单一 Tool 声明、实例绑定和动态可用性。
 2. 运行 [文件 App](docs/examples/file-app.tsx)：打开 a.txt/b.txt，编辑后读最新 FileDetail，最后关闭页面。它只操作内存，不访问磁盘。
 3. 对已展示的业务对象，读 [Ref 参数与完整示例](docs/readonly-ref-v2.md)：类型提示留在页面，调用用 `view_id.local_ref`。
 4. 读 [View 合同](docs/views.md)：显式 id/type/kind、独立页面、原样正文和唯一包装。
@@ -19,25 +19,27 @@
 ## 最小组件应用
 
 ```tsx
-import { createTUIApp, View } from '@aotui/sdk';
+import { createTUIApp, defineViewType, View } from '@aotui/sdk';
+
+const Root = defineViewType({ name: 'Root', tools: {} });
 
 function App() {
-  return <View id="root" type="Root" kind="instruction">
+  return <View id="root" type={Root} kind="instruction">
     <h1>Example Application Instruction</h1>
     <p>Read this page. This application has no domain tools.</p>
   </View>;
 }
 
-export default createTUIApp({ app_name: 'example', component: App });
+export default createTUIApp({ app_name: 'example', component: App, viewTypes: [Root] });
 ```
 
 应用模块 default 导出唯一托管工厂。`app_name` 匹配 `/^[a-z0-9_]+$/`。View id 在 App 内唯一，由一个或多个 ASCII 字母、数字或下划线组成。View 必须显式提供 type 和 kind（instruction/state），多个实例可共享 type，页面不能嵌套。
 
 ## 开发时记住的合同
 
-- 用 TypeBox 和 `defineViewTypeTool` 声明一次 viewType/name/description/inputSchema，用 `defineToolSet` 组织；handler 放入 AppTools 的 bindings 或普通 TS 的 `publish({ views, bindings })`。没有 isMutating 分类。
-- 完整说明与参数 Schema 由上下文的 Tools 提供。Root 用 `ToolCatalog` 从同一声明按 ViewType 列出名称；数据 View 呈现业务状态和 Ref，不复制完整工具定义。目录、可见性和 enabled 都不能代替授权与业务检查。
-- Tool 按 App + ViewType 共享。打开匹配页面后能力出现，最后一个匹配页面关闭后失效；Tool 不隐式选择某个实例。
+- 用 TypeBox 和 `defineViewType({ name, tools })` 声明共享工具。Preact 的 `View.bindings` 和普通 TS 的 `createView().render` 各自提供页面的 handler 与可用性。
+- 完整说明与 Schema 由请求的 `Tools` 提供。Root 用 `ToolCatalog viewTypes={viewTypes}` 从同一声明列出工具名。
+- Tool 按 App + ViewType 共享。调用中的 `view_id` 选择本轮观察中的页面实例。禁用或关闭页面会撤销这个实例的执行资格。
 - 文件路径、编辑内容、标题等保留普通参数。已发布对象用 Ref 选择：页面中 `Note:notes[0]` 位于 View `detail`，调用写 `detail.notes[0]`，不带展示类型前缀、不抄业务 ID。对象、整列表、元素、多个/可选字段和多选均使用同一个 refParam。
 - 参数递归只读，不自动 coercion/default/trim。App 检查对象是否仍存在、归属、状态与权限，并自行执行业务变更。Tool 收据与当前业务数据分别通过结果和 View 呈现；unknown 写入不自动重试。
 - 框架生成外层 XML，App 不拼接外壳或预转义。文件/代码/日志使用 pre/code，保留空白及 CR/LF；普通说明按 HTML→Markdown 规则排版。

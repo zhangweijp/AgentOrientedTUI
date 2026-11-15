@@ -511,3 +511,5 @@ IDE 启动配置已通过本地工程验收，[16](docs/sdk-runtime-design/16-re
 本轮给出推荐候选：静态 ViewType descriptor、页面实例 bindings、纯 TS 稳定 handle、原观察实例路由；保留 Root 静态名称目录、XML + Markdown User Messages 与动态原生 Tools。用户目标已明确，但具体 API、发布接受后置条件、enabled 代际、协议版本与迁移安排未全部冻结。新代码示例不是当前 SDK 导出。
 
 建立专题时的交付是研究、源码核对和设计文档。后续现行基线复测、已确认调用合同及候选实现状态分别登记在 [专题决定与验证](docs/sdk-runtime-design/view-type-sdk/07-decisions-and-validation.md)。2026-11-16 升级前完成文档一致性复核，实际状态以专题为准。
+
+2026-11-16 已实现上述页面实例绑定：SDK 使用 `defineViewType` 与页面 `bindings`，Runtime 按已采用的观察校验显式 `view_id` 和独立的 Ref 来源。共享定义、页面打开和关闭、旧观察失效与一组原生 Tools 贯通 Preact、普通 TypeScript、Worker 和标准 Source。公开使用与迁移以 [SDK 作者指南](sdk/docs/app-authoring.md) 和 [Runtime 集成合同](runtime/docs/runtime-app-interaction.md) 为准。

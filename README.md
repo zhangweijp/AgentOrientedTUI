@@ -104,10 +104,10 @@ In `AgentOrientedTUI`, `Read File` can mean something different:
 - make that `File View` the current file-shaped object in context
 - let later actions update or close that object
 
-For example, at `t1`, the runtime might insert:
+At `t1`, the runtime can add the file view as a User Message.
 
 ```xml
-<view id="file:src/index.ts" type="FileView">
+<view id="file_index" type="FileDetail" kind="state" name="src/index.ts" app_id="ide_demo" app_name="system_ide">
   path: src/index.ts
   language: typescript
   dirty: false
@@ -115,19 +115,14 @@ For example, at `t1`, the runtime might insert:
   content: ...
   diff_against: HEAD
   diagnostics: ...
-
-  available_actions:
-  - edit_file
-  - save_file
-  - close_file
 </view>
 ```
 
-The point is not the markup but the semantic contract: a `File View` is a runtime-managed handle to a file-shaped working object, not just another returned blob of text.
+The View presents the current file state. The native `Tools` list separately provides available operations such as `system_ide-FileDetail-edit_file` and their parameter schemas.
 
 That also means it does not have to expose a whole-file snapshot every time. Depending on the task, a file-facing view can be line-addressable, slice-based, diff-aware, or oriented around partial edits rather than full-file replacement.
 
-At `t2`, the agent calls `Edit File`. The runtime does not need to append a second full file result into context. It can update the existing handle in place:
+At `t2`, the agent calls the edit tool and receives a receipt. The app updates the file, and the next projection uses the latest snapshot of the same logical View.
 
 - `content` changes
 - `dirty` changes
@@ -153,7 +148,7 @@ The claim is narrower: the agent should work against maintained, actionable view
 
 A file is only a minimal case. Real applications are more demanding because they involve more than reading state. They involve object selection, object identity, action availability, and state transitions across views.
 
-That is where a messaging example becomes more useful.
+This hypothetical messaging app uses the current Tool presentation and Ref address conventions. Runnable examples are available in the SDK guide. [App authoring guide](./sdk/docs/app-authoring.md)
 
 Suppose the user says:
 
@@ -180,19 +175,16 @@ That usually means at least four primitives.
 First, the system exposes a view of the current world:
 
 ```xml
-<view id="contacts" type="ContactList" name="Contacts" app_id="messaging">
+<view id="contacts" type="ContactList" kind="state" name="Contacts" app_id="messaging" app_name="messaging">
   ## Contacts
 
   - [Wills Guo](Contact:contacts[0]) - online
   - [Emma Chen](Contact:contacts[1]) - away
   - [JY Chen](Contact:contacts[2]) - online
-
-  available_actions:
-  - open_chat(contact: Contact)
 </view>
 ```
 
-This view does not expose pixels. It exposes which objects currently exist and which actions are valid from this state.
+This View presents the current contacts and their Refs. The request's `Tools` list carries the available operations and parameter schemas.
 
 ### 2. Reference
 
@@ -204,7 +196,7 @@ The crucial step is not the label by itself, but the typed reference:
 
 `JY Chen` is the readable label.
 
-`Contact:contacts[2]` is the resolvable reference.
+`Contact:contacts[2]` is the display marker with the business type and local Ref name. With the containing View's `id="contacts"`, the call address is `contacts.contacts[2]`.
 
 That turns "seeing a name" into "binding to a concrete object."
 
@@ -212,39 +204,39 @@ Without references, an agent may know what exists in the application while still
 
 ### 3. Tool
 
-Given the contact list view, the correct next step is not to send a message immediately. It is to enter the chat context:
+The agent uses `messaging-ContactList-open_chat` from the current `Tools` list and passes the selected contact.
 
 ```json
 {
-  "tool": "open_chat",
+  "tool": "messaging-ContactList-open_chat",
   "arguments": {
-    "contact": "Contact:contacts[2]"
+    "view_id": "contacts",
+    "contact": "contacts.contacts[2]"
   }
 }
 ```
 
-The tool here is not a text-returning helper. It is a state transition request. The runtime resolves the reference into the real contact object and moves the application into the corresponding conversation state.
+The runtime resolves the contact Ref from the observation bound to the call. The app opens that conversation, and the tool returns a receipt.
 
 ### 4. State Update
 
 After that transition, the runtime can expose a new current view:
 
 ```xml
-<view id="chat_jy" type="ChatDetail" name="Chat with JY Chen">
-  ## Chat with [JY Chen](Contact:contacts[2])
+<view id="chat_jy" type="ChatDetail" kind="state" name="Chat with JY Chen" app_id="messaging" app_name="messaging">
+  ## Chat with JY Chen
 
-  available_actions:
-  - send_message(message: string)
-  - close_view()
+  - [Current conversation](Chat:current_chat)
 </view>
 ```
 
-Now, and only now, does the agent call:
+The `Tools` list now offers the send tool. The agent passes the ChatDetail XML ID as `view_id`.
 
 ```json
 {
-  "tool": "send_message",
+  "tool": "messaging-ChatDetail-send_message",
   "arguments": {
+    "view_id": "chat_jy",
     "message": "Hi"
   }
 }
@@ -261,18 +253,18 @@ In an agent-oriented interface, those responsibilities have to be represented ex
 - `View` exposes the current world
 - `Reference` binds the relevant object
 - `Tool` requests a state transition or action
-- the runtime updates the current world into the next view
+- the app updates business state, and the runtime presents the committed state as a new View snapshot
 
 This is not just a thin wrapper over tool calls. It is a different way of organizing interaction around maintained state rather than accumulated outputs.
 
 ## The Minimal Runtime Contract
 
-For this model to work reliably, the runtime has to guarantee at least four things:
+The runtime and the app each own part of the interaction contract.
 
-- references remain stable and resolvable across view transitions
-- actions declare which object types they accept
-- the runtime, not the model, is responsible for updating or invalidating the current view
-- concurrent or external mutation has explicit conflict semantics
+- The runtime resolves Refs from the observation bound to the call and checks that the source View instance is still valid.
+- Tools declare the business types they accept, and the runtime validates the resolved values.
+- The runtime updates or revokes the projection based on the app's committed state.
+- The app checks for conflicting external or concurrent changes and reports how to recover.
 
 ## What This Model Changes
 

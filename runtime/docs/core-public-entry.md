@@ -1,6 +1,6 @@
 # 从正式包入口使用纯 Core
 
-`@aotui/runtime/core` 提供 V3 Snapshot、App/ViewType Tool、App 实例交互与 Observation、参数合同与 StateSession；`@aotui/runtime/adapters/memory-state-storage` 提供内存存储。Core 不加载 DOM、Worker、Node 或模型 SDK。业务规则和外部副作用仍由 App/Host 负责。
+`@aotui/runtime/core` 提供 V4 Snapshot、App/ViewType Tool、App 实例交互与 Observation、参数合同与 StateSession；`@aotui/runtime/adapters/memory-state-storage` 提供内存存储。Core 不加载 DOM、Worker、Node 或模型 SDK。业务规则和外部副作用仍由 App/Host 负责。
 
 本例面向自建 Host／Producer 的低层装配者，只使用 Runtime 的纯 Core 与内存存储入口。普通 App 作者可从 `@aotui/sdk` 包内 `docs/app-authoring.md` 开始。Agent Driver 用户通过独立 `@aotui/agent-driver-adapter` 接入。安装时使用同次交付记录的版本与 tar。[本地交付说明](sdk-runtime-distribution.md#current-delivery)
 
@@ -29,7 +29,7 @@ B03 的 `createSnapshotCore({ limits })` 在构造时固定有效配置。`limit
 
 ## 完整 Core 示例
 
-两个 Tool 都注册一次到 `Note` ViewType，统一使用正式 `view-type-parameters-v1` profile。`add` 接收普通数值；`read` 接收一个必填 Note 对象 Ref。Note 是本例的内存业务数据，不是文件定位。下面的 JSON 注解与 SDK TypeBox `refParam` 对应，低层装配者不另造 Ref parser。Core 从原观察解析参数，授权与执行使用同一 effectiveInput。
+两个 Tool 都声明一次到 `Note` ViewType，统一使用正式 `view-type-parameters-v1` profile。`add` 接收普通数值；`read` 接收一个必填 Note 对象 Ref。Note 是本例的内存业务数据，不是文件定位。下面的 JSON 注解与 SDK TypeBox `refParam` 对应，低层装配者不另造 Ref parser。Core 从原观察解析参数，授权与执行使用同一 effectiveInput。
 
 普通 TypeScript 使用 `SemanticProjectionCoordinator.commit` 提交完整页面和当前工具，用现有 binding 提交参与本次的 Ref。框架管理发布版本，观察读取已准备的结果。正文只在 View 中呈现；Tool 返回完成收据，测试见证独立记录旧/新 Ref 的冻结值。b1 标记中的正文由真实新包消费者逐字提取、以 ES2022-only/types:[] 严格编译后执行，不能用另写的等价示例代替。
 
@@ -37,9 +37,9 @@ B03 的 `createSnapshotCore({ limits })` 在构造时固定有效配置。`limit
 ```ts
 import {
   createSnapshotCore, createViewOwnedTools, createAppInteraction, SemanticProjectionCoordinator,
-  compileOrdinarySchema, createStateSession,
+  compileOrdinarySchema, createStateSession, SNAPSHOT_SCHEMA_VERSION,
   type ExecutionBinding, type ExecutionFact, type JsonValue, type ToolResult,
-  type OrdinaryParameterContract, type StateSessionLimits, type ObservationGrant,
+  type StateSessionLimits, type ObservationGrant,
 } from '@aotui/runtime/core';
 import { createMemoryStateStorage } from '@aotui/runtime/adapters/memory-state-storage';
 
@@ -54,10 +54,8 @@ const preview = createSnapshotCore({ limits: previewLimits });
 previewLimits.maxViews = 1;
 snapshots.lifecycle.startApp(appId, instanceId);
 const registry = createViewOwnedTools(appId, instanceId);
-const view = registry.mount('detail', 'Note');
-const contracts = new Map<string, OrdinaryParameterContract>();
-const bindings = new Map<string, ExecutionBinding>();
-const bindingKey = (toolId: string, execution: unknown) => JSON.stringify([toolId, execution]);
+const attachment = registry.prepareMount('detail', 'Note');
+const { view, owner } = attachment;
 
 const addSchema = {
   type: 'object', properties: { n: { type: 'number' } },
@@ -75,14 +73,21 @@ const readSchema = {
 check(compileOrdinarySchema(addSchema).ok, 'Add Schema');
 check(compileOrdinarySchema(readSchema).ok, 'Ref Schema');
 
-let count = 1, noteText = 'old', handlerEntries = 0;
+let count = 1, noteText = 'old', handlerEntries = 0, addEnabled = true;
 const projection = new SemanticProjectionCoordinator({
   identity: () => ({ appId, instanceId }),
-  readFrame: () => ({
-    views: [{ id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: 'Note', kind: 'state',
-      content: { format: 'markdown-v1', value: `Counter: ${count}\nNote: ${noteText}` } }],
-    tools: registry.listTools(),
-  }),
+  readFrame: () => {
+    const candidate = registry.prepareFrame([{ id: view.viewId, type: view.viewType, owner, bindings: [
+      { name: 'add', enabled: addEnabled, execute: add },
+      { name: 'read', enabled: true, execute: read },
+    ] }]);
+    const published = candidate.instances[0]; check(published, 'Expected the Note View');
+    return {
+      views: [{ id: view.viewId, viewInstanceId: published.viewInstanceId, type: view.viewType, name: 'Note', kind: 'state',
+        content: { format: 'markdown-v1', value: `Counter: ${count}\nNote: ${noteText}` }, toolBindings: published.toolBindings }],
+      tools: candidate.tools, accept: candidate.accept,
+    };
+  },
 });
 let selected: ReturnType<typeof projection.registerRef> | undefined;
 const witness: Array<{ text: string; frozen: boolean }> = [];
@@ -99,40 +104,20 @@ async function read(args: Readonly<Record<string, unknown>>): Promise<ToolResult
   // Business text is already in the View; the receipt does not duplicate it.
   return { success: true, data: { completed: true } };
 }
-function register(name: string, schema: Readonly<Record<string, unknown>>,
-  execute: (args: Readonly<Record<string, unknown>>) => Promise<ToolResult>) {
-  return registry.registerTypeTool({ viewType: 'Note', name, description: name === 'add' ? 'Add to the counter' : 'Inspect a displayed Note',
-    inputSchema: schema }, {
-    safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
-    createSafeOrdinaryParametersInvoker: contract => {
-      contracts.set(name, contract);
-      return async args => {
-        return { phase: 'entered-returned', result: await execute(args) };
-      };
-    },
-  });
-}
-let releaseAdd = register('add', addSchema, add);
-const releaseRead = register('read', readSchema, read);
-function installBinding(tool: ReturnType<typeof registry.listTools>[number]) {
-  check(tool.execution.kind === 'view-type', 'One type-level execution identity');
-  const contract = contracts.get(tool.name); check(contract, 'Captured registration contract');
-  const binding: ExecutionBinding = {
-    identity: {},
-    validateInput: (_source, input) => {
-      const checked = contract.validateResolvedInput(input);
-      return checked.ok ? { ok: true, value: checked.value as Readonly<Record<string, JsonValue>> } : { ok: false };
-    },
-    isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.execution).success }),
-    execute: async context => {
-      const terminal = await registry.invokeTypeTool(context.source.tool, context.source.execution, context.effectiveInput);
-      if (terminal.result.success) check(terminal.result.data?.completed === true, 'Expected a concise completion receipt');
-      return { kind: 'tool-result', ...terminal } satisfies ExecutionFact;
-    },
-  };
-  bindings.set(bindingKey(tool.id, tool.execution), binding);
-}
-registry.listTools().forEach(installBinding);
+registry.defineTools([
+  { viewType: 'Note', name: 'add', description: 'Add to the counter', inputSchema: addSchema },
+  { viewType: 'Note', name: 'read', description: 'Inspect a displayed Note', inputSchema: readSchema },
+]);
+const binding: ExecutionBinding = {
+  identity: {},
+  validateInput: (_source, value) => ({ ok: true, value }),
+  isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.receiver).success }),
+  execute: async context => {
+    const terminal = await registry.invokeTypeTool(context.source.tool, context.source.receiver, context.effectiveInput);
+    if (terminal.result.success) check(terminal.result.data?.completed === true, 'Expected a concise completion receipt');
+    return { kind: 'tool-result', ...terminal } satisfies ExecutionFact;
+  },
+};
 function publish(text: string) {
   const prepared = projection.commit(() => {
     noteText = text;
@@ -149,7 +134,7 @@ check(sample.status === 'ready', 'Expected a published Note');
 preview.lifecycle.startApp(appId, instanceId);
 try {
   const { views, refs, tools } = sample.snapshot;
-  const result = preview.committer.accept({ schemaVersion: 3, appId, instanceId,
+  const result = preview.committer.accept({ schemaVersion: SNAPSHOT_SCHEMA_VERSION, appId, instanceId,
     producerSeq: 1, sourceEpoch: 1, capturedAt: 0, views, refs, tools });
   check(result.status === 'rejected' && result.issue.path === '$.views', 'The Core retained maxViews: 0');
 } finally { preview.lifecycle.dispose(); }
@@ -157,16 +142,14 @@ try {
 let authorizations = 0;
 const authority = createAppInteraction(snapshots.store, { namespace: 'tutorial:tutorial-run-1', now: () => 0, appId, instanceId, policy: {
   project: ({ source }): ObservationGrant => ({
-    views: source.views.map(item => ({ viewId: item.id, viewInstanceId: item.viewInstanceId })),
     refs: Object.values(source.refs).map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
-    toolBindings: Object.values(source.tools).map(tool => ({ toolId: tool.id, execution: tool.execution })),
-    content: source.views.map(item => ({ view: { viewId: item.id, viewInstanceId: item.viewInstanceId }, decision: 'retain' as const })),
+    toolIds: Object.keys(source.tools),
   }),
   authorize: () => { authorizations++; return true; }, canReadReceipt: () => true,
-}, execution: { resolve: source => bindings.get(bindingKey(source.tool.id, source.execution)) ?? null } });
+}, execution: { resolve: () => binding } });
 const client = authority;
 async function observe() {
-  const result = await client.observe({ viewIds: [view.viewId] });
+  const result = await client.observe({ all: true });
   check(result.status === 'observed', 'Expected an observation');
   check(client.adoptObservation(result.observation.observationId).status === 'adopted', 'Expected adoption');
   return result.observation;
@@ -174,9 +157,8 @@ async function observe() {
 function request(observation: Awaited<ReturnType<typeof observe>>, name: string, invocationId: string,
   input: Readonly<Record<string, JsonValue>>) {
   const tool = observation.tools.find(item => item.name === name);
-  const binding = observation.bindings.find(item => item.toolId === tool?.id);
-  check(binding, 'Expected a visible type binding');
-  return { invocationId, observationId: observation.observationId, bindingId: binding.bindingId, input };
+  check(tool, 'Expected an observed Tool');
+  return { invocationId, observationId: observation.observationId, toolId: tool.id, input: { view_id: view.viewId, ...input } };
 }
 async function completed(observation: Awaited<ReturnType<typeof observe>>, name: string, id: string,
   input: Readonly<Record<string, JsonValue>>) {
@@ -206,12 +188,8 @@ try {
   check(prior.kind === 'receipt' && prior.receipt.outcome.status === 'succeeded' && count === 3,
     'Reading the original receipt after adoption preserves the counter');
 
-  const oldAdd = fresh.tools.find(tool => tool.name === 'add'); check(oldAdd, 'Observed add');
-  const oldKey = bindingKey(oldAdd.id, oldAdd.execution), oldBinding = bindings.get(oldKey);
-  releaseAdd(); releaseAdd = register('add', addSchema, add);
-  const newAdd = registry.listTools().find(tool => tool.name === 'add'); check(newAdd, 'Replacement add'); installBinding(newAdd);
-  const newKey = bindingKey(newAdd.id, newAdd.execution);
-  check(newKey !== oldKey && bindings.get(newKey) !== oldBinding, 'New registration has a new activation');
+  addEnabled = false; publish(noteText);
+  addEnabled = true; publish(noteText);
   const stale = await client.invoke(request(fresh, 'add', 'old-binding', { n: 2 }));
   check(stale.kind === 'receipt' && stale.receipt.outcome.status === 'rejected' && handlerEntries === 3, 'Old activation cannot enter or redirect');
 
@@ -224,8 +202,7 @@ try {
     'Observation slots, logical bytes and leases released');
 } finally {
   authority.close(); await authority.whenClosed();
-  releaseAdd(); releaseRead(); projection.close(); registry.dispose(); snapshots.lifecycle.dispose();
-  bindings.clear(); contracts.clear();
+  attachment.release(); projection.close(); registry.dispose(); snapshots.lifecycle.dispose();
 }
 check(registry.inspect().bindings === 0 && snapshots.store.inspect().activeLeases === 0, 'Registry and Snapshot cleanup');
 
@@ -255,8 +232,8 @@ export const coreTutorialFacts = { handlerEntries, authorizations: beforeClosed,
 ```
 <!-- b1-example:end -->
 
-低层注册 SPI 的 `safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4'` 声明 invoker 实现的 ABI。Core 与 Worker 共用 `view-type-parameters-v1` 参数 profile。`ExecutionBinding` 的 validator 可以拒绝输入，接受时返回等值参数。Snapshot View 正文使用 `markdown-v1`，Ref 发布 `snapshot-value` JSON payload。
+`defineTools` 注册共享业务参数合同。`prepareFrame` 准备每页当前绑定，投影校验通过后调用 `accept`。Core 与 Worker 共用 `view-type-parameters-v1` 参数 profile。`ExecutionBinding` 可以拒绝输入，接受时返回等值参数。
 
-View 与 Ref 仍有实例/原快照来源身份，Tool 只有 App/ViewType activation；关闭最后一个匹配 View或替换注册会拒绝旧 activation。Ref 参数不把 Tool 隐式绑定某个文件。App 检查对象是否仍存在、当前业务权限和父子归属；有业务意义的路径/标题/内容不必包装成 Ref。当前合同同时支持多个顶层对象／对象列表 Ref 和可选 Ref；缺席字段保持缺席，出现的字段必须有效，整个参数与来源 envelope 共享既有预算。Type.Array(refParam(...)) 表达 Ref 名数组，多选按输入顺序解析；重复选择保留，空选择不触发解析。新观察先准备，再由显式 adopt 撤销旧资格；单纯 observe 不会换掉当前观察。
+调用先定位原观察中的工具和 `view_id`，再检查该页面挂载和 activation。Ref 参数独立选择原观察中的数据来源。页面关闭、替换或禁用工具会撤销相应资格。App 检查业务对象是否仍然有效。新的观察在明确采用后替换当前观察；诊断预览独立运行。
 
 StateSession owner 释放和持久值保留分别验证：第一 owner flush 并释放后，第二 owner 仍恢复 41，再确认最终 owner 归零。关闭必须等真实调用/读取责任结算后再 dispose Registry/Core；不以删除 Map、abort 或返回超时替代真实结束。正式存储与外部资源由具体适配器负责。

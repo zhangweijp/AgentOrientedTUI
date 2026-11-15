@@ -99,29 +99,24 @@ cat file.txt
 - 让这个 `File View` 成为上下文里的当前文件对象
 - 后续动作围绕这个对象展开、更新或关闭
 
-例如，在 `t1`，runtime 可以插入这样一个视图：
+例如，在 `t1`，Runtime 可以把以下视图作为一条 User Message 加入上下文。
 
 ```xml
-<view id="file:src/index.ts" type="FileView" title="src/index.ts">
+<view id="file_index" type="FileDetail" kind="state" name="src/index.ts" app_id="ide_demo" app_name="system_ide">
   path: src/index.ts
   language: typescript
   dirty: false
   visible_range: 120-180
   content: ...
   diff_against: HEAD
-
-  available_actions:
-  - edit_file
-  - save_file
-  - close_view
 </view>
 ```
 
-重点不在标记长什么样，而在它背后的语义契约：`File View` 不是一段文本，而是一个由 runtime 管理、被渲染进上下文的文件工作对象句柄。
+该视图呈现当前文件状态。原生 `Tools` 另行提供当前可用的 `system_ide-FileDetail-edit_file` 等工具及其参数 Schema。
 
 这也意味着，它不需要每次都暴露整份文件快照。按任务不同，一个文件视图可以按行寻址、按片段暴露、带 diff 语义，也可以天然支持 partial edits，而不是默认整文件替换。
 
-在 `t2`，Agent 调用 `Edit File`。runtime 不需要再把整份文件重新 dump 一次，只要原地更新这个已有句柄：
+在 `t2`，Agent 调用编辑工具并收到操作收据。App 更新文件状态，下一轮投影使用同一逻辑 View 的最新快照。
 
 - `content` 变化
 - `dirty` 变化
@@ -147,7 +142,7 @@ cat file.txt
 
 文件只是最小例子。真实应用里的交互更复杂，因为它不只是读取状态，还涉及对象选择、对象身份、动作可用性，以及跨视图的状态转移。
 
-这时，用消息应用来举例会更清楚。
+以下是一个概念性的消息应用，采用现行工具呈现和 Ref 调用格式。SDK 提供了可运行的应用示例。[App 作者指南](./sdk/docs/app-authoring.md)
 
 假设用户说：
 
@@ -172,19 +167,16 @@ cat file.txt
 先看 `View`。系统要先给 Agent 一个当前状态的 `View`：
 
 ```xml
-<view id="contacts" type="ContactList" name="联系人列表" app_id="wechat">
+<view id="contacts" type="ContactList" kind="state" name="联系人列表" app_id="wechat" app_name="wechat">
   ## 联系人
 
   - [Wills Guo](Contact:contacts[0]) — 在线
   - [Emma Chen](Contact:contacts[1]) — 离开
   - [JY Chen](Contact:contacts[2]) — 在线
-
-  available_actions:
-  - open_chat(contact: Contact)
 </view>
 ```
 
-这个视图暴露的不是像素，而是当前有哪些对象，以及这个状态下允许哪些动作。
+这个 View 展示当前联系人及其 Ref。可调用的工具及参数由本轮 `Tools` 提供。
 
 ### 2. Reference
 
@@ -196,7 +188,7 @@ cat file.txt
 
 `JY Chen` 是可读标签。
 
-`Contact:contacts[2]` 是可解析引用。
+`Contact:contacts[2]` 是展示标记，包含业务类型和 View 内的局部 Ref 名。结合外层 `id="contacts"`，调用地址为 `contacts.contacts[2]`。
 
 这一步把“看见一个名字”变成了“绑定到一个真实对象”。
 
@@ -204,39 +196,39 @@ cat file.txt
 
 ### 3. Tool
 
-在联系人列表这个状态里，正确的下一步不是立刻发消息，而是先进入聊天上下文：
+Agent 根据本轮 `Tools` 里 `wechat-ContactList-open_chat` 的参数说明，选择联系人并打开对话。
 
 ```json
 {
-  "tool": "open_chat",
+  "tool": "wechat-ContactList-open_chat",
   "arguments": {
-    "contact": "Contact:contacts[2]"
+    "view_id": "contacts",
+    "contact": "contacts.contacts[2]"
   }
 }
 ```
 
-这里的工具不是一个返回文本的 helper，而是一次状态转移请求。runtime 会把引用解析成真实联系人对象，再把应用推进到对应会话。
+Runtime 从调用绑定的观察中解析联系人 Ref，App 打开对应会话，Tool 返回操作收据。
 
 ### 4. State Update
 
 这次转移之后，runtime 再暴露一个新的当前视图：
 
 ```xml
-<view id="chat_jy" type="ChatDetail" name="与 JY Chen 的对话">
-  ## 与 [JY Chen](Contact:contacts[2]) 的对话
+<view id="chat_jy" type="ChatDetail" kind="state" name="与 JY Chen 的对话" app_id="wechat" app_name="wechat">
+  ## 与 JY Chen 的对话
 
-  available_actions:
-  - send_message(message: string)
-  - close_view()
+  - [当前会话](Chat:current_chat)
 </view>
 ```
 
-这时，Agent 才调用：
+这时，`Tools` 提供发送工具，Agent 把会话页面的 XML ID 写进 `view_id`。
 
 ```json
 {
-  "tool": "send_message",
+  "tool": "wechat-ChatDetail-send_message",
   "arguments": {
+    "view_id": "chat_jy",
     "message": "你好！"
   }
 }
@@ -255,7 +247,7 @@ cat file.txt
 - `View` 暴露当前世界
 - `Reference` 绑定目标对象
 - `Tool` 请求状态转移或执行动作
-- runtime 把当前世界更新成下一个视图
+- App 更新业务状态，Runtime 将已提交状态呈现为新的 View 快照
 
 这不是给 Tool Call 再套一层壳。
 
@@ -263,12 +255,12 @@ cat file.txt
 
 ## 最低运行时契约
 
-如果这套模型要可靠工作，runtime 至少要保证四件事：
+这套交互由 Runtime 和 App 共同保证。
 
-- 引用在跨视图切换时仍然稳定且可解析
-- 动作要声明自己接受什么对象类型
-- 当前视图的更新或失效由 runtime 负责，而不是交给模型自己猜
-- 外部修改或并发修改必须有明确的冲突语义
+- Runtime 从调用绑定的观察解析 Ref，并检查来源 View 实例是否仍然有效。
+- Tool 声明参数接受的业务类型，Runtime 校验解析后的值。
+- Runtime 根据 App 已提交的状态更新或撤销当前投影。
+- App 对外部修改和并发修改作业务校验，并报告冲突及恢复方式。
 
 ## 这套模型改变了什么
 

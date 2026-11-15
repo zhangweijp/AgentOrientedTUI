@@ -136,7 +136,7 @@ try {
   }
  }
  async function call(c, app, type, tool, args) {
-  const result = await c.executeTool(name(c,app,type,tool),args,'docs-'+facts.calls.length);
+  const result = await c.executeTool(name(c,app,type,tool), { view_id: 'workspace', ...args }, 'docs-'+facts.calls.length);
   facts.calls.push({ app, tool, result }); return result;
  }
  let current = await capture(c => ['docfilesa','docfilesb'].every(app=>c.tools[app+'-Workspace-open_file']));
@@ -149,22 +149,22 @@ try {
  current = await capture(c=>views(c,'docfilesa').length===4 && c.tools['docfilesa-FileDetail-edit_file'] && c.tools['docfilesb-FileDetail-edit_file']);
  const observed = current;
  assert.equal(Object.keys(current.tools).filter(n=>n==='docfilesa-FileDetail-edit_file').length,1);
- const edit = await call(current,'docfilesa','FileDetail','edit_file',{filePath:'a.txt',content:'DOCUMENT_UPDATED_A'});
+ const edit = await call(current,'docfilesa','FileDetail','edit_file',{view_id:'file_a',content:'DOCUMENT_UPDATED_A'});
  assert.equal(edit.outcomeStatus,'succeeded'); assert.ok(!JSON.stringify(edit).includes('DOCUMENT_UPDATED_A'));
  assert.equal((await call(current,'docfilesa','Workspace','close_file',{filePath:'b.txt'})).outcomeStatus,'succeeded');
- const denied = await call(current,'docfilesa','FileDetail','edit_file',{filePath:'b.txt',content:'MUST_NOT_APPEAR'});
- assert.equal(denied.outcomeStatus,'failed');assert.equal(denied.error.code,'FILE_NOT_OPEN');
+ const denied = await call(current,'docfilesa','FileDetail','edit_file',{view_id:'file_b',content:'MUST_NOT_APPEAR'});
+ assert.equal(denied.outcomeStatus,'rejected');assert.equal(denied.error.code,'VIEW_INSTANCE_REVOKED');
  current = await capture(c=>views(c,'docfilesa','file_a')[0]?.includes('DOCUMENT_UPDATED_A') && views(c,'docfilesa','file_b').length===0);
  assert.ok(views(current,'docfilesb','file_a')[0].includes('Initial A'));
  assert.ok(!views(current,'docfilesb','file_a')[0].includes('DOCUMENT_UPDATED_A'));
  assert.equal(views(current,'docfilesa','root')[0],catalog);
  assert.equal((await call(current,'docfilesa','Workspace','close_file',{filePath:'a.txt'})).outcomeStatus,'succeeded');
- const stale = await call(observed,'docfilesa','FileDetail','edit_file',{filePath:'a.txt',content:'STALE'});assert.equal(stale.outcomeStatus,'rejected');
+ const stale = await call(observed,'docfilesa','FileDetail','edit_file',{view_id:'file_a',content:'STALE'});assert.equal(stale.outcomeStatus,'rejected');
  current = await capture(c=>!c.tools['docfilesa-FileDetail-edit_file'] && views(c,'docfilesa').length===2);
  assert.ok(current.tools['docfilesb-FileDetail-edit_file'],'Other App still active');
  assert.equal((await call(current,'docfilesa','Workspace','open_file',{filePath:'a.txt'})).outcomeStatus,'succeeded');
  current = await capture(c=>!!c.tools['docfilesa-FileDetail-edit_file']);
- assert.equal((await call(observed,'docfilesa','FileDetail','edit_file',{filePath:'a.txt',content:'STALE_AGAIN'})).outcomeStatus,'rejected');
+ assert.equal((await call(observed,'docfilesa','FileDetail','edit_file',{view_id:'file_a',content:'STALE_AGAIN'})).outcomeStatus,'rejected');
  assert.equal(views(current,'docfilesa','root')[0],catalog);
  facts.fileExample = true;
 } finally {
@@ -193,7 +193,7 @@ try {
  }
  let context = await observe(c => c.tools['notes-Workspace-open_notes']);
  assert.ok(!context.tools['notes-NoteDetail-inspect_note']);
- assert.equal((await context.executeTool('notes-Workspace-open_notes', {}, 'notes-open')).outcomeStatus, 'succeeded');
+ assert.equal((await context.executeTool('notes-Workspace-open_notes', { view_id: 'workspace' }, 'notes-open')).outcomeStatus, 'succeeded');
  context = await observe(c => c.tools['notes-NoteDetail-inspect_note'] && c.tools['notes-NoteDetail-inspect_notes']);
  for (const ref of ['Note:current', 'Note[]:notes', 'Note:notes[0]']) assert.ok(text(context).includes(ref));
  for (const [tool, args, expected] of [
@@ -203,7 +203,7 @@ try {
   ['inspect_selection', { selected: ['detail.notes[1]', 'detail.notes[0]', 'detail.notes[1]'], primary: 'detail.current', whole: 'detail.notes' }, 'Second note: Another note'],
   ['inspect_selection', { selected: [] }, 'No notes selected.'],
  ]) {
-  const result = await context.executeTool('notes-NoteDetail-' + tool, args, 'ref-doc-' + facts.calls.length);
+  const result = await context.executeTool('notes-NoteDetail-' + tool, { view_id: 'detail', ...args }, 'ref-doc-' + facts.calls.length);
   facts.calls.push({ app: 'notes', tool, args, result });
   assert.equal(result.outcomeStatus, 'succeeded');
   assert.ok(!JSON.stringify(result).includes('First line'), 'Business content stays in the View');
@@ -219,14 +219,14 @@ try {
   ['inspect_selection', { selected: [], primary: null }],
   ['inspect_selection', { selected: ['detail.missing'] }],
  ]) {
-  const result = await context.executeTool('notes-NoteDetail-' + tool, args, 'invalid-' + facts.calls.length);
+  const result = await context.executeTool('notes-NoteDetail-' + tool, { view_id: 'detail', ...args }, 'invalid-' + facts.calls.length);
   assert.equal(result.outcomeStatus, 'rejected');
   facts.calls.push({ app: 'notes', tool, args, result });
  }
  const old = context;
- assert.equal((await context.executeTool('notes-Workspace-close_notes', {}, 'notes-close')).outcomeStatus, 'succeeded');
+ assert.equal((await context.executeTool('notes-Workspace-close_notes', { view_id: 'workspace' }, 'notes-close')).outcomeStatus, 'succeeded');
  context = await observe(c => !c.tools['notes-NoteDetail-inspect_note']);
- assert.equal((await old.executeTool('notes-NoteDetail-inspect_note', { note: 'detail.current' }, 'closed-note')).outcomeStatus, 'rejected');
+ assert.equal((await old.executeTool('notes-NoteDetail-inspect_note', { view_id: 'detail', note: 'detail.current' }, 'closed-note')).outcomeStatus, 'rejected');
  assert.ok(!text(context).includes('Note:notes[0]'));
  facts.refExample = true;
 } finally {
@@ -275,10 +275,8 @@ try {
     assert.deepEqual(current.views.filter(view => view.type === 'Item').map(view => view.id), [otherViewId, selectedViewId]);
     const tools = current.tools.filter(tool => tool.name === 'inspect');
     assert.equal(tools.length, 1);
-    const binding = current.bindings.find(binding => binding.toolId === tools[0].id);
-    assert.ok(binding);
-    const result = await client.invoke({ observationId: current.observationId, bindingId: binding.bindingId,
-     invocationId: 'docs-work-' + index, input: { selected: id + '.selected' } });
+    const result = await client.invoke({ observationId: current.observationId, toolId: tools[0].id,
+     invocationId: 'docs-work-' + index, input: { view_id: id, selected: id + '.selected' } });
     assert.equal(result.receipt?.outcome.status, 'succeeded', JSON.stringify(result));
     const updated = await observe();
     const original = await client.readReceipt({ observationId: current.observationId, invocationId: 'docs-work-' + index });

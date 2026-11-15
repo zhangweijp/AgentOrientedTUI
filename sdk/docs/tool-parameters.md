@@ -1,6 +1,6 @@
 # Tool 的 TypeBox 参数合同
 
-用 `defineViewTypeTool` 声明 ViewType、名称、说明和 TypeBox `inputSchema`。普通 TS 用 `createApp` 的 `publish` 提交实例绑定，Preact 使用 `AppTools`。SDK 在声明时捕获并冻结规范化 schema，Runtime 在注册时独立校验；`ArgsOf` 和 `SchemaOf` 复用声明的静态类型。两种实例共用声明的代码见 [App 作者指南](app-authoring.md)。
+用 `defineViewType` 声明类型名和每个工具的说明与 TypeBox `inputSchema`。模型调用每个页面 Tool 时都填写 `view_id`。SDK 添加这个字段，应用的业务参数禁止使用这个保留名。Worker 收到独立的接收者身份，并把已校验的业务参数交给页面 handler。
 
 ## 支持的本地 schema
 
@@ -19,7 +19,7 @@
 
 ## 声明容量和诊断
 
-SDK 在 `defineViewTypeTool` 处预检完整 normalized Tool profile。默认上限是 64 KiB canonical JSON UTF-8（65,536 字节，含内部参数合同标记），恰好达到上限时仍允许。作者拿到的 `inputSchema` 是冻结的裸 Schema。Runtime 注册独立验证完整 profile，Host 可以给 Snapshot 设置更低的上限。
+SDK 在 `defineViewType` 处预检每个 Tool 的完整参数合同。默认上限是 64 KiB canonical JSON UTF-8（65,536 字节，含内部参数合同标记），恰好达到上限时仍允许。作者拿到的 `inputSchema` 是冻结的裸 Schema。Runtime 注册独立验证完整 profile，Host 可以给 Snapshot 设置更低的上限。
 
 | 作者错误 | 原因 |
 | --- | --- |
@@ -35,7 +35,7 @@ SDK 在 `defineViewTypeTool` 处预检完整 normalized Tool profile。默认上
 
 模型侧工具目录保留支持的 schema 约束，Ref 位置显示地址字符串。Runtime 校验原始输入和解引用后的值，再以深只读参数调用已提交 handler。完整业务数据通过 View 呈现，handler 返回短收据。业务副作用与 View 可观察是两个完成条件。
 
-托管 SDK 工厂自动提供 `view-type-tools-v4` 作者标记。当前 Host／Worker 调用使用 `view-type-parameters-v1`，具体支持范围见 [匹配包说明](runtime-compatibility.md)。App 绑定的生命周期见 [生命周期合同](tool-lifecycle.md)。
+托管 SDK 工厂自动提供 `view-type-tools-v5` 作者标记。当前 Host／Worker 调用使用 `view-type-parameters-v1`，具体支持范围见 [匹配包说明](runtime-compatibility.md)。App 绑定的生命周期见 [生命周期合同](tool-lifecycle.md)。
 
 ## Native Host 工具名称
 
