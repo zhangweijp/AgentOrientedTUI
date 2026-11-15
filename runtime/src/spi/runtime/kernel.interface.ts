@@ -4,11 +4,7 @@
  * Defines the Kernel and Desktop runtime contracts.
  */
 
-import type {
-    DesktopID,
-    AppID,
-    DesktopState
-} from '../core/types.js';
+import type { DesktopID, AppID } from '../core/types.js';
 import type { UpdateSignal } from '../core/signals.js';
 import type { IRuntimeContext } from './context.interface.js'; // New
 import type { ShutdownOptions, DesktopCloseOptions, DesktopCloseHandle, RuntimeCloseHandle } from './close.interface.js';
@@ -18,11 +14,6 @@ import type { AppInteractionPolicy } from '../../core/invocation/app-interaction
 
 export interface ReinitializeDesktopAppsOptions {
     reason?: string;
-    preserve?: {
-        desktopIdentity?: boolean;
-        installedApps?: boolean;
-        rootSurface?: boolean;
-    };
 }
 
 export interface ReinitializeDesktopAppsResult {
@@ -137,7 +128,7 @@ export interface IDesktop {
  */
 export interface IKernel {
     getAppInteraction(desktopId: DesktopID, appId: string, expectedInstanceId: string, policy?: AppInteractionPolicy): AppInteractionResult;
-    beginShutdown(reason?: string): RuntimeCloseHandle;
+    beginShutdown(): RuntimeCloseHandle;
     beginDesktopShutdown(id: DesktopID, options?: ShutdownOptions): DesktopCloseHandle;
     createDesktop(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID>;
     // [M1 FIX] Changed from void to Promise<void> to match implementation
@@ -185,7 +176,6 @@ export interface IKernel {
     // [H3 FIX] Changed from void to Promise<void> - Desktop methods are async
     suspend(desktopId: DesktopID): Promise<void>;
     resume(desktopId: DesktopID): Promise<void>;
-    serialize(desktopId: DesktopID): DesktopState;
 
     /**
      * [RFC-015] 删除 Desktop
@@ -201,7 +191,7 @@ export interface IKernel {
      * - 幂等
      * - shutdown 后 Kernel 不再可用于创建/管理 Desktop
      */
-    shutdown(reason?: string): Promise<void>;
+    shutdown(): Promise<void>;
 }
 
 /**

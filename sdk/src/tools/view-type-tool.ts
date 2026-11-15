@@ -65,8 +65,6 @@ export interface ToolCatalogEntry {
     readonly inputSchema: JsonSchemaObject;
 }
 
-export type ToolCatalog = readonly ToolCatalogEntry[];
-
 interface CapturedDefinition extends ToolCatalogEntry {
     readonly tupleKey: string;
 }
@@ -241,7 +239,7 @@ export function defineToolSet<const Map extends ToolMap>(tools: Map): ToolSet<Ma
 }
 
 /** Return the immutable, sorted four-field static descriptor list for a ToolSet. */
-export function getToolCatalog<const Map extends ToolMap>(definition: ToolSet<Map>): ToolCatalog {
+export function getToolCatalog<const Map extends ToolMap>(definition: ToolSet<Map>): readonly ToolCatalogEntry[] {
     const entries = readToolSet(definition);
     const sorted = [...entries].sort((left, right) => {
         const leftViewType = left[1].viewType;

@@ -29,6 +29,7 @@ function createEnvironment(component: () => unknown, options: {
     const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
     kernel.setId('type_tool_integration' as any);
     kernel.setAppExecutionInstanceId(options.instanceId ?? 'type_tool_integration_run_1');
+    kernel.enableAppLifecycle();
     const environment = {
         kernel,
         get container() { return document.getElementById('app-root-type_tool_integration')!; },

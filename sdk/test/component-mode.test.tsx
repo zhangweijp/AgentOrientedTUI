@@ -19,11 +19,10 @@ describe('[RFC-027] Component Mode', () => {
         } as any);
 
         expect(app).toBeDefined();
-        expect(app.displayName).toBe('test_app');
         // component字段被转换为factory对象
         expect(typeof app.initialize).toBe('function');
         expect(app.kernelConfig).not.toHaveProperty('component');
-        expect(app.kernelConfig.name).toBe('test_app');
+        expect(app.kernelConfig.appName).toBe('test_app');
     });
 
 

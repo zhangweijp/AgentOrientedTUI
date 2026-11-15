@@ -30,7 +30,7 @@ if (values.help) {
             const acceptedStartup = startup;
             closing = (async () => {
                 await acceptedStartup?.catch(() => {});
-                const report = await runtime.beginShutdown(reason).completion;
+                const report = await runtime.beginShutdown().completion;
                 if (!report.ok || !report.resourcesReleased) process.exitCode = 1;
                 emit('closed', { report });
                 return report;

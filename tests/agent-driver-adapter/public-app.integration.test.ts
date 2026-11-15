@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
@@ -16,7 +16,7 @@ const adapters = ['plain', 'preact'] as const;
 let consumer: string;
 
 beforeAll(async () => {
-    consumer = await mkdtemp(join(tmpdir(), 'aotui-p2a-consumer-'));
+    consumer = await realpath(await mkdtemp(join(tmpdir(), 'aotui-p2a-consumer-')));
     await mkdir(join(consumer, 'node_modules/@aotui'), { recursive: true });
     for (const name of ['sdk', 'runtime']) {
         const source = join(repository, name), installed = join(consumer, 'node_modules/@aotui', name);
@@ -714,7 +714,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, tools, initialize(
     }
 }, 15_000);
 
-it('serializes registered pending Apps while hiding a Worker whose first install is still in progress', async () => {
+it('lists registered pending Apps while hiding a Worker whose first install is still in progress', async () => {
     const name = 'install_visibility', log = join(consumer, name + '.trace'), release = log + '.release';
     const folder = await appFolder(name, `
 import { appendFileSync, existsSync } from 'node:fs';
@@ -730,15 +730,23 @@ export default createApp({ app_name: ${JSON.stringify(name)}, async initialize({
     try {
         const desktopId = await runtime.createDesktop(createDesktopId(name));
         const desktop = runtime.getDesktop(desktopId);
-        const pending = await desktop.registerPendingApp({ appId: createAppId('registered'), modulePath: join(folder, 'entry.mjs') });
-        installing = desktop.installDynamicWorkerApp(join(folder, 'entry.mjs'), { appId: createAppId(name) });
+        const pending = await desktop.registerPendingApp({ appId: createAppId('registered'),
+            name: 'registered', modulePath: join(folder, 'entry.mjs'), config: { projectPath: folder } });
+        installing = desktop.installDynamicWorkerApp(join(folder, 'entry.mjs'), { appId: createAppId(name), name });
         await waitFor(log, 'initializing');
-        const during = [{ appId: pending, status: 'pending' }];
+        const during = [{ appId: pending, name: 'registered', status: 'pending' }];
+        const first = desktop.getInstalledApps();
+        expect(first).toMatchObject(during);
+        for (const key of ['appInstanceId', 'modulePath', 'config', 'toolsEnabled', 'installedAt']) {
+            expect(first[0]).not.toHaveProperty(key);
+        }
+        Object.assign(first[0]!, { name: 'changed' });
         expect(desktop.getInstalledApps()).toMatchObject(during);
-        expect(runtime.serialize(desktopId).apps).toMatchObject(during);
         await writeFile(release, '');
         await installing;
-        expect(runtime.serialize(desktopId).apps).toMatchObject([...during, { appId: name, status: 'running' }]);
+        expect(desktop.getInstalledApps()).toMatchObject([...during, {
+            appId: name, name, status: 'running', appInstanceId: expect.any(String),
+        }]);
     } finally {
         await writeFile(release, '');
         await installing?.catch(() => {});
@@ -746,7 +754,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, async initialize({
     }
 }, 15_000);
 
-it('runs the installed CLI with a custom manifest entry and previews the published View', async () => {
+it('manages a local App through the installed CLI and previews its published View', async () => {
     const name = 'cli_manifest';
     const folder = await appFolder(name, `
 import { createApp } from '@aotui/sdk/app';
@@ -754,13 +762,30 @@ export default createApp({ app_name: ${JSON.stringify(name)}, initialize({ publi
     publish({ views: [{ id: 'current', type: 'Item', kind: 'state', body: 'View from the custom manifest entry' }] });
 }});
 `);
-    const config = join(folder, 'registry.json'), preload = join(folder, 'cli-test-config.mjs');
-    await writeFile(config, JSON.stringify({ version: 2, apps: { [name]: { source: 'local:' + folder, enabled: true, autoStart: false } } }));
-    await writeFile(preload, `import { AppRegistry } from '@aotui/runtime';
-AppRegistry.prototype.getDefaultConfigPath = () => ${JSON.stringify(config)};`);
+    const home = join(folder, 'home');
+    await mkdir(home);
+    const config = join(home, '.agentina/config.json');
     const cli = join(consumer, 'node_modules/@aotui/runtime/dist/cli.js');
-    const child = spawn(process.execPath, ['--import', pathToFileURL(preload).href, cli, 'run', name], {
-        cwd: consumer, stdio: ['pipe', 'pipe', 'pipe'],
+    const env = { ...process.env, HOME: home, USERPROFILE: home, AOTUI_DATA_DIR: join(home, 'data') };
+    const runCli = (...args: string[]) => execute(process.execPath, [cli, ...args], { cwd: folder, env, timeout: 5_000 });
+    await runCli('install', '.');
+    expect(JSON.parse(await readFile(config, 'utf8')).apps[name]).toMatchObject({
+        source: 'local:' + folder, enabled: true, autoStart: true, distribution: { type: 'local' },
+    });
+    await expect(runCli('install', '.')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('already registered') });
+    await runCli('install', 'local:.', '--force', '--no-autostart');
+    const forced = await readFile(config, 'utf8');
+    expect(JSON.parse(forced).apps[name].autoStart).toBe(false);
+    for (const [command, arg] of [['add', '.'], ['link', '.'], ['uninstall', name]]) {
+        await expect(runCli(command, arg)).rejects.toMatchObject({
+            code: 1, stderr: expect.stringContaining(`Unknown command: ${command}`),
+        });
+    }
+    expect(await readFile(config, 'utf8')).toBe(forced);
+    expect((await runCli('list')).stdout).toContain(name);
+
+    const child = spawn(process.execPath, [cli, 'run', name], {
+        cwd: folder, env, stdio: ['pipe', 'pipe', 'pipe'],
     });
     const finished = once(child, 'close');
     let output = '', errors = '';
@@ -778,4 +803,7 @@ AppRegistry.prototype.getDefaultConfigPath = () => ${JSON.stringify(config)};`);
         if (child.exitCode === null && child.signalCode === null) child.kill();
         await finished;
     }
+    await runCli('remove', name);
+    expect(JSON.parse(await readFile(config, 'utf8')).apps).toEqual({});
+    expect(await readFile(join(folder, 'entry.mjs'), 'utf8')).toContain('View from the custom manifest entry');
 }, 15_000);

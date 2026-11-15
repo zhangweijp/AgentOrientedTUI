@@ -176,7 +176,7 @@ What they do:
   - links local core packages into dependent folders for local development
   - builds the core packages in dependency order
   - globally links the `agentina` CLI from `runtime/`
-  - builds and registers the default apps (`aotui-ide`, `terminal-app`, and `lite-browser-app`) with `agentina link .`
+  - builds and registers `aotui-ide`, `planning-app`, `terminal-app`, and `lite-browser-app` with `agentina install . --force`
 - `run.sh`
   - refreshes local links
   - rebuilds the core packages and the default apps
@@ -192,15 +192,13 @@ Current CLI surface from `runtime/src/cli.ts`:
 ```bash
 agentina install <source>
 agentina search [query]
-agentina link <path>
 agentina remove <name>
-agentina uninstall <name>
 agentina list
 agentina enable <name>
 agentina disable <name>
 agentina autostart <name> <on|off>
 agentina run [name]
-agentina --version
+agentina --help
 ```
 
 ## Common Development Paths
@@ -232,12 +230,12 @@ Use this layer for GUI work, desktop UX, settings, installation flow, IPC wiring
 
 ### I want to add a new app
 
-Use an existing `demo-apps/*` package as the template. Apps outside the default install set can still be linked manually. The current app build pattern is:
+Use an existing `demo-apps/*` package as the template. Apps outside the default install set can be registered manually.
 
 - export a `createTUIApp(...)` app factory from the app entry
 - compile with `tsc`
 - generate `aoapp.json` with `node ../../scripts/generate-aoapp.mjs .`
-- register the app locally with `agentina link <path>`
+- register the app locally with `agentina install local:<path>`
 
 ## Troubleshooting
 
@@ -277,8 +275,7 @@ agentina list
 If needed, re-register it:
 
 ```bash
-agentina remove <app-name>
-agentina link ./demo-apps/<app-folder>
+agentina install ./demo-apps/<app-folder> --force
 ```
 
 ## Further Reading

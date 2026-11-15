@@ -10,7 +10,7 @@ it.each(['normal', 'sync-throw', 'async-reject', 'async-held'] as const)('A17 ac
         if (mode === 'async-reject') return Promise.reject(Error('renderer async'));
         if (mode === 'async-held') return unmountGate.promise;
     });
-    const kernel = new AppKernel({ name: 'test', appName: 'test', factory: { async initialize(context: any) {
+    const kernel = new AppKernel({ appName: 'test_app', factory: { async initialize(context: any) {
         runtime = context;
         context.projection.beginCommit();
         const view = context.viewTools.mount('v', 'Detail');

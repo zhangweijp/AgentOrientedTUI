@@ -14,6 +14,7 @@ afterEach(async () => { for (const close of closing.splice(0)) await close();vi.
 async function mount(Body: () => any, options: { outside?: boolean } = {}) {
     const factory = createTUIApp({ app_name: 'public_api', component: () => options.outside ? h(Body, {}) : h(View, {kind: 'state', id: 'detail', type: 'Detail' }, h(Body, {})) });
     const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);kernel.setId('app' as any);kernel.setAppExecutionInstanceId('public_api_run');
+    kernel.enableAppLifecycle();
     let closed = false;
     const close = async () => { if (!closed) { closed = true;await act(async () => { await kernel.onClose(); }); } };closing.push(close);
     await act(async () => { await kernel.onOpen({ appId: 'app' as any, desktopId: 'desktop' as any }); });

@@ -16,7 +16,7 @@ import type { StateStorageBackend } from './state-storage-host.js';
  * - AppManager 持有 Desktop 引用用于日志和信号
  */
 
-import type { AppID, AppState, DesktopID, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
+import type { AppDiscoveryInfo, AppID, DesktopID, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
 import { createAppId } from '../../spi/index.js';
 import type { SandboxCloseReport } from './worker-sandbox.js';
 import type { AppManagerCloseReport, AppManagerCloseHandle } from '../../spi/runtime/close.interface.js';
@@ -31,7 +31,7 @@ import { captureToolsEnabled } from './interaction-config.js';
 /**
  * 已安装的 App 信息
  */
-export interface InstalledApp extends AppInteractionOptions {
+interface InstalledApp extends AppInteractionOptions {
     appId: AppID;
     name?: string;
     /** [RFC-013] App 描述 - 告诉 Agent 什么时候使用此 App */
@@ -49,7 +49,6 @@ export interface InstalledApp extends AppInteractionOptions {
      * - 'collapsed': 已折叠
      */
     status: 'pending' | 'running' | 'paused' | 'closed' | 'collapsed';
-    installedAt: number;
 
     /** [RFC-014] 懒加载: 模块路径 */
     modulePath?: string;
@@ -68,10 +67,6 @@ export interface AppManagerOptions {
     runtimeConfig?: import('../../spi/config/index.js').RuntimeConfig;
     workerCapacity?: WorkerCapacity;
     storageBackend?: StateStorageBackend;
-    /** App 安装回调 */
-    onAppInstalled?: (appId: AppID) => void;
-    /** App 移除回调 */
-    onAppRemoved?: (appId: AppID) => void;
 }
 
 
@@ -87,31 +82,7 @@ interface IDesktopInternal {
     logSystem(message: string, level?: 'info' | 'warn' | 'error'): void;
 }
 
-type InstallOptions = AppInteractionOptions & {
-            workerScriptPath?: string;
-            appId?: AppID;
-            name?: string;
-            /** [RFC-013] App description for Agent */
-            description?: string;
-            /** App 是什么 */
-            whatItIs?: string;
-            /** 什么时候用 */
-            whenToUse?: string;
-            config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
-            runtimeConfig?: import('../../spi/config/index.js').RuntimeConfig; // [RFC-005] Runtime Config
-
-            /** Internal: suppress install callbacks during reinitialize */
-            notifyAppInstalled?: boolean;
-            /** Internal: suppress lifecycle signal during reinitialize */
-            emitLifecycleSignal?: boolean;
-            /** Internal: override lifecycle log message */
-            lifecycleMessage?: string;
-            /** Internal: startup lifecycle metadata for runtime-only injection */
-            lifecycle?: {
-                startupKind: 'normal' | 'reinitialize';
-                reason?: string;
-            };
-        };
+type InstallOptions = Omit<PendingOptions, 'modulePath'>;
 type PendingOptions = AppInteractionOptions & {
         appId?: AppID;
         name?: string;
@@ -186,23 +157,6 @@ export class AppManager {
         this.assertActive();
         if (this.installedApps.get(meta.appId) !== meta || worker && this.workers.get(meta.appId) !== worker) throw closeError('LIFECYCLE_CONFLICT');
     }
-    private withLifecycleMetadata(
-        config: import('../../spi/app/app-config.interface.js').AppLaunchConfig | undefined,
-        lifecycle?: {
-            startupKind: 'normal' | 'reinitialize';
-            reason?: string;
-        }
-    ): import('../../spi/app/app-config.interface.js').AppLaunchConfig | undefined {
-        const effectiveLifecycle = lifecycle ?? { startupKind: 'normal' as const };
-        return {
-            ...(config ?? {}),
-            __aotuiLifecycle: {
-                startupKind: effectiveLifecycle.startupKind,
-                reason: effectiveLifecycle.reason,
-            },
-        };
-    }
-
     install(appModulePath: string, options?: InstallOptions): Promise<AppID> {
         let id: AppID;
         try {
@@ -213,11 +167,11 @@ export class AppManager {
         } catch (error) { return Promise.reject(error); }
         return this.track(id, 'install', async () => {
             const meta: InstalledApp = { appId: id, name: options?.name, description: options?.description, whatItIs: options?.whatItIs,
-                whenToUse: options?.whenToUse, status: 'pending', installedAt: Date.now(), modulePath: appModulePath,
+                whenToUse: options?.whenToUse, status: 'pending', modulePath: appModulePath,
                 workerScript: options?.workerScriptPath, config: options?.config, runtimeConfig: options?.runtimeConfig,
                 toolsEnabled: options?.toolsEnabled };
             this.installedApps.set(id, meta);
-            try { await this.installMeta(meta, options); }
+            try { await this.installMeta(meta); }
             catch (error) {
                 if (this.installedApps.get(id) === meta) this.installedApps.delete(id);
                 throw error;
@@ -225,23 +179,31 @@ export class AppManager {
             return id;
         });
     }
-    private async installMeta(meta: InstalledApp, options?: InstallOptions): Promise<void> {
+    private async installMeta(meta: InstalledApp, reinitialize?: ReinitializeDesktopAppsOptions): Promise<void> {
         this.current(meta);let record: OwnedSandbox | undefined;
         try {
+            const config = {
+                ...meta.config,
+                __aotuiLifecycle: { startupKind: reinitialize ? 'reinitialize' : 'normal', reason: reinitialize?.reason },
+            };
             const worker = new WorkerSandbox({ appId: meta.appId, desktopId: this.desktop.id, name: meta.name, appModulePath: meta.modulePath!,
-                workerScriptPath: meta.workerScript, config: this.withLifecycleMetadata(meta.config, options?.lifecycle),
+                workerScriptPath: meta.workerScript, config,
                 runtimeConfig: meta.runtimeConfig ?? this.options.runtimeConfig, workerCapacity: this.workerCapacity,
                 toolsEnabled: meta.toolsEnabled, persistenceBackend: this.options.storageBackend });
             record = this.owned(meta.appId, worker);record.meta = meta;this.workers.set(meta.appId, worker);
             worker.onUpdateRequest = () => { if (this.phase === 'active' && this.workers.get(meta.appId) === worker) this.desktop.emitSignal('manual_refresh'); };
-            await worker.installDynamic();this.current(meta, worker);if (record.stopReopen) throw closeError('APP_MANAGER_CLOSED');
-            if (options?.notifyAppInstalled !== false) await this.options.onAppInstalled?.(meta.appId);
+            await worker.installDynamic();
             this.current(meta, worker);if (record.stopReopen) throw closeError('APP_MANAGER_CLOSED');meta.status = 'running';
-            this.desktop.logSystem(options?.lifecycleMessage ?? `Installed app: ${meta.appId}`);
-            if (options?.emitLifecycleSignal !== false) this.desktop.emitSignal('app_installed');
+            if (reinitialize) {
+                const reason = reinitialize.reason;
+                this.desktop.logSystem(`Reinitialized app: ${meta.appId}${reason ? ` (${reason})` : ''}`);
+            } else {
+                this.desktop.logSystem(`Installed app: ${meta.appId}`);
+                this.desktop.emitSignal('app_installed');
+            }
         } catch (error) {
             if (record) {
-                record.codes.add('INSTALL_FAILED');const report = await this.clean(record, 'close', false);
+                record.codes.add('INSTALL_FAILED');const report = await this.clean(record, 'close');
                 if (this.phase === 'active' && report.resourcesReleased) {
                     this.releaseRecord(record, true);
                     if (this.installedApps.get(meta.appId) === meta && !this.workers.has(meta.appId)) meta.status = 'closed';
@@ -255,15 +217,15 @@ export class AppManager {
         this.assertActive();const id = options.appId ?? this.allocateId();
         if (this.installedApps.has(id) || this.workers.has(id) || this.appTasks.has(id)) throw closeError('APP_ALREADY_EXISTS');
         this.installedApps.set(id, { appId: id, name: options.name, description: options.description, whatItIs: options.whatItIs, whenToUse: options.whenToUse,
-            status: 'pending', installedAt: Date.now(), modulePath: options.modulePath, workerScript: options.workerScriptPath,
+            status: 'pending', modulePath: options.modulePath, workerScript: options.workerScriptPath,
             config: options.config, runtimeConfig: options.runtimeConfig,
             toolsEnabled });
         this.desktop.logSystem(`Registered pending app: ${id} (${options.name ?? 'unnamed'})`);return id;
     }
-    startPendingApp(id: AppID, options?: Pick<InstallOptions, 'notifyAppInstalled' | 'emitLifecycleSignal' | 'lifecycleMessage' | 'lifecycle'>): Promise<boolean> {
+    startPendingApp(id: AppID): Promise<boolean> {
         try { this.assertActive(); } catch (error) { return Promise.reject(error); }
         const meta = this.installedApps.get(id);if (!meta || !meta.modulePath || meta.status !== 'pending' && meta.status !== 'closed') return Promise.resolve(false);
-        return this.track(id, 'open', async () => { this.current(meta);if (this.workers.has(id)) throw closeError('APP_ALREADY_EXISTS');await this.installMeta(meta, options);return true; });
+        return this.track(id, 'open', async () => { this.current(meta);if (this.workers.has(id)) throw closeError('APP_ALREADY_EXISTS');await this.installMeta(meta);return true; });
     }
     reinitializeApp(id: AppID, options?: ReinitializeDesktopAppsOptions): Promise<void> {
         try { this.assertActive(); } catch (error) { return Promise.reject(error); }
@@ -273,14 +235,12 @@ export class AppManager {
         return this.track(id, 'reinitialize', async () => {
             try {
                 this.current(meta, worker);await worker.reinitialize(options?.reason);this.current(meta, worker);
-                const report = await this.clean(record, 'close', false);this.releaseRecord(record, this.phase === 'active');
+                const report = await this.clean(record, 'close');this.releaseRecord(record, this.phase === 'active');
                 if (!report.resourcesReleased || report.issues.length || record.codes.size) throw closeError('APP_CLOSE_FAILED');
                 this.current(meta);if (record.stopReopen || this.workers.has(id)) throw closeError('LIFECYCLE_CONFLICT');
-                await this.installMeta(meta, { notifyAppInstalled: false, emitLifecycleSignal: false,
-                    lifecycleMessage: `Reinitialized app: ${id}${options?.reason ? ` (${options.reason})` : ''}`,
-                    lifecycle: { startupKind: 'reinitialize', reason: options?.reason } });
+                await this.installMeta(meta, { reason: options?.reason });
             } catch {
-                record.codes.add('APP_CLOSE_FAILED');await this.clean(record, 'close', false);this.releaseRecord(record, this.phase === 'active');throw closeError('APP_CLOSE_FAILED');
+                record.codes.add('APP_CLOSE_FAILED');await this.clean(record, 'close');this.releaseRecord(record, this.phase === 'active');throw closeError('APP_CLOSE_FAILED');
             }
         });
     }
@@ -293,30 +253,19 @@ export class AppManager {
         return { reinitializedAppIds: results.filter(x => x.state === 'done').map(x => x.id),
             skippedAppIds: results.filter(x => x.state === 'skipped').map(x => x.id), failedAppIds: results.filter(x => x.state === 'failed').map(x => x.id) };
     }
-    private clean(record: OwnedSandbox, intent: 'close' | 'delete', notify: boolean): Promise<SandboxCloseReport> {
+    private clean(record: OwnedSandbox, intent: 'close' | 'delete'): Promise<SandboxCloseReport> {
         if (record.cleanup) return record.cleanup;
         let actual: Promise<SandboxCloseReport>;
         try {
             if (intent === 'delete') { const deleting = record.worker.delete();void deleting.catch(() => {}); }
             actual = record.worker.disposeAsync();
         } catch (error) { actual = Promise.reject(error); }
-        record.cleanup = actual.then(async report => {
-            if (notify && report.resourcesReleased) {
-                try { await this.options.onAppRemoved?.(record.id); } catch { record.codes.add('APP_CLOSE_FAILED'); }
-            }
-            return report;
-        }, error => { record.codes.add('APP_CLOSE_FAILED');throw error; });
+        record.cleanup = actual.catch(error => { record.codes.add('APP_CLOSE_FAILED');throw error; });
         void record.cleanup.catch(() => {});return record.cleanup;
     }
     private retryRelease(record: OwnedSandbox): Promise<SandboxCloseReport> {
         if (record.releaseRetry) return record.releaseRetry;
-        record.releaseRetry = record.worker.retryResourceRelease().then(async report => {
-            if (report.resourcesReleased) {
-                try { await this.options.onAppRemoved?.(record.id); }
-                catch { record.codes.add('APP_CLOSE_FAILED'); }
-            }
-            return report;
-        }).finally(() => { record.releaseRetry = undefined; });
+        record.releaseRetry = record.worker.retryResourceRelease().finally(() => { record.releaseRetry = undefined; });
         return record.releaseRetry;
     }
 
@@ -366,7 +315,7 @@ export class AppManager {
         const completion = new Promise<AppManagerCloseReport>(resolve => { complete = resolve; });
         this.closing = createCloseHandle(() => this.report(), completion);
         const ownedCapacity = this.ownsWorkerCapacity ? this.workerCapacity.close() : undefined;
-        const tasks = this.targets.map(record => record.releaseRetry ?? this.clean(record, intent, true));
+        const tasks = this.targets.map(record => record.releaseRetry ?? this.clean(record, intent));
         void Promise.resolve().then(async () => {
             await Promise.allSettled([...tasks, ...this.inFlight]);
             if (ownedCapacity) await ownedCapacity;
@@ -404,7 +353,7 @@ export class AppManager {
         const before = worker.getCloseReport();
         const report = await (before.state === 'settled' && before.host?.storage.ownerRetained
             ? this.retryRelease(record)
-            : this.clean(record, 'close', true));
+            : this.clean(record, 'close'));
         if (accepted) await accepted.catch(() => {});
         if (this.phase === 'active') {
             if (record.meta && this.installedApps.get(id) === record.meta && this.workers.get(id) === worker) record.meta.status = 'closed';
@@ -425,15 +374,13 @@ export class AppManager {
     }
     async collapseApp(id: AppID, expectedInstanceId?: string): Promise<void> { this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'collapsed';this.desktop.logSystem(`Collapsed application: ${id}`);this.desktop.emitSignal('dom_mutation'); }
     async showApp(id: AppID, expectedInstanceId?: string): Promise<void> { this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'running';this.desktop.logSystem(`Shown application: ${id}`);this.desktop.emitSignal('dom_mutation'); }
-    getInstalledApps(): Array<InstalledApp & { readonly appInstanceId?: string }> {
+    getInstalledApps(): readonly AppDiscoveryInfo[] {
         return [...this.installedApps.values()].filter(app =>
             app.status !== 'pending' || this.appTasks.get(app.appId)?.kind !== 'install').map(app => {
             const appInstanceId = this.workers.get(app.appId)?.appInstanceId;
-            return { ...app, ...(appInstanceId ? { appInstanceId } : {}) };
+            const { appId, status, name, description, whatItIs, whenToUse } = app;
+            return { appId, status, name, description, whatItIs, whenToUse, ...(appInstanceId ? { appInstanceId } : {}) };
         });
-    }
-    getAppStates(): AppState[] {
-        return this.getInstalledApps().map(({ appId, name, status, installedAt }) => ({ appId, name, status, installedAt }));
     }
     getWorkerSandbox(id: AppID): WorkerSandbox | undefined { return this.workers.get(id); }
     getAppInteraction(appId: string, expectedInstanceId: string, policy?: AppInteractionPolicy): AppInteractionResult {
@@ -447,7 +394,6 @@ export class AppManager {
         if (!current()) return appInteractionUnavailable();
         return result;
     }
-    isWorkerMode(id: AppID): boolean { return this.workers.has(id); }
     broadcastLLMOutput(payload: { reasoning?: string; content?: string }, type: 'complete', meta?: Parameters<WorkerSandbox['pushLLMOutput']>[2]): void {
         if (this.phase !== 'active') return;for (const worker of this.workers.values()) worker.pushLLMOutput(payload, type, meta);
     }

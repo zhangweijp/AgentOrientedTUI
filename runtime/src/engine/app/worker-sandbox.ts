@@ -64,8 +64,6 @@ const lifecycleError = (code: 'SANDBOX_CLOSED' | 'SANDBOX_ALREADY_INSTALLED' | '
 export class WorkerSandbox {
     readonly appId: AppID;
     readonly desktopId: DesktopID;
-    readonly name?: string;
-    readonly createdAt: number;
 
     private workerHost: AppWorkerHost | null = null;
     private _status: SandboxStatus = 'created';
@@ -88,8 +86,6 @@ export class WorkerSandbox {
         this.config = { ...config, toolsEnabled };
         this.appId = config.appId;
         this.desktopId = config.desktopId;
-        this.name = config.name;
-        this.createdAt = Date.now();
     }
 
     // ════════════════════════════════════════════════════════════════

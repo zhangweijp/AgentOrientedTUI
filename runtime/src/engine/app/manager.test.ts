@@ -64,15 +64,6 @@ describe('AppManager', () => {
             expect(manager.getInstalledApps()).toHaveLength(0);
         });
 
-        it('接受可选的 options 参数', () => {
-            const onAppInstalled = vi.fn();
-            const onAppRemoved = vi.fn();
-            const managerWithOptions = new AppManager(desktop, {
-                onAppInstalled,
-                onAppRemoved
-            });
-            expect(managerWithOptions).toBeInstanceOf(AppManager);
-        });
     });
 
     // ════════════════════════════════════════════════════════════════
@@ -83,19 +74,6 @@ describe('AppManager', () => {
         it('返回空数组当没有安装 App', () => {
             const apps = manager.getInstalledApps();
             expect(apps).toEqual([]);
-        });
-    });
-
-    describe('getAppStates', () => {
-        it('返回空数组当没有安装 App', () => {
-            const states = manager.getAppStates();
-            expect(states).toEqual([]);
-        });
-    });
-
-    describe('isWorkerMode', () => {
-        it('对不存在的 App 返回 false', () => {
-            expect(manager.isWorkerMode('nonexistent_app' as AppID)).toBe(false);
         });
     });
 
@@ -270,7 +248,7 @@ describe('AppManager', () => {
             expect(worker.close).toHaveBeenCalledTimes(1);
             expect(worker.disposeAsync).toHaveBeenCalledTimes(1);
             expect(worker.getCloseReport()).toMatchObject({ state: 'settled', resourcesReleased: true });
-            expect(manager.isWorkerMode(appId)).toBe(false);
+            expect(manager.getWorkerSandbox(appId)).toBeUndefined();
             expect(manager.getInstalledApps()[0]?.status).toBe('closed');
         });
     });
@@ -308,11 +286,11 @@ describe('AppManager', () => {
                 appId,
                 name: 'lazy-app',
                 status: 'pending',
-                modulePath: '/path/to/module'
+                description: 'Lazy App'
             });
+            expect(apps[0]).not.toHaveProperty('modulePath');
 
             // 验证没有 Worker
-            expect(manager.isWorkerMode(appId)).toBe(false);
             expect(manager.getWorkerSandbox(appId)).toBeUndefined();
         });
 
@@ -348,7 +326,8 @@ describe('AppManager', () => {
             installedApp.whatItIs = 'IDE';
             installedApp.whenToUse = 'Use for code';
             installedApp.config = { projectPath: '/repo' };
-            expect(manager.getInstalledApps()[0]).toMatchObject({ appId, status: 'closed', whatItIs: 'IDE', whenToUse: 'Use for code', config: { projectPath: '/repo' } });
+            expect(manager.getInstalledApps()[0]).toMatchObject({ appId, status: 'closed', whatItIs: 'IDE', whenToUse: 'Use for code' });
+            expect(manager.getInstalledApps()[0]).not.toHaveProperty('config');
 
             await manager.openApp(appId);
 

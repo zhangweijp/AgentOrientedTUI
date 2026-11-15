@@ -7,7 +7,7 @@ import type { OrdinaryParameterContract } from '../core/tool/ordinary-parameter-
 
 async function setup() {
   let port!: IAppTypeToolPort, views!: IViewOwnedToolPort;
-  const kernel = new AppKernel({ appName: 'compiled', name: 'Compiled', factory: {
+  const kernel = new AppKernel({ appName: 'test_app', factory: {
     initialize: async (context) => {
       port = context.appTypeTools!; views = context.viewTools!;
       return { close() {} };

@@ -46,13 +46,10 @@ async function setup() {
     }
     entry = pathToFileURL(await fs.realpath(ideMainPath)).href;
     const ideModule = await import(entry);
+    const { isTUIAppFactory, hasViewTypeToolAuthoringProtocol } =
+        await import(pathToFileURL(path.join(modules, '@aotui/runtime/dist/spi/index.js')).href);
     const factory = ideModule.default;
-    if (!factory || typeof factory !== 'object' ||
-        typeof Object.getOwnPropertyDescriptor(factory, 'displayName')?.value !== 'string' ||
-        !Object.getOwnPropertyDescriptor(factory, 'kernelConfig')?.value ||
-        typeof Object.getOwnPropertyDescriptor(factory, 'initialize')?.value !== 'function' ||
-        Object.getOwnPropertyDescriptor(factory, 'persistenceSupport')?.value !== 'state-session-v1' ||
-        Object.getOwnPropertyDescriptor(factory, 'appLifecycleSupport')?.value !== 'app-lifecycle-v2' ||
+    if (!isTUIAppFactory(factory) || !hasViewTypeToolAuthoringProtocol(factory) ||
         Object.hasOwn(ideModule, 'ideEntryForRoute')) {
         throw new Error('IDE package main must default-export the managed TUIAppFactory');
     }

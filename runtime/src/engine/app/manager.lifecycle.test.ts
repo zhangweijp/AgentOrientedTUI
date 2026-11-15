@@ -27,7 +27,7 @@ describe('AppManager owned lifecycle (controlled C1 Sandbox seam, no OS Workers)
         if (intent === 'delete') void manager.beginClose('delete').completion.catch(() => {});else if (intent === 'cleanup') void manager.cleanupAsync().catch(() => {});else void manager.beginClose().completion.catch(() => {});
         expect(manager.getWorkerSandbox('app')).toBe(controls.boxes[0]);expect(manager.getCloseReport().state).toBe('closing');expect(controls.boxes[0].cleanCalls).toBe(1);
         gate.resolve();await expect(installing).rejects.toHaveProperty('code','INSTALL_FAILED');await manager.cleanupAsync();
-        expect(manager.isWorkerMode('app')).toBe(false);expect(manager.getInstalledApps()).toEqual([]);expect(desktop.emitSignal).not.toHaveBeenCalled();
+        expect(manager.getWorkerSandbox('app')).toBeUndefined();expect(manager.getInstalledApps()).toEqual([]);expect(desktop.emitSignal).not.toHaveBeenCalled();
     });
     it('reserves identity before await and exposes only installed apps; duplicate active/pending/closing IDs cannot overwrite', async () => {
         const gate = barrier();controls.install = () => gate.promise;const { manager } = fixture();
@@ -37,7 +37,7 @@ describe('AppManager owned lifecycle (controlled C1 Sandbox seam, no OS Workers)
         const handle = manager.beginClose();expect(manager.beginClose()).toBe(handle);expect(controls.boxes[0].cleanCalls).toBe(1);
         await expect(manager.install('/late')).rejects.toMatchObject({ code: 'APP_MANAGER_CLOSED' });gate.resolve();
         await expect(installing).rejects.toMatchObject({ code: 'INSTALL_FAILED' });const report = await handle.completion;
-        expect(report).toMatchObject({ state: 'settled', pendingTasks: 0, apps: { accepted: 1, settled: 1 }, hasFailures: true });expect(manager.isWorkerMode('app_0')).toBe(false);await manager.cleanupAsync();
+        expect(report).toMatchObject({ state: 'settled', pendingTasks: 0, apps: { accepted: 1, settled: 1 }, hasFailures: true });expect(manager.getWorkerSandbox('app_0')).toBeUndefined();await manager.cleanupAsync();
     });
     it('enforces 128 accepted installs before any Sandbox side effect and restores capacity when calls end', async () => {
         const gate = barrier();controls.install = () => gate.promise;const { manager } = fixture();
@@ -60,12 +60,16 @@ describe('AppManager owned lifecycle (controlled C1 Sandbox seam, no OS Workers)
         const close = manager.beginClose();expect(manager.beginClose()).toBe(close);expect(controls.boxes.map(box => box.cleanCalls)).toEqual([1,1]);
         await Promise.resolve();expect(manager.getCloseReport().state).toBe('closing');expect(manager.getInstalledApps().every(app => app.status === 'running')).toBe(true);
         expect(() => manager.beginClose('delete')).toThrow(/LIFECYCLE_CONFLICT/);gate.resolve();await close.completion;
-        expect(manager.getInstalledApps().every(app => app.status === 'running')).toBe(true);expect(['a', 'b'].some(id => manager.isWorkerMode(id))).toBe(false);await manager.cleanupAsync();expect(manager.getInstalledApps()).toEqual([]);
+        expect(manager.getInstalledApps().every(app => app.status === 'running')).toBe(true);expect(['a', 'b'].map(id => manager.getWorkerSandbox(id))).toEqual([undefined, undefined]);await manager.cleanupAsync();expect(manager.getInstalledApps()).toEqual([]);
     });
     it('cleanup never drops an unconfirmed owner and metadata/query snapshots cannot mutate ownership', async () => {
         const { manager } = fixture();await manager.install('/a', { appId: 'a' });
-        const record = manager.getInstalledApps()[0];record.appId = 'wrong';record.status = 'closed';record.modulePath = '/wrong';
-        const state = manager.getAppStates()[0];state.status = 'closed';expect(manager.getWorkerSandbox('a')).toBe(controls.boxes[0]);expect(manager.getInstalledApps()[0]).toMatchObject({ appId: 'a', status: 'running', modulePath: '/a' });
+        const record = manager.getInstalledApps()[0];
+        expect(record).not.toHaveProperty('modulePath');
+        Object.assign(record, { appId: 'wrong', status: 'closed', modulePath: '/wrong' });
+        expect(manager.getWorkerSandbox('a')).toBe(controls.boxes[0]);
+        expect(manager.getInstalledApps()[0]).toMatchObject({ appId: 'a', status: 'running' });
+        expect(manager.getInstalledApps()[0]).not.toHaveProperty('modulePath');
         controls.clean = async () => false;const report = await manager.cleanupAsync();expect(report.resourcesReleased).toBe(false);expect(report.apps.notVerifiedReleased).toBe(1);
         expect(manager.getWorkerSandbox('a')).toBe(controls.boxes[0]);expect(manager.getInstalledApps()).toHaveLength(1);
     });
@@ -75,12 +79,12 @@ describe('AppManager owned lifecycle (controlled C1 Sandbox seam, no OS Workers)
         controls.clean=async box=>{box.issues.push('APP_CLOSE_FAILED');return false;};
         const report=await manager.cleanupAsync();expect(report).toMatchObject({state:'settled',hasFailures:true,resourcesReleased:false,samplesTruncated:true,failureCount:40,apps:{accepted:40,settled:40,notVerifiedReleased:40}});
         expect(report.failures).toHaveLength(16);expect(report.failures.every(sample=>Buffer.byteLength(sample.appId!,'utf8')<=256)).toBe(true);expect(Buffer.byteLength(JSON.stringify(report),'utf8')).toBeLessThanOrEqual(65536);
-        expect(ids.filter(id => manager.isWorkerMode(id))).toEqual(ids);expect(manager.getInstalledApps()).toHaveLength(40);
+        expect(ids.filter(id => manager.getWorkerSandbox(id))).toEqual(ids);expect(manager.getInstalledApps()).toHaveLength(40);
     });
     it('reinitialize failure only cleans its captured Sandbox, never a same-ID successor', async () => {
         const { manager } = fixture();await manager.install('/old', { appId: 'same' });const old = controls.boxes[0], reset = barrier();controls.reinitialize = () => reset.promise;
         const reinitializing = manager.reinitializeApp('same');const next = new WorkerSandbox({ appId: 'same', desktopId: 'd', appModulePath: '/new' });
-        (manager as any).workers.set('same', next);(manager as any).installedApps.set('same', { appId: 'same', status: 'running', modulePath: '/new', installedAt: 0 });
+        (manager as any).workers.set('same', next);(manager as any).installedApps.set('same', { appId: 'same', status: 'running', modulePath: '/new' });
         reset.reject(Error('private'));await expect(reinitializing).rejects.toMatchObject({ code: 'APP_CLOSE_FAILED' });
         expect(old.cleanCalls).toBe(1);expect((next as any).cleanCalls).toBe(0);expect(manager.getWorkerSandbox('same')).toBe(next);expect(manager.getInstalledApps()[0].status).toBe('running');await manager.cleanupAsync();
     });
@@ -100,7 +104,7 @@ describe('AppManager owned lifecycle (controlled C1 Sandbox seam, no OS Workers)
         const { manager } = fixture();for (const id of ['throw','held','done']) await manager.install('/'+id,{appId:id});const gate = barrier();
         controls.clean = async box => { if(box.appId==='throw'){box.state='settled';box.issues.push('RESOURCE_RELEASE_FAILED');throw Error('private');}if(box.appId==='held')await gate.promise;return true; };
         const closing = manager.beginClose();expect(controls.boxes.map(box=>box.cleanCalls)).toEqual([1,1,1]);await Promise.resolve();expect(closing.inspect().state).toBe('closing');
-        gate.resolve();const report=await closing.completion;expect(report.hasFailures).toBe(true);expect(report.resourcesReleased).toBe(false);expect(manager.isWorkerMode('throw')).toBe(true);expect(['throw', 'held', 'done'].filter(id => manager.isWorkerMode(id))).toEqual(['throw']);await manager.cleanupAsync();
+        gate.resolve();const report=await closing.completion;expect(report.hasFailures).toBe(true);expect(report.resourcesReleased).toBe(false);expect(['throw', 'held', 'done'].filter(id => manager.getWorkerSandbox(id))).toEqual(['throw']);await manager.cleanupAsync();
     });
     it('delete first starts delete and actual cleanup once; ID counter does not wrap or reset', async () => {
         const { manager } = fixture();await manager.install('/a', { appId: 'a' });const deleted = manager.beginClose('delete');expect(manager.beginClose('delete')).toBe(deleted);expect(controls.boxes[0].deleteCalls).toBe(1);await deleted.completion;await manager.cleanupAsync();

@@ -392,8 +392,8 @@ try {
     const idleDeadline = Date.now() + 3_000;
     while (session && session.agentDriver.getState() !== 'idle' && Date.now() < idleDeadline) await sleep(25);
     await cleanupStep('session', async () => { await manager?.cleanup(); });
-    await cleanupStep('runtime', async () => { await runtime?.shutdown('semantic-host-llm-e2e'); });
-    await cleanupStep('module-runtime', async () => { await moduleRuntime?.shutdown('semantic-host-llm-e2e-module'); });
+    await cleanupStep('runtime', async () => { await runtime?.shutdown(); });
+    await cleanupStep('module-runtime', async () => { await moduleRuntime?.shutdown(); });
     await cleanupStep('database', () => { database?.closeDatabase(); });
     await cleanupStep('temporary-files', async () => { if (work) await fs.rm(work, { recursive: true, force: true }); });
     facts.elapsedMs = Date.now() - startedAt;

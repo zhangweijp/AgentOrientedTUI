@@ -179,7 +179,7 @@ Host 可以用 `client.invoke(request, timeoutMs)` 为一次等待指定期限�
 | Binding/activation id | Runtime/Core；注册和类型活跃期 | handler-only 更新保留注册，禁用／最后 View 关闭后旧资格失效，重新激活产生新身份；Context 捕获执行目标 |
 | 状态 appKey | 可信 Host；既有 StateAddress 的 namespace | Registry 默认使用 canonical app_name；Host 可显式传 AOTUI_APP_KEY 选择独立 namespace，不改变注册名、调用目标或 Ref 资格。无通用数据作用域系统 |
 
-AppKernel 从 Runtime AppContext 接收 App ID，不再以逻辑 App 名兜底，也不允许更改已赋予的身份。SDK 的 displayName 和 Kernel.name 是派生呈现／调试标签，不是第二份执行定位来源。旧 AOTUI_APP_NAME 曾混用为持久化 namespace，本次退出；显式需要该能力的 Host 改用 AOTUI_APP_KEY，默认 Registry 生成同样的 namespace 值，不迁移或删除业务持久化数据。
+SDK 从作者声明的 `app_name` 生成 `kernelConfig.appName`。生成器用它写入 `aoapp.json`，Worker 校验工厂与安装时登记的名称一致。AppKernel 使用 Runtime 分配的 App ID。Host 可用 `AOTUI_APP_KEY` 显式指定持久化命名空间。
 
 当前常量随拥有合同的 Runtime SPI/Core 导出。工厂／端口使用 view-type-tools-v4，Snapshot 仍为3，工具 IPC 使用 view-tool-parameters-invoke/v5，生命周期仍为2，持久化会话与记录各自仍为1。INIT 的请求／ACK 必须包含 app-snapshot/v3；启用工具时还必须确认工具能力。不支持的组合在加载／OPEN前明确拒绝，数据的后续严格捕获与来源检查依然独立；没有新 spec 包或通用协商平台。
 

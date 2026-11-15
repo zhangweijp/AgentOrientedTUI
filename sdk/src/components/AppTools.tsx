@@ -84,7 +84,6 @@ export function AppTools<const Map extends ToolMap, const Bindings extends ToolB
 }
 
 // Keep the existing descriptor-list type available alongside the component value.
-export type ToolCatalog = import('../tools/view-type-tool.js').ToolCatalog;
 export interface ToolCatalogProps { readonly definition: AnyToolSet }
 export function ToolCatalog({ definition }: ToolCatalogProps) {
     const groups = new Map<string, string[]>();

@@ -12,7 +12,7 @@ function appBarrier() {
     let finish!: (report: AppManagerCloseReport) => void;
     const completion = new Promise<AppManagerCloseReport>(resolve => { finish = resolve; });
     const handle = createCloseHandle(report, completion);
-    return { state, handle, manager: { beginClose: vi.fn(() => handle), cleanupAsync: vi.fn(async () => handle.completion), getInstalledApps: () => [], getAppStates: () => [] },
+    return { state, handle, manager: { beginClose: vi.fn(() => handle), cleanupAsync: vi.fn(async () => handle.completion), getInstalledApps: () => [] },
         release(fail = false) { if (fail) addCloseFailure(state, 'apps', ['APP_CLOSE_FAILED']);state.state = 'settled';state.resourcesReleased = true;finish(report()); } };
 }
 afterEach(() => { vi.useRealTimers();vi.restoreAllMocks(); });

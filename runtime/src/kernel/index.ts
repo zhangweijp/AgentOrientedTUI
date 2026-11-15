@@ -3,7 +3,6 @@ import type {
     IKernel,
     DesktopID,
     IDesktop,
-    DesktopState,
     IRuntimeContext, // New
     ReinitializeDesktopAppsOptions,
     ReinitializeDesktopAppsResult,
@@ -23,7 +22,7 @@ import type { AppInteractionPolicy } from '../core/invocation/app-interaction-ty
  * Responsibilities:
  * - Creates and manages Desktop instances (via IDesktopManager)
  * - Exposes App instance interaction
- * - Manages Desktop lifecycle (suspend, resume, serialize, restore)
+ * - Manages Desktop lifecycle (create, suspend, resume, close)
  * 
  */
 export class Kernel implements IKernel {
@@ -182,21 +181,6 @@ export class Kernel implements IKernel {
         await this.desktopManager.resume(desktopId);
     }
 
-    serialize(desktopId: DesktopID): DesktopState {
-        const info = this.desktopManager.getDesktopInfo(desktopId);
-        if (!info) {
-            throw new AOTUIError('DESKTOP_NOT_FOUND', { desktopId });
-        }
-
-        return {
-            id: desktopId,
-            status: info.status,
-            createdAt: info.createdAt,
-            serializedAt: Date.now(),
-            apps: this.desktopManager.getAppStates(desktopId)
-        };
-    }
-
     deleteDesktop(desktopId: DesktopID): Promise<void> {
         try { return closeVoid(this.beginDesktopClose(desktopId, { intent: 'delete' }).completion, 'DESKTOP_CLOSE_FAILED'); }
         catch (error) { return Promise.reject(error); }
@@ -220,7 +204,7 @@ export class Kernel implements IKernel {
         return freezeClose({ ...snapshotClose(state), scope: 'runtime' as const, intent: 'close' as const });
     }
 
-    beginShutdown(_reason?: string): RuntimeCloseHandle {
+    beginShutdown(): RuntimeCloseHandle {
         if (this.closing) return this.closing;
         this.shutdownDesktopIds = new Set(this.desktopManager.listDesktopIds());
         let complete!: (value: RuntimeCloseReport) => void;
@@ -239,5 +223,5 @@ export class Kernel implements IKernel {
         return this.closing;
     }
 
-    shutdown(reason?: string): Promise<void> { return this.shutdownPromise ??= closeVoid(this.beginShutdown(reason).completion, 'RUNTIME_CLOSE_FAILED'); }
+    shutdown(): Promise<void> { return this.shutdownPromise ??= closeVoid(this.beginShutdown().completion, 'RUNTIME_CLOSE_FAILED'); }
 }

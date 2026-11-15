@@ -1,6 +1,6 @@
 import Type from 'typebox';
-import { AppTools, ToolCatalog, View, defineToolSet, defineViewTypeTool } from '../src/index.js';
-import type { ArgsOf, SchemaOf, ToolBindings, ToolSetMap, AppToolsProps } from '../src/index.js';
+import { AppTools, ToolCatalog, View, defineToolSet, defineViewTypeTool, getToolCatalog } from '../src/index.js';
+import type { ArgsOf, SchemaOf, ToolBindings, ToolSetMap, AppToolsProps, ToolCatalogEntry, ToolCatalogProps } from '../src/index.js';
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type Assert<T extends true> = T;
 type IsAny<T> = 0 extends (1 & T) ? true : false;
@@ -9,11 +9,15 @@ const tools = defineToolSet({ edit: defineViewTypeTool({ viewType: 'File', name:
 type Expected = { readonly path: string; readonly mode: 'append' | 'replace'; readonly count: number; readonly tags: readonly string[]; readonly note?: string };
 type _Schema = Assert<Equal<SchemaOf<typeof tools.edit>, typeof schema>>;
 type _Args = Assert<Equal<ArgsOf<typeof tools.edit>, Expected>>;
+type _Catalog = Assert<Equal<ReturnType<typeof getToolCatalog>, readonly ToolCatalogEntry[]>>;
+// @ts-expect-error ToolCatalog is the JSX component. Use ToolCatalogEntry for the returned data.
+type _RetiredCatalog = ToolCatalog;
+const catalog: ToolCatalogProps = { definition: tools };
 export const jsx = <AppTools definition={tools} bindings={{ edit: { execute: args => {
     type _Exact = Assert<Equal<typeof args, Expected>>;
     type _Any = Assert<Equal<IsAny<typeof args>, false>>;
     return { success: true, data: { path: args.path } };
-} } }}><View kind="state" id="file" type="File">File content</View><ToolCatalog definition={tools} /></AppTools>;
+} } }}><View kind="state" id="file" type="File">File content</View><ToolCatalog {...catalog} /></AppTools>;
 const bindings: ToolBindings<ToolSetMap<typeof tools>> = { edit: { enabled: false, execute: args => ({ success: true, data: { path: args.path } }) } };
 const props: AppToolsProps<typeof tools> = { definition: tools, bindings };
 export const forwarded = <AppTools {...props} />;

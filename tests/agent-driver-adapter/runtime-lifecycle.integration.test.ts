@@ -266,7 +266,7 @@ it('rejects retired imports and an incompatible invoker ABI in a real Worker', a
             await capture(file, `
 ${declaration}
 export default {
-    displayName: 'legacy_sdk', kernelConfig: { name: 'legacy_sdk', appName: 'legacy_sdk' },
+    kernelConfig: { appName: 'legacy_sdk' },
     toolAuthoringProtocol: 'view-type-tools-v4', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
     initialize({ appTypeTools }) {
         appTypeTools.registerTypeTool({ viewType: 'Detail', name: 'old', description: 'Legacy Tool',
@@ -418,6 +418,81 @@ it('B2 C06/10–12/16 public pending/collapse/pause/reopen/reinitialize keeps th
         facts.push({ case: 'instance-boundaries', instances: [first.source.instanceId, next.source.instanceId, last.source.instanceId], toolsEnabled: true });
     } finally { await runtime.beginShutdown().completion; }
 }, 20000);
+
+it('preserves the SPI lifecycle callback receiver for cold restart and delete', async () => {
+    const desktopId = 'hook-desktop', name = 'callback_fixture';
+    const projectPath = join(directory, 'synthetic-project');
+    const trace = join(directory, 'factory-hooks.jsonl');
+    const fixture = join(directory, 'factory-hooks.mjs');
+    await capture(fixture, `
+import { appendFileSync } from 'node:fs';
+import { threadId } from 'node:worker_threads';
+
+function record(hook, receiver, context) {
+    const { appName, description, whatItIs, whenToUse, signalPolicy } = receiver;
+    const row = { hook, threadId, appName, description, whatItIs, whenToUse, signalPolicy,
+        copied: receiver !== kernelConfig, ...context };
+    appendFileSync(${JSON.stringify(trace)}, JSON.stringify(row) + '\\n');
+}
+const kernelConfig = {
+    appName: '${name}',
+    description: 'App metadata',
+    whatItIs: 'Lifecycle fixture',
+    whenToUse: 'Exercise SPI callbacks',
+    signalPolicy: 'never',
+    onReinitialize({ appId, desktopId, reason }) {
+        record('reinitialize', this, { appId, desktopId, reason });
+        this.description = 'Changed only in the first instance';
+    },
+    onDelete({ appId, desktopId }) {
+        record('delete', this, { appId, desktopId });
+    },
+};
+export default {
+    kernelConfig,
+    toolAuthoringProtocol: 'view-type-tools-v4',
+    persistenceSupport: 'state-session-v1',
+    appLifecycleSupport: 'app-lifecycle-v2',
+    initialize({ launchConfig, publishFrame }) {
+        if (launchConfig?.projectPath !== ${JSON.stringify(projectPath)}) throw Error('Host config missing');
+        publishFrame(() => ({ views: [], tools: [] }));
+        return { close() {} };
+    },
+};
+`);
+    const runtime = makeRuntime();
+    try {
+        const appId = await install(runtime, desktopId, 'hooks', undefined, {
+            name, config: { AOTUI_DATA_DIR: join(directory, 'hooks-state'), projectPath },
+        }, fixture);
+        const desktop = runtime.getDesktop(desktopId);
+        const originalInstance = desktop.getInstalledApps()[0]?.appInstanceId;
+        expect(originalInstance).toEqual(expect.any(String));
+        const reason = 'Refresh the workspace';
+        const reset = await runtime.reinitializeDesktopApps(desktopId, { reason });
+        expect(reset).toEqual({ desktopId, reinitializedAppIds: [appId], skippedAppIds: [], failedAppIds: [] });
+        const newInstance = desktop.getInstalledApps()[0]?.appInstanceId;
+        expect(newInstance).toEqual(expect.any(String));
+        expect(newInstance).not.toBe(originalInstance);
+        await runtime.deleteDesktop(desktopId);
+        expect(() => runtime.getDesktop(desktopId)).toThrow();
+
+        const hooks = (await readFile(trace, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+        const expected = { appName: name, description: 'App metadata', whatItIs: 'Lifecycle fixture',
+            whenToUse: 'Exercise SPI callbacks', signalPolicy: 'never', appId, desktopId, copied: true,
+            threadId: expect.any(Number) };
+        expect(hooks).toEqual([
+            { ...expected, hook: 'reinitialize', reason },
+            { ...expected, hook: 'delete' },
+        ]);
+        expect(hooks[0].threadId).not.toBe(hooks[1].threadId);
+        facts.push({ case: 'spi-lifecycle-receiver', hooks, reset, originalInstance, newInstance });
+    } finally {
+        expect(await runtime.beginShutdown().completion).toMatchObject({
+            ok: true, resourcesReleased: true, workers: { report: { total: 0 } },
+        });
+    }
+}, 15000);
 
 it('Semantic lifecycle controls stay bound to the App instance observed by each live Agent Context', async () => {
     const runtime = makeRuntime(), contexts: any[] = [], sources: any[] = [];

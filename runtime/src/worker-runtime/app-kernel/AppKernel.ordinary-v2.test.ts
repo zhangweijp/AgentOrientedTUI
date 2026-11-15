@@ -14,7 +14,7 @@ const compiledSchema = () => {
 const setup = async () => {
   let viewTools!: IViewOwnedToolPort;
   let appTypeTools!: IAppTypeToolPort;
-  const kernel = new AppKernel({ appName: 'ordinary', name: 'Read', factory: {
+  const kernel = new AppKernel({ appName: 'test_app', factory: {
     initialize: async (context) => {
       viewTools = context.viewTools!;
       appTypeTools = context.appTypeTools!;

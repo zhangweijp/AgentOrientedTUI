@@ -12,6 +12,7 @@ function setup(Content: () => any) {
  const factory = createTUIApp({ app_name: 'typed_refs', component: () => h(View, {kind: 'state',id:'detail',type:'Detail'},h(Content, {})) });
  const kernel = new AppKernel({...factory.kernelConfig,factory} as any);
  kernel.setId('app' as any);
+ kernel.enableAppLifecycle();
  return {kernel,get container(){return document.getElementById('app-root-app')!;},open:()=>kernel.onOpen({appId:'app' as any,desktopId:'desktop' as any}),
  async close(){await kernel.onClose();}};
 }

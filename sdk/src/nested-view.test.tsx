@@ -15,6 +15,7 @@ function setup(component: () => any) {
     const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
     kernel.setId('nested_fixture' as any);
     kernel.setAppExecutionInstanceId('nested_fixture_run');
+    kernel.enableAppLifecycle();
 
     return {
         kernel,

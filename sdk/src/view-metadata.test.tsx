@@ -26,6 +26,7 @@ describe('explicit View author metadata', () => {
             const kernel = new AppKernel({ ...factory.kernelConfig, factory });
             kernel.setId('metadata' as any);
             kernel.setAppExecutionInstanceId('metadata-run');
+            kernel.enableAppLifecycle();
             try {
                 await expect(kernel.onOpen({ appId: 'metadata' as any, desktopId: 'desktop' as any }))
                     .rejects.toMatchObject({ code: 'SNAPSHOT_INVALID', path: '$.views' });
@@ -43,6 +44,7 @@ describe('explicit View author metadata', () => {
         const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
         kernel.setId('metadata' as any);
         kernel.setAppExecutionInstanceId('metadata-run');
+        kernel.enableAppLifecycle();
         try {
             await act(async () => kernel.onOpen({ appId: 'metadata' as any, desktopId: 'desktop' as any,
                  }));

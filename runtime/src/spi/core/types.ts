@@ -32,31 +32,5 @@ export type AppID = string & { readonly [__brand]: 'AppID' };
 /** 视图唯一标识 (Branded Type) */
 export type ViewID = string & { readonly [__brand]: 'ViewID' };
 
-// ============================================================================
-// 数据结构
-// ============================================================================
-
-// ============================================================================
-// 状态类型
-// ============================================================================
-
 /** Desktop 状态 */
 export type DesktopStatus = 'active' | 'suspended';
-
-/** App 状态 */
-export interface AppState {
-    appId: AppID;
-    name?: string;
-    /** [RFC-014] 增加 'pending' 状态用于懒加载 */
-    status: 'pending' | 'running' | 'paused' | 'closed' | 'collapsed';
-    installedAt: number;
-}
-
-/** Desktop 序列化状态 */
-export interface DesktopState {
-    id: DesktopID;
-    status: DesktopStatus;
-    createdAt: number;
-    serializedAt?: number;
-    apps: AppState[];
-}

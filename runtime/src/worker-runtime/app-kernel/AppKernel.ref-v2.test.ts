@@ -3,7 +3,7 @@ import { AppKernel } from './AppKernel.js';
 import { ordinaryParameterProfile } from '../../core/tool/ordinary-parameter-profile.js';
 async function setup() {
     let context: any;
-    const kernel = new AppKernel({ appName: 'ref', name: 'Ref', factory: {
+    const kernel = new AppKernel({ appName: 'test_app', factory: {
         initialize: async (value) => { context = value; return { close() {} }; },
     } });
     kernel.setId('app' as any); kernel.setAppExecutionInstanceId('run');

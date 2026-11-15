@@ -227,15 +227,12 @@ async function handleInit(msg: InitMessage): Promise<void> {
                 'This Runtime requires a TUIAppFactory using view-type-tools-v4');
             return;
         }
-        const managedFactory = factory;
-        const metadata = captureAppMetadata({ app_name: managedFactory.kernelConfig.appName });
-        for (const [path, actual] of [
-            ['INIT.appName', msg.appName],
-        ] as const) {
-            if (actual !== undefined && actual !== metadata.app_name) {
-                const error = new AOTUIError('APP_IDENTITY_MISMATCH', { expected: metadata.app_name, actual, path });
-                sendError(msg.requestId, error.code, error.message);return;
-            }
+        const kernelConfig = factory.kernelConfig;
+        const metadata = captureAppMetadata({ app_name: kernelConfig.appName });
+        if (msg.appName !== undefined && msg.appName !== metadata.app_name) {
+            const error = new AOTUIError('APP_IDENTITY_MISMATCH', { expected: metadata.app_name, actual: msg.appName, path: 'INIT.appName' });
+            sendError(msg.requestId, error.code, error.message);
+            return;
         }
         const offerField = Object.getOwnPropertyDescriptor(msg, 'persistence');
         const offer = offerField && 'value' in offerField ? capturePersistenceOffer(offerField.value, msg.appInstanceId ?? '') : null;
@@ -245,11 +242,10 @@ async function handleInit(msg: InitMessage): Promise<void> {
         if (!lifecycleOffer || !('value' in lifecycleOffer) || !captureAppLifecycleAck(lifecycleOffer.value, msg.appInstanceId ?? ''))
             throw new Error('APP_LIFECYCLE_UNSUPPORTED');
 
-        if (managedFactory.kernelConfig.signalPolicy) {
-            signalPolicy = managedFactory.kernelConfig.signalPolicy as SignalPolicy;
-        }
+        const appSignalPolicy = kernelConfig.signalPolicy;
+        if (appSignalPolicy) signalPolicy = appSignalPolicy;
 
-        app = new AppKernel({ ...managedFactory.kernelConfig, factory: managedFactory, launchConfig });
+        app = new AppKernel({ ...kernelConfig, appName: metadata.app_name, factory, launchConfig });
 
         // Keep the SDK/AppKernel App identity equal to the authenticated
         // Worker INIT appId. Otherwise Tool IDs and SDK AppRuntimeContext use ''.

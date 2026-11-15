@@ -4,6 +4,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { DesktopManager } from './manager.js';
+import { Desktop } from './desktop.js';
 
 describe('DesktopManager', () => {
     let manager: DesktopManager;
@@ -62,34 +63,6 @@ describe('DesktopManager', () => {
     });
 
     // ─────────────────────────────────────────────────────────────
-    //  App 管理 - [Worker-Only Migration]
-    // ─────────────────────────────────────────────────────────────
-
-    // installApp() and getApp() tests removed.
-    // In Worker-Only architecture, use installDynamicWorkerApp instead.
-
-    // ─────────────────────────────────────────────────────────────
-    //  Desktop 状态
-    // ─────────────────────────────────────────────────────────────
-
-
-
-    describe('getDesktopInfo()', () => {
-        it('should return info for existing desktop', async () => {
-            const id = await manager.create();
-            const info = manager.getDesktopInfo(id);
-
-            expect(info).toBeDefined();
-            expect(info?.status).toBe('active');
-            expect(info?.createdAt).toBeLessThanOrEqual(Date.now());
-        });
-
-        it('should return undefined for non-existent desktop', () => {
-            expect(manager.getDesktopInfo('non_existent')).toBeUndefined();
-        });
-    });
-
-    // ─────────────────────────────────────────────────────────────
     //  生命周期控制
     // ─────────────────────────────────────────────────────────────
 
@@ -98,8 +71,7 @@ describe('DesktopManager', () => {
             const id = await manager.create();
             await manager.suspend(id);
 
-            const info = manager.getDesktopInfo(id);
-            expect(info?.status).toBe('suspended');
+            expect((manager.get(id) as Desktop).status).toBe('suspended');
         });
 
         it('should resume suspended desktop', async () => {
@@ -107,8 +79,7 @@ describe('DesktopManager', () => {
             await manager.suspend(id);
             await manager.resume(id);
 
-            const info = manager.getDesktopInfo(id);
-            expect(info?.status).toBe('active');
+            expect((manager.get(id) as Desktop).status).toBe('active');
         });
 
         it('should throw E_NOT_FOUND for non-existent desktop', async () => {

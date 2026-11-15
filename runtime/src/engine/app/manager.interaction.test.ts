@@ -77,11 +77,11 @@ it('preserves trusted Tool disablement across pending, open, reopen and reinitia
     const manager = new AppManager(desktop), options = { modulePath: '/app', toolsEnabled: false };
     const id = manager.registerPendingApp(options);options.toolsEnabled = true;
     expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing')).toMatchObject({ issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });expect(control.boxes).toHaveLength(0);
-    const copy = manager.getInstalledApps()[0];expect(copy.toolsEnabled).toBe(false);
-    (copy as any).toolsEnabled = true;await manager.openApp(id);expect(control.boxes[0].config.toolsEnabled).toBe(false);
+    expect(manager.getInstalledApps()[0]).not.toHaveProperty('toolsEnabled');
+    await manager.openApp(id);expect(control.boxes[0].config.toolsEnabled).toBe(false);
     const original = control.boxes[0];await manager.closeApp(id);await manager.openApp(id);await manager.reinitializeApp(id);
     expect(control.boxes).toHaveLength(3);expect(control.boxes.every(box => box.config.toolsEnabled === false)).toBe(true);
-    expect(control.boxes[2]).not.toBe(original);expect(manager.getAppStates()[0]).not.toHaveProperty('toolsEnabled');
+    expect(control.boxes[2]).not.toBe(original);expect(manager.getInstalledApps()[0]).not.toHaveProperty('toolsEnabled');
     await manager.cleanupAsync();
 });
 
@@ -99,7 +99,10 @@ it.each(['meta', 'worker', 'close'] as const)('B2 C13 App factory rejects a retu
     const manager = new AppManager(desktop), id = await manager.install('/app'), captured = control.boxes[0];
     let close: Promise<unknown> | undefined;
     control.create = () => {
-        if (change === 'meta') (manager as any).installedApps.set(id, { ...manager.getInstalledApps()[0] });
+        if (change === 'meta') {
+            const stored = (manager as any).installedApps;
+            stored.set(id, { ...stored.get(id) });
+        }
         if (change === 'worker') (manager as any).workers.set(id, { status: 'running' });
         if (change === 'close') close = manager.closeApp(id);
     };
@@ -110,8 +113,8 @@ it.each(['meta', 'worker', 'close'] as const)('B2 C13 App factory rejects a retu
 it('C05 immediate install capture precedes async startup, ID allocation and mutation', async () => {
     const manager = new AppManager(desktop), input: any = { toolsEnabled: false };
     const installing = manager.install('/app', input);input.toolsEnabled = true;
-    const id = await installing;expect(control.boxes[0].config.toolsEnabled).toBe(false);
+    await installing;expect(control.boxes[0].config.toolsEnabled).toBe(false);
     await expect(manager.install('/bad', { toolsEnabled: 'bad' as any })).rejects.toHaveProperty('code', 'TOOLS_ENABLED_INVALID');
     expect(control.boxes).toHaveLength(1);expect(manager.registerPendingApp({ modulePath: '/next' })).toBe('app_1');
-    expect(manager.getInstalledApps().find(app => app.appId === id)?.toolsEnabled).toBe(false);await manager.cleanupAsync();
+    await manager.cleanupAsync();
 });

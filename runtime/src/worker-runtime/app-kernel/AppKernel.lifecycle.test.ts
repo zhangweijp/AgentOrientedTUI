@@ -3,22 +3,22 @@ import { AppKernel } from './AppKernel.js';
 const defer = () => { let resolve!: () => void;const promise = new Promise<void>(yes => { resolve = yes; });return { promise, resolve }; };
 function fixture(initialize: (context: any) => Promise<any> | any, extra = {}) {
     let runtime: any;
-    const kernel = new AppKernel({ name: 'test', appName: 'test', factory: { async initialize(context: any) { runtime = context;return initialize(context); } }, ...extra } as any);
+    const kernel = new AppKernel({ appName: 'test_app', factory: { async initialize(context: any) { runtime = context;return initialize(context); } }, ...extra });
     kernel.setId('app' as any);
     const context = { appId: 'app', desktopId: 'd' };
     return { kernel, context, runtime: () => runtime, open: () => kernel.onOpen(context as any) };
 }
-it('injects the formal lifecycle port when a managed factory is initialized directly', async () => {
-    let runtime: any;
-    const kernel = new AppKernel({ name: 'test', appName: 'test', factory: {
-        appLifecycleSupport: 'app-lifecycle-v2',
-        async initialize(context: any) { runtime = context;return { close() {} }; },
-    } } as any);
-    kernel.setId('app' as any);
-    await kernel.onOpen({ appId: 'app', desktopId: 'd' } as any);
-    expect(runtime.appLifecycle).toMatchObject({ protocol: 'app-lifecycle-v2' });
-    const close = vi.fn();runtime.appLifecycle.register({ close });
-    await kernel.onClose();expect(close).toHaveBeenCalledTimes(1);
+it('passes the enabled lifecycle port to the App and waits for its cleanup', async () => {
+    const close = vi.fn();
+    const f = fixture(context => {
+        expect(context.appLifecycle).toMatchObject({ protocol: 'app-lifecycle-v2' });
+        context.appLifecycle.register({ close });
+        return { close() {} };
+    });
+    f.kernel.enableAppLifecycle();
+    await f.open();
+    await f.kernel.onClose();
+    expect(close).toHaveBeenCalledTimes(1);
 });
 it.each(['sync', 'async'])('C2-18 %s unmount failure still clears owned registries', async kind => {
     const f = fixture(context => {

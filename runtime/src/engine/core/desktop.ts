@@ -1,6 +1,6 @@
 import type { StateStorageBackend } from '../app/state-storage-host.js';
 import type { WorkerCapacity } from '../app/worker-capacity.js';
-import type { IDesktop, DesktopID, AppID, UpdateSignal, AppState, DesktopStatus, ILLMOutputChannelService, IRuntimeContext, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
+import type { IDesktop, DesktopID, AppID, UpdateSignal, AppDiscoveryInfo, DesktopStatus, ILLMOutputChannelService, IRuntimeContext, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
 import { createDesktopId } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import { SignalBus, type SignalListener } from './signal-bus.js';
@@ -43,7 +43,6 @@ export interface DesktopOptions {
 
 export class Desktop implements IDesktop {
     public readonly id: DesktopID;
-    public readonly createdAt: number;
 
     // [RFC-026] Runtime Context
     public readonly context?: IRuntimeContext;
@@ -80,7 +79,6 @@ export class Desktop implements IDesktop {
 
     constructor(id?: DesktopID, options?: DesktopOptions) {
         this.id = id ?? createDesktopId();
-        this.createdAt = Date.now();
         this.config = options?.runtimeConfig ?? RUNTIME_DEFAULTS;
         this.context = options?.context;
 
@@ -318,14 +316,10 @@ export class Desktop implements IDesktop {
         }
     }
 
-    getAppStates(): AppState[] {
-        return this.appManager.getAppStates();
-    }
-
     /**
      * 获取已安装应用列表
      */
-    getInstalledApps(): ReturnType<AppManager['getInstalledApps']> {
+    getInstalledApps(): readonly AppDiscoveryInfo[] {
         return this.appManager.getInstalledApps();
     }
 

@@ -9,9 +9,7 @@
 // Core identifiers, state values, results, errors, and notifications.
 export type {
     AppID,
-    AppState,
     DesktopID,
-    DesktopState,
     DesktopStatus,
     ViewID,
 } from './core/types.js';

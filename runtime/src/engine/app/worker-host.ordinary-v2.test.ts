@@ -118,8 +118,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
       alias: { '@aotui/sdk': join(sdk, 'dist/index.js') }, bundle: true, platform: 'node', format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent' });
     legacySdkAppFile = join(temporary, 'legacy-sdk-app.mjs');
     await writeFile(legacySdkAppFile, `export default {
-      displayName: 'legacy_sdk',
-      kernelConfig: { appName: 'legacy_sdk', name: 'legacy_sdk' },
+      kernelConfig: { appName: 'legacy_sdk' },
       persistenceSupport: 'state-session-v1',
       appLifecycleSupport: 'app-lifecycle-v2',
       initialize() { throw new Error('UNSUPPORTED_FACTORY_EXECUTED'); }

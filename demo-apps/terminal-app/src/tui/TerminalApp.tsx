@@ -238,7 +238,4 @@ export default createTUIApp({
     whatItIs: 'A multi-terminal shell application with command history, working directory tracking, and output tailing for LLM workflows.',
     whenToUse: 'Run shell commands in the project workspace, manage terminal sessions, and inspect command status and output.',
     component: TerminalRoot,
-    launchConfig: {
-        projectPath: process.env.PROJECT_PATH || process.argv[2] || ''
-    }
 });

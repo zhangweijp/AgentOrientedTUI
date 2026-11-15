@@ -8,8 +8,6 @@ describe('planning app factory', () => {
     });
 
     it('exposes canonical app_name metadata', () => {
-        const factory = PlanningAppFactory as { displayName?: string; kernelConfig?: { appName?: string } };
-        expect(factory.displayName).toBe('planning_app');
-        expect(factory.kernelConfig?.appName).toBe('planning_app');
+        expect(PlanningAppFactory.kernelConfig.appName).toBe('planning_app');
     });
 });

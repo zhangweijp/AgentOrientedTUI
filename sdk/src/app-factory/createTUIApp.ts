@@ -48,7 +48,7 @@ export async function mountPreactApp(RootComponent: ComponentType, container: HT
         toolOwners,
         appId: context.appId,
         desktopId: context.desktopId,
-        launchConfig: (context as { launchConfig?: Record<string, unknown> }).launchConfig,
+        launchConfig: context.launchConfig,
         refExporter: context.refExporter,
         persistence: context.persistence,
         appLifecycle: context.appLifecycle,

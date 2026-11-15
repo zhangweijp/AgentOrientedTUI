@@ -331,7 +331,7 @@ try {
 } finally {
     for (const context of contexts) release(context);
     await source?.dispose();
-    await runtime.shutdown('semantic-default-e2e');
+    await runtime.shutdown();
     if (server.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     const factsFile = process.argv[2];
     if (factsFile) await fs.writeFile(factsFile, JSON.stringify(facts, null, 2));

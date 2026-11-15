@@ -15,13 +15,10 @@ function createMockFactory(name: string): TUIAppFactory {
     return {
         persistenceSupport: 'state-session-v1',
         appLifecycleSupport: 'app-lifecycle-v2',
-        displayName: name,
         toolAuthoringProtocol: 'view-type-tools-v4',
         kernelConfig: {
             appName: name,
-            name,
             description: `${name} App`,
-            component: {},
         },
         initialize: vi.fn(async () => ({ close: vi.fn() })),
     };
@@ -282,9 +279,9 @@ describe('AppRegistry', () => {
             expect(isTUIAppFactory(factory)).toBe(true);
             expect(isTUIAppFactory({ manifest: { app_name: 'test' }, create: () => ({}) })).toBe(false);
             expect(isTUIAppFactory(() => ({}))).toBe(false);
-            expect(isTUIAppFactory({ displayName: 'test', kernelConfig: { appName: 'test' } })).toBe(false);
-            expect(isTUIAppFactory({ displayName: 'test', kernelConfig: {}, initialize() {} })).toBe(false);
-            expect(isTUIAppFactory({ displayName: '', kernelConfig: { appName: 'test' }, initialize() {} })).toBe(false);
+            expect(isTUIAppFactory({ ...factory, initialize: undefined })).toBe(false);
+            expect(isTUIAppFactory({ ...factory, kernelConfig: {} })).toBe(false);
+            expect(isTUIAppFactory({ ...factory, kernelConfig: { appName: '' } })).toBe(false);
             const { persistenceSupport: _persistence, ...withoutPersistence } = factory;
             const { appLifecycleSupport: _lifecycle, ...withoutLifecycle } = factory;
             expect(isTUIAppFactory(withoutPersistence)).toBe(false);

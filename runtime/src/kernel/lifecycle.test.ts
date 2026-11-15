@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Kernel } from './index.js';
 import { DesktopManager } from '../engine/core/manager.js'; // Use real Manager
-import { DesktopState, createDesktopId } from '../spi/index.js';
+import { createDesktopId } from '../spi/index.js';
 
 describe('Kernel Lifecycle Management', () => {
     let kernel: Kernel;
@@ -32,24 +32,6 @@ describe('Kernel Lifecycle Management', () => {
         });
     });
 
-    describe('serialize/restore', () => {
-        it('serialize throws NOT_FOUND for non-existent desktop', () => {
-            expect(() => kernel.serialize(createDesktopId('non_existent'))).toThrow(/not found/);
-        });
-
-        // [Worker-Only Migration] Tests removed:
-        // - 'serialize returns DesktopState with correct structure' - requires installApp
-        // - 'restore creates new desktop from state' - requires installApp
-        // - 'restore preserves app configuration' - requires installApp
-        //
-        // In Worker-Only architecture, use installDynamicWorkerApp instead.
-        // State serialization for Worker apps is handled differently.
-    });
-
-    // [Worker-Only Migration] 'integration: full lifecycle' test removed
-    // The old lifecycle (install static HTML -> serialize -> restore) is no longer supported.
-    // Worker-Only apps have different lifecycle patterns.
-
     describe('runtime shutdown', () => {
         it('shutdown is idempotent and rejects further Runtime requests', async () => {
             const id1 = await kernel.createDesktop();
@@ -58,8 +40,8 @@ describe('Kernel Lifecycle Management', () => {
             expect(desktopManager.get(id1)).toBeDefined();
             expect(desktopManager.get(id2)).toBeDefined();
 
-            await kernel.shutdown('service_stop');
-            await kernel.shutdown('service_stop');
+            await kernel.shutdown();
+            await kernel.shutdown();
 
             expect(desktopManager.get(id1)).toBeUndefined();
             expect(desktopManager.get(id2)).toBeUndefined();

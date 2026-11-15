@@ -57,7 +57,7 @@ describe('Worker accepts only the managed App factory contract', () => {
         });
     }
 
-    async function launch(appSource: string, requestedCapabilities = [SNAPSHOT_CAPABILITY] as readonly string[], appName?: string, config: Record<string, unknown> = {}) {
+    async function launch(appSource: string, requestedCapabilities = [SNAPSHOT_CAPABILITY] as readonly string[], appName?: string, config?: Record<string, unknown>) {
         const appScript = join(temp, `app-${Math.random().toString(36).slice(2)}.mjs`);
         await writeFile(appScript, appSource, 'utf8');
         const worker = new Worker(workerScript);
@@ -74,7 +74,7 @@ describe('Worker accepts only the managed App factory contract', () => {
             appModulePath: pathToFileURL(appScript).href,
             requestedCapabilities,
             ...(appName === undefined ? {} : { appName }),
-            config: { factoryContractMarker: 'launch-config', AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR!, ...config },
+            ...(config === undefined ? {} : { config }),
             persistence: { protocol: 'state-session-v1', version: 1, instanceId: appInstanceId,
                 limits: DEFAULT_STATE_SESSION_LIMITS, transport: DEFAULT_STATE_TRANSPORT_LIMITS },
             appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: appInstanceId },
@@ -98,8 +98,7 @@ describe('Worker accepts only the managed App factory contract', () => {
     });
 
     it('refuses a registered name that differs from the factory before rendering', async () => {
-        const { worker, init } = await launch(`export default { ${managedMarkers} displayName:'canonical',
-            kernelConfig: { name:'canonical', appName:'canonical' }, initialize() { throw Error('must not render'); } };`, [SNAPSHOT_CAPABILITY], 'alias');
+        const { worker, init } = await launch(`export default { ${managedMarkers} kernelConfig: { appName: 'canonical' }, initialize() { throw Error('must not render'); } };`, [SNAPSHOT_CAPABILITY], 'alias');
         try {
             expect(init).toMatchObject({ type: 'ERROR_RESPONSE', success: false, error: { code: 'APP_IDENTITY_MISMATCH' } });
             expect(init.error.message).toContain('INIT.appName');
@@ -111,16 +110,15 @@ describe('Worker accepts only the managed App factory contract', () => {
         ['legacy create factory', `export default { ${managedMarkers} create: () => ({ onOpen() {} }) };`],
         ['plain App instance export', `export default { ${managedMarkers} onOpen() {} };`],
         ['named app instance export', `export const app = { ${managedMarkers} onOpen() {} };`],
-        ['incomplete managed factory', `export default { ${managedMarkers} displayName: 'incomplete', kernelConfig: { name: 'incomplete', appName: 'incomplete' } };`],
-        ['named-only managed factory', `export const factory = { ${managedMarkers} displayName: 'named', kernelConfig: { name: 'named', appName: 'named' }, initialize() {} };`],
-        ['factory without kernel appName', `export default { ${managedMarkers} displayName: 'missing_name', kernelConfig: { name: 'missing_name' }, initialize() {} };`],
-        ['factory with empty kernel appName', `export default { ${managedMarkers} displayName: 'empty_name', kernelConfig: { name: 'empty_name', appName: '' }, initialize() {} };`],
-        ['factory with invalid kernel appName', `export default { ${managedMarkers} displayName: 'invalid_name', kernelConfig: { name: 'invalid_name', appName: 1 }, initialize() {} };`],
-        ['factory with empty displayName', `export default { ${managedMarkers} displayName: '', kernelConfig: { name: 'empty_display', appName: 'empty_display' }, initialize() {} };`],
-        ['factory missing persistence marker', `export default { appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', displayName: 'missing_persistence', kernelConfig: { appName: 'missing_persistence' }, initialize() {} };`],
-        ['factory with wrong persistence marker', `export default { persistenceSupport: 'state-session-v0', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', displayName: 'wrong_persistence', kernelConfig: { appName: 'wrong_persistence' }, initialize() {} };`],
-        ['factory missing lifecycle marker', `export default { persistenceSupport: 'state-session-v1', toolAuthoringProtocol: 'view-type-tools-v4', displayName: 'missing_lifecycle', kernelConfig: { appName: 'missing_lifecycle' }, initialize() {} };`],
-        ['factory with wrong lifecycle marker', `export default { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v1', toolAuthoringProtocol: 'view-type-tools-v4', displayName: 'wrong_lifecycle', kernelConfig: { appName: 'wrong_lifecycle' }, initialize() {} };`],
+        ['incomplete managed factory', `export default { ${managedMarkers} kernelConfig: { appName: 'incomplete' } };`],
+        ['named-only managed factory', `export const factory = { ${managedMarkers} kernelConfig: { appName: 'named' }, initialize() {} };`],
+        ['factory without kernel appName', `export default { ${managedMarkers} kernelConfig: {}, initialize() {} };`],
+        ['factory with empty kernel appName', `export default { ${managedMarkers} kernelConfig: { appName: '' }, initialize() {} };`],
+        ['factory with invalid kernel appName', `export default { ${managedMarkers} kernelConfig: { appName: 1 }, initialize() {} };`],
+        ['factory missing persistence marker', `export default { appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'missing_persistence' }, initialize() {} };`],
+        ['factory with wrong persistence marker', `export default { persistenceSupport: 'state-session-v0', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'wrong_persistence' }, initialize() {} };`],
+        ['factory missing lifecycle marker', `export default { persistenceSupport: 'state-session-v1', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'missing_lifecycle' }, initialize() {} };`],
+        ['factory with wrong lifecycle marker', `export default { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v1', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'wrong_lifecycle' }, initialize() {} };`],
     ])('rejects %s', async (_name, source) => {
         const { worker, init } = await launch(source);
         try {
@@ -131,10 +129,11 @@ describe('Worker accepts only the managed App factory contract', () => {
     });
 
     it.each([
-        ['missing', `export default { ${lifecycleMarkers} displayName: 'missing_authoring', kernelConfig: { appName: 'missing_authoring' }, initialize() {} };`],
-        ['retired v3', `export default { ${lifecycleMarkers} toolAuthoringProtocol: 'view-type-tools-v3', displayName: 'old_authoring', kernelConfig: { appName: 'old_authoring' }, initialize() {} };`],
-        ['wrong value', `export default { ${lifecycleMarkers} toolAuthoringProtocol: 'view-local-tools-v2', displayName: 'wrong_authoring', kernelConfig: { appName: 'wrong_authoring' }, initialize() {} };`],
-        ['accessor', `const factory = { ${lifecycleMarkers} displayName: 'accessor_authoring', kernelConfig: { appName: 'accessor_authoring' }, initialize() {} }; Object.defineProperty(factory, 'toolAuthoringProtocol', { get() { throw new Error('authoring accessor invoked'); } }); export default factory;`],
+        ['missing', `export default { ${lifecycleMarkers} kernelConfig: { appName: 'missing_authoring' }, initialize() {} };`],
+        ['retired v2', `export default { ${lifecycleMarkers} toolAuthoringProtocol: 'view-type-tools-v2', kernelConfig: { appName: 'old_authoring' }, initialize() {} };`],
+        ['retired v3', `export default { ${lifecycleMarkers} toolAuthoringProtocol: 'view-type-tools-v3', kernelConfig: { appName: 'old_authoring' }, initialize() {} };`],
+        ['wrong value', `export default { ${lifecycleMarkers} toolAuthoringProtocol: 'view-local-tools-v2', kernelConfig: { appName: 'wrong_authoring' }, initialize() {} };`],
+        ['accessor', `const factory = { ${lifecycleMarkers} kernelConfig: { appName: 'accessor_authoring' }, initialize() {} }; Object.defineProperty(factory, 'toolAuthoringProtocol', { get() { throw new Error('authoring accessor invoked'); } }); export default factory;`],
     ])('rejects %s tool authoring protocol before factory initialization', async (_name, source) => {
         const { worker, init } = await launch(source);
         try {
@@ -145,23 +144,23 @@ describe('Worker accepts only the managed App factory contract', () => {
         }
     });
 
-    it('initializes the managed object factory with launchConfig and without a global fallback', async () => {
+    it.each([undefined, { projectPath: '/fixture/project', AOTUI_APP_KEY: 'host_key' }])(
+        'passes the Host launchConfig to the managed factory as supplied (%j)', async config => {
         const { worker, init, appInstanceId } = await launch(`
             export default {
                 persistenceSupport: 'state-session-v1',
                 appLifecycleSupport: 'app-lifecycle-v2',
                 toolAuthoringProtocol: 'view-type-tools-v4',
-                displayName: 'managed',
-                kernelConfig: { name: 'managed', appName: 'managed' },
+                kernelConfig: { appName: 'managed', launchConfig: { projectPath: 'retired-default' } },
                 async initialize(context) {
-                    if (context.launchConfig?.factoryContractMarker !== 'launch-config') throw new Error('LAUNCH_CONFIG_MISSING');
+                    if (JSON.stringify(context.launchConfig) !== ${JSON.stringify(JSON.stringify(config))}) throw new Error('WRONG_LAUNCH_CONFIG');
                     if (Object.hasOwn(globalThis, '__AOTUI_APP_CONFIG__')) throw new Error('GLOBAL_CONFIG_FALLBACK_PRESENT');
                     context.projection.beginCommit();
                     if (context.projection.endCommit() !== 'prepared') throw Error('EMPTY_PROJECTION_NOT_PREPARED');
                     return { close() {} };
                 },
             };
-        `);
+        `, undefined, 'managed', config);
         try {
             expect(init).toMatchObject({
                 type: 'INIT_RESPONSE', success: true, appInstanceId,

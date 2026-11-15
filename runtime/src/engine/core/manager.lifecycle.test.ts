@@ -10,7 +10,7 @@ describe('DesktopManager admission and captured identity', () => {
         const old = manager.get('one')!, handle = manager.beginDesktopShutdown('one');
         expect(manager.beginDesktopShutdown('one')).toBe(handle);await expect(manager.create('one')).rejects.toMatchObject({ code: 'DESKTOP_ALREADY_EXISTS' });
         await handle.completion;await Promise.resolve();await manager.create('one');expect(manager.get('one')).not.toBe(old);
-        await manager.shutdown();
+        expect(await manager.beginShutdown().completion).toMatchObject({ ok: true, resourcesReleased: true });
     });
     it('shutdown starts every Desktop independently and closes Manager and pool admission in the same turn', async () => {
         const manager = new DesktopManager();await manager.create('held');await manager.create('other');
@@ -45,10 +45,12 @@ describe('DesktopManager admission and captured identity', () => {
         const original = old.beginClose!.bind(old);vi.spyOn(old, 'beginClose').mockReturnValue(createCloseHandle(report, completion));const destroying = manager.beginDesktopShutdown('same');
         // Force the impossible-under-public-API replacement to exercise the identity guard.
         (manager as any).desktops.delete('same');await manager.create('same');const next = manager.get('same');
-        release();await destroying.completion;expect(manager.get('same')).toBe(next);await original().completion;await manager.shutdown();
+        release();await destroying.completion;expect(manager.get('same')).toBe(next);await original().completion;
+        expect(await manager.beginShutdown().completion).toMatchObject({ ok: true, resourcesReleased: true });
     });
     it('missing ID has no historical resources or Desktop count', async () => {
         const manager = new DesktopManager(), report = await manager.beginDesktopShutdown('missing').completion;
-        expect(report).toMatchObject({ found: false, ok: true, desktops: { accepted: 0, settled: 0 }, apps: { accepted: 0 } });await manager.shutdown();
+        expect(report).toMatchObject({ found: false, ok: true, desktops: { accepted: 0, settled: 0 }, apps: { accepted: 0 } });
+        expect(await manager.beginShutdown().completion).toMatchObject({ ok: true, resourcesReleased: true });
     });
 });
