@@ -38,7 +38,7 @@ describe("W06 native exclusive workspace creator", () => {
     expect(result.data).not.toHaveProperty("content");
   });
   test.each(["none", "partial"] as const)(
-    "preserves known failed effects: %s",
+    "keeps the business failure message without exposing the internal %s category",
     (effects) => {
       expect(
         mapWorkspaceFileCreationResult({
@@ -53,7 +53,6 @@ describe("W06 native exclusive workspace creator", () => {
           code: "RESOURCE_WRITE_FAILED",
           message: "File creation left partial effects",
         },
-        effects,
       });
     },
   );

@@ -10,11 +10,11 @@ const fixture = () => {
   const c = compileOrdinarySchema({ type: 'object', properties: { q: { type: 'string', maxLength: 1 } }, required: ['q'], additionalProperties: false }, 'view-type-parameters-v1');
   if (!c.ok) throw Error('Fixture');
   const execution = { kind: 'view-type' as const, activationId: 'activation' };
-  return { ...header, type: 'VIEW_TOOL_INVOKE_V4', argumentMode: 'view-type-parameters-v1', snapshotId: 's', rawArgs: { q: '😀' }, effectiveArgs: { q: '😀' }, refSources: [], execution,
+  return { ...header, type: 'VIEW_TOOL_INVOKE_V5', argumentMode: 'view-type-parameters-v1', snapshotId: 's', rawArgs: { q: '😀' }, effectiveArgs: { q: '😀' }, refSources: [], execution,
     tool: { id: 'tool', name: 'find', viewType: 'File', description: 'Find', 
       inputSchema: ordinaryParameterProfile(c.contract), execution } };
 };
-describe('R10 precise qualified V4 message grammar', () => {
+describe('R10 precise qualified V5 message grammar', () => {
   it('captures the canonical immutable request and terminal', () => {
     const input = fixture(), message = captureTypeParametersRequest(input);
     expect(message).toEqual(input); expect(message).not.toBe(input); expect(Object.isFrozen(message.rawArgs)).toBe(true);
@@ -23,9 +23,10 @@ describe('R10 precise qualified V4 message grammar', () => {
     const response = typeParametersResponse(header, terminal);
     expect(captureTypeParametersTerminal(response, header)).toEqual(terminal);
   });
-  it.each(['type', 'mode', 'extra', 'missing', 'execution', 'nonjson', 'argument-bytes', 'whole-bytes'])('rejects request %s', kind => {
+  it.each(['type', 'retired-v4', 'mode', 'extra', 'missing', 'execution', 'nonjson', 'argument-bytes', 'whole-bytes'])('rejects request %s', kind => {
     const message: any = fixture();
     if (kind === 'type') message.type = 'VIEW_TOOL_INVOKE_ORDINARY_V2';
+    if (kind === 'retired-v4') message.type = 'VIEW_TOOL_INVOKE_V4';
     if (kind === 'mode') message.argumentMode = 'ordinary-v1';
     if (kind === 'extra') message.extra = true;
     if (kind === 'missing') delete message.snapshotId;
@@ -63,17 +64,15 @@ describe('R10 precise qualified V4 message grammar', () => {
     expect(captured.tool).not.toHaveProperty('isMutating'); expect(validateTypeParameters(captured).success).toBe(true);
     expect(captured).not.toHaveProperty('resource'); expect(captured).not.toHaveProperty('resourceRefId');
   });
-  it.each(['none', 'partial'] as const)('preserves application-declared %s failure effects', failureEffects => {
-    const terminal = { phase: 'entered-returned' as const, result: { success: false, error: { code: 'APP_FAILED', message: 'Failed' } }, failureEffects };
-    expect(captureTypeParametersTerminal(typeParametersResponse(header, terminal), header)).toEqual(terminal);
-  });
-  it.each(['success', 'not-entered', 'invalid', 'raw-result'] as const)('rejects invalid effect placement: %s', kind => {
+  it.each(['retired-v4', 'terminal-field', 'result-field', 'getter'] as const)('rejects an incompatible response: %s', kind => {
     const response: any = JSON.parse(JSON.stringify(typeParametersResponse(header, { phase: 'entered-returned', result: { success: false, error: { code: 'BUSINESS', message: 'Expected failure' } } })));
-    response.terminal.failureEffects = kind === 'invalid' ? 'all' : 'none';
-    if (kind === 'success') response.terminal.result.success = true;
-    if (kind === 'not-entered') response.terminal.phase = 'not-entered';
-    if (kind === 'raw-result') { delete response.terminal.failureEffects; response.terminal.result.effects = 'none'; }
+    let reads = 0;
+    if (kind === 'retired-v4') response.type = 'VIEW_TOOL_INVOKE_V4_RESPONSE';
+    if (kind === 'terminal-field') response.terminal.failureEffects = 'none';
+    if (kind === 'result-field') response.terminal.result.effects = 'none';
+    if (kind === 'getter') Object.defineProperty(response.terminal.result, 'effects', { enumerable: true, get() { reads++; return 'none'; } });
     expect(captureTypeParametersTerminal(response, header)).toBeNull();
+    expect(reads).toBe(0);
   });
 
 });

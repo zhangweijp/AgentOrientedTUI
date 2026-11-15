@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { RAW_TOOL_ARGUMENT_LIMITS, RESOLVED_TOOL_ARGUMENT_LIMITS } from '../snapshot/snapshot-support.js';
 import { compileOrdinarySchema } from './ordinary-parameter-contract.js';
 import { compileOrdinaryProfile, ordinaryParameterProfile } from './ordinary-parameter-profile.js';
 
@@ -101,13 +102,13 @@ describe('Ref parameters in the shared qualified compiler', () => {
         const a = compile(schema({ file: ref(), z: { type: 'string' } }));
         const b = compile(schema({ z: { type: 'string' }, file: ref() })); expect(a.fingerprint).toBe(b.fingerprint);
     });
-    it('uses the shared input budgets for the complete raw and expanded arguments', () => {
+    it('enforces each node limit for the complete raw and resolved arguments', () => {
         const c = compile(schema({ file: ref() }, ['file'], true));
-        expect(c.validateModelInput!({ file: 'File:a', nodes: Array(9997).fill(null) }).ok).toBe(true);
-        expect(c.validateModelInput!({ file: 'File:a', nodes: Array(9998).fill(null) }).ok).toBe(false);
-        expect(c.validateResolvedInput!({ file: {}, nodes: Array(9997).fill(null) }).ok).toBe(true);
-        expect(c.validateResolvedInput!({ file: {}, nodes: Array(9998).fill(null) }).ok).toBe(false);
-        // Depth and both byte metrics are also exercised at exact boundaries by
-        // ordinary-parameter-contract P10 and snapshot-value-arguments W01 T07.
+        const rawItemsAtLimit = RAW_TOOL_ARGUMENT_LIMITS.maxNodes - 3;
+        const resolvedItemsAtLimit = RESOLVED_TOOL_ARGUMENT_LIMITS.maxNodes - 3;
+        expect(c.validateModelInput!({ file: 'File:a', nodes: Array(rawItemsAtLimit).fill(null) }).ok).toBe(true);
+        expect(c.validateModelInput!({ file: 'File:a', nodes: Array(rawItemsAtLimit + 1).fill(null) }).ok).toBe(false);
+        expect(c.validateResolvedInput!({ file: {}, nodes: Array(resolvedItemsAtLimit).fill(null) }).ok).toBe(true);
+        expect(c.validateResolvedInput!({ file: {}, nodes: Array(resolvedItemsAtLimit + 1).fill(null) }).ok).toBe(false);
     });
 });

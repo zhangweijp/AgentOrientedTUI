@@ -1,11 +1,11 @@
 export const ORDINARY_PARAMETER_REVISION = 'ordinary-params-v1' as const;
 export const VIEW_TYPE_PARAMETERS_MODE = 'view-type-parameters-v1' as const;
-import { canonicalJson, copyJson, SnapshotDataError, utf8Size } from '../snapshot/json.js';
+import { canonicalJson, copyJson, JsonCopyLimitError, SnapshotDataError, utf8Size } from '../snapshot/json.js';
 import type { JsonValue } from '../snapshot/types.js';
 import { RAW_TOOL_ARGUMENT_LIMITS as INPUT, RESOLVED_TOOL_ARGUMENT_LIMITS } from '../snapshot/snapshot-support.js';
 
 type JsonObject = Readonly<Record<string, JsonValue>>;
-type DeclarationCode = 'PARAMETER_DECLARATION_INVALID' | 'PARAMETER_DECLARATION_UNSUPPORTED';
+type DeclarationCode = 'PARAMETER_DECLARATION_INVALID' | 'PARAMETER_DECLARATION_UNSUPPORTED' | 'PARAMETER_DECLARATION_CAPACITY';
 export type ParameterDiagnostic = Readonly<{ parameter?: string; path?: string; message: string }>;
 export type OrdinaryValidation =
   | Readonly<{ ok: true; value: JsonObject }>
@@ -56,7 +56,9 @@ function kind(value: JsonValue | undefined, allowed: readonly string[], path = '
 }
 function bounded(input: unknown, limits: typeof DECLARATION): JsonValue {
   const value = copyJson(input, limits);
-  if (utf8Size(canonicalJson(value)) > limits.maxApproxBytes) invalid();
+  if (utf8Size(canonicalJson(value)) > limits.maxApproxBytes) {
+    throw new DeclarationError('PARAMETER_DECLARATION_CAPACITY', 'Canonical JSON byte budget exceeded.', '$');
+  }
   return value;
 }
 type ValueIssue = Readonly<{ path: string; message: string }>;
@@ -247,6 +249,9 @@ function compileValue(field: JsonValue, path: string, position: Position, allowR
 }
 
 function declarationIssue(error: unknown) {
+  if (error instanceof JsonCopyLimitError) {
+    return Object.freeze({ code: 'PARAMETER_DECLARATION_CAPACITY' as const, message: error.message, path: diagnosticPath(error.path) });
+  }
   return Object.freeze({
     code: error instanceof DeclarationError ? error.code : 'PARAMETER_DECLARATION_INVALID' as const,
     message: error instanceof DeclarationError ? error.message : 'Expected a valid bounded ordinary parameter declaration.',
@@ -319,6 +324,8 @@ function compile(input: unknown, convert: (captured: JsonValue) => JsonObject, a
 }
 
 /** Derive the model descriptor without walking defaults, constants, or property names as keywords. */
+export function modelToolSchema(input: JsonObject): JsonObject;
+export function modelToolSchema(input: JsonValue): JsonValue;
 export function modelToolSchema(input: JsonValue): JsonValue {
   if (!object(input)) return input;
   const schema = Object.fromEntries(Object.entries(input).flatMap(([key, value]) => {

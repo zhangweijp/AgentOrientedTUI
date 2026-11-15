@@ -1,6 +1,5 @@
-import { ORDINARY_INVOCATION_MODE } from '../tool/invocation-terminal.js';
 import { VIEW_TYPE_PARAMETERS_MODE } from '../tool/ordinary-parameter-contract.js';
-/** Internal Core contracts; no root package export. */
+/** Core owns these contracts. The Runtime root also exposes the Host-facing types. */
 import type { AppSnapshotV3, JsonValue, ObservedToolExecutionV3, ToolDescriptorV3 } from '../snapshot/types.js';
 import type { Observation, ObservedView, ObservationSelection, ObservationGrant, ObservationSource, ObservationRegistryStats, ObservationJsonLimits } from './observation-types.js';
 import type { SnapshotValueRefSource } from '../tool/snapshot-value-arguments.js';
@@ -14,21 +13,26 @@ export interface CancellationSignal {
 }
 import type { ToolResultData } from '../../spi/core/tool-result.js';
 export type { ToolResultData } from '../../spi/core/tool-result.js';
+export const ORDINARY_EXECUTION_MODE = 'ordinary-v2' as const;
 export type ExecutionPhase = 'not-entered' | 'entered-returned';
 export type BusinessDetails = Readonly<{kind:'tool-result'; phase:ExecutionPhase; result:ToolResultData}>;
 export type InvocationOutcome =
   | Readonly<{status:'succeeded'; value:JsonValue}>
   | Readonly<{status:'rejected'; code:string; message:string; path?:string; details?:BusinessDetails}>
-  | Readonly<{status:'failed'; code:string; message:string; effects:'none'|'partial'; details?:BusinessDetails}>
+  | Readonly<{status:'failed'; code:string; message:string; details?:BusinessDetails}>
   | Readonly<{status:'unknown'; code:string; message:string; details?:BusinessDetails}>;
 export type ExecutionFact =
-  | Readonly<{kind:'tool-result'; phase:ExecutionPhase; result:ToolResultData; failureEffects?:'none'|'partial'}>
+  | Readonly<{kind:'tool-result'; phase:ExecutionPhase; result:ToolResultData}>
   | Readonly<{kind:'unknown'}>;
 export interface AppInvocation {
   readonly invocationId:string;
   readonly observationId:string;
   readonly bindingId:string;
   readonly input:JsonObject;
+}
+export interface ReceiptQuery {
+  readonly observationId: string;
+  readonly invocationId: string;
 }
 export interface InvocationSource {
   readonly appId:string;
@@ -79,7 +83,7 @@ export interface ExecutionBindingBase {
   isLive(source:InvocationSource):LiveCheck;
   execute(context:InvocationContext):ExecutionFact|Promise<ExecutionFact>;
 }
-export type ExecutionBinding = ExecutionBindingBase & Readonly<{mode:typeof ORDINARY_INVOCATION_MODE|typeof VIEW_TYPE_PARAMETERS_MODE}>;
+export type ExecutionBinding = ExecutionBindingBase & Readonly<{mode:typeof ORDINARY_EXECUTION_MODE|typeof VIEW_TYPE_PARAMETERS_MODE}>;
 export interface ExecutionResolver {
   /** Stable identity/function references for one live registered callable. */
   resolve(source:InvocationSource):ExecutionBinding|null;
@@ -97,7 +101,7 @@ export interface AppInteraction {
   /** A waiting deadline bounds this invocation's wait without ending dispatched work. */
   invoke(request:unknown, timeoutMs?:number):Promise<InvokeResult>;
   /** Authorize and read a matching original invocation, without admitting execution. */
-  readReceipt(request:unknown, timeoutMs?:number):Promise<ReceiptAccess>;
+  readReceipt(query: ReceiptQuery, timeoutMs?:number):Promise<ReceiptAccess>;
   releaseObservation(observationId:string):void;
 }
 export interface AppInteractionSource {
@@ -143,7 +147,6 @@ export interface InteractionStats {
   readonly issue?:Issue;
 }
 export interface InstanceInteraction extends AppInteraction {
-  sweepExpired():InteractionStats;
   inspect():InteractionStats;
   close():InteractionStats;
   whenClosed():Promise<void>;

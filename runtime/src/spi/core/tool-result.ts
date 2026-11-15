@@ -7,12 +7,12 @@ export type ToolError = {
     readonly message: string;
     readonly context?: JsonObject;
 };
-type Success = Readonly<{ success: true; data?: JsonObject; error?: never; effects?: never }>;
-type Failure = Readonly<{ success: false; error: ToolError; data?: JsonObject; effects?: 'none' | 'partial' }>;
-/** A short receipt; omitted failure effects mean that business effects are unknown. */
+type Success = Readonly<{ success: true; data?: JsonObject; error?: never }>;
+type Failure = Readonly<{ success: false; error: ToolError; data?: JsonObject }>;
+/** A short application receipt. */
 export type ToolResult = Success | Failure;
-/** Captured result envelope. Failure effects travel beside it in the execution terminal. */
-export type ToolResultData = Success | Readonly<Omit<Failure, 'effects'> & { effects?: never }>;
+/** The same result shape at the bounded JSON transport boundary. */
+export type ToolResultData = ToolResult;
 
 /** Validate a result after the existing boundary has captured it as bounded JSON. */
 export function isToolResultData(value: unknown): value is ToolResultData {

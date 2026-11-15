@@ -92,4 +92,4 @@ export type { AppMetadata } from './app/app-metadata.js';
 export { VIEW_TYPE_TOOL_PROTOCOL } from './runtime/app-type-tools.interface.js';
 export { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION } from './runtime/app-lifecycle.interface.js';
 export { STATE_SESSION_PROTOCOL, STATE_SESSION_VERSION } from './runtime/state-persistence.interface.js';
-export { SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY } from './worker-protocol/types.js';
+export { SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY } from './worker-protocol/types.js';

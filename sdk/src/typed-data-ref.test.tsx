@@ -6,7 +6,7 @@ import Type from 'typebox';
 import { compileOrdinarySchema } from '@aotui/runtime/core';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 import { createTUIApp, View, useDataRef, refParam, defineViewTypeTool } from './index.js';
-import { refParam as toolsRefParam } from './tools.js';
+import { refParam as plainRefParam } from './app.js';
 
 function setup(Content: () => any) {
  const factory = createTUIApp({ app_name: 'typed_refs', component: () => h(View, {kind: 'state',id:'detail',type:'Detail'},h(Content, {})) });
@@ -20,7 +20,7 @@ const define=(parameter:any)=>defineViewTypeTool({viewType:'Detail',name:'edit',
 
 describe('typed single-object Ref',()=>{
  it('shares refParam implementation across public entries and preserves the business Schema witness',()=>{
-   expect(toolsRefParam).toBe(refParam);
+   expect(plainRefParam).toBe(refParam);
    const parameter=refParam('Plan',schema);
    expect(parameter['x-aotui-ref-value']).toBe(schema);
    expect(parameter).toMatchObject({type:'string',minLength:1,'x-aotui-ref-kind':'Plan'});
@@ -92,6 +92,14 @@ describe('typed single-object Ref',()=>{
    let reads=0;const getterSchema=Object.create(null);Object.defineProperty(getterSchema,'type',{enumerable:true,get(){reads++;throw new Error('probe-sentinel');}});
    const parameter=refParam('Plan',getterSchema);expect(reads).toBe(0);
    expect(()=>define(parameter)).toThrow(expect.objectContaining({code:'TOOL_SCHEMA_INVALID'}));expect(reads).toBe(0);
+ });
+ it('reports a standalone Ref schema copy limit at publication without registering the value', async () => {
+   const schema = Type.Array(Type.Number(), { default: Array(3_000).fill(0) });
+   const x = setup(() => { useDataRef('values', [], { refType: 'Numbers', schema }); return null; });
+   try {
+     await expect(x.open()).rejects.toMatchObject({ code: 'TOOL_SCHEMA_CAPACITY', path: expect.stringContaining('default') });
+     expect(x.kernel.getViewRefs()).toEqual([]);
+   } finally { await x.close(); }
  });
  it('captures arrays of Ref names and preserves exact resolved value witnesses',()=>{
    const input=Type.Object({plans:Type.Array(refParam('Plan',schema),{maxItems:3}),

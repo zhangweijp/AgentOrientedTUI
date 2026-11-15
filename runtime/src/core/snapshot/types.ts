@@ -188,7 +188,10 @@ export interface SnapshotLimits {
 
 export interface SnapshotStoreOptions {
     readonly now?: () => number;
-    readonly limits?: Partial<SnapshotLimits>;
+    /** Captured at Core creation. Omitted or undefined fields use their defaults.
+     * Overrides are safe integers from zero to their default, inclusive.
+     * Invalid property shapes throw TypeError; invalid values throw RangeError. */
+    readonly limits?: Partial<{ [Field in keyof SnapshotLimits]: SnapshotLimits[Field] | undefined }> | undefined;
     readonly maxHistoryEntries?: number;
     readonly maxHistoryBytes?: number;
     readonly historyTtlMs?: number;

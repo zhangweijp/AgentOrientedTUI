@@ -1,6 +1,6 @@
 {
   "name": "@aotui/runtime",
-  "version": "7.0.0-srt.1",
+  "version": "7.0.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

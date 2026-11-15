@@ -1,4 +1,4 @@
-import { SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY } from '../../spi/worker-protocol/types.js';
+import { SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY } from '../../spi/worker-protocol/types.js';
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
@@ -69,7 +69,7 @@ describe('Worker Host owns exactly one application initialization', () => {
     it.each([{ name: 'default capability set', interactionModes: undefined }, ...modes])('claims the $name opportunity before the first INIT waits', async ({ interactionModes }) => {
         const { host, worker } = make({ interactionModes }); const first = host.start(); const init = worker.last;
         expect(init.requestedCapabilities).toEqual(interactionModes?.length === 0
-            ? [SNAPSHOT_CAPABILITY] : [SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY]);
+            ? [SNAPSHOT_CAPABILITY] : [SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY]);
         expect((host as any).pendingRequests.size).toBe(1); expect(vi.getTimerCount()).toBe(1);
         await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
         expect((host as any).pendingRequests.size).toBe(1); expect(vi.getTimerCount()).toBe(1);
@@ -97,7 +97,7 @@ describe('Worker Host owns exactly one application initialization', () => {
             savedListener({ type: 'INIT_RESPONSE', requestId: init.requestId, success: true,
                 appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: host.appInstanceId },
                 persistence: { protocol: 'state-session-v1', version: 1, instanceId: host.appInstanceId },
-                acceptedCapabilities: [PARAMETERS_V4_CAPABILITY], appInstanceId: host.appInstanceId });
+                acceptedCapabilities: [PARAMETERS_V5_CAPABILITY], appInstanceId: host.appInstanceId });
             savedListener({ type: 'SNAPSHOT_PREPARED', draft: draft(host, 2) });
             expect(host.hasOrdinaryParametersCapability()).toBe(false); expect(host.getSemanticSnapshotReport()).toEqual(retired);
             await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');
@@ -120,11 +120,11 @@ describe('Worker Host owns exactly one application initialization', () => {
         await expect(starting).rejects.toThrow('WORKER_CAPABILITY_UNAVAILABLE');
         expect(host.hasOrdinaryParametersCapability()).toBe(false);clean(host);
     });
-    it('accepts a requested qualified V4 capability', async () => {
+    it('accepts a requested qualified V5 capability', async () => {
         const { host, worker } = make({ interactionModes: ['view-type-parameters-v1'] });
         const starting = host.start();
         const init = worker.last;
-        const ack = initAck(host, init, [SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY]);
+        const ack = initAck(host, init, [SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY]);
         worker.emit('message', { ...ack, type: 'UNSUPPORTED_RESPONSE' });
         expect((host as any).pendingRequests.has(init.requestId)).toBe(true);
         worker.emit('message', ack);
@@ -135,7 +135,7 @@ describe('Worker Host owns exactly one application initialization', () => {
     it.each([
         { label: 'duplicate ACK entries', accepted: [SNAPSHOT_CAPABILITY, SNAPSHOT_CAPABILITY], code: 'WORKER_CAPABILITY_INVALID' },
         { label: 'unknown capability', accepted: ['view-tool-future-invoke/v9'], code: 'WORKER_CAPABILITY_UNSUPPORTED' },
-        { label: 'an unrequested valid capability', accepted: [SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY], code: 'WORKER_CAPABILITY_ACK_INVALID' },
+        { label: 'an unrequested valid capability', accepted: [SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY], code: 'WORKER_CAPABILITY_ACK_INVALID' },
         { label: 'retired V2 capability', accepted: ['view-tool-ordinary-invoke/v2'], code: 'WORKER_CAPABILITY_UNSUPPORTED' },
         { label: 'retired V3 capability', accepted: ['view-tool-ref-invoke/v3'], code: 'WORKER_CAPABILITY_UNSUPPORTED' },
         { label: 'a malformed ACK', accepted: { capabilities: [] }, code: 'WORKER_CAPABILITY_INVALID' },

@@ -27,7 +27,7 @@ AppTools({ definition: defineToolSet({ edit: definition }), bindings: { edit: { 
 
 const existing = async (args: { readonly filePath: string; readonly content: string }): Promise<import('@aotui/runtime/spi').ToolResult> => args.filePath.length > 0
   ? { success: true }
-  : { success: false, error: { code: 'PATH_REQUIRED', message: 'Choose a path.' }, effects: 'none' };
+  : { success: false, error: { code: 'PATH_REQUIRED', message: 'Choose a path.' } };
 const write = defineViewTypeTool({
   viewType: 'FileDetail', name: 'write_file', description: 'Replace content.',
   inputSchema: Type.Object({ filePath: Type.String(), content: Type.String() }),

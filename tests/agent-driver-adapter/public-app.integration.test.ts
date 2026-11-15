@@ -124,6 +124,9 @@ function request(observation: Observation, name: string, input: Readonly<Record<
 
 it.each(adapters)('loads and exercises the published %s SDK App through manifest and fresh Worker', async adapter => {
     const name = 'work_' + adapter;
+    const selectedId = 'billing_export_2026_11', otherId = 'b';
+    const selectedRef = selectedId + '.selected', otherRef = otherId + '.selected';
+    const itemRef = (index?: number) => selectedId + '.items' + (index === undefined ? '' : '[' + index + ']');
     const traceFile = join(consumer, name + '.trace'), gate = (which: string) => join(consumer, name + '-' + which);
     const folder = await appFolder(name, `
 import { appendFileSync, existsSync } from 'node:fs';
@@ -165,28 +168,28 @@ export default factory;
         const client = interaction(runtime, desktopId, appId);
         let current = await observe(client), serial = 0;
         const originalInstance = current.source.instanceId;
-        const originalView = current.views.find(view => view.id === 'item_a')!.viewInstanceId;
+        const originalView = current.views.find(view => view.id === selectedId)!.viewInstanceId;
         const call = (tool: string, input: Readonly<Record<string, JsonValue>>) => client.invoke(request(current, tool, input, 'work-' + ++serial));
         const success = (reply: Awaited<ReturnType<typeof call>>) => {
             expect(reply).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { success: true } } } });
             expect(JSON.stringify(reply)).not.toContain('Inspections:');
         };
-        expect(current.views.filter(view => view.type === 'Item')).toHaveLength(2);
+        expect(current.views.filter(view => view.type === 'Item').map(view => view.id)).toEqual([otherId, selectedId]);
         expect(current.tools.filter(tool => tool.name === 'inspect')).toHaveLength(1);
-        expect(body(current, 'item_a')).toContain('[Selected \\[work\\] \\\\ item](Data:selected)');
-        expect(current.refs.filter(ref => ref.viewId === 'item_a').map(ref => ref.refId)).toEqual(expect.arrayContaining(['items', 'items[0]', 'items[4]']));
+        expect(body(current, selectedId)).toContain('[Selected \\[work\\] \\\\ item](Data:selected)');
+        expect(current.refs.filter(ref => ref.viewId === selectedId).map(ref => ref.refId)).toEqual(expect.arrayContaining(['items', 'items[0]', 'items[4]']));
 
-        success(await call('inspect', { selected: 'item_a.selected', text: '$value view.items[0]', elements: ['item_a.items[0]', 'item_a.items[1]', 'item_a.items[2]'] }));
+        success(await call('inspect', { selected: selectedRef, text: '$value view.items[0]', elements: [itemRef(0), itemRef(1), itemRef(2)] }));
         current = await observe(client);
         expect(body(current)).toContain('{"selected":null,"elements":[0,false,""],"text":"$value view.items[0]","readonly":true}');
-        for (const [selected, value] of [['item_b.selected', 'false'], ['item_a.items[2]', '""'], ['item_a.items[3]', 'null'],
-            ['item_a.items[4]', '{"nested":[1,[false]]}'], ['item_a.items', '[0,false,"",null,{"nested":[1,[false]]}]']]) {
+        for (const [selected, value] of [[otherRef, 'false'], [itemRef(2), '""'], [itemRef(3), 'null'],
+            [itemRef(4), '{"nested":[1,[false]]}'], [itemRef(), '[0,false,"",null,{"nested":[1,[false]]}]']]) {
             success(await call('inspect', { selected: selected! }));
             current = await observe(client);
             expect(body(current)).toContain('"selected":' + value);
             expect(body(current)).not.toContain('"text":');
         }
-        expect(await call('count', { selected: 'item_b.selected' })).toMatchObject({ receipt: { executionPhase: 'not-dispatched',
+        expect(await call('count', { selected: otherRef })).toMatchObject({ receipt: { executionPhase: 'not-dispatched',
             outcome: { status: 'rejected', code: 'REF_VALUE_UNSUPPORTED', path: '$.selected' } } });
         expect(await call('update', { operation: 'reset', options: { mode: 'keep', numbers: [1, 9] } })).toMatchObject({
             receipt: { executionPhase: 'not-dispatched', outcome: { code: 'TOOL_INVALID_ARGS', path: '$.options.numbers[1]' } },
@@ -222,18 +225,18 @@ export default factory;
         current = await observe(client);
         const reset = request(current, 'update', { operation: 'reset', options: { mode: 'keep', numbers: [1, null] } }, 'reset');
         success(await client.invoke(reset)); success(await client.invoke(reset));
-        success(await call('inspect', { selected: 'item_a.selected' }));
+        success(await call('inspect', { selected: selectedRef }));
         current = await observe(client);
         expect(body(current)).toContain('"selected":null');
-        success(await call('count', { selected: 'item_a.selected' }));
+        success(await call('count', { selected: selectedRef }));
         success(await call('update', { operation: 'null' })); current = await observe(client);
-        success(await call('inspect', { selected: 'item_a.selected' })); current = await observe(client);
+        success(await call('inspect', { selected: selectedRef })); current = await observe(client);
         expect(body(current)).toContain('"selected":null');
         success(await call('update', { operation: 'reset' })); current = await observe(client);
-        success(await call('count', { selected: 'item_a.selected' }));
+        success(await call('count', { selected: selectedRef }));
 
         for (const [operation, issue] of [
-            ['invalid', { code: 'SNAPSHOT_INVALID', path: 'Ref item_a.selected $', message: 'Value does not match any declared alternative.' }],
+            ['invalid', { code: 'SNAPSHOT_INVALID', path: 'Ref ' + selectedRef + ' $', message: 'Value does not match any declared alternative.' }],
             ['oversized', { code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$.views[0].content.value', message: 'Serialized byte budget exceeded' }],
         ] as const) {
             const lastGood = current;
@@ -259,14 +262,14 @@ export default factory;
         }
 
         success(await call('update', { operation: 'reverse' })); current = await observe(client);
-        expect(current.refs.some(ref => ref.viewId === 'item_a' && ref.refId === 'items[3]')).toBe(false);
-        success(await call('inspect', { selected: 'item_a.items[0]' })); current = await observe(client);
+        expect(current.refs.some(ref => ref.viewId === selectedId && ref.refId === 'items[3]')).toBe(false);
+        success(await call('inspect', { selected: itemRef(0) })); current = await observe(client);
         expect(body(current)).toContain('"selected":{"nested":[1,[false]]}');
         success(await call('update', { operation: 'empty' })); current = await observe(client);
-        success(await call('inspect', { selected: 'item_a.items' })); current = await observe(client);
+        success(await call('inspect', { selected: itemRef() })); current = await observe(client);
         expect(body(current)).toContain('"selected":[]');
 
-        const stale = request(current, 'inspect', { selected: 'item_a.selected' }, 'stale');
+        const stale = request(current, 'inspect', { selected: selectedRef }, 'stale');
         success(await call('update', { operation: 'close' }));
         const closedPreview = await client.preview();
         expect(closedPreview).toMatchObject({ status: 'previewed' });
@@ -277,10 +280,10 @@ export default factory;
             receipt: { outcome: { code: 'REF_VIEW_UNAVAILABLE', path: '$.selected' } },
         });
         success(await call('update', { operation: 'close' })); current = await observe(client);
-        expect(body(current, 'item_a')).toBeUndefined();
+        expect(body(current, selectedId)).toBeUndefined();
         expect(current.tools.some(tool => tool.name === 'inspect')).toBe(true);
         success(await call('update', { operation: 'open' })); current = await observe(client);
-        expect(current.views.find(view => view.id === 'item_a')?.viewInstanceId).not.toBe(originalView);
+        expect(current.views.find(view => view.id === selectedId)?.viewInstanceId).not.toBe(originalView);
         expect(await client.invoke(stale)).not.toMatchObject({ receipt: { outcome: { status: 'succeeded' } } });
 
         const held = request(current, 'update', { operation: 'wait' }, 'held');
@@ -292,14 +295,14 @@ export default factory;
             kind: 'receipt', receipt: { invocationId: held.invocationId, observationId: held.observationId,
                 bindingId: held.bindingId, executionPhase: 'unknown', outcome: { status: 'unknown' } },
         });
-        expect(await call('count', { selected: 'item_a.selected' })).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
+        expect(await call('count', { selected: selectedRef })).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
         expect((await trace(traceFile)).filter(line => line === 'handler-entered')).toHaveLength(1);
         const prior = current;
         current = await observe(client);
         await writeFile(gate('work'), '');
-        const terminal = await client.readReceipt(held);
+        const terminal = await client.readReceipt({ observationId: held.observationId, invocationId: held.invocationId });
         success(terminal);
-        expect(await client.invoke(request(prior, 'count', { selected: 'item_a.selected' }, 'old-unseen'))).toMatchObject({
+        expect(await client.invoke(request(prior, 'count', { selected: selectedRef }, 'old-unseen'))).toMatchObject({
             kind: 'refused', code: 'OBSERVATION_UNAVAILABLE',
         });
         expect(terminal).toMatchObject({ receipt: { invocationId: held.invocationId, executionPhase: 'entered-returned' } });

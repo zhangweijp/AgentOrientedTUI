@@ -65,7 +65,7 @@ it.each(['delete','close'] as const)('PF01 %s hanging rejects ordinary and Ref p
     const f=fixture(context=>{
         viewInstanceId=context.viewTools.mount('v','Detail');
         const handler=(name:string)=>async()=>{calls.push(name);if(name==='held'){enteredHandler.resolve();await handlerGate.promise;}return {success:true,data:{value:19}};};
-        const ordinary=(name:string)=>({safeOrdinaryParametersInvocationMode:'ordinary-v2',createSafeOrdinaryParametersInvoker:()=>async()=>({phase:'entered-returned',result:await handler(name)()})});
+        const ordinary=(name:string)=>({safeOrdinaryParametersInvocationMode:'ordinary-invoker/v3',createSafeOrdinaryParametersInvoker:()=>async()=>({phase:'entered-returned',result:await handler(name)()})});
         const register=(name:string,inputSchema:any,mutating=false)=>context.appTypeTools.registerTypeTool({viewType:'Detail',name,description:name,inputSchema},ordinary(name));
         releaseTool=register('held',{type:'object',properties:{},additionalProperties:false});
         register('parameters',{type:'object',properties:{n:{type:'number'}},required:['n'],additionalProperties:false});

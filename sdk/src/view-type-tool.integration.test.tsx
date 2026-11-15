@@ -150,29 +150,28 @@ describe('ViewTypeTool through real Preact and AppKernel', () => {
         expect(environment.tools()).toEqual([]);
     });
 
-    it('publishes returned and unknown failure facts without inventing application effects', async () => {
-        const unknown = { success: false, error: { code: 'OUTCOME_UNKNOWN', message: 'Read the current View.' } };
-        const partial = { success: false, effects: 'partial' as const, error: { code: 'PARTIAL_WRITE', message: 'One file changed.' } };
-        let setPartial!: (next: boolean) => void;
+    it('keeps the original activation and returns the latest closure business receipt', async () => {
+        const unconfirmed = { success: false, error: { code: 'OUTCOME_UNKNOWN', message: 'Read the current View.' } };
+        const changed = { success: false, error: { code: 'PARTIAL_WRITE', message: 'One file changed.' }, data: { filesWritten: 1 } };
+        let setChanged!: (next: boolean) => void;
         const boundTools = defineToolSet({ tool: defineViewTypeTool({
                 viewType: 'FileDetail', name: 'edit_file', description: 'Edit the file.',
                 inputSchema: Type.Object({ filePath: Type.String() }),
             }) });
 
         function App() {
-            const [isPartial, update] = useState(false); setPartial = update;
-            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => isPartial ? partial : unknown } } }, h(View, {kind: 'state', id: 'file', type: 'FileDetail' }));
+            const [didChange, update] = useState(false); setChanged = update;
+            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => didChange ? changed : unconfirmed } } }, h(View, {kind: 'state', id: 'file', type: 'FileDetail' }));
         }
         const environment = createEnvironment(App);
         await environment.open();
         const first = environment.typeTool('edit_file');
-        expect(await environment.invokeType(first, { filePath: '/workspace/a.txt' })).toEqual({ phase: 'entered-returned', result: unknown });
-        await act(async () => setPartial(true));
+        expect(await environment.invokeType(first, { filePath: '/workspace/a.txt' })).toEqual({ phase: 'entered-returned', result: unconfirmed });
+        await act(async () => setChanged(true));
         const afterHandlerUpdate = environment.typeTool('edit_file');
         expect(afterHandlerUpdate.execution).toEqual(first.execution);
         expect(await environment.invokeType(first, { filePath: '/workspace/a.txt' })).toEqual({
-            phase: 'entered-returned', failureEffects: 'partial',
-            result: { success: false, error: partial.error },
+            phase: 'entered-returned', result: changed,
         });
     });
 

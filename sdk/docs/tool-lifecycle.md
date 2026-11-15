@@ -41,10 +41,9 @@ The App checks explicit business selectors such as filePath against its current 
 | Handler fact | ToolResult |
 |---|---|
 | Completed | success:true and a concise receipt; update the View for current data |
-| Known no side effect on failure | success:false with effects:'none' |
-| Known partial side effects | success:false with effects:'partial' and recovery information |
-| Failure with unknown effects | success:false without an invented effects guarantee |
-| Throw / malformed result / lost reply | Runtime reports the appropriate entered/unknown outcome; no automatic business retry |
+| App reports a failure | success:false with a business error and optional recovery data |
+| Throw or malformed result | The Worker reports an ended execution with unknown result |
+| Wait ends before a trusted reply | Runtime continues tracking the operation; the Host can read the original receipt |
 
 ## Ref and App cleanup
 

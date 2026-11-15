@@ -1,46 +1,78 @@
 import { beforeAll, afterAll, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, realpath, symlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
 let directory: string, app: string, runtimePackage: any, adaptersPackage: any;
 const facts: any[] = [];
+const output = process.env.AOTUI_W08_C1_FACTS_DIR;
+const installedConsumer = process.env.AOTUI_PACKAGE_CONSUMER_DIR;
 const deferred = () => { let resolve!: (value?: any) => void, reject!: (error: unknown) => void;
     const promise = new Promise<any>((yes, no) => { resolve = yes;reject = no; });return { promise, resolve, reject }; };
 async function capture(path: string, body: string) {
-    await writeFile(path, body);const output = process.env.AOTUI_W08_C1_FACTS_DIR;
+    await writeFile(path, body);
     if (output) { const hash = createHash('sha256').update(body).digest('hex'), folder = join(output, 'b2-inputs');await mkdir(folder, { recursive: true });
         await writeFile(join(folder, hash), body);await writeFile(join(folder, hash + '.json'), JSON.stringify({ path, sha256: hash, capturedBeforeExecution: true })); }
 }
 beforeAll(async () => {
-    const repo = fileURLToPath(new URL('../../', import.meta.url));directory = await mkdtemp(join(tmpdir(), 'aotui-b2-public-'));
-    const modules = join(directory, 'node_modules');await mkdir(join(modules, '@aotui'), { recursive: true });
-    for (const pkg of ['runtime', 'sdk', 'agent-driver-adapter', 'agent-driver-v2']) {
-        const pack = join(directory, 'pack-' + pkg), target = join(modules, '@aotui', pkg);await mkdir(pack);await mkdir(target);
-        const argv = ['pack', '--ignore-scripts', '--json', '--pack-destination', pack];
-        await capture(join(directory, 'pack-' + pkg + '-before.json'), JSON.stringify({ cwd: join(repo, pkg), argv: ['npm', ...argv], env: { NPM_CONFIG_CACHE: join(directory, 'npm-cache') } }));
-        const result = JSON.parse(execFileSync('npm', argv, { cwd: join(repo, pkg), env: { ...process.env, NPM_CONFIG_CACHE: join(directory, 'npm-cache') }, encoding: 'utf8' }));
-        const archive = join(pack, result[0].filename);execFileSync('tar', ['-xzf', archive, '--strip-components', '1', '-C', target]);
-        facts.push({ package: pkg, archive, sha256: createHash('sha256').update(await readFile(archive)).digest('hex'), actualTar: true });
+    const repo = fileURLToPath(new URL('../../', import.meta.url));
+    if (output) await mkdir(output, { recursive: true });
+    let runtimeDocs: string;
+    if (installedConsumer) {
+        if (!isAbsolute(installedConsumer)) throw new Error('AOTUI_PACKAGE_CONSUMER_DIR must be absolute');
+        const consumer = await realpath(installedConsumer);
+        const modules = join(consumer, 'node_modules', '@aotui');
+        for (const pkg of ['runtime', 'sdk', 'agent-driver-adapter', 'agent-driver-v2']) {
+            const path = await realpath(join(modules, pkg));
+            expect(path.startsWith(join(consumer, 'node_modules') + '/')).toBe(true);
+            const manifest = JSON.parse(await readFile(join(path, 'package.json'), 'utf8'));
+            facts.push({ package: manifest.name, version: manifest.version, path });
+        }
+        directory = await mkdtemp(join(consumer, 'runtime-lifecycle-'));
+        await capture(join(directory, 'package.json'), JSON.stringify({ type: 'module', private: true }));
+        runtimeDocs = join(modules, 'runtime', 'docs');
+        facts.push({ consumer, mode: 'provided-installation', fixtures: directory });
+    } else {
+        directory = await mkdtemp(join(output ?? tmpdir(), 'aotui-b2-public-'));
+        await capture(join(directory, 'package.json'), JSON.stringify({ type: 'module', private: true }));
+        const modules = join(directory, 'node_modules');
+        await mkdir(join(modules, '@aotui'), { recursive: true });
+        for (const pkg of ['runtime', 'sdk', 'agent-driver-adapter', 'agent-driver-v2']) {
+            const pack = join(directory, 'pack-' + pkg), target = join(modules, '@aotui', pkg);await mkdir(pack);await mkdir(target);
+            const argv = ['pack', '--ignore-scripts', '--json', '--pack-destination', pack];
+            await capture(join(directory, 'pack-' + pkg + '-before.json'), JSON.stringify({ cwd: join(repo, pkg), argv: ['npm', ...argv], env: { NPM_CONFIG_CACHE: join(directory, 'npm-cache') } }));
+            const result = JSON.parse(execFileSync('npm', argv, { cwd: join(repo, pkg), env: { ...process.env, NPM_CONFIG_CACHE: join(directory, 'npm-cache') }, encoding: 'utf8' }));
+            const archive = join(pack, result[0].filename);execFileSync('tar', ['-xzf', archive, '--strip-components', '1', '-C', target]);
+            const manifest = JSON.parse(await readFile(join(target, 'package.json'), 'utf8'));
+            facts.push({ package: manifest.name, version: manifest.version, archive,
+                sha256: createHash('sha256').update(await readFile(archive)).digest('hex'), actualTar: true });
+        }
+        const links: any[] = [];
+        for (const pkg of ['runtime', 'sdk', 'agent-driver-adapter', 'agent-driver-v2']) for (const entry of await readdir(join(repo, pkg, 'node_modules'), { withFileTypes: true })) {
+            if (entry.name.startsWith('.') || entry.name === '@aotui') continue;
+            const target = join(modules, entry.name);try { await symlink(join(repo, pkg, 'node_modules', entry.name), target, 'dir');links.push({ path: target, source: join(repo, pkg, 'node_modules', entry.name) }); } catch (error: any) { if (error.code !== 'EEXIST') throw error; }
+        }
+        runtimeDocs = join(modules, '@aotui', 'runtime', 'docs');
+        facts.push({ consumer: directory, selfPackageLinks: false, thirdPartyLinks: links, completeCleanInstall: false });
     }
-    const links: any[] = [];
-    for (const pkg of ['runtime', 'sdk', 'agent-driver-adapter', 'agent-driver-v2']) for (const entry of await readdir(join(repo, pkg, 'node_modules'), { withFileTypes: true })) {
-        if (entry.name.startsWith('.') || entry.name === '@aotui') continue;
-        const target = join(modules, entry.name);try { await symlink(join(repo, pkg, 'node_modules', entry.name), target, 'dir');links.push({ path: target, source: join(repo, pkg, 'node_modules', entry.name) }); } catch (error: any) { if (error.code !== 'EEXIST') throw error; }
-    }
-    const document = await readFile(join(repo, 'runtime/docs/runtime-app-interaction.md'), 'utf8');
+    const document = await readFile(join(runtimeDocs, 'runtime-app-interaction.md'), 'utf8');
     const body = document.match(/<!-- b2-app:start -->\n```js\n([\s\S]*?)\n```\n<!-- b2-app:end -->/)?.[1];if (!body) throw Error('App example markers');
-    const executableBody = body.replace("if (args.filePath !== '/open/note.txt')", "if (args.text === 'throw') throw new Error('PRIVATE_CONTROLLED_FAILURE');\n      if (args.filePath !== '/open/note.txt')");
+    const executableBody = body.replace("if (args.filePath !== '/open/note.txt')", `if (args.text === 'throw') throw new Error('PRIVATE_CONTROLLED_FAILURE');
+      if (args.text === 'business') return { success: false, error: { code: 'E_HANDLER_ERROR', message: 'Application declined the edit.' },
+        data: { refreshed: false } };
+      if (args.filePath !== '/open/note.txt')`);
     if (executableBody === body) throw Error('Expected the documented ordinary Tool guard for the controlled failure fixture');
     app = join(directory, 'app.mjs');await capture(app, executableBody + '\n');
     const entry = join(directory, 'entry.mjs');await capture(entry, "export * from '@aotui/runtime';\n");runtimePackage = await import(pathToFileURL(entry).href);
     const adaptersEntry = join(directory, 'adapters.mjs');await capture(adaptersEntry, "export * from '@aotui/agent-driver-adapter';\n");adaptersPackage = await import(pathToFileURL(adaptersEntry).href);
-    facts.push({ selfPackageLinks: false, thirdPartyLinks: links, completeCleanInstall: false });
 }, 30000);
-afterAll(async () => { const output = process.env.AOTUI_W08_C1_FACTS_DIR;if (output) { await mkdir(output, { recursive: true });await writeFile(join(output, 'b2-public-e2e.json'), JSON.stringify(facts, null, 2)); }if (directory) await rm(directory, { recursive: true, force: true }); });
+afterAll(async () => {
+    if (output) await writeFile(join(output, 'b2-public-e2e.json'), JSON.stringify(facts, null, 2));
+    else if (directory) await rm(directory, { recursive: true, force: true });
+});
 
 const allModes = ['view-type-parameters-v1'] as const;
 function makeRuntime() { return runtimePackage.createRuntime({ worker: { timeoutMs: 4000, maxWorkers: 8 } }); }
@@ -136,26 +168,138 @@ it('B2 C05 invalid public interactionModes reject before registering the app', a
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);
 
-it('B2 C09 source authorization denies entry and unknown handler results are not retried', async () => {
+it('packed SDK separates authorization, a returned E_HANDLER_ERROR and an actual throw', async () => {
     const runtime = makeRuntime();try {
         await install(runtime);const s = scope(runtime), observation = await s.observe();
         s.controls.authorize = () => false;
         const denied = await s.client.invoke(request(observation, 'ordinary', { text: 'change' }, 'denied'));
         expect(denied).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'not-dispatched', outcome: { status: 'rejected' } } });
         s.controls.authorize = () => true;
-        const first = await s.client.invoke(request(observation, 'ordinary', { text: 'throw' }, 'unknown'));
-        expect(first).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'entered-returned', outcome: { status: 'unknown' } } });
-        expect(await s.client.invoke(request(observation, 'ordinary', { text: 'throw' }, 'unknown'))).toEqual(first);
+        const business = request(observation, 'ordinary', { text: 'business' }, 'business');
+        const declined = await s.client.invoke(business);
+        expect(declined).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'entered-returned', outcome: {
+            status: 'failed', details: { result: { success: false, error: { code: 'E_HANDLER_ERROR', message: 'Application declined the edit.' },
+                data: { refreshed: false } } },
+        } } });
+        expect(declined.receipt.outcome).not.toHaveProperty('effects');
+        const query = { observationId: business.observationId, invocationId: business.invocationId };
+        expect(await s.client.readReceipt(query)).toEqual(declined);
+        expect(await s.client.readReceipt(business)).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_INVALID' });
+        const thrown = request(observation, 'ordinary', { text: 'throw' }, 'unknown');
+        const first = await s.client.invoke(thrown);
+        expect(first).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'unknown', outcome: { status: 'unknown' } } });
+        expect(first.receipt.outcome).not.toHaveProperty('details');
+        expect(JSON.stringify(first)).not.toContain('PRIVATE_CONTROLLED_FAILURE');
+        expect(await s.client.invoke(thrown)).toEqual(first);
         const later = await s.client.invoke(request(observation, 'ordinary', { text: 'change' }, 'after-unknown'));
         expect(later.receipt.outcome.status).toBe('succeeded');
         await waitForViewText(s.client, 'Completed actions: 1');
+        facts.push({ case: 'B01-packed-business-failure-and-throw', declined, unknown: first });
 
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);
 
-it.each(allModes)('B2 C09/24 missing or invalid ACK rejects public %s before installation', async mode => {
-    for (const wrong of [false, true]) {
-        const runtime = makeRuntime(), script = join(directory, `ack-${mode}-${wrong}.mjs`);
+it('checks the complete Tool profile at the packed SDK, Runtime and Snapshot boundaries', async () => {
+    const entry = join(directory, 'b03-profile.mjs');
+    await capture(entry, `import Type from 'typebox';
+import { createApp, defineToolSet, defineViewTypeTool } from '@aotui/sdk/app';
+import { VIEW_TYPE_PARAMETERS_MODE } from '@aotui/runtime/core';
+
+const limit = 64 * 1024, marker = 'x-aotui-parameter-contract';
+const base = { type: 'object', properties: {}, required: [], additionalProperties: true, description: '' };
+const bytes = value => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+const unit = '界😀\\n';
+const fill = limit - bytes({ ...base, [marker]: VIEW_TYPE_PARAMETERS_MODE });
+const unitBytes = bytes(unit) - 2;
+const description = unit.repeat(Math.floor(fill / unitBytes)) + 'x'.repeat(fill % unitBytes);
+const metadata = { viewType: 'Detail', name: 'wide', description: 'Exercise a Tool at its profile boundary' };
+export const define = delta => defineViewTypeTool({ ...metadata, inputSchema: Type.Object({}, { description: description + 'x'.repeat(delta) }) });
+const tools = defineToolSet({ wide: define(0) });
+export const oversizedProfile = { ...tools.wide.inputSchema, description: description + 'x', [marker]: VIEW_TYPE_PARAMETERS_MODE };
+export const profileBytes = bytes({ ...tools.wide.inputSchema, [marker]: VIEW_TYPE_PARAMETERS_MODE });
+export default createApp({ app_name: 'profile_capacity', tools, initialize({ publish }) {
+    publish({ views: [{ id: 'detail', type: 'Detail', kind: 'state', body: 'Profile ready' }],
+        bindings: { wide: { execute: () => ({ success: true }) } } });
+} });
+`);
+    const fixture = await import(pathToFileURL(entry).href);
+    expect(fixture.profileBytes).toBe(64 * 1024);
+    expect(() => fixture.define(1)).toThrow(expect.objectContaining({ name: 'TypeBoxSchemaExportError', code: 'TOOL_SCHEMA_CAPACITY', path: '$' }));
+    const coreEntry = join(directory, 'b03-profile-core.mjs');
+    await capture(coreEntry, "export { compileOrdinaryProfile } from '@aotui/runtime/core';\n");
+    const { compileOrdinaryProfile } = await import(pathToFileURL(coreEntry).href);
+    expect(compileOrdinaryProfile(fixture.oversizedProfile)).toBeNull();
+
+    const runtime = makeRuntime();
+    try {
+        await install(runtime, 'd', 'a', allModes, {}, entry);
+        const s = scope(runtime), observation = await s.observe();
+        const profile = observation.tools.find((tool: any) => tool.name === 'wide')?.inputSchema;
+        expect(new TextEncoder().encode(JSON.stringify(profile)).byteLength).toBe(fixture.profileBytes);
+        expect(compileOrdinaryProfile(profile)?.schema).toEqual(fixture.define(0).inputSchema);
+        const result = await s.client.invoke(request(observation, 'wide', {}, 'at-limit'));
+        expect(result).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'entered-returned', outcome: { status: 'succeeded' } } });
+        facts.push({ case: 'B03-complete-profile', bytes: fixture.profileBytes, oversized: 'TOOL_SCHEMA_CAPACITY', result });
+    } finally {
+        expect(await runtime.beginShutdown().completion).toMatchObject({ ok: true, resourcesReleased: true });
+    }
+}, 15000);
+
+it('rejects the previous SDK helper at the packed Runtime import or registration boundary', async () => {
+    const helper = join(directory, 'legacy-ordinary-parameter-tool.mjs');
+    await capture(helper, await readFile(new URL('../fixtures/legacy-ordinary-parameter-tool.mjs', import.meta.url), 'utf8'));
+    const { invokeOrdinaryParameterTool } = await import(pathToFileURL(helper).href);
+    const throws = () => { throw Error('legacy helper handler'); };
+    const oldTerminal = await invokeOrdinaryParameterTool({ validate: () => ({ ok: true, value: {} }) }, {}, throws);
+    expect(oldTerminal).toEqual({ phase: 'entered-returned', result: {
+        success: false, error: { code: 'E_HANDLER_ERROR', message: 'Tool handler failed' },
+    } });
+
+    const exportsEntry = join(directory, 'b01-exports.mjs');
+    await capture(exportsEntry, "export * as core from '@aotui/runtime/core';\nexport * as spi from '@aotui/runtime/spi';\n");
+    const { core, spi } = await import(pathToFileURL(exportsEntry).href);
+    expect(core.ORDINARY_INVOKER_ABI_V3).toBe('ordinary-invoker/v3');
+    expect(core).not.toHaveProperty('ORDINARY_INVOCATION_MODE');
+    expect(spi.PARAMETERS_V5_CAPABILITY).toBe('view-tool-parameters-invoke/v5');
+    expect(spi).not.toHaveProperty('PARAMETERS_V4_CAPABILITY');
+
+    const runtime = makeRuntime();
+    try {
+        for (const variant of ['import', 'inline']) {
+            const file = join(directory, `legacy-${variant}.mjs`);
+            await capture(file, `
+${variant === 'import' ? "import { ORDINARY_INVOCATION_MODE } from '@aotui/runtime/core';" : "const ORDINARY_INVOCATION_MODE = 'ordinary-v2';"}
+import { invokeOrdinaryParameterTool } from './legacy-ordinary-parameter-tool.mjs';
+export default {
+    displayName: 'legacy_sdk', kernelConfig: { name: 'legacy_sdk', appName: 'legacy_sdk' },
+    toolAuthoringProtocol: 'view-type-tools-v4', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
+    initialize({ appTypeTools }) {
+        appTypeTools.registerTypeTool({ viewType: 'Detail', name: 'old', description: 'Legacy Tool',
+            inputSchema: { type: 'object', properties: {}, additionalProperties: false } }, {
+            safeOrdinaryParametersInvocationMode: ORDINARY_INVOCATION_MODE,
+            createSafeOrdinaryParametersInvoker: contract => args => invokeOrdinaryParameterTool(contract, args, () => { throw Error('legacy helper handler'); }),
+        });
+        return { close() {} };
+    }
+};\n`);
+            const issue = variant === 'import'
+                ? { code: 'E_INIT_FAILED', cause: { message: expect.stringContaining('ORDINARY_INVOCATION_MODE') } }
+                : { code: 'E_OPEN_FAILED', cause: { code: 'TOOL_INVALID' } };
+            await expect(install(runtime, 'd', variant, allModes, {}, file)).rejects.toMatchObject({
+                code: 'INSTALL_FAILED', cause: { code: 'INSTALL_FAILED', cause: issue },
+            });
+            expect(runtime.getDesktop('d').getInstalledApps()).toEqual([]);
+        }
+        facts.push({ case: 'B01-retires-old-sdk-import-and-inline-invoker-abi', oldTerminal, variants: ['import', 'inline'] });
+    } finally {
+        expect(await runtime.beginShutdown().completion).toMatchObject({ ok: true, resourcesReleased: true });
+    }
+}, 15000);
+
+it.each(allModes)('B2 C09/24 missing, invalid or v4 ACK rejects public %s before installation', async mode => {
+    for (const variant of ['missing', 'invalid', 'v4']) {
+        const capabilities = variant === 'invalid' ? ['unknown-capability'] : ['app-snapshot/v3', 'view-tool-parameters-invoke/v4'];
+        const runtime = makeRuntime(), script = join(directory, `ack-${mode}-${variant}.mjs`);
         await capture(script, `import {parentPort} from 'node:worker_threads';
 let instanceId, closePending;
 function respond(m) {
@@ -167,7 +311,7 @@ function respond(m) {
     :completed?{protocol:'state-session-v1',instanceId,ok:true,unmount:'completed',flush,dispose:{status:'disposed',unsaved:[],release:{status:'released'}}}:undefined;
   const appCleanup=['APP_STOP','APP_SHUTDOWN','APP_CLOSE'].includes(m.type)?{protocol:'app-lifecycle-v2',instanceId,state:completed?'completed':'stopped',issues:[]}:undefined;
   parentPort.postMessage({type:init?'INIT_RESPONSE':'LIFECYCLE_RESPONSE',requestId:m.requestId,success:true,
-    ...(init?{appInstanceId:m.appInstanceId,appLifecycle:{protocol:'app-lifecycle-v2',version:2,instanceId:m.appInstanceId},persistence${wrong ? ",acceptedCapabilities:['unknown-capability']" : ''}}:{}),
+    ...(init?{appInstanceId:m.appInstanceId,appLifecycle:{protocol:'app-lifecycle-v2',version:2,instanceId:m.appInstanceId},persistence${variant === 'missing' ? '' : ',acceptedCapabilities:' + JSON.stringify(capabilities)}}:{}),
     ...(!init&&persistence?{persistence}:{}),...(appCleanup?{appCleanup}:{})});
   if(init) parentPort.postMessage({type:'SNAPSHOT_PREPARED',draft:{schemaVersion:3,appId:m.appId,instanceId:m.appInstanceId,producerSeq:1,sourceEpoch:1,capturedAt:Date.now(),
     views:[{id:'detail',viewInstanceId:'view-instance',type:'Detail',name:'Details',kind:'state',content:{format:'markdown-v1',value:'Available'} }],refs:{},
@@ -185,7 +329,7 @@ parentPort.on('message',m=>{
             const installed = runtime.getDesktop('d').getInstalledApps().find((entry: any) => entry.appId === 'a');
             expect(installed).toBeUndefined();
             const report = await runtime.beginShutdown().completion;
-            facts.push({ case: `capability-ack-${mode}-${wrong ? 'invalid' : 'missing'}`, report, installedStatus: installed?.status });
+            facts.push({ case: `capability-ack-${mode}-${variant}`, report, installedStatus: installed?.status });
             expect(report).toMatchObject({ resourcesReleased: true, hasFailures: false, verification: 'managed', interactions: { verified: true, retainedOperations: 0, retainedBytes: 0 } });
         } finally { await runtime.beginShutdown().completion; }
     }

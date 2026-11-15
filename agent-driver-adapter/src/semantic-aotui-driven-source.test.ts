@@ -382,15 +382,15 @@ describe('semantic receipt mapping', () => {
             { status: 'succeeded', value: { success: true, data: { message: 'Edited.', view_id: 'file' } } }) });
         expect(completed.result).toEqual({ message: 'Edited.', view_id: 'file' });
         const failed = await executeMappedResult({ kind: 'receipt', receipt: receipt(request, {
-            status: 'unknown', code: 'TOOL_OUTCOME_UNKNOWN', message: 'uncertain', details: { kind: 'tool-result', phase: 'entered-returned',
+            status: 'failed', code: 'TOOL_FAILED', message: 'The application reported a task failure', details: { kind: 'tool-result', phase: 'entered-returned',
                 result: { success: false, error: { code: 'EDIT_NOT_MATCHED', message: 'Original text was not found.' }, data: { checked: 1 } } },
         }) });
-        expect(failed).toMatchObject({ outcomeStatus: 'unknown', error: { code: 'EDIT_NOT_MATCHED', message: 'Original text was not found.' }, result: { checked: 1 } });
+        expect(failed).toMatchObject({ outcomeStatus: 'failed', error: { code: 'EDIT_NOT_MATCHED', message: 'Original text was not found.' }, result: { checked: 1 } });
         expect(JSON.stringify([completed, failed])).not.toContain('receipt');
     });
     const outcomes: InvocationOutcome[] = [
         { status: 'succeeded', value: null }, { status: 'rejected', code: 'NO', message: 'rejected' },
-        { status: 'failed', code: 'FAILED', message: 'failed', effects: 'partial' },
+        { status: 'failed', code: 'FAILED', message: 'failed' },
         { status: 'unknown', code: 'UNKNOWN', message: 'uncertain' },
     ];
     it.each(outcomes)('keeps $status internal without leaking a receipt', async outcome => {
@@ -401,7 +401,7 @@ describe('semantic receipt mapping', () => {
         expect(JSON.stringify(result)).not.toContain('receipt');
         expect(Boolean(result.error)).toBe(['rejected', 'failed', 'unknown'].includes(outcome.status));
         if (outcome.status === 'unknown') expect(result.error?.code).toBe('UNKNOWN');
-        if (outcome.status === 'failed') expect(result.error?.message).toContain('Some changes were applied.');
+        if (outcome.status === 'failed') expect(result.error).toEqual({ code: 'FAILED', message: 'failed' });
     });
     it('distinguishes a known refusal from an unavailable execution result', async () => {
         expect((await executeMappedResult({ kind: 'refused', code: 'FULL', message: 'full' })).outcomeStatus).toBe('rejected');

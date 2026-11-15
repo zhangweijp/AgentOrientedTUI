@@ -20,7 +20,7 @@ function draft(inputSchema = schema(), activationId = 'active-1', sequence = 1):
 function setup() { const registry = createViewOwnedTools('app', 'run'); registry.mount('fd_A', 'FileDetail'); registry.mount('fd_B', 'FileDetail'); return registry; }
 function register(registry: ReturnType<typeof setup>, inputSchema: any = input()) {
     return registry.registerTypeTool({ viewType: 'FileDetail', name: 'inspect', description: 'Inspect', inputSchema }, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: { success: true } }),
+        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: { success: true } }),
     });
 }
 describe('shared versioned Ref declaration boundary', () => {

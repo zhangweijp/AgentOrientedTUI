@@ -36,7 +36,7 @@ function assembly(topicId: string, instanceId: string) {
     if (!input.ok) throw Error('Invalid controlled Schema');
     let entries = 0;
     const unregister = registry.registerTypeTool({ viewType: 'Workspace', name: 'inspect', description: 'Inspect current work.', inputSchema: input.contract.schema }, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: () => async () => {
+        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () => async () => {
             entries++; return { phase: 'entered-returned', result: { success: true, data: { completed: true } } };
         },
     });

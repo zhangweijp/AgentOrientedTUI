@@ -22,7 +22,6 @@ const sessionKeys = ['workspaceFolders', 'activeFiles', 'expandedDirs'] as const
 const fail = (error: IDEError): ToolResult => ({
     success: false, error: { code: error.code, message: error.message },
     ...(error.details ? { data: error.details } : {}),
-    ...(error.effects === 'unknown' ? {} : { effects: error.effects }),
 });
 const success = (data: NonNullable<ToolResult['data']> = {}): ToolResult => ({ success: true, data });
 const textPath = (input: unknown): string => {
@@ -501,8 +500,7 @@ export class IDESession {
                 else results.push({ index, status: issue.effects === 'unknown' ? 'unknown' : 'failed', code: issue.code });
                 for (let rest = index + 1; rest < edits.length; rest++) results.push({ index: rest, status: 'not-run' });
                 if (this.live) { this.lastBatch = boundedJSON(results); this.publish(); }
-                if (issue.effects === 'unknown') return fail(new IDEError(issue.code, 'unknown', { results }));
-                return fail(new IDEError(issue.code, results.some(item => item.status === 'succeeded') || issue.effects === 'partial' ? 'partial' : 'none', { results }));
+                return fail(new IDEError(issue.code, issue.effects, { results }));
             }
         }
         this.lastBatch = boundedJSON(results); this.publish(); return success({ results });

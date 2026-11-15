@@ -1,5 +1,4 @@
 import { VIEW_TYPE_PARAMETERS_MODE } from '../tool/ordinary-parameter-contract.js';
-import { ORDINARY_INVOCATION_MODE } from '../tool/invocation-terminal.js';
 import { SNAPSHOT_SCHEMA_VERSION } from '../snapshot/types.js';
 import { canonicalJson, utf8Size } from '../snapshot/json.js';
 import { RESOLVED_TOOL_ENVELOPE_LIMITS } from '../snapshot/snapshot-support.js';
@@ -9,10 +8,11 @@ import { checkRefViews, prepareViewTypeParameters } from '../tool/snapshot-value
 import { createObservationOperations, previewCommittedApp, type ObservationState } from './observation-registry.js';
 import type { ObservationJsonLimits } from './observation-types.js';
 import { captureBoundedJson, exactFields, jsonObject, mapExecutionFact, unknownOutcome, type ExecutionMapping } from './invocation-outcome.js';
+import { ORDINARY_EXECUTION_MODE } from './app-interaction-types.js';
 import type {
     AppInteractionSource, AppInvocation, ExecutionBinding, InstanceInteraction, InteractionLimits, InteractionLimitOverrides, InteractionStats,
     InvocationContext, InvocationReceipt, InvocationSource, Issue, ObserveResult,
-    ReceiptAccess, ReceiptMetadata, AppInteractionPolicy,
+    ReceiptAccess, ReceiptMetadata, ReceiptQuery, AppInteractionPolicy,
 } from './app-interaction-types.js';
 
 const KiB = 1024, MiB = KiB * KiB, WORK = MiB;
@@ -43,6 +43,7 @@ function dataProperties(raw: unknown, required: readonly string[], optional: rea
     return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]));
 }
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
+const validRequestId = (value: unknown): value is string => nonEmpty(value) && utf8Size(value) <= 256;
 function capture<T>(raw: unknown, limits: ObservationJsonLimits, code: string): { value: T; bytes: number } {
     try { return captureBoundedJson<T>(raw, limits); } catch { return fail(code); }
 }
@@ -52,7 +53,7 @@ function binding(raw: unknown): Binding {
     try {
         const data = dataProperties(raw, ['identity', 'mode', 'validateInput', 'isLive', 'execute']);
         if (!data.identity || !['object', 'function'].includes(typeof data.identity) ||
-            (data.mode !== ORDINARY_INVOCATION_MODE && data.mode !== VIEW_TYPE_PARAMETERS_MODE) ||
+            (data.mode !== ORDINARY_EXECUTION_MODE && data.mode !== VIEW_TYPE_PARAMETERS_MODE) ||
             ['validateInput', 'isLive', 'execute'].some(key => typeof data[key] !== 'function')) throw 0;
         return Object.freeze(data) as unknown as Binding;
     } catch { return fail('EXECUTION_BINDING_FAILED'); }
@@ -182,7 +183,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         clearTimeout(expiry);
         expiry = undefined;
         scheduledExpiry = undefined;
-        state.closing = true; observations.releaseAll(state);
+        state.closing = true; observations.releaseAll();
         for (const entry of state.entries.values()) if (!entry.running) dropContent(entry);
         for (const controller of state.controllers) controller.abort();
         clean(state);
@@ -208,7 +209,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         if (expiry && typeof expiry === 'object') expiry.unref();
     }
     function refresh(): number {
-        if (!state.closing && !observations.isCurrent(state)) revoke(state);
+        if (!state.closing && !observations.isCurrent()) revoke(state);
         if (state.closing) return lastNow;
         const time = clock();
         expireReceipts(time);
@@ -250,7 +251,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
     }
     function sourceFor(state: State, request: AppInvocation) {
         active(state);
-        const result = observations.resolveBinding(state, { observationId: request.observationId, bindingId: request.bindingId });
+        const result = observations.resolveBinding({ observationId: request.observationId, bindingId: request.bindingId });
         if (result.status === 'rejected') fail(result.issue.code);
         return result;
     }
@@ -446,7 +447,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         const captured = capture<AppInvocation>(raw, limits.request, 'INVOCATION_INVALID');
         const request = captured.value;
         if (!jsonObject(request) || !exactFields(request, ['invocationId', 'observationId', 'bindingId', 'input']) ||
-            [request.invocationId, request.observationId, request.bindingId].some(value => !nonEmpty(value) || utf8Size(value) > 256) ||
+            ![request.invocationId, request.observationId, request.bindingId].every(validRequestId) ||
             !jsonObject(request.input)) fail('INVOCATION_INVALID');
         return { request, bytes: captured.bytes, fingerprint: canonicalJson(request as unknown as JsonValue) };
     }
@@ -468,9 +469,11 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         try {
             const end = deadline(timeoutMs, refresh());
             if (state.closing) fail('APP_INTERACTION_UNAVAILABLE');
-            const { request, fingerprint } = capturedRequest(raw);
-            const entry = findEntry(request, fingerprint);
-            if (!entry) fail('RESULT_UNAVAILABLE');
+            const { value: query } = capture<ReceiptQuery>(raw, limits.request, 'INVOCATION_INVALID');
+            if (!jsonObject(query) || !exactFields(query, ['observationId', 'invocationId']) ||
+                !validRequestId(query.observationId) || !validRequestId(query.invocationId)) fail('INVOCATION_INVALID');
+            const entry = state.entries.get(query.invocationId);
+            if (!entry || entry.metadata.observationId !== query.observationId) fail('RESULT_UNAVAILABLE');
             return read(state, entry, admitRead(state), end);
         } catch (error) { return Promise.resolve(unavailable(problem(error).code)); }
     }
@@ -523,14 +526,14 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
             active(state);
             if (state.projects || state.observations.size > (state.adoptedObservationId ? 1 : 0))
                 fail('OBSERVATION_CAPACITY', 'Release or adopt the prepared observation before preparing another.');
-            const reserved = observations.begin(state, selection);
+            const reserved = observations.begin(selection);
             if (reserved.status === 'rejected') return reserved;
             token = reserved.reservation; controller = new AbortController(); state.controllers.add(controller); state.projects++;
             const grant = await state.policy!.project(Object.freeze({ source: reserved.source, selection: reserved.selection, signal: controller.signal }));
-            return observations.complete(state, token, grant);
+            return observations.complete(token, grant);
         } catch (error) { return Object.freeze({ status: 'rejected', issue: problem(error) }); }
         finally {
-            if (token) observations.abandon(state, token);
+            if (token) observations.abandon(token);
             if (controller) {
                 state.controllers.delete(controller); state.projects--;
             }
@@ -547,18 +550,18 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
     }
     function inspect() { try { refresh(); return stats(); } catch (error) { return stats(error); } }
     return Object.freeze({
-        observe, invoke, readReceipt, inspect, sweepExpired: inspect,
+        observe, invoke, readReceipt, inspect,
         async preview() {
             try { active(state); return previewCommittedApp(store, state.appId, state.instanceId); }
             catch (error) { return Object.freeze({ status: 'rejected' as const, issue: problem(error) }); }
         },
         adoptObservation(observationId: string) {
-            const result = observations.adoptObservation(state, observationId);
+            const result = observations.adoptObservation(observationId);
             if (result.status === 'adopted') expireReceipts(lastNow);
             return result;
         },
         releaseObservation(observationId: string): void {
-            observations.releaseObservation(state, observationId);
+            observations.releaseObservation(observationId);
             try { refresh(); } catch { /* Explicit release remains possible with a failed clock. */ }
         },
         close() {

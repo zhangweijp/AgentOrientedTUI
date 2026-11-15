@@ -60,7 +60,7 @@ export function createApp<const Tools extends ToolMap = EmptyTools>(config: Crea
                 const views: AppProjectionFrame['views'][number][] = [];
                 for (const { id, type, kind, name = id, body, refs = [] } of frame.views) {
                     if (typeof id !== 'string' || !VIEW_ID_PATTERN.test(id) || viewIds.has(id)) {
-                        invalid('$.views', 'View IDs must be unique and use 2–15 letters, digits or underscores');
+                        invalid('$.views', 'View IDs must be unique, non-empty and use only ASCII letters, digits or underscores');
                     }
                     viewIds.add(id);
                     const path = `View ${id}`;

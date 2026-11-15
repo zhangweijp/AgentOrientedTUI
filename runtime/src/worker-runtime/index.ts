@@ -1,5 +1,5 @@
 import { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION, STATE_SESSION_VERSION, captureAppMetadata } from '../spi/index.js';
-import { SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY } from '../spi/worker-protocol/types.js';
+import { SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY } from '../spi/worker-protocol/types.js';
 import { initializationFailure } from '../adapters/initialization-error.js';
 import { captureAppLifecycleAck } from '../adapters/app-lifecycle-protocol.js';
 import { hasViewTypeToolAuthoringProtocol } from '../spi/app/app-factory.interface.js';
@@ -99,7 +99,7 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
         } catch { sendError(msg.requestId, 'PROJECTION_CLOSED', 'Projection source unavailable'); }
         return;
     }
-    if (msg.type === 'VIEW_TOOL_INVOKE_V4') {
+    if (msg.type === 'VIEW_TOOL_INVOKE_V5') {
         try {
             const kernel = app;
             const response = await invokeTypeParameters(msg, { appId, instanceId: appInstanceId,
@@ -266,8 +266,8 @@ async function handleInit(msg: InitMessage): Promise<void> {
         app.setPersistence(session.port);
         persistenceRecord = { app, proxy, session };
 
-        parametersNegotiated = requested.capabilities.includes(PARAMETERS_V4_CAPABILITY);
-        const capabilities = parametersNegotiated ? [SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY] : [SNAPSHOT_CAPABILITY];
+        parametersNegotiated = requested.capabilities.includes(PARAMETERS_V5_CAPABILITY);
+        const capabilities = parametersNegotiated ? [SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY] : [SNAPSHOT_CAPABILITY];
         parentPort?.postMessage({ type: 'INIT_RESPONSE', requestId: msg.requestId, success: true,
             appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, version: APP_LIFECYCLE_VERSION, instanceId: msg.appInstanceId! },
             persistence: { protocol: STATE_SESSION_PROTOCOL, version: STATE_SESSION_VERSION, instanceId: session.port.instanceId },

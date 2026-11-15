@@ -7,12 +7,11 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { createSnapshotCore, createViewOwnedTools, createAppInteraction, compileOrdinarySchema,
     type SemanticProjectionCoordinator } from '../../core/index.js';
-import { initialBusiness, applyBusiness, businessResult, ordinaryInputSchema, referenceInputSchema, tools as businessTools, fileRef, privateRef, fileLabel, filePayload, selectedBusinessSession,
-    expectedRead, businessSequence } from '../../../tests/fixtures/dual-producer-business.mjs';
 
 const defer = () => { let resolve!: (value?: any) => void;const promise = new Promise<any>(yes => { resolve = yes; });return { promise, resolve }; };
 let consumer: string, Host: any, actorCount = 0;
 let Projection: typeof SemanticProjectionCoordinator;
+let business: typeof import('../../../tests/fixtures/dual-producer-business.mjs');
 const evidence: any[] = [];
 const grant = ({ source, selection }: any) => {
     const views = source.views.filter((v: any) => selection.viewIds.includes(v.id));
@@ -59,6 +58,7 @@ beforeAll(async () => {
         try { await symlink(join(repo, pkg, 'node_modules', entry), join(modules, entry), 'dir'); } catch (error: any) { if (error.code !== 'EEXIST') throw error; }
     }
     for (const file of ['dual-producer-app.mjs', 'dual-producer-business.mjs']) await capture(join(consumer, file), await readFile(join(repo, 'runtime/tests/fixtures', file), 'utf8'));
+    business = await import(pathToFileURL(join(consumer, 'dual-producer-business.mjs')).href);
     await capture(join(consumer, 'plain-producer.mjs'), "export { SemanticProjectionCoordinator } from '@aotui/runtime/core';\n");
     Projection = (await import(pathToFileURL(join(consumer, 'plain-producer.mjs')).href)).SemanticProjectionCoordinator;
     Host = (await import(pathToFileURL(join(modules, '@aotui/runtime/dist/engine/app/worker-host.js')).href)).AppWorkerHost;
@@ -67,6 +67,8 @@ beforeAll(async () => {
 afterAll(async () => { const root = process.env.AOTUI_W08_C1_FACTS_DIR;if (root) { await mkdir(root, { recursive: true });await writeFile(join(root, 'c-dual-producer.json'), JSON.stringify(evidence, null, 2)); }if (consumer) await rm(consumer, { recursive: true, force: true }); });
 
 function plainActor() {
+    const { initialBusiness, applyBusiness, businessResult, ordinaryInputSchema, referenceInputSchema,
+        tools: businessTools, fileLabel, filePayload, selectedBusinessSession } = business;
     const ordinary = compileOrdinarySchema(ordinaryInputSchema, 'view-type-parameters-v1');
     const reference = compileOrdinarySchema(referenceInputSchema, 'view-type-parameters-v1');
     if (!ordinary.ok || !reference.ok) throw Error('business declaration: ' + JSON.stringify({ ordinary, reference }));
@@ -91,7 +93,7 @@ function plainActor() {
             const { name, viewType, description, inputSchema } = definition;
             if (releases.has(name)) continue;
             releases.set(name, registry.registerTypeTool({ name, viewType, description, inputSchema }, {
-                safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+                safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
                 createSafeOrdinaryParametersInvoker: contract => async args => {
                     const checked = (contract.validateResolvedInput ?? contract.validate)(args);
                     if (!checked.ok) return { phase: 'not-entered' as const, result: { success: false, error: { code: 'E_INVALID_ARGS', message: 'Input invalid' } } };
@@ -171,10 +173,11 @@ function plainActor() {
 }
 
 async function workerActor() {
+    const { initialBusiness, applyBusiness } = business;
     const dataDir = join(consumer, 'data-' + ++actorCount);
     const worker = new Worker(join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), { stdout: true, stderr: true, env: { ...process.env, AOTUI_DATA_DIR: dataDir } });
     const messages: any[] = [], calls: any[] = [], entries: any[] = [], guards: any[] = [], dispatches: any[] = [], facts: any[] = [], logs: string[] = [], p = policy();
-    const post = worker.postMessage.bind(worker); worker.postMessage = (message: any) => { if (message.type === 'VIEW_TOOL_INVOKE_V4') dispatches.push(message); post(message); };
+    const post = worker.postMessage.bind(worker); worker.postMessage = (message: any) => { if (message.type === 'VIEW_TOOL_INVOKE_V5') dispatches.push(message); post(message); };
     worker.stdout!.on('data', b => logs.push(String(b)));worker.stderr!.on('data', b => logs.push(String(b)));
     worker.on('error', error => logs.push(String(error.stack)));
     worker.on('message', m => {
@@ -243,6 +246,7 @@ function expectDelta(actor: any, before: any, expected: { entries: number; guard
     else expect(after.dispatches - before.dispatches).toBe(expected.dispatches);
 }
 it.each(factories)('D1 selects granted same-name Refs by View and rejects unqualified names via %s', async (name, factory) => {
+    const { fileRef, expectedRead } = business;
     const actor = await factory(); try {
         await actor.change({ op: 'mount', ids: ['aa', 'bb'] });
         const all = await actor.client.observe({ viewIds: ['aa', 'bb'] }); expect(all.status).toBe('observed');
@@ -269,6 +273,7 @@ it.each(factories)('D1 selects granted same-name Refs by View and rejects unqual
 
 
 it.each(factories)('C03–07/12 shared business sequence via %s', async (name, factory) => {
+    const { businessSequence } = business;
     const actor = await factory();try {
         for (const step of businessSequence) {
             if (step.kind === 'empty') { expect(actor.snapshot()).toMatchObject({ schemaVersion: 3, views: [], refs: {}, tools: {} });expect(await actor.client.observe({ viewIds: [] })).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_INVALID' } });continue; }
@@ -279,7 +284,7 @@ it.each(factories)('C03–07/12 shared business sequence via %s', async (name, f
             if (step.name === 'ordinary-defaults') { expect(Object.hasOwn(actor.calls.at(-1).args, 'n')).toBe(false);expect(Object.hasOwn(actor.calls.at(-1).args, 'choice')).toBe(false); }
             if (step.name === 'explicit-values') expect(actor.calls.at(-1).args).toEqual(step.input);
             if (step.kind === 'refuse') { expect(result.receipt.outcome.status).toBe('rejected');expect(actor.policyCalls.authorize).toBe(authorized); expectDelta(actor, beforeCounts, { entries: 0, guards: 0, business: 0, dispatches: 0 }); }
-            else if (step.kind === 'business-failed') { expect(result.receipt.outcome).toMatchObject({ status: 'unknown', details: { kind: 'tool-result', result: step.result } }); }
+            else if (step.kind === 'business-failed') { expect(result.receipt.outcome).toMatchObject({ status: 'failed', details: { kind: 'tool-result', result: step.result } }); }
             else expect(result.receipt.outcome).toEqual({ status: 'succeeded', value: step.result });
             evidence.push({ producer: name, step: step.name, result, handlers: actor.calls.length - count });actor.client.releaseObservation(observation.observationId);
         }
@@ -287,6 +292,7 @@ it.each(factories)('C03–07/12 shared business sequence via %s', async (name, f
 }, 25000);
 
 it.each(factories)('C08/09/13 records shared Tool versus App-session migration differences via %s', async (name, factory) => {
+    const { fileRef, expectedRead } = business;
     const actor = await factory();try {
         await actor.change({ op: 'mount', ids: ['aa', 'bb'] });const before = actor.snapshot(), old = await observe(actor, 'aa');
         await actor.change({ op: 'value', id: 'aa', value: 'new' });const next = actor.snapshot();
@@ -303,7 +309,7 @@ it.each(factories)('C08/09/13 records shared Tool versus App-session migration d
             await actor.change(command);
             const oldSession = await actor.client.invoke(request(staleOrdinary, 'aa', 'read', { q: 'closed-session' }, 'old-session-' + command.op));
             if (command.op === 'enabled' || command.op === 'remove') {
-                expect(oldSession.receipt.outcome).toMatchObject({ status: 'unknown', details: { result: { error: { code: 'VIEW_NOT_OPEN' } } } });
+                expect(oldSession.receipt.outcome).toMatchObject({ status: 'failed', details: { result: { error: { code: 'VIEW_NOT_OPEN' } } } });
                 expect(actor.calls.length).toBe(count);
             }
             const beforeRefCounts = counts(actor);
@@ -314,7 +320,7 @@ it.each(factories)('C08/09/13 records shared Tool versus App-session migration d
                 expectDelta(actor, beforeRefCounts, { entries: 0, guards: 0, business: 0, dispatches: 0 });
             } else {
                 expect(staleRefResult.receipt.executionPhase).toBe('entered-returned');
-                expect(staleRefResult.receipt.outcome).toMatchObject({ status: 'unknown', details: { result: { error: { code: 'VIEW_NOT_OPEN' } } } });
+                expect(staleRefResult.receipt.outcome).toMatchObject({ status: 'failed', details: { result: { error: { code: 'VIEW_NOT_OPEN' } } } });
                 expectDelta(actor, beforeRefCounts, { entries: 1, guards: 1, business: 0, dispatches: 1 });
                 const guard = actor.guards.at(-1); expect(guard.stateAfter).toBe(guard.stateBefore);
             }
@@ -346,13 +352,13 @@ it.each(factories)('C08/09/13 records shared Tool versus App-session migration d
         await actor.change({ op: 'remove', ids: ['bb'] });
         expect((Object.values(actor.snapshot().tools) as any[]).find(t => t.name === 'read').execution).toEqual(liveActivation);
         expect((await actor.client.invoke(request(oldB, 'bb', 'read', { q: 'closed-b' }, 'closed-b'))).receipt.outcome)
-            .toMatchObject({ status: 'unknown', details: { result: { error: { code: 'VIEW_NOT_OPEN' } } } });
+            .toMatchObject({ status: 'failed', details: { result: { error: { code: 'VIEW_NOT_OPEN' } } } });
         expect(actor.calls.length).toBe(beforeCloseB);
         await actor.change({ op: 'mount', ids: ['bb'] });
         expect((Object.values(actor.snapshot().tools) as any[]).find(t => t.name === 'read').execution).toEqual(liveActivation);
         expect(actor.businessIdFor('bb')).toBe('bb@2');
         expect((await actor.client.invoke(request(oldB, 'bb', 'read', { q: 'old-b-session' }, 'old-b-session'))).receipt.outcome)
-            .toMatchObject({ status: 'unknown', details: { result: { error: { code: 'VIEW_NOT_OPEN' } } } });
+            .toMatchObject({ status: 'failed', details: { result: { error: { code: 'VIEW_NOT_OPEN' } } } });
         expect(actor.calls.length).toBe(beforeCloseB);
         const newB = await observe(actor, 'bb');
         expect((await actor.client.invoke(request(newB, 'bb', 'read', { q: 'new-b-session' }, 'new-b-session'))).receipt.outcome)
@@ -406,6 +412,7 @@ for (const stage of ['project', 'authorize'] as const) for (const action of ['cl
     }, 20000);
 
 it.each(factories)('C12 terminal loss after actual entry revokes authority with no retry via %s', async (name, factory) => {
+    const { fileRef } = business;
     const actor = await factory();try {
         await actor.change({ op: 'mount', ids: ['aa'] });await actor.change({ op: 'hold', value: true });
         const observation = await observe(actor), loss = actor.loseTerminal();

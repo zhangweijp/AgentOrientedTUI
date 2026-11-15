@@ -11,7 +11,7 @@
     "test:run": "vitest run"
   },
   "dependencies": {
-    "@aotui/sdk": "0.8.0-srt.1",
+    "@aotui/sdk": "0.8.0",
     "preact": "^10.25.4",
     "typebox": "1.4.3"
   },

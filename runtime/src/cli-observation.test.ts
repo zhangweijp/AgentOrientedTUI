@@ -34,12 +34,12 @@ function fixture(project?: AppInteractionPolicy['project']) {
     const views = ['first', 'second'].map(id => tools.mount(id, 'Detail'));
     tools.registerTypeTool({ viewType: 'Detail', name: 'edit', description: 'Edit', 
         inputSchema: { type: 'object', properties: {}, additionalProperties: false } }, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
         createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: { success: true } }),
     });
     tools.registerTypeTool({ viewType: 'Detail', name: 'inspect', description: 'Inspect', 
         inputSchema: { type: 'object', properties: { record: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } } }, required: ['record'], additionalProperties: false },
-    }, { safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: { success: true } }) });
+    }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: { success: true } }) });
     const published = core.committer.accept({ schemaVersion: 3, appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
         views: views.map(view => ({ id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: view.viewId,
             kind: 'state', content: { format: 'markdown-v1', value: 'Current content' } })),

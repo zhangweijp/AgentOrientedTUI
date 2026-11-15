@@ -14,7 +14,7 @@ function fixture(instance = 'i', stage?: 'authorize' | 'execute', now?: () => nu
     if (!contract.ok) throw Error('Fixture ordinary-v2 contract');
     const handler = async () => ({ success: true });
     registry.registerTypeTool({ viewType: 'T', name: 'read', description: 'Read', inputSchema: contract.contract.schema }, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
         createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: await handler() }),
     });
     const tool = registry.listTools()[0]!;

@@ -1,5 +1,5 @@
 import { arrayRef, createApp, formatRef, ref, type PublishedView } from '@aotui/sdk/app';
-import { bindings, initialState, itemValue, label, tools, workspaceText, type WorkItemOptions } from './work-items.js';
+import { bindings, initialState, itemValue, label, otherViewId, selectedViewId, tools, workspaceText, type WorkItemOptions } from './work-items.js';
 
 export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
     return createApp({
@@ -21,11 +21,11 @@ export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
             function publishState() {
                 const views: PublishedView[] = [
                     { id: 'workspace', type: 'Workspace', kind: 'state', body: workspaceText(state) },
-                    { id: 'item_b', type: 'Item', kind: 'state', body: formatRef('Other item', 'selected', 'Data'),
+                    { id: otherViewId, type: 'Item', kind: 'state', body: formatRef('Other item', 'selected', 'Data'),
                         refs: [ref('selected', false, { refType: 'Data', schema: itemValue })] },
                 ];
                 if (state.open) views.push({
-                    id: 'item_a', type: 'Item', kind: 'state',
+                    id: selectedViewId, type: 'Item', kind: 'state',
                     body: [formatRef(label, 'selected', 'Data'), formatRef('All items', 'items', 'Data[]'),
                         ...state.items.map((_, index) => formatRef(`Item ${index + 1}`, `items[${index}]`, 'Data'))].join('\n'),
                     refs: [ref('selected', state.value, { refType: 'Data', schema: itemValue }), arrayRef('items', state.items, { itemType: 'Data' })],

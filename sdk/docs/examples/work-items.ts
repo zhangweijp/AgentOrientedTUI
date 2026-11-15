@@ -39,6 +39,8 @@ export const tools = defineToolSet({
 });
 
 export const label = 'Selected [work] \\ item';
+export const selectedViewId = 'billing_export_2026_11';
+export const otherViewId = 'b';
 const initialItems = [0, false, '', null, { nested: [1, [false]] }] as const;
 
 export interface State {

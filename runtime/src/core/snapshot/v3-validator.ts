@@ -92,15 +92,14 @@ function rejected(error: unknown, envelope?: SnapshotDraftEnvelope): V3Result {
 /** Validate cross-View identities and type activation references, never any Handler. */
 export function validatePreparedV3Draft(
     input: unknown,
-    overrides: Partial<SnapshotLimits> = {},
+    limits: SnapshotLimits = DEFAULT_SNAPSHOT_LIMITS,
     previousTools?: (appId: string, instanceId: string) => Readonly<Record<string, ToolDescriptorV3>> | undefined,
 ): V3Result {
-    const limits = { ...DEFAULT_SNAPSHOT_LIMITS, ...overrides };
     const envelope = envelopeFromOwnDescriptors(input);
     let copied: JsonValue;
     try {
         copied = copyJson(input, {
-            ...limits, maxApproxBytes: limits.maxSnapshotBytes * 2,
+            maxDepth: limits.maxDepth, maxNodes: limits.maxNodes, maxApproxBytes: limits.maxSnapshotBytes * 2,
         });
     } catch (error) {
         return rejected(error, envelope);

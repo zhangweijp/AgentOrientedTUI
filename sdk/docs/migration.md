@@ -9,11 +9,11 @@
 | View 内的 `ToolRef` 与 `useViewContext` | 省略重复操作标签；确有业务用途的 View ID 由 App 自己作为组件参数传入 |
 | definition 内含 execute | definition 只含 viewType、name、description、inputSchema；execute／enabled 放入 App bindings |
 | 重复维护 Schema、参数类型、注册和工具说明 | 一份 TypeBox Schema 推导 `ArgsOf`／`SchemaOf`、注册和参数合同；handler 参数递归只读 |
-| isMutating 分类 | 删除该字段；只读参数、授权、业务 effects 及调用终态各守原合同 |
+| isMutating 分类 | 删除该字段。只读参数、授权与调用终态独立校验 |
 | Root／数据 View 重复序列化完整工具定义 | Root 用 `ToolCatalog` 按类型列工具名；完整描述与 Schema 只进入 Context Tools |
 | 用实例 id 猜 ViewType／扫描后代猜 kind | 显式 View `id`、`type`、`kind="instruction"` 或 `kind="state"`；同类型多个实例共享工具 |
 | App 自行包装 `<view>` 或预转义 XML | 只提交正文；最终消息边界包装并编码一次，文件／日志原文放 pre/code |
-| ToolResult 的 success/error/effects 任意组合 | 以 success 判别；失败提供 JSON error；成功不带 error/effects；无法确认副作用时不伪造 none |
+| ToolResult 的旧 effects 分类 | 删除顶层字段。以 success 判别，失败提供 JSON error，必要时附具体业务恢复信息 |
 | Registry 为读名称 import App，或注册配置覆盖名称／说明 | 先构建生成 aoapp.json；Registry 只读静态输出，注册 key 使用 canonical app_name，说明仍只维护在工厂声明 |
 | AOTUI_APP_NAME 同时充当运行名称和状态 namespace | canonical app_name 由生成物核对；需要独立状态 namespace 的 Host 改传 AOTUI_APP_KEY，旧字段明确拒绝 |
 | ToolResult 携带完整文件正文或列表 | 返回短收据及必要提示；当前业务数据进入 View |
@@ -28,8 +28,10 @@
 
 迁移后运行 [文件 App](examples/file-app.tsx)、[笔记 Ref App](examples/ref-app.tsx) 与现有包消费者检查。验证打开后能力出现、数据更新只呈现最新快照、关闭后旧资格失效、合法业务失败和资源释放。历史阶段方案及签收记录只说明当时产物，不作为当前推荐教程或本次验收结论。
 
-本次为 Breaking Change：匹配组合是 Runtime 7.0.0-srt.1、SDK 0.8.0-srt.1、可选 Adapter 0.4.0-srt.1 与 Driver 0.3.0。工厂和注册端口统一引用 Runtime 的 view-type-tools-v4 常量；旧 v3 及更早工厂／端口不会获得兼容执行。重新构建工厂及生成清单，不手动修改协议字符串。
+本次 Breaking Change 需要同批构建的 Runtime、SDK，以及宿主使用的 Adapter 和 Driver。工厂和注册端口统一引用 Runtime 的 `view-type-tools-v4` 常量。旧 v3 及更早工厂和端口会被拒绝。请重新构建 App 工厂并生成清单。
 
-Worker INIT 必须请求并确认 app-snapshot/v3；启用工具时还必须确认既有 view-tool-parameters-invoke/v4。缺失 Snapshot 支持或未确认全部请求能力时，在 OPEN/调用前拒绝。Snapshot 数据本身仍逐份独立校验，不以握手代替来源、参数、Ref 或预算检查。普通 TS 和 Preact 均通过中立的 `initialize(context)` / `close()` 合同装载。手写 SPI 工厂迁移见 [App 作者指南](app-authoring.md)。
+Worker INIT 必须请求并确认 app-snapshot/v3，启用工具时还必须确认 view-tool-parameters-invoke/v5。旧 Tool IPC 在能力协商时被拒绝。普通 TS 和 Preact 均通过中立的 `initialize(context)` / `close()` 合同装载。手写 SPI 工厂使用 `ordinary-invoker/v3` 作为其确实实现的注册 ABI。退役的 `ORDINARY_INVOCATION_MODE` 不再导出。纯 Core `ExecutionBinding.mode = 'ordinary-v2'` 仍受支持。具体配对见 [匹配包说明](runtime-compatibility.md)。
 
 旧 Registry 的 package.json/index.js 回退不再用于发现应用；缺失或无效 aoapp.json 给 APP_MANIFEST_INVALID。直接 Runtime Worker 安装入口仍可使用明确的模块路径，Worker 核对工厂协议和调用／Snapshot 支持。现有 SDK 文件／Ref 示例属于这种直接安装场景，不需要为了运行示例先引入应用市场。
+
+新增与迁移后的 View ID 规则见 [View 指南](views.md)。自定义 Host 迁移到独立 Source 和两字段 `readReceipt`，见 `@aotui/runtime` 包内 `docs/semantic-host-integration.zh-CN.md`。高级 Core 集成使用 `inspect()` 查询实例状态，构造时传入 Snapshot 限额，详见同包 `docs/core-public-entry.md`；Schema 容量诊断见 `docs/initialization-diagnostics.md`。

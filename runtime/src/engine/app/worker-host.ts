@@ -1,5 +1,5 @@
 import { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION, STATE_SESSION_VERSION } from '../../spi/index.js';
-import { SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY } from '../../spi/worker-protocol/types.js';
+import { SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY } from '../../spi/worker-protocol/types.js';
 import { initializationError } from '../../adapters/initialization-error.js';
 import { captureAppLifecycleAck, captureAppCleanupReport } from '../../adapters/app-lifecycle-protocol.js';
 import { withExecutableTools } from '../../adapters/semantic-capability-policy.js';
@@ -30,7 +30,7 @@ import { Worker } from 'worker_threads';
 import { randomUUID } from 'node:crypto';
 import { SemanticSnapshotReceiver, type SemanticSnapshotReport } from '../../adapters/snapshot/receiver.js';
 import type { CancellationSignal, ExecutionBinding, ExecutionFact, AppInteraction, InstanceInteraction, InteractionStats,
-    InvocationContext, InvocationSource, Issue, ToolResultData, AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
+    InvocationContext, InvocationSource, Issue, AppInteractionPolicy, ReceiptQuery } from '../../core/invocation/app-interaction-types.js';
 import type { JsonValue } from '../../core/snapshot/types.js';
 import { captureSnapshotPrepareIssue } from '../../core/snapshot/snapshot-support.js';
 import { captureTypeParametersTerminal, captureViewToolCapabilities } from '../../adapters/worker-message-capture.js';
@@ -311,8 +311,8 @@ export class AppWorkerHost {
         invoke: (request: unknown, timeoutMs?: number) => this.interactionAvailable() && this.instanceInteraction
             ? this.instanceInteraction.invoke(request, timeoutMs ?? this.timeout)
             : Promise.resolve({ kind: 'refused' as const, ...appInteractionUnavailable().issue }),
-        readReceipt: (request: unknown, timeoutMs?: number) => this.interactionAvailable() && this.instanceInteraction
-            ? this.instanceInteraction.readReceipt(request, timeoutMs ?? this.timeout)
+        readReceipt: (query: ReceiptQuery, timeoutMs?: number) => this.interactionAvailable() && this.instanceInteraction
+            ? this.instanceInteraction.readReceipt(query, timeoutMs ?? this.timeout)
             : Promise.resolve({ kind: 'unavailable' as const, ...appInteractionUnavailable().issue }),
     });
 
@@ -364,7 +364,7 @@ export class AppWorkerHost {
                     return result.ok ? { ok: true as const, value: result.value } : { ok: false as const };
                 },
                 isLive: () => ({ ok: isLive() }),
-                execute: (context: InvocationContext) => this.dispatchTool({ type: 'VIEW_TOOL_INVOKE_V4', requestId: generateRequestId(),
+                execute: (context: InvocationContext) => this.dispatchTool({ type: 'VIEW_TOOL_INVOKE_V5', requestId: generateRequestId(),
                     appId: source.appId as AppID, instanceId: source.instanceId, snapshotId: source.snapshotId,
                     tool: source.tool, argumentMode: PARAMETERS_MODE, execution, rawArgs: context.rawInput,
                     effectiveArgs: context.effectiveInput, refSources: context.refSources,
@@ -377,7 +377,7 @@ export class AppWorkerHost {
         return null;
     };
 
-    private dispatchTool(message: import('../../spi/worker-protocol/messages.js').ViewToolInvokeV4Message,
+    private dispatchTool(message: import('../../spi/worker-protocol/messages.js').ViewToolInvokeV5Message,
         expected: { worker: Worker; version: number; signal: CancellationSignal }): ExecutionFact | Promise<ExecutionFact> {
         const refused = (code: string, text: string): ExecutionFact => ({ kind: 'tool-result', phase: 'not-entered',
             result: { success: false, error: { code, message: text } } });
@@ -470,7 +470,7 @@ export class AppWorkerHost {
                     limits: DEFAULT_STATE_SESSION_LIMITS, transport: { ...DEFAULT_STATE_TRANSPORT_LIMITS, timeoutMs: this.timeout } },
                 appInstanceId: this.appInstanceId,
                 appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, version: APP_LIFECYCLE_VERSION, instanceId: this.appInstanceId },
-                requestedCapabilities: this.requestParameters ? [SNAPSHOT_CAPABILITY, PARAMETERS_V4_CAPABILITY] : [SNAPSHOT_CAPABILITY],
+                requestedCapabilities: this.requestParameters ? [SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY] : [SNAPSHOT_CAPABILITY],
             }, 'ready');
         } catch (error) {
             if (!this.closePromise) {
@@ -754,7 +754,7 @@ export class AppWorkerHost {
         }
     }
 
-    private sendRequest<T>(message: Exclude<MainToWorkerMessage, { type: 'VIEW_TOOL_INVOKE_V4' }>): Promise<T> {
+    private sendRequest<T>(message: Exclude<MainToWorkerMessage, { type: 'VIEW_TOOL_INVOKE_V5' }>): Promise<T> {
         if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE'].includes(message.type)) this.lifecycleContextVersion++;
         if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE', 'APP_REINITIALIZE'].includes(message.type)) {
             this.revokeRefCapability();
@@ -811,13 +811,11 @@ export class AppWorkerHost {
         const refPending = typeof id === 'string' ? this.pendingRequests.get(id) : undefined;
         if (refPending?.ref) {
             const { worker, appId, instanceId } = refPending.ref;
-            if (worker !== this.worker || typeField.value !== 'VIEW_TOOL_INVOKE_V4_RESPONSE') return;
+            if (worker !== this.worker || typeField.value !== 'VIEW_TOOL_INVOKE_V5_RESPONSE') return;
             const terminal = captureTypeParametersTerminal(msg, { requestId: id, appId, instanceId });
             if (!terminal) return;
             this.pendingRequests.delete(id);
-            refPending.resolve(terminal.phase === 'finished-unknown' ? { kind: 'unknown' } : { kind: 'tool-result', phase: terminal.phase,
-                result: terminal.result as unknown as ToolResultData,
-                ...(terminal.phase === 'entered-returned' && terminal.failureEffects !== undefined ? { failureEffects: terminal.failureEffects } : {}) } satisfies ExecutionFact);
+            refPending.resolve(terminal.phase === 'finished-unknown' ? { kind: 'unknown' } : { kind: 'tool-result', ...terminal } satisfies ExecutionFact);
             return;
         }
         if ((msg.type === 'INIT_RESPONSE' || msg.type === 'LIFECYCLE_RESPONSE' || msg.type === 'ERROR_RESPONSE') &&
@@ -900,7 +898,7 @@ export class AppWorkerHost {
                         init.worker === this.worker && init.version === this.lifecycleContextVersion &&
                         this.status !== 'closing' && this.status !== 'closed' && !this.closePromise &&
                         instance === this.appInstanceId && accepted !== null) {
-                        this.ordinaryParametersCapability = accepted.includes(PARAMETERS_V4_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
+                        this.ordinaryParametersCapability = accepted.includes(PARAMETERS_V5_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
                     }
                 }
                 if (pending.initialOpen && msg.success !== true) {

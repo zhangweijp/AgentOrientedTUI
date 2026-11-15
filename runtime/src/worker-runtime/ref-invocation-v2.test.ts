@@ -6,7 +6,7 @@ function fixture() {
     const c = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: true }, 'view-type-parameters-v1');if (!c.ok) throw Error('fixture');
     
     const execution = { kind: 'view-type' as const, activationId: 'active-1' };
-    const input = { type: 'VIEW_TOOL_INVOKE_V4', requestId: 'r', appId: 'app', instanceId: 'run', snapshotId: 'source', argumentMode: 'view-type-parameters-v1', execution,
+    const input = { type: 'VIEW_TOOL_INVOKE_V5', requestId: 'r', appId: 'app', instanceId: 'run', snapshotId: 'source', argumentMode: 'view-type-parameters-v1', execution,
         tool: { id: JSON.stringify(['app', 'File', 'read']), name: 'read', description: 'Read', viewType: 'File', inputSchema: ordinaryParameterProfile(c.contract), 
             execution },
         rawArgs: { file: 'v.id' }, effectiveArgs: { file: {} }, refSources: [{ param: 'file', refId: 'id', kind: 'snapshot-value', refType: 'unknown', snapshotId: 'source', viewId: 'v', viewInstanceId: 'mount' }] };
@@ -17,7 +17,7 @@ function fixture() {
         invokeBinding: vi.fn(() => { events.push('entry');return { phase: 'entered-returned' as const, result: { success: true } }; }) };
     return { input, context, events };
 }
-describe('R03/R04/R15 Ref V4 Worker final qualification', () => {
+describe('R03/R04/R15 Ref V5 Worker final qualification', () => {
     it('checks original full identity, both argument stages and private qualification before synchronous entry', async () => {
         const f = fixture();f.context.validateBinding.mockImplementation(tool => { expect(tool.inputSchema['x-aotui-parameter-contract']).toBe('view-type-parameters-v1');f.events.push('private');queueMicrotask(() => f.events.push('microtask'));return { success: true }; });
         const promise = invokeTypeParameters(f.input, f.context);expect(f.events).toEqual(['private', 'entry']);
@@ -33,7 +33,7 @@ describe('R03/R04/R15 Ref V4 Worker final qualification', () => {
         const f = fixture();f.context.invokeBinding.mockImplementation(() => { throw Error('PRIVATE'); });
         const response = await invokeTypeParameters(f.input, f.context);
         expect(response).toEqual({
-            type: 'VIEW_TOOL_INVOKE_V4_RESPONSE', requestId: f.input.requestId,
+            type: 'VIEW_TOOL_INVOKE_V5_RESPONSE', requestId: f.input.requestId,
             appId: f.input.appId, instanceId: f.input.instanceId,
             argumentMode: f.input.argumentMode, success: true,
             terminal: { phase: 'finished-unknown' },

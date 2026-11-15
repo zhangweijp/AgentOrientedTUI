@@ -1,4 +1,4 @@
-import { SNAPSHOT_PREPARE_ISSUE_CODES, type SnapshotLimits, type SnapshotPrepareIssue } from './types.js';
+import { SNAPSHOT_PREPARE_ISSUE_CODES, type SnapshotLimits, type SnapshotPrepareIssue, type SnapshotStoreOptions } from './types.js';
 
 export const DEFAULT_SNAPSHOT_LIMITS: Readonly<SnapshotLimits> = Object.freeze({
     maxDepth: 48,
@@ -11,6 +11,41 @@ export const DEFAULT_SNAPSHOT_LIMITS: Readonly<SnapshotLimits> = Object.freeze({
     maxRefPayloadBytes: 512 * 1024,
     maxToolSchemaBytes: 64 * 1024,
 });
+
+export function captureSnapshotLimits(options: SnapshotStoreOptions): SnapshotLimits {
+    const property = Object.getOwnPropertyDescriptor(options, 'limits');
+    if (!property && !('limits' in options)) return DEFAULT_SNAPSHOT_LIMITS;
+    if (!property?.enumerable || !Object.hasOwn(property, 'value')) {
+        throw new TypeError('limits must be an own enumerable data property');
+    }
+    const input: unknown = property.value;
+    if (input === undefined) return DEFAULT_SNAPSHOT_LIMITS;
+    if (input === null || typeof input !== 'object' || Array.isArray(input) ||
+        ![Object.prototype, null].includes(Object.getPrototypeOf(input))) {
+        throw new TypeError('limits must be a plain object');
+    }
+
+    const captured = { ...DEFAULT_SNAPSHOT_LIMITS };
+    for (const key of Reflect.ownKeys(input)) {
+        const label = `limits.${String(key)}`;
+        if (typeof key !== 'string' || !Object.hasOwn(DEFAULT_SNAPSHOT_LIMITS, key)) {
+            throw new TypeError(`Unknown Snapshot limit ${label}`);
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(input, key);
+        if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) {
+            throw new TypeError(`${label} must be an own enumerable data property`);
+        }
+        const field = key as keyof SnapshotLimits;
+        const value: unknown = descriptor.value;
+        if (value === undefined) continue;
+        const max = DEFAULT_SNAPSHOT_LIMITS[field];
+        if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > max) {
+            throw new RangeError(`${label} must be a safe integer between 0 and ${max}`);
+        }
+        captured[field] = value;
+    }
+    return Object.freeze(captured);
+}
 
 const KiB = 1024;
 export const OBSERVATION_METADATA_BYTES = 64 * KiB;

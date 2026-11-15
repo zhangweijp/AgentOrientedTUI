@@ -19,7 +19,7 @@ it.each(['normal', 'sync-throw', 'async-reject', 'async-held'] as const)('A17 ac
         const handler = async (_args: any) => { calls++; handlerStarted.resolve(); await handlerGate.promise; return { success: true, data: 19 }; };
         context.appTypeTools.registerTypeTool({ viewType: 'Detail', name: 'held', description: 'Held',
             inputSchema: { type: 'object', properties: {}, additionalProperties: false } }, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
             createSafeOrdinaryParametersInvoker: () => async args => ({ phase: 'entered-returned', result: await handler(args) }),
         });
         context.refExporter.registerRef('v', 'r', { value: 19 });

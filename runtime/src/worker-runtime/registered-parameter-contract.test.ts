@@ -19,8 +19,8 @@ async function setup() {
   const context = { appId: 'app', instanceId: 'run', negotiated: true,
     validateBinding: kernel.validateBoundTypeTool.bind(kernel),
     getParameterContract: (tool: Parameters<typeof kernel.validateBoundTypeTool>[0], execution: Parameters<typeof kernel.validateBoundTypeTool>[1]) =>
-            isRefViewLive: () => true,
       kernel.getBoundTypeToolContract(tool, execution),
+    isRefViewLive: () => true,
     invokeBinding: kernel.invokeBoundTypeTool.bind(kernel),
   };
   return { kernel, port, views, context };
@@ -38,7 +38,7 @@ describe('registered parameter contract through Worker dispatch and AppKernel', 
         type: 'object', properties: { value: ref ? { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File',
           'x-aotui-ref-value': { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false } }
           : { type: 'string' } }, required: ['value'], additionalProperties: false,
-      } }, { safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: contract => {
+      } }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: contract => {
         compiled = contract;
         return async args => ({ phase: 'entered-returned', result: await handler(args) });
       } });
@@ -47,7 +47,7 @@ describe('registered parameter contract through Worker dispatch and AppKernel', 
       for (let index = 0; index < 4; index++) {
         const rawArgs = { value: ref ? 'detail.current' : 'value-' + index };
         const effectiveArgs = { value: ref ? { text: 'value-' + index } : rawArgs.value };
-        const response = await invokeTypeParameters({ type: 'VIEW_TOOL_INVOKE_V4', requestId: 'r-' + index,
+        const response = await invokeTypeParameters({ type: 'VIEW_TOOL_INVOKE_V5', requestId: 'r-' + index,
           appId: 'app', instanceId: 'run', snapshotId: 'source', tool, execution: tool.execution,
           argumentMode: 'view-type-parameters-v1', rawArgs, effectiveArgs, refSources: ref ? [{
             param: 'value', refId: 'current', kind: 'snapshot-value', refType: 'File', snapshotId: 'source',
@@ -66,11 +66,11 @@ describe('registered parameter contract through Worker dispatch and AppKernel', 
     try {
       x.port.registerTypeTool({ viewType: 'File', name: 'read', description: 'Read', inputSchema: {
         type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false,
-      } }, { safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: () =>
+      } }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () =>
         async args => ({ phase: 'entered-returned', result: await handler(args) }) });
       const tool = x.kernel.getToolDefinitions()[0]!;
       expect((await x.kernel.invokeBoundTypeTool(tool, tool.execution, { value: 7 })).phase).toBe('entered-returned');
-      const reply = await invokeTypeParameters({ type: 'VIEW_TOOL_INVOKE_V4', requestId: 'invalid', appId: 'app',
+      const reply = await invokeTypeParameters({ type: 'VIEW_TOOL_INVOKE_V5', requestId: 'invalid', appId: 'app',
         instanceId: 'run', snapshotId: 'source', tool, execution: tool.execution, argumentMode: 'view-type-parameters-v1',
         rawArgs: { value: 7 }, effectiveArgs: { value: 7 }, refSources: [] }, x.context);
       expect(reply?.terminal).toMatchObject({ phase: 'not-entered', result: { success: false, error: { code: 'E_INVALID_ARGS' } } });
@@ -83,7 +83,7 @@ describe('registered parameter contract through Worker dispatch and AppKernel', 
     const handler = vi.fn(async (args: Readonly<Record<string, unknown>>) => ({ success: true, data: { value: args.value } }));
     const register = (type: string) => x.port.registerTypeTool({ viewType: 'File', name: 'read', description: 'Read',
       inputSchema: { type: 'object', properties: { value: { type } }, required: ['value'], additionalProperties: false },
-    }, { safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: () =>
+    }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () =>
       async args => ({ phase: 'entered-returned', result: await handler(args) }) });
     try {
       const release = register('string'), old = x.kernel.getToolDefinitions()[0]!;
@@ -98,7 +98,7 @@ describe('registered parameter contract through Worker dispatch and AppKernel', 
       release(); register('number');
       const current = x.kernel.getToolDefinitions()[0]!;
       expect(x.kernel.getBoundTypeToolContract(current, current.execution)).not.toBe(first);
-      const request = (tool: typeof current, value: unknown) => ({ type: 'VIEW_TOOL_INVOKE_V4', requestId: 'r',
+      const request = (tool: typeof current, value: unknown) => ({ type: 'VIEW_TOOL_INVOKE_V5', requestId: 'r',
         appId: 'app', instanceId: 'run', snapshotId: 'source', tool, execution: tool.execution,
         argumentMode: 'view-type-parameters-v1', rawArgs: { value }, effectiveArgs: { value }, refSources: [] });
       expect((await invokeTypeParameters(request(old, 'old'), x.context))?.terminal.phase).toBe('not-entered');

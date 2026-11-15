@@ -7,8 +7,8 @@ import type { ExecutionPhase, InvocationOutcome } from './app-interaction-types.
 export function jsonObject(value: unknown): value is Readonly<Record<string, JsonValue>> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-export function exactFields(value: Readonly<Record<string, JsonValue>>, required: readonly string[], optional: readonly string[] = []): boolean {
-    return required.every(key => Object.hasOwn(value, key)) && Object.keys(value).every(key => required.includes(key) || optional.includes(key));
+export function exactFields(value: Readonly<Record<string, JsonValue>>, required: readonly string[]): boolean {
+    return Object.keys(value).length === required.length && required.every(key => Object.hasOwn(value, key));
 }
 export function captureBoundedJson<T>(raw: unknown, limits: ObservationJsonLimits): { value: T; bytes: number } {
     const value = copyJson(raw, limits);
@@ -33,12 +33,10 @@ export function mapExecutionFact(raw: unknown, limits: ObservationJsonLimits): E
         if (fact.kind === 'unknown' && exactFields(fact, ['kind'])) return { executionPhase: 'unknown', outcome: unknownOutcome() };
         if (fact.phase !== 'not-entered' && fact.phase !== 'entered-returned') throw 0;
         const phase: ExecutionPhase = fact.phase;
-        if (fact.kind !== 'tool-result' || !exactFields(fact, ['kind', 'phase', 'result'], ['failureEffects'])) throw 0;
+        if (fact.kind !== 'tool-result' || !exactFields(fact, ['kind', 'phase', 'result'])) throw 0;
         const result = fact.result;
         if (!isToolResultData(result)) throw 0;
-        if (Object.hasOwn(fact, 'failureEffects') && (phase !== 'entered-returned' || result.success ||
-            fact.failureEffects !== 'none' && fact.failureEffects !== 'partial')) throw 0;
-        const details = { kind: 'tool-result' as const, phase, result: result as unknown as import('./app-interaction-types.js').ToolResultData };
+        const details = { kind: 'tool-result' as const, phase, result };
         if (phase === 'not-entered') {
             if (result.success) throw 0;
             if (result.error.code === 'REF_VIEW_UNAVAILABLE' && typeof result.error.context?.path === 'string') {
@@ -49,9 +47,7 @@ export function mapExecutionFact(raw: unknown, limits: ObservationJsonLimits): E
                 message: 'The Tool rejected the request before handler entry', details }) };
         }
         if (result.success) return { executionPhase: phase, outcome: Object.freeze({ status: 'succeeded', value: result }) };
-        if (fact.failureEffects === 'none' || fact.failureEffects === 'partial') return { executionPhase: phase,
-            outcome: Object.freeze({ status: 'failed', code: 'TOOL_FAILED', message: 'The application reported a task failure', effects: fact.failureEffects, details }) };
-        return { executionPhase: phase, outcome: Object.freeze({ status: 'unknown', code: 'TOOL_OUTCOME_UNKNOWN',
-            message: 'The business outcome is uncertain', details }) };
+        return { executionPhase: phase, outcome: Object.freeze({ status: 'failed', code: 'TOOL_FAILED',
+            message: 'The application reported a task failure', details }) };
     } catch { return { executionPhase: 'unknown', outcome: unknownOutcome() }; }
 }

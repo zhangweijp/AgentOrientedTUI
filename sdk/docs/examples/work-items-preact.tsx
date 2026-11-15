@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import { AppTools, createTUIApp, useAppLifecycle, useArrayRef, useDataRef, View, type JsonSchemaValue } from '@aotui/sdk';
-import { bindings, initialState, itemValue, label, tools, workspaceText, type WorkItemOptions } from './work-items.js';
+import { bindings, initialState, itemValue, label, otherViewId, selectedViewId, tools, workspaceText, type WorkItemOptions } from './work-items.js';
 
 function Item({ value, items }: { readonly value: JsonSchemaValue; readonly items?: readonly JsonSchemaValue[] }) {
     const selected = useDataRef('selected', value, { refType: 'Data', schema: itemValue });
@@ -24,8 +24,8 @@ export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
         useAppLifecycle({ stop: () => options.onStop?.(), close: () => options.onClose?.() });
         return <AppTools definition={tools} bindings={bindings(setState, options)}>
             <View id="workspace" type="Workspace" kind="state"><p>{workspaceText(state)}</p></View>
-            <View id="item_b" type="Item" kind="state"><Item value={false} /></View>
-            {state.open && <View id="item_a" type="Item" kind="state"><Item value={state.value} items={state.items} /></View>}
+            <View id={otherViewId} type="Item" kind="state"><Item value={false} /></View>
+            {state.open && <View id={selectedViewId} type="Item" kind="state"><Item value={state.value} items={state.items} /></View>}
         </AppTools>;
     }
     return createTUIApp({ app_name, component: WorkItems });

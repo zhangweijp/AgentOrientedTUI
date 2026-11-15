@@ -4,14 +4,14 @@ import { RAW_TOOL_ARGUMENT_LIMITS, RESOLVED_TOOL_ARGUMENT_LIMITS, RESOLVED_TOOL_
 import { selectedRefParameters } from '../core/tool/versioned-ref-declarations.js';
 import { captureInvocationJson, captureTypeParametersTerminal,
   exact, invocationExecution, invocationObject, invocationToolDescriptorV3, text } from './worker-message-capture.js';
-import type { ViewToolInvokeV4Message, ViewToolInvokeV4Response } from '../spi/worker-protocol/messages.js';
+import type { ViewToolInvokeV5Message, ViewToolInvokeV5Response } from '../spi/worker-protocol/messages.js';
 import type { ToolDescriptorV3, ObservedToolExecutionV3, JsonValue } from '../core/snapshot/types.js';
 import type { ToolResultData } from '../spi/core/tool-result.js';
 
-export function captureTypeParametersRequest(input: unknown): ViewToolInvokeV4Message {
+export function captureTypeParametersRequest(input: unknown): ViewToolInvokeV5Message {
   const value = captureInvocationJson(input, TOOL_REQUEST_LIMITS);
   if (!invocationObject(value) || !exact(value, ['type', 'requestId', 'appId', 'instanceId', 'snapshotId', 'tool',
-      'argumentMode', 'execution', 'rawArgs', 'effectiveArgs', 'refSources']) || value.type !== 'VIEW_TOOL_INVOKE_V4' ||
+      'argumentMode', 'execution', 'rawArgs', 'effectiveArgs', 'refSources']) || value.type !== 'VIEW_TOOL_INVOKE_V5' ||
       value.argumentMode !== VIEW_TYPE_PARAMETERS_MODE || !['requestId', 'appId', 'instanceId', 'snapshotId'].every(k => text(value[k])) ||
       !invocationToolDescriptorV3(value.tool) || !invocationExecution(value.execution) ||
       !invocationObject(value.rawArgs) || !invocationObject(value.effectiveArgs) || !Array.isArray(value.refSources)) throw new Error('Invalid parameter request');
@@ -20,11 +20,11 @@ export function captureTypeParametersRequest(input: unknown): ViewToolInvokeV4Me
     throw new Error('Invalid ViewType execution identity');
   captureInvocationJson(value.rawArgs, RAW_TOOL_ARGUMENT_LIMITS);
   captureInvocationJson(value.effectiveArgs, RESOLVED_TOOL_ARGUMENT_LIMITS);
-  return value as unknown as ViewToolInvokeV4Message;
+  return value as unknown as ViewToolInvokeV5Message;
 }
 
 /** Captured request after full binding verification, using that registration's compiled contract. */
-export function validateTypeParameters(message: ViewToolInvokeV4Message, contract: OrdinaryParameterContract | undefined | null): ToolResultData {
+export function validateTypeParameters(message: ViewToolInvokeV5Message, contract: OrdinaryParameterContract | undefined | null): ToolResultData {
   const invalid = (code = 'E_INVALID_ARGS'): ToolResultData => ({ success: false, error: { code, message: 'Parameters or Ref provenance do not match the registered contract' } });
   if (!contract || contract.revision !== VIEW_TYPE_PARAMETERS_MODE) return invalid('REF_CONTRACT_UNSUPPORTED');
   try {
@@ -50,7 +50,7 @@ export function validateTypeParameters(message: ViewToolInvokeV4Message, contrac
     return { success: true };
   } catch { return invalid('REF_ARGUMENT_BUDGET_EXCEEDED'); }
 }
-export function typeParametersResponse(input: unknown, terminal: ViewToolInvokeV4Response['terminal']): ViewToolInvokeV4Response | null {
+export function typeParametersResponse(input: unknown, terminal: ViewToolInvokeV5Response['terminal']): ViewToolInvokeV5Response | null {
   try {
     if (!invocationObject(input)) return null;
     const header: Record<string, string> = {};
@@ -59,7 +59,7 @@ export function typeParametersResponse(input: unknown, terminal: ViewToolInvokeV
       if (!field || !('value' in field) || !text(field.value)) return null;
       header[key] = field.value;
     }
-    const response = captureInvocationJson({ ...header, type: 'VIEW_TOOL_INVOKE_V4_RESPONSE', argumentMode: VIEW_TYPE_PARAMETERS_MODE, success: true, terminal });
-    return captureTypeParametersTerminal(response, header as { requestId: string; appId: string; instanceId: string }) ? response as unknown as ViewToolInvokeV4Response : null;
+    const response = captureInvocationJson({ ...header, type: 'VIEW_TOOL_INVOKE_V5_RESPONSE', argumentMode: VIEW_TYPE_PARAMETERS_MODE, success: true, terminal });
+    return captureTypeParametersTerminal(response, header as { requestId: string; appId: string; instanceId: string }) ? response as unknown as ViewToolInvokeV5Response : null;
   } catch { return null; }
 }

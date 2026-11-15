@@ -10,7 +10,7 @@ const incrementInput = Type.Object({
     view_id: Type.String({ description: 'The counter business ID shown in the open Counter View.' }),
     amount: Type.Number(),
     hold: Type.Optional(Type.Boolean()),
-    failure: Type.Optional(Type.String({ enum: ['none', 'partial', 'undeclared', 'throw'] })),
+    failure: Type.Optional(Type.String({ enum: ['declined', 'after-update', 'throw'] })),
 }, { additionalProperties: false });
 
 function Counter({ owner, id, generation, enabled }) {
@@ -72,14 +72,13 @@ Increment: { execute: async args => {
             owner.entries++; parentPort.postMessage({ type: 'TEST_ENTERED', entries: owner.entries });
             if (args.hold) await new Promise(resolve => { owner.handlerRelease = resolve; });
             // The application decides whether a suspended task may commit.
-            if (!owner.live) return { success: false, error: { code: 'APP_STOPPED', message: 'App is stopping' }, effects: 'none' };
-            if (args.failure === 'none') return { success: false, error: { code: 'EXPECTED', message: 'No effect' }, effects: 'none' };
+            if (!owner.live) return { success: false, error: { code: 'APP_STOPPED', message: 'App is stopping' } };
+            if (args.failure === 'declined') return { success: false, error: { code: 'EXPECTED', message: 'Counter was not updated' } };
             if (args.view_id === 'counter') { owner.value += args.amount; owner.save(owner.value); }
             else owner.secondaryValue += args.amount;
             refresh(x => x + 1);
-            if (args.failure === 'partial') return { success: false, error: { code: 'EXPECTED', message: 'One effect' }, effects: 'partial' };
-            if (args.failure === 'undeclared') return { success: false, error: { code: 'EXPECTED', message: 'Effects not declared' } };
-            if (args.failure === 'throw') throw Error('effect happened');
+            if (args.failure === 'after-update') return { success: false, error: { code: 'EXPECTED', message: 'Counter was updated' }, data: { counterUpdated: true } };
+            if (args.failure === 'throw') throw Error('PRIVATE_COUNTER_EXCEPTION');
             return { success: true, data: { value: args.view_id === 'counter' ? owner.value : owner.secondaryValue,
                 view_id: args.view_id, generation: view.generation, entries: owner.entries } };
         }, enabled: view.enabled }

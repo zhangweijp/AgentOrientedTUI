@@ -74,7 +74,7 @@ try {
                 const outcome = await x.call('write_file', { filePath: file, content: 'after' });
                 assert.equal(acquired.length, 1); assert.equal(acquired[0].handle.fd === -1, physicallyClosed);
                 facts.stagingClose ??= []; facts.stagingClose.push({ physicallyClosed, outcome, descriptorOpen: acquired[0].handle.fd !== -1 });
-                assert.equal(outcome.success, false); assert.equal(outcome.effects, undefined); assert.equal(outcome.error.code, 'RESOURCE_CLOSE_UNCERTAIN'); assert.equal(await fs.readFile(file, 'utf8'), 'before');
+                assert.equal(outcome.success, false); assert.equal(Object.hasOwn(outcome, 'effects'), false); assert.equal(outcome.error.code, 'RESOURCE_CLOSE_UNCERTAIN'); assert.equal(await fs.readFile(file, 'utf8'), 'before');
                 await assert.rejects(x.owner.close(), code('IDE_RESOURCE_CLEANUP_FAILED'));
             } finally {
                 fs.open = open;
@@ -128,14 +128,14 @@ try {
         const root = await workspace('batch'), file = path.join(root, 'a.ts'); await fs.writeFile(file, 'one');
         const x = await session(root); await x.owner.start(); await x.call('multi_open_file', { filePaths: [file] });
         const invalid = await x.call('batch_edit', { edits: [{ filePath: file, oldString: 'one', newString: 'two' }, { filePath: file, oldString: 1, newString: 'bad' }] });
-        assert.equal(invalid.effects, 'none'); assert.equal(await fs.readFile(file, 'utf8'), 'one');
+        assert.equal(invalid.success, false); assert.equal(Object.hasOwn(invalid, 'effects'), false); assert.equal(await fs.readFile(file, 'utf8'), 'one');
         const partial = await x.call('batch_edit', { edits: [{ filePath: file, oldString: 'one', newString: 'two' }, { filePath: file, oldString: 'missing', newString: 'bad' }, { filePath: file, oldString: 'two', newString: 'three' }] });
-        assert.equal(partial.effects, 'partial'); assert.equal(await fs.readFile(file, 'utf8'), 'two'); assert.deepEqual(x.owner.lastBatch.map(item => item.status), ['succeeded', 'failed', 'not-run']);
+        assert.equal(partial.success, false); assert.equal(Object.hasOwn(partial, 'effects'), false); assert.equal(await fs.readFile(file, 'utf8'), 'two'); assert.deepEqual(x.owner.lastBatch.map(item => item.status), ['succeeded', 'failed', 'not-run']);
         const entered = gate(), release = gate(), add = x.owner.history.add.bind(x.owner.history);
         x.owner.history.add = async (...args) => { entered.resolve(); await release.promise; return add(...args); };
         const pending = x.call('batch_edit', { edits: [{ filePath: file, oldString: 'two', newString: 'three' }, { filePath: file, oldString: 'three', newString: 'four' }] });
         await entered.promise; const extra = await workspace('batch-other'); assert.equal((await x.call('add_folder_to_workspace', { folderPath: extra })).success, true);
-        release.resolve(); const concurrent = await pending; assert.equal(concurrent.effects, 'partial'); assert.equal(await fs.readFile(file, 'utf8'), 'three');
+        release.resolve(); const concurrent = await pending; assert.equal(concurrent.success, false); assert.equal(Object.hasOwn(concurrent, 'effects'), false); assert.equal(await fs.readFile(file, 'utf8'), 'three');
         assert.equal((await x.close()).ok, true);
     });
     await run('conditional slice close failure stays unknown and prevents clean App release', async () => {
@@ -174,7 +174,7 @@ try {
                 assert.equal((await x.call('multi_open_file', { filePaths: [file] })).success, true);
                 const current = x.owner.files.get(file); assert.notEqual(current, record); assert.equal(current.viewId, record.viewId);
                 lateRelease.resolve(); const rejected = await late;
-                assert.equal(rejected.error.code, 'IDE_FILE_VIEW_STALE'); assert.equal(rejected.effects, 'none'); assert.deepEqual(current.panels, {});
+                assert.equal(rejected.error.code, 'IDE_FILE_VIEW_STALE'); assert.equal(Object.hasOwn(rejected, 'effects'), false); assert.deepEqual(current.panels, {});
                 x.owner.lsp.query = async (_kind, _file, content) => ({ documentVersion: 2, value: content });
                 const fresh = await x.call('lsp_hover', { file_path: file, line: 1, character: 1 }, current.viewId);
                 assert.equal(fresh.success, true); assert.equal(fresh.data.value, 'const x = 2;');
@@ -187,7 +187,7 @@ try {
         const record = x.owner.files.get(file), before = JSON.stringify(record);
         x.owner.lsp.query = async () => ({ documentVersion: 1, value: [{ range: { start: { line: -1, character: 0 }, end: { line: 0, character: 1 } }, message: 'bad' }] });
         const result = await x.call('lsp_get_diagnostics', { file_path: file }, record.viewId);
-        assert.equal(result.error.code, 'LSP_DIAGNOSTICS_INVALID'); assert.equal(result.effects, 'none'); assert.equal(JSON.stringify(record), before); await x.close();
+        assert.equal(result.error.code, 'LSP_DIAGNOSTICS_INVALID'); assert.equal(Object.hasOwn(result, 'effects'), false); assert.equal(JSON.stringify(record), before); await x.close();
     });
     await run('queued history cancellation has no disk effect and is a healthy close', async () => {
         const root = await workspace('cancel-history'), file = path.join(root, 'history.json'), history = new IDEHistory(file);
@@ -203,7 +203,7 @@ try {
         const x = await session(root); await x.owner.start(); await x.call('multi_open_file', { filePaths: [file] });
         const before = x.owner.files.get(file), version = x.owner.workspaceVersion;
         const outcome = await x.call('multi_open_file', { filePaths: [second, file, path.join(root, 'missing')] });
-        assert.equal(outcome.success, false); assert.equal(outcome.effects, 'none');
+        assert.equal(outcome.success, false); assert.equal(Object.hasOwn(outcome, 'effects'), false);
         assert.equal(x.owner.workspaceVersion, version); assert.equal(x.owner.files.get(file), before); assert.equal(x.owner.files.size, 1);
         assert.equal((await x.close()).ok, true);
     });

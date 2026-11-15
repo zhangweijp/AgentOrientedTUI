@@ -14,7 +14,7 @@ const declaration = () => ({ viewType: 'File', name: 'read', description: 'Read'
     inputSchema: { type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } }, n: { type: 'number', default: 2 } }, required: ['file'], additionalProperties: false },
 });
 const options = (factory: any = () => async () => ({ phase: 'entered-returned', result: { success: true } })) => ({
-    safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: factory,
+    safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: factory,
 });
 describe('AppKernel shared parameter port', () => {
     it('uses Core as the sole contract compiler and preserves a captured typed Ref contract', async () => {

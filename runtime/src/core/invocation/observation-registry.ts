@@ -168,46 +168,46 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
             if (--entry.references === 0) { sources.delete(hold.source.id); sourceBytes -= entry.bytes; }
         }
     }
-    function dropObservation(scope: ObservationState, key: string, value: RegisteredObservation): void {
-        scope.observations.delete(key);
-        if (scope.adoptedObservationId === key) scope.adoptedObservationId = undefined;
+    function dropObservation(key: string, value: RegisteredObservation): void {
+        state.observations.delete(key);
+        if (state.adoptedObservationId === key) state.adoptedObservationId = undefined;
         observationBytes -= value.publicBytes; metadataBytes -= value.metadataBytes;
         dropHold(value);
     }
-    function releaseAll(scope: ObservationState): void {
-        for (const value of scope.reservations.values()) value.cancelled = true;
-        for (const [key, value] of scope.observations) dropObservation(scope, key, value);
+    function releaseAll(): void {
+        for (const value of state.reservations.values()) value.cancelled = true;
+        for (const [key, value] of state.observations) dropObservation(key, value);
     }
-    function isCurrent(scope: ObservationState): boolean {
-        if (scope.closing) return false;
-        const identity = store.readAppIdentity(scope.appId);
-        return identity.status !== 'stopped' && (identity.status !== 'active' || identity.instanceId === scope.instanceId);
+    function isCurrent(): boolean {
+        if (state.closing) return false;
+        const identity = store.readAppIdentity(state.appId);
+        return identity.status !== 'stopped' && (identity.status !== 'active' || identity.instanceId === state.instanceId);
     }
-    function requireActive(scope: ObservationState): void {
-        if (scope !== state || scope.closing) fail('APP_INTERACTION_UNAVAILABLE');
+    function requireActive(): void {
+        if (state.closing) fail('APP_INTERACTION_UNAVAILABLE');
     }
-    function ready(scope: ObservationState): AppSnapshotV3 {
-        const latest = store.readLatest(scope.appId);
+    function ready(): AppSnapshotV3 {
+        const latest = store.readLatest(state.appId);
         if (latest.status !== 'ready') fail(latest.status === 'stopped' ? 'APP_STOPPED' : 'SNAPSHOT_UNREADY');
-        if (latest.snapshot.instanceId !== scope.instanceId) fail('APP_INSTANCE_MISMATCH');
+        if (latest.snapshot.instanceId !== state.instanceId) fail('APP_INSTANCE_MISMATCH');
         if (latest.snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) fail('SNAPSHOT_INVALID');
         return latest.snapshot;
     }
-    function reacquire(scope: ObservationState, source: AppSnapshotV3): void {
-        ready(scope);
+    function reacquire(source: AppSnapshotV3): void {
+        ready();
         const result = store.acquire(source.id);
         if (result.status === 'rejected') fail(result.issue.code);
         try {
-            if (result.lease.snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION || result.lease.snapshot.appId !== scope.appId ||
-                result.lease.snapshot.instanceId !== scope.instanceId) fail('APP_INSTANCE_MISMATCH');
+            if (result.lease.snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION || result.lease.snapshot.appId !== state.appId ||
+                result.lease.snapshot.instanceId !== state.instanceId) fail('APP_INSTANCE_MISMATCH');
         } finally { result.lease.release(); }
     }
     function capacity(nextSource: number, nextPublic: number, nextMetadata: number): void {
         if (nextSource > limits.maxSourceBytes || nextPublic > limits.maxObservationBytes ||
             nextMetadata > limits.maxMetadataBytes || nextSource + nextPublic + nextMetadata > limits.maxTotalBytes) fail('OBSERVATION_CAPACITY', '$.observation');
     }
-    function settle(scope: ObservationState, token: ReservationHandle, value: Reservation, transferred = false): void {
-        scope.reservations.delete(token);
+    function settle(token: ReservationHandle, value: Reservation, transferred = false): void {
+        state.reservations.delete(token);
         observationBytes -= limits.observation.maxCanonicalBytes;
         metadataBytes -= limits.metadata.maxCanonicalBytes;
         if (!transferred) dropHold(value);
@@ -301,10 +301,10 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
     return Object.freeze({
         limits,
         isCurrent, releaseAll, stats,
-        begin(scope: ObservationState, input: unknown) {
+        begin(input: unknown) {
             let lease: SnapshotLease | undefined;
             try {
-                refresh(); requireActive(scope);
+                refresh(); requireActive();
                 const captured = bounded<Record<string, unknown>>(input, limits.capture, 'OBSERVATION_INVALID').value;
                 const all = captured !== null && typeof captured === 'object' && Object.hasOwn(captured, 'all');
                 const data = object(captured, all ? ['all'] : ['viewIds']);
@@ -312,9 +312,9 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
                 if (!all && (!Array.isArray(data.viewIds) || data.viewIds.length === 0 ||
                     data.viewIds.length > DEFAULT_OBSERVATION_REGISTRY_LIMITS.maxViews ||
                     data.viewIds.some(v => !text(v)) || new Set(data.viewIds).size !== data.viewIds.length)) fail('OBSERVATION_INVALID');
-                if (scope.reservations.size || scope.observations.size > (scope.adoptedObservationId ? 1 : 0))
+                if (state.reservations.size || state.observations.size > (state.adoptedObservationId ? 1 : 0))
                     fail('OBSERVATION_CAPACITY');
-                const source = ready(scope);
+                const source = ready();
                 const viewIds = all ? source.views.map(view => view.id) : data.viewIds as string[];
                 if (viewIds.length > DEFAULT_OBSERVATION_REGISTRY_LIMITS.maxViews) fail('OBSERVATION_CAPACITY');
                 if (viewIds.some(viewId => !source.views.some(v => v.id === viewId))) fail('OBSERVATION_INVALID');
@@ -330,47 +330,47 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
                 const value = { source, lease, selection, observationId: id('observation'), cancelled: false };
                 if (existing) existing.references++;
                 else { sources.set(source.id, { source, bytes, references: 1 }); sourceBytes += bytes; }
-                scope.reservations.set(token, value);
+                state.reservations.set(token, value);
                 observationBytes += limits.observation.maxCanonicalBytes; metadataBytes += limits.metadata.maxCanonicalBytes;
                 lease = undefined;
                 return Object.freeze({ status: 'reserved' as const, reservation: token, source, selection });
             } catch (error) { return rejected(error); }
             finally { lease?.release(); }
         },
-        complete(scope: ObservationState, token: ReservationHandle, input: unknown) {
-            const value = scope.reservations.get(token);
+        complete(token: ReservationHandle, input: unknown) {
+            const value = state.reservations.get(token);
             let transferred = false;
             try {
                 refresh();
-                if (!value || scope.closing || value.cancelled) fail('RESERVATION_UNAVAILABLE');
-                reacquire(scope, value.source);
+                if (!value || state.closing || value.cancelled) fail('RESERVATION_UNAVAILABLE');
+                reacquire(value.source);
                 const projected = project(value, input);
                 capacity(sourceBytes, observationBytes - limits.observation.maxCanonicalBytes + projected.publicBytes,
                     metadataBytes - limits.metadata.maxCanonicalBytes + projected.metadataBytes);
-                scope.observations.set(value.observationId, { ...projected, source: value.source, lease: value.lease });
+                state.observations.set(value.observationId, { ...projected, source: value.source, lease: value.lease });
                 observationBytes += projected.publicBytes; metadataBytes += projected.metadataBytes;
                 transferred = true;
                 return Object.freeze({ status: 'observed' as const, observation: projected.observation });
             } catch (error) { return rejected(error); }
-            finally { if (value) settle(scope, token, value, transferred); }
+            finally { if (value) settle(token, value, transferred); }
         },
-        abandon(scope: ObservationState, token: ReservationHandle): void {
+        abandon(token: ReservationHandle): void {
             try { refresh(); } catch { /* Explicit settlement remains possible with a failed clock. */ }
-            const value = scope.reservations.get(token);
-            if (value) settle(scope, token, value);
+            const value = state.reservations.get(token);
+            if (value) settle(token, value);
         },
-        resolveBinding(scope: ObservationState, input: unknown) {
+        resolveBinding(input: unknown) {
             try {
-                refresh(); requireActive(scope);
+                refresh(); requireActive();
                 const data = object(bounded(input, limits.capture, 'OBSERVATION_INVALID').value, ['observationId', 'bindingId']);
                 if (!text(data.observationId) || !text(data.bindingId)) fail('OBSERVATION_INVALID');
-                const value = scope.observations.get(data.observationId);
+                const value = state.observations.get(data.observationId);
                 if (!value) fail('OBSERVATION_UNAVAILABLE');
-                if (scope.adoptedObservationId !== data.observationId) fail('OBSERVATION_NOT_ADOPTED');
+                if (state.adoptedObservationId !== data.observationId) fail('OBSERVATION_NOT_ADOPTED');
                 const binding = value.metadata.bindings.find(b => b.bindingId === data.bindingId);
                 if (!binding) fail('BINDING_UNAVAILABLE');
                 const execution = binding.execution;
-                const sourceRequest = Object.freeze({ appId: scope.appId, instanceId: scope.instanceId,
+                const sourceRequest = Object.freeze({ appId: state.appId, instanceId: state.instanceId,
                     snapshotId: value.source.id, toolId: binding.toolId, execution });
                 const selected = acquireToolSource(store, sourceRequest);
                 if (selected.status === 'rejected') fail(selected.issue.code);
@@ -380,27 +380,27 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
                 } finally { selected.release(); }
             } catch (error) { return rejected(error); }
         },
-        adoptObservation(scope: ObservationState, observationId: string) {
+        adoptObservation(observationId: string) {
             try {
-                refresh(); requireActive(scope);
+                refresh(); requireActive();
                 if (!text(observationId) || utf8Size(observationId) > 256) fail('OBSERVATION_INVALID');
-                if (!scope.observations.has(observationId)) fail('OBSERVATION_UNAVAILABLE');
-                ready(scope);
-                if (scope.adoptedObservationId === observationId) return Object.freeze({ status: 'adopted' as const });
+                if (!state.observations.has(observationId)) fail('OBSERVATION_UNAVAILABLE');
+                ready();
+                if (state.adoptedObservationId === observationId) return Object.freeze({ status: 'adopted' as const });
                 // Preparation and publication do not switch the consumer's source.
                 // Only this explicit boundary revokes earlier qualifications.
-                for (const pending of scope.reservations.values()) pending.cancelled = true;
-                for (const [key, value] of scope.observations) {
-                    if (key !== observationId) dropObservation(scope, key, value);
+                for (const pending of state.reservations.values()) pending.cancelled = true;
+                for (const [key, value] of state.observations) {
+                    if (key !== observationId) dropObservation(key, value);
                 }
-                scope.adoptedObservationId = observationId;
+                state.adoptedObservationId = observationId;
                 return Object.freeze({ status: 'adopted' as const });
             } catch (error) { return rejected(error); }
         },
-        releaseObservation(scope: ObservationState, observationId: string): void {
+        releaseObservation(observationId: string): void {
             try { refresh(); } catch { /* Explicit release does not require advancing time. */ }
-            const value = scope.observations.get(observationId);
-            if (value) dropObservation(scope, observationId, value);
+            const value = state.observations.get(observationId);
+            if (value) dropObservation(observationId, value);
         },
     });
 }

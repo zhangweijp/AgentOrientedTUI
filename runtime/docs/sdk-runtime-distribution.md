@@ -7,7 +7,52 @@
 - [Runtime App interaction](runtime-app-interaction.md)：`interactionModes`, `getAppInteraction`, `SemanticAOTUIDrivenSource.getContext()` 与 Context release。
 - [Tool lifecycle and cleanup](tool-lifecycle.md)：统一 ViewType Worker 参数模式、Tool 结果与 managed App 生命周期。
 - [Pure Core entry](core-public-entry.md)：从正式包名编译运行的无 DOM Producer / Host 示例。
-- [IDE local consumer](../../demo-apps/aotui-ide/SCOPED_IDE.md#local-terminal-from-exact-installed-packages)：在正常安装的匹配包中直接运行随包入口；旧的仓库 prepare/run/verify 启动包装已退出。
+- 仓库内示例见 [IDE local consumer](../../demo-apps/aotui-ide/SCOPED_IDE.md#local-terminal-from-exact-installed-packages)：在正常安装的匹配包中直接运行随包入口；旧的仓库 prepare/run/verify 启动包装已退出。
+
+<a id="current-delivery"></a>
+## 当前本地交付
+
+| 包 | 版本 | 正式依赖关系 |
+| --- | --- | --- |
+| `@aotui/runtime` | `7.0.0` | 提供纯 Core、Node Host 和 Worker |
+| `@aotui/sdk` | `0.8.0` | 精确依赖 Runtime `7.0.0`，要求 TypeBox `1.4.3`，Preact 为可选 peer |
+| `@aotui/agent-driver-adapter` | `0.4.0` | 精确要求 Runtime `7.0.0` 和 Driver `0.3.1` 两个 peer |
+| `@aotui/agent-driver-v2` | `0.3.1` | 完整 Source Host 使用的 Driver，严格类型安装见包内 `STRICT_TYPES.md` |
+
+安装时使用同一次本地交付的 tar，并以其清单核对 SHA-256。版本号用于选择包，Worker 与 App 通过各自协议确认是否能协作。可用范围以本地验证记录为准。
+
+在仓库根目录指定一个新的绝对路径运行交付入口。使用 `--store-dir` 可指定已有 pnpm store，缓存齐全时可加 `--offline`。
+
+```sh
+pnpm run release:local --out /absolute/path/aotui-local-delivery
+```
+
+入口从当前源码冻结构建输入，使用相同锁文件在两个新目录依次构建 Runtime、SDK、Driver、Adapter。它调用 npm pack，比较每个包的文件内容、权限和内部链接，然后将第一组 tar 放入 `artifacts/`。实际输入、工具链、两组 payload 与原始 tar 的哈希、安装解析图、命令和报告写入 `release-manifest.json`。
+
+`consumers/plain/` 是普通 TypeScript 作者及中立 Host 的最小依赖图。`consumers/host/` 包含 Preact、标准 Source 和 Driver 的严格类型图。各自使用同一组最终 tar 正常安装、验证，并在另一个新目录同锁重装和复验。要重装，保留 `artifacts/`、消费者 manifest、lock 与 patch 的相对位置，在所选消费者目录运行 `pnpm install --frozen-lockfile`。完整 Host 首次配置见 `@aotui/agent-driver-v2` 包内 `STRICT_TYPES.md`。
+
+App 作者可从 `@aotui/sdk` 包内 `docs/runtime-compatibility.md` 开始。Host 迁移、Core 的 `inspect()` 和声明容量边界分别见 [公共 App 交互](runtime-app-interaction.md)、[纯 Core 入口](core-public-entry.md) 和 [初始化诊断](initialization-diagnostics.md)。
+
+## 当前协议与拒绝边界
+
+下表供 Runtime／宿主集成者定位当前合同。SDK 作者使用工厂与组件，由 SDK 提供协议标记。包版本、工厂、端口、Snapshot、调用和持久化各自演进，没有统一的协议大版本；源码文件或类型名里的 V2／V3 也不能替代实际字段。
+
+| 合同 | 当前身份与生产／消费位置 | 支持与拒绝边界 |
+| --- | --- | --- |
+| 托管 App 工厂 | SDK 的 `createApp` 与 `createTUIApp` 提供 `toolAuthoringProtocol: 'view-type-tools-v4'`，Runtime 的 `hasViewTypeToolAuthoringProtocol` 校验 | Registry 从生成的 aoapp.json 读取该标记。Worker 的模块 default 必须是托管对象工厂。`isTUIAppFactory` 先检查形状、持久化及生命周期声明，再检查工具标记。缺失、旧值或 accessor 工具标记产生 `APP_AUTHORING_PROTOCOL_UNSUPPORTED`。 |
+| App Tool 注册端口 | Runtime `IAppTypeToolPort.protocol: 'view-type-tools-v4'`，由 Preact 适配器内部使用 | 端口与工厂声明共用 Runtime SPI 的 `VIEW_TYPE_TOOL_PROTOCOL`。端口标识或注册函数无效时为 `TOOL_BINDING_PORT_INVALID`。普通 TS 托管工厂通过完整帧进入同一个 ViewType 注册表。 |
+| 当前状态 Snapshot | Core 的 `PreparedAppSnapshotDraftV3`／`AppSnapshotV3` 使用 `schemaVersion: 3`；DOM Producer 或普通 TS Producer 提交，Core `v3-validator` 接收 | 内容格式支持 `markdown-v1`／`semantic-v1`。Runtime 自己生成并请求 `app-snapshot/v3`，Worker 在导入 App 前要求该能力，Host 在 OPEN 前要求 ACK；缺失为 `WORKER_SNAPSHOT_UNSUPPORTED`，未知版本能力为 `WORKER_CAPABILITY_UNSUPPORTED`。其他实际 schemaVersion 仍由数据边界拒绝为 `SNAPSHOT_INVALID`；握手不代替身份、序列、Ref owner、Tool activation 及预算检查。 |
+| Host 交互选择 | SPI `SEMANTIC_INTERACTION_MODES` 只含 `view-type-parameters-v1`；Host `captureInteractionModes` 捕获配置 | 默认启用该模式；显式空数组关闭 Tool 执行协商，仍协商当前 Snapshot。重复、未知值及 accessor 配置为 `INTERACTION_MODES_INVALID`，不会改选旧模式。 |
+| Worker Tool IPC | `PARAMETERS_V5_CAPABILITY = 'view-tool-parameters-invoke/v5'`。`VIEW_TOOL_INVOKE_V5`／`VIEW_TOOL_INVOKE_V5_RESPONSE` 的 `argumentMode` 为 `view-type-parameters-v1` | 启用工具时 Host INIT 请求此能力，Worker 明确返回 acceptedCapabilities；Host 要求全部请求的能力被确认，缺少调用能力为 `WORKER_CAPABILITY_UNAVAILABLE`。双方仍独立校验完整调用消息、success 判别的 JSON 结果、身份与预算；不尝试旧 RPC。 |
+| 可信 invoker ABI | Runtime Core 导出并独立检查 `ORDINARY_INVOKER_ABI_V3 = 'ordinary-invoker/v3'`，SDK 按自身实现声明同一 literal。 | 旧公共 `ORDINARY_INVOCATION_MODE` 导入失败，旧内联注册值在执行前拒绝。 |
+| 参数与 Ref profile | Core `ordinaryParameterProfile`／`compileOrdinaryProfile` 处理 `x-aotui-parameter-contract`。当前 ViewType 路径使用 `view-type-parameters-v1`，SDK `refParam` 生成 Ref schema | 普通字段与 Ref 目标共享有限 JSON 值域，显式 Ref 从 Observation 解析。支持的关键词和位置见 `@aotui/sdk` 包内 `docs/ordinary-v2.md`。 |
+| App 生命周期 | SDK 声明 `appLifecycleSupport: 'app-lifecycle-v2'`；Runtime 端口／清理报告用该 protocol，INIT offer／ACK 另带 `version: 2` 和同一 instanceId | Worker 校验 offer，Host `captureAppLifecycleAck` 校验 ACK；缺失、旧值、错误版本或实例不能建立托管生命周期。Host 的 ACK 失败为 `APP_LIFECYCLE_NEGOTIATION_FAILED`；清理报告仍另行校验，不把 ACK 当作已关闭。 |
+| 实例持久化与传输 | SDK 声明 `persistenceSupport: 'state-session-v1'`；Runtime 的 `STATE_SESSION_PROTOCOL` 标识 offer／ACK、App 端口和报告。offer／ACK 与 `STATE_STORAGE_REQUEST`／`STATE_STORAGE_RESPONSE` 的传输版本为 `1` | Worker `capturePersistenceOffer` 与 Host `capturePersistenceAck` 分别检查版本、实例及预算；Host ACK 失败为 `PERSISTENCE_NEGOTIATION_FAILED`。请求／响应还核对 sequence、action、地址和结果，不能用生命周期 ACK 代替持久化结算。 |
+| 持久化记录编码 | Core `encodeStateRecord`／`decodeStateRecord` 的 JSON 外壳为 `{ version: 1, updatedAt, value }` | 记录格式与实例传输是独立合同；无版本的裸业务 JSON 或其他记录版本为 `UNSUPPORTED_FORMAT`。业务自己的 version 字段可位于 value 内，不充当外壳版本。 |
+
+Worker 握手对退役或未知能力返回 `WORKER_CAPABILITY_UNSUPPORTED`，对不合法的能力列表返回 `WORKER_CAPABILITY_INVALID`。纯 Core 的 `ExecutionBinding.mode = 'ordinary-v2'` 和 `ordinary-params-v1` 普通参数 profile 继续支持。使用本批实际重建和配对的产物，版本号相同的旧包也可能含有 Tool IPC v4 或旧 invoker ABI。
+
+这些检查发生在各自入口。旧工厂、缺少必要 offer／ACK、未知能力或不匹配的调用身份不能靠“包版本看起来相近”通过。Worker INIT／OPEN 的失败仍按原阶段和诊断合同报告，不将不同错误统一改写成一个兼容错误。
 
 ## Historical W09 / W10 distribution evidence
 
@@ -25,7 +70,7 @@ Runtime 的纯语义入口是 `@aotui/runtime/core` 和 `@aotui/runtime/adapters
 
 C-Q01 允许没有 legacy TypeTools 的 AppKernel 在 owned View 非空或本次 DOM View fragments 确实为空时生成 V2。初始空和最后 View 卸载后的空态都有明确空 inventory；缺 inventory 方法、孤立 DOM、重复/错身份/集合不完整必须拒绝，失败不能降级 V1。非 AppKernel、legacy/mixed TypeTools、有旧 DOM View 但无 owned View 的路径保留 V1。空 selection 仍为 OBSERVATION_INVALID，同 ID 重挂产生新 ViewInstance，旧 Binding 不重新获得资格。
 
-参数 default 仅为声明注释，验证器不填值；业务 Handler 可以自行默认。非法输入在授权和 Handler 前拒绝。Ref 来源来自原 Observation 的同 View 只读对象，Ref-only 值更新需要新来源，不能把旧 Observation 指向新值。业务 success:false 的 data/error 保留；没有明确 failureEffects 时 Core 保守返回 unknown，不能自动重试。等待结束后原执行仍可结算，可信 Host 使用完整原请求重新授权读取。
+参数 default 仅为声明注释，验证器不填值；业务 Handler 可以自行默认。非法输入在授权和 Handler 前拒绝。Ref 来源来自原 Observation 的同 View 只读对象，Ref-only 值更新需要新来源，不能把旧 Observation 指向新值。合法业务 `success:false` 映射为 failed，保留 data/error。真实异常或无法确认结果时报告 unknown。等待结束后原执行仍可结算，可信 Host 使用完整原请求重新授权读取。Tool IPC v5 与 invoker ABI `ordinary-invoker/v3` 需要同批产物，见 [匹配包说明](../../sdk/docs/runtime-compatibility.md)。
 
 资源上限按有限 Runtime/App 数量理解。Interaction 的 maxTotalBytes=64MiB 只约束 invocation 费用，Observation registry 另有独立预算。combinedBytes 为 invocationBytes + observations.totalBytes；默认分项给出64MiB + min(64MiB,32+16+8MiB)=120MiB的保守逻辑上界，不是一个共享64MiB池，也不是RSS。两边通过lease持有Store的同一不可变Snapshot，同一payload的来源费用可在两个账本重复计费，不能把这些JSON费用直接相加成独立堆内存。Store 的current/history/lease与调用者持有的返回对象有各自归属；history64项/32MiB是可配置默认，不是不可提高硬上限。关闭停止新工作，但实际回调/IO的finally未结束时仍由原owner保留；deadline不能把未完成工作改成已释放。安装元数据可能为reopen保留，删除Desktop后的生命周期释放与业务持久值留存分别核对。完整逐资源责任表及实测曲线在W09-C交付报告中。
 
@@ -34,7 +79,3 @@ C-Q01 允许没有 legacy TypeTools 的 AppKernel 在 owned View 非空或本次
 上述 W09 / D5 批次不授权 Strict、Full M4、默认 Router 切换、完整 IDE/LSP、Agent Driver/Mobile 或 registry 发布。W10 在单独证据与决定下增加完整 IDE 显式入口及固定 TypeScript LSP profile；其余排除项保持。
 
 兼容 adapters 在 D5 时确有严格类型限制：该次实际安装的 `@ai-sdk/provider` 3.0.19、`ai` 6.0.315、TypeScript 5.9.3、`json-schema` 0.4.0 均未安装 `@types/json-schema`，`@aotui/runtime/adapters` 的声明链因此在 `skipLibCheck=false` 下产生两条 TS7016；B2/C 独立对照相同。历史决定编号为 W09-C-Q02。该缺口 `D-LEGACY-ADAPTER-TYPES-01` 已在 W10 hardening 的精确依赖图中关闭：Runtime 正式携带 `@types/json-schema` 7.0.15，实际安装 tar 的 adapters 以 `skipLibCheck=false` 通过，纯 Core 仍以 ES2022-only / `types:[]` 单独通过；未用类型 shim 或关闭严格检查。证据与适用版本保存在 `w10-hardening-20261027T055450Z` 的公开包验证及 D6 决定；不能把这一结果推广至任意未来依赖组合。
-
-## 当前包边界
-
-Runtime 不依赖具体 Agent Driver。标准 Source 从独立 `@aotui/agent-driver-adapter` 导入，Host 安装其匹配 Runtime／Driver peer。SDK 复用 Runtime 参数合同。当前组合、构建、正常 tar 安装和作者示例命令统一维护在 [SDK 包使用说明](../../sdk/docs/runtime-compatibility.md)。上方历史批次只适用于各自记录的产物，不证明当前包已发布或所有第三方严格类型问题已解决。

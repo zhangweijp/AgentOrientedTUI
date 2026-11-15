@@ -28,7 +28,7 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
         const definition: AppTypeToolDefinition = { viewType: type, name: 'run', description: 'Run the current App Tool.',
             inputSchema: input.contract.schema };
         return registry.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
             createSafeOrdinaryParametersInvoker: contract => async args => {
                 const checked = contract.validate(args);
                 if (!checked.ok) return { phase: 'not-entered', result: { success: false,

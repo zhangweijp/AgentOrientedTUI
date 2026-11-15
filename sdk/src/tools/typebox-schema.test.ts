@@ -52,6 +52,20 @@ describe('exportTypeBoxSchema', () => {
     }));
   });
 
+  it('checks hidden data and Ref witnesses before filtering TypeBox metadata', () => {
+    const defaultValue = Object.defineProperty({}, '~kind', { value: 'String' });
+    expect(() => exportTypeBoxSchema({ type: 'object', properties: { item: { default: defaultValue } } }))
+      .toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_INVALID', path: '$.properties.item.default.~kind' }));
+
+    const field = { type: 'string', 'x-aotui-ref-kind': 'Note', 'x-aotui-ref-value': { type: 'object' } };
+    const input = { type: 'object', properties: { item: field } };
+    expect(() => exportTypeBoxSchema(input)).toThrow(expect.objectContaining({
+      code: 'TOOL_SCHEMA_INVALID', path: '$.properties.item', reason: 'Ref value annotations require a TypeBox static value witness',
+    }));
+    Object.defineProperty(field, '~unsafe', { value: true });
+    expect(() => exportTypeBoxSchema(input)).toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_UNSUPPORTED', path: '$.properties.item.~unsafe' }));
+  });
+
   it('ignores Optional and Readonly metadata only on Schema nodes', () => {
     const input = Type.Object({
       list: Type.Readonly(Type.Optional(Type.Array(Type.String()))),
@@ -60,6 +74,30 @@ describe('exportTypeBoxSchema', () => {
       type: 'object', properties: { list: { type: 'array', items: { type: 'string' } } },
       additionalProperties: false,
     });
+  });
+
+  it('charges structural commas only for validated exported keys at the byte boundary', () => {
+    const input = Type.Object({ entry: Type.Readonly(Type.Optional(Type.String({ description: '' }))) });
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    input.properties.entry!.description = 'x'.repeat(64 * 1024 - bytes(input));
+    const exported = exportTypeBoxSchema(input);
+    expect(bytes(exported)).toBe(64 * 1024);
+    expect(exported.properties).toEqual({ entry: { type: 'string', description: input.properties.entry!.description } });
+
+    input.properties.entry!.description += 'x';
+    expect(() => exportTypeBoxSchema(input)).toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_CAPACITY' }));
+    let reads = 0;
+    Object.defineProperty(input.properties.entry!, '~unknown', { get() { reads++; return true; } });
+    expect(() => exportTypeBoxSchema(input)).toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_INVALID', path: '$.properties.entry.~unknown' }));
+    expect(reads).toBe(0);
+  });
+
+  it('counts a synthesized string type as one value at the exact node boundary', () => {
+    const values = Array.from({ length: 4_994 }, (_, index) => index.toString(36));
+    const input = { type: 'object', properties: { choice: { enum: values } } };
+    expect(exportTypeBoxSchema(input).properties).toEqual({ choice: { enum: values, type: 'string' } });
+    values.push('extra');
+    expect(() => exportTypeBoxSchema(input)).toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_CAPACITY' }));
   });
 
   it('normalizes only unconstrained opaque objects supported by the Runtime profile', () => {
@@ -77,6 +115,15 @@ describe('exportTypeBoxSchema', () => {
         restricted: { type: 'object', properties: {}, additionalProperties: false },
       },
     });
+  });
+
+  it('keeps the export cost of fields removed during opaque object normalization', () => {
+    const input = Type.Object({ opaque: Type.Object({}), after: Type.String({ description: '' }) });
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    const exportedBytes = bytes(exportTypeBoxSchema(input));
+    input.properties.after!.description = 'x'.repeat(64 * 1024 - exportedBytes);
+    expect(bytes(input)).toBeGreaterThan(64 * 1024);
+    expect(() => exportTypeBoxSchema(input)).toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_CAPACITY' }));
   });
 
   it('does not invoke getters and rejects symbols, malformed descriptors, and cycles', () => {

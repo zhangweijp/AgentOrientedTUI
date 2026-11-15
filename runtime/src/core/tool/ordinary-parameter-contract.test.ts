@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compileOrdinaryParams, compileOrdinarySchema, type CompileResult } from './ordinary-parameter-contract.js';
+import { compileOrdinaryParams, compileOrdinarySchema, compileValueSchema, type CompileResult } from './ordinary-parameter-contract.js';
 
 function contract(result: CompileResult) {
   expect(result.ok).toBe(true);
@@ -320,16 +320,32 @@ describe('W07-B1 ordinary parameter contract', () => {
   it('P10 enforces declaration and normalized Schema depth/node/canonical budgets', () => {
     const nested = (depth: number): any => depth ? { x: nested(depth - 1) } : 0;
     const decl = (value: unknown) => schema({ o: { type: 'object', default: { a: value } } }, { required: [], additionalProperties: true });
+    const capacity = { ok: false, issue: { code: 'PARAMETER_DECLARATION_CAPACITY' } };
     expect(compileOrdinarySchema(decl(nested(20))).ok).toBe(true);
-    invalid(compileOrdinarySchema(decl(nested(21))));
+    expect(compileOrdinarySchema(decl(nested(21)))).toMatchObject(capacity);
     expect(compileOrdinarySchema(decl(Array(4_991).fill(null))).ok).toBe(true);
-    invalid(compileOrdinarySchema(decl(Array(4_992).fill(null))));
+    expect(compileOrdinarySchema(decl(Array(4_992).fill(null)))).toMatchObject(capacity);
     const base = { type: 'object', properties: {}, required: [], additionalProperties: true, description: '' };
     const count = Math.floor((64 * 1024 - JSON.stringify(base).length) / 6);
     expect(compileOrdinarySchema({ ...base, description: '\0'.repeat(count) }).ok).toBe(true);
-    invalid(compileOrdinarySchema({ ...base, description: '\0'.repeat(count + 1) }));
-    invalid(compileOrdinaryParams({ s: { type: 'string', desc: 'x'.repeat(64 * 1024) } }));
-    invalid(compileOrdinarySchema({ ...base, description: 'x'.repeat(64 * 1024) }));
+    expect(compileOrdinarySchema({ ...base, description: '\0'.repeat(count + 1) })).toMatchObject(capacity);
+    expect(compileOrdinaryParams({ s: { type: 'string', desc: 'x'.repeat(64 * 1024) } })).toMatchObject(capacity);
+    expect(compileOrdinarySchema({ ...base, description: 'x'.repeat(64 * 1024 + 1) })).toMatchObject(capacity);
+    expect(compileOrdinarySchema(schema({ ['x'.repeat(64 * 1024 + 1)]: {} }))).toMatchObject(capacity);
+  });
+
+  it('reports a copy budget rejection for a small declaration and keeps invalid and unsupported distinct', () => {
+    const value = { type: 'array', items: { type: 'number' }, default: Array(3_000).fill(0) };
+    expect(new TextEncoder().encode(JSON.stringify(value)).byteLength).toBeLessThan(7 * 1024);
+    const capacity = { ok: false, issue: { code: 'PARAMETER_DECLARATION_CAPACITY', path: expect.stringContaining('default') } };
+    expect(compileValueSchema(value)).toMatchObject(capacity);
+    expect(compileOrdinarySchema(schema({ xs: value }))).toMatchObject(capacity);
+    expect(compileValueSchema({ ...value, default: ['0'] })).toMatchObject({
+      ok: false, issue: { code: 'PARAMETER_DECLARATION_INVALID', path: '$.default' },
+    });
+    expect(compileValueSchema({ type: 'string', format: 'email' })).toMatchObject({
+      ok: false, issue: { code: 'PARAMETER_DECLARATION_UNSUPPORTED', path: '$.format' },
+    });
   });
 
   it('P10 applies the new canonical declaration limit to normalized Schema, not raw DSL', () => {

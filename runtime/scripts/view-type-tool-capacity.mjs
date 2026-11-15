@@ -65,7 +65,7 @@ async function runCase(viewCount) {
         releases.push(tools.registerTypeTool({
             viewType: 'File', ...definition, inputSchema,
         }, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
             createSafeOrdinaryParametersInvoker: () => invocationFor(definition.name),
         }));
         toolRegistrationCalls++;

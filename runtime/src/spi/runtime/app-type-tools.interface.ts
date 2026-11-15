@@ -1,4 +1,4 @@
-import { ORDINARY_INVOCATION_MODE } from '../../core/tool/invocation-terminal.js';
+import type { ORDINARY_INVOKER_ABI_V3 } from '../../core/tool/invocation-terminal.js';
 export const VIEW_TYPE_TOOL_PROTOCOL = 'view-type-tools-v4' as const;
 import type { OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
 export type { SafeOrdinaryInvoker } from '../../core/tool/invocation-terminal.js';
@@ -13,7 +13,7 @@ export interface AppTypeToolDefinition {
 
 /** Trusted factory. The Runtime compiles and owns the actual parameter contract. */
 export interface AppTypeToolRegistrationOptions {
-    readonly safeOrdinaryParametersInvocationMode: typeof ORDINARY_INVOCATION_MODE;
+    readonly safeOrdinaryParametersInvocationMode: typeof ORDINARY_INVOKER_ABI_V3;
     readonly createSafeOrdinaryParametersInvoker: (contract: OrdinaryParameterContract) => import('../../core/tool/invocation-terminal.js').SafeOrdinaryInvoker;
 }
 

@@ -47,7 +47,7 @@ function App() {
   const [inspection, setInspection] = useState('No inspection requested.');
   function inspect(selected: readonly { readonly id: string; readonly title: string; readonly text: string }[]) {
     if (!opened || selected.some(note => !notes.some(current => current.id === note.id))) {
-      return { success: false as const, effects: 'none' as const,
+      return { success: false as const,
         error: { code: 'NOTE_NOT_AVAILABLE', message: 'Open Notes, refresh, and choose its current Ref.' } };
     }
     setInspection(selected.length ? selected.map(note => `${note.title}: ${note.text}`).join('\n') : 'No notes selected.');

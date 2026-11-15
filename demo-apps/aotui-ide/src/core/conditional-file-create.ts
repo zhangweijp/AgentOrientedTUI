@@ -43,11 +43,6 @@ export function mapWorkspaceFileCreationResult(
         },
       };
     case "failed":
-      return {
-        success: false,
-        error: { code: outcome.code, message: outcome.message },
-        effects: outcome.effects,
-      };
     case "unknown":
       return {
         success: false,

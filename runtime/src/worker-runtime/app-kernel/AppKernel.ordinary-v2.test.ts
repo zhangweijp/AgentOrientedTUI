@@ -31,7 +31,7 @@ const definition = (overrides: Record<string, unknown> = {}) => ({ viewType: 'Fi
   inputSchema: compiledSchema(),  ...overrides });
 const options = (factory: AppTypeToolRegistrationOptions['createSafeOrdinaryParametersInvoker'] = () =>
   async () => ({ phase: 'entered-returned', result: { success: true } })) => ({
-    safeOrdinaryParametersInvocationMode: 'ordinary-v2' as const,
+    safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3' as const,
     createSafeOrdinaryParametersInvoker: factory,
   });
 

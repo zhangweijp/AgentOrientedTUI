@@ -142,14 +142,19 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         expect((await control(x, 'inspect'))).toMatchObject({ value: 2, entries: 2 });
         await close(x);
     }, 15000);
-    it.each(['none', 'partial', 'undeclared', 'throw'])('reports %s application failure effects and never executes a replay twice', async failure => {
-        const x = await start('effect-' + failure), s = scope(x), req = request(await s.observeCounter(), { view_id: 'counter', amount: 2, failure });
-        const first = outcome(await s.invoke(req));
-        expect(first.status).toBe(failure === 'none' || failure === 'partial' ? 'failed' : 'unknown');
-        if (failure === 'none' || failure === 'partial') expect(first.effects).toBe(failure);
-        else expect(first).not.toHaveProperty('effects');
-        expect((await control(x, 'inspect')).value).toBe(failure === 'none' ? 0 : 2);
-        await s.invoke(req); expect((await control(x, 'inspect')).entries).toBe(1); await close(x);
+    it.each(['declined', 'after-update', 'throw'])('reports %s and never executes a replay twice', async failure => {
+        const x = await start(failure), s = scope(x), req = request(await s.observeCounter(), { view_id: 'counter', amount: 2, failure });
+        const first = await s.invoke(req);
+        const result = outcome(first);
+        expect(result.status).toBe(failure === 'throw' ? 'unknown' : 'failed');
+        expect(result).not.toHaveProperty('effects');
+        if (failure === 'after-update') expect(result).toMatchObject({ details: { result: {
+            error: { code: 'EXPECTED', message: 'Counter was updated' }, data: { counterUpdated: true },
+        } } });
+        if (failure === 'throw') expect(JSON.stringify(first)).not.toContain('PRIVATE_COUNTER_EXCEPTION');
+        expect((await control(x, 'inspect')).value).toBe(failure === 'declined' ? 0 : 2);
+        expect(await s.invoke(req)).toEqual(first);
+        expect((await control(x, 'inspect')).entries).toBe(1); await close(x);
     }, 15000);
     it('runs late stop callbacks while joining initialization and closes the actual resource', async () => {
         const x = await start('late', { holdInitialization: true });
@@ -201,7 +206,7 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
     it('checks the current View at Worker entry and lets the App cancel a held handler on stop', async () => {
         const x = await start(), s = scope(x), observation = await s.observeCounter();
         const send = x.worker.postMessage.bind(x.worker);
-        x.worker.postMessage = (message: any) => send(message.type === 'VIEW_TOOL_INVOKE_V4' && message.argumentMode === 'view-type-parameters-v1'
+        x.worker.postMessage = (message: any) => send(message.type === 'VIEW_TOOL_INVOKE_V5' && message.argumentMode === 'view-type-parameters-v1'
             ? { ...message, execution: { kind: 'view-type', activationId: 'stale-activation' } } : message);
         expect(outcome(await s.invoke(request(observation))).status).toBe('rejected');
         expect((await control(x, 'inspect')).entries).toBe(0); x.worker.postMessage = send;
@@ -210,7 +215,7 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         await wait(x, m => m.type === 'TEST_STOPPED');
         expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: true, core: { activeInvocations: 1 } });
         expect(x.messages.some((message: any) => message.type === 'TEST_CLEANUP_ENTERED')).toBe(false);
-        const terminal = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V4_RESPONSE', x.messages.length);
+        const terminal = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE', x.messages.length);
         await control(x, 'release-handler');
         expect((await terminal).terminal.phase).toBe('entered-returned');
         // Closing revokes this Scope, including receipt access. It must not

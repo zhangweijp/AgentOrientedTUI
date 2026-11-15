@@ -43,8 +43,7 @@ function semanticToolResult(toolName: string, toolCallId: string, result: Invoke
         ...(business?.data === undefined ? {} : { result: business.data }),
         error: { code: business?.error?.code ?? outcome.code,
             message: (business?.error?.message ?? outcome.message) +
-                (outcome.status === 'rejected' && outcome.path ? ' At ' + outcome.path + '.' : '') + (outcome.status === 'failed' && outcome.effects === 'partial'
-                ? ' Some changes were applied. Inspect the current View before retrying.' : '') },
+                (outcome.status === 'rejected' && outcome.path ? ' At ' + outcome.path + '.' : '') },
     };
 }
 

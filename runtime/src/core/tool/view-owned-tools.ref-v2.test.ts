@@ -7,7 +7,7 @@ const definition = { viewType: 'File', name: 'read', description: 'Read original
 } as const;
 function setup() { const r = createViewOwnedTools('app', 'run'), owner = r.mount('aa', 'File'); return { r, owner }; }
 function register(r: ReturnType<typeof createViewOwnedTools>, invoke: SafeOrdinaryInvoker, name = 'read') {
-    return r.registerTypeTool({ ...definition, name }, { safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: () => invoke });
+    return r.registerTypeTool({ ...definition, name }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () => invoke });
 }
 function terminal(data: any = undefined): ViewToolInvocationTerminal {
     return { phase: 'entered-returned', result: { success: true, ...(data === undefined ? {} : { data }) } };
@@ -16,7 +16,7 @@ describe('Ref parameters in the ViewType registry', () => {
     it('requires an exact contract and a private safe invoker', () => {
         const { r } = setup();
         for (const factory of [() => undefined, async () => terminal()]) expect(() => r.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: factory,
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: factory,
         } as any)).toThrow(expect.objectContaining({ code: 'TOOL_INVALID' }));
         expect(r.listTools()).toEqual([]); r.dispose();
     });
@@ -51,7 +51,7 @@ describe('Ref parameters in the ViewType registry', () => {
         const { r } = setup(); register(r, async () => terminal()); const original = r.listTools();
         expect(() => r.registerTypeTool({ ...definition, name: 'legacy', inputSchema: { ...definition.inputSchema,
             properties: { file: { type: 'string', 'x-aotui-ref': { version: 1 } } } } }, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: () => async () => terminal(),
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () => async () => terminal(),
         })).toThrow(); expect(r.listTools()).toEqual(original); r.dispose();
     });
     it.each(['success', 'throw'] as const)('preserves an already-entered Ref %s after disposal', async outcome => {
@@ -63,7 +63,7 @@ describe('Ref parameters in the ViewType registry', () => {
     });
     it('keeps an App registration hidden when its factory unmounts the last View', () => {
         const { r, owner } = setup(); const release = r.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: () => {
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () => {
                 r.unmount(owner.viewInstanceId); return async () => terminal();
             },
         });
@@ -72,7 +72,7 @@ describe('Ref parameters in the ViewType registry', () => {
     });
     it('rechecks duplicate ownership after invoker factory reentry', () => {
         const { r } = setup(); expect(() => r.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2', createSafeOrdinaryParametersInvoker: () => {
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () => {
                 register(r, async () => terminal()); return async () => terminal();
             },
         })).toThrow(expect.objectContaining({ code: 'TOOL_DUPLICATE' }));

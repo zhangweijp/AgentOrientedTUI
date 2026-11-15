@@ -108,11 +108,10 @@ async function main() {
   createResult = {
     success: false,
     error: { code: 'RESOURCE_WRITE_FAILED', message: 'Some file bytes were written.' },
-    effects: 'partial',
   };
   const partial = await createFile.execute({ workspacePath: '/work', relativePath: 'partial.txt', content: 'body' });
-  assert.deepEqual(partial, createResult, "the Tool must preserve the application's partial-effects fact");
-  console.log('IDE ViewType Tools: receipt, View identity, create, and partial-effect assertions passed');
+  assert.deepEqual(partial, createResult, "the Tool must preserve the application's recovery message");
+  console.log('IDE ViewType Tools: receipt, View identity, create, and recovery assertions passed');
 }
 
 await main();

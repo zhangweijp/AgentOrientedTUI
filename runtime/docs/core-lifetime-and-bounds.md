@@ -4,7 +4,7 @@
 
 ## Snapshot 额度
 
-`createSnapshotCore(options)` 按值捕获以下新额度。缺省即硬上限，可下调到 0；必须是范围内的安全整数。0 表示不允许该类新保留，不能通过设置更大的数字绕过硬上限。history、lease、单 Draft 的额度继续保留；无持有者的旧快照按下文立即释放。
+`createSnapshotCore(options)` 按值捕获下表四项保留额度。缺省即硬上限，每项可设置为 0 至该上限的安全整数。0 表示不允许该类新保留。单次 Draft 的九项 `options.limits` 在创建时独立捕获，history 和 lease 使用各自的配置。 [单次 Draft 限额](core-public-entry.md#snapshot-limits)
 
 | 字段 | 缺省及硬上限 | 单位 |
 | --- | ---: | --- |

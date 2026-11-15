@@ -24,7 +24,7 @@ function safe(handler: (args: Readonly<Record<string, unknown>>) => ToolResult):
 function register(registry: ReturnType<typeof createViewOwnedTools>, handler: (args: Readonly<Record<string, unknown>>) => ToolResult,
     createInvoker: (fallback: SafeOrdinaryInvoker) => SafeOrdinaryInvoker = fallback => fallback) {
     return registry.registerTypeTool(definition, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
         createSafeOrdinaryParametersInvoker: () => createInvoker(safe(handler)),
     });
 }
@@ -104,7 +104,7 @@ describe('ViewType Tools V3 Core registry', () => {
         tools.mount('file-a', 'FileDetail');
         const observed = tools.listTools()[0]!;
         expect(() => tools.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
             createSafeOrdinaryParametersInvoker: secondFactory,
         }))
             .toThrow(expect.objectContaining({ code: 'TOOL_DUPLICATE' }));
@@ -147,18 +147,18 @@ describe('ViewType Tools V3 Core registry', () => {
         const tools = registry();
         const createInvoker = vi.fn(() => safe(() => ({ success: true })));
         expect(() => tools.registerTypeTool({ ...definition, handler: () => ({ success: true }) } as never, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
             createSafeOrdinaryParametersInvoker: createInvoker,
         })).toThrow();
         expect(() => tools.registerTypeTool({ ...definition, inputSchema: { type: 'object', properties: {
             file: { type: 'reference' },
         } } }, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
             createSafeOrdinaryParametersInvoker: createInvoker,
         })).toThrow();
         expect(createInvoker).not.toHaveBeenCalled();
         expect(() => tools.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
         } as never)).toThrow(expect.objectContaining({ code: 'TOOL_INVALID' }));
         expect(tools.inspect()).toMatchObject({ bindings: 0 });
         tools.dispose();
@@ -188,18 +188,18 @@ describe('ViewType Tools V3 Core registry', () => {
     it('rejects getters, hidden option fields and custom prototypes without executing getters', () => {
         const tools = registry(); let getterCalls = 0;
         const accessor = {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
             get createSafeOrdinaryParametersInvoker() { getterCalls++; return () => safe(() => ({ success: true })); },
         };
         expect(() => tools.registerTypeTool(definition, accessor as never)).toThrow(expect.objectContaining({ code: 'TOOL_INVALID' }));
         const hidden = {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
             createSafeOrdinaryParametersInvoker: () => safe(() => ({ success: true })),
         };
         Object.defineProperty(hidden, 'internal', { value: true, enumerable: false });
         expect(() => tools.registerTypeTool(definition, hidden as never)).toThrow(expect.objectContaining({ code: 'TOOL_INVALID' }));
         const customPrototype = Object.assign(Object.create({ inherited: true }), {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
             createSafeOrdinaryParametersInvoker: () => safe(() => ({ success: true })),
         });
         expect(() => tools.registerTypeTool(definition, customPrototype)).toThrow(expect.objectContaining({ code: 'TOOL_INVALID' }));
@@ -212,7 +212,7 @@ describe('ViewType Tools V3 Core registry', () => {
         tools.mount('file-a', 'FileDetail');
         const innerRelease = { value: undefined as (() => void) | undefined };
         expect(() => tools.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
             createSafeOrdinaryParametersInvoker: () => {
                 innerRelease.value = register(tools, () => ({ success: true }));
                 return safe(() => ({ success: true }));
@@ -223,7 +223,7 @@ describe('ViewType Tools V3 Core registry', () => {
         innerRelease.value?.();
         expect(tools.inspect().bindings).toBe(0);
         expect(() => tools.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-v2',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
             createSafeOrdinaryParametersInvoker: () => {
                 tools.dispose();
                 return safe(() => ({ success: true }));

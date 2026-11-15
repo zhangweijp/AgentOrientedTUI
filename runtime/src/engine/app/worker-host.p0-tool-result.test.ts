@@ -73,7 +73,7 @@ Invalid: { execute: async () => ({success:true,data:{unreachable:true}}) }
 
             const failed = await invokeObservedTool(host, 'fail', {}, 'root');
             expect(failed).toMatchObject({ kind: 'receipt', receipt: {
-                executionPhase: 'entered-returned', outcome: { status: 'unknown', details: {
+                executionPhase: 'entered-returned', outcome: { status: 'failed', details: {
                     kind: 'tool-result', result: { success: false, error: { code: 'BUSINESS_FAILED',
                         message: 'The requested file is locked' } },
                 } },

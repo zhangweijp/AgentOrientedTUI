@@ -30,9 +30,9 @@ Preact 在共同祖先放一个 AppTools，View 作为独立兄弟页面。用�
 
 ## 结果与更新
 
-ToolResult 以 success 判别：成功只返回 `{ success: true, data?: JsonObject }`；失败必须提供普通 JSON error 记录 `{ code, message, context? }`，可以附短的恢复 data。成功不能带 error 或 effects，失败不能省略 error。不要把 Error 实例、stack、cause、函数或 undefined 放入收据；本地诊断和跨进程错误记录分开。
+ToolResult 以 success 判别。成功返回 `{ success: true, data?: JsonObject }`。失败返回 `{ success: false, error: { code, message, context? }, data? }`，可附简短的业务恢复事实。收据只接受 JSON 数据，Error 实例、stack、cause、函数和 undefined 留在本地。
 
-已知失败副作用用 effects:'none' 或 'partial'；不声明表示无法确定，不会被当成安全重试。非法结果或传输不能证明最终结果时仍为 unknown；未知结果不自动重放。正文、集合和编辑结果放入 View，data 只承载简短收据与必要恢复事实。
+正常返回合法失败时，Runtime 记录 failed 并保留业务错误和 data。真实异常或无法取得可信结果时报告 unknown。失败和未知都应按当前 View 与应用提示恢复。正文、集合和编辑结果放入 View，data 承载简短收据与必要恢复事实。
 
 App 通过现有提交/发布边界更新页面。宿主观察等待已提交投影，准备 Context 后采用，再开始模型消费和工具调用；采用新观察会撤销旧资格。App 不实现观察采纳或拼接 observationId/bindingId。
 

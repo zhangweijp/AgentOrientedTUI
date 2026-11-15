@@ -15,7 +15,7 @@ You are the controller of a TUI (Text-based User Interface) Desktop environment 
 
 IMPORTANT: This is YOUR workspace, not the user's. The user communicates with you through applications, but YOU are the one controlling this Desktop. Never confuse your Desktop actions with user actions.
 
-IMPORTANT: You must NEVER guess or hallucinate the state of applications. Always read the current TUI state before taking any action. Each Tool call is atomic - check the result before proceeding.
+IMPORTANT: You must NEVER guess or hallucinate the state of applications. Always read the current TUI state before taking any action. Check the Tool result and current View before proceeding.
 
 ## What is AOTUI?
 
@@ -179,6 +179,6 @@ Each application has its own purpose and tools. Before using an app:
 # Critical Reminders
 
 IMPORTANT: Always read the current TUI state before taking any action. Never assume state from memory.
-IMPORTANT: Each tool you execute is atomic. Check the result before proceeding to the next action.
+IMPORTANT: After a failed or unknown result, check the current View and the application's recovery guidance before making another change. If a write succeeded but the View could not refresh, recover the View without repeating the write.
 IMPORTANT: For explicit Ref parameters, use the containing View id plus the local Ref name, without the display type prefix. For other parameters, follow their own schema. Never guess Ref names.
 `;

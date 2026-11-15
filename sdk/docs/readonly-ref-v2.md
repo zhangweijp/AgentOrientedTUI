@@ -54,6 +54,8 @@ Runtime 保留 Ref owner、View 实例、类型、原 Snapshot、来源、调用
 
 Worker 发出 Snapshot 前有界捕获严格 JSON，不冻结或修改 App 拥有的原对象。getter、隐藏字段、Symbol、循环和类实例会被拒绝；当前默认捕获限额为 48 层、100,000 个节点、约 8 MiB 的近似输入字节，Host 仍独立校验完整 V3 Snapshot、归属及规范化字节预算。
 
-非法 Draft 产生 `SNAPSHOT_SERIALIZATION_ERROR` 并使该来源 degraded，不把失败 Draft 冒充最新有效状态。修正后下一份有效 Snapshot 可恢复 ready。`auto` 自动发布并通知，`never` 自动发布但抑制通知，`manual` 不自动发布后台变化；Tool 调用仍会提交当时投影。信号策略不放宽校验，也不等待尚未完成的外部业务工作。
+App 为 Ref 提供源 `schema` 时，发布会校验该声明。非法、不支持和超限分别报告 `TOOL_SCHEMA_INVALID`、`TOOL_SCHEMA_UNSUPPORTED` 和 `TOOL_SCHEMA_CAPACITY`。Tool 目标 Schema 则在定义时编译，在 Ref 解引用后用来校验所选值。 [参数合同](ordinary-v2.md#声明容量和诊断)
+
+Draft 序列化失败会报告 `SNAPSHOT_SERIALIZATION_ERROR`，结构或声明错误会携带对应诊断。失败来源进入 degraded，下一份有效 Snapshot 可恢复 ready。`auto` 自动发布并通知，`never` 自动发布但抑制通知，`manual` 不自动发布后台变化。Tool 调用仍会提交当时投影。信号策略不放宽校验，也不等待尚未完成的外部业务工作。
 
 配对包、运行步骤和验证命令见 [包使用说明](runtime-compatibility.md)。底层协议与资源合同属于 Runtime／Host；普通 App 作者只需声明数据、参数及业务检查。
