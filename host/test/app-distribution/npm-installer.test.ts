@@ -37,6 +37,30 @@ describe('installNpmPackage', () => {
         expect(registry.getConfig().apps).toEqual({});
     });
 
+    it('removes managed npm artifacts for an explicitly loaded App', async () => {
+        const cacheRoot = path.join(tmpDir, 'npm');
+        const installRoot = path.join(cacheRoot, 'demo', '1.0.0');
+        const installedPath = path.join(installRoot, 'node_modules', 'demo');
+        await fs.mkdir(installedPath, { recursive: true });
+        await fs.writeFile(path.join(installedPath, 'entry.mjs'), 'export default {};');
+        await fs.writeFile(path.join(installedPath, 'aoapp.json'), JSON.stringify({
+            app_name: 'demo', version: '1.0.0', entry: { main: './entry.mjs' },
+            toolAuthoringProtocol: 'view-type-tools-v4', persistenceSupport: 'state-session-v1',
+            appLifecycleSupport: 'app-lifecycle-v2',
+        }));
+        const registry = new AppRegistry({ configPath: path.join(tmpDir, 'registry.json') });
+        expect(await registry.loadFromEntries([{
+            name: 'demo', source: 'local:' + installedPath, enabled: true,
+            distribution: { type: 'npm', installRoot, installedPath },
+        }])).toEqual([{ name: 'demo', status: 'loaded' }]);
+        expect(registry.getConfig().apps).toEqual({});
+
+        await removeInstalledApp(registry, 'demo', cacheRoot);
+
+        expect(registry.getEntry('demo')).toBeUndefined();
+        await expect(fs.stat(installRoot)).rejects.toHaveProperty('code', 'ENOENT');
+    });
+
     it('installs package into cache and returns local source', async () => {
         const runner = vi.fn(async (_command: string, args: string[], cwd: string) => {
             const spec = args[args.length - 1];

@@ -73,7 +73,7 @@ function getDefaultAppCacheRoot(): string {
 
 /** Remove the product-owned npm package before removing its registry entry. */
 export async function removeInstalledApp(registry: AppRegistry, name: string, cacheRoot = getDefaultAppCacheRoot()): Promise<void> {
-    const distribution = registry.getConfig().apps[name]?.distribution;
+    const distribution = registry.getEntry(name)?.distribution;
     if (distribution?.type === 'npm' && typeof distribution.installRoot === 'string' && distribution.installRoot.trim()) {
         const managed = path.resolve(cacheRoot) + path.sep;
         const installed = path.resolve(distribution.installRoot);
