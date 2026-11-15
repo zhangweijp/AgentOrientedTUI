@@ -51,4 +51,4 @@ Use `refParam` in the ViewType definition. Publish JSON values in their owning V
 
 Applications that own external resources use plain TypeScript `registerCleanup({ stop, close })` or Preact `useAppLifecycle({ stop, close })`. Each callback is optional. The application releases its own processes, files and services. Runtime and SDK release their registrations, observations, renderer and Worker resources. Persistence has its own flush and close contract.
 
-[Migration](migration.md) removes the ordinary Hook and UI return path without a compatibility shell. Changing the SDK author API does not change the Runtime wire or Observation contract.
+[Package migration](migration.md) lists the current author, Host and Worker entry points.

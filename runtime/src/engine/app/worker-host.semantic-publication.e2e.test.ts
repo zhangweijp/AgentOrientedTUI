@@ -372,7 +372,6 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
 
     it('manual ignores automatic DOM/Ref/Tool changes until a valid current Tool commits the projection', async () => {
         const manual = await start('manual-open', {
-            interactionModes: ['view-type-parameters-v1'],
         });
         await manual.host.open();
         expect(viewCount(manual.host)).toBe(1);
@@ -406,7 +405,7 @@ describe('Semantic publication through the current SDK and a real Node Worker', 
     });
 
     it('auto reports a failed projection after a successful mutation and recovers from external state repair', async () => {
-        const x = await start('auto-fault', { interactionModes: ['view-type-parameters-v1'] });
+        const x = await start('auto-fault');
         await x.host.open();
         expect(x.host.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', published: 1, lastViewCount: 1 });
         const fault = await createToolCaller(x.host, 'fault_after_commit', { reason: 'commit then fail to present' });

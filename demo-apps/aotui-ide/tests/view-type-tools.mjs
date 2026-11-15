@@ -3,6 +3,7 @@ import { createIDEToolBindings, ideTools } from '../dist/tui/ide-tool-contracts.
 
 async function main() {
   let createResult = { success: true, data: { filePath: '/work/new.txt' } };
+  let hoverValue = { contents: 'secret LSP payload' };
   const createCalls = [];
   const loadedViews = new Map([
     ['/work/open.ts', 'fd_actual_17'],
@@ -33,7 +34,7 @@ async function main() {
       return success({});
     },
     invokeOpenedFile: async args => success({ filePath: args.filePath, diskCommitted: true, warnings: [] }),
-    invokeLoadedFileTool: async () => success({ hover: { contents: 'secret LSP payload' }, locations: ['/work/definition.ts'] }),
+    invokeLoadedFileTool: async () => success({ documentVersion: 1, value: hoverValue }),
     getLoadedFileViewId: filePath => loadedViews.get(filePath),
     readLoadedDiagnostics: () => ({ success: true, data: {} }),
     createWorkspaceFile: async (...args) => { createCalls.push(args); return createResult; },
@@ -74,8 +75,14 @@ async function main() {
     'batch contents stay in the View and do not leak in the receipt');
 
   const lspResult = await byName(tools.file, 'lsp_hover').execute({ file_path: '/work/open.ts', line: 1, character: 1 });
-  assert.deepEqual(lspResult, expectedReceipt('lsp_hover', 'fd_actual_17'),
+  assert.deepEqual(lspResult, { success: true, data: {
+    message: 'Hover information available at 1:1. See FileDetail fd_actual_17, hover section.', view_id: 'fd_actual_17',
+  } },
     'LSP receipt points to the actual FileDetail View and omits its result payload');
+  hoverValue = null;
+  assert.deepEqual(await bindings.lsp_hover.execute({ file_path: '/work/open.ts', line: 2, character: 1 }), { success: true, data: {
+    message: 'No hover information at 2:1. See FileDetail fd_actual_17, hover section.', view_id: 'fd_actual_17',
+  } });
   const editResult = await byName(tools.file, 'edit_file').execute({ filePath: '/work/open.ts', oldString: 'x', newString: 'y' });
   assert.equal(editResult.data.view_id, 'fd_actual_17', 'edit receipt points to the existing FileDetail View');
   const writeResult = await byName(tools.file, 'write_file').execute({ filePath: '/work/open.ts', content: 'updated' });

@@ -11,14 +11,14 @@ import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
 const schema = (refType = 'unknown', parameter = 'file'): JsonValue => {
     const result = compileOrdinarySchema({ type: 'object', properties: { [parameter]: {
         type: 'string', minLength: 1, 'x-aotui-ref-kind': refType, 'x-aotui-ref-value': { type: 'object' },
-    } }, required: [parameter], additionalProperties: true }, 'view-type-parameters-v1');
+    } }, required: [parameter], additionalProperties: true });
     if (!result.ok) throw Error('Invalid parameter fixture');
     return ordinaryParameterProfile(result.contract);
 };
 
 function fixture(options: {
     payload?: JsonValue; inputSchema?: JsonValue; refType?: string; refId?: string;
-    viewId?: string; viewInstanceId?: string; activationId?: string;  entity?: boolean;
+    viewId?: string; viewInstanceId?: string; activationId?: string;
     storeOptions?: SnapshotStoreOptions;
 } = {}) {
     const context = { appId: 'app', instanceId: 'run' };
@@ -36,9 +36,7 @@ function fixture(options: {
             [refKey(viewId, viewInstanceId, refId)]: {
                 id: refId, ownerViewId: viewId, ownerViewInstanceId: viewInstanceId,
                 refType: options.refType ?? 'unknown',
-                target: options.entity
-                    ? { kind: 'entity' as const, entityType: 'File', entityId: 'A', entityVersion: '1' }
-                    : { kind: 'snapshot-value' as const, payload: value },
+                target: { kind: 'snapshot-value' as const, payload: value },
             },
             [refKey('fd_B', 'mount_B', refId)]: {
                 id: refId, ownerViewId: 'fd_B', ownerViewInstanceId: 'mount_B', refType: 'unknown',
@@ -190,9 +188,6 @@ describe('W01: narrow execution subset and fixed rejection classes', () => {
     });
     it.each([null, true, 12, 'text', []])('refuses snapshot-value shape %j', payload => {
         const f = fixture({ payload }); denied(f, f.request, 'REF_VALUE_UNSUPPORTED');
-    });
-    it('refuses an Entity without changing the versioned Entity path', () => {
-        const f = fixture({ entity: true }); denied(f, f.request, 'REF_TARGET_UNSUPPORTED');
     });
     it.each([
         [undefined, 'unknown', true], [undefined, 'File', false], ['File', 'File', true],

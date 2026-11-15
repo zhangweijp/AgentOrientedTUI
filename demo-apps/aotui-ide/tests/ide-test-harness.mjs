@@ -77,10 +77,9 @@ async function start(root, id, options = {}) {
     worker.stderr?.on('data', buffer => { logs.push(String(buffer)); if (logs.length > 30) logs.shift(); });
     worker.on('message', message => { if (message.type !== 'SNAPSHOT_PREPARED') messages.push(message.type); });
     const host = new Host({ appId: id, desktopId: 'test', appModulePath: entry, existingWorker: worker,
-        interactionModes: ['view-type-parameters-v1'], timeout: 45000,
+        timeout: 45000,
         config: { projectPath: root, ideSessionKey: options.sessionKey ?? id,
             ideHistoryPath: options.historyPath ?? path.join(working, 'history', id + '.json'),
-            ideLegacyDatabasePath: path.join(working, 'legacy', id + '.json'), ideLegacyImportPath: options.legacy,
             enableDiagnosticsRead: options.slices !== false, enableWorkspaceCreate: options.slices !== false, AOTUI_DATA_DIR: data },
     });
     const x = { id, host, worker, logs, messages, data, closed: false }; apps.push(x);

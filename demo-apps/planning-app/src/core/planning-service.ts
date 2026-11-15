@@ -5,18 +5,6 @@ async function ensureDb() {
     await db.initDatabase();
 }
 
-function withTodoAlias(phase: Phase, todos: TaskItem[] = phase.tasks): Phase {
-    return {
-        ...phase,
-        tasks: todos,
-        todos
-    };
-}
-
-function normalizeTaskInputs(phaseInput: PhaseInput): TaskInput[] {
-    return phaseInput.tasks ?? phaseInput.todos ?? [];
-}
-
 export const planningService = {
     async init(): Promise<void> {
         await ensureDb();
@@ -45,14 +33,13 @@ export const planningService = {
                 continue;
             }
             const createdTasks: TaskItem[] = [];
-            const tasks: TaskInput[] = normalizeTaskInputs(phaseInput);
-            for (const taskInput of tasks) {
+            for (const taskInput of phaseInput.tasks ?? []) {
                 const task = db.createTodo(desktopId, phase.id, taskInput.title, taskInput.description ?? '');
                 if (task) {
                     createdTasks.push(task);
                 }
             }
-            createdPhases.push(withTodoAlias(phase, createdTasks));
+            createdPhases.push({ ...phase, tasks: createdTasks });
         }
         return { ...plan, phases: createdPhases };
     },
@@ -86,7 +73,7 @@ export const planningService = {
                 createdTasks.push(task);
             }
         }
-        return withTodoAlias(phase, createdTasks);
+        return { ...phase, tasks: createdTasks };
     },
 
     async deletePhase(desktopId: string, phaseId: string): Promise<boolean> {
@@ -94,9 +81,9 @@ export const planningService = {
         return db.deletePhase(desktopId, phaseId);
     },
 
-    async completePhase(desktopId: string, planIdOrPhaseId: string, maybePhaseId?: string): Promise<boolean> {
+    async completePhase(desktopId: string, phaseId: string): Promise<boolean> {
         await ensureDb();
-        return db.completePhase(desktopId, maybePhaseId ?? planIdOrPhaseId);
+        return db.completePhase(desktopId, phaseId);
     },
 
     async addTask(
@@ -126,32 +113,6 @@ export const planningService = {
     async completeTask(desktopId: string, taskId: string): Promise<boolean> {
         await ensureDb();
         return db.completeTodo(desktopId, taskId);
-    },
-
-    async addTodo(
-        desktopId: string,
-        planIdOrPhaseId: string,
-        phaseIdOrTitle: string,
-        titleOrDescription: string,
-        maybeDescription: string = ''
-    ): Promise<TaskItem | null> {
-        const isLegacySignature = maybeDescription !== '';
-        const phaseId = isLegacySignature ? phaseIdOrTitle : planIdOrPhaseId;
-        const title = isLegacySignature ? titleOrDescription : phaseIdOrTitle;
-        const description = isLegacySignature ? maybeDescription : titleOrDescription;
-        return this.addTask(desktopId, phaseId, title, description);
-    },
-
-    async updateTodo(desktopId: string, todoId: string, updates: { title?: string; description?: string }): Promise<boolean> {
-        return this.updateTask(desktopId, todoId, updates);
-    },
-
-    async deleteTodo(desktopId: string, todoId: string): Promise<boolean> {
-        return this.deleteTask(desktopId, todoId);
-    },
-
-    async completeTodo(desktopId: string, planIdOrTodoId: string, phaseIdOrTodoId?: string, maybeTodoId?: string): Promise<boolean> {
-        return this.completeTask(desktopId, maybeTodoId ?? phaseIdOrTodoId ?? planIdOrTodoId);
     },
 
     async clearDesktop(desktopId: string): Promise<void> {

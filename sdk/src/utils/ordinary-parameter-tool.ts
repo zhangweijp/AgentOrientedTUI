@@ -3,13 +3,13 @@ import type { ToolResult } from '@aotui/runtime/spi';
 
 /** Runtime-captured ordinary validation or the same Ref contract's effective validation, supplied by its trusted factory. */
 export async function invokeOrdinaryParameterTool(
-  contract: Pick<OrdinaryParameterContract, 'validate' | 'validateResolvedInput'>,
+  contract: Pick<OrdinaryParameterContract, 'validateResolvedInput'>,
   input: unknown,
   handler: (args: Readonly<Record<string, unknown>>) => ToolResult | Promise<ToolResult>,
   canEnter?: () => boolean,
 ): Promise<ViewToolInvocationTerminal> {
   let validated;
-  try { validated = (contract.validateResolvedInput ?? contract.validate)(input); }
+  try { validated = contract.validateResolvedInput(input); }
   catch { return { phase: 'not-entered', result: { success: false, error: {
     code: 'E_INVALID_ARGS', message: 'Tool arguments could not be validated',
   } } }; }

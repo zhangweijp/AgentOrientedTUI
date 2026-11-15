@@ -14,3 +14,5 @@ Worker 在清理前捕获原始错误，只发送这个平坦的普通数据记�
 诊断只供宿主开发排查：各层 Error.cause 都是非枚举属性，不会随默认 JSON 序列化进入公开 ToolResult；不将原始堆栈、路径或消息自动加入 View、关闭摘要。开发者可主动检查本地 cause。调用结果和恢复语义见 [Tool 生命周期](tool-lifecycle.md)。
 
 OPEN 失败时仍携带真实 persistence / appCleanup 收尾报告，不能让 `PERSISTENCE_CLOSE_FAILED` 替代首次渲染的原始错误。资源已释放与业务/持久化成功分别报告；`resourcesReleased: true` 不把失败安装或中止保存改成成功。INIT 失败仍终止不可信 Worker，失败实例不会作为健康实例继续运行。
+
+如果 cause 的 `code` 是 `TOOL_INVOKER_ABI_UNSUPPORTED`，请使用同一次交付的 Runtime 和 SDK 重新构建 App。当前注册 ABI 为 `ordinary-invoker/v4`，它规定 Runtime 为普通和 Ref Tool 提供的同一参数校验合同。

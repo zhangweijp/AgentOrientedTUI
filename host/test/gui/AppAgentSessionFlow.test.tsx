@@ -1,7 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { migrateAgentAppReferences } from '../../src/config/app-reference-migration.js';
 
 const mockRef = vi.hoisted(() => ({
     bridge: null as any,
@@ -174,12 +173,11 @@ describe('App agent flow around New Session', () => {
         mockRef.bridge = createMockBridge();
     });
 
-    it('creates a Topic from migrated app IDs while preserving an unselected application', async () => {
+    it('creates a Topic from registered App keys while preserving an unselected application', async () => {
         const registry = Object.fromEntries(['system_ide', 'terminal', 'lite_browser'].map(name => [name, { source: name, enabled: true }]));
         const stored = await mockRef.bridge.getAgents();
-        stored.list[0].enabledApps = ['aotui-ide', 'lite-browser-app'];
-        const migrated = migrateAgentAppReferences({ agents: stored }, registry, { 'aotui-ide': 'system_ide', 'lite-browser-app': 'lite_browser' });
-        mockRef.bridge.getAgents.mockResolvedValue(migrated.config.agents);
+        stored.list[0].enabledApps = ['system_ide', 'lite_browser'];
+        mockRef.bridge.getAgents.mockResolvedValue(stored);
         mockRef.bridge.getTrpcClient().sourceControl.getDraft.query.mockResolvedValue({
             apps: { enabled: true, items: Object.keys(registry).map(name => ({ name, enabled: true })) },
             mcp: { enabled: true, groups: [] }, skill: { enabled: true, items: [] },

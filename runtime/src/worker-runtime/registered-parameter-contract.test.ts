@@ -38,7 +38,7 @@ describe('registered parameter contract through Worker dispatch and AppKernel', 
         type: 'object', properties: { value: ref ? { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File',
           'x-aotui-ref-value': { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false } }
           : { type: 'string' } }, required: ['value'], additionalProperties: false,
-      } }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: contract => {
+      } }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: contract => {
         compiled = contract;
         return async args => ({ phase: 'entered-returned', result: await handler(args) });
       } });
@@ -66,7 +66,7 @@ describe('registered parameter contract through Worker dispatch and AppKernel', 
     try {
       x.port.registerTypeTool({ viewType: 'File', name: 'read', description: 'Read', inputSchema: {
         type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false,
-      } }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () =>
+      } }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: () =>
         async args => ({ phase: 'entered-returned', result: await handler(args) }) });
       const tool = x.kernel.getToolDefinitions()[0]!;
       expect((await x.kernel.invokeBoundTypeTool(tool, tool.execution, { value: 7 })).phase).toBe('entered-returned');
@@ -83,7 +83,7 @@ describe('registered parameter contract through Worker dispatch and AppKernel', 
     const handler = vi.fn(async (args: Readonly<Record<string, unknown>>) => ({ success: true, data: { value: args.value } }));
     const register = (type: string) => x.port.registerTypeTool({ viewType: 'File', name: 'read', description: 'Read',
       inputSchema: { type: 'object', properties: { value: { type } }, required: ['value'], additionalProperties: false },
-    }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () =>
+    }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: () =>
       async args => ({ phase: 'entered-returned', result: await handler(args) }) });
     try {
       const release = register('string'), old = x.kernel.getToolDefinitions()[0]!;

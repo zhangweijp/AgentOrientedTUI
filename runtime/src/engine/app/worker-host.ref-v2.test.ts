@@ -5,7 +5,6 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-const ALL = ['view-type-parameters-v1'] as const;
 const REF_A = 'aa.alpha', REF_B = 'bb.beta', BIG_A = 'aa.capacity_alpha';
 const NORMAL_HOST_TIMEOUT_MS = 3000;
 const FAULT_HOST_TIMEOUT_MS = 1500;
@@ -71,8 +70,7 @@ async function start(options: any = {}) {
     worker.stdout?.on('data', (b: any) => logs.push(String(b)));worker.stderr?.on('data', (b: any) => logs.push(String(b)));
     const host = new Host({ appId: 'app', desktopId: 'd', appModulePath: appFile,
         existingWorker: worker, timeout: options.timeout ?? NORMAL_HOST_TIMEOUT_MS,
-        config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') },
-        interactionModes: options.modes ?? ALL });
+        config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } });
     worker.on('message', (m: any) => messages.push(m));
     const x: any = { host, worker, messages, rawMessages, sent, attempted, logs, transform(fn: any) { transform = fn; },
         entries: () => rawMessages.filter(m => m.type === 'REF_V2_HANDLER_ENTER'), handlerEntries: () => rawMessages.filter(m => m.type === 'REF_HANDLER_ENTRY'), guards: () => rawMessages.filter(m => m.type === 'REF_APP_GUARD'), posts: () => sent.filter(invokes), snapshot: () => host.snapshotReceiver.core.store.readLatest('app').snapshot };

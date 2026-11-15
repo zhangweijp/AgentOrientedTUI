@@ -62,7 +62,6 @@ describe('AppManager', () => {
 
         it('初始状态下没有已安装的 App', () => {
             expect(manager.getInstalledApps()).toHaveLength(0);
-            expect(manager.getDynamicAppIds()).toHaveLength(0);
         });
 
         it('接受可选的 options 参数', () => {
@@ -84,13 +83,6 @@ describe('AppManager', () => {
         it('返回空数组当没有安装 App', () => {
             const apps = manager.getInstalledApps();
             expect(apps).toEqual([]);
-        });
-    });
-
-    describe('getDynamicAppIds', () => {
-        it('返回空数组当没有安装 App', () => {
-            const ids = manager.getDynamicAppIds();
-            expect(ids).toEqual([]);
         });
     });
 
@@ -406,9 +398,5 @@ describe('AppManager', () => {
             expect(manager.getInstalledApps()).toHaveLength(0);
         });
 
-        it('清理后 workers 为空', async () => {
-            await manager.cleanupAsync();
-            expect(manager.getDynamicAppIds()).toEqual([]);
-        });
     });
 });

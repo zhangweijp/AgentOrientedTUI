@@ -13,7 +13,7 @@ import { LLMOutputChannelService } from './llm-output-channel.js';
 import { RuntimeConfig, RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
 import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
-import { captureInteractionModes } from '../app/interaction-config.js';
+import { captureToolsEnabled } from '../app/interaction-config.js';
 
 
 /**
@@ -233,7 +233,7 @@ export class Desktop implements IDesktop {
 
         }
     ): Promise<string> {
-        const interactionModes = captureInteractionModes(options);
+        const toolsEnabled = captureToolsEnabled(options);
         this.assertActive();
         // [RFC-026] Merge Runtime Context into AppLaunchConfig
         // Priority: App Specific Config > Runtime Context
@@ -260,7 +260,7 @@ export class Desktop implements IDesktop {
                 whenToUse: options?.whenToUse,
                 config: mergedConfig, // [RFC-026] Injected Config
                 runtimeConfig: this.config, // [RFC-005] Pass Runtime Config
-                interactionModes
+                toolsEnabled
             }
         );
     }
@@ -278,7 +278,7 @@ export class Desktop implements IDesktop {
         workerScriptPath?: string;
         config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
     }): Promise<string> {
-        const interactionModes = captureInteractionModes(options);
+        const toolsEnabled = captureToolsEnabled(options);
         this.assertActive();
         return this.appManager.registerPendingApp({
             appId: options.appId as any,
@@ -290,7 +290,7 @@ export class Desktop implements IDesktop {
             workerScriptPath: options.workerScriptPath,
             config: { ...this.context?.env, ...options.config },
             runtimeConfig: this.config,
-            interactionModes
+            toolsEnabled
         });
     }
     // --- Lifecycle Methods ---
@@ -352,13 +352,6 @@ export class Desktop implements IDesktop {
      */
     logSystem(message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
         if (!this._isDraining) this.logger.logSystem(this.id, message, level);
-    }
-
-    /**
-     * 获取动态 App ID 列表（用于序列化恢复）
-     */
-    getDynamicAppIds(): AppID[] {
-        return this.appManager.getDynamicAppIds();
     }
 
     /**

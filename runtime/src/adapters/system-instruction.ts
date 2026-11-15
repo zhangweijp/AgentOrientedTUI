@@ -171,7 +171,8 @@ Each application has its own purpose and tools. Before using an app:
 **Key Conventions:**
 
 - Apps are installed on YOUR Desktop, managed by the system
-- You can open/close apps using system tools
+- When Apps are enabled for this conversation, \`system-open_app\` and \`system-close_app\` are available even if there are no eligible targets. Use the exact App ID from the current Desktop application list.
+- Use \`system-open_app\` for an application marked available (not started) or not launched. Use \`system-close_app\` for a running, minimized, or paused application with a live instance. If the current list has no eligible app, check the current app status before calling again.
 - Apps expose tools through their views
 - Published Ref names identify observed data for explicitly declared Ref parameters; they do not replace every path, ID or JSON object
 

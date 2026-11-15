@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { invokeTypeParameters } from './ordinary-invocation-v2.js';
-import { compileOrdinaryParams } from '../core/tool/ordinary-parameter-contract.js';
+import { compileOrdinarySchema } from '../core/tool/ordinary-parameter-contract.js';
 import { createViewOwnedTools } from '../core/tool/view-owned-tools.js';
 import type { SafeOrdinaryInvoker } from '../core/tool/invocation-terminal.js';
 
 function setup() {
-  const compiled = compileOrdinaryParams({ e: { type: 'enum', options: ['1'], required: true } }, { additionalProperties: false });
+  const compiled = compileOrdinarySchema({ type: 'object', properties: { e: { type: 'string', enum: ['1'] } }, required: ['e'], additionalProperties: false });
   if (!compiled.ok) throw Error('Fixture');
   const registry = createViewOwnedTools('app', 'run');
   const handler = vi.fn(async (args: Readonly<Record<string, unknown>>) => ({ success: true, data: { value: args.e } }));
@@ -14,7 +14,7 @@ function setup() {
     inputSchema: compiled.contract.schema };
   let release = () => {};
   const register = () => { release = registry.registerTypeTool(declaration, {
-    safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () => safe,
+    safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: () => safe,
   }); };
   register();
   registry.mount('aa', 'File');

@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DesktopManager } from '../../src/core/desktop-manager.js';
-import { SEMANTIC_INTERACTION_MODES } from '@aotui/runtime';
 
 describe('DesktopManager', () => {
     let mockKernel: any;
@@ -13,8 +12,8 @@ describe('DesktopManager', () => {
         };
 
         mockRegistry = {
-            loadFromConfig: vi.fn().mockResolvedValue(undefined),
-            loadFromEntries: vi.fn().mockResolvedValue(undefined),
+            loadFromConfig: vi.fn().mockResolvedValue([]),
+            loadFromEntries: vi.fn().mockResolvedValue([]),
             registerTransient: vi.fn().mockResolvedValue('dev-app'),
             list: vi.fn().mockReturnValue([]),
             installAll: vi.fn().mockResolvedValue([]),
@@ -28,12 +27,11 @@ describe('DesktopManager', () => {
         };
     });
 
-    it('uses standard AppRegistry installation with the supported Semantic profiles by default', async () => {
+    it('uses standard AppRegistry installation without restating the Runtime tool default', async () => {
         const manager = new DesktopManager({ kernel: mockKernel, appRegistry: mockRegistry });
         await manager.createDesktop(undefined, { projectPath: '/test/workspace' });
         expect(mockRegistry.installAll).toHaveBeenCalledWith(mockKernel.getDesktop(), {
             dynamicConfig: { projectPath: '/test/workspace' },
-            interactionModes: SEMANTIC_INTERACTION_MODES,
         });
     });
 

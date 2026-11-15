@@ -65,7 +65,6 @@ Invalid: { execute: async () => ({success:true,data:{unreachable:true}}) }
             host = new AppWorkerHost({
                 appId: 'result_app' as any, desktopId: 'result_desktop' as any,
                 appModulePath: appFile, workerScriptPath: workerFile,
-                interactionModes: ['view-type-parameters-v1'],
                 config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR! },
             });
             await host.start();

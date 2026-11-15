@@ -1,14 +1,12 @@
-import { VIEW_TYPE_PARAMETERS_MODE } from '../tool/ordinary-parameter-contract.js';
 import { SNAPSHOT_SCHEMA_VERSION } from '../snapshot/types.js';
 import { canonicalJson, utf8Size } from '../snapshot/json.js';
 import { RESOLVED_TOOL_ENVELOPE_LIMITS } from '../snapshot/snapshot-support.js';
 import type { AppIdentityReader, AppSnapshotV3, JsonValue, SnapshotStore } from '../snapshot/types.js';
-import { validateVersionedToolRefDeclarations } from '../tool/versioned-ref-declarations.js';
+import { compileOrdinaryProfile } from '../tool/ordinary-parameter-profile.js';
 import { checkRefViews, prepareViewTypeParameters } from '../tool/snapshot-value-arguments.js';
 import { createObservationOperations, previewCommittedApp, type ObservationState } from './observation-registry.js';
 import type { ObservationJsonLimits } from './observation-types.js';
 import { captureBoundedJson, exactFields, jsonObject, mapExecutionFact, unknownOutcome, type ExecutionMapping } from './invocation-outcome.js';
-import { ORDINARY_EXECUTION_MODE } from './app-interaction-types.js';
 import type {
     AppInteractionSource, AppInvocation, ExecutionBinding, InstanceInteraction, InteractionLimits, InteractionLimitOverrides, InteractionStats,
     InvocationContext, InvocationReceipt, InvocationSource, Issue, ObserveResult,
@@ -47,19 +45,17 @@ const validRequestId = (value: unknown): value is string => nonEmpty(value) && u
 function capture<T>(raw: unknown, limits: ObservationJsonLimits, code: string): { value: T; bytes: number } {
     try { return captureBoundedJson<T>(raw, limits); } catch { return fail(code); }
 }
-type Binding = ExecutionBinding;
-function binding(raw: unknown): Binding {
+function binding(raw: unknown): ExecutionBinding {
     if (raw === null) fail('TOOL_EXECUTION_UNAVAILABLE');
     try {
-        const data = dataProperties(raw, ['identity', 'mode', 'validateInput', 'isLive', 'execute']);
+        const data = dataProperties(raw, ['identity', 'validateInput', 'isLive', 'execute']);
         if (!data.identity || !['object', 'function'].includes(typeof data.identity) ||
-            (data.mode !== ORDINARY_EXECUTION_MODE && data.mode !== VIEW_TYPE_PARAMETERS_MODE) ||
             ['validateInput', 'isLive', 'execute'].some(key => typeof data[key] !== 'function')) throw 0;
-        return Object.freeze(data) as unknown as Binding;
+        return Object.freeze(data) as unknown as ExecutionBinding;
     } catch { return fail('EXECUTION_BINDING_FAILED'); }
 }
-function sameBinding(a: Binding, b: Binding): boolean {
-    return a.identity === b.identity && a.mode === b.mode && a.validateInput === b.validateInput &&
+function sameBinding(a: ExecutionBinding, b: ExecutionBinding): boolean {
+    return a.identity === b.identity && a.validateInput === b.validateInput &&
         a.isLive === b.isLive && a.execute === b.execute;
 }
 interface Entry {
@@ -237,12 +233,12 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
             }
         };
     }
-    function resolve(state: State, source: InvocationSource): Binding {
+    function resolve(state: State, source: InvocationSource): ExecutionBinding {
         let value: unknown;
         try { value = state.resolve!(source); } catch { return fail('EXECUTION_BINDING_FAILED'); }
         return binding(value);
     }
-    function live(current: Binding, source: InvocationSource): void {
+    function live(current: ExecutionBinding, source: InvocationSource): void {
         let value: JsonValue;
         try { value = captureBoundedJson<JsonValue>(current.isLive(source), limits.metadata).value; }
         catch { return fail('LIVE_BINDING_CHECK_FAILED'); }
@@ -286,42 +282,32 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
             setMetadata(entry, { source: { appId: snapshot.appId, instanceId: snapshot.instanceId, snapshotId: snapshot.id, revision: snapshot.revision } });
             const source: InvocationSource = Object.freeze({ appId: state.appId, instanceId: state.instanceId,
                 snapshotId: snapshot.id, tool: selected.tool, execution: selected.execution });
-            let declared: boolean;
-            try { declared = validateVersionedToolRefDeclarations(source.tool.inputSchema); }
-            catch { return fail('REF_CONTRACT_UNSUPPORTED'); }
+            const contract = compileOrdinaryProfile(source.tool.inputSchema);
+            if (!contract) fail('REF_CONTRACT_UNSUPPORTED');
             const initial = resolve(state, source);
-            let rawInput = request.input, effectiveInput = request.input;
-            let refSources: InvocationContext['refSources'] = Object.freeze([]), firstRefCanonical: string | undefined;
-            if (initial.mode === VIEW_TYPE_PARAMETERS_MODE) {
-                if (source.execution.kind !== 'view-type') fail('REF_CONTRACT_UNSUPPORTED');
-                if (!declared) rawInput = capture<InvocationContext['rawInput']>(request.input, limits.ordinaryInput, 'ACTION_INPUT_INVALID').value;
-                const prepared = prepareViewTypeParameters(store, state, { snapshotId: snapshot.id, toolId: source.tool.id,
-                    execution: source.execution, args: rawInput }, selected.visibleRefs);
-                if (prepared.status === 'rejected') fail(prepared.issue.code, prepared.issue.message, prepared.issue.path);
-                try { rawInput = prepared.rawArgs; effectiveInput = prepared.effectiveArgs; refSources = prepared.refSources;
-                    firstRefCanonical = canonicalJson({ effectiveInput, refSources } as unknown as JsonValue); }
-                finally { prepared.release(); }
-            } else {
-                if (declared) fail('REF_CONTRACT_UNSUPPORTED');
-                rawInput = capture<InvocationContext['rawInput']>(request.input, limits.ordinaryInput, 'ACTION_INPUT_INVALID').value;
-                effectiveInput = rawInput;
-            }
+            const input = contract.hasRefs ? request.input
+                : capture<InvocationContext['rawInput']>(request.input, limits.ordinaryInput, 'ACTION_INPUT_INVALID').value;
+            const caller = { snapshotId: snapshot.id, toolId: source.tool.id, execution: source.execution, args: input };
+            const prepared = prepareViewTypeParameters(store, state, caller, selected.visibleRefs);
+            if (prepared.status === 'rejected') fail(prepared.issue.code, prepared.issue.message, prepared.issue.path);
+            const { rawArgs: rawInput, effectiveArgs: effectiveInput, refSources } = prepared;
+            let firstCanonical: string;
+            try { firstCanonical = canonicalJson({ effectiveInput, refSources } as unknown as JsonValue); }
+            finally { prepared.release(); }
             function recheck(): void {
                 checkAdmission(entry, controller);
                 const current = sourceFor(state, request);
-                if (initial.mode === VIEW_TYPE_PARAMETERS_MODE) {
-                    if (refSources.length) {
-                        const latest = store.readLatest(state.appId);
-                        const issue = checkRefViews(refSources, rawInput, (id, instanceId) => latest.status === 'ready' &&
-                            latest.snapshot.views.some(view => view.id === id && view.viewInstanceId === instanceId));
-                        if (issue) fail(issue.code, issue.message, issue.path);
-                    }
-                    const checked = prepareViewTypeParameters(store, state, { snapshotId: snapshot.id, toolId: source.tool.id,
-                        execution: source.execution, args: rawInput }, current.visibleRefs);
-                    if (checked.status === 'rejected') fail(checked.issue.code, checked.issue.message, checked.issue.path);
-                    try { if (canonicalJson({ effectiveInput: checked.effectiveArgs, refSources: checked.refSources } as unknown as JsonValue) !== firstRefCanonical) fail('REF_ARGUMENT_CHANGED'); }
-                    finally { checked.release(); }
+                if (refSources.length) {
+                    const latest = store.readLatest(state.appId);
+                    const issue = checkRefViews(refSources, rawInput, (id, instanceId) => latest.status === 'ready' &&
+                        latest.snapshot.views.some(view => view.id === id && view.viewInstanceId === instanceId));
+                    if (issue) fail(issue.code, issue.message, issue.path);
                 }
+                const checked = prepareViewTypeParameters(store, state, { ...caller, args: rawInput }, current.visibleRefs);
+                if (checked.status === 'rejected') fail(checked.issue.code, checked.issue.message, checked.issue.path);
+                try {
+                    if (canonicalJson({ effectiveInput: checked.effectiveArgs, refSources: checked.refSources } as unknown as JsonValue) !== firstCanonical) fail('REF_ARGUMENT_CHANGED');
+                } finally { checked.release(); }
                 const latest = resolve(state, source);
                 if (!sameBinding(initial, latest)) fail('TOOL_SOURCE_STALE');
                 live(latest, source);
@@ -334,9 +320,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
             if (!jsonObject(validation) || typeof validation.ok !== 'boolean' || !exactFields(validation, validation.ok ? ['ok', 'value'] : ['ok'])) fail('INPUT_VALIDATOR_FAILED');
             if (!validation.ok) fail('ACTION_INPUT_INVALID');
             if (!jsonObject(validation.value)) fail('INPUT_VALIDATOR_FAILED');
-            if (initial.mode === VIEW_TYPE_PARAMETERS_MODE) {
-                if (canonicalJson(validation.value) !== canonicalJson(effectiveInput)) fail('REF_ARGUMENT_CHANGED');
-            } else effectiveInput = capture<InvocationContext['effectiveInput']>(validation.value, limits.ordinaryInput, 'ACTION_INPUT_INVALID').value;
+            if (canonicalJson(validation.value) !== canonicalJson(effectiveInput)) fail('REF_ARGUMENT_CHANGED');
             const context: InvocationContext = Object.freeze({ invocationId: request.invocationId,
                 source, rawInput, effectiveInput, refSources, signal: controller.signal });
             let authorized: unknown;

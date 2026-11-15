@@ -18,14 +18,12 @@ export interface Phase {
     description?: string;
     status: TaskStatus;
     tasks: TaskItem[];
-    todos: TaskItem[];
 }
 
 export interface PhaseInput {
     title: string;
     description?: string;
     tasks?: TaskInput[];
-    todos?: TaskInput[];
 }
 
 export interface Plan {

@@ -75,12 +75,14 @@ describe('Kernel close reporting', () => {
         gate.resolve();await expect(creating).rejects.toMatchObject({ code: 'RUNTIME_SHUTDOWN' });const report = await shutdown.completion;
         expect(desktops.size).toBe(0);expect(manager.beginDesktopShutdown).toHaveBeenCalledOnce();expect(report).toMatchObject({ ok: true, hasFailures: false, verification: 'managed', desktops: { accepted: 1, settled: 1 } });
     });
-    it('graceful observer deadline never repeats destroy or cancels an entered callback; callback can serialize', async () => {
+    it('close observer deadline never repeats destroy or cancels an entered callback; callback can serialize', async () => {
         vi.useFakeTimers();const { kernel, manager } = setup();const id = await kernel.createDesktop('graceful'), gate = barrier();
         const callback = vi.fn(async () => { expect(kernel.serialize(id).id).toBe(id);await gate.promise; });
-        const graceful = kernel.gracefulShutdown(id, { timeoutMs: 10, beforeClose: callback });const handled = graceful.catch(error => error);
-        await vi.advanceTimersByTimeAsync(0);expect(callback).toHaveBeenCalledOnce();const handle = kernel.beginDesktopShutdown(id, { beforeClose: callback });
-        const runtime = kernel.beginShutdown();await vi.advanceTimersByTimeAsync(11);expect(await handled).toMatchObject({ code: 'CLOSE_DEADLINE_EXCEEDED' });expect(manager.get(id)).toBeDefined();
+        const handle = kernel.beginDesktopShutdown(id, { timeoutMs: 10, beforeClose: callback });
+        const waiting = handle.wait({ timeoutMs: 10 });
+        await vi.advanceTimersByTimeAsync(0);expect(callback).toHaveBeenCalledOnce();
+        expect(kernel.beginDesktopShutdown(id, { beforeClose: callback })).toBe(handle);
+        const runtime = kernel.beginShutdown();await vi.advanceTimersByTimeAsync(11);expect(await waiting).toMatchObject({ status: 'deadline', report: { state: 'closing', resourcesReleased: false } });expect(manager.get(id)).toBeDefined();
         expect(handle.inspect().beforeClose).toBe('running');gate.resolve();expect((await handle.completion).beforeClose).toBe('done');await runtime.completion;expect(vi.getTimerCount()).toBe(0);
     });
     it('a real Manager close exception remains a bounded failure fact', async () => {

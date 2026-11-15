@@ -893,8 +893,7 @@ export class SessionManagerV3 extends EventEmitter {
     /**
      * Gracefully shutdown a Session
      * 
-     * Uses kernel.gracefulShutdown to allow apps to flush state
-     * without deleting persistent data.
+     * Allows apps to flush state before closing the Desktop.
      */
     async shutdownSession(topicId: string): Promise<void> {
         const session = this.sessions.get(topicId);
@@ -907,7 +906,12 @@ export class SessionManagerV3 extends EventEmitter {
             session.agentDriver.stop();
             session.agentDriver.dispose();
             await session.sources.aotui.dispose();
-            await this.kernel.gracefulShutdown(session.desktop.id, { timeoutMs: 5000 });
+            const handle = this.kernel.beginDesktopShutdown(session.desktop.id, { timeoutMs: 5000 });
+            const result = await handle.wait({ timeoutMs: 5000 });
+            if (result.status === 'deadline' || result.report.hasFailures) {
+                const code = result.status === 'deadline' ? 'CLOSE_DEADLINE_EXCEEDED' : 'DESKTOP_CLOSE_FAILED';
+                throw Object.assign(new Error(code), { code, report: result.report });
+            }
             session.state = 'destroyed';
             this.sessions.delete(topicId);
             this.inFlightSessions.delete(topicId);

@@ -55,7 +55,6 @@ if (values.help) {
         if (!closing) {
             const appId = await (startup = runtime.installDynamicWorkerApp(desktopId, import.meta.resolve('@agentina/aotui-ide'), {
                 appId: 'local-ide',
-                interactionModes: ['view-type-parameters-v1'],
                 config: { projectPath: project, ideSessionKey: session,
                     ideHistoryPath: path.join(data, 'history.json'), AOTUI_DATA_DIR: path.join(data, 'state'),
                     enableDiagnosticsRead: true, enableWorkspaceCreate: true },

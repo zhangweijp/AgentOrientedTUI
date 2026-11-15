@@ -10,6 +10,7 @@ export function RootView() {
         <ul>
             <li>PlanList shows unfinished plans and the active plan. Create or open a plan to work on its details; only one plan is open at a time.</li>
             <li>PlanDetail shows the active plan's phases and tasks. Manage those objects here, then close the plan to return to the list.</li>
+            <li>For inline tasks, use objects such as <code>{'tasks: [{"title": "Review the design"}]'}</code>.</li>
             <li>Ref links show type and local name, such as Phase:completed_phases[0]. For Tool input, combine the containing View id with the local name: plan_detail.completed_phases[0], without Phase:. Read the updated View before the next selection.</li>
             <li>The app checks that the object still exists and belongs to the active plan. Callable Tools and their parameter contracts are provided separately in the tool list.</li>
         </ul>

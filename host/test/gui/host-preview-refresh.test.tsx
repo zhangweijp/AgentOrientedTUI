@@ -32,15 +32,15 @@ function assembly(topicId: string, instanceId: string) {
     const core = createSnapshotCore(); core.lifecycle.startApp('preview_app', instanceId);
     const registry = createViewOwnedTools('preview_app', instanceId);
     const view = registry.mount('work', 'Workspace');
-    const input = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false }, 'view-type-parameters-v1');
+    const input = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
     if (!input.ok) throw Error('Invalid controlled Schema');
     let entries = 0;
     const unregister = registry.registerTypeTool({ viewType: 'Workspace', name: 'inspect', description: 'Inspect current work.', inputSchema: input.contract.schema }, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () => async () => {
+        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: () => async () => {
             entries++; return { phase: 'entered-returned', result: { success: true, data: { completed: true } } };
         },
     });
-    const binding: ExecutionBinding = { identity: {}, mode: 'view-type-parameters-v1',
+    const binding: ExecutionBinding = { identity: {},
         validateInput: (_source, value) => ({ ok: true, value }),
         isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.execution).success }),
         execute: async () => { entries++; return { kind: 'tool-result', phase: 'entered-returned', result: { success: true } }; },

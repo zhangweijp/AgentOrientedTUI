@@ -1,4 +1,4 @@
-import { MARKDOWN_VIEW_FORMAT, SEMANTIC_VIEW_FORMAT } from './types.js';
+import { MARKDOWN_VIEW_FORMAT } from './types.js';
 import { SNAPSHOT_SCHEMA_VERSION } from './types.js';
 /** Validate the sole supported V3 snapshot contract before it reaches storage. */
 import { canonicalJson, copyJson, diagnosticDigest, SnapshotDataError, utf8Size } from './json.js';
@@ -135,12 +135,9 @@ export function validatePreparedV3Draft(
             withinBytes({ id, viewInstanceId: instanceId, type, name, kind: view.kind }, VIEW_METADATA_BYTES, path);
             const content = obj(view.content, path + '.content');
             exact(content, ['format', 'value'], path + '.content');
-            if (content.format === MARKDOWN_VIEW_FORMAT) {
-                if (typeof content.value !== 'string') fail(path + '.content.value', 'Markdown content must be string');
-            } else if (content.format !== SEMANTIC_VIEW_FORMAT) {
-                fail(path + '.content.format', 'Unknown View content format');
-            }
-            withinBytes(content.value!, limits.maxViewContentBytes, path + '.content.value');
+            if (content.format !== MARKDOWN_VIEW_FORMAT) fail(path + '.content.format', 'Unknown View content format');
+            if (typeof content.value !== 'string') fail(path + '.content.value', 'Markdown content must be string');
+            withinBytes(content.value, limits.maxViewContentBytes, path + '.content.value');
             mounted.set(id, { instanceId, type });
             ids.add(instanceId);
         }
@@ -159,22 +156,14 @@ export function validatePreparedV3Draft(
             if (key !== refKey(owner, instanceId, id)) fail(path, 'Ref key does not match V2 instance identity');
             if (mounted.get(owner)?.instanceId !== instanceId) fail(path, 'Ref has stale or missing View instance');
             const target = obj(ref.target, path + '.target');
-            if (target.kind === 'snapshot-value') {
-                exact(target, ['kind', 'payload'], path + '.target');
-                const payloadPath = path + '.target.payload';
-                withinBytes(target.payload!, Math.min(limits.maxRefPayloadBytes, REF_VALUE_LIMITS.maxCanonicalBytes), payloadPath);
-                try { copyJson(target.payload, REF_VALUE_LIMITS); }
-                catch (error) {
-                    if (error instanceof SnapshotDataError) throw new SnapshotDataError(error.code, payloadPath + error.path.slice(1), error.message);
-                    throw error;
-                }
-            } else if (target.kind === 'entity') {
-                exact(target, ['kind', 'entityType', 'entityId', ...(Object.hasOwn(target, 'entityVersion') ? ['entityVersion'] : [])], path + '.target');
-                str(target.entityType, path + '.target.entityType');
-                str(target.entityId, path + '.target.entityId');
-                if (Object.hasOwn(target, 'entityVersion')) str(target.entityVersion, path + '.target.entityVersion');
-            } else {
-                fail(path + '.target.kind', 'Unknown Ref target kind');
+            if (target.kind !== 'snapshot-value') fail(path + '.target.kind', 'Unknown Ref target kind');
+            exact(target, ['kind', 'payload'], path + '.target');
+            const payloadPath = path + '.target.payload';
+            withinBytes(target.payload!, Math.min(limits.maxRefPayloadBytes, REF_VALUE_LIMITS.maxCanonicalBytes), payloadPath);
+            try { copyJson(target.payload, REF_VALUE_LIMITS); }
+            catch (error) {
+                if (error instanceof SnapshotDataError) throw new SnapshotDataError(error.code, payloadPath + error.path.slice(1), error.message);
+                throw error;
             }
         }
 

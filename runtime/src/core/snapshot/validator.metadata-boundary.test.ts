@@ -3,13 +3,13 @@ import { createSnapshotCore } from './store.js';
 import { validatePreparedV3Draft } from './v3-validator.js';
 import { canonicalJson } from './json.js';
 import { DEFAULT_SNAPSHOT_LIMITS, VIEW_METADATA_BYTES } from './snapshot-support.js';
-import { compileOrdinaryParams } from '../tool/ordinary-parameter-contract.js';
+import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
 
 const text = '中文😀\n"\\\ud800';
 const refId = '["view","mount","ref"]';
 const toolId = '["app","Type","read"]';
-const empty = compileOrdinaryParams({});
+const empty = compileOrdinarySchema({ type: 'object', properties: {} });
 if (!empty.ok) throw new Error('Fixture Tool schema must compile');
 const emptySchema = ordinaryParameterProfile(empty.contract);
 const expected = {
@@ -23,8 +23,8 @@ const expected = {
             inputSchema: emptySchema, 
             execution: { kind: 'view-type', activationId: 'ta:v1:["instance",1]' } } },
     } as any),
-    contentDigest: 'fnv1a64:dcccf17c487a9edd',
-    bytes: 814,
+    contentDigest: 'fnv1a64:96ea30e097d1651f',
+    bytes: 819,
     emptyCanonicalContent: '{"refs":{},"schemaVersion":3,"tools":{},"views":[]}',
     emptyContentDigest: 'fnv1a64:adb8bb3e2428af24',
     emptyBytes: 136,

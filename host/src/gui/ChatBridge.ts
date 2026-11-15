@@ -13,7 +13,7 @@ import { isIMSessionKey } from '../im/routing.js';
 
 // Event types for subscribers
 export interface ChatUpdateEvent {
-    type: 'message' | 'topic' | 'snapshot' | 'snapshot_error' | 'agent_state' | 'agent_thought' | 'agent_reasoning' | 'agent_paused' | 'agent_resumed' | 'desktop_destroyed' | 'init' | 'message_update';
+    type: 'message' | 'topic' | 'snapshot' | 'snapshot_error' | 'agent_state' | 'agent_reasoning' | 'agent_paused' | 'agent_resumed' | 'init';
     topicId?: string;
     data?: unknown;
 }
@@ -38,8 +38,6 @@ export class ChatBridge {
     private snapshots: Map<string, string> = new Map();
     private agentStates: Map<string, string> = new Map();
     private agentPaused: Map<string, boolean> = new Map();  // [RFC-014]
-    private agentThoughts: Map<string, string> = new Map();
-    private agentReasoning: Map<string, string> = new Map();
     private streamingTexts: Map<string, string> = new Map();
     private streamingReasonings: Map<string, string> = new Map();
     private subscribers: Set<ChatSubscriber> = new Set();
@@ -94,171 +92,6 @@ export class ChatBridge {
 
     isConnected(): boolean {
         return this.isIpcAvailable();
-    }
-
-    // ============ Host Message Handling ============
-
-    private handleHostMessage(msg: any): void {
-        console.log('[ChatBridge] Host message:', msg.type);
-
-        switch (msg.type) {
-            case 'init':
-                // Host sends available desktops
-                console.log('[ChatBridge] Host desktops:', msg.desktops);
-                break;
-
-            case 'desktop_created':
-                // Desktop created, store snapshot
-                if (msg.snapshot) {
-                    this.snapshots.set(msg.desktopId, msg.snapshot);
-                }
-                this.notify({ type: 'snapshot', topicId: msg.desktopId });
-                break;
-
-            case 'snapshot':
-                this.snapshots.set(msg.desktopId, msg.markup);
-                this.notify({ type: 'snapshot', topicId: msg.desktopId });
-                break;
-
-            case 'agent_state':
-                this.agentStates.set(msg.desktopId, msg.state);
-                if (msg.state === 'IDLE' || msg.state === 'EXECUTING') {
-                    this.agentThoughts.set(msg.desktopId, '');
-                    this.agentReasoning.set(msg.desktopId, '');
-                }
-                this.notify({ type: 'agent_state', topicId: msg.desktopId, data: msg.state });
-                break;
-
-            case 'agent_thought':
-                const incomingThought = msg.content || '';
-                const currentThought = this.agentThoughts.get(msg.desktopId) || '';
-
-                // Hybrid Strategy:
-                // 1. If incoming starts with current, Host is sending accumulated text -> Replace
-                // 2. Otherwise, Host is sending chunks -> Append
-                if (incomingThought.startsWith(currentThought)) {
-                    this.agentThoughts.set(msg.desktopId, incomingThought);
-                } else {
-                    this.agentThoughts.set(msg.desktopId, currentThought + incomingThought);
-                }
-
-                this.notify({ type: 'agent_thought', topicId: msg.desktopId, data: this.agentThoughts.get(msg.desktopId) });
-                break;
-
-            case 'agent_reasoning':
-                const incomingReasoning = msg.content || '';
-                const currentReasoning = this.agentReasoning.get(msg.desktopId) || '';
-
-                // Hybrid Strategy for Reasoning:
-                // 1. If incoming starts with current, Host is sending accumulated text -> Replace
-                // 2. Otherwise, Host is sending chunks -> Append
-                if (currentReasoning && incomingReasoning.startsWith(currentReasoning)) {
-                    this.agentReasoning.set(msg.desktopId, incomingReasoning);
-                } else {
-                    this.agentReasoning.set(msg.desktopId, currentReasoning + incomingReasoning);
-                }
-
-                this.notify({ type: 'agent_reasoning', topicId: msg.desktopId, data: this.agentReasoning.get(msg.desktopId) });
-                break;
-
-            // [RFC-021] Message events from dual-trigger architecture
-            case 'message_received':
-                // Acknowledgment that message was received by Host
-                console.log('[ChatBridge] Message received by Host:', msg.messageId);
-                break;
-
-            case 'message_delta': {
-                const topicId = msg.desktopId;
-                const delta = msg.delta as string;
-                const msgs = this.messages.get(topicId) || [];
-                const lastMsg = msgs[msgs.length - 1];
-
-                if (lastMsg && lastMsg.role === 'assistant' && lastMsg.messageType !== 'tool_call') {
-                    // Append to existing message
-                    lastMsg.content += delta;
-                    // Trigger UI update
-                    this.notify({ type: 'message', topicId, data: lastMsg });
-                } else {
-                    // Create new streaming message placeholder
-                    const newMsg: Message = {
-                        id: `msg_${Date.now()}_assistant`,
-                        role: 'assistant',
-                        content: delta,
-                        timestamp: Date.now()
-                    };
-                    msgs.push(newMsg);
-                    this.messages.set(topicId, msgs);
-                    this.notify({ type: 'message', topicId, data: newMsg });
-                }
-                break;
-            }
-
-            case 'message_update':
-                // Handle message updates (e.g. final reasoning content)
-                const updatedMsg = msg.message as Message;
-                const updateTopicId = msg.desktopId;
-                const updateMsgs = this.messages.get(updateTopicId) || [];
-
-                const updateIdx = updateMsgs.findIndex(m => m.id === updatedMsg.id);
-                if (updateIdx !== -1) {
-                    updateMsgs[updateIdx] = updatedMsg;
-                    this.messages.set(updateTopicId, updateMsgs);
-                    this.notify({ type: 'message', topicId: updateTopicId, data: updatedMsg });
-                }
-                break;
-
-            case 'new_message':
-                // New message broadcast (from Agent response or other sources)
-                const newMsg = msg.message as Message;
-                const topicId = msg.desktopId;
-                const msgs = this.messages.get(topicId) || [];
-
-                // Dedup: check if message already exists (optimistic update may have added it)
-                // [Fix] Also check if we have a streaming message that matches this one?
-                // For now, simpler check: if ID matches, update content (final sync). 
-                // If ID doesn't match but we have a partial last message, maybe replace it?
-                // Let's stick to simple ID dedup for now.
-                const existingIdx = msgs.findIndex(m => m.id === newMsg.id);
-                if (existingIdx !== -1) {
-                    // Update existing (e.g. confirmed timestamp or full content)
-                    msgs[existingIdx] = newMsg;
-                    this.messages.set(topicId, msgs);
-                    this.notify({ type: 'message', topicId, data: newMsg });
-                } else {
-                    // Special Handling: If the last message was a "streaming placeholder" (generated in message_delta),
-                    // and this new_message is the FINAL version of it, we might end up with duplicates if IDs differ.
-                    // However, SignalRouter generates ID for final message.
-                    // We should probably rely on the UI to handle this or replace the last "assistant" message if it was streaming.
-                    // For safety in this fix: Just push it. The delta handler reuses the last message if assistant.
-                    msgs.push(newMsg);
-                    this.messages.set(topicId, msgs);
-                    this.notify({ type: 'message', topicId, data: newMsg });
-                }
-                break;
-
-            // [RFC-014] Agent Lifecycle Events
-            case 'agent_paused':
-                this.agentPaused.set(msg.desktopId, true);
-                this.notify({ type: 'agent_paused', topicId: msg.desktopId, data: true });
-                break;
-
-            case 'agent_resumed':
-                this.agentPaused.set(msg.desktopId, false);
-                this.notify({ type: 'agent_resumed', topicId: msg.desktopId, data: false });
-                break;
-
-            case 'desktop_destroyed':
-                this.releaseSessionSubscription(msg.desktopId);
-                this.snapshots.delete(msg.desktopId);
-                this.agentStates.delete(msg.desktopId);
-                this.agentPaused.delete(msg.desktopId);
-                this.notify({ type: 'desktop_destroyed', topicId: msg.desktopId });
-                break;
-
-            case 'error':
-                console.error('[ChatBridge] Host error:', msg.message);
-                break;
-        }
     }
 
     // ============ API - Topics ============
@@ -523,16 +356,11 @@ export class ChatBridge {
         // 流式输出文本优先显示
         const streamingText = this.streamingTexts.get(topicId) || '';
         if (streamingText) return streamingText;
-        const thought = this.agentThoughts.get(topicId) || '';
-        if (thought) return thought;
         return state === 'THINKING' || state === 'EXECUTING' ? 'Agent is thinking...' : '';
     }
 
     getAgentReasoning(topicId: string): string {
-        // 流式推理文本优先显示
-        const streaming = this.streamingReasonings.get(topicId) || '';
-        if (streaming) return streaming;
-        return this.agentReasoning.get(topicId) || '';
+        return this.streamingReasonings.get(topicId) || '';
     }
 
     getActiveTopicId(): string | null {
@@ -624,7 +452,10 @@ export class ChatBridge {
                 normalized = m as Message;
                 return this.enforceAttachmentBoundary(normalized);
             }
-            // ✅ 处理 AI SDK v6 ModelMessage 格式
+            if (Array.isArray(m.parts) && m.parts.length) {
+                return this.enforceAttachmentBoundary(this.rebuildMessageFromParts(m));
+            }
+            // AI SDK ModelMessage format.
             if (m.role === 'user') {
                 normalized = this.normalizeUserMessage(m);
                 return this.enforceAttachmentBoundary(normalized);
@@ -639,9 +470,7 @@ export class ChatBridge {
                 return this.enforceAttachmentBoundary(normalized);
             }
 
-            // 兜底：旧格式消息
-            normalized = this.normalizeLegacyMessage(m, toolNamesByCallId);
-            return this.enforceAttachmentBoundary(normalized);
+            return this.enforceAttachmentBoundary(m);
         });
     }
 
@@ -886,58 +715,6 @@ export class ChatBridge {
     }
 
     /**
-     * 规范化旧格式消息（兜底逻辑）
-     */
-    private normalizeLegacyMessage(m: any, toolNamesByCallId: Map<string, string>): Message {
-        // 旧格式：可能有 parts 字段
-        if (m.parts && m.parts.length > 0) {
-            return this.rebuildMessageFromParts(m);
-        }
-
-        // 旧格式：简单的 content 字符串
-        if (!m.messageType && typeof m.content === 'string') {
-            const calledMatch = m.content.match(/^Called\s+(.+)$/);
-            if (m.role === 'assistant' && calledMatch) {
-                const toolName = calledMatch[1];
-                toolNamesByCallId.set(m.id, toolName);
-                return {
-                    ...m,
-                    messageType: 'tool_call',
-                    metadata: {
-                        ...(m.metadata || {}),
-                        toolName,
-                        toolCallId: m.metadata?.toolCallId || m.id,
-                        args: m.metadata?.args
-                    }
-                };
-            }
-            if (m.role === 'tool') {
-                let parsed: any = null;
-                try {
-                    parsed = JSON.parse(m.content);
-                } catch {
-                    parsed = m.content;
-                }
-                const toolCallId = m.metadata?.toolCallId || m.id;
-                const resolvedToolName = m.metadata?.toolName || toolNamesByCallId.get(toolCallId) || toolCallId;
-                return {
-                    ...m,
-                    messageType: 'tool_result',
-                    metadata: {
-                        ...(m.metadata || {}),
-                        toolName: resolvedToolName,
-                        toolCallId,
-                        result: parsed,
-                        isError: m.metadata?.isError === true
-                    }
-                };
-            }
-        }
-
-        return m;
-    }
-
-    /**
      * [RFC-026] Rebuild message content from message_parts
      */
     private rebuildMessageFromParts(msg: any): Message {
@@ -1135,13 +912,6 @@ export class ChatBridge {
             this.handleGuiUpdateEvent(topicId, eventType, message);
             return;
         }
-
-        // Fallback: legacy event format
-        const msg = {
-            ...event,
-            desktopId: (event as any).desktopId ?? (event as any).sessionId ?? contextTopicId
-        };
-        this.handleHostMessage(msg);
     }
 
     /**

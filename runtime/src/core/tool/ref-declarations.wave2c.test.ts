@@ -8,7 +8,7 @@ import { createViewOwnedTools } from './view-owned-tools.js';
 const field = (refType = 'File') => ({ type: 'string', minLength: 1, 'x-aotui-ref-kind': refType, 'x-aotui-ref-value': { type: 'object' } });
 const input = (refType = 'File') => ({ type: 'object', properties: { file: field(refType) }, required: ['file'], additionalProperties: true });
 function schema(refType = 'File'): any {
-    const c = compileOrdinarySchema(input(refType), 'view-type-parameters-v1'); if (!c.ok) throw Error('fixture'); return ordinaryParameterProfile(c.contract);
+    const c = compileOrdinarySchema(input(refType)); if (!c.ok) throw Error('fixture'); return ordinaryParameterProfile(c.contract);
 }
 function draft(inputSchema = schema(), activationId = 'active-1', sequence = 1): any {
     const id = JSON.stringify(['app', 'FileDetail', 'inspect']);
@@ -20,7 +20,7 @@ function draft(inputSchema = schema(), activationId = 'active-1', sequence = 1):
 function setup() { const registry = createViewOwnedTools('app', 'run'); registry.mount('fd_A', 'FileDetail'); registry.mount('fd_B', 'FileDetail'); return registry; }
 function register(registry: ReturnType<typeof setup>, inputSchema: any = input()) {
     return registry.registerTypeTool({ viewType: 'FileDetail', name: 'inspect', description: 'Inspect', inputSchema }, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: { success: true } }),
+        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: { success: true } }),
     });
 }
 describe('shared versioned Ref declaration boundary', () => {
@@ -35,21 +35,21 @@ describe('shared versioned Ref declaration boundary', () => {
         if (kind === 'wrong-type') f.type = 'object';
         if (kind === 'missing-value') delete f['x-aotui-ref-value'];
         if (kind === 'unknown-field') f.extra = true;
-        expect(compileOrdinarySchema(s, 'view-type-parameters-v1').ok).toBe(false);
+        expect(compileOrdinarySchema(s).ok).toBe(false);
     });
     it('rejects declaration accessors without executing them', () => {
         const s = input(); const getter = vi.fn(() => 'File'); Object.defineProperty(s.properties.file, 'x-aotui-ref-kind', { enumerable: true, get: getter });
-        expect(compileOrdinarySchema(s, 'view-type-parameters-v1').ok).toBe(false); expect(getter).not.toHaveBeenCalled();
+        expect(compileOrdinarySchema(s).ok).toBe(false); expect(getter).not.toHaveBeenCalled();
     });
     it('normalizes equivalent property order and registers one shared Tool for two Views', () => {
-        const a = compileOrdinarySchema({ ...input(), properties: { file: field(), question: { type: 'string' } } }, 'view-type-parameters-v1');
-        const b = compileOrdinarySchema({ ...input(), properties: { question: { type: 'string' }, file: field() } }, 'view-type-parameters-v1');
-        if (!a.ok || !b.ok) throw Error('fixture'); expect(a.contract.fingerprint).toBe(b.contract.fingerprint);
+        const a = compileOrdinarySchema({ ...input(), properties: { file: field(), question: { type: 'string' } } });
+        const b = compileOrdinarySchema({ ...input(), properties: { question: { type: 'string' }, file: field() } });
+        if (!a.ok || !b.ok) throw Error('fixture'); expect(a.contract.schema).toEqual(b.contract.schema);
         const r = setup(); register(r, a.contract.schema); expect(r.listTools()).toHaveLength(1);
         expect(r.listTools()[0]!.execution.kind).toBe('view-type'); expect(r.listViews()).toHaveLength(2); r.dispose();
     });
     it('admits Ref name arrays through the same Snapshot and registration contract', () => {
-        const c = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'array', items: field() } }, required: ['file'], additionalProperties: false }, 'view-type-parameters-v1');
+        const c = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'array', items: field() } }, required: ['file'], additionalProperties: false });
         if (!c.ok) throw Error('fixture');
         expect(validatePreparedV3Draft(draft(ordinaryParameterProfile(c.contract))).ok).toBe(true);
         const r = setup(); const release = register(r, c.contract.schema);
@@ -97,7 +97,7 @@ describe('shared versioned Ref declaration boundary', () => {
             execution: { kind: 'view-type', activationId: 'active-1' } })).toMatchObject({ status: 'rejected', issue: { code: 'TOOL_SOURCE_STALE' } }); held.lease.release(); c.lifecycle.dispose();
     });
     it('rejects oversize Ref metadata without truncation', () => {
-        const bad = input('x'.repeat(70 * 1024)); expect(compileOrdinarySchema(bad, 'view-type-parameters-v1').ok).toBe(false);
+        const bad = input('x'.repeat(70 * 1024)); expect(compileOrdinarySchema(bad).ok).toBe(false);
         expect(validatePreparedV3Draft(draft({ ...bad, 'x-aotui-parameter-contract': 'view-type-parameters-v1' })).ok).toBe(false);
     });
 });

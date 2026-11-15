@@ -11,10 +11,10 @@ export function resolveIDEOptions(context: {
     launchConfig?: Record<string, unknown>;
 }): IDEOptions {
     const config = context.launchConfig ?? {};
+    requireIDE(!('ideLegacyImportPath' in config) && !('ideLegacyDatabasePath' in config), 'IDE_LEGACY_IMPORT_RETIRED');
     requireIDE(config.ideToolRoute === undefined || config.ideToolRoute === 'scoped', 'IDE_ROUTE_INVALID');
-    const appKey = typeof config.AOTUI_APP_NAME === 'string' ? config.AOTUI_APP_NAME : context.appId;
     const defaultKey = 'ide-' + createHash('sha256')
-        .update(JSON.stringify([context.desktopId, appKey])).digest('hex').slice(0, 32);
+        .update(JSON.stringify([context.desktopId, context.appId])).digest('hex').slice(0, 32);
     const sessionKey = config.ideSessionKey ?? defaultKey;
     requireIDE(typeof sessionKey === 'string' && /^[a-zA-Z0-9_.-]{1,128}$/.test(sessionKey), 'IDE_SESSION_KEY_REQUIRED');
     const dataDir = config.AOTUI_DATA_DIR ?? path.join(os.homedir(), '.aotui', 'data');
@@ -25,6 +25,5 @@ export function resolveIDEOptions(context: {
         sessionKey,
         historyPath,
         projectPath: typeof config.projectPath === 'string' ? config.projectPath : undefined,
-        legacyImportPath: typeof config.ideLegacyImportPath === 'string' ? config.ideLegacyImportPath : undefined,
     };
 }

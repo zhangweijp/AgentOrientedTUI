@@ -71,6 +71,17 @@ const findTool = (context: Awaited<ReturnType<SemanticAOTUIDrivenSource['getCont
     const name = Object.keys(context.tools).find(name => name.includes(fragment));
     expect(name).toBeDefined(); return name!;
 };
+const openApp = 'system-open_app', closeApp = 'system-close_app';
+function baseControls(context: Awaited<ReturnType<SemanticAOTUIDrivenSource['getContext']>>) {
+    return [openApp, closeApp].map(name => {
+        const tool = context.tools[name];
+        expect(tool?.description).toContain('App ID from the current Desktop application list');
+        const { jsonSchema } = tool!.inputSchema as { jsonSchema: unknown };
+        expect(jsonSchema).toEqual({ type: 'object', properties: { app_id: { type: 'string' } },
+            required: ['app_id'], additionalProperties: false });
+        return { name, description: tool!.description, jsonSchema };
+    });
+}
 async function executeMappedResult(result: InvokeResult) {
     const h = harness(), context = await consume(h.source), name = findTool(context, 'one-');
     h.clients[0]!.client.invoke.mockResolvedValueOnce(result);
@@ -152,11 +163,54 @@ describe('SemanticAOTUIDrivenSource', () => {
         await next.release!(); h.source.dispose();
     });
 
-    it('binds close/collapse/show controls to the observed App instance and hides active controls without its identity', async () => {
+    it('keeps open and close definitions stable while checking captured targets and current state', async () => {
+        const h = harness([app('one'), app('two', 'pending')]);
+        const first = await consume(h.source);
+        const definitions = baseControls(first);
+        const getter = vi.fn(() => 'one');
+        for (const args of [{}, { app_id: 1 }, { app_id: 'one', extra: true }, Object.assign(Object.create({ app_id: 'one' }), { extra: true }),
+            Object.defineProperty({}, 'app_id', { enumerable: true, get: getter })]) {
+            expect(await first.executeTool!(closeApp, args, 'malformed')).toMatchObject({
+                outcomeStatus: 'rejected', error: { code: 'INVALID_APP_TARGET' },
+            });
+        }
+        expect(getter).not.toHaveBeenCalled();
+        h.installed[1] = app('two', 'running');
+        expect((await first.executeTool!(openApp, { app_id: 'two' }, 'changed'))?.error?.code).toBe('APP_STATE_CHANGED');
+        await first.release!();
+
+        for (const [apps, rejected] of [
+            [[], [openApp, closeApp]],
+            [[app('one')], [openApp]],
+            [[app('one', 'pending')], [closeApp]],
+            [[app('one', 'closed')], [closeApp]],
+            [[app('one', 'running', null)], [openApp, closeApp]],
+        ] as const) {
+            h.installed.splice(0, h.installed.length, ...apps);
+            const current = await consume(h.source);
+            expect(baseControls(current)).toEqual(definitions);
+            for (const name of rejected) {
+                expect(await current.executeTool!(name, { app_id: 'one' }, 'ineligible')).toMatchObject({
+                    outcomeStatus: 'rejected', error: { code: 'INVALID_APP_TARGET',
+                        message: expect.stringContaining(name === openApp ? 'pending or closed' : 'running, collapsed, or paused') },
+                });
+            }
+            await current.release!();
+        }
+        expect(h.desktop.openApp).not.toHaveBeenCalled();
+        expect(h.desktop.closeApp).not.toHaveBeenCalled();
+        h.source.dispose();
+    });
+
+    it('binds close, collapse and show to the observed instance and requires a live target', async () => {
         const h = harness(), originalId = h.installed[0].appInstanceId!;
         const running = await consume(h.source);
+        expect(running.tools['system-show_app']).toBeUndefined();
         h.installed[0] = app('one', 'collapsed', originalId);
         const collapsed = await h.source.getContext();
+        expect(collapsed.tools['system-collapse_app']).toBeUndefined();
+        expect((collapsed.tools['system-show_app']!.inputSchema as { jsonSchema: unknown }).jsonSchema)
+            .toMatchObject({ properties: { app_id: { enum: ['one'] } } });
 
         h.installed[0] = app('one', 'running', 'successor-instance');
         for (const [name, callId] of [['system-close_app', 'old-close'], ['system-collapse_app', 'old-collapse']] as const) {
@@ -183,8 +237,10 @@ describe('SemanticAOTUIDrivenSource', () => {
         expect(h.desktop.closeApp).toHaveBeenCalledWith('one', 'successor-instance');
 
         h.installed[0] = app('one', 'running', null);
-        const withoutIdentity = await h.source.getContext();
-        expect(withoutIdentity.tools['system-close_app']).toBeUndefined();
+        const withoutIdentity = await consume(h.source);
+        expect(withoutIdentity.tools[closeApp]).toBeDefined();
+        expect((await withoutIdentity.executeTool!(closeApp, { app_id: 'one' }, 'no-instance'))?.error?.code).toBe('INVALID_APP_TARGET');
+        expect(h.desktop.closeApp).toHaveBeenCalledOnce();
         expect(withoutIdentity.tools['system-collapse_app']).toBeUndefined();
         for (const context of [running, collapsed, latest, freshRunning, withoutIdentity]) await context.release!();
         h.source.dispose();
@@ -338,6 +394,8 @@ describe('SemanticAOTUIDrivenSource', () => {
         const result = await context.executeTool!(findTool(context, '-multi_open_file'), {}, 'after-disable');
         expect(result?.outcomeStatus).toBe('rejected');
         expect(h.clients[0].client.invoke).not.toHaveBeenCalled();
+        expect((await context.executeTool!(closeApp, { app_id: 'one' }, 'after-disable-close'))?.error?.code).toBe('APP_STATE_CHANGED');
+        expect(h.desktop.closeApp).not.toHaveBeenCalled();
 
         await context.release!(); h.source.dispose();
     });
@@ -493,13 +551,22 @@ describe('model-visible presentation contract', () => {
         expect(desktop).toContain('activity-3'); expect(desktop).toContain('activity-7');
         await first.release!();
         h.source.setAppEnabled('one', false);
-        const hidden = await h.source.getContext();
+        const hidden = await consume(h.source);
         expect(JSON.stringify(hidden.messages)).not.toContain('activity-');
         expect(JSON.stringify(hidden.messages)).toContain('No applications enabled for this context.');
         expect(JSON.stringify(hidden.messages)).not.toContain('No applications installed.');
         expect(JSON.stringify(hidden.messages)).toContain('logs are hidden');
         expect(hidden.messages.filter(message => String(message.content).startsWith('<view '))).toHaveLength(0);
-        expect(Object.keys(hidden.tools)).toHaveLength(0);
+        expect(Object.keys(hidden.tools).sort()).toEqual([closeApp, openApp]);
+        expect(baseControls(hidden)).toEqual(baseControls(first));
+        for (const name of [openApp, closeApp]) {
+            expect((await hidden.executeTool!(name, { app_id: 'one' }, 'disabled-target'))?.error?.code).toBe('INVALID_APP_TARGET');
+        }
+        h.source.setEnabled(false);
+        expect(await h.source.getContext()).toEqual({ messages: [], tools: {} });
+        expect((await hidden.executeTool!(openApp, { app_id: 'one' }, 'disabled-source'))?.error?.code).toBe('SEMANTIC_CONTEXT_RELEASED');
+        expect(h.desktop.openApp).not.toHaveBeenCalled();
+        expect(h.desktop.closeApp).not.toHaveBeenCalled();
         await hidden.release!(); h.source.dispose();
     });
 

@@ -45,7 +45,7 @@ async function start(id = 'app', options: { holdInitialization?: boolean; existi
     const root = await mkdtemp(join(tmpdir(), 'aotui-tool-'));
     const host = new AppWorkerHost({ appId: id as any, desktopId: 'd' as any,
         appModulePath: pathToFileURL(join(consumer, 'app.mjs')).href,
-        workerScriptPath: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), interactionModes: ['view-type-parameters-v1'], timeout: 5000,
+        workerScriptPath: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), timeout: 5000,
         existingWorker: options.existingWorker,
         config: { AOTUI_DATA_DIR: join(root, 'state'), testFile: join(root, 'resource'), holdInitialization: !!options.holdInitialization },
     });
@@ -108,7 +108,7 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
     it('stops through Sandbox before held installation settles and retains the physical Worker', async () => {
         const root = await mkdtemp(join(tmpdir(), 'aotui-tool-sandbox-'));
         const sandbox = new WorkerSandbox({ appId: 'sandbox' as any, desktopId: 'd' as any, appModulePath: pathToFileURL(join(consumer, 'app.mjs')).href,
-            workerScriptPath: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), interactionModes: ['view-type-parameters-v1'], runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 5000, maxWorkers: 1 } }),
+            workerScriptPath: join(consumer, 'node_modules/@aotui/runtime/dist/worker-runtime/index.js'), runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 5000, maxWorkers: 1 } }),
             config: { AOTUI_DATA_DIR: join(root, 'state'), testFile: join(root, 'resource'), holdInitialization: true } });
         const install = sandbox.installDynamic(); void install.catch(() => {});
         let worker: Worker | undefined;

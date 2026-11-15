@@ -24,7 +24,7 @@ Opening files publishes FileDetail Views and makes the IDE's FileDetail Tool set
 
 File contents, search matches and LSP results appear in their current Views. Successful search, LSP and batch Tool results carry receipts rather than duplicate result collections. Receipts point to the actual FileDetail ID while that View remains current; delete/close receipts point to Workspace, and a failed View refresh preserves its warning and points to Workspace for recovery.
 
-See [SCOPED_IDE.md](./SCOPED_IDE.md) for tool contracts, limits and cleanup, and [Semantic Host integration](../../runtime/docs/semantic-host-integration.zh-CN.md) for context ownership and outcomes. Legacy data import, when configured, is a data migration; it is not an alternate app entry.
+See [SCOPED_IDE.md](./SCOPED_IDE.md) for tool contracts, limits and cleanup, and [Semantic Host integration](../../runtime/docs/semantic-host-integration.zh-CN.md) for context ownership and outcomes.
 
 ## Runtime Requirements
 

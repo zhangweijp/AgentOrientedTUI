@@ -23,7 +23,7 @@ const inputSchema = {
 };
 const appId = 'capacity-app';
 const instanceId = 'capacity-instance';
-const compiled = core.compileOrdinarySchema(inputSchema, 'view-type-parameters-v1');
+const compiled = core.compileOrdinarySchema(inputSchema);
 if (!compiled.ok) throw new Error('Capacity parameter schema did not compile');
 
 function elapsed(start) { return Number((performance.now() - start).toFixed(3)); }
@@ -65,7 +65,7 @@ async function runCase(viewCount) {
         releases.push(tools.registerTypeTool({
             viewType: 'File', ...definition, inputSchema,
         }, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
             createSafeOrdinaryParametersInvoker: () => invocationFor(definition.name),
         }));
         toolRegistrationCalls++;
@@ -101,9 +101,9 @@ async function runCase(viewCount) {
         policy: { project: ({ source, selection }) => grant(source, selection.viewIds), authorize: () => true, canReadReceipt: () => true },
         execution: { resolve(source) {
             if (!bindings.has(source.tool.id)) bindings.set(source.tool.id, {
-                identity: {}, mode: 'view-type-parameters-v1',
+                identity: {},
                 isLive(current) { return { ok: tools.validateTypeToolBinding(current.tool, current.execution).success }; },
-                validateInput(_source, input) { const result = compiled.contract.validate(input);
+                validateInput(_source, input) { const result = compiled.contract.validateResolvedInput(input);
                     return result.ok ? { ok: true, value: result.value } : { ok: false }; },
                 async execute(context) { return { kind: 'tool-result', ...await tools.invokeTypeTool(context.source.tool,
                     context.source.execution, context.effectiveInput) }; },

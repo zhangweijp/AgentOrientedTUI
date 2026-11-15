@@ -22,7 +22,6 @@ import {
     type AppLaunchConfig,
     // Third-party Apps
     AppRegistry,
-    SEMANTIC_INTERACTION_MODES,
     installNpmPackage,
     parseInstallSource,
     resolveCatalog,
@@ -43,8 +42,6 @@ export type { DesktopID };
 
 export interface DesktopInfo {
     desktopId: DesktopID;
-    // [RFC-021] appId is now optional since we may not have any apps installed
-    appId?: string;
     thirdPartyAppCount: number;
 }
 
@@ -174,7 +171,6 @@ export class DesktopManager {
             const desktop = this.kernel.getDesktop(actualDesktopId);
             const results = await this.appRegistry.installAll(desktop, {
                 dynamicConfig: config,
-                interactionModes: SEMANTIC_INTERACTION_MODES,
             });
             for (const result of results) {
                 if (result.status === 'failed') this.reportAppFailure(result);
@@ -191,7 +187,6 @@ export class DesktopManager {
 
         return {
             desktopId: actualDesktopId,
-            appId: installedAppIds[0],  // First app ID for backward compatibility
             thirdPartyAppCount: installedAppIds.length
         };
     }
@@ -216,14 +211,6 @@ export class DesktopManager {
      */
     getAppIds(desktopId: DesktopID): string[] {
         return this.desktopAppMap.get(desktopId) || [];
-    }
-
-    /**
-     * Get first app ID for backward compatibility
-     */
-    getAppId(desktopId: DesktopID): string | undefined {
-        const ids = this.desktopAppMap.get(desktopId);
-        return ids?.[0];
     }
 
     /**

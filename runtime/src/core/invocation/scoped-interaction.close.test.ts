@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { compileOrdinaryParams, createSnapshotCore, createViewOwnedTools, createAppInteraction } from '../index.js';
+import { compileOrdinarySchema, createSnapshotCore, createViewOwnedTools, createAppInteraction } from '../index.js';
 import type { AppSnapshotV3, CancellationSignal, ExecutionBinding, ExecutionFact, InputValidation, InvocationContext,
     ReceiptMetadata, ReceiptQuery, AppInteractionPolicy } from '../index.js';
 
@@ -16,11 +16,11 @@ function fixture(instanceId = 'run', namespace = 'close:run') {
     const now = () => { if (clockMode === 'throw') throw Error('clock'); return clockMode === 'back' ? 9 : time; };
     const core = createSnapshotCore({ now }), registry = createViewOwnedTools('app', instanceId), view = registry.mount('v', 'Detail');
     core.lifecycle.startApp('app', instanceId);
-    const contract = compileOrdinaryParams({}, { additionalProperties: false });
-    if (!contract.ok) throw Error('Fixture ordinary-v2 contract');
+    const contract = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
+    if (!contract.ok) throw Error('Fixture ViewType contract');
     const handler = async () => ({ success: true });
     registry.registerTypeTool({ viewType: 'Detail', name: 'read', description: 'Read', inputSchema: contract.contract.schema }, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
+        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
         createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: await handler() }),
     });
     const tool = registry.listTools()[0];
@@ -38,7 +38,7 @@ function fixture(instanceId = 'run', namespace = 'close:run') {
         read: (_metadata: ReceiptMetadata, _signal: CancellationSignal): Maybe<boolean> => true,
     };
     const calls = { handler: 0, authorize: 0, validate: 0, project: 0, read: 0 };
-    const binding: ExecutionBinding = { identity: {}, mode: 'ordinary-v2',
+    const binding: ExecutionBinding = { identity: {},
         validateInput: (source, input, signal) => { calls.validate++; return controls.validate(source, input, signal); },
         isLive: source => ({ ok: registry.validateTypeToolBinding(tool, source.execution).success }),
         execute: context => { calls.handler++; return controls.execute(context); } };

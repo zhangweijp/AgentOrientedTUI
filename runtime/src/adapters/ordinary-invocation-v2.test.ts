@@ -7,7 +7,7 @@ import { captureTypeParametersRequest, typeParametersResponse } from './ordinary
 import { captureTypeParametersTerminal } from './worker-message-capture.js';
 const header = { requestId: 'r', appId: 'a', instanceId: 'i' };
 const fixture = () => {
-  const c = compileOrdinarySchema({ type: 'object', properties: { q: { type: 'string', maxLength: 1 } }, required: ['q'], additionalProperties: false }, 'view-type-parameters-v1');
+  const c = compileOrdinarySchema({ type: 'object', properties: { q: { type: 'string', maxLength: 1 } }, required: ['q'], additionalProperties: false });
   if (!c.ok) throw Error('Fixture');
   const execution = { kind: 'view-type' as const, activationId: 'activation' };
   return { ...header, type: 'VIEW_TOOL_INVOKE_V5', argumentMode: 'view-type-parameters-v1', snapshotId: 's', rawArgs: { q: '😀' }, effectiveArgs: { q: '😀' }, refSources: [], execution,

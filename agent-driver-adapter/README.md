@@ -35,6 +35,8 @@ in this Source; getContext and background publication only prepare data. Manual
 consumers must explicitly adopt too. An unadopted Context refuses tool calls. For diagnostic rendering, use Runtime
 `getAppInteraction(...).interaction.preview()` after checking the ready result.
 
+An enabled Apps Source always advertises `system-open_app` and `system-close_app` with a required string `app_id`. Choose an App ID from the current Context's Desktop list. Open accepts `pending` or `closed` apps. Close requires a live instance in `running`, `collapsed`, or `paused` state and uses the instance captured by the Context. An ineligible target is rejected. Disabling the whole Apps Source removes these tools. Desktop previews show installation state for inspection. Context tools and their targets are scoped to the conversation.
+
 The Source converts Runtime observations and operation receipts into Driver
 messages, tool declarations and results. Runtime owns Ref resolution, source
 binding, authorization, parameter validation and framework resources. Apps own

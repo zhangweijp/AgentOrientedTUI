@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { inside, readObservedFile } from './versioned-file-write.js';
 import { replaceObservedFile, createFileWithParents, withLocks } from './observed-file-actions.js';
@@ -8,8 +7,7 @@ import { directoryIdentity } from './versioned-file-write.js';
 import { IDEError, boundedJSON, requireIDE } from './ide-errors.js';
 import type { FileInfo } from '../types.js';
 
-export interface HistoryData { version: 1; workspaces: Record<string, FileInfo[]>;
-    migration?: { digest: string; phase: 'history' | 'completed' } }
+export interface HistoryData { version: 1; workspaces: Record<string, FileInfo[]> }
 export async function readBoundedText(file: string, limit = 256 * 1024): Promise<string> {
     const handle = await fs.open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
@@ -43,20 +41,7 @@ function histories(value: unknown): Record<string, FileInfo[]> {
 function parseHistory(text: string): HistoryData {
     const data = JSON.parse(text);
     requireIDE(data?.version === 1 && Object.keys(data).every(key => ['version', 'workspaces', 'migration'].includes(key)), 'HISTORY_INVALID');
-    if (Object.prototype.hasOwnProperty.call(data, 'migration')) requireIDE(data.migration && typeof data.migration === 'object' && !Array.isArray(data.migration) && /^[a-f0-9]{64}$/.test(data.migration.digest) && ['history', 'completed'].includes(data.migration.phase) && Object.keys(data.migration).length === 2, 'HISTORY_INVALID');
-    return { version: 1, workspaces: histories(data.workspaces), ...(data.migration ? { migration: data.migration } : {}) };
-}
-export async function readLegacyIDE(source: string) {
-    requireIDE(path.isAbsolute(source), 'IMPORT_PATH_REQUIRED');
-    const text = await readBoundedText(source), value = JSON.parse(text);
-    requireIDE(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).every(key => ['workspaceFolders', 'workspaces'].includes(key)), 'IMPORT_SCHEMA_INVALID');
-    const workspaceFolders = pathList(value.workspaceFolders ?? [], 16);
-    requireIDE(value.workspaces && typeof value.workspaces === 'object' && !Array.isArray(value.workspaces), 'IMPORT_SCHEMA_INVALID');
-    const raw = Object.fromEntries(Object.entries(value.workspaces).map(([root, entry]: [string, any]) => {
-        requireIDE(entry && Object.keys(entry).length === 1 && Array.isArray(entry.openFiles), 'IMPORT_SCHEMA_INVALID');
-        return [root, entry.openFiles];
-    }));
-    return { digest: createHash('sha256').update(text).digest('hex'), workspaceFolders, workspaces: histories(raw) };
+    return { version: 1, workspaces: histories(data.workspaces) };
 }
 export class IDEHistory {
     private live = true;
@@ -102,16 +87,6 @@ export class IDEHistory {
     }
     remove(root: string, file: string): Promise<void> {
         return this.change(data => ({ ...data, workspaces: { ...data.workspaces, [root]: (data.workspaces[root] ?? []).filter(item => item.path !== file) } }));
-    }
-    importHistory(source: Awaited<ReturnType<typeof readLegacyIDE>>): Promise<void> {
-        return this.change(data => {
-            requireIDE(!data.migration || data.migration.digest === source.digest, 'IMPORT_SOURCE_CONFLICT');
-            if (data.migration?.phase === 'completed') return data;
-            return { ...data, workspaces: { ...source.workspaces, ...data.workspaces }, migration: { digest: source.digest, phase: 'history' } };
-        });
-    }
-    completeImport(digest: string): Promise<void> {
-        return this.change(data => { requireIDE(data.migration?.digest === digest, 'IMPORT_CONFLICT'); return { ...data, migration: { digest, phase: 'completed' } }; });
     }
     stop(): void { this.live = false; }
     async close(): Promise<void> { this.stop(); await Promise.allSettled([...this.pending]); requireIDE(!this.cleanupFailed && !this.uncertain, 'HISTORY_CLEANUP_FAILED'); }

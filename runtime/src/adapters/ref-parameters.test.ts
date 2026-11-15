@@ -6,7 +6,6 @@ import type { JsonValue, PreparedAppSnapshotDraftV3 } from '../core/snapshot/typ
 import { compileOrdinarySchema } from '../core/tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profile.js';
 import { prepareViewTypeParameters } from '../core/tool/snapshot-value-arguments.js';
-import { validateVersionedToolRefDeclarations } from '../core/tool/versioned-ref-declarations.js';
 import { captureTypeParametersRequest } from './ordinary-invocation-v2.js';
 
 const ref = (value: JsonValue = { type: 'object', properties: { label: { type: 'string' } }, required: ['label'], additionalProperties: false }) =>
@@ -17,7 +16,7 @@ function fixture(optional = false) {
         many: { type: 'array', items: ref(), maxItems: 3 },
         one: ref(), all: ref({ type: 'array', items: { type: 'object' } }),
         ordinary: { type: 'string' },
-    }, required: optional ? [] : ['many'], additionalProperties: false }, 'view-type-parameters-v1');
+    }, required: optional ? [] : ['many'], additionalProperties: false });
     if (!c.ok) throw Error(JSON.stringify(c.issue));
     const core = createSnapshotCore(); core.lifecycle.startApp('a', 'i');
     const toolId = JSON.stringify(['a', 'Items', 'choose']);
@@ -67,7 +66,7 @@ describe('shared Ref selections through Core and Worker parameter grammar', () =
             expect(Object.isFrozen(p.effectiveArgs.many)).toBe(true);
             expect(Object.isFrozen((p.effectiveArgs.many as readonly JsonValue[])[0])).toBe(true);
             expect(validateTypeParameters(f.message(p))).toEqual({ success: true });
-            expect(validateVersionedToolRefDeclarations(ordinaryParameterProfile(f.contract))).toBe(true);
+            expect(f.contract.hasRefs).toBe(true);
         } finally { p.release(); f.core.lifecycle.dispose(); }
         expect(f.core.store.inspect().activeLeases).toBe(0);
     });

@@ -17,7 +17,6 @@ export const PhaseSchema = Type.Object({
     description: Type.Optional(Type.String()),
     status: Status,
     tasks: Type.Array(TaskSchema),
-    todos: Type.Array(TaskSchema),
 });
 
 export const PlanSchema = Type.Object({

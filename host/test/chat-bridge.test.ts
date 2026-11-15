@@ -63,6 +63,28 @@ describe('ChatBridge Host-only', () => {
         expect(notify).toHaveBeenCalledWith({ type: 'snapshot', topicId: topic.id });
     });
 
+    it('reconstructs stored tool parts and streams only the current Topic event shape', async () => {
+        const bridge = ChatBridge.getInstance();
+        const stored = [{ id: 'stored', role: 'tool', timestamp: 1, content: '', parts: [
+            { partType: 'tool-result', toolName: 'edit', toolCallId: 'call1', output: { type: 'text', value: 'Saved' }, isError: false },
+        ] }];
+        (bridge as any).getTrpcClient = () => ({ db: { getMessagesWithParts: { query: vi.fn().mockResolvedValue(stored) } } });
+        await (bridge as any).loadMessagesForTopic(topic.id);
+        expect(bridge.getMessages(topic.id)[0]).toMatchObject({ messageType: 'tool_result', metadata: { toolName: 'edit', toolCallId: 'call1' } });
+
+        const receive = (event: object) => (bridge as any).handleSessionEvent(event, topic.id);
+        receive({ type: 'message_delta', desktopId: topic.id, delta: 'retired' });
+        expect(bridge.getMessages(topic.id)).toHaveLength(1);
+        receive({ type: 'text_delta', topicId: topic.id, delta: 'Working' });
+        receive({ type: 'reasoning_delta', topicId: topic.id, delta: 'Reading' });
+        expect(bridge.getAgentThinking(topic.id)).toBe('Working');
+        expect(bridge.getAgentReasoning(topic.id)).toBe('Reading');
+        receive({ type: 'assistant', topicId: topic.id, message: { id: 'final', role: 'assistant', content: 'Done' } });
+        expect(bridge.getMessages(topic.id).at(-1)).toMatchObject({ id: 'final', content: 'Done' });
+        expect(bridge.getAgentThinking(topic.id)).toBe('');
+        expect(bridge.getAgentReasoning(topic.id)).toBe('');
+    });
+
     it('reads IM runtime through tRPC', async () => {
         const bridge = ChatBridge.getInstance();
         const runtime = {

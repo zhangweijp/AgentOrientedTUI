@@ -19,7 +19,7 @@ import { AOTUIError } from '../../spi/core/errors.js';
 import type { TUIConfig, AppConfigEntry } from './config.js';
 import type { AppLaunchConfig } from '../../spi/app/app-config.interface.js';
 import type { AppInteractionOptions } from '../../spi/runtime/app-interaction.interface.js';
-import { captureInteractionModes } from './interaction-config.js';
+import { captureToolsEnabled } from './interaction-config.js';
 import { createDefaultConfig, validateConfig } from './config.js';
 // [Option C] ESM-compatible imports for file system access
 import * as fs from 'fs';
@@ -329,7 +329,7 @@ export class AppRegistry {
         return this.installEntries(desktop, Array.from(this.apps.keys()), {
             defaultWorkerScript,
             dynamicConfig: options?.dynamicConfig,
-            interactionModes: captureInteractionModes(options),
+            toolsEnabled: captureToolsEnabled(options),
         });
     }
 
@@ -344,7 +344,7 @@ export class AppRegistry {
         return this.installEntries(desktop, names, {
             defaultWorkerScript,
             dynamicConfig: options?.dynamicConfig,
-            interactionModes: captureInteractionModes(options),
+            toolsEnabled: captureToolsEnabled(options),
         });
     }
 
@@ -493,7 +493,7 @@ export class AppRegistry {
                             whatItIs,
                             whenToUse,
                             config: dynamicConfig,
-                            interactionModes: options.interactionModes,
+                            toolsEnabled: options.toolsEnabled,
                         }
                     );
                     results.push({ name, status: 'installed', appId: appId as AppID });
@@ -507,7 +507,7 @@ export class AppRegistry {
                         modulePath,
                         workerScriptPath: workerScript,
                         config: dynamicConfig,
-                        interactionModes: options.interactionModes,
+                        toolsEnabled: options.toolsEnabled,
                     });
                     results.push({ name, status: 'registered', appId: appId as AppID });
                     console.log(`[AppRegistry] Registered "${name}" to Desktop ${desktop.id} (Pending mode)`);

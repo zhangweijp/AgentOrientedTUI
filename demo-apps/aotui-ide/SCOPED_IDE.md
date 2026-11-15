@@ -9,14 +9,13 @@ The current authoring contract uses SDK 0.8.0 with Runtime 7.0.0. `createTUIApp`
 Install Runtime, SDK and IDE packages from a compatible delivery. Published packages with identical version numbers do not prove support for the current contracts.
 
 ```ts
-import { createRuntime } from '@aotui/runtime';
+import { createDesktopId, createRuntime } from '@aotui/runtime';
 
 const runtime = createRuntime();
-const desktopId = await runtime.createDesktop('my-ide');
+const desktopId = await runtime.createDesktop(createDesktopId('dt_my-ide'));
 const appModulePath = import.meta.resolve('@agentina/aotui-ide');
 const appId = await runtime.installDynamicWorkerApp(desktopId, appModulePath, {
     appId: 'my-ide',
-    interactionModes: ['view-type-parameters-v1'],
     config: {
         projectPath: '/absolute/project',
         ideSessionKey: 'my-project',
@@ -28,9 +27,9 @@ const appId = await runtime.installDynamicWorkerApp(desktopId, appModulePath, {
 });
 ```
 
-The Host supports `view-type-parameters-v1` for both ordinary and Ref parameters. Omitting `interactionModes` enables this mode; `[]` disables execution. The matching Host/Worker capability is `view-tool-parameters-invoke/v5`. Retired modes and execution categories are rejected. The optional diagnostics and WorkspaceCreate tools use the same current mode. A trusted Controller can set the instance's projection, execution authorization and receipt authorization policy. App configuration is not an OS filesystem sandbox.
+Replace the absolute paths with an existing project directory and a writable data location. Tool execution is enabled by default. Set `toolsEnabled: false` on the installation options to keep View observation and preview read-only. Ordinary and Ref parameters share `view-type-parameters-v1` and use the `view-tool-parameters-invoke/v5` Worker capability. When the Host finishes, await `runtime.beginShutdown().completion` and inspect its report.
 
-The normal Host supplies App identity, Desktop identity, project path and managed persistence through AppContext. When omitted, the IDE derives its session key from Desktop and App identity, and stores history under `AOTUI_DATA_DIR/ide-sessions/<sessionKey>/history.json`. Explicit overrides remain available: session keys must be 1–128 ASCII letters/digits/underscore/dot/hyphen and history paths must be absolute. The current package default does not open the legacy home LowDB. Give concurrent independent Apps distinct session keys; identical keys are not a shared-write protocol. Recent history uses a cooperative lock/CAS and reports conflicts/warnings without invisible retries.
+The normal Host supplies App identity, Desktop identity, project path and managed persistence through AppContext. By default, the IDE derives its session key from the Desktop ID and the assigned App ID, and stores history under `AOTUI_DATA_DIR/ide-sessions/<sessionKey>/history.json`. A different App installation order can change the assigned ID and the default path. Explicit `ideSessionKey` values use 1–128 ASCII letters, digits, underscores, dots or hyphens. Explicit `ideHistoryPath` values must be absolute. Give concurrent independent Apps distinct session keys. Recent history uses a cooperative lock/CAS and reports conflicts and warnings.
 
 ## All tools and business targets
 
@@ -108,21 +107,21 @@ The client negotiates UTF-16. TypeScript diagnostics use standard `textDocument/
 
 A group probe denied with `EPERM` retains ownership and continues the existing bounded wait; only `ESRCH` proves absence. Persistent denial and failed signals remain cleanup failures. Failure logs contain only bounded phase/resource codes (`LSP_CLOSE_FAILURE` / `IDE_CLOSE_FAILURE`), without document contents or arbitrary server messages. Queued history work cancelled before I/O is a normal stop; uncertain handle/lock cleanup remains sticky and blocks healthy release.
 
-## Restoration and explicit legacy import
+## Restoration
 
-Managed state owns `workspaceFolders`, `activeFiles`, `expandedDirs` under the session key. Recent history is a separate shared business resource. `ideLegacyImportPath` selects an absolute legacy LowDB source, read and hashed without modification. Existing target history and existing managed workspace state win. Legacy recent files are not invented active files.
+Managed state owns `workspaceFolders`, `activeFiles` and `expandedDirs` under the session key. Recent history is a separate shared file with version 1 and `workspaces`. Previously imported history remains readable if it contains a retired `migration` field. Reading preserves the original file, and the next ordinary history write saves the current fields. The IDE rejects the retired `ideLegacyImportPath` and `ideLegacyDatabasePath` launch options.
 
 The explicitly configured `projectPath` must be a usable directory. A separately restored root that now fails with `ENOENT` or `ENOTDIR` is listed under **Unavailable folders** while other valid roots remain usable. Its normalized absolute path stays in the existing `workspaceFolders` value across restarts and still counts toward the 16-root limit. Unavailable roots are excluded from LSP, search and file access. Permission errors, invalid saved data, identity changes and uncertain cleanup remain initialization failures; this recovery rule does not hide failures while reading the workspace tree.
 
 The IDE does not recreate missing directories. Restore a folder at its listed path and call `add_folder_to_workspace` to reconnect it, or call `remove_folder_from_workspace` to delete that saved entry. Both actions remain available when every saved root is unavailable. Reconnecting a saved path, or an alias of an already connected canonical root, does not consume another slot. Existing active-file and expanded-directory recovery is unchanged: only files that can be loaded under valid roots reopen; inaccessible files produce the existing warning, and expanded paths outside valid roots are omitted. Reconnecting a root does not automatically reopen its former files.
 
-Import writes a `history` marker, prepares/saves the managed session, verifies exact flush addresses/revisions, then marks `completed`. The IDE stays unavailable until completion. A new App can resume a failed import using the same source/target; changed source digest conflicts. Corrupt/unknown data is not replaced with defaults. Partial initialization releases unconfirmed bindings before managed flush can deadlock.
+Corrupt history is left on disk and the operation reports the error. Partial initialization releases unconfirmed bindings before managed flush.
 
 ## Replace an installed IDE
 
 1. Stop issuing calls to the current App instance. Close the App and await its actual resource report. Record failed/unknown disk outcomes for inspection.
 2. Install the package version you want through its default entry and create fresh observations/bindings; do not reuse old IDs.
-3. Check actual edited/renamed/deleted files. Replacing an App version does not undo disk effects or authorize replay of an unknown write. A configured legacy data import remains separate from the current app entry.
+3. Inspect the files you edited, renamed or deleted before deciding whether to retry any write with an unknown outcome.
 
 The package's default factory is the only current app entry. Updating installed packages does not publish a release; older installed artifacts do not gain new behavior automatically.
 

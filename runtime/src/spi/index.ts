@@ -70,11 +70,9 @@ export type {
     RuntimeCloseReport,
     ShutdownOptions,
 } from './runtime/close.interface.js';
-export { SEMANTIC_INTERACTION_MODES } from './runtime/app-interaction.interface.js';
 export type {
     AppInteractionOptions,
     AppInteractionResult,
-    InteractionMode,
 } from './runtime/app-interaction.interface.js';
 export type { IRuntimeContext } from './runtime/context.interface.js';
 export type { ILLMOutputChannelService } from './runtime/llm-output-channel.interface.js';

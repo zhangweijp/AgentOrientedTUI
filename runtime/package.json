@@ -74,7 +74,6 @@
     "vitest": "^4.1.12"
   },
   "dependencies": {
-    "@types/json-schema": "^7.0.15",
     "linkedom": "^0.18.12"
   },
   "overrides": {

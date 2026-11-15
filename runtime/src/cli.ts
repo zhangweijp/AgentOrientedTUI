@@ -344,7 +344,7 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
                 if (!view.content) continue;
                 console.log(buildViewMessageMarkup({ appId, appName: app.name || appId,
                     viewId: view.id, viewType: view.type, kind: view.kind, viewName: view.name,
-                    markup: view.content.format === 'markdown-v1' ? view.content.value : JSON.stringify(view.content.value) }));
+                    markup: view.content.value }));
             }
         }
     }

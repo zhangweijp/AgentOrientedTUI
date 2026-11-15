@@ -7,7 +7,7 @@ import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
 import type { AppTypeToolDefinition } from '../../spi/runtime/app-type-tools.interface.js';
 import type { SafeOrdinaryInvoker, ViewToolInvocationTerminal } from './invocation-terminal.js';
 
-const emptyContract = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false }, 'view-type-parameters-v1');
+const emptyContract = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
 if (!emptyContract.ok) throw new Error('Fixture schema must compile');
 const emptySchema = emptyContract.contract.schema;
 const typeDefinition = (name = 'read', viewType = 'T', description = 'Read'): AppTypeToolDefinition => ({
@@ -19,7 +19,7 @@ const publicDefinition = (definition: AppTypeToolDefinition): JsonValue => ({
 const size = (value: unknown) => utf8Size(canonicalJson(value as JsonValue));
 function register(r: ReturnType<typeof createViewOwnedTools>, definition = typeDefinition(), invoke?: SafeOrdinaryInvoker) {
     return r.registerTypeTool(definition, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
+        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
         createSafeOrdinaryParametersInvoker: () => invoke ?? (async () => ({
             phase: 'entered-returned', result: { success: true },
         })),
@@ -117,7 +117,7 @@ describe('ViewType Tool Registry bounded retention and release lifecycle', () =>
         r.mount('v', 'File');
         const createInvoker = vi.fn(() => async () => ({ phase: 'entered-returned' as const, result: { success: true } }));
         expect(() => r.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: createInvoker,
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: createInvoker,
         })).toThrow(expect.objectContaining({ code: 'TOOL_CAPACITY' }));
         expect(createInvoker).not.toHaveBeenCalled();
         expect(r.inspect()).toMatchObject({ views: 1, bindings: 0, retainedBytes: base + viewBytes });

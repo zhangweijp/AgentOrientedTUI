@@ -3,14 +3,14 @@ import { copyJson } from './json.js';
 import { createSnapshotCore } from './store.js';
 import { DEFAULT_SNAPSHOT_LIMITS, refKey } from './snapshot-support.js';
 import { validatePreparedV3Draft } from './v3-validator.js';
-import { compileOrdinaryParams } from '../tool/ordinary-parameter-contract.js';
+import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
 import type { PreparedAppSnapshotDraftV3, SnapshotCore, SnapshotStoreOptions } from './types.js';
 
 const KEY = refKey('workspace', 'mount_1', 'tasks[0]');
 const TOOL = JSON.stringify(['task_app', 'Workspace', 'complete_task']);
 const taskSchema = (() => {
-    const compiled = compileOrdinaryParams({ id: { type: 'string', required: false } }, { additionalProperties: false });
+    const compiled = compileOrdinarySchema({ type: 'object', properties: { id: { type: 'string' } }, additionalProperties: false });
     if (!compiled.ok) throw new Error('Fixture Tool Schema must compile');
     return ordinaryParameterProfile(compiled.contract);
 })();
@@ -478,11 +478,11 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
         expect(sourceRefWithGeneration(core, newer.id, 'mount_2').status).toBe('resolved');
     });
 
-    it('retains exact old Entity locator, including entityVersion', () => {
+    it('retains the exact historical payload, including its business version', () => {
         const core = createSnapshotCore();
         core.lifecycle.startApp('task_app', 'instance_a');
-        const target = { kind: 'entity' as const, entityType: 'Task', entityId: 'same-id', entityVersion: 'old-v1' };
-        const newerTarget = { ...target, entityVersion: 'new-v2' };
+        const target = { kind: 'snapshot-value' as const, payload: { id: 'same-id', version: 'old-v1' } };
+        const newerTarget = { ...target, payload: { ...target.payload, version: 'new-v2' } };
         const old = published(core, draft(1, 1, 'unused', {
             refs: { [KEY]: { ...draft().refs[KEY], target } },
         }));
@@ -493,9 +493,8 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
         const refOld = sourceRef(core, old.id);
         const refNew = sourceRef(core, newer.id);
         if (refOld.status !== 'resolved' || refNew.status !== 'resolved') throw Error('unexpected');
-        expect(refOld.target).toMatchObject({ entityId: 'same-id', entityVersion: 'old-v1' });
-        expect(refNew.target).toMatchObject({ entityId: 'same-id', entityVersion: 'new-v2' });
-        // Live resource CAS is an M4 concern; M1 must never swap the old locator.
+        expect(refOld.target).toEqual(target);
+        expect(refNew.target).toEqual(newerTarget);
         held.lease.release(); expect(core.store.inspect().historicalSnapshots).toBe(0);
     });
 });
@@ -683,8 +682,7 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
         core.lifecycle.startApp('task_app', 'instance_a');
         const first = published(core, draft());
         const changedSchema = (() => {
-            const compiled = compileOrdinaryParams({ id: { type: 'string', required: false, desc: 'Task identifier' } },
-                { additionalProperties: false });
+            const compiled = compileOrdinarySchema({ type: 'object', properties: { id: { type: 'string', description: 'Task identifier' } }, additionalProperties: false });
             if (!compiled.ok) throw new Error('Changed Tool Schema must compile');
             return ordinaryParameterProfile(compiled.contract);
         })();

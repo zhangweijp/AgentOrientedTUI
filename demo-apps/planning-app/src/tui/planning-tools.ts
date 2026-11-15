@@ -3,11 +3,20 @@ import Type from 'typebox';
 import { PlanSchema, PhaseSchema, TaskSchema } from './ref-schemas.js';
 import type { PhaseInput, Plan, TaskInput } from '../types.js';
 
-const looseObject = Type.Object({}, { additionalProperties: true });
+const taskInput = Type.Object({
+    title: Type.String(),
+    description: Type.Optional(Type.String()),
+});
+const tasksInput = Type.Array(taskInput, { description: 'Initial tasks for this phase.' });
+const phaseInput = Type.Object({
+    title: Type.String(),
+    description: Type.Optional(Type.String()),
+    tasks: Type.Optional(tasksInput),
+}, { additionalProperties: false });
 const planInput = Type.Object({
     title: Type.String({ description: 'Plan title' }),
     description: Type.Optional(Type.String({ description: 'Optional plan description' })),
-    phases: Type.Optional(Type.Array(looseObject, { description: 'Optional phase objects with title, description, and tasks or todos.' })),
+    phases: Type.Optional(Type.Array(phaseInput, { description: 'Initial phases for the plan.' })),
 }, { additionalProperties: false });
 
 const updatePlanInput = Type.Object({
@@ -30,7 +39,7 @@ const addPhaseInput = Type.Object({
     plan: refParam('Plan', PlanSchema),
     title: Type.String({ description: 'Phase title' }),
     description: Type.Optional(Type.String({ description: 'Optional phase description' })),
-    tasks: Type.Optional(Type.Array(looseObject, { description: 'Initial tasks: objects with a required title and optional description.' })),
+    tasks: Type.Optional(tasksInput),
 }, { additionalProperties: false });
 
 const addTaskInput = Type.Object({
@@ -70,39 +79,6 @@ type PlanDetailActions = {
     completeTask: (taskId: string) => Promise<boolean>;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function parseTaskInputs(value: unknown): TaskInput[] | null {
-    if (!Array.isArray(value)) return null;
-    const tasks: TaskInput[] = [];
-    for (const item of value) {
-        if (!isRecord(item) || typeof item.title !== 'string') return null;
-        if (item.description !== undefined && typeof item.description !== 'string') return null;
-        tasks.push({ title: item.title, description: item.description });
-    }
-    return tasks;
-}
-
-function parsePhaseInputs(value: unknown): PhaseInput[] | null {
-    if (!Array.isArray(value)) return null;
-    const phases: PhaseInput[] = [];
-    for (const item of value) {
-        if (!isRecord(item) || typeof item.title !== 'string') return null;
-        if (item.description !== undefined && typeof item.description !== 'string') return null;
-        const phase: PhaseInput = { title: item.title, description: item.description };
-        const tasks = item.tasks ?? item.todos;
-        if (tasks !== undefined) {
-            const parsedTasks = parseTaskInputs(tasks);
-            if (!parsedTasks) return null;
-            phase.tasks = parsedTasks;
-        }
-        phases.push(phase);
-    }
-    return phases;
-}
-
 function findActivePlan(plan: Plan | null, requestedPlanId: string): Plan | null {
     return plan?.id === requestedPlanId ? plan : null;
 }
@@ -119,10 +95,9 @@ export function createPlanListBindings(actions: PlanListActions) {
     };
     return {
         createPlan: ({ execute: async (args: ArgsOf<typeof planningTools.createPlan>) => {
-                const phases = args.phases === undefined ? [] : parsePhaseInputs(args.phases);
-                if (!phases) {
-                    return { success: false, error: { code: 'INVALID_PHASES', message: 'Each phase needs a string title; descriptions and task titles must be strings.' } };
-                }
+                const phases: PhaseInput[] = (args.phases ?? []).map(({ title, description, tasks }) => ({
+                    title, description, tasks: [...(tasks ?? [])],
+                }));
                 await actions.createPlan(args.title, args.description, phases);
                 const taskCount = phases.reduce((sum, phase) => sum + (phase.tasks?.length ?? 0), 0);
                 return { success: true, data: { message: `Plan created with ${phases.length} phases and ${taskCount} tasks.` } };
@@ -170,8 +145,7 @@ export function createPlanDetailBindings(actions: PlanDetailActions) {
     return {
         addPhase: ({ execute: async (args: ArgsOf<typeof planningTools.addPhase>) => {
                 if (!findActivePlan(actions.activePlan, args.plan.id)) return inactivePlan();
-                const tasks = args.tasks === undefined ? [] : parseTaskInputs(args.tasks);
-                if (!tasks) return { success: false, error: { code: 'INVALID_TASKS', message: 'Each task needs a string title and an optional string description.' } };
+                const tasks = [...(args.tasks ?? [])];
                 if (!await actions.addPhase(args.title, args.description, tasks)) return { success: false, error: { code: 'PHASE_ADD_FAILED', message: 'Add phase failed' } };
                 return { success: true, data: { message: `Phase added with ${tasks.length} tasks.` } };
             } } satisfies ToolBinding<typeof planningTools.addPhase>),

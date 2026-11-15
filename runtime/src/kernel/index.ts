@@ -13,7 +13,7 @@ import type { IDesktopManager } from '../spi/runtime/desktop-manager.interface.j
 import { AOTUIError } from '../spi/core/errors.js';
 import type { DesktopCloseOptions, DesktopCloseHandle, RuntimeCloseHandle, RuntimeCloseReport, ShutdownOptions } from '../spi/runtime/close.interface.js';
 import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseHandle, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from '../engine/core/close-handle.js';
-import { captureInteractionModes } from '../engine/app/interaction-config.js';
+import { captureToolsEnabled } from '../engine/app/interaction-config.js';
 import { appInteractionUnavailable, type AppInteractionResult } from '../spi/runtime/app-interaction.interface.js';
 import type { AppInteractionPolicy } from '../core/invocation/app-interaction-types.js';
 
@@ -129,8 +129,8 @@ export class Kernel implements IKernel {
      */
     installDynamicWorkerApp(desktopId: DesktopID, appModulePath: string, options?: Parameters<IKernel['installDynamicWorkerApp']>[2]): Promise<string> {
         try {
-            const interactionModes = captureInteractionModes(options);
-            const captured = { ...options, interactionModes };
+            const toolsEnabled = captureToolsEnabled(options);
+            const captured = { ...options, toolsEnabled };
             return this.business(() => this.installDynamicWorkerAppAccepted(desktopId, appModulePath, captured));
         } catch (error) { return Promise.reject(error); }
     }
@@ -195,23 +195,6 @@ export class Kernel implements IKernel {
             serializedAt: Date.now(),
             apps: this.desktopManager.getAppStates(desktopId)
         };
-    }
-
-    /**
-     * [RFC-014] 优雅关闭 Desktop
-     * 
-     * 1. 等待 Desktop 及其 App 清理完成
-     * 2. 执行 beforeClose 回调（如持久化）
-     * 3. 销毁 Desktop
-     * 
-     * @param desktopId - Desktop ID
-     * @param options - 关闭选项
-     */
-    async gracefulShutdown(desktopId: DesktopID, options?: ShutdownOptions): Promise<void> {
-        const handle = this.beginDesktopShutdown(desktopId, options);
-        const result = await handle.wait(options);
-        if (result.status === 'deadline') throw closeError('CLOSE_DEADLINE_EXCEEDED', result.report);
-        if (result.report.hasFailures) throw closeError('DESKTOP_CLOSE_FAILED', result.report);
     }
 
     deleteDesktop(desktopId: DesktopID): Promise<void> {

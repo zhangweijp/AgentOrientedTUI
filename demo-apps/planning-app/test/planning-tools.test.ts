@@ -10,7 +10,6 @@ const plan = (id: string, phaseId: string, taskId: string): Plan => ({
         title: `Phase ${phaseId}`,
         status: 'pending',
         tasks: [{ id: taskId, title: `Task ${taskId}`, status: 'pending' }],
-        todos: [],
     }],
 });
 
@@ -116,7 +115,7 @@ describe('planning app type-level tool handlers', () => {
         expect(result).toMatchObject({ success: false, error: { code: 'PLAN_NOT_ACTIVE' } });
     });
 
-    it('rejects malformed inline phases before creating a plan', async () => {
+    it('creates a plan with optional initial tasks', async () => {
         const createPlan = vi.fn(async () => 'new-plan');
         const tools = createPlanListBindings({
             plans: [],
@@ -128,9 +127,15 @@ describe('planning app type-level tool handlers', () => {
             closePlan: vi.fn(),
         });
 
-        const receipt = await tools.createPlan.execute({ title: 'New plan', phases: [{ title: 42 }] });
+        const receipt = await tools.createPlan.execute({ title: 'New plan', phases: [
+            { title: 'Design' },
+            { title: 'Review', tasks: [{ title: 'Accepted' }] },
+        ] });
 
-        expect(createPlan).not.toHaveBeenCalled();
-        expect(receipt).toMatchObject({ success: false, error: { code: 'INVALID_PHASES' } });
+        expect(createPlan).toHaveBeenCalledWith('New plan', undefined, [
+            { title: 'Design', tasks: [] },
+            { title: 'Review', tasks: [{ title: 'Accepted' }] },
+        ]);
+        expect(receipt).toMatchObject({ success: true, data: { message: 'Plan created with 2 phases and 1 tasks.' } });
     });
 });

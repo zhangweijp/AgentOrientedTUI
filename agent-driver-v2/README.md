@@ -109,20 +109,15 @@ IDrivenSource 及其导出已经退出。把原 getMessages/getTools 读取合�
 
 ### LLM 配置格式
 
-AgentDriverV2 支持灵活的 LLM 配置格式：
+新配置使用 `providerId:modelId`，或在 `provider.id` 指定 Provider 并提供完整模型名。显式 Provider 下，模型名中的 `/` 和 `:` 原样交给 Provider，只有同 Provider 的冒号前缀用于标识 Provider。Host 仍能读取未保存 Provider 的现有配置。
 
 ```typescript
-// 格式 1: 简单格式（自动推断 Provider）
-const config: LLMConfig = {
-  model: 'gpt-4',  // 自动推断为 openai
-};
-
-// 格式 2: 显式指定 Provider
+// 通过模型标识指定 Provider
 const config: LLMConfig = {
   model: 'openai:gpt-4',  // 使用冒号分隔
 };
 
-// 格式 3: 自定义 Provider 配置
+// 自定义 Provider 配置
 const config: LLMConfig = {
   model: 'anthropic:claude-3-5-sonnet-20241022',
   provider: {
@@ -134,7 +129,7 @@ const config: LLMConfig = {
   maxSteps: 10,
 };
 
-// 格式 4: 使用 OpenRouter
+// 使用 OpenRouter
 const config: LLMConfig = {
   model: 'meta-llama/llama-4-scout-17b-16e-instruct',
   provider: {

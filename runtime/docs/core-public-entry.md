@@ -72,8 +72,8 @@ const readSchema = {
     suffix: { type: 'string' },
   }, required: ['note', 'suffix'], additionalProperties: false,
 };
-check(compileOrdinarySchema(addSchema, 'view-type-parameters-v1').ok, 'Add Schema');
-check(compileOrdinarySchema(readSchema, 'view-type-parameters-v1').ok, 'Ref Schema');
+check(compileOrdinarySchema(addSchema).ok, 'Add Schema');
+check(compileOrdinarySchema(readSchema).ok, 'Ref Schema');
 
 let count = 1, noteText = 'old', handlerEntries = 0;
 const projection = new SemanticProjectionCoordinator({
@@ -103,7 +103,7 @@ function register(name: string, schema: Readonly<Record<string, unknown>>,
   execute: (args: Readonly<Record<string, unknown>>) => Promise<ToolResult>) {
   return registry.registerTypeTool({ viewType: 'Note', name, description: name === 'add' ? 'Add to the counter' : 'Inspect a displayed Note',
     inputSchema: schema }, {
-    safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
+    safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
     createSafeOrdinaryParametersInvoker: contract => {
       contracts.set(name, contract);
       return async args => {
@@ -118,9 +118,9 @@ function installBinding(tool: ReturnType<typeof registry.listTools>[number]) {
   check(tool.execution.kind === 'view-type', 'One type-level execution identity');
   const contract = contracts.get(tool.name); check(contract, 'Captured registration contract');
   const binding: ExecutionBinding = {
-    identity: {}, mode: 'view-type-parameters-v1',
+    identity: {},
     validateInput: (_source, input) => {
-      const checked = (contract.validateResolvedInput ?? contract.validate)(input);
+      const checked = contract.validateResolvedInput(input);
       return checked.ok ? { ok: true, value: checked.value as Readonly<Record<string, JsonValue>> } : { ok: false };
     },
     isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.execution).success }),
@@ -255,7 +255,7 @@ export const coreTutorialFacts = { handlerEntries, authorizations: beforeClosed,
 ```
 <!-- b1-example:end -->
 
-低层注册 SPI 的 `safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3'` 声明 invoker 实现的 ABI。示例使用 `view-type-parameters-v1` 执行绑定与参数 profile。纯 Core 的 `ExecutionBinding.mode = 'ordinary-v2'` 仍可用于已有的普通参数路径。
+低层注册 SPI 的 `safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4'` 声明 invoker 实现的 ABI。Core 与 Worker 共用 `view-type-parameters-v1` 参数 profile。`ExecutionBinding` 的 validator 可以拒绝输入，接受时返回等值参数。Snapshot View 正文使用 `markdown-v1`，Ref 发布 `snapshot-value` JSON payload。
 
 View 与 Ref 仍有实例/原快照来源身份，Tool 只有 App/ViewType activation；关闭最后一个匹配 View或替换注册会拒绝旧 activation。Ref 参数不把 Tool 隐式绑定某个文件。App 检查对象是否仍存在、当前业务权限和父子归属；有业务意义的路径/标题/内容不必包装成 Ref。当前合同同时支持多个顶层对象／对象列表 Ref 和可选 Ref；缺席字段保持缺席，出现的字段必须有效，整个参数与来源 envelope 共享既有预算。Type.Array(refParam(...)) 表达 Ref 名数组，多选按输入顺序解析；重复选择保留，空选择不触发解析。新观察先准备，再由显式 adopt 撤销旧资格；单纯 observe 不会换掉当前观察。
 

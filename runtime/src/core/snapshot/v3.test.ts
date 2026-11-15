@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { compileOrdinaryParams } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
 import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { createSnapshotCore } from './store.js';
@@ -11,8 +10,8 @@ const viewType = 'FileDetail';
 const typeId = JSON.stringify([appId, viewType, 'edit_file']);
 const refId = JSON.stringify([appId, viewType, 'read_ref']);
 const target = { viewId, viewInstanceId, bindingVersion: 4 };
-const ordinary = compileOrdinaryParams({ path: { type: 'string', required: true }, content: { type: 'string', required: true } }, { additionalProperties: false });
-const snapshotValue = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: false }, 'view-type-parameters-v1');
+const ordinary = compileOrdinarySchema({ type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'], additionalProperties: false });
+const snapshotValue = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: false });
 if (!ordinary.ok || !snapshotValue.ok) throw new Error('V3 fixtures must compile');
 
 function draft() {
@@ -61,6 +60,15 @@ describe('Semantic Snapshot V3', () => {
         const duplicate = draft();
         duplicate.tools[refId]!.execution = { kind: 'view-type', activationId: 'ta:v1:["run-1",1]' };
         expect(validatePreparedV3Draft(duplicate)).toMatchObject({ ok: false, issue: { path: expect.stringContaining('activationId') } });
+    });
+
+    it.each([
+        [{ format: 'semantic-v1', value: { text: 'retired' } }, 'format'],
+        [{ format: 'markdown-v1', value: { text: 'invalid' } }, 'value'],
+    ])('rejects retired or invalid View content %j', (content, field) => {
+        const input = draft();
+        expect(validatePreparedV3Draft({ ...input, views: [{ ...input.views[0], content }] }))
+            .toMatchObject({ ok: false, issue: { code: 'SNAPSHOT_INVALID', path: `$.views[0].content.${field}` } });
     });
 
     it('commits only V3 snapshots and retrieves type-level Tools without an instance target', () => {

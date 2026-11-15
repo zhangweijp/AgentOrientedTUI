@@ -34,7 +34,7 @@ describe('Runtime public entry points', () => {
     it('exposes the host factory and supported host registration surface', () => {
         expect(runtime.createRuntime).toBeTypeOf('function');
         expect(runtime.AppRegistry).toBeTypeOf('function');
-        expect(runtime.SEMANTIC_INTERACTION_MODES).toEqual(['view-type-parameters-v1']);
+        expect(runtime).not.toHaveProperty('SEMANTIC_INTERACTION_MODES');
         expect(runtime).not.toHaveProperty('AOAppManifest');
         expect(runtime).not.toHaveProperty('validateManifest');
         expect(runtime).not.toHaveProperty('isValidAppName');

@@ -1,108 +1,54 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { WebSocketHandler } from '../../src/host/websocket-handler.js';
-import type { ISessionManager } from '../../src/host/types.js';
-import type { SignalRouter } from '../../src/host/signal-router.js';
-import { WebSocket } from 'ws';
+import { EventEmitter } from 'node:events';
+import { describe, expect, it, vi } from 'vitest';
+import type { WebSocket } from 'ws';
+import type { HostManagerV2 } from '../../src/core/host-manager-v2.js';
+import type { GUIBridge } from '../../src/server/gui-bridge.js';
+import { WebSocketHandlerV2 } from '../../src/server/websocket-handler-v2.js';
 
-// Mock WebSocket
-class MockWebSocket {
-    readyState = 1; // OPEN
-    on = vi.fn();
-    send = vi.fn();
-    static OPEN = 1;
+function fixture() {
+    const bridge = new EventEmitter();
+    const manager = { switchTopic: vi.fn(), sendUserMessage: vi.fn(), ensureSessionForTopic: vi.fn() };
+    const handlers = new Map<string, (input: Buffer) => Promise<void>>();
+    const socket = { readyState: 1, send: vi.fn(), on: (event: string, listener: (input: Buffer) => Promise<void>) => handlers.set(event, listener) };
+    const handler = new WebSocketHandlerV2(manager as unknown as HostManagerV2, bridge as unknown as GUIBridge);
+    handler.handleConnection(socket as unknown as WebSocket);
+    const send = (message: object | string) => handlers.get('message')!(Buffer.from(typeof message === 'string' ? message : JSON.stringify(message)));
+    const replies = () => socket.send.mock.calls.map(([response]) => JSON.parse(response));
+    const broadcast = (topicId: string) => bridge.emit('message:new', { topicId, type: 'assistant', message: { role: 'assistant', content: 'Reply' } });
+    return { manager, send, replies, broadcast };
 }
 
-describe('WebSocketHandler (Zod Validation)', () => {
-    let mockSessionManager: any;
-    let mockSignalRouter: any;
-    let handler: WebSocketHandler;
-    let mockWs: any;
-
-    beforeEach(() => {
-        mockSessionManager = {
-            getAllSessions: vi.fn().mockReturnValue([]),
-            getOrCreateSession: vi.fn().mockResolvedValue({ id: 'test-session', bridge: {} }),
-            getSession: vi.fn()
-        };
-        mockSignalRouter = {
-            onBroadcast: vi.fn().mockReturnValue(() => {}),
-            handleUserMessage: vi.fn().mockResolvedValue({}),
-            handlePause: vi.fn(),
-            handleResume: vi.fn()
-        };
-        handler = new WebSocketHandler(
-            mockSessionManager as unknown as ISessionManager,
-            mockSignalRouter as unknown as SignalRouter
-        );
-        mockWs = new MockWebSocket();
-        
-        // Register listeners
-        handler.handleConnection(mockWs as any);
+describe('Host WebSocket topic routing', () => {
+    it('subscribes to one Topic, routes sends and creation, and stops delivery after unsubscribe', async () => {
+        const x = fixture();
+        expect(x.replies()[0].type).toBe('init');
+        await x.send({ type: 'subscribe', topicId: 'topic-a' });
+        x.broadcast('topic-b');
+        expect(x.replies()).toHaveLength(1);
+        x.broadcast('topic-a');
+        expect(x.replies().at(-1)).toEqual({ type: 'new_message', topicId: 'topic-a', message: expect.objectContaining({ content: 'Reply' }) });
+        await x.send({ type: 'unsubscribe', topicId: 'topic-a' });
+        x.broadcast('topic-a');
+        expect(x.replies()).toHaveLength(2);
+        await x.send({ type: 'create_session', topicId: 'topic-b' });
+        expect(x.manager.ensureSessionForTopic).toHaveBeenCalledWith('topic-b');
+        expect(x.replies().at(-1)).toEqual({ type: 'session_created', topicId: 'topic-b' });
+        await x.send({ type: 'message', topicId: 'topic-b', content: 'Hello', messageId: 'm1' });
+        expect(x.manager.switchTopic).toHaveBeenCalledWith('topic-b');
+        expect(x.manager.sendUserMessage).toHaveBeenCalledWith('Hello', 'topic-b', 'm1');
+        expect(x.replies().at(-1)).toEqual({ type: 'message_received', topicId: 'topic-b', messageId: 'm1' });
     });
 
-    it('should handle valid "subscribe" message via typed handler', async () => {
-        const msg = JSON.stringify({
-            type: 'subscribe',
-            sessionId: 'session-1'
-        });
-
-        // Simulating receiving a message
-        const messageHandler = getMessageHandler(mockWs);
-        await messageHandler(Buffer.from(msg));
-
-        expect(mockSignalRouter.onBroadcast).toHaveBeenCalledWith('session-1', expect.any(Function));
-    });
-
-    it('should handle valid "message" message via typed handler', async () => {
-        const msg = JSON.stringify({
-            type: 'message',
-            sessionId: 'session-1',
-            content: 'hello'
-        });
-
-        const messageHandler = getMessageHandler(mockWs);
-        await messageHandler(Buffer.from(msg));
-
-        expect(mockSignalRouter.handleUserMessage).toHaveBeenCalledWith('session-1', 'hello', undefined);
-    });
-
-    it('should fallback to legacy handler for GUI compatibility (subscribe_session)', async () => {
-        const msg = JSON.stringify({
-            type: 'subscribe_session',
-            sessionId: 'legacy-session'
-        });
-
-        const messageHandler = getMessageHandler(mockWs);
-        await messageHandler(Buffer.from(msg));
-
-        expect(mockSignalRouter.onBroadcast).toHaveBeenCalledWith('legacy-session', expect.any(Function));
-    });
-
-    it('should send error to client for invalid message format', async () => {
-        const msg = 'not-a-json';
-
-        const messageHandler = getMessageHandler(mockWs);
-        await messageHandler(Buffer.from(msg));
-
-        expect(mockWs.send).toHaveBeenCalledWith(expect.stringContaining('"type":"error"'));
-    });
-
-    it('should handle "control" message via typed handler', async () => {
-        const msg = JSON.stringify({
-            type: 'control',
-            sessionId: 'session-1',
-            action: 'pause'
-        });
-
-        const messageHandler = getMessageHandler(mockWs);
-        await messageHandler(Buffer.from(msg));
-
-        expect(mockSignalRouter.handlePause).toHaveBeenCalledWith('session-1');
+    it('rejects malformed messages and retired routing aliases before switching or sending', async () => {
+        const x = fixture();
+        for (const message of ['not-json', { type: 'message', sessionId: 'old', content: 'wrong' },
+            { type: 'create_session', desktopId: 'old' }, { type: 'send_message', topicId: 't', content: 'retired' },
+            { type: 'message', topicId: 't', content: false }]) {
+            await x.send(message);
+            expect(x.replies().at(-1).type).toBe('error');
+        }
+        expect(x.manager.switchTopic).not.toHaveBeenCalled();
+        expect(x.manager.sendUserMessage).not.toHaveBeenCalled();
+        expect(x.manager.ensureSessionForTopic).not.toHaveBeenCalled();
     });
 });
-
-// Helper to extract the message listener from mock
-function getMessageHandler(ws: any) {
-    const call = ws.on.mock.calls.find((c: any) => c[0] === 'message');
-    return call ? call[1] : null;
-}

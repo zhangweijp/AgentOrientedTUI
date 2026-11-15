@@ -100,7 +100,7 @@ export async function mountPreactApp(RootComponent: ComponentType, container: HT
         }
     };
 
-    context.setViewReader?.(mounted => readDOMAppViews(container, mounted));
+    context.setViewReader(mounted => readDOMAppViews(container, mounted));
     try {
         renderCommitted(rootVNode());
     } catch (error) {

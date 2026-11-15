@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { compileOrdinarySchema } from './ordinary-parameter-contract.js';
 const legacy = { type: 'string', 'x-aotui-ref': { version: 1, kind: 'snapshot-value', owner: 'tool-target' } };
 const literalNames = ['default', 'const', 'enum', 'examples'];
-const compile = (s: any) => compileOrdinarySchema(s, 'view-type-parameters-v1');
+const compile = (s: any) => compileOrdinarySchema(s);
 describe('annotation boundaries in the shared parameter grammar', () => {
     it.each(['ordinary', ...literalNames])('rejects unsupported dependency Schema member %s', name => {
         expect(compile({ type: 'object', properties: { file: { type: 'string' } }, dependencies: {
@@ -34,8 +34,8 @@ describe('annotation boundaries in the shared parameter grammar', () => {
         const c = compile({ type: 'object', properties: { file: { type: 'object', const: { x: null } } } });
         expect(c.ok).toBe(true);
         if (!c.ok) throw Error('fixture');
-        expect(c.contract.validate({ file: { x: null } }).ok).toBe(true);
-        expect(c.contract.validate({ file: {} }).ok).toBe(false);
+        expect(c.contract.validateModelInput({ file: { x: null } }).ok).toBe(true);
+        expect(c.contract.validateModelInput({ file: {} }).ok).toBe(false);
     });
     it.each(['file', ...literalNames, 'x-aotui-ref'])('accepts the current annotation under ordinary parameter name %s', name => {
         expect(compile({ type: 'object', properties: { [name]: { type: 'string', minLength: 1,
@@ -44,6 +44,6 @@ describe('annotation boundaries in the shared parameter grammar', () => {
     it('keeps a parameter named x-aotui-ref ordinary when no annotation is present', () => {
         const c = compile({ type: 'object', properties: { 'x-aotui-ref': { type: 'string' } } });
         expect(c.ok).toBe(true); if (!c.ok) throw Error('fixture');
-        expect(c.contract.validate({ 'x-aotui-ref': 'ordinary' }).ok).toBe(true);
+        expect(c.contract.validateModelInput({ 'x-aotui-ref': 'ordinary' }).ok).toBe(true);
     });
 });

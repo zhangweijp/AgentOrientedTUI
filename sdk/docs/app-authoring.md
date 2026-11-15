@@ -19,7 +19,7 @@ Ref 名在所属 View 内唯一，禁用点号。使用 `formatRef(label, id, re
 
 Tool 声明使用 TypeBox。普通字段和解析后的 Ref 允许有限 JSON 数据，包括 null、整数、混合数组和嵌套对象。Ref 可选 `schema` 校验源数据，`refParam` 则校验调用时选中的实际值。相同的源 Ref 可以用于不同目标约束。可选字段省略后仍缺失，`default` 作为 schema 注释保留。
 
-本地校验支持对象属性、必填字段、布尔 `additionalProperties`、数组 `items`、`enum`、`const`、字段及 Ref 值的 `anyOf`、字符串长度与 Unicode `pattern`、数值上下限、数组长度、`description` 和 `default`。`Type.Unknown()` 与 `Type.Any()` 仍受普通 JSON 捕获限制。显式 Ref 可作直接参数，也可作直接数组参数的元素。声明诊断区分非法、不支持和超限，并报告代码与 Schema 路径。完整 Tool profile 连同内部标记的上限为 64 KiB canonical JSON UTF-8。 [参数合同与错误码](ordinary-v2.md)
+本地校验支持对象属性、必填字段、布尔 `additionalProperties`、数组 `items`、`enum`、`const`、字段及 Ref 值的 `anyOf`、字符串长度与 Unicode `pattern`、数值上下限、数组长度、`description` 和 `default`。`Type.Unknown()` 与 `Type.Any()` 仍受普通 JSON 捕获限制。显式 Ref 可作直接参数，也可作直接数组参数的元素。声明诊断区分非法、不支持和超限，并报告代码与 Schema 路径。完整 Tool profile 连同内部标记的上限为 64 KiB canonical JSON UTF-8。 [参数合同与错误码](tool-parameters.md)
 
 Tool handler 返回收据，业务状态通过下一次 View 发布呈现。普通 TS 的 `publish` 同步校验候选帧。失败异常包含 code、path 和原因。最近有效快照、已提交的 View 和 Tool 身份保留，App 暂停新调用直到提交有效帧。原样提交可恢复原有身份和调用资格，成功关闭后再打开会分配新身份。已产生业务副作用的操作由 App 记录真实结果，恢复时只补交投影。
 

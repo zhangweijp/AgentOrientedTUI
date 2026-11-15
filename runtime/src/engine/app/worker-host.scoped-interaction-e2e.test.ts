@@ -30,7 +30,7 @@ async function start() {
     worker.stdout!.on('data', b => logs.push(String(b))); worker.stderr!.on('data', b => logs.push(String(b)));
     const host = new Host({ appId: 'scoped_sdk' as any, desktopId: 'd' as any, appModulePath: appFile, existingWorker: worker,
         config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') },
-        timeout: 1500, interactionModes: ['view-type-parameters-v1'] });
+        timeout: 1500 });
     worker.on('message', m => messages.push(m));
     const x = { host, worker, messages, sent, logs,
         snapshot: () => (host as any).snapshotReceiver.core.store.readLatest('scoped_sdk').snapshot,
@@ -190,7 +190,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         const x = await start(), s = scope(x), o = await s.observe();
         const other = await start();
         expect(await scope(other).client.invoke(s.request(o, 'moved'))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
-        expect(x.host.getInteractionReport()?.negotiatedModes).toEqual(['view-type-parameters-v1']);
+        expect(x.host.getInteractionReport()?.toolsEnabled).toBe(true);
         expect(o.tools.some(tool => tool.name === 'read')).toBe(true);
         expect(o.tools.some(tool => ['optional', 'multi'].includes(tool.name))).toBe(false);
         expect(receipt(await s.client.invoke({ invocationId: 'plain', observationId: o.observationId,

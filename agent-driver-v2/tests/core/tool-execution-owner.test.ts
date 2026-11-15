@@ -3,6 +3,7 @@ import * as ai from 'ai';
 import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { AgentDriverV2 } from '../../src/core/agent-driver-v2.js';
 import { LLMClient } from '../../src/core/llm-client.js';
+import * as providerFactory from '../../src/core/provider-factory.js';
 import type { ContextDrivenSource } from '../../src/core/interfaces.js';
 
 // Native ESM exports cannot be spied on directly. Record calls while delegating
@@ -11,6 +12,7 @@ vi.mock('ai', async importOriginal => {
     const actual = await importOriginal<typeof import('ai')>();
     return { ...actual, streamText: vi.fn(actual.streamText) };
 });
+vi.mock('../../src/core/provider-factory.js', { spy: true });
 
 const drivers: AgentDriverV2[] = [];
 const config = { model: 'openai:controlled-owner', apiKey: 'unused-no-network' };
@@ -94,6 +96,24 @@ function barrier() {
 }
 
 describe('Source tool execution owner', () => {
+    it.each(['gateway/team/model:fast', 'gateway:gateway/team/model:fast'])(
+        'preserves the full model name with an explicit provider: %s', async model => {
+            const fixture = controlledModel(undefined, false);
+            vi.mocked(LLMClient.prototype as any).createProvider.mockRestore();
+            vi.mocked(providerFactory.createLanguageModel).mockReturnValue(fixture);
+            const inputBudget = vi.fn(async () => ({ contextWindow: 16_384, maxOutputTokens: 1024 }));
+            await new LLMClient({ ...config, provider: { id: 'gateway' }, model, inputBudget })
+                .call([{ role: 'user', content: 'Use the selected model.' }], {});
+            expect(inputBudget).toHaveBeenCalledWith({ providerId: 'gateway', modelId: 'gateway/team/model:fast' });
+            expect(providerFactory.createLanguageModel).toHaveBeenCalledWith(expect.objectContaining({ target: {
+                providerId: 'gateway', modelName: 'gateway/team/model:fast', registryModelId: 'gateway:gateway/team/model:fast',
+            } }));
+        });
+
+    it('rejects an empty explicit model before requesting a provider', () => {
+        expect(() => new LLMClient({ ...config, provider: { id: 'gateway' }, model: 'gateway:' })).toThrow('Model name is required');
+        expect(ai.streamText).not.toHaveBeenCalled();
+    });
     it.each([false, true])('real LLMClient leaves execution to Driver (streaming=%s) and preserves metadata', async streaming => {
         const model = controlledModel();
         const execute = vi.fn(async () => ({ ok: true }));

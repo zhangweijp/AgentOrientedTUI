@@ -26,11 +26,11 @@ export function captureTypeParametersRequest(input: unknown): ViewToolInvokeV5Me
 /** Captured request after full binding verification, using that registration's compiled contract. */
 export function validateTypeParameters(message: ViewToolInvokeV5Message, contract: OrdinaryParameterContract | undefined | null): ToolResultData {
   const invalid = (code = 'E_INVALID_ARGS'): ToolResultData => ({ success: false, error: { code, message: 'Parameters or Ref provenance do not match the registered contract' } });
-  if (!contract || contract.revision !== VIEW_TYPE_PARAMETERS_MODE) return invalid('REF_CONTRACT_UNSUPPORTED');
+  if (!contract) return invalid('REF_CONTRACT_UNSUPPORTED');
   try {
     const raw = message.rawArgs, effective = message.effectiveArgs;
     if (!invocationObject(raw) || !invocationObject(effective)) return invalid();
-    if (!(contract.validateModelInput ?? contract.validate)(raw).ok || !(contract.validateResolvedInput ?? contract.validate)(effective).ok) return invalid();
+    if (!contract.validateModelInput(raw).ok || !contract.validateResolvedInput(effective).ok) return invalid();
     const fields = contract.schema.properties as Readonly<Record<string, JsonValue>>;
     const slots = selectedRefParameters(fields, raw);
     if (message.refSources.length !== slots.length) return invalid();

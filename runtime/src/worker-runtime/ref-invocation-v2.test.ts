@@ -3,7 +3,7 @@ import { compileOrdinarySchema } from '../core/tool/ordinary-parameter-contract.
 import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profile.js';
 import { invokeTypeParameters } from './ordinary-invocation-v2.js';
 function fixture() {
-    const c = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: true }, 'view-type-parameters-v1');if (!c.ok) throw Error('fixture');
+    const c = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: true });if (!c.ok) throw Error('fixture');
     
     const execution = { kind: 'view-type' as const, activationId: 'active-1' };
     const input = { type: 'VIEW_TOOL_INVOKE_V5', requestId: 'r', appId: 'app', instanceId: 'run', snapshotId: 'source', argumentMode: 'view-type-parameters-v1', execution,

@@ -1,4 +1,3 @@
-import { VIEW_TYPE_PARAMETERS_MODE } from './ordinary-parameter-contract.js';
 import { canonicalJson, copyJson, utf8Size, type JsonCopyLimits } from '../snapshot/json.js';
 import type { JsonValue, ObservedToolExecutionV3, SnapshotIssueCode, SnapshotStore } from '../snapshot/types.js';
 import { compileOrdinaryProfile } from './ordinary-parameter-profile.js';
@@ -65,9 +64,9 @@ export function prepareViewTypeParameters(
     try {
         if (selected.execution.kind !== 'view-type') return rejected('REF_CONTRACT_UNSUPPORTED', 'Expected ViewType execution');
         const contract = compileOrdinaryProfile(selected.tool.inputSchema);
-        if (!contract || contract.revision !== VIEW_TYPE_PARAMETERS_MODE) return rejected('REF_CONTRACT_UNSUPPORTED', 'Expected the ViewType parameter profile');
+        if (!contract) return rejected('REF_CONTRACT_UNSUPPORTED', 'Expected the ViewType parameter profile');
         const rawArgs = bounded(request.args, RAW) as JsonObject;
-        const model = (contract.validateModelInput ?? contract.validate)(rawArgs);
+        const model = contract.validateModelInput(rawArgs);
         if (!model.ok) {
             const diagnostic = model.diagnostics[0];
             return rejected('TOOL_INVALID_ARGS', diagnostic?.message ?? 'Invalid model parameters', diagnostic?.path);
@@ -89,7 +88,6 @@ export function prepareViewTypeParameters(
             const resolved = store.resolveRef({ appId: context.appId, instanceId: context.instanceId,
                 snapshotId: request.snapshotId as string, refId: owner.refId, viewId: owner.viewId, viewInstanceId: owner.viewInstanceId });
             if (resolved.status === 'rejected') return rejected(resolved.issue.code, 'Original Ref source is unavailable');
-            if (resolved.target.kind !== 'snapshot-value') return rejected('REF_TARGET_UNSUPPORTED', 'Expected a Snapshot value');
             const expectedType = (field as JsonObject)['x-aotui-ref-kind'] as string;
             if (resolved.ref.refType !== expectedType) return rejected('REF_TYPE_MISMATCH',
                 `Parameter ${JSON.stringify(param.slice(0, 64))} requires a current ${JSON.stringify(expectedType.slice(0, 64))} Ref, but the selected Ref is ${JSON.stringify(resolved.ref.refType.slice(0, 64))}. Read the latest View and pass view_id.ref_id for the required type.`);
@@ -103,7 +101,7 @@ export function prepareViewTypeParameters(
         }
         // Budget the complete resolved arguments, not a mix of payloads and unresolved Ref names.
         effectiveArgs = bounded(effectiveArgs, ARGUMENTS) as JsonObject;
-        const effective = (contract.validateResolvedInput ?? contract.validate)(effectiveArgs);
+        const effective = contract.validateResolvedInput(effectiveArgs);
         if (!effective.ok) {
             const diagnostic = effective.diagnostics[0];
             return rejected('REF_VALUE_UNSUPPORTED', diagnostic?.message ?? 'Resolved parameters do not match the contract', diagnostic?.path);

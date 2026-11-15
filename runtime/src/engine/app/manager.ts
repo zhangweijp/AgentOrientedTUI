@@ -26,7 +26,7 @@ import { WorkerCapacity } from './worker-capacity.js';
 import { RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
 import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
-import { captureInteractionModes } from './interaction-config.js';
+import { captureToolsEnabled } from './interaction-config.js';
 
 /**
  * 已安装的 App 信息
@@ -206,8 +206,8 @@ export class AppManager {
     install(appModulePath: string, options?: InstallOptions): Promise<AppID> {
         let id: AppID;
         try {
-            const interactionModes = captureInteractionModes(options);
-            options = { ...options, interactionModes };
+            const toolsEnabled = captureToolsEnabled(options);
+            options = { ...options, toolsEnabled };
             this.capacity();id = options?.appId ?? this.allocateId();
             if (this.installedApps.has(id) || this.workers.has(id) || this.appTasks.has(id)) throw closeError('APP_ALREADY_EXISTS');
         } catch (error) { return Promise.reject(error); }
@@ -215,7 +215,7 @@ export class AppManager {
             const meta: InstalledApp = { appId: id, name: options?.name, description: options?.description, whatItIs: options?.whatItIs,
                 whenToUse: options?.whenToUse, status: 'pending', installedAt: Date.now(), modulePath: appModulePath,
                 workerScript: options?.workerScriptPath, config: options?.config, runtimeConfig: options?.runtimeConfig,
-                interactionModes: options?.interactionModes };
+                toolsEnabled: options?.toolsEnabled };
             this.installedApps.set(id, meta);
             try { await this.installMeta(meta, options); }
             catch (error) {
@@ -231,7 +231,7 @@ export class AppManager {
             const worker = new WorkerSandbox({ appId: meta.appId, desktopId: this.desktop.id, name: meta.name, appModulePath: meta.modulePath!,
                 workerScriptPath: meta.workerScript, config: this.withLifecycleMetadata(meta.config, options?.lifecycle),
                 runtimeConfig: meta.runtimeConfig ?? this.options.runtimeConfig, workerCapacity: this.workerCapacity,
-                interactionModes: meta.interactionModes, persistenceBackend: this.options.storageBackend });
+                toolsEnabled: meta.toolsEnabled, persistenceBackend: this.options.storageBackend });
             record = this.owned(meta.appId, worker);record.meta = meta;this.workers.set(meta.appId, worker);
             worker.onUpdateRequest = () => { if (this.phase === 'active' && this.workers.get(meta.appId) === worker) this.desktop.emitSignal('manual_refresh'); };
             await worker.installDynamic();this.current(meta, worker);if (record.stopReopen) throw closeError('APP_MANAGER_CLOSED');
@@ -251,13 +251,13 @@ export class AppManager {
         }
     }
     registerPendingApp(options: PendingOptions): AppID {
-        const interactionModes = captureInteractionModes(options);
+        const toolsEnabled = captureToolsEnabled(options);
         this.assertActive();const id = options.appId ?? this.allocateId();
         if (this.installedApps.has(id) || this.workers.has(id) || this.appTasks.has(id)) throw closeError('APP_ALREADY_EXISTS');
         this.installedApps.set(id, { appId: id, name: options.name, description: options.description, whatItIs: options.whatItIs, whenToUse: options.whenToUse,
             status: 'pending', installedAt: Date.now(), modulePath: options.modulePath, workerScript: options.workerScriptPath,
             config: options.config, runtimeConfig: options.runtimeConfig,
-            interactionModes });
+            toolsEnabled });
         this.desktop.logSystem(`Registered pending app: ${id} (${options.name ?? 'unnamed'})`);return id;
     }
     startPendingApp(id: AppID, options?: Pick<InstallOptions, 'notifyAppInstalled' | 'emitLifecycleSignal' | 'lifecycleMessage' | 'lifecycle'>): Promise<boolean> {
@@ -432,7 +432,6 @@ export class AppManager {
             return { ...app, ...(appInstanceId ? { appInstanceId } : {}) };
         });
     }
-    getDynamicAppIds(): AppID[] { return [...this.workers.keys()]; }
     getAppStates(): AppState[] {
         return this.getInstalledApps().map(({ appId, name, status, installedAt }) => ({ appId, name, status, installedAt }));
     }

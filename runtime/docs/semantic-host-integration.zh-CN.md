@@ -125,7 +125,11 @@ Source 构造模型 Tools 时校验 `appName-ViewType-toolName`，例如 `system
 
 普通 ViewType Tool 使用应用声明的原始 Schema 和显式业务参数。Runtime 不读取 `target` 元数据、不依据 View 实例选择 Binding，也不猜测或解析 `filePath`；App Handler 负责业务对象选择及其有效性。多个同类型 View 共用 Tool，不会为每个实例生成新的别名或 Schema。对象关闭、过期或不具备业务授权时，由应用 Handler 按业务合同拒绝操作。
 
-Desktop 保留应用用途、状态、App ID 和最近 5 条系统日志。日志不提供时显示无近期活动；存在被 Source 禁用的应用时，不投影可能包含该应用信息的 Desktop 全局日志。系统控制工具使用 `system-open_app`、`system-close_app`、`system-collapse_app`、`system-show_app`，仅在当前状态可用时出现。close、collapse、show 绑定到生成该 Context 时的 App 执行实例；Runtime 在生命周期入口同步核对实例身份，实例变化或身份不可用时返回 `APP_INSTANCE_CHANGED`，不会操作同 App ID 的后继实例。当前实例身份缺失时不发布这些活动实例控制工具。open_app 面向已安装的逻辑应用，用于启动 pending/closed 应用，不绑定某个已运行实例。
+Source 的 Desktop 应用列表按话题启用状态筛选，呈现应用用途、状态和 App ID。没有单独禁用的应用时，还呈现最近 5 条系统日志。Host 的 Desktop 预览可显示整个桌面的安装状态，供诊断和展示使用。Agent 从同一份 Context 的应用列表和 Tools 选择操作。
+
+Apps Source 启用时，`system-open_app` 和 `system-close_app` 始终随 Context 提供。空 Desktop、没有符合条件的目标或所有 App 都被单项禁用时，两项定义也相同。调用只接受必填的字符串 `app_id`，使用本轮 Desktop 列表中的 App ID。`open_app` 启动 `pending` 或 `closed` 的已安装应用。`close_app` 关闭 `running`、`collapsed` 或 `paused` 的应用，目标须有当前执行实例。参数不合法或目标在该轮不符合条件时，返回 `INVALID_APP_TARGET`。关闭整个 Apps Source 会移除该 Source 的全部工具。
+
+`system-collapse_app` 与 `system-show_app` 随可用状态和实例动态提供。`close_app`、`collapse_app` 和 `show_app` 绑定到捕获 Context 时的执行实例。调用前重查应用状态和话题启用资格，Runtime 在生命周期入口再同步核对实例。状态变化时返回 `APP_STATE_CHANGED`，实例变化时返回 `APP_INSTANCE_CHANGED`。业务 View 和 App + ViewType Tool 继续随运行中的应用和当前观察发布。
 
 说明覆盖优先级为非空 `instruction` → `instructionPath` → 环境变量 `AOTUI_SYSTEM_INSTRUCTION_PATH` → Runtime 内置的 `DEFAULT_AOTUI_SYSTEM_INSTRUCTION`。指定文件不可读时记录诊断并使用内置说明；`includeInstruction: false` 不注入全局说明。应用自己的 instruction View 仍由应用声明。
 
@@ -188,13 +192,11 @@ pnpm -C agent-driver-v2 exec vitest run \
 
 Semantic 的正式接入和清理以代码、当前 API 类型及定向验证共同确认；任何旧代码尚未删除的事实都不等于默认流程仍受支持。默认路径不通过回退掩盖 Semantic 接入缺口。
 
-本轮实际构建、定向回归与真实模型结果见 [2026-10-28 验证记录](./semantic-host-validation-2026-10-28.zh-CN.md)。这些自动化结果不替代项目所有者的最终验收。
-
 ## 参数 Schema 与公共别名
 
-SDK 将 TypeBox 声明编译为有界的 `view-type-parameters-v1` 参数合同。支持的 Schema 词汇贯通声明、模型参数和解引用校验。其他词汇会在 Tool 定义期带路径拒绝。完整支持范围见 `@aotui/sdk` 包内 `docs/ordinary-v2.md`。Native Tool 的公共别名约束见上文。
+SDK 将 TypeBox 声明编译为有界的 `view-type-parameters-v1` 参数合同。支持的 Schema 词汇贯通声明、模型参数和解引用校验。其他词汇会在 Tool 定义期带路径拒绝。完整支持范围见 `@aotui/sdk` 包内 `docs/tool-parameters.md`。Native Tool 的公共别名约束见上文。
 
-本候选的工厂作者标记为 `view-type-tools-v4`，Host/Worker mode 为 `view-type-parameters-v1`；旧 Hook、实例 Tool 执行、专属 profile 和旧 wire 成功路径退出。View/Ref owner、授权后重验、预算及释放保持。观察的准备与采用分开，显式采用新观察会撤销旧资格，规则见下节。历史验收记录保留各自日期和适用产物，未执行的新候选测试不能标成已通过。
+工厂作者标记为 `view-type-tools-v4`。Core 和 Worker 使用 `view-type-parameters-v1` 参数合同。View/Ref owner、授权后重验、预算及释放保持。观察的准备与采用分开，显式采用新观察会撤销旧资格，规则见下节。历史验收记录保留各自日期和适用产物，未执行的新候选测试不能标成已通过。
 
 ### 串行采用与失败
 

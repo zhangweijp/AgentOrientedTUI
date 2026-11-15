@@ -89,7 +89,7 @@ export default {
                     });
                     expect(released.host?.storage.lifecycle?.flush).toMatchObject({ status: 'disposed', ok: false, entries: [] });
                 }
-                expect(f.manager.getDynamicAppIds()).toEqual([]);
+                expect(f.manager.isWorkerMode(id as any)).toBe(false);
             } finally {
                 expect((await f.manager.cleanupAsync()).resourcesReleased).toBe(true);
             }

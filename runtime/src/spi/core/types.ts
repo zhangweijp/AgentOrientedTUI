@@ -41,7 +41,7 @@ export type ViewID = string & { readonly [__brand]: 'ViewID' };
 // ============================================================================
 
 /** Desktop 状态 */
-export type DesktopStatus = 'active' | 'suspended' | 'serialized';
+export type DesktopStatus = 'active' | 'suspended';
 
 /** App 状态 */
 export interface AppState {

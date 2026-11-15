@@ -25,7 +25,7 @@ function port() {
     const releases: Array<ReturnType<typeof vi.fn>> = [];
     const invokers: Array<(args: any) => Promise<any>> = [];
     const registerTypeTool = vi.fn((definition, options) => {
-        const contract = compileOrdinarySchema(definition.inputSchema, 'view-type-parameters-v1');
+        const contract = compileOrdinarySchema(definition.inputSchema);
         if (!contract.ok) throw Error('Invalid fixture contract');
         invokers.push(options.createSafeOrdinaryParametersInvoker(contract.contract));
         const release = vi.fn(); releases.push(release); return release;

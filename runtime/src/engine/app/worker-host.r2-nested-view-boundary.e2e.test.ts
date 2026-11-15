@@ -169,7 +169,6 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
                 workerScriptPath: workerScript,
                 existingWorker: worker,
                 config: { AOTUI_DATA_DIR: directory },
-                interactionModes: ['view-type-parameters-v1'],
             });
             const captures: Capture[] = [];
             const healthNotifications: Array<string | undefined> = [];

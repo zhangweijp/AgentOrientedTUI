@@ -24,7 +24,7 @@ Tool 属于 App + ViewType。同类型多个 View 共享一次注册；最后一
 
 Tool 返回完成/失败/恢复所需的短收据，当前业务数据进入 View；unknown 不自动重试写入。数据 Ref 深只读不限制 App 执行业务变更，业务权限、父子归属、文件冲突和外部资源由 App/Host 负责。
 
-Ref 值和普通字段使用有限 JSON 数据域。显式 Ref 地址使用 `view_id.local_ref`，整个列表、元素与多选均按所属 View 定位并共享总参数预算。Host 必须显式采用准备好的 Observation，新采用撤销旧资格。示例和支持清单见 [Ref 参数](readonly-ref-v2.md) 与 [参数合同](ordinary-v2.md)。
+Ref 值和普通字段使用有限 JSON 数据域。显式 Ref 地址使用 `view_id.local_ref`，整个列表、元素与多选均按所属 View 定位并共享总参数预算。Host 必须显式采用准备好的 Observation，新采用撤销旧资格。示例和支持清单见 [Ref 参数](readonly-ref-v2.md) 与 [参数合同](tool-parameters.md)。
 
 
 

@@ -19,9 +19,6 @@ importers:
 
   .:
     dependencies:
-      '@types/json-schema':
-        specifier: ^7.0.15
-        version: 7.0.15
       linkedom:
         specifier: ^0.18.12
         version: 0.18.12

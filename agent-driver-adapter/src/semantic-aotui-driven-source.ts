@@ -270,7 +270,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                     const localPresentations = new Map<string, { digest: string; timestamp: number }>();
                     for (const view of observation.views) {
                         if (!view.content) continue;
-                        const content = view.content.format === 'markdown-v1' ? view.content.value : JSON.stringify(view.content.value);
+                        const content = view.content.value;
                         const refs = observation.refs.filter(ref => ref.viewId === view.id && ref.viewInstanceId === view.viewInstanceId);
                         const markup = buildViewMessageMarkup({ appId, appName: app.name || appId,
                             viewId: view.id, viewType: view.type, kind: view.kind, viewName: view.name, markup: content,
@@ -400,31 +400,41 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
     private controls(apps: readonly AppDiscoveryInfo[], tools: Record<string, Tool>): Map<string, (input: unknown, callId: string) => Promise<ToolResult>> {
         const handlers = new Map<string, (input: unknown, callId: string) => Promise<ToolResult>>();
         const actions: Array<{ action: string; statuses: readonly AppDiscoveryInfo['status'][]; description: string;
-            instanceBound: boolean; execute: (id: AppID, expectedInstanceId?: string) => Promise<void> }> = [
-            { action: 'open', statuses: ['pending', 'closed'], description: 'Start an installed application.', instanceBound: false,
+            instanceBound: boolean; invalidTargetMessage?: string; execute: (id: AppID, expectedInstanceId?: string) => Promise<void> }> = [
+            { action: 'open', statuses: ['pending', 'closed'],
+                description: 'Start a pending or closed application using its App ID from the current Desktop application list.',
+                instanceBound: false,
+                invalidTargetMessage: 'Select a pending or closed application by App ID from the current Desktop application list.',
                 execute: id => this.desktop.openApp(id) },
-            { action: 'close', statuses: ['running', 'collapsed', 'paused'], description: 'Close an application and revoke its current tools.', instanceBound: true,
+            { action: 'close', statuses: ['running', 'collapsed', 'paused'],
+                description: 'Close a running, collapsed, or paused application using its App ID from the current Desktop application list.',
+                instanceBound: true,
+                invalidTargetMessage: 'Select a running, collapsed, or paused application with a live instance by App ID from the current Desktop application list.',
                 execute: (id, instanceId) => this.desktop.closeApp(id, instanceId) },
             { action: 'collapse', statuses: ['running'], description: 'Collapse an application.', instanceBound: true,
                 execute: (id, instanceId) => this.desktop.collapseApp(id, instanceId) },
             { action: 'show', statuses: ['collapsed'], description: 'Show a collapsed application.', instanceBound: true,
                 execute: (id, instanceId) => this.desktop.showApp(id, instanceId) },
         ];
-        for (const { action, statuses, description, instanceBound, execute } of actions) {
+        for (const { action, statuses, description, instanceBound, invalidTargetMessage, execute } of actions) {
+            const alwaysVisible = action === 'open' || action === 'close';
             const available = apps.filter(app => statuses.includes(app.status) && (!instanceBound ||
                 (typeof app.appInstanceId === 'string' && app.appInstanceId.length > 0)));
-            if (!available.length) continue;
-            const name = `system-${action}_app`, ids = new Set(available.map(app => String(app.appId)));
-            const instances = new Map(available.map(app => [String(app.appId), app.appInstanceId]));
+            if (!alwaysVisible && !available.length) continue;
+            const name = `system-${action}_app`;
             const capturedApps = new Map(available.map(app => [String(app.appId), app]));
-            tools[name] = { description, inputSchema: jsonSchema({ type: 'object', properties: { app_id: { type: 'string', enum: [...ids] } }, required: ['app_id'], additionalProperties: false }) };
+            tools[name] = { description, inputSchema: jsonSchema({ type: 'object', properties: {
+                app_id: alwaysVisible ? { type: 'string' } : { type: 'string', enum: [...capturedApps.keys()] },
+            }, required: ['app_id'], additionalProperties: false }) };
             handlers.set(name, async (input, callId) => {
-                if (!object(input) || Object.keys(input).length !== 1 || typeof input.app_id !== 'string' || !ids.has(input.app_id))
-                    return unavailable(name, callId, 'INVALID_APP_TARGET', 'Select an application from this observation.');
-                const app = this.currentApp(input.app_id), captured = capturedApps.get(input.app_id);
-                if (!app || !captured || !this.allowed(captured) || !(statuses as readonly string[]).includes(app.status))
+                const field = object(input) && Reflect.ownKeys(input).length === 1
+                    ? Object.getOwnPropertyDescriptor(input, 'app_id') : undefined;
+                const captured = field?.enumerable && typeof field.value === 'string' ? capturedApps.get(field.value) : undefined;
+                if (!captured) return unavailable(name, callId, 'INVALID_APP_TARGET', invalidTargetMessage ?? 'Select an application from this observation.');
+                const app = this.currentApp(String(captured.appId));
+                if (!app || !this.allowed(captured) || !statuses.includes(app.status))
                     return unavailable(name, callId, 'APP_STATE_CHANGED', 'The application state changed; refresh the context.');
-                const expectedInstanceId = instanceBound ? instances.get(input.app_id) : undefined;
+                const expectedInstanceId = instanceBound ? captured.appInstanceId : undefined;
                 if (instanceBound && (!expectedInstanceId || app.appInstanceId !== expectedInstanceId))
                     return unavailable(name, callId, 'APP_INSTANCE_CHANGED', 'The application instance changed; refresh the context.');
                 try { await execute(app.appId, expectedInstanceId); this.update(); return { toolName: name, toolCallId: callId, outcomeStatus: 'succeeded', result: { success: true } }; }

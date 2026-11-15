@@ -63,7 +63,7 @@ const report = await close.completion;
 
 回调只在 drain 没有已知故障、且首次请求的单调时钟期限尚未到达时启动。期限已到则记 `skipped-deadline`；drain 失败则记 `skipped-drain-failed`；这两种跳过原本要求的回调都属于已知故障。已经启动的回调持续被监督到实际返回，后来更短的 `wait` 不取消它。系统墙钟回拨不会延长期限。
 
-旧 `gracefulShutdown(id, options)` 使用同一个关闭操作及一次有限等待：观察者截止为 `CLOSE_DEADLINE_EXCEEDED`，实际关闭故障为 `DESKTOP_CLOSE_FAILED`，都附当刻冻结报告。超时后不会发起第二次 destroy。缺失 ID 的关闭保持幂等，报告为 `found=false`、本次零个 Desktop/App；它不证明某个历史实例保存成功。
+用 `beginDesktopShutdown(id, options)` 启动一次关闭。`handle.wait({ timeoutMs })` 在等待截止时返回 `deadline` 和当刻报告。最终结果由 `handle.completion` 给出，关闭故障通过 `report.hasFailures` 与 `report.failures` 查看。缺失 ID 的关闭保持幂等，报告为 `found=false`、本次零个 Desktop/App；它不证明某个历史实例保存成功。
 
 close/delete 由首次意图决定。delete 先开始会先尝试 App 的 `onDelete`；失败仍继续 close/unmount 和资源释放。close/drain 先开始后不能升级为 delete。`AppKernel` 同实例的异步 open、delete、close 各自共用一次操作；卸载失败仍独立撤销五类自身监听和 owned View/Ref/Tool 注册。
 

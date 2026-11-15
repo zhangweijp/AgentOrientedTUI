@@ -6,9 +6,8 @@ import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
-import { compileOrdinaryParams } from '../../core/tool/ordinary-parameter-contract.js';
+import { compileOrdinarySchema } from '../../core/tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../../core/tool/ordinary-parameter-profile.js';
-const ALL = ['view-type-parameters-v1'] as const;
 const NORMAL_HOST_TIMEOUT_MS = 3000;
 const FAULT_HOST_TIMEOUT_MS = 1500;
 const closing: Array<() => Promise<void> | void> = [];
@@ -91,7 +90,7 @@ async function start(options: any = {}) {
   worker.postMessage = (m: any) => { attempted.push(m); if (!hold?.(m)) { sent.push(m); post(m); } };
   worker.stdout?.on('data', (b: any) => logs.push(String(b))); worker.stderr?.on('data', (b: any) => logs.push(String(b)));
   const host = new Host({ appId: 'app', desktopId: 'd', appModulePath: appFile, existingWorker: worker,
-    timeout: options.timeout ?? NORMAL_HOST_TIMEOUT_MS, interactionModes: options.modes ?? ALL,
+    timeout: options.timeout ?? NORMAL_HOST_TIMEOUT_MS, toolsEnabled: options.toolsEnabled,
     config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } });
   worker.on('message', (m: any) => messages.push(m));
   const x = { host, worker, messages, sent, attempted, logs, hold(f: (m: any) => boolean) { hold = f; }, physical(m: any) { sent.push(m); post(m); },
@@ -149,7 +148,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
 
   it('new Runtime rejects a factory with the old authoring protocol before AppKernel construction', async () => {
     const host = new Host({ appId: 'legacy_sdk', desktopId: 'd', appModulePath: legacySdkAppFile,
-      timeout: NORMAL_HOST_TIMEOUT_MS, interactionModes: ALL, config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } });
+      timeout: NORMAL_HOST_TIMEOUT_MS, config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } });
     try {
       await expect(host.start()).rejects.toThrow('APP_AUTHORING_PROTOCOL_UNSUPPORTED');
       expect(host.getStatus()).toBe('closed');
@@ -167,7 +166,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     expect(s.authorized[0].rawInput).toEqual(good); expect(s.authorized[0].effectiveInput).toEqual(good);
     expect(x.posts()[0].effectiveArgs).toEqual(good); expect(x.entries()[0]).toMatchObject({ view: 'aa', name: 'find', args: good, frozen: true, nestedFrozen: true });
     expect(Object.hasOwn(output.data.args, 'n')).toBe(false); expect(Object.hasOwn(output.data.args, 'payload')).toBe(false);
-    expect(x.host.getInteractionReport().negotiatedModes).toEqual(ALL);
+    expect(x.host.getInteractionReport().toolsEnabled).toBe(true);
   });
   it.each(['enum', 'array', 'type', 'range', 'null', 'missing', 'extra', 'getter', 'bytes'])('R12 invalid %s never authorizes/posts/enters', async kind => {
     const x = await start(), s = scope(x), o = await s.observe(); const input: any = { ...good }; let reads = 0;
@@ -189,8 +188,8 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
   });
   it('R12/Q01 accepts exactly 5000 nodes and rejects 5001 before policy and dispatch', async () => {
     const x = await start(), s = scope(x), o = await s.observe();
-    const contract = compileOrdinaryParams({ flags: { type: 'array', itemType: 'boolean', required: true } }, { additionalProperties: false });
-    expect(contract.ok && contract.contract.validate({ flags: Array(4999).fill(true) }).ok).toBe(true);
+    const contract = compileOrdinarySchema({ type: 'object', properties: { flags: { type: 'array', items: { type: 'boolean' } } }, required: ['flags'], additionalProperties: false });
+    expect(contract.ok && contract.contract.validateModelInput({ flags: Array(4999).fill(true) }).ok).toBe(true);
     const accepted = value(await s.client.invoke(s.request(o, 'nodes-5000', 'flags', { flags: Array(4997).fill(true) })));
     expect(accepted.data).toEqual({ count: 4997, allTrue: true });
     expect(s.authorized).toHaveLength(1); expect(x.posts()).toHaveLength(1); expect(x.entries()).toHaveLength(1);
@@ -313,12 +312,12 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     expect(value(await other.client.invoke(other.request(observed, 'new-run', 'find', good))).data.view).toBe('aa');
     const oldRead = await s.client.invoke(s.request(o, 'old-run', 'find', good)); expect(oldRead.kind).not.toBe('receipt');
   });
-  it('R21 an explicit empty execution set still allows View observation without executable bindings', async () => {
-    const x = await start({ modes: [] }), s = scope(x), o = await s.observe();
+  it('R21 toolsEnabled false still allows View observation without executable bindings', async () => {
+    const x = await start({ toolsEnabled: false }), s = scope(x), o = await s.observe();
     expect(o.views).toHaveLength(1);
     expect(o.tools).toEqual([]);
     expect(o.bindings).toEqual([]);
-    expect(x.host.getInteractionReport().negotiatedModes).toEqual([]);
+    expect(x.host.getInteractionReport().toolsEnabled).toBe(false);
     const snapshot = x.snapshot(), tool = Object.values(snapshot.tools).find((tool: any) => tool.name === 'find' && tool.viewType === 'File') as any;
     const requestId = 'read-only-probe', from = x.messages.length;
     x.physical({ type: 'VIEW_TOOL_INVOKE_V5', requestId, appId: 'app', instanceId: x.host.appInstanceId,
@@ -333,7 +332,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
   });
   it('R22 the current shared mode includes empty ordinary parameters and reject duplicate initialization', async () => {
     const x = await start(), s = scope(x), o = await s.observe();
-    expect(x.host.getInteractionReport().negotiatedModes).toEqual(ALL);
+    expect(x.host.getInteractionReport().toolsEnabled).toBe(true);
     expect(value(await s.client.invoke(s.request(o, 'zero', 'zero', {}))).data.args).toEqual({ view_id: 'aa' });
     const from = x.messages.length, init = x.sent.find((message: any) => message.type === 'INIT');
     x.physical({ ...init, requestId: 'duplicate-init' });

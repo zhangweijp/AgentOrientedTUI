@@ -103,10 +103,10 @@ describe('defineViewTypeTool', () => {
         });
         const definition = define(description);
         expect(definition.inputSchema).toEqual({ ...bare, description });
-        const compiled = compileOrdinarySchema(definition.inputSchema, VIEW_TYPE_PARAMETERS_MODE);
+        const compiled = compileOrdinarySchema(definition.inputSchema);
         if (!compiled.ok) throw new Error(compiled.issue.message);
         expect(bytes(ordinaryParameterProfile(compiled.contract))).toBe(limit);
-        expect(compileOrdinarySchema({ ...bare, description: description + 'x' }, VIEW_TYPE_PARAMETERS_MODE).ok).toBe(true);
+        expect(compileOrdinarySchema({ ...bare, description: description + 'x' }).ok).toBe(true);
         expect(() => define(description + 'x')).toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_CAPACITY', path: '$' }));
     });
 
@@ -153,10 +153,10 @@ describe('AppTools ordinary binding migration', () => {
         expect(registrations[0]!.definition).toEqual({ viewType: 'FileDetail', name: 'edit_file', description: 'Edit an opened file.',
             inputSchema: definition.edit.inputSchema });
         expect(Object.isFrozen(registrations[0]!.definition.inputSchema)).toBe(true);
-        const invoker = registrations[0]!.options.createSafeOrdinaryParametersInvoker({ validate(input: unknown) { return { ok: true, value: Object.freeze(input as object) }; }, fingerprint: 'contract' });
+        const invoker = registrations[0]!.options.createSafeOrdinaryParametersInvoker({ validateResolvedInput(input: unknown) { return { ok: true, value: Object.freeze(input as object) }; } });
         expect(await invoker({ filePath: '/workspace/a.txt' })).toMatchObject({ phase: 'entered-returned', result: { success: true } });
         expect(execute).toHaveBeenCalledWith({ filePath: '/workspace/a.txt' });
-        expect(registrations[0]!.options.safeOrdinaryParametersInvocationMode).toBe('ordinary-invoker/v3');
+        expect(registrations[0]!.options.safeOrdinaryParametersInvocationMode).toBe('ordinary-invoker/v4');
     });
 
     it('keeps the registration while replacing the committed handler and releases only when disabled or unmounted', async () => {
@@ -170,7 +170,7 @@ describe('AppTools ordinary binding migration', () => {
             return h(AppTools, { definition, bindings: { save: { execute: revision === 0 ? first : second, enabled } } }); }
         const view = mount(App, port); expect(registrations).toHaveLength(1);
         await act(async () => update(1)); expect(registrations).toHaveLength(1);
-        const captured = { validate(input: unknown) { return { ok: true, value: Object.freeze(input as object) }; }, fingerprint: 'contract' };
+        const captured = { validateResolvedInput(input: unknown) { return { ok: true, value: Object.freeze(input as object) }; } };
         const invoke = registrations[0]!.options.createSafeOrdinaryParametersInvoker(captured);
         expect(await invoke({ content: 'new' })).toMatchObject({ result: { data: { revision: 'second' } } });
         expect(first).not.toHaveBeenCalled(); expect(second).toHaveBeenCalledOnce();

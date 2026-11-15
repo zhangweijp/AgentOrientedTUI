@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { compileOrdinaryParams } from '../../../runtime/src/core/tool/ordinary-parameter-contract.js';
+import { compileOrdinarySchema } from '../../../runtime/src/core/tool/ordinary-parameter-contract.js';
 import { invokeOrdinaryParameterTool } from './ordinary-parameter-tool.js';
 const compiled = () => {
-  const c = compileOrdinaryParams({ e: { type: 'enum', options: ['1'], required: true }, n: { type: 'number', default: 7 } }, { additionalProperties: false });
+  const c = compileOrdinarySchema({ type: 'object', properties: { e: { type: 'string', enum: ['1'] }, n: { type: 'number', default: 7 } }, required: ['e'], additionalProperties: false });
   if (!c.ok) throw Error('Fixture'); return c.contract;
 };
 describe('R16/R17 SDK single-contract helper', () => {

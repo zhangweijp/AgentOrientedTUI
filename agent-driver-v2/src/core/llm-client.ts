@@ -71,7 +71,7 @@ export class LLMClient {
      * 
      * 如果只提供 model 名称 (如 'gpt-4')，将自动补全为 'openai:gpt-4'
      * 
-     * 注意: 也支持旧格式 'provider/model'，会自动转换为冒号格式
+     * Without an explicit provider, stored Host configurations can still use the legacy model syntax.
      */
     private resolveModelTarget(model: string): ModelTarget {
         const configuredProviderId = this.config.provider?.id;
@@ -79,12 +79,10 @@ export class LLMClient {
 
         if (configuredProviderId) {
             const colonPrefix = `${configuredProviderId}:`;
-            const slashPrefix = `${configuredProviderId}/`;
             const modelName = normalizedModel.startsWith(colonPrefix)
                 ? normalizedModel.slice(colonPrefix.length)
-                : normalizedModel.startsWith(slashPrefix)
-                    ? normalizedModel.slice(slashPrefix.length)
-                    : normalizedModel;
+                : normalizedModel;
+            if (!modelName.trim()) throw new Error('Model name is required.');
 
             return {
                 providerId: configuredProviderId,
@@ -94,10 +92,12 @@ export class LLMClient {
         }
 
         // 1. 标准格式: providerId:modelId（只按第一个冒号分割，保留 model 中的其他冒号）
+        if (!normalizedModel) throw new Error('Model name is required.');
         const separatorIndex = normalizedModel.indexOf(':');
         if (separatorIndex > 0) {
             const providerId = normalizedModel.slice(0, separatorIndex);
             const modelName = normalizedModel.slice(separatorIndex + 1);
+            if (!modelName.trim()) throw new Error('Model name is required.');
             return {
                 providerId,
                 modelName,
@@ -111,6 +111,7 @@ export class LLMClient {
             if (slashIndex > 0) {
                 const providerId = normalizedModel.slice(0, slashIndex);
                 const modelName = normalizedModel.slice(slashIndex + 1);
+                if (!modelName.trim()) throw new Error('Model name is required.');
                 return {
                     providerId,
                     modelName,

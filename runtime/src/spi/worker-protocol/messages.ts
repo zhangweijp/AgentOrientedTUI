@@ -64,7 +64,6 @@ export interface AppLifecycleMessage {
     reason?: string;
 }
 
-export type { InteractionMode } from '../runtime/app-interaction.interface.js';
 export type { OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
 import type { ViewToolInvocationTerminal } from '../../core/tool/invocation-terminal.js';
 export type { ViewToolInvocationTerminal } from '../../core/tool/invocation-terminal.js';

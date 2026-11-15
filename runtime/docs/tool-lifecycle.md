@@ -1,6 +1,6 @@
 # ViewType Tools, Ref parameters, and app cleanup
 
-The supported Worker interaction mode is `view-type-parameters-v1`. The trusted Host selects it through interactionModes; omission enables it, while [] disables execution. Host/Worker negotiation and per-binding qualification remain mandatory. Retired modes are explicitly rejected, not reinterpreted as new calls.
+The trusted Host can set `toolsEnabled: false` for read-only observation. Tool execution is enabled by default and requires the current Worker handshake and a live binding. The shared parameter profile is `view-type-parameters-v1`.
 
 Declare each Tool once per App/ViewType with defineViewTypeTool/defineToolSet, then bind its execute/enabled map through AppTools or createToolBindings. Matching Views activate one shared type Tool; the Observation pins its App instance, descriptor and activation. Opening multiple same-type Views does not duplicate the Tool or choose its business object.
 

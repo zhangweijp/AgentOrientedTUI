@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
-import { compileOrdinaryParams } from './ordinary-parameter-contract.js';
+import { compileOrdinarySchema } from './ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
 import { acquireToolSource } from './source-binding.js';
 
@@ -10,7 +10,7 @@ const toolId = JSON.stringify([appId, 'FileDetail', 'lsp_hover']);
 const vid = 'vi:v1:["ide-run-1",1]';
 const activationId = 'ta:v1:["ide-run-1",1]';
 const schema = (() => {
-    const compiled = compileOrdinaryParams({ line: { type: 'string', required: false } }, { additionalProperties: false });
+    const compiled = compileOrdinarySchema({ type: 'object', properties: { line: { type: 'string' } }, additionalProperties: false });
     if (!compiled.ok) throw new Error('Tool schema fixture must compile');
     return ordinaryParameterProfile(compiled.contract);
 })();
@@ -108,7 +108,7 @@ describe('V3 source binding resolves only Runtime committed/pinned type executio
         const old = commit(c);
         const held = c.store.acquire(old.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
         const changed = v3(2);
-        const otherSchema = compileOrdinaryParams({ line: { type: 'number', required: false } }, { additionalProperties: false });
+        const otherSchema = compileOrdinarySchema({ type: 'object', properties: { line: { type: 'number' } }, additionalProperties: false });
         if (!otherSchema.ok) throw new Error('Changed Tool schema fixture must compile');
         changed.tools[toolId].inputSchema = ordinaryParameterProfile(otherSchema.contract);
         commit(c, changed);

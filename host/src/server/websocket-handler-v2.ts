@@ -53,7 +53,6 @@ export class WebSocketHandlerV2 {
             this.broadcastToTopic(event.topicId, {
                 type: 'new_message',
                 topicId: event.topicId,
-                desktopId: event.topicId, // 兼容旧 GUI
                 message: this.convertToGUIMessage(event.message, event.type),
             });
         });
@@ -103,19 +102,20 @@ export class WebSocketHandlerV2 {
     private async handleMessage(ws: WebSocket, msg: WSMessage): Promise<void> {
         this.logger.debug('Received message:', msg.type);
 
+        if (typeof msg.topicId !== 'string' || !msg.topicId) {
+            this.sendToClient(ws, { type: 'error', message: 'Missing or invalid topicId' });
+            return;
+        }
         switch (msg.type) {
             case 'subscribe':
-            case 'subscribe_session':
-                this.handleSubscribe(ws, msg.topicId || msg.sessionId);
+                this.handleSubscribe(ws, msg.topicId);
                 break;
 
             case 'unsubscribe':
-            case 'unsubscribe_session':
-                this.handleUnsubscribe(ws, msg.topicId || msg.sessionId);
+                this.handleUnsubscribe(ws, msg.topicId);
                 break;
 
             case 'message':
-            case 'send_message':
                 await this.handleUserMessage(ws, msg);
                 break;
 
@@ -124,12 +124,11 @@ export class WebSocketHandlerV2 {
                 break;
 
             case 'create_session':
-            case 'create_desktop':
                 await this.handleCreateSession(ws, msg);
                 break;
 
             default:
-                this.logger.warn('Unknown message type:', msg.type);
+                this.sendToClient(ws, { type: 'error', message: 'Unsupported message type' });
         }
     }
 
@@ -137,16 +136,8 @@ export class WebSocketHandlerV2 {
      * 处理用户消息
      */
     private async handleUserMessage(ws: WebSocket, msg: WSMessage): Promise<void> {
-        const topicId = msg.topicId || msg.sessionId || msg.desktopId;
+        const topicId = msg.topicId;
         const content = msg.content;
-
-        if (!topicId) {
-            this.sendToClient(ws, {
-                type: 'error',
-                message: 'Missing topicId/sessionId/desktopId',
-            });
-            return;
-        }
 
         if (!content || typeof content !== 'string') {
             this.sendToClient(ws, {
@@ -167,8 +158,6 @@ export class WebSocketHandlerV2 {
             this.sendToClient(ws, {
                 type: 'message_received',
                 topicId,
-                sessionId: topicId,
-                desktopId: topicId,
                 messageId: msg.messageId || `msg_${Date.now()}`,
             });
 
@@ -245,15 +234,7 @@ export class WebSocketHandlerV2 {
      * 处理创建 session/desktop
      */
     private async handleCreateSession(ws: WebSocket, msg: WSMessage): Promise<void> {
-        const topicId = msg.sessionId || msg.desktopId;
-
-        if (!topicId) {
-            this.sendToClient(ws, {
-                type: 'error',
-                message: 'Missing sessionId/desktopId',
-            });
-            return;
-        }
+        const topicId = msg.topicId;
 
         try {
             // 自动订阅
@@ -264,8 +245,7 @@ export class WebSocketHandlerV2 {
 
             this.sendToClient(ws, {
                 type: 'session_created',
-                sessionId: topicId,
-                desktopId: topicId,
+                topicId,
             });
 
             this.logger.info('Session created', { topicId });

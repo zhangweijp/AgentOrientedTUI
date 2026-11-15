@@ -20,7 +20,7 @@ const mountA = 'fixture-mount-A';
 const mountB = 'fixture-mount-B';
 const toolId = JSON.stringify([appId, 'FileDetail', 'inspect']);
 const argsLimits = { maxDepth: 24, maxNodes: 10_000, maxApproxBytes: 128 * 1024 };
-const refParameters = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: true }, 'view-type-parameters-v1');
+const refParameters = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: true });
 if (!refParameters.ok) throw new Error('Invalid Ref V3 fixture');
 
 function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): PreparedAppSnapshotDraftV3 {
@@ -180,18 +180,18 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
         });
     });
 
-    it('Ref type and generic entity target are returned as data without read permissions', () => {
+    it('returns the Ref type and business payload from the snapshot', () => {
         const core = start(); const input = draft();
         const source = publish(core, { ...input, refs: {
             ...input.refs,
             [refKey('fd_A', mountA, 'file')]: {
                 ...input.refs[refKey('fd_A', mountA, 'file')], refType: 'Todo',
-                target: { kind: 'entity', entityType: 'File', entityId: 'no-resource-is-opened', entityVersion: 'v1' },
+                target: { kind: 'snapshot-value', payload: { id: 'no-resource-is-opened', version: 'v1' } },
             },
         } });
         expect(core.store.resolveRef(selector(source.id))).toMatchObject({
             status: 'resolved', ref: { refType: 'Todo' },
-            target: { kind: 'entity', entityId: 'no-resource-is-opened' },
+            target: { kind: 'snapshot-value', payload: { id: 'no-resource-is-opened', version: 'v1' } },
         });
     });
 
@@ -200,6 +200,7 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
         for (const ref of [
             { ...input.refs[key], ownerViewInstanceId: mountB },
             { ...input.refs[key], target: { kind: 'resource', payload: {} } },
+            { ...input.refs[key], target: { kind: 'entity', entityType: 'File', entityId: 'old' } },
             { ...input.refs[key], extraAuthority: true },
         ]) expect(validatePreparedV3Draft({ ...input, refs: { ...input.refs, [key]: ref } })).toMatchObject({
             ok: false, issue: { code: 'SNAPSHOT_INVALID' },

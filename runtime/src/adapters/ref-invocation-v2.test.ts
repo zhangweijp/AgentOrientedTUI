@@ -7,7 +7,7 @@ import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profil
 import { captureTypeParametersRequest, typeParametersResponse } from './ordinary-invocation-v2.js';
 import { captureTypeParametersTerminal } from './worker-message-capture.js';
 function fixture() {
-    const c = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } }, choice: { type: 'string', enum: ['ok'] } }, required: ['file'], additionalProperties: false }, 'view-type-parameters-v1');
+    const c = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } }, choice: { type: 'string', enum: ['ok'] } }, required: ['file'], additionalProperties: false });
     if (!c.ok) throw Error('fixture');
     const execution = { kind: 'view-type' as const, activationId: 'active-1' };
     return { type: 'VIEW_TOOL_INVOKE_V5', requestId: 'r', appId: 'app', instanceId: 'run', snapshotId: 'source', argumentMode: 'view-type-parameters-v1', execution,

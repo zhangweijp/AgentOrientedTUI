@@ -7,7 +7,6 @@ import { createViewOwnedTools } from '../tool/view-owned-tools.js';
 import { createAppInteraction, DEFAULT_INTERACTION_LIMITS as HARD } from './app-interaction.js';
 import type { CancellationSignal, ExecutionBinding, ExecutionFact, InteractionLimitOverrides, InvocationContext, ReceiptMetadata, ReceiptQuery, InstanceInteraction, AppInvocation } from './app-interaction-types.js';
 import type { Observation, ObservationGrant, ObservationRegistryLimitOverrides } from './observation-types.js';
-import { compileOrdinaryParams } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
 import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 
@@ -121,24 +120,23 @@ const receiptQuery = ({ observationId, invocationId }: ReceiptQuery): ReceiptQue
 function receipt(value: Awaited<ReturnType<InstanceInteraction['invoke']>>) {
     expect(value.kind).toBe('receipt'); if (value.kind !== 'receipt') throw new Error('Expected receipt: ' + value.code); return value.receipt;
 }
-function fixture(options: { mode?: ExecutionBinding['mode'];  limits?: InteractionLimitOverrides; observationLimits?: ObservationRegistryLimitOverrides;
+function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverrides; observationLimits?: ObservationRegistryLimitOverrides;
     store?: SnapshotStoreOptions; payload?: JsonValue; refType?: string; schema?: JsonValue; namespace?: string } = {}) {
     let time = 0, sequence = 0, clockThrows = false, clockMessageReads = 0;
     const now = () => { if (clockThrows) throw { get message() { clockMessageReads++; return 'secret-clock'; } }; return time; };
     const core = createSnapshotCore({ now, ...options.store }); core.lifecycle.startApp('app', 'run');
     const tools = createViewOwnedTools('app', 'run'), owners = [tools.mount('v0', 'File'), tools.mount('v1', 'File')];
-    const mode = options.mode ?? 'ordinary-v2';
-    const ordinary = compileOrdinaryParams({});
+    const ordinary = compileOrdinarySchema({ type: 'object', properties: {} });
     const snapshotValue = compileOrdinarySchema({ type: 'object', properties: {
         file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } },
         line: { type: 'string' },
-    }, required: ['file'], additionalProperties: true }, 'view-type-parameters-v1');
+    }, required: ['file'], additionalProperties: true });
     if (!ordinary.ok || !snapshotValue.ok) throw new Error('Invalid interaction fixture');
-    const schema: JsonValue = options.schema ?? (mode === 'view-type-parameters-v1'
+    const schema: JsonValue = options.schema ?? (options.withRef
         ? snapshotValue.contract.schema : ordinary.contract.schema);
     const typeDefinition = { viewType: 'File', name: 'run', description: 'Synthetic tool', inputSchema: schema };
     const register = () => tools.registerTypeTool(typeDefinition, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
+        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
         createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned' as const, result: { success: true } }),
     });
     let typeRelease = register();
@@ -179,7 +177,7 @@ function fixture(options: { mode?: ExecutionBinding['mode'];  limits?: Interacti
         read: (_metadata: ReceiptMetadata, _signal?: CancellationSignal): unknown => true,
         live: (): unknown => ({ ok: true }),
     };
-    let current: ExecutionBinding | null = { identity: {}, mode,
+    let current: ExecutionBinding | null = { identity: {},
         validateInput: (source, input, signal) => { calls.validate++; seen.validateInput = input; seen.validateSignal = signal; return controls.validate(source, input, signal) as never; },
         isLive: () => { calls.live++; return controls.live() as never; },
         execute: ctx => { calls.handler++; seen.execute = ctx; return controls.execute(ctx) as never; } };
@@ -197,7 +195,7 @@ function fixture(options: { mode?: ExecutionBinding['mode'];  limits?: Interacti
         if (viewed.status !== 'observed') throw new Error(viewed.issue.code);
         expect(client.adoptObservation(viewed.observation.observationId)).toEqual({ status: 'adopted' }); return viewed.observation;
     }
-    function request(viewed: Observation, id = 'invocation', input: Readonly<Record<string, JsonValue>> = mode === 'view-type-parameters-v1' ? { file: 'v0.visible', line: '7' } : {}): AppInvocation {
+    function request(viewed: Observation, id = 'invocation', input: Readonly<Record<string, JsonValue>> = options.withRef ? { file: 'v0.visible', line: '7' } : {}): AppInvocation {
         return { invocationId: id, observationId: viewed.observationId, bindingId: viewed.bindings[0]!.bindingId, input };
     }
     function zero() {
@@ -329,16 +327,26 @@ describe('B2-T03/T04/T05: deduplication and ordinary/Ref parameter paths', () =>
         expect(f.calls.handler).toBe(1); expect(f.calls.validate).toBe(1); expect(f.calls.authorize).toBe(1); expect(f.calls.read).toBe(4);
         expect(await client.invoke({ ...request, input: { changed: true } })).toMatchObject({ kind: 'refused', code: 'INVOCATION_ID_CONFLICT' }); f.zero();
     });
-    it('preserves ordinary transformation and shares the exact frozen effective object with authorization/execute', async () => {
+    it('rejects a Host validator that rewrites ordinary input', async () => {
         const f = fixture(), client = f.open(), observed = await f.observe(client);
         f.controls.validate = () => ({ ok: true, value: { line: 7, defaulted: true } });
-        receipt(await client.invoke(f.request(observed, 'ordinary', { line: '7', surplus: true })));
-        expect(f.seen.execute!.effectiveInput).toEqual({ line: 7, defaulted: true });
-        expect(f.seen.execute!.rawInput).toEqual({ line: '7', surplus: true });
-        expect(f.seen.authorize!.effectiveInput).toBe(f.seen.execute!.effectiveInput); expect(Object.isFrozen(f.seen.execute!.effectiveInput)).toBe(true); f.zero();
+        const result = receipt(await client.invoke(f.request(observed, 'ordinary', { line: '7', surplus: true })));
+        expect(result.outcome).toMatchObject({ status: 'rejected', code: 'REF_ARGUMENT_CHANGED' });
+        expect(f.calls.authorize).toBe(0); expect(f.calls.handler).toBe(0); f.zero();
+    });
+    it('uses the committed ordinary Schema and rejects a binding with a retired mode', async () => {
+        const f = fixture({ schema: { type: 'object', properties: { line: { type: 'string' } }, required: ['line'] } });
+        const client = f.open(), observed = await f.observe(client);
+        const invalid = receipt(await client.invoke(f.request(observed, 'invalid', { line: 7 })));
+        expect(invalid.outcome).toMatchObject({ status: 'rejected', code: 'TOOL_INVALID_ARGS', path: '$.line' });
+        expect(f.calls.validate).toBe(0);
+        const legacy = { ...f.binding!, mode: 'ordinary-v2' }; f.binding = legacy;
+        const retired = receipt(await client.invoke(f.request(observed, 'legacy-binding', { line: '7' })));
+        expect(retired.outcome).toMatchObject({ status: 'rejected', code: 'EXECUTION_BINDING_FAILED' });
+        expect(f.calls.handler).toBe(0); f.zero();
     });
     it('prepares a legal 6000+ node Ref without the old M5 whole-request cap or ordinary conversion', async () => {
-        const f = fixture({ mode: 'view-type-parameters-v1' }), client = f.open(), observed = await f.observe(client);
+        const f = fixture({ withRef: true }), client = f.open(), observed = await f.observe(client);
         const raw = { file: 'v0.visible', line: '7', surplus: true, nodes: Array(6000).fill(null) };
         const result = receipt(await client.invoke(f.request(observed, 'ref', raw)));
         expect(result.outcome.status).toBe('succeeded'); expect(f.seen.execute!.effectiveInput).toMatchObject({ file: { version: 'S1' }, line: '7', surplus: true });
@@ -346,18 +354,18 @@ describe('B2-T03/T04/T05: deduplication and ordinary/Ref parameter paths', () =>
         expect(f.seen.execute!.refSources[0]).toMatchObject({ snapshotId: f.source.id, viewId: 'v0', refId: 'visible' }); f.zero();
     });
     it('rejects Ref validators that transform values and never calls authorize/execute', async () => {
-        const f = fixture({ mode: 'view-type-parameters-v1' }), client = f.open(), observation = await f.observe(client);
+        const f = fixture({ withRef: true }), client = f.open(), observation = await f.observe(client);
         f.controls.validate = (_, input) => ({ ok: true, value: { ...input, line: 7 } });
         expect(receipt(await client.invoke(f.request(observation))).outcome).toMatchObject({ status: 'rejected', code: 'REF_ARGUMENT_CHANGED' });
         expect(f.calls.authorize).toBe(0); expect(f.calls.handler).toBe(0); f.zero();
     });
     it('rejects invisible same-owner Ref before any Store.resolveRef/validation/authorization', async () => {
-        const f = fixture({ mode: 'view-type-parameters-v1' }), client = f.open(), observation = await f.observe(client);
+        const f = fixture({ withRef: true }), client = f.open(), observation = await f.observe(client);
         expect(receipt(await client.invoke(f.request(observation, 'hidden', { file: 'v0.hidden' }))).outcome).toMatchObject({ code: 'REF_NOT_VISIBLE' });
         expect(f.calls.resolveRef).toBe(0); expect(f.calls.validate).toBe(0); expect(f.calls.authorize).toBe(0); expect(f.calls.handler).toBe(0); f.zero();
     });
     it('keeps Ref type and mixed root selector restrictions', async () => {
-        const f = fixture({ mode: 'view-type-parameters-v1', refType: 'Other' }), client = f.open(), observation = await f.observe(client);
+        const f = fixture({ withRef: true, refType: 'Other' }), client = f.open(), observation = await f.observe(client);
         expect(receipt(await client.invoke(f.request(observation))).outcome).toMatchObject({ code: 'REF_TYPE_MISMATCH', message: expect.stringMatching(/file.*File.*Other.*view_id\.ref_id/) });
         expect(await client.invoke({ ...f.request(observation, 'mixed'), refId: 'visible' } as any)).toMatchObject({ kind: 'refused', code: 'INVOCATION_INVALID' });
         expect(f.calls.handler).toBe(0); f.zero();
@@ -366,7 +374,7 @@ describe('B2-T03/T04/T05: deduplication and ordinary/Ref parameter paths', () =>
 
 describe('B2-T06: post-await original source and callable revalidation', () => {
     it('invokes the same observed Binding after a long model turn while reading the exact original Ref', async () => {
-        const f = fixture({ mode: 'view-type-parameters-v1', store: { historyTtlMs: 10, leaseTtlMs: 10 } }), client = f.open();
+        const f = fixture({ withRef: true, store: { historyTtlMs: 10, leaseTtlMs: 10 } }), client = f.open();
         const observed = await client.observe({ all: true });
         expect(observed.status).toBe('observed'); if (observed.status !== 'observed') return;
         expect(observed.observation.expiresAt).toBeNull();
@@ -382,7 +390,7 @@ describe('B2-T06: post-await original source and callable revalidation', () => {
         expect(f.calls.handler).toBe(1); f.zero();
     });
     it('keeps an original source through long authorization without expiring ownership or bypassing current permission', async () => {
-        const f = fixture({ mode: 'view-type-parameters-v1', store: { historyTtlMs: 10, leaseTtlMs: 10 } });
+        const f = fixture({ withRef: true, store: { historyTtlMs: 10, leaseTtlMs: 10 } });
         const client = f.open(), observation = await f.observe(client), gate = deferred<boolean>(), started = deferred<void>();
         f.controls.authorize = () => { started.resolve(); return gate.promise; };
         const pending = client.invoke(f.request(observation)); await started.promise;
@@ -402,7 +410,7 @@ describe('B2-T06: post-await original source and callable revalidation', () => {
         expect(f.calls.project).toBe(1); expect(f.calls.handler).toBe(0); f.zero();
     });
     it.each(['validate', 'authorize'] as const)('uses the original Ref snapshot after %s is suspended', async stage => {
-        const f = fixture({ mode: 'view-type-parameters-v1' }), client = f.open(), observation = await f.observe(client), gate = deferred<unknown>(), started = deferred<void>();
+        const f = fixture({ withRef: true }), client = f.open(), observation = await f.observe(client), gate = deferred<unknown>(), started = deferred<void>();
         if (stage === 'validate') f.controls.validate = (_, input) => { started.resolve(); return gate.promise.then(() => ({ ok: true, value: input })); };
         else f.controls.authorize = () => { started.resolve(); return gate.promise; };
         const pending = client.invoke(f.request(observation)); await started.promise; f.publish({ refs: f.refs({ version: 'S2' }) }); gate.resolve(true);
@@ -417,7 +425,7 @@ describe('B2-T06: post-await original source and callable revalidation', () => {
         else if (change === 'remount') { f.remountAll(); f.publish();
         } else if (change === 'schema') {
             const tool = Object.values(f.source.tools)[0]!;
-            const changed = compileOrdinaryParams({ x: { type: 'string' } }); if (!changed.ok) throw new Error('Changed Tool schema must compile');
+            const changed = compileOrdinarySchema({ type: 'object', properties: { x: { type: 'string' } } }); if (!changed.ok) throw new Error('Changed Tool schema must compile');
             f.publish({ tools: { [tool.id]: { ...tool, inputSchema: ordinaryParameterProfile(changed.contract) } } });
         } else if (change === 'identity') f.binding = { ...f.binding!, identity: {} };
         else if (change === 'function') f.binding = { ...f.binding!, execute: () => success('must-not-run') };
@@ -426,10 +434,10 @@ describe('B2-T06: post-await original source and callable revalidation', () => {
         else if (change === 'getter') f.binding = { ...f.binding!, get execute() { throw new Error('secret'); } };
         gate.resolve(true); expect(receipt(await pending).outcome.status).toBe('rejected'); expect(f.calls.handler).toBe(0); f.zero();
     });
-    it.each((['ordinary-v2', 'view-type-parameters-v1'] as const).flatMap(mode =>
-        (['allow', 'deny', 'rebind', 'adopt'] as const).map(action => ({ mode, action }))))(
-        'preserves the final authorization boundary for $mode after $action', async ({ mode, action }) => {
-            const f = fixture({ mode }), client = f.open(), observation = await f.observe(client);
+    it.each([false, true].flatMap(withRef =>
+        (['allow', 'deny', 'rebind', 'adopt'] as const).map(action => ({ withRef, action }))))(
+        'preserves the final authorization boundary with Ref=$withRef after $action', async ({ withRef, action }) => {
+            const f = fixture({ withRef }), client = f.open(), observation = await f.observe(client);
             const started = deferred<void>(), gate = deferred<boolean>();
             f.controls.authorize = () => { started.resolve(); return gate.promise; };
             const pending = client.invoke(f.request(observation)); await started.promise;
@@ -478,7 +486,7 @@ describe('B2-T07/T08/T09: phases, current reading and deletable results', () => 
         expect(f.calls.read).toBe(4); expect(f.calls.handler).toBe(1); f.zero();
     });
     it('reads settled results after releasing Observation and expiring the original history', async () => {
-        const f = fixture({ mode: 'view-type-parameters-v1', store: { historyTtlMs: 10 } }), client = f.open();
+        const f = fixture({ withRef: true, store: { historyTtlMs: 10 } }), client = f.open();
         const observation = await f.observe(client), request = f.request(observation);
         const original = receipt(await client.invoke(request)); client.releaseObservation(observation.observationId);
         f.publish({ refs: f.refs({ version: 'S2' }) }); f.setTime(10);
@@ -716,12 +724,11 @@ describe('B2-T12: independent depth/node/approximate/canonical profiles', () => 
             else expect(receipt(result).outcome.status).toBe('succeeded'); expect(f.calls.handler).toBe(delta < 0 ? 0 : 1); f.zero();
         }
     });
-    it.each(fields.flatMap(field => ['raw', 'effective'].map(stage => [field, stage] as const)))('bounds ordinary %s at the %s stage', async (field, stage) => {
+    it.each(fields)('bounds ordinary input %s before validator entry', async field => {
         const n = measure(sample, field);
         for (const delta of [-1, 0, 1]) {
             const f = fixture({ limits: { ordinaryInput: { [field]: n + delta } } }), client = f.open(), observed = await f.observe(client);
-            if (stage === 'effective') f.controls.validate = () => ({ ok: true, value: sample });
-            const result = receipt(await client.invoke(f.request(observed, 'profile', stage === 'raw' ? sample : {})));
+            const result = receipt(await client.invoke(f.request(observed, 'profile', sample)));
             expect(result.outcome.status).toBe(delta < 0 ? 'rejected' : 'succeeded');
             if (delta < 0) expect(result.outcome).toMatchObject({ code: 'ACTION_INPUT_INVALID' }); expect(f.calls.handler).toBe(delta < 0 ? 0 : 1); f.zero();
         }
@@ -822,9 +829,9 @@ describe('B2-Q01: identity replacement before a new projection exists', () => {
         expect(code(await replacement.observe({ viewIds: ['v0'] }))).toBe('SNAPSHOT_UNREADY');
         f.core.lifecycle.stopApp('app', 'run'); expect(f.core.store.readAppIdentity('app')).toEqual({ status: 'active', instanceId: 'run-2' });
         const next = createViewOwnedTools('app', 'run-2'), mounted = next.mount('v0', 'File');
-        const nextSchema = compileOrdinaryParams({}); if (!nextSchema.ok) throw new Error('Next instance Tool schema must compile');
+        const nextSchema = compileOrdinarySchema({ type: 'object', properties: {} }); if (!nextSchema.ok) throw new Error('Next instance Tool schema must compile');
         next.registerTypeTool({ viewType: 'File', name: 'run', description: 'Synthetic tool', inputSchema: nextSchema.contract.schema }, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
             createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: { success: true } }),
         });
         const tool = next.listTools()[0]!;

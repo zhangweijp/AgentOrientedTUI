@@ -69,8 +69,8 @@ afterAll(async () => { const root = process.env.AOTUI_W08_C1_FACTS_DIR;if (root)
 function plainActor() {
     const { initialBusiness, applyBusiness, businessResult, ordinaryInputSchema, referenceInputSchema,
         tools: businessTools, fileLabel, filePayload, selectedBusinessSession } = business;
-    const ordinary = compileOrdinarySchema(ordinaryInputSchema, 'view-type-parameters-v1');
-    const reference = compileOrdinarySchema(referenceInputSchema, 'view-type-parameters-v1');
+    const ordinary = compileOrdinarySchema(ordinaryInputSchema);
+    const reference = compileOrdinarySchema(referenceInputSchema);
     if (!ordinary.ok || !reference.ok) throw Error('business declaration: ' + JSON.stringify({ ordinary, reference }));
     const instance = 'plain-' + ++actorCount, core = createSnapshotCore(), registry = createViewOwnedTools('app', instance);
     core.lifecycle.startApp('app', instance);
@@ -93,9 +93,9 @@ function plainActor() {
             const { name, viewType, description, inputSchema } = definition;
             if (releases.has(name)) continue;
             releases.set(name, registry.registerTypeTool({ name, viewType, description, inputSchema }, {
-                safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
+                safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
                 createSafeOrdinaryParametersInvoker: contract => async args => {
-                    const checked = (contract.validateResolvedInput ?? contract.validate)(args);
+                    const checked = contract.validateResolvedInput(args);
                     if (!checked.ok) return { phase: 'not-entered' as const, result: { success: false, error: { code: 'E_INVALID_ARGS', message: 'Input invalid' } } };
                     // This is the App handler boundary, after the framework contract wrapper and before every business guard.
                     entries.push({ name });
@@ -145,8 +145,8 @@ function plainActor() {
         let binding = bindings.get(source); if (binding) return binding;
         const tool = source.tool, execution = source.execution;
         const contract = tool.name === 'read_ref' ? reference.contract : ordinary.contract;
-        binding = { identity: {}, mode: 'view-type-parameters-v1',
-            validateInput: (_source: any, args: any) => { const r = (contract.validateResolvedInput ?? contract.validate)(args); return r.ok ? { ok: true, value: r.value } : { ok: false }; },
+        binding = { identity: {},
+            validateInput: (_source: any, args: any) => { const r = contract.validateResolvedInput(args); return r.ok ? { ok: true, value: r.value } : { ok: false }; },
             isLive: () => ({ ok: registry.validateTypeToolBinding(tool, execution).success }),
             execute: async (context: any) => {
                 const terminal = await registry.invokeTypeTool(tool, execution, context.effectiveInput);
@@ -193,7 +193,7 @@ async function workerActor() {
             const receive = (m: any) => { if (predicate(m)) { clearTimeout(timer);worker.off('message', receive);yes(m); } };worker.on('message', receive); });
     }
     const host = new Host({ appId: 'app', desktopId: 'd', appModulePath: join(consumer, 'dual-producer-app.mjs'), existingWorker: worker,
-        timeout: 2000, interactionModes: ['view-type-parameters-v1'],
+        timeout: 2000,
         config: { AOTUI_DATA_DIR: dataDir } });
     const dispatch = host.dispatchTool.bind(host);
     host.dispatchTool = async (...args: any[]) => { const fact = await dispatch(...args);facts.push(fact);return fact; };

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -62,8 +63,12 @@ if (!plain) {
   await fs.writeFile(path.join(output, 'runtime-app.mjs'), extract(runtimeGuide, 'b2-app', 'js'));
   await fs.writeFile(path.join(output, 'runtime-host.ts'), extract(runtimeGuide, 'b2-example', 'ts'));
 }
-const coreGuide = await fs.readFile(path.join(runtimeRoot, 'docs/core-public-entry.md'), 'utf8');
-await fs.writeFile(path.join(output, 'core-example.ts'), extract(coreGuide, 'b1-example', 'ts'));
+const coreGuidePath = path.join(await fs.realpath(runtimeRoot), 'docs/core-public-entry.md');
+const coreGuide = await fs.readFile(coreGuidePath, 'utf8');
+const coreSource = extract(coreGuide, 'b1-example', 'ts');
+await fs.writeFile(path.join(output, 'core-example.ts'), coreSource);
+const digest = value => createHash('sha256').update(value).digest('hex');
+facts.coreTutorial = { document: coreGuidePath, documentSha256: digest(coreGuide), sourceSha256: digest(coreSource) };
 const compiler = path.join(consumer, 'node_modules/typescript/bin/tsc');
 const version = JSON.parse(await fs.readFile(path.join(consumer, 'node_modules/typescript/package.json'), 'utf8')).version;
 assert.equal(version, '7.0.2');
@@ -84,6 +89,7 @@ await compile('core-compile', 'tsconfig-core.json', {
   files: ['./core-example.ts', './work-items-plain.ts'],
 });
 await checked('core-execution', [path.join(output, 'core-out/core-example.js')]);
+facts.coreTutorial.moduleSha256 = digest(await fs.readFile(path.join(output, 'core-out/core-example.js')));
 const fullAuthorExamples = String.raw`
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 const minimalRuntime = createRuntime({ worker: { timeoutMs: 45000, maxWorkers: 1 } });
@@ -114,7 +120,7 @@ let source;
 try {
  const desktop = await runtime.createDesktop('published-docs');
  const url = new URL('./out-7.0.2/file-app.js', import.meta.url).href;
- for (const id of ['docfilesa', 'docfilesb']) await runtime.installDynamicWorkerApp(desktop, url, { appId: id, interactionModes: ['view-type-parameters-v1'], config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
+ for (const id of ['docfilesa', 'docfilesb']) await runtime.installDynamicWorkerApp(desktop, url, { appId: id, config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
  source = new SemanticAOTUIDrivenSource(runtime.getDesktop(desktop), runtime, { includeInstruction: false });
  const messages = c => c.messages.map(m => String(m.content));
  const views = (c, app, id) => messages(c).filter(m => m.startsWith('<view ') && m.includes('app_id="'+app+'"') && (!id || m.includes('id="'+id+'"')));
@@ -172,7 +178,7 @@ let refSource;
 try {
  const desktop = await refRuntime.createDesktop('published-ref-doc');
  await refRuntime.installDynamicWorkerApp(desktop, new URL('./out-7.0.2/ref-app.js', import.meta.url).href,
-  { appId: 'notes', interactionModes: ['view-type-parameters-v1'], config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
+  { appId: 'notes', config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR } });
  refSource = new SemanticAOTUIDrivenSource(refRuntime.getDesktop(desktop), refRuntime, { includeInstruction: false });
  const text = c => c.messages.map(m => String(m.content)).join('\n');
  async function observe(ready) {
@@ -309,6 +315,11 @@ import { createRuntime } from '@aotui/runtime';
 import { coreTutorialFacts } from './core-out/core-example.js';
 import { selectedViewId, otherViewId } from './core-out/work-items.js';
 const facts = { profile: ${JSON.stringify(profile)}, coreTutorialFacts, calls: [], reports: [] };
+assert.equal(coreTutorialFacts.handlerEntries, 3);
+assert.deepEqual(coreTutorialFacts.witness, [{ text: 'old!', frozen: true }, { text: 'new!', frozen: true }]);
+for (const field of ['observationSlots', 'logicalBytes', 'leases', 'bindings', 'stateOwners']) assert.equal(coreTutorialFacts[field], 0, field);
+assert.equal(coreTutorialFacts.restoredValue, 41);
+assert.equal(coreTutorialFacts.storedKeys, 1);
 ${workItemsExamples}
 ${plain ? '' : fullAuthorExamples + neutralHostExample}
 await fs.writeFile(new URL('./runtime-facts.json',import.meta.url),JSON.stringify(facts,null,2)+'\n');

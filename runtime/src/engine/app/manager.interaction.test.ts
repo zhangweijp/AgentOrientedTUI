@@ -73,21 +73,20 @@ it('keeps an accepted close attached to its captured Worker while cleanup is pen
     await manager.cleanupAsync();
 });
 
-it('C05 trusted qualified parameter mode survive pending/open/reopen/reinitialize with independent metadata', async () => {
-    const manager = new AppManager(desktop), values: any[] = ['view-type-parameters-v1'];
-    const id = manager.registerPendingApp({ modulePath: '/app', interactionModes: values });values.length = 0;
+it('preserves trusted Tool disablement across pending, open, reopen and reinitialize', async () => {
+    const manager = new AppManager(desktop), options = { modulePath: '/app', toolsEnabled: false };
+    const id = manager.registerPendingApp(options);options.toolsEnabled = true;
     expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing')).toMatchObject({ issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });expect(control.boxes).toHaveLength(0);
-    const copy = manager.getInstalledApps()[0];expect(copy.interactionModes).toEqual(['view-type-parameters-v1']);
-    expect(Object.isFrozen(copy.interactionModes)).toBe(true);expect(() => (copy.interactionModes as any).push('view-type-parameters-v1')).toThrow();
-    (copy as any).interactionModes = [];await manager.openApp(id);expect(control.boxes[0].config.interactionModes).toEqual(['view-type-parameters-v1']);
+    const copy = manager.getInstalledApps()[0];expect(copy.toolsEnabled).toBe(false);
+    (copy as any).toolsEnabled = true;await manager.openApp(id);expect(control.boxes[0].config.toolsEnabled).toBe(false);
     const original = control.boxes[0];await manager.closeApp(id);await manager.openApp(id);await manager.reinitializeApp(id);
-    expect(control.boxes).toHaveLength(3);expect(control.boxes.every(box => JSON.stringify(box.config.interactionModes) === '["view-type-parameters-v1"]')).toBe(true);
-    expect(control.boxes[2]).not.toBe(original);expect(manager.getAppStates()[0]).not.toHaveProperty('interactionModes');
+    expect(control.boxes).toHaveLength(3);expect(control.boxes.every(box => box.config.toolsEnabled === false)).toBe(true);
+    expect(control.boxes[2]).not.toBe(original);expect(manager.getAppStates()[0]).not.toHaveProperty('toolsEnabled');
     await manager.cleanupAsync();
 });
 
 it('B2 C11 collapsed is presentation while pending/paused/closed/current closing stop scope creation', async () => {
-    const manager = new AppManager(desktop), id = await manager.install('/app', { interactionModes: ['view-type-parameters-v1'] });
+    const manager = new AppManager(desktop), id = await manager.install('/app');
     expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('ready');await manager.collapseApp(id);
     expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('ready');await manager.pauseAll();
     expect(manager.getAppInteraction(id, manager.getInstalledApps()[0]?.appInstanceId ?? 'missing').status).toBe('rejected');await manager.resumeAll();
@@ -109,10 +108,10 @@ it.each(['meta', 'worker', 'close'] as const)('B2 C13 App factory rejects a retu
 });
 
 it('C05 immediate install capture precedes async startup, ID allocation and mutation', async () => {
-    const manager = new AppManager(desktop), input: any = { interactionModes: ['view-type-parameters-v1'] };
-    const installing = manager.install('/app', input);input.interactionModes.push('view-type-parameters-v1');input.interactionModes = [];
-    const id = await installing;expect(control.boxes[0].config.interactionModes).toEqual(['view-type-parameters-v1']);
-    await expect(manager.install('/bad', { interactionModes: ['bad'] as any })).rejects.toHaveProperty('code', 'INTERACTION_MODES_INVALID');
+    const manager = new AppManager(desktop), input: any = { toolsEnabled: false };
+    const installing = manager.install('/app', input);input.toolsEnabled = true;
+    const id = await installing;expect(control.boxes[0].config.toolsEnabled).toBe(false);
+    await expect(manager.install('/bad', { toolsEnabled: 'bad' as any })).rejects.toHaveProperty('code', 'TOOLS_ENABLED_INVALID');
     expect(control.boxes).toHaveLength(1);expect(manager.registerPendingApp({ modulePath: '/next' })).toBe('app_1');
-    expect(manager.getInstalledApps().find(app => app.appId === id)?.interactionModes).toEqual(['view-type-parameters-v1']);await manager.cleanupAsync();
+    expect(manager.getInstalledApps().find(app => app.appId === id)?.toolsEnabled).toBe(false);await manager.cleanupAsync();
 });

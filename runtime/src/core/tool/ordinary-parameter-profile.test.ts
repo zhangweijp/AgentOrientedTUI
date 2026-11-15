@@ -3,11 +3,13 @@ import { canonicalJson, SnapshotDataError, utf8Size } from '../snapshot/json.js'
 import { DEFAULT_SNAPSHOT_LIMITS } from '../snapshot/snapshot-support.js';
 import { createSnapshotCore } from '../snapshot/store.js';
 import type { JsonValue } from '../snapshot/types.js';
-import { compileOrdinaryParams, compileOrdinarySchema, VIEW_TYPE_PARAMETERS_MODE } from './ordinary-parameter-contract.js';
-import { compileOrdinaryProfile, ordinaryParameterProfile, ORDINARY_PARAMETER_MARKER as marker } from './ordinary-parameter-profile.js';
+import { compileOrdinarySchema, VIEW_TYPE_PARAMETERS_MODE } from './ordinary-parameter-contract.js';
+import { compileOrdinaryProfile, ordinaryParameterProfile } from './ordinary-parameter-profile.js';
 import { createViewOwnedTools, ViewToolContractError } from './view-owned-tools.js';
+const marker = 'x-aotui-parameter-contract';
 const make = () => {
-  const result = compileOrdinaryParams({ z: { type: 'string', required: true }, a: { type: 'number', required: true, default: 1 } }, { additionalProperties: false });
+  const result = compileOrdinarySchema({ type: 'object', properties: { z: { type: 'string' }, a: { type: 'number', default: 1 } },
+    required: ['z', 'a'], additionalProperties: false });
   if (!result.ok) throw Error('Fixture declaration');
   return result.contract;
 };
@@ -22,19 +24,19 @@ function boundarySchema(bytes: number) {
   return { ...base, description: unit.repeat(Math.floor(fill / unitBytes)) + 'x'.repeat(fill % unitBytes) };
 }
 
-describe('R01 ordinary-v2 declaration profile', () => {
+describe('ViewType parameter profile', () => {
   it('roundtrips exact immutable B1 Schema and its complete identity', () => {
     const c = make(), tagged = ordinaryParameterProfile(c), result = compileOrdinaryProfile(tagged)!;
-    expect(result.fingerprint).toBe(c.fingerprint);
     expect(result.schema).toEqual(c.schema);
     expect(result.schema).not.toBe(c.schema);
     expect(Object.isFrozen(tagged)).toBe(true);
-    expect(result.validate({ z: 'x', a: 1 })).toMatchObject({ ok: true });
+    expect(result.validateModelInput({ z: 'x', a: 1 })).toMatchObject({ ok: true });
   });
-  it.each(['missing', 'future', 'extra', 'ref', 'required-order', 'omitted-required', 'omitted-extra', 'tuple', 'format'])('rejects %s without silently normalizing it', kind => {
+  it.each(['missing', 'retired', 'future', 'extra', 'ref', 'required-order', 'omitted-required', 'omitted-extra', 'tuple', 'format'])('rejects %s without silently normalizing it', kind => {
     const p: any = JSON.parse(JSON.stringify(ordinaryParameterProfile(make())));
     if (kind === 'missing') delete p[marker];
-    if (kind === 'future') p[marker] = 'ordinary-params-v2';
+    if (kind === 'retired') p[marker] = 'ordinary-params-v1';
+    if (kind === 'future') p[marker] = 'view-type-parameters-v2';
     if (kind === 'extra') p['x-aotui-other'] = true;
     if (kind === 'ref') p.properties.z['x-aotui-ref'] = { version: 1 };
     if (kind === 'required-order') p.required.reverse();
@@ -52,7 +54,7 @@ describe('R01 ordinary-v2 declaration profile', () => {
   it('accepts equivalent object key insertion order without broadening required order', () => {
     const p: any = ordinaryParameterProfile(make());
     const reordered = Object.fromEntries(Object.entries(p).reverse());
-    expect(compileOrdinaryProfile(reordered)?.fingerprint).toBe(make().fingerprint);
+    expect(compileOrdinaryProfile(reordered)?.schema).toEqual(make().schema);
   });
   it('rejects getters without reading them and preserves both capacity layers', () => {
     let reads = 0;
@@ -71,20 +73,20 @@ describe('R01 ordinary-v2 declaration profile', () => {
 
   it('checks complete canonical UTF-8 at the inclusive boundary in generation, consumption and Snapshot commit', () => {
     const compile = (bytes: number) => {
-      const result = compileOrdinarySchema(boundarySchema(bytes), VIEW_TYPE_PARAMETERS_MODE);
+      const result = compileOrdinarySchema(boundarySchema(bytes));
       if (!result.ok) throw new Error('Bare boundary schema must compile: ' + result.issue.message);
       return result.contract;
     };
     const exact = compile(limit), above = compile(limit + 1);
     const profile = ordinaryParameterProfile(exact);
-    const oversized = { ...above.schema, [marker]: above.revision };
+    const oversized = { ...above.schema, [marker]: VIEW_TYPE_PARAMETERS_MODE };
     expect(utf8Size(canonicalJson(profile))).toBe(limit);
     expect(canonicalJson(profile).length).toBeLessThan(limit);
     expect(utf8Size(canonicalJson(oversized))).toBe(limit + 1);
     expect(utf8Size(canonicalJson(above.schema))).toBeLessThan(limit);
     expect(() => ordinaryParameterProfile(above)).toThrow(SnapshotDataError);
     expect(() => ordinaryParameterProfile(above)).toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_CAPACITY', path: '$' }));
-    expect(compileOrdinaryProfile(profile)?.fingerprint).toBe(exact.fingerprint);
+    expect(compileOrdinaryProfile(profile)?.schema).toEqual(exact.schema);
     expect(compileOrdinaryProfile(oversized)).toBeNull();
 
     const toolId = JSON.stringify(['app', 'Note', 'read']);
@@ -120,7 +122,7 @@ describe('R01 ordinary-v2 declaration profile', () => {
     const before = registry.inspect();
     const factory = vi.fn(() => async () => ({ phase: 'entered-returned' as const, result: { success: true } }));
     const register = (inputSchema: JsonValue, description = 'Read') => registry.registerTypeTool({ viewType: 'Note', name: 'read', description, inputSchema }, {
-      safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: factory,
+      safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: factory,
     });
     const expensive = { type: 'object', properties: { xs: { type: 'array', items: { type: 'number' }, default: Array(3_000).fill(0) } } };
     for (const schema of [boundarySchema(limit + 1), expensive]) {

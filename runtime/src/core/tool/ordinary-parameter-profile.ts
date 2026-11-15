@@ -1,9 +1,9 @@
 import { canonicalJson, copyJson, SnapshotDataError, utf8Size } from '../snapshot/json.js';
 import { DEFAULT_SNAPSHOT_LIMITS } from '../snapshot/snapshot-support.js';
 import type { JsonValue } from '../snapshot/types.js';
-import { compileOrdinarySchema, VIEW_TYPE_PARAMETERS_MODE, ORDINARY_PARAMETER_REVISION, type OrdinaryParameterContract } from './ordinary-parameter-contract.js';
+import { compileOrdinarySchema, VIEW_TYPE_PARAMETERS_MODE, type OrdinaryParameterContract } from './ordinary-parameter-contract.js';
 
-export const ORDINARY_PARAMETER_MARKER = 'x-aotui-parameter-contract';
+const ORDINARY_PARAMETER_MARKER = 'x-aotui-parameter-contract';
 const compiledProfiles = new WeakMap<object, { canonical: string; contract: OrdinaryParameterContract }>();
 
 function captureProfile(input: unknown): JsonValue {
@@ -16,7 +16,7 @@ function captureProfile(input: unknown): JsonValue {
 }
 
 export function ordinaryParameterProfile(contract: OrdinaryParameterContract): JsonValue {
-  return captureProfile({ ...contract.schema, [ORDINARY_PARAMETER_MARKER]: contract.revision });
+  return captureProfile({ ...contract.schema, [ORDINARY_PARAMETER_MARKER]: VIEW_TYPE_PARAMETERS_MODE });
 }
 /** A declaration only. A live, negotiated binding and its private callable remain mandatory. */
 export function compileOrdinaryProfile(input: unknown): OrdinaryParameterContract | null {
@@ -28,11 +28,10 @@ export function compileOrdinaryProfile(input: unknown): OrdinaryParameterContrac
     if (!captured || typeof captured !== 'object' || Array.isArray(captured) ||
         !Object.hasOwn(captured, ORDINARY_PARAMETER_MARKER)) return null;
     const marker = (captured as Record<string, JsonValue>)[ORDINARY_PARAMETER_MARKER];
-    if (marker !== ORDINARY_PARAMETER_REVISION && marker !== VIEW_TYPE_PARAMETERS_MODE) return null;
+    if (marker !== VIEW_TYPE_PARAMETERS_MODE) return null;
     const schema = { ...captured } as Record<string, JsonValue>;
-    const qualified = marker === VIEW_TYPE_PARAMETERS_MODE;
     delete schema[ORDINARY_PARAMETER_MARKER];
-    const compiled = compileOrdinarySchema(schema, qualified ? VIEW_TYPE_PARAMETERS_MODE : undefined);
+    const compiled = compileOrdinarySchema(schema);
     if (!compiled.ok || canonicalJson(schema) !== canonicalJson(compiled.contract.schema)) return null;
     return compiled.contract;
   } catch { return null; }

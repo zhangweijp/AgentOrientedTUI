@@ -14,7 +14,7 @@
 4. 读 [View 合同](docs/views.md)：显式 id/type/kind、独立页面、原样正文和唯一包装。
 5. 普通 TS 使用 [createApp 与 publish](docs/app-authoring.md)；迁移旧应用看 [迁移说明](docs/migration.md)。
 
-[API 参考](docs/api-status.md)、[参数规则](docs/ordinary-v2.md)、[生命周期](docs/tool-lifecycle.md)和[持久化](docs/persistence.md)用于查阅。匹配包与安装、构建、验证命令统一见 [包使用说明](docs/runtime-compatibility.md)。当前工作树的能力已采用；这不表示同版本的旧文件或 registry 包自动具备这些能力，也不表示已经发布。
+[API 参考](docs/api-status.md)、[参数规则](docs/tool-parameters.md)、[生命周期](docs/tool-lifecycle.md)和[持久化](docs/persistence.md)用于查阅。匹配包与安装、构建、验证命令统一见 [包使用说明](docs/runtime-compatibility.md)。当前工作树的能力已采用；这不表示同版本的旧文件或 registry 包自动具备这些能力，也不表示已经发布。
 
 ## 最小组件应用
 

@@ -26,7 +26,6 @@ const artifacts = path.join(out, 'artifacts');
 for (const directory of [logs, artifacts]) fs.mkdirSync(directory);
 const packages = ['runtime', 'sdk', 'agent-driver-v2', 'agent-driver-adapter'];
 const lifecycleSpec = 'tests/agent-driver-adapter/runtime-lifecycle.integration.test.ts';
-const oldToolFixture = 'tests/fixtures/legacy-ordinary-parameter-tool.mjs';
 const patchPath = 'patches/provider-utils-4.0.65.patch';
 const env = { ...process.env, CI: '1' };
 for (const key of Object.keys(env)) {
@@ -105,7 +104,7 @@ function freeze() {
     const head = run('git-head', repo, 'git', ['rev-parse', 'HEAD']).trim();
     const dirty = run('git-status', repo, 'git', ['status', '--porcelain=v1', '--untracked-files=all']);
     const files = run('git-build-inputs', repo, 'git', ['ls-files', '-co', '--exclude-standard', '-z', '--',
-        ...packages, 'package.json', 'pnpm-lock.yaml', 'scripts/release-local.mjs', lifecycleSpec, oldToolFixture]);
+        ...packages, 'package.json', 'pnpm-lock.yaml', 'scripts/release-local.mjs', lifecycleSpec]);
     for (const file of new Set(files.split('\0').filter(Boolean))) {
         if (file.split('/').some(part => ['node_modules', 'dist', 'coverage', '.git', '.tmp', '.pnpm-store'].includes(part))) continue;
         const source = path.join(repo, file);
@@ -334,10 +333,8 @@ function consumers(profile) {
         stage(`${label}-w10`, () => run(`${label}-w10`, folder, process.execPath, [path.join(inputs, 'runtime/tests/w10-package-consumer.mjs'), folder,
             path.join(report, 'w10.json'), 'ref-only'], data), blocked);
         stage(`${label}-lifecycle`, () => {
-            for (const fixture of [lifecycleSpec, oldToolFixture]) {
-                fs.mkdirSync(path.dirname(path.join(folder, fixture)), { recursive: true });
-                copy(path.join(inputs, fixture), path.join(folder, fixture));
-            }
+            fs.mkdirSync(path.dirname(path.join(folder, lifecycleSpec)), { recursive: true });
+            copy(path.join(inputs, lifecycleSpec), path.join(folder, lifecycleSpec));
             run(`${label}-lifecycle`, folder, process.execPath, [path.join(folder, 'node_modules/vitest/vitest.mjs'), 'run', lifecycleSpec, '--maxWorkers', '1'],
                 { ...data, AOTUI_PACKAGE_CONSUMER_DIR: folder, AOTUI_W08_C1_FACTS_DIR: report });
         }, blocked);

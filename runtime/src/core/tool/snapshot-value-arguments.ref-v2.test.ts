@@ -7,7 +7,7 @@ function parameters(extra = false) {
     return compileOrdinarySchema({ type: 'object', properties: {
         file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } },
         choice: { type: 'string', enum: ['ok'] }, ...(extra ? { n: { type: 'number', default: 2 } } : {}),
-    }, required: ['file'], additionalProperties: true }, 'view-type-parameters-v1');
+    }, required: ['file'], additionalProperties: true });
 }
 
 import { prepareViewTypeParameters } from './snapshot-value-arguments.js';

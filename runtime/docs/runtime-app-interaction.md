@@ -62,24 +62,23 @@ SDK 工厂自动提供 `view-type-tools-v4`、托管状态和 `app-lifecycle-v2`
 
 ## Host installation and instance interaction
 
-The trusted Host selects an interaction mode at install. Omitting `interactionModes` enables execution. Passing `[]` keeps observation and preview available and disables Tool execution. Use the matched Runtime and SDK packages.
+Tool execution is enabled by default. Install with the trusted Host option `toolsEnabled: false` to keep observation and preview read-only. The retired `interactionModes` key is rejected with `TOOLS_ENABLED_INVALID`. Use the matched Runtime and SDK packages.
 
 Construct the Runtime with `createRuntime()`. The returned `IKernel` includes App interaction and shutdown reporting. Use `getDesktop()` for the `IDesktop` contract. These interfaces replace imports of the concrete `Kernel`, `IDesktopManager`, and the separate access and shutdown reporting interfaces.
 
-The Worker handshake requires `app-snapshot/v3`. The Host also requests `view-tool-parameters-invoke/v5` when execution is enabled. A malformed capability list receives `WORKER_CAPABILITY_INVALID`. Retired capabilities, including Tool IPC v4, receive `WORKER_CAPABILITY_UNSUPPORTED`. Current Tool calls use `VIEW_TOOL_INVOKE_V5` and its matching response. Snapshot publications notify the Host. Trusted invoker registration uses `ordinary-invoker/v3`. The pure Core execution binding still accepts `ordinary-v2`.
+The Worker handshake requires `app-snapshot/v3`. The Host also requests `view-tool-parameters-invoke/v5` when execution is enabled. A malformed capability list receives `WORKER_CAPABILITY_INVALID`. Retired capabilities, including Tool IPC v4, receive `WORKER_CAPABILITY_UNSUPPORTED`. Current Tool calls use `VIEW_TOOL_INVOKE_V5` and its matching response. Snapshot publications notify the Host. The separate trusted invoker registration requires `ordinary-invoker/v4` for the shared ordinary and Ref parameter contract. `TOOL_INVOKER_ABI_UNSUPPORTED` in an installation cause means the App needs to be rebuilt with the matching SDK and Runtime.
 
 B03 validates the complete normalized Tool profile, including its internal marker, against the inclusive 64 KiB canonical JSON UTF-8 limit at generation, registration and consumption. A custom Snapshot Core can set a lower limit. SDK author diagnostics include a Schema path and distinguish invalid, unsupported and over-capacity declarations. [Core limits and declaration diagnostics](core-public-entry.md#snapshot-limits)
 
 <!-- b2-example:start -->
 ```ts
-import { createRuntime, type AppInteraction, type InteractionMode, type Observation, type ReceiptQuery } from '@aotui/runtime';
+import { createRuntime, type AppInteraction, type Observation, type ReceiptQuery } from '@aotui/runtime';
 
 export async function runExample(appUrl: string, dataDirectory: string) {
   const runtime = createRuntime({ worker: { timeoutMs: 4000, maxWorkers: 2 } });
   try {
     const desktopId = await runtime.createDesktop();
     const desktop = runtime.getDesktop(desktopId);
-    const modes: InteractionMode[] = ['view-type-parameters-v1'];
     async function observeReady(client: AppInteraction): Promise<Observation> {
       const deadline = Date.now() + 6000;
       while (Date.now() < deadline) {
@@ -102,7 +101,7 @@ export async function runExample(appUrl: string, dataDirectory: string) {
       throw Error('Snapshot readiness deadline');
     }
     const appId = await runtime.installDynamicWorkerApp(desktopId, appUrl, {
-      interactionModes: modes, config: { AOTUI_DATA_DIR: dataDirectory },
+      config: { AOTUI_DATA_DIR: dataDirectory },
     });
     const instanceId = desktop.getInstalledApps().find(app => app.appId === appId)?.appInstanceId;
     if (!instanceId) throw Error('App has no running instance');
@@ -138,7 +137,7 @@ export async function runExample(appUrl: string, dataDirectory: string) {
     }
     const close = await runtime.beginShutdown().completion;
     if (!close.ok || !close.resourcesReleased) throw Error('Runtime shutdown did not complete successfully');
-    return { modes, outcomes, close };
+    return { outcomes, close };
   } finally {
     const close = await runtime.beginShutdown().completion;
     if (!close.resourcesReleased) throw Error('Runtime resource release is incomplete');

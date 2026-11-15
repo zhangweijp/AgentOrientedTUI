@@ -61,7 +61,7 @@ it('captures type activations and refuses policy activation rewrites or retired 
     expect(observation.bindings[0]!.execution).toEqual(grant.toolBindings[0]!.execution);
     f.registry.close(); f.core.lifecycle.dispose();
 });
-function fixture(options: { views?: number; refs?: number; tools?: number; content?: JsonValue;
+function fixture(options: { views?: number; refs?: number; tools?: number; content?: string;
     payload?: JsonValue; store?: SnapshotStoreOptions; limits?: ObservationRegistryLimitOverrides; ready?: boolean; namespace?: string; instanceId?: string } = {}) {
     let time = 0, sequence = 0;
     const now = () => time;
@@ -78,7 +78,7 @@ function fixture(options: { views?: number; refs?: number; tools?: number; conte
         ...declaration, viewType: 'File', inputSchema: { type: 'object', properties: { selected: {
             type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' },
         } }, required: ['selected'], additionalProperties: true },
-    }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3', createSafeOrdinaryParametersInvoker: () => async args => {
+    }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: () => async args => {
         await handler(args); return { phase: 'entered-returned', result: { success: true } };
     } });
     const releases = declarations.map(register);
@@ -93,12 +93,10 @@ function fixture(options: { views?: number; refs?: number; tools?: number; conte
         const seq = ++sequence;
         return { schemaVersion: 3, ...identity, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
             views: owners.map(v => ({ id: v.viewId, viewInstanceId: v.viewInstanceId, type: 'File', name: v.viewId, kind: 'state',
-                content: options.content === undefined ? { format: 'markdown-v1', value: 'content-secret-' + v.viewId }
-                    : { format: 'semantic-v1', value: options.content } })),
+                content: { format: 'markdown-v1', value: options.content ?? 'content-secret-' + v.viewId } })),
             refs: Object.fromEntries(owners.flatMap(v => Array.from({ length: options.refs ?? 2 }, (_, i) => [refKey(v.viewId, v.viewInstanceId, 'r' + i), {
                 id: 'r' + i, ownerViewId: v.viewId, ownerViewInstanceId: v.viewInstanceId, refType: 'unknown',
-                target: i === 1 ? { kind: 'entity', entityType: 'File', entityId: 'entity-secret', entityVersion: '1' }
-                    : { kind: 'snapshot-value', payload: options.payload ?? { value: 'payload-secret-' + v.viewId } },
+                target: { kind: 'snapshot-value', payload: options.payload ?? { value: `payload-secret-${v.viewId}-${i}` } },
             }]))),
             tools: Object.fromEntries(tools.listTools().map(t => [t.id, t])), ...patch };
     }
@@ -162,7 +160,7 @@ function zero(f: Fixture) {
 }
 
 describe('B1 projection and real source ownership', () => {
-    it('clips a shared Tool to its original approved owner, hides content by default and never exports Ref payload/entity identity', () => {
+    it('clips a shared Tool to its original approved owner and hides View content and Ref payload by default', () => {
         const f = fixture({ tools: 2 });
         const permission = f.grant(f.source, ['v1']);
         const observation = f.observe(permission);
@@ -172,7 +170,7 @@ describe('B1 projection and real source ownership', () => {
         expect(observation.tools.every(t => t.execution.kind === 'view-type' && !Object.hasOwn(t.execution, 'targets'))).toBe(true);
         expect(observation.bindings.map(b => b.execution.kind)).toEqual(['view-type', 'view-type']);
         expect(observation.bindings.every(b => !Object.hasOwn(b, 'arguments'))).toBe(true);
-        expect(JSON.stringify(observation)).not.toMatch(/payload-secret|entity-secret|content-secret|"payload"|"entityVersion"|"viewId":"v0"/);
+        expect(JSON.stringify(observation)).not.toMatch(/payload-secret|content-secret|"payload"|"viewId":"v0"/);
         const result = f.registry.resolveBinding(key(observation));
         expect(result.status).toBe('found');
         if (result.status === 'found') {
@@ -404,7 +402,7 @@ describe('B1 original source, lifecycle and deadlines', () => {
         else {
             const schema = first.inputSchema as Record<string, any>;
             const changedSchema = compileOrdinarySchema({ type: 'object', properties: { ...schema.properties, optional: { type: 'string' } },
-                required: schema.required, additionalProperties: true }, 'view-type-parameters-v1');
+                required: schema.required, additionalProperties: true });
             if (!changedSchema.ok) throw Error('Changed parameter fixture');
             f.publish({ tools: { [first.id]: { ...first, ...(mode === 'schema' ? { inputSchema: ordinaryParameterProfile(changedSchema.contract) } : {}),
                 execution: { kind: 'view-type', activationId: mode === 'version' ? 'replacement' : first.execution.activationId } } } });
@@ -600,10 +598,11 @@ describe('B1 independently bounded JSON and total budgets', () => {
         }
     });
     it.each(['maxDepth', 'maxNodes', 'maxApproxBytes', 'maxCanonicalBytes'] as const)('bounds final public Observation %s at N-1/N/N+1', field => {
-        const probe = fixture({ content: ['\u0000'.repeat(30), { nested: { text: '汉字' } }] }), observation = probe.observe(probe.grant(probe.source, ['v0', 'v1'], true));
+        const content = '\u0000'.repeat(30) + '汉字';
+        const probe = fixture({ content }), observation = probe.observe(probe.grant(probe.source, ['v0', 'v1'], true));
         const n = field === 'maxCanonicalBytes' ? bytes(observation) : threshold(observation, field); zero(probe);
         for (const delta of [-1, 0, 1]) {
-            const f = fixture({ content: ['\u0000'.repeat(30), { nested: { text: '汉字' } }], limits: { observation: { [field]: n + delta } } }), p = f.begin();
+            const f = fixture({ content, limits: { observation: { [field]: n + delta } } }), p = f.begin();
             const result = f.registry.complete(p.reservation, f.grant(f.source, ['v0', 'v1'], true));
             expect(result.status).toBe(delta < 0 ? 'rejected' : 'observed');
             if (result.status === 'rejected') expect(code(result)).toBe('OBSERVATION_CAPACITY'); zero(f);

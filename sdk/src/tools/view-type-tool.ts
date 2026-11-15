@@ -1,12 +1,12 @@
 import { VIEW_TYPE_TOOL_PROTOCOL } from '@aotui/runtime/spi';
 import Type from 'typebox';
-import { compileOrdinarySchema, ordinaryParameterProfile, SnapshotDataError, VIEW_TYPE_PARAMETERS_MODE } from '@aotui/runtime/core';
+import { compileOrdinarySchema, ordinaryParameterProfile, SnapshotDataError } from '@aotui/runtime/core';
 import type { JsonValue } from '@aotui/runtime/core';
 import type { AppFrameTool, IAppTypeToolPort, ToolResult } from '@aotui/runtime/spi';
 import { invokeOrdinaryParameterTool } from '../utils/ordinary-parameter-tool.js';
 import { exportTypeBoxSchema, schemaDeclarationError, TypeBoxSchemaExportError } from './typebox-schema.js';
 
-const ORDINARY_INVOKER_ABI = 'ordinary-invoker/v3' as const;
+const ORDINARY_INVOKER_ABI = 'ordinary-invoker/v4' as const;
 
 /** JSON values captured from TypeBox and normalized by Runtime. */
 export type JsonSchemaValue = JsonValue;
@@ -134,7 +134,7 @@ function nonEmptyString(value: unknown, field: string): asserts value is string 
 }
 
 function captureOrdinarySchema(schema: unknown): JsonSchemaObject {
-    const compiled = compileOrdinarySchema(schema, VIEW_TYPE_PARAMETERS_MODE);
+    const compiled = compileOrdinarySchema(schema);
     if (!compiled.ok) throw schemaDeclarationError(compiled.issue);
     try {
         ordinaryParameterProfile(compiled.contract);

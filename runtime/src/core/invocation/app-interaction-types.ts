@@ -1,4 +1,3 @@
-import { VIEW_TYPE_PARAMETERS_MODE } from '../tool/ordinary-parameter-contract.js';
 /** Core owns these contracts. The Runtime root also exposes the Host-facing types. */
 import type { AppSnapshotV3, JsonValue, ObservedToolExecutionV3, ToolDescriptorV3 } from '../snapshot/types.js';
 import type { Observation, ObservedView, ObservationSelection, ObservationGrant, ObservationSource, ObservationRegistryStats, ObservationJsonLimits } from './observation-types.js';
@@ -13,7 +12,6 @@ export interface CancellationSignal {
 }
 import type { ToolResultData } from '../../spi/core/tool-result.js';
 export type { ToolResultData } from '../../spi/core/tool-result.js';
-export const ORDINARY_EXECUTION_MODE = 'ordinary-v2' as const;
 export type ExecutionPhase = 'not-entered' | 'entered-returned';
 export type BusinessDetails = Readonly<{kind:'tool-result'; phase:ExecutionPhase; result:ToolResultData}>;
 export type InvocationOutcome =
@@ -77,13 +75,12 @@ export interface InvocationContext {
 }
 export type InputValidation = Readonly<{ok:true; value:JsonObject}> | Readonly<{ok:false}>;
 export type LiveCheck = Readonly<{ok:true}> | Readonly<{ok:false}>;
-export interface ExecutionBindingBase {
+export interface ExecutionBinding {
   readonly identity:object;
   validateInput(source:InvocationSource, input:JsonObject, signal:CancellationSignal):InputValidation|Promise<InputValidation>;
   isLive(source:InvocationSource):LiveCheck;
   execute(context:InvocationContext):ExecutionFact|Promise<ExecutionFact>;
 }
-export type ExecutionBinding = ExecutionBindingBase & Readonly<{mode:typeof ORDINARY_EXECUTION_MODE|typeof VIEW_TYPE_PARAMETERS_MODE}>;
 export interface ExecutionResolver {
   /** Stable identity/function references for one live registered callable. */
   resolve(source:InvocationSource):ExecutionBinding|null;

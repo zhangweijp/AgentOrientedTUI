@@ -5,7 +5,6 @@ import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
-import { migrateAgentAppReferences } from '../src/config/app-reference-migration.js';
 import { createSourceControlsFromAgent, applySourceControlsToSources } from '../src/core/source-controls.js';
 import { appSourceControls } from '../src/shared/source-control-keys.js';
 import { parseTuiSnapshot } from '../src/gui/components/TuiParser.js';
@@ -35,6 +34,7 @@ const facts: { passed: boolean; cases: string[]; calls: Array<Record<string, unk
 let source: InstanceType<typeof SemanticAOTUIDrivenSource> | undefined;
 let sequence = 0;
 const contexts = new Set<any>();
+const adoptedContexts = new WeakSet<object>();
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const server = http.createServer((_request, response) => {
     response.setHeader('content-type', 'text/html');
@@ -54,7 +54,8 @@ function instruction(context: any, appName: string): string {
 }
 function tool(context: any, name: string): string {
     const matches = Object.keys(context.tools).filter(key => key.includes(name));
-    assert.equal(matches.length, 1, `Expected one ${name}; got ${matches.join(', ')}`);
+    const apps = context.messages.find((message: any) => String(message.content).startsWith('<desktop>'));
+    assert.equal(matches.length, 1, `Expected one ${name}; got ${matches.join(', ')}. ${apps?.content ?? ''}`);
     return matches[0]!;
 }
 async function observe() {
@@ -64,14 +65,19 @@ async function observe() {
     for (const message of context.messages) {
         const text = String(message.content);
         if (text.startsWith('<view ') && !text.startsWith('<view id="root"')) {
-            assert.ok(!/^#{1,6} Available Tools\s*$/m.test(text), 'Instance Views do not repeat the static tool catalog');
+            assert.ok(!/^## Tools by ViewType\s*$/m.test(text), 'Instance Views do not repeat the static tool catalog');
             assert.ok(!/<tool-ref\b/.test(text), 'Instance Views do not render tool references');
         }
     }
     return context;
 }
 function release(context: any) { context.release?.(); contexts.delete(context); }
+async function switchContext(context: any) {
+    await context.adopt();
+    adoptedContexts.add(context);
+}
 async function invoke(context: any, name: string, args: unknown, expected = 'succeeded') {
+    if (!adoptedContexts.has(context)) await switchContext(context);
     const result = await context.executeTool(tool(context, name), args, `semantic-e2e-${++sequence}`);
     assert.ok(result, 'Source owns the advertised tool');
     const status = result.outcomeStatus;
@@ -139,13 +145,13 @@ try {
     assert.ok(!workspace.includes('batch_edit'), 'Workspace contains current data rather than a tool catalog');
     const ideInstruction = instruction(initial, 'system_ide');
     assert.ok(ideInstruction.includes('### Workspace') && ideInstruction.includes('### FileDetail') && ideInstruction.includes('### SearchResult'));
-    assert.equal(ideInstruction.match(/^#### Available Tools$/gm)?.length, 3, 'One catalog per IDE View Type');
+    assert.equal(ideInstruction.match(/^## Tools by ViewType$/gm)?.length, 1);
     assert.ok(ideInstruction.includes('- edit_file') && ideInstruction.includes('- batch_edit') && ideInstruction.includes('- close_search_view'),
         'The static catalog includes tools whose Views or enabling state do not exist yet');
     assert.ok(!initial.tools['system_ide-Workspace-batch_edit']);
     assert.ok(!initial.tools['system_ide-SearchResult-close_search_view']);
     const terminalInstruction = instruction(initial, 'terminal');
-    assert.equal(terminalInstruction.match(/^#### Available Tools$/gm)?.length, 2);
+    assert.equal(terminalInstruction.match(/^## Tools by ViewType$/gm)?.length, 1);
     assert.ok(terminalInstruction.includes('- send_command_to_exist_terminal'));
     assert.ok(content(initial).includes('## System Logs'));
     facts.initialProjection = { messages: initial.messages, tools: Object.keys(initial.tools) };
@@ -159,7 +165,7 @@ try {
     release(initial);
     pass('normal AppRegistry installation exposes multiple semantic apps without a dev flag');
 
-    // Reproduce the real failure with an old Agent template and installed Workers.
+    // Unknown keys grant no App capabilities.
     const registeredApps = await manager.getAppsConfig();
     const oldAgent = { id: 'old-agent', name: 'Old Agent', prompt: '', modelId: '', skin: {},
         enabledApps: ['aotui-ide', 'terminal-app', 'lite-browser-app'], enabledSkills: {}, enabledMCPs: [] };
@@ -167,13 +173,11 @@ try {
     applySourceControlsToSources(broken, { aotuiSource: source });
     const filtered = await observe();
     assert.equal(filtered.messages.filter((message: any) => String(message.content).startsWith('<view ')).length, 0);
-    assert.deepEqual(Object.keys(filtered.tools), []);
+    assert.deepEqual(Object.keys(filtered.tools).sort(), ['system-close_app', 'system-open_app']);
     assert.ok(content(filtered).includes('No applications enabled for this context.'));
     assert.equal((await preview()).length, 3, 'Inspection still sees installed apps');
     release(filtered);
-    const migrated = migrateAgentAppReferences({ agents: { list: [oldAgent] } }, registeredApps,
-        { 'aotui-ide': 'system_ide', 'terminal-app': 'terminal', 'lite-browser-app': 'lite_browser' });
-    const selectedAgent = migrated.config.agents!.list[0];
+    const selectedAgent = { ...oldAgent, enabledApps: ['system_ide', 'terminal', 'lite_browser'] };
     const fixed = createSourceControlsFromAgent(selectedAgent, {}, Object.keys(registeredApps));
     assert.deepEqual(fixed.apps, appSourceControls(selectedAgent.enabledApps, Object.keys(registeredApps)), 'GUI and backend app controls agree');
     for (const name of Object.keys(registeredApps)) source.setAppEnabled(name, !fixed.apps.disabledItems.includes(name));
@@ -191,7 +195,7 @@ try {
     assert.ok(!content(explicitlyDisabled).includes('app_name="terminal"'));
     release(explicitlyDisabled);
     source.setAppEnabled('terminal', true);
-    pass('old Agent configuration migrates to matching Messages/Tools and preserves explicit Topic disables');
+    pass('canonical App keys enable matching Messages and Tools and preserve explicit Topic disables');
 
 
     await call('multi_open_dirs', { dirPaths: [path.join(project, 'src')] });
@@ -224,6 +228,7 @@ try {
     const editedPreview = (await preview())[0].views;
     assert.equal(editedPreview.filter(view => view.content.includes('export const answer = 43;')).length, 1);
     assert.ok(!editedPreview.some(view => view.content.includes('export const answer = 42;')));
+    await invoke(edited, 'read_loaded_diagnostics', { filePath: file });
     pass('editing replaces the current file projection with exactly one latest View');
 
     await call('multi_open_file', { filePaths: [otherFile] });
@@ -239,23 +244,28 @@ try {
     await invoke(twoFiles, 'edit_file', { filePath: otherFile, oldString: 'other = 100', newString: 'other = 200' });
     assert.equal(await fs.readFile(file, 'utf8'), 'export const answer = 43;\n', 'First file is untouched');
     assert.equal(await fs.readFile(otherFile, 'utf8'), 'export const other = 200;\n');
-    await invoke(edited, 'read_loaded_diagnostics', { filePath: file });
-    await call('multi_close_file', { filePaths: [otherFile] });
-    await invoke(twoFiles, 'edit_file', { filePath: otherFile, oldString: 'other = 200', newString: 'other = 300' }, 'rejected');
+    const stale = await invoke(edited, 'read_loaded_diagnostics', { filePath: file }, 'rejected');
+    assert.equal(stale.error?.code, 'SEMANTIC_CONTEXT_RELEASED');
+    release(edited);
+    await invoke(twoFiles, 'multi_close_file', { filePaths: [otherFile] });
+    await invoke(twoFiles, 'edit_file', { filePath: otherFile, oldString: 'other = 200', newString: 'other = 300' }, 'failed');
+    assert.equal(await fs.readFile(otherFile, 'utf8'), 'export const other = 200;\n');
     release(twoFiles);
     pass('one readable Tool routes two FileDetails correctly and rejects a closed target without retargeting');
 
-    await call('multi_close_file', { filePaths: [file] });
+    const lastOpen = await observe();
+    await invoke(lastOpen, 'multi_close_file', { filePaths: [file] });
     const closed = await observe();
     assert.ok(!content(closed).includes('export const answer = 43;'));
     assert.ok(!Object.keys(closed.tools).some(key => key.includes('edit_file')));
     assert.equal(instruction(closed, 'system_ide'), ideInstruction, 'Closing the last file preserves the catalog but removes its tools');
     assert.ok(!(await preview())[0].views.some(view => view.content.includes('export const answer = 43;')));
     release(closed);
-    await invoke(edited, 'read_loaded_diagnostics', { filePath: file }, 'rejected');
+    await invoke(lastOpen, 'read_loaded_diagnostics', { filePath: file }, 'rejected');
     await call('multi_open_file', { filePaths: [file] });
-    await invoke(edited, 'read_loaded_diagnostics', { filePath: file }, 'rejected');
-    release(edited);
+    const staleAfterReopen = await invoke(lastOpen, 'read_loaded_diagnostics', { filePath: file }, 'rejected');
+    assert.equal(staleAfterReopen.error?.code, 'SEMANTIC_CONTEXT_RELEASED');
+    release(lastOpen);
     pass('closing/reopening a file revokes its old binding without rebinding it to the new View');
 
     const createdTerminal = await call('new_terminal_and_send_command', { command: "printf 'SEMANTIC_TERMINAL_OK\\n'" });
@@ -264,20 +274,22 @@ try {
     const terminalId = (createdTerminal.result as any).terminal_id;
     assert.equal(instruction(terminal, 'terminal'), terminalInstruction);
     assert.equal(typeof terminalId, 'string');
-    const createdSecond = await call('new_terminal_and_send_command', { command: "printf 'SECOND_TERMINAL_OK\\n'" });
+    const createdSecond = await invoke(terminal, 'new_terminal_and_send_command', { command: "printf 'SECOND_TERMINAL_OK\\n'" });
     const secondId = (createdSecond.result as any).terminal_id;
     const twoTerminals = await eventually(context => content(context).includes('SECOND_TERMINAL_OK') && Object.keys(context.tools).some(key => key.includes('send_command_to_exist_terminal')), 'second terminal completion');
     assert.equal(instruction(twoTerminals, 'terminal'), terminalInstruction);
     assert.deepEqual(twoTerminals.tools[tool(twoTerminals, 'load_more_output')].inputSchema.jsonSchema, terminal.tools[tool(terminal, 'load_more_output')].inputSchema.jsonSchema);
     await invoke(twoTerminals, 'load_more_output', { terminal_id: secondId, tail_lines: 10 });
     await invoke(twoTerminals, 'close_terminal', { terminal_id: secondId });
-    await invoke(twoTerminals, 'load_more_output', { terminal_id: secondId, tail_lines: 10 }, 'rejected');
     release(twoTerminals);
-    await invoke(terminal, 'load_more_output', { terminal_id: terminalId, tail_lines: 10 });
-    await invoke(terminal, 'close_terminal', { terminal_id: terminalId });
-    await invoke(terminal, 'load_more_output', { terminal_id: terminalId, tail_lines: 10 }, 'rejected');
+    const remainingTerminal = await eventually(context => !content(context).includes('id="' + secondId + '"'), 'second Terminal View removed');
+    const closedTerminal = await invoke(remainingTerminal, 'load_more_output', { terminal_id: secondId, tail_lines: 10 }, 'failed');
+    assert.equal(closedTerminal.error?.code, 'TERMINAL_NOT_FOUND');
+    await invoke(remainingTerminal, 'load_more_output', { terminal_id: terminalId, tail_lines: 10 });
+    await invoke(remainingTerminal, 'close_terminal', { terminal_id: terminalId });
+    release(remainingTerminal);
     release(terminal);
-    const terminalsClosed = await observe();
+    const terminalsClosed = await eventually(context => !Object.keys(context.tools).some(name => name.startsWith('terminal-Terminal-')), 'last Terminal closed');
     assert.equal(instruction(terminalsClosed, 'terminal'), terminalInstruction);
     assert.ok(!Object.keys(terminalsClosed.tools).some(name => name.startsWith('terminal-Terminal-')));
     release(terminalsClosed);
@@ -289,7 +301,7 @@ try {
     const browser = await eventually(context => Object.keys(context.tools).some(key => key.includes('fetch_url')), 'lazy browser ready');
     assert.ok(!Object.keys(browser.tools).some(key => key.includes('close_page')));
     const browserInstruction = instruction(browser, 'lite_browser');
-    assert.equal(browserInstruction.match(/^#### Available Tools$/gm)?.length, 4);
+    assert.equal(browserInstruction.match(/^## Tools by ViewType$/gm)?.length, 1);
     assert.ok(browserInstruction.includes('- close_page') && browserInstruction.includes('- open_result'));
     release(browser);
     await new Promise<void>((resolve, reject) => {
@@ -305,9 +317,10 @@ try {
     assert.equal(browserPreview?.status, 'running');
     assert.ok(browserPreview?.views.some(view => view.content.includes('SEMANTIC_BROWSER_OK')));
     await invoke(page, 'close_page', {});
-    await invoke(page, 'close_page', {}, 'rejected');
     release(page);
-    const pageClosed = await observe();
+    const stalePage = await invoke(page, 'close_page', {}, 'rejected');
+    assert.equal(stalePage.error?.code, 'SEMANTIC_CONTEXT_RELEASED');
+    const pageClosed = await eventually(context => !Object.keys(context.tools).some(key => key.includes('close_page')), 'Browser Page closed');
     assert.equal(instruction(pageClosed, 'lite_browser'), browserInstruction);
     assert.ok(!Object.keys(pageClosed.tools).some(key => key.includes('close_page')));
     release(pageClosed);

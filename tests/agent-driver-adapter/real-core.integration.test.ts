@@ -3,7 +3,7 @@ import { expect, it } from 'vitest';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { SemanticSnapshotReceiver } from '../../runtime/src/adapters/snapshot/receiver.js';
 import { createViewOwnedTools } from '../../runtime/src/core/tool/view-owned-tools.js';
-import { compileOrdinaryParams } from '../../runtime/src/core/tool/ordinary-parameter-contract.js';
+import { compileOrdinarySchema } from '../../runtime/src/core/tool/ordinary-parameter-contract.js';
 import type { AppDiscoveryInfo, IDesktop, IKernel } from '../../runtime/src/spi/runtime/kernel.interface.js';
 import type { ExecutionBinding, InvocationContext, InvocationSource, AppInteractionPolicy } from '@aotui/runtime/core';
 import type { ViewToolInvocationTerminal } from '../../runtime/src/core/tool/invocation-terminal.js';
@@ -18,7 +18,7 @@ function inspectCore(receiver: SemanticSnapshotReceiver) {
 
 function createApp(appId: string, name: string, instanceId: string, viewType: string, body: string, viewName = 'Workspace') {
     const registry = createViewOwnedTools(appId, instanceId);
-    const input = compileOrdinaryParams({ value: { type: 'string', required: true } }, { additionalProperties: false });
+    const input = compileOrdinarySchema({ type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false });
     if (!input.ok) throw new Error('The real registry fixture requires a valid ordinary Tool contract.');
 
     const invoked: string[] = [];
@@ -28,9 +28,9 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
         const definition: AppTypeToolDefinition = { viewType: type, name: 'run', description: 'Run the current App Tool.',
             inputSchema: input.contract.schema };
         return registry.registerTypeTool(definition, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
+            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
             createSafeOrdinaryParametersInvoker: contract => async args => {
-                const checked = contract.validate(args);
+                const checked = contract.validateResolvedInput(args);
                 if (!checked.ok) return { phase: 'not-entered', result: { success: false,
                     error: { code: checked.code, message: 'Input did not match the registered Tool contract.' } } };
                 const value = String(checked.value.value);
@@ -44,9 +44,8 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
     const receiver = new SemanticSnapshotReceiver(appId, instanceId, () => 100);
     const binding: ExecutionBinding = {
         identity: {},
-        mode: 'ordinary-v2',
         validateInput: (_source: InvocationSource, value: Readonly<Record<string, unknown>>) => {
-            const checked = input.contract.validate(value);
+            const checked = input.contract.validateModelInput(value);
             return checked.ok ? { ok: true, value: checked.value } : { ok: false };
         },
         isLive: source => registry.validateTypeToolBinding(source.tool, source.execution).success

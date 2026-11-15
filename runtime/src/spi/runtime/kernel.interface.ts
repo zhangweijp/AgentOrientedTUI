@@ -188,18 +188,6 @@ export interface IKernel {
     serialize(desktopId: DesktopID): DesktopState;
 
     /**
-     * [RFC-014] 优雅关闭 Desktop
-     * 
-     * 1. 等待 Desktop 及其 App 清理完成
-     * 2. 执行 beforeClose 回调（如持久化）
-     * 3. 销毁 Desktop
-     * 
-     * @param desktopId - Desktop ID
-     * @param options - 关闭选项
-     */
-    gracefulShutdown(desktopId: DesktopID, options?: ShutdownOptions): Promise<void>;
-
-    /**
      * [RFC-015] 删除 Desktop
      * 
      * 永久销毁 Desktop 及其所有数据。

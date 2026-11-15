@@ -38,7 +38,7 @@ import type {
 
 // Runtime SPI types
 import type { AppContext, SignalPolicy } from '../spi/index.js';
-import { createAppId, createDesktopId, isTUIAppFactory } from '../spi/index.js';
+import { createAppId, isTUIAppFactory } from '../spi/index.js';
 import { AOTUIError } from '../spi/core/errors.js';
 import { captureSnapshotPrepareIssue } from '../core/snapshot/snapshot-support.js';
 

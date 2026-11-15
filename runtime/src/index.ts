@@ -56,7 +56,6 @@ export {
     createDesktopId,
     createAppId,
     createViewId,
-    SEMANTIC_INTERACTION_MODES,
 } from './spi/index.js';
 export type {
     AppContext,
@@ -78,7 +77,6 @@ export type {
     ErrorCode,
     IDesktop,
     IKernel,
-    InteractionMode,
     InteractionCloseReport,
     LLMOutputEvent,
     LLMOutputEventMeta,

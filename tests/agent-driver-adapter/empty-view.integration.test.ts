@@ -119,7 +119,6 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
                 workerScriptPath: fixture.workerScript,
                 existingWorker: worker,
                 config: { AOTUI_DATA_DIR: directory },
-                interactionModes: ['view-type-parameters-v1'],
             });
             await host.start();
             await host.open();

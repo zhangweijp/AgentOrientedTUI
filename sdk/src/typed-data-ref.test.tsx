@@ -105,10 +105,10 @@ describe('typed single-object Ref',()=>{
    const input=Type.Object({plans:Type.Array(refParam('Plan',schema),{maxItems:3}),
      optional:Type.Optional(refParam('Plan',schema))},{additionalProperties:false});
    const tool=defineViewTypeTool({viewType:'Plan',name:'choose',description:'Choose Plans',inputSchema:input});
-   const compiled=compileOrdinarySchema(tool.inputSchema,'view-type-parameters-v1');
+   const compiled=compileOrdinarySchema(tool.inputSchema);
    expect(compiled.ok).toBe(true);if(!compiled.ok)throw Error('contract');
-   expect(compiled.contract.validateModelInput!({plans:['detail.a','detail.b']}).ok).toBe(true);
-   expect(compiled.contract.validateResolvedInput!({plans:[{id:'a',title:'A'},{id:'b',title:'B'}]}).ok).toBe(true);
+   expect(compiled.contract.validateModelInput({plans:['detail.a','detail.b']}).ok).toBe(true);
+   expect(compiled.contract.validateResolvedInput({plans:[{id:'a',title:'A'},{id:'b',title:'B'}]}).ok).toBe(true);
    expect(Object.isFrozen(tool.inputSchema)).toBe(true);
    expect(()=>define(Type.Array(refParam(' ',schema)))).toThrow(expect.objectContaining({code:'TOOL_SCHEMA_INVALID'}));
  });

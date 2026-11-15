@@ -19,11 +19,10 @@ import type { ManagedPersistenceReport } from '../../worker-runtime/state-persis
  * @module @aotui/runtime/engine/app-worker
  */
 
-import type { InteractionMode } from '../../spi/worker-protocol/messages.js';
-import { SEMANTIC_INTERACTION_MODES, appInteractionUnavailable, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
+import { appInteractionUnavailable, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
 import { projectCompleteViews } from '../../core/invocation/observation-registry.js';
-import { captureInteractionModes } from './interaction-config.js';
-import { compileOrdinaryProfile, ORDINARY_PARAMETER_MARKER } from '../../core/tool/ordinary-parameter-profile.js';
+import { captureToolsEnabled } from './interaction-config.js';
+import { compileOrdinaryProfile } from '../../core/tool/ordinary-parameter-profile.js';
 import { captureTypeParametersRequest } from '../../adapters/ordinary-invocation-v2.js';
 import { VIEW_TYPE_PARAMETERS_MODE as PARAMETERS_MODE } from '../../core/tool/ordinary-parameter-contract.js';
 import { Worker } from 'worker_threads';
@@ -93,7 +92,7 @@ export interface AppWorkerHostConfig {
     workerCapacity?: WorkerCapacity;
     config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig; // Configuration Injection
     runtimeConfig?: { worker: WorkerConfig }; // [RFC-005] Runtime Config
-    interactionModes?: readonly InteractionMode[];
+    toolsEnabled?: boolean;
 }
 
 /**
@@ -333,11 +332,10 @@ export class AppWorkerHost {
         return this.projectionRefresh.promise;
     }
 
-    getInteractionReport(): Readonly<{ mode: 'instance'; negotiatedModes: readonly InteractionMode[]; workerToolPending: boolean; core: InteractionStats }> | null {
+    getInteractionReport(): Readonly<{ toolsEnabled: boolean; workerToolPending: boolean; core: InteractionStats }> | null {
         const core = this.snapshotReceiver?.getInteractionStats();
         return core ? Object.freeze({
-            mode: 'instance' as const,
-            negotiatedModes: this.hasOrdinaryParametersCapability() ? SEMANTIC_INTERACTION_MODES : Object.freeze([]),
+            toolsEnabled: this.hasOrdinaryParametersCapability(),
             workerToolPending: !!this.pendingTool(), core,
         }) : null;
     }
@@ -346,35 +344,25 @@ export class AppWorkerHost {
         if (!this.interactionAvailable() || source.appId !== String(this.appId) || source.instanceId !== this.appInstanceId) return null;
         const existing = this.interactionBindings.get(source);
         if (existing) return existing;
-        const marked = source.tool.inputSchema !== null && typeof source.tool.inputSchema === 'object' &&
-            Object.hasOwn(source.tool.inputSchema, ORDINARY_PARAMETER_MARKER);
+        if (source.execution.kind !== 'view-type' || !this.hasOrdinaryParametersCapability()) return null;
+        const parameters = compileOrdinaryProfile(source.tool.inputSchema);
+        if (!parameters) return null;
         const worker = this.worker!, version = this.lifecycleContextVersion;
-        const live = (capability: () => boolean) => () => this.interactionAvailable() && this.worker === worker &&
-            this.lifecycleContextVersion === version && capability();
-
-        if (source.execution.kind === 'view-type') {
-            if (!marked || !this.hasOrdinaryParametersCapability()) return null;
-            const parameters = compileOrdinaryProfile(source.tool.inputSchema);
-            if (!parameters || parameters.revision !== PARAMETERS_MODE) return null;
-            const execution = source.execution;
-            const isLive = live(() => this.hasOrdinaryParametersCapability());
-            const binding: ExecutionBinding = Object.freeze({ identity: Object.freeze({}), mode: PARAMETERS_MODE,
-                validateInput: (_source: InvocationSource, input: Readonly<Record<string, JsonValue>>) => {
-                    const result = (parameters.validateResolvedInput ?? parameters.validate)(input);
-                    return result.ok ? { ok: true as const, value: result.value } : { ok: false as const };
-                },
-                isLive: () => ({ ok: isLive() }),
-                execute: (context: InvocationContext) => this.dispatchTool({ type: 'VIEW_TOOL_INVOKE_V5', requestId: generateRequestId(),
-                    appId: source.appId as AppID, instanceId: source.instanceId, snapshotId: source.snapshotId,
-                    tool: source.tool, argumentMode: PARAMETERS_MODE, execution, rawArgs: context.rawInput,
-                    effectiveArgs: context.effectiveInput, refSources: context.refSources,
-                }, { worker, version, signal: context.signal }),
-            });
-            this.interactionBindings.set(source, binding);
-            return binding;
-        }
-
-        return null;
+        const binding: ExecutionBinding = Object.freeze({ identity: Object.freeze({}),
+            validateInput: (_source: InvocationSource, input: Readonly<Record<string, JsonValue>>) => {
+                const result = parameters.validateResolvedInput(input);
+                return result.ok ? { ok: true as const, value: result.value } : { ok: false as const };
+            },
+            isLive: () => ({ ok: this.interactionAvailable() && this.worker === worker &&
+                this.lifecycleContextVersion === version && this.hasOrdinaryParametersCapability() }),
+            execute: (context: InvocationContext) => this.dispatchTool({ type: 'VIEW_TOOL_INVOKE_V5', requestId: generateRequestId(),
+                appId: source.appId as AppID, instanceId: source.instanceId, snapshotId: source.snapshotId,
+                tool: source.tool, argumentMode: PARAMETERS_MODE, execution: source.execution, rawArgs: context.rawInput,
+                effectiveArgs: context.effectiveInput, refSources: context.refSources,
+            }, { worker, version, signal: context.signal }),
+        });
+        this.interactionBindings.set(source, binding);
+        return binding;
     };
 
     private dispatchTool(message: import('../../spi/worker-protocol/messages.js').ViewToolInvokeV5Message,
@@ -408,13 +396,13 @@ export class AppWorkerHost {
     // Notify the Desktop when an App publication changes.
     onUpdateRequest?: () => void;
     constructor(config: AppWorkerHostConfig) {
-        const modes = captureInteractionModes(config);
+        const toolsEnabled = captureToolsEnabled(config);
         this.appId = config.appId;
         this.desktopId = config.desktopId;
         this.name = config.name;
         this.appModulePath = config.appModulePath;
         this.appInstanceId = randomUUID();
-        this.requestParameters = modes === undefined || modes.length > 0;
+        this.requestParameters = toolsEnabled !== false;
         this.snapshotReceiver = new SemanticSnapshotReceiver(String(this.appId), this.appInstanceId);
         // [C1 Fix] Default to Runtime's built-in worker-runtime
         this.workerScriptPath = config.workerScriptPath ? resolve(config.workerScriptPath) : DEFAULT_WORKER_SCRIPT;

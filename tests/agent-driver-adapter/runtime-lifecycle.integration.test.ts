@@ -74,13 +74,12 @@ afterAll(async () => {
     else if (directory) await rm(directory, { recursive: true, force: true });
 });
 
-const allModes = ['view-type-parameters-v1'] as const;
 function makeRuntime() { return runtimePackage.createRuntime({ worker: { timeoutMs: 4000, maxWorkers: 8 } }); }
-async function install(runtime: any, desktop = 'd', id = 'a', modes?: any, extra = {}, appPath = app) {
+async function install(runtime: any, desktop = 'd', id = 'a', toolsEnabled?: boolean, extra = {}, appPath = app) {
     try { runtime.getDesktop(desktop); } catch { await runtime.createDesktop(desktop); }
     return runtime.installDynamicWorkerApp(desktop, pathToFileURL(appPath).href, {
         appId: id, config: { AOTUI_DATA_DIR: join(directory, 'data', desktop, id) }, ...extra,
-        ...(modes === undefined ? {} : { interactionModes: modes }),
+        ...(toolsEnabled === undefined ? {} : { toolsEnabled }),
     });
 }
 function scope(runtime: any, desktop = 'd', id = 'a') {
@@ -123,7 +122,7 @@ async function waitForViewText(client: any, expected: string) {
     throw Error('View update deadline: ' + JSON.stringify({ expected, last }));
 }
 
-it('B2 C08/26 omitted interactionModes enables ordinary and Ref calls through the shared current contract in the tar package', async () => {
+it('B2 C08/26 omitted toolsEnabled enables ordinary and Ref calls through the shared current contract in the tar package', async () => {
     const runtime = makeRuntime();try {
         await install(runtime);const s = scope(runtime), observation = await s.observe(), outputs: any[] = [];
         for (const [index, [name, input]] of ([['ordinary', { text: 'change' }], ['ref', { file: 'detail.file' }]] as const).entries()) {
@@ -135,9 +134,9 @@ it('B2 C08/26 omitted interactionModes enables ordinary and Ref calls through th
     } finally { expect((await runtime.beginShutdown().completion).ok).toBe(true); }
 }, 15000);
 
-it('B2 C09 one qualified mode exposes ordinary and Ref tools through the same contract', async () => {
+it('B2 C09 toolsEnabled true exposes ordinary and Ref tools through the same contract', async () => {
     const runtime = makeRuntime();try {
-        await install(runtime, 'd', 'a', allModes);const s = scope(runtime), observation = await s.observe();
+        await install(runtime, 'd', 'a', true);const s = scope(runtime), observation = await s.observe();
         for (const [name, input] of [['ordinary', { text: 'change' }], ['ref', { file: 'detail.file' }]] as const) {
             expect(observation.bindings.some((binding: any) => binding.toolId === observation.tools.find((tool: any) => tool.name === name)?.id)).toBe(true);
             const first = await s.client.invoke(request(observation, name, input, name));
@@ -150,20 +149,22 @@ it('B2 C09 one qualified mode exposes ordinary and Ref tools through the same co
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);
 
-it('B2 C05 explicit empty interactionModes preserves Views but grants no executable bindings', async () => {
+it('B2 C05 toolsEnabled false preserves Views but grants no executable bindings', async () => {
     const runtime = makeRuntime();try {
-        await install(runtime, 'd', 'a', []);const s = scope(runtime), observation = await s.observe();
+        await install(runtime, 'd', 'a', false);const s = scope(runtime), observation = await s.observe();
         expect(observation.views.some((view: any) => view.id === 'detail')).toBe(true);
         expect(observation.bindings).toEqual([]);
 
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);
 
-it('B2 C05 invalid public interactionModes reject before registering the app', async () => {
-    const runtime = makeRuntime();try {
-        await expect(install(runtime, 'd', 'duplicate', ['view-type-parameters-v1', 'view-type-parameters-v1'])).rejects.toMatchObject({ code: 'INTERACTION_MODES_INVALID' });
-        await expect(install(runtime, 'd', 'unknown', ['view-type-parameters-v1', 'future-v3'])).rejects.toMatchObject({ code: 'INTERACTION_MODES_INVALID' });
-        for (const retired of ['ordinary-v2', 'snapshot-value-v2']) await expect(install(runtime, 'd', 'retired', [retired])).rejects.toMatchObject({ code: 'INTERACTION_MODES_INVALID' });
+it('rejects invalid tool settings and the retired Host key before registering an App', async () => {
+    const runtime = makeRuntime();
+    try {
+        await expect(install(runtime, 'd', 'bad-value', 'false' as any)).rejects.toMatchObject({ code: 'TOOLS_ENABLED_INVALID' });
+        for (const value of [[], ['view-type-parameters-v1'], undefined]) {
+            await expect(install(runtime, 'd', 'retired', undefined, { interactionModes: value })).rejects.toMatchObject({ code: 'TOOLS_ENABLED_INVALID' });
+        }
         expect(runtime.getDesktop('d').getInstalledApps()).toEqual([]);
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);
@@ -232,7 +233,7 @@ export default createApp({ app_name: 'profile_capacity', tools, initialize({ pub
 
     const runtime = makeRuntime();
     try {
-        await install(runtime, 'd', 'a', allModes, {}, entry);
+        await install(runtime, 'd', 'a', true, {}, entry);
         const s = scope(runtime), observation = await s.observe();
         const profile = observation.tools.find((tool: any) => tool.name === 'wide')?.inputSchema;
         expect(new TextEncoder().encode(JSON.stringify(profile)).byteLength).toBe(fixture.profileBytes);
@@ -245,61 +246,56 @@ export default createApp({ app_name: 'profile_capacity', tools, initialize({ pub
     }
 }, 15000);
 
-it('rejects the previous SDK helper at the packed Runtime import or registration boundary', async () => {
-    const helper = join(directory, 'legacy-ordinary-parameter-tool.mjs');
-    await capture(helper, await readFile(new URL('../fixtures/legacy-ordinary-parameter-tool.mjs', import.meta.url), 'utf8'));
-    const { invokeOrdinaryParameterTool } = await import(pathToFileURL(helper).href);
-    const throws = () => { throw Error('legacy helper handler'); };
-    const oldTerminal = await invokeOrdinaryParameterTool({ validate: () => ({ ok: true, value: {} }) }, {}, throws);
-    expect(oldTerminal).toEqual({ phase: 'entered-returned', result: {
-        success: false, error: { code: 'E_HANDLER_ERROR', message: 'Tool handler failed' },
-    } });
-
+it('rejects retired imports and an incompatible invoker ABI in a real Worker', async () => {
     const exportsEntry = join(directory, 'b01-exports.mjs');
     await capture(exportsEntry, "export * as core from '@aotui/runtime/core';\nexport * as spi from '@aotui/runtime/spi';\n");
     const { core, spi } = await import(pathToFileURL(exportsEntry).href);
-    expect(core.ORDINARY_INVOKER_ABI_V3).toBe('ordinary-invoker/v3');
+    expect(core.ORDINARY_INVOKER_ABI_V4).toBe('ordinary-invoker/v4');
+    expect(core).not.toHaveProperty('ORDINARY_INVOKER_ABI_V3');
     expect(core).not.toHaveProperty('ORDINARY_INVOCATION_MODE');
     expect(spi.PARAMETERS_V5_CAPABILITY).toBe('view-tool-parameters-invoke/v5');
     expect(spi).not.toHaveProperty('PARAMETERS_V4_CAPABILITY');
 
     const runtime = makeRuntime();
     try {
-        for (const variant of ['import', 'inline']) {
-            const file = join(directory, `legacy-${variant}.mjs`);
+        for (const variant of ['import', 'ordinary-v2', 'ordinary-invoker/v3']) {
+            const file = join(directory, `legacy-${variant.replace('/', '-')}.mjs`);
+            const declaration = variant === 'import'
+                ? "import { ORDINARY_INVOCATION_MODE as abi } from '@aotui/runtime/core';"
+                : `const abi = ${JSON.stringify(variant)};`;
             await capture(file, `
-${variant === 'import' ? "import { ORDINARY_INVOCATION_MODE } from '@aotui/runtime/core';" : "const ORDINARY_INVOCATION_MODE = 'ordinary-v2';"}
-import { invokeOrdinaryParameterTool } from './legacy-ordinary-parameter-tool.mjs';
+${declaration}
 export default {
     displayName: 'legacy_sdk', kernelConfig: { name: 'legacy_sdk', appName: 'legacy_sdk' },
     toolAuthoringProtocol: 'view-type-tools-v4', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
     initialize({ appTypeTools }) {
         appTypeTools.registerTypeTool({ viewType: 'Detail', name: 'old', description: 'Legacy Tool',
             inputSchema: { type: 'object', properties: {}, additionalProperties: false } }, {
-            safeOrdinaryParametersInvocationMode: ORDINARY_INVOCATION_MODE,
-            createSafeOrdinaryParametersInvoker: contract => args => invokeOrdinaryParameterTool(contract, args, () => { throw Error('legacy helper handler'); }),
+            safeOrdinaryParametersInvocationMode: abi,
+            createSafeOrdinaryParametersInvoker: () => { throw Error('UNSUPPORTED_INVOKER_FACTORY_ENTERED'); },
         });
         return { close() {} };
     }
 };\n`);
             const issue = variant === 'import'
                 ? { code: 'E_INIT_FAILED', cause: { message: expect.stringContaining('ORDINARY_INVOCATION_MODE') } }
-                : { code: 'E_OPEN_FAILED', cause: { code: 'TOOL_INVALID' } };
-            await expect(install(runtime, 'd', variant, allModes, {}, file)).rejects.toMatchObject({
+                : { code: 'E_OPEN_FAILED', cause: { code: 'TOOL_INVOKER_ABI_UNSUPPORTED',
+                    message: expect.stringContaining('Expected ordinary-invoker/v4. Install matching Runtime and SDK packages') } };
+            await expect(install(runtime, 'd', variant, undefined, {}, file)).rejects.toMatchObject({
                 code: 'INSTALL_FAILED', cause: { code: 'INSTALL_FAILED', cause: issue },
             });
             expect(runtime.getDesktop('d').getInstalledApps()).toEqual([]);
         }
-        facts.push({ case: 'B01-retires-old-sdk-import-and-inline-invoker-abi', oldTerminal, variants: ['import', 'inline'] });
+        facts.push({ case: 'rejects-retired-import-and-invoker-abi', variants: ['import', 'ordinary-v2', 'ordinary-invoker/v3'] });
     } finally {
         expect(await runtime.beginShutdown().completion).toMatchObject({ ok: true, resourcesReleased: true });
     }
 }, 15000);
 
-it.each(allModes)('B2 C09/24 missing, invalid or v4 ACK rejects public %s before installation', async mode => {
+it('rejects a missing, invalid or v4 ACK before installing an App', async () => {
     for (const variant of ['missing', 'invalid', 'v4']) {
         const capabilities = variant === 'invalid' ? ['unknown-capability'] : ['app-snapshot/v3', 'view-tool-parameters-invoke/v4'];
-        const runtime = makeRuntime(), script = join(directory, `ack-${mode}-${variant}.mjs`);
+        const runtime = makeRuntime(), script = join(directory, `ack-${variant}.mjs`);
         await capture(script, `import {parentPort} from 'node:worker_threads';
 let instanceId, closePending;
 function respond(m) {
@@ -325,11 +321,11 @@ parentPort.on('message',m=>{
 });
 `);
         try {
-            await expect(install(runtime, 'd', 'a', [mode], { workerScriptPath: script })).rejects.toMatchObject({ code: 'INSTALL_FAILED' });
+            await expect(install(runtime, 'd', 'a', undefined, { workerScriptPath: script })).rejects.toMatchObject({ code: 'INSTALL_FAILED' });
             const installed = runtime.getDesktop('d').getInstalledApps().find((entry: any) => entry.appId === 'a');
             expect(installed).toBeUndefined();
             const report = await runtime.beginShutdown().completion;
-            facts.push({ case: `capability-ack-${mode}-${variant}`, report, installedStatus: installed?.status });
+            facts.push({ case: `capability-ack-${variant}`, report, installedStatus: installed?.status });
             expect(report).toMatchObject({ resourcesReleased: true, hasFailures: false, verification: 'managed', interactions: { verified: true, retainedOperations: 0, retainedBytes: 0 } });
         } finally { await runtime.beginShutdown().completion; }
     }
@@ -403,11 +399,11 @@ it.each((['authorize', 'auto-read', 'duplicate-read'] as const).flatMap(stage =>
     }
 }, 25000);
 
-it('B2 C06/10–12/16 public pending/collapse/pause/reopen/reinitialize keeps modes and permanently closes old clients', async () => {
+it('B2 C06/10–12/16 public pending/collapse/pause/reopen/reinitialize keeps the trusted setting and permanently closes old clients', async () => {
     const runtime = makeRuntime();try {
-        const id = await runtime.createDesktop('d'), desktop = runtime.getDesktop(id), modes: Array<(typeof allModes)[number]> = ['view-type-parameters-v1'];
-        await desktop.registerPendingApp({ appId: 'a', modulePath: pathToFileURL(app).href, interactionModes: modes });modes.length = 0;
-        expect(desktop.getInstalledApps().find((entry: any) => entry.appId === 'a')?.interactionModes).toEqual(['view-type-parameters-v1']);
+        const id = await runtime.createDesktop('d'), desktop = runtime.getDesktop(id);
+        const pending = { appId: 'a', modulePath: pathToFileURL(app).href, toolsEnabled: true };
+        await desktop.registerPendingApp(pending); pending.toolsEnabled = false;
         expect(runtime.getAppInteraction(id, 'a', 'missing').issue.code).toBe('APP_INTERACTION_UNAVAILABLE');await desktop.openApp('a');
         const s = scope(runtime), first = await s.observe();await desktop.collapseApp('a');expect(runtime.getAppInteraction(id, 'a', s.instanceId).interaction).toBe(s.client);
         await runtime.suspend(id);expect(runtime.getAppInteraction(id, 'a', s.instanceId, s.policy).issue.code).toBe('APP_INTERACTION_UNAVAILABLE');
@@ -419,12 +415,19 @@ it('B2 C06/10–12/16 public pending/collapse/pause/reopen/reinitialize keeps mo
         expect((await reopened.client.observe({ viewIds: ['detail'] })).status).toBe('rejected');await reinitializing;
         const fresh = scope(runtime), last = await fresh.observe();expect(last.source.instanceId).not.toBe(next.source.instanceId);
         expect((await fresh.client.invoke(request(last))).receipt.outcome.status).toBe('succeeded');
-        facts.push({ case: 'instance-boundaries', instances: [first.source.instanceId, next.source.instanceId, last.source.instanceId], registeredModes: ['view-type-parameters-v1'] });
+        facts.push({ case: 'instance-boundaries', instances: [first.source.instanceId, next.source.instanceId, last.source.instanceId], toolsEnabled: true });
     } finally { await runtime.beginShutdown().completion; }
 }, 20000);
 
 it('Semantic lifecycle controls stay bound to the App instance observed by each live Agent Context', async () => {
     const runtime = makeRuntime(), contexts: any[] = [], sources: any[] = [];
+    const definitions = (context: any) => ['system-open_app', 'system-close_app'].map(name => {
+        const tool = context.tools[name];
+        expect(tool).toBeDefined();
+        expect(tool.inputSchema.jsonSchema).toEqual({ type: 'object', properties: { app_id: { type: 'string' } },
+            required: ['app_id'], additionalProperties: false });
+        return { name, description: tool.description, schema: tool.inputSchema.jsonSchema };
+    });
     const call = async (context: any, name: string, args: any, callId: string) => {
         expect(context.tools[name]).toBeDefined();
         return context.executeTool(name, args, callId);
@@ -438,8 +441,17 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
         const value = await source.getContext();contexts.push(value);await value.adopt();return value;
     };
     try {
+        const empty = await context(), base = definitions(empty);
+        expect(Object.keys(empty.tools).sort()).toEqual(['system-close_app', 'system-open_app']);
+        for (const name of ['system-open_app', 'system-close_app']) {
+            expect((await call(empty, name, { app_id: 'a' }, 'empty-' + name))?.error?.code).toBe('INVALID_APP_TARGET');
+        }
+        expect(desktop.getInstalledApps()).toEqual([]);
         await install(runtime, desktopId, 'a', undefined, { name: 'interaction_example' });
         const first = await context();
+        expect(definitions(first)).toEqual(base);
+        expect((await call(first, 'system-open_app', { app_id: 'a' }, 'already-open'))?.error?.code).toBe('INVALID_APP_TARGET');
+        expect(first.tools['system-show_app']).toBeUndefined();
         const dynamicTool = Object.keys(first.tools).find(name => name === 'interaction_example-Detail-ordinary');
         expect(dynamicTool).toBeDefined();
         const firstInstance = desktop.getInstalledApps().find((entry: any) => entry.appId === 'a')?.appInstanceId;
@@ -449,13 +461,20 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
 
         expect((await call(first, 'system-collapse_app', { app_id: 'a' }, 'first-collapse'))?.outcomeStatus).toBe('succeeded');
         const collapsedFirst = await context();
+        expect(definitions(collapsedFirst)).toEqual(base);
+        expect(collapsedFirst.tools['system-collapse_app']).toBeUndefined();
+        expect(collapsedFirst.tools[dynamicTool!]).toBeUndefined();
         expect((await call(collapsedFirst, 'system-show_app', { app_id: 'a' }, 'first-show'))?.outcomeStatus).toBe('succeeded');
         expect((await call(first, 'system-close_app', { app_id: 'a' }, 'first-close'))?.outcomeStatus).toBe('succeeded');
         expect((await call(first, dynamicTool!, { filePath: '/open/note.txt', text: 'change' }, 'closed-read'))?.error?.code).toBe('APP_INTERACTION_UNAVAILABLE');
 
         const closed = await context();
+        expect(definitions(closed)).toEqual(base);
+        expect(closed.tools[dynamicTool!]).toBeUndefined();
+        expect((await call(closed, 'system-close_app', { app_id: 'a' }, 'already-closed'))?.error?.code).toBe('INVALID_APP_TARGET');
         expect((await call(closed, 'system-open_app', { app_id: 'a' }, 'reopen'))?.outcomeStatus).toBe('succeeded');
         const successor = await context();
+        expect(definitions(successor)).toEqual(base);
         const successorInstance = desktop.getInstalledApps().find((entry: any) => entry.appId === 'a')?.appInstanceId;
         expect(successorInstance).toEqual(expect.any(String));
         expect(successorInstance).not.toBe(firstInstance);
@@ -466,6 +485,9 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
         for (const [name, callId] of [['system-close_app', 'stale-close'], ['system-collapse_app', 'stale-collapse']] as const) {
             expect((await call(first, name, { app_id: 'a' }, callId))?.error?.code).toBe('APP_INSTANCE_CHANGED');
         }
+        expect(desktop.getInstalledApps().find((entry: any) => entry.appId === 'a')).toMatchObject({
+            status: 'running', appInstanceId: successorInstance,
+        });
 
         expect((await call(successor, 'system-collapse_app', { app_id: 'a' }, 'successor-collapse'))?.outcomeStatus).toBe('succeeded');
         const collapsedSuccessor = await context();
@@ -473,6 +495,8 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
         expect((await call(collapsedSuccessor, 'system-show_app', { app_id: 'a' }, 'successor-show'))?.outcomeStatus).toBe('succeeded');
         const runningSuccessor = await context();
         expect((await call(runningSuccessor, 'system-close_app', { app_id: 'a' }, 'successor-close'))?.outcomeStatus).toBe('succeeded');
+        facts.push({ case: 'persistent-lifecycle-controls', definitions: base, emptyDesktopRejected: true,
+            firstInstance, successorInstance, staleCloseRejected: true });
     } finally {
         for (const entry of contexts) await entry.release?.();
         for (const source of sources) source.dispose();
@@ -498,9 +522,9 @@ it('B2 C12/21 two Desktop/three App actual owners aggregate held callbacks witho
     } finally { for (const gate of gates) gate.resolve({ views: [], refs: [], toolBindings: [], content: [] });await runtime.beginShutdown().completion; }
 }, 20000);
 
-it('B2 C07 app launch config cannot grant modes disabled by the trusted Host', async () => {
+it('B2 C07 app launch config cannot grant tools disabled by the trusted Host', async () => {
     const runtime = makeRuntime();try {
-        await install(runtime, 'd', 'a', [], { config: { interactionModes: allModes } });
+        await install(runtime, 'd', 'a', false, { config: { toolsEnabled: true } });
         const s = scope(runtime), observation = await s.observe();
         expect(observation.views.find((view: any) => view.id === 'detail')?.content.value).toContain('Completed actions: 0');
         expect(observation.bindings).toEqual([]);

@@ -23,7 +23,7 @@ function fixture() {
         toolBindings: Object.values(source.tools).map(tool => ({ toolId: tool.id, execution: tool.execution })) };
     const policy: AppInteractionPolicy = { project: vi.fn(async () => grant), authorize: vi.fn(() => true), canReadReceipt: vi.fn(() => true) };
     const context = { source, selection: { viewIds: ['root'] }, signal: new AbortController().signal };
-    const binding: ExecutionBinding = { identity: {}, mode: 'ordinary-v2', validateInput: () => ({ ok: true, value: {} }),
+    const binding: ExecutionBinding = { identity: {}, validateInput: () => ({ ok: true, value: {} }),
         isLive: () => ({ ok: true }), execute: () => ({ kind: 'unknown' }) };
     return { policy, grant, context, binding };
 }

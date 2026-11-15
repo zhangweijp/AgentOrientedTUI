@@ -25,14 +25,14 @@ function fixture(fields: Record<string, any> = { a: ref(), b: ref() }, required 
     values: Record<string, any> = { a: notes[0], b: notes[1] }, kinds: Record<string, string> = {}) {
     const schema = { type: 'object', properties: { ...fields, ordinary: { type: 'string', enum: ['keep'], default: 'keep' } },
         required, additionalProperties: false };
-    const compiled = compileOrdinarySchema(schema, 'view-type-parameters-v1');
+    const compiled = compileOrdinarySchema(schema);
     if (!compiled.ok) throw Error(JSON.stringify(compiled.issue));
     const core = createSnapshotCore(), registry = createViewOwnedTools('app', 'run');
     cleanup.push(() => { registry.dispose(); core.lifecycle.dispose(); });
     core.lifecycle.startApp('app', 'run'); const view = registry.mount('aa', 'NoteView');
     const entries: any[] = [], dispatches: any[] = [];
     const release = registry.registerTypeTool({ viewType: 'NoteView', name: 'inspect', description: 'Inspect refs',
-        inputSchema: schema }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v3',
+        inputSchema: schema }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
         createSafeOrdinaryParametersInvoker: contract => async args => {
             const valid = contract.validateResolvedInput!(args);
             if (!valid.ok) return { phase: 'not-entered', result: { success: false, error: { code: 'E_INVALID_ARGS', message: 'Invalid' } } };
@@ -61,7 +61,7 @@ function fixture(fields: Record<string, any> = { a: ref(), b: ref() }, required 
         authorize: () => true, canReadReceipt: () => true,
     }, execution: { resolve: source => {
         if (bindings.has(source)) return bindings.get(source);
-        const binding = { identity: source, mode: 'view-type-parameters-v1',
+        const binding = { identity: source,
         isLive: () => ({ ok: registry.validateTypeToolBinding(source.tool, source.execution).success }),
         validateInput: (_source, input) => { const r = compiled.contract.validateResolvedInput!(input); return r.ok ? { ok: true, value: r.value } : { ok: false }; },
         execute: async context => { dispatches.push(context); const terminal = await registry.invokeTypeTool(source.tool, source.execution, context.effectiveInput);

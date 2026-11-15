@@ -23,7 +23,7 @@ try {
     await fs.writeFile(path.join(folder, 'core-example.ts'), example);
     }
     await fs.writeFile(path.join(folder, 'tool-types.ts'), `import type { RefTarget, ToolResult, ViewToolInvocationTerminal, SafeOrdinaryInvoker, AppSnapshotV3, SnapshotRead } from '@aotui/runtime/core';
-import { ORDINARY_INVOKER_ABI_V3, type OrdinaryCompileResult, type SnapshotStoreOptions, type SnapshotLimits } from '@aotui/runtime/core';
+import { ORDINARY_INVOKER_ABI_V4, type OrdinaryCompileResult, type SnapshotStoreOptions, type SnapshotLimits } from '@aotui/runtime/core';
 // @ts-expect-error The JSON copy budget reason is internal to Core.
 import { JsonCopyLimitError } from '@aotui/runtime/core';
 export const defaultLimits: SnapshotStoreOptions = { limits: undefined };
@@ -75,10 +75,12 @@ import type { VersionedEntityResource } from '@aotui/runtime/core';
 import type { VersionedEntityTerminal } from '@aotui/runtime/core';
 // @ts-expect-error Removed entity-only callable is not a public API.
 import type { SafeVersionedEntityInvoker } from '@aotui/runtime/core';
-const entity: RefTarget = { kind: 'entity', entityType: 'Counter', entityId: 'one', entityVersion: '1' };
-// @ts-expect-error Existing D5 entity references remain readonly.
-entity.entityVersion = '2';
-const abi: 'ordinary-invoker/v3' = ORDINARY_INVOKER_ABI_V3;
+const ref: RefTarget = { kind: 'snapshot-value', payload: { id: 'one', version: 1 } };
+// @ts-expect-error Snapshot Ref targets are readonly.
+ref.payload = {};
+// @ts-expect-error Business identity belongs inside the captured payload.
+const oldRef: RefTarget = { kind: 'entity', entityId: 'one' };
+const abi: 'ordinary-invoker/v4' = ORDINARY_INVOKER_ABI_V4;
 const result: ToolResult = { success: false, error: { code: 'PARTIAL', message: 'Application reports partial work' } };
 // @ts-expect-error The former Tool failure classification is retired.
 const oldResult: ToolResult = { ...result, effects: 'none' };
@@ -87,7 +89,7 @@ const terminal: ViewToolInvocationTerminal = { phase: 'entered-returned', result
 const oldTerminal: ViewToolInvocationTerminal = { ...terminal, failureEffects: 'partial' };
 const invoke: SafeOrdinaryInvoker = async _args => terminal;
 const readySnapshot = (read: SnapshotRead): AppSnapshotV3 | undefined => read.status === 'ready' ? read.snapshot : undefined;
-void [entity, abi, result, oldResult, oldTerminal, invoke, readySnapshot];
+void [ref, oldRef, abi, result, oldResult, oldTerminal, invoke, readySnapshot];
 `);
     const compiler = { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, exactOptionalPropertyTypes: true, skipLibCheck: false,
         lib: ['ES2022'], types: [], outDir: './core-out' };
@@ -105,7 +107,7 @@ const ideToolAuthoringProtocol: 'view-type-tools-v4' = ideFactory.toolAuthoringP
 void [persistenceSupport, ideLifecycleSupport, ideToolAuthoringProtocol, ideFactory];`;
     await fs.writeFile(path.join(folder, 'sdk-types.ts'), `import { h } from 'preact';
 import { Type } from 'typebox';
-import { createRuntime, type InteractionMode } from '@aotui/runtime';
+import { createRuntime, type AppInteractionOptions } from '@aotui/runtime';
 import type {
   AppInteraction, AppInteractionPolicy, AppInvocation, ReceiptQuery, Observation,
   ObservationSelection, ObservationGrant, ObserveResult, AppPreviewResult, InvocationReceipt,
@@ -164,14 +166,12 @@ const toolAuthoringProtocol: 'view-type-tools-v4' = managedFactory.toolAuthoring
 // @ts-expect-error Managed lifecycle support is the default factory contract, not a config flag.
 createTUIApp({ app_name: 'retired_lifecycle_flag', component: Root, experimentalAppLifecycle: true });
 export default managedFactory;
-const mode: InteractionMode = 'view-type-parameters-v1';
-const refMode: InteractionMode = 'view-type-parameters-v1';
-// @ts-expect-error Legacy ordinary-v1 is not a supported Host interaction mode.
-const removedMode: InteractionMode = 'ordinary-v1';
-// @ts-expect-error Entity-only transport is not a supported Host interaction mode.
-const removedEntityMode: InteractionMode = 'versioned-entity-v1';
+const writable: AppInteractionOptions = { toolsEnabled: true };
+const readOnly: AppInteractionOptions = { toolsEnabled: false };
+// @ts-expect-error The retired array cannot select Host tool availability.
+const oldOptions: AppInteractionOptions = { interactionModes: [] };
 const lifecyclePort = (port: AppLifecyclePort, report: AppCleanupReport) => { const detach = port.register(owner); detach(); return report.state; };
-void [mode, refMode, lifecyclePort, lifecycleSupport, toolAuthoringProtocol, createRuntime, removedMode, removedEntityMode];
+void [writable, readOnly, oldOptions, lifecyclePort, lifecycleSupport, toolAuthoringProtocol, createRuntime];
 `);
     await fs.writeFile(path.join(folder, 'sdk-tsconfig.json'), JSON.stringify({ compilerOptions: { ...compiler, lib: ['ES2022', 'DOM'], types: ['node'], outDir: './sdk-out' }, files: ['./sdk-types.ts'] }));
     await run([tsc, '-p', path.join(folder, 'sdk-tsconfig.json')], refOnly ? 'strict Runtime Host types, SPI and SDK Ref declarations' : 'strict Runtime Host types, SPI and SDK with IDE declarations');
@@ -254,7 +254,7 @@ let source, context, report;
 try {
  const desktopId = await runtime.createDesktop('package-tool-consumer');
  const appId = await runtime.installDynamicWorkerApp(desktopId, pathToFileURL(path.join(${JSON.stringify(folder)}, 'type-tool-app.mjs')).href, {
-  appId: 'packagetools', interactionModes: ['view-type-parameters-v1'], config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR },
+  appId: 'packagetools', config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR },
  });
  assert.equal(appId, 'packagetools');
  source = new SemanticAOTUIDrivenSource(runtime.getDesktop(desktopId), runtime, { includeInstruction: false, instruction: 'Isolated SDK and Runtime Ref consumer verification.' });
@@ -331,7 +331,7 @@ const base = await fs.realpath(await fs.mkdtemp(path.join(tmpdir(), 'aotui-publi
 const file=path.join(root,'example.ts'), unopenedFile=path.join(root,'not-open.ts'); await fs.writeFile(file,'export const answer = 1;\\n'); await fs.writeFile(path.join(root,'tsconfig.json'),'{}');
 const runtime=createRuntime({worker:{timeoutMs:45000,maxWorkers: 1}}); const outcomes=[]; let source, context, report;
 try {
- const desktopId=await runtime.createDesktop('external'); const appId=await runtime.installDynamicWorkerApp(desktopId,ideModulePath,{appId:'publicide',interactionModes:['view-type-parameters-v1'],config:{projectPath:root,ideSessionKey:'publicide',ideHistoryPath:path.join(base,'history.json'),AOTUI_DATA_DIR:path.join(base,'state')}});
+ const desktopId=await runtime.createDesktop('external'); const appId=await runtime.installDynamicWorkerApp(desktopId,ideModulePath,{appId:'publicide',config:{projectPath:root,ideSessionKey:'publicide',ideHistoryPath:path.join(base,'history.json'),AOTUI_DATA_DIR:path.join(base,'state')}});
  source=new SemanticAOTUIDrivenSource(runtime.getDesktop(desktopId),runtime,{includeInstruction:false,instruction:'Explicit full-mode IDE fixture instruction; full mode is not admitted in the Ref-only proof.'});
  async function capture(){context=await source.getContext();assert.equal(typeof context.executeTool,'function');await context.adopt();return context;}
  async function captureWhenToolIsAvailable(suffix){
@@ -356,12 +356,17 @@ try {
  await context.release?.();context=undefined;
  context=await capture();const updatedFileView=context.messages.map(message=>String(message.content)).join('\\n');
  assert.ok(updatedFileView.includes('export const answer = 2;'),'New Context observes the completed write');assert.ok(!updatedFileView.includes('export const answer = 1;'),'Only the latest FileDetail snapshot remains current');
- const hover=await invoke(context,'lsp_hover',{file_path:file,line:1,character:15});assert.match(hover.result?.message,/Read the current IDE Views/);
- await context.release?.();context=undefined;context=await capture();const currentView=context.messages.map(message=>String(message.content)).join('\\n');
- assert.match(currentView,/documentVersion[^0-9]*[1-9][0-9]*/,'The current FileDetail View contains an actual versioned LSP hover result');assert.match(currentView,/hover/);assert.match(currentView,/answer/);
+ const hover=await invoke(context,'lsp_hover',{file_path:file,line:1,character:15});
+ const detailId=hover.result?.view_id;assert.match(detailId,/^fd_/);
+ assert.equal(hover.result?.message,'Hover information available at 1:15. See FileDetail '+detailId+', hover section.');
+ assert.deepEqual(Object.keys(hover.result).sort(),['message','view_id'],'Hover data stays in FileDetail');
+ await context.release?.();context=undefined;context=await capture();
+ const currentView=context.messages.map(message=>String(message.content)).find(message=>message.startsWith('<view id="'+detailId+'" type="FileDetail"'));
+ const currentHover=currentView?.split('### hover')[1];assert.ok(currentHover,'The receipt points to the current FileDetail hover section');
+ assert.match(currentHover,/documentVersion[^0-9]*[1-9][0-9]*/,'The current FileDetail View contains an actual versioned LSP hover result');assert.match(currentHover,/answer/);
  await context.release?.();context=undefined;source.dispose();source=undefined;
  report=await runtime.beginShutdown().completion; assert.equal(report.ok,true,JSON.stringify(report));assert.equal(report.resourcesReleased,true);assert.equal(report.appCleanup?.managedApps,1);assert.equal(report.appCleanup?.completedApps,1);assert.equal(report.appCleanup?.failedApps,0);
- console.log('PUBLIC_IDE',JSON.stringify({base,outcomes,report,defaultWorkerResolution:true,interactionModes:['view-type-parameters-v1'],ordinaryMutation:true,actualLspHover:hover.result}));
+ console.log('PUBLIC_IDE',JSON.stringify({base,outcomes,report,defaultWorkerResolution:true,ordinaryMutation:true,actualLspHover:hover.result}));
 } finally {await context?.release?.();source?.dispose();await runtime.beginShutdown().completion;}
 `);
     const publicResult = await run([path.join(folder, 'public-ide.mjs')], 'public default Runtime Worker uses Semantic Context/release for ordinary IDE mutation, actual LSP, and managed shutdown');

@@ -31,6 +31,18 @@ function fileReceipt(owner: IDESession, name: string, filePath: string, result: 
     const viewId = projectionFailed ? undefined : owner.getLoadedFileViewId(filePath);
     return receipt(name, viewId ?? 'workspace', result, omitData);
 }
+
+async function hoverReceipt(owner: IDESession, args: ArgsOf<typeof ideTools.lsp_hover>): Promise<ToolResult> {
+    const result = await owner.invokeLoadedFileTool('lsp_hover', args);
+    if (!result.success) return result;
+    const viewId = owner.getLoadedFileViewId(args.file_path);
+    if (!viewId) return receipt('lsp_hover', 'workspace', result, true);
+    const position = `${args.line}:${args.character}`;
+    const status = result.data?.value == null
+        ? `No hover information at ${position}.`
+        : `Hover information available at ${position}.`;
+    return { success: true, data: { message: `${status} See FileDetail ${viewId}, hover section.`, view_id: viewId } };
+}
 export const ideTools = defineToolSet({
 search_files_by_pattern: defineViewTypeTool({
             viewType: 'Workspace', name: 'search_files_by_pattern',
@@ -109,7 +121,7 @@ rename_file: defineViewTypeTool({
         }),
 lsp_hover: defineViewTypeTool({
             viewType: 'FileDetail', name: 'lsp_hover',
-            description: 'Load language-server hover information at a one-based position in an opened document.',
+            description: 'Query language-server hover at a one-based position in an opened document. Read the hover section of its FileDetail View.',
             inputSchema: Type.Object({ file_path: Type.String({ description: 'Absolute path of a currently opened file.' }), line: Type.Number(), character: Type.Number() }, closed),
         }),
 lsp_goto_definition: defineViewTypeTool({
@@ -185,7 +197,7 @@ write_file: { execute: async (args: ArgsOf<typeof ideTools.write_file>) => fileR
 edit_file: { execute: async (args: ArgsOf<typeof ideTools.edit_file>) => fileReceipt(owner, 'edit_file', args.filePath, await owner.invoke('edit_file', args)), enabled: enabled(ideTools.edit_file) },
 delete_file: { execute: async (args: ArgsOf<typeof ideTools.delete_file>) => fileReceipt(owner, 'delete_file', args.filePath, await owner.invoke('delete_file', args)), enabled: enabled(ideTools.delete_file) },
 rename_file: { execute: async (args: ArgsOf<typeof ideTools.rename_file>) => fileReceipt(owner, 'rename_file', args.newPath, await owner.invoke('rename_file', args)), enabled: enabled(ideTools.rename_file) },
-lsp_hover: { execute: async (args: ArgsOf<typeof ideTools.lsp_hover>) => fileReceipt(owner, 'lsp_hover', args.file_path, await owner.invokeLoadedFileTool('lsp_hover', args), true), enabled: enabled(ideTools.lsp_hover) },
+lsp_hover: { execute: args => hoverReceipt(owner, args), enabled: enabled(ideTools.lsp_hover) },
 lsp_goto_definition: { execute: async (args: ArgsOf<typeof ideTools.lsp_goto_definition>) => fileReceipt(owner, 'lsp_goto_definition', args.file_path, await owner.invokeLoadedFileTool('lsp_goto_definition', args), true), enabled: enabled(ideTools.lsp_goto_definition) },
 lsp_find_references: { execute: async (args: ArgsOf<typeof ideTools.lsp_find_references>) => fileReceipt(owner, 'lsp_find_references', args.file_path, await owner.invokeLoadedFileTool('lsp_find_references', args), true), enabled: enabled(ideTools.lsp_find_references) },
 lsp_get_diagnostics: { execute: async (args: ArgsOf<typeof ideTools.lsp_get_diagnostics>) => fileReceipt(owner, 'lsp_get_diagnostics', args.file_path, await owner.invokeLoadedFileTool('lsp_get_diagnostics', args), true), enabled: enabled(ideTools.lsp_get_diagnostics) },
