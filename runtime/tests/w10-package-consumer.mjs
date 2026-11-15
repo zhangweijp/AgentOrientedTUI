@@ -22,7 +22,7 @@ try {
     const example = coreDoc.match(/<!-- b1-example:start -->\n```ts\n([\s\S]*?)\n```\n<!-- b1-example:end -->/)?.[1]; assert.ok(example);
     await fs.writeFile(path.join(folder, 'core-example.ts'), example);
     }
-    await fs.writeFile(path.join(folder, 'tool-types.ts'), `import type { RefTarget, ToolResult, ViewToolInvocationTerminal, SafeOrdinaryInvoker, AppSnapshotV3, SnapshotRead } from '@aotui/runtime/core';
+    await fs.writeFile(path.join(folder, 'tool-types.ts'), `import type { RefTarget, ToolResult, ViewToolInvocationTerminal, SafeOrdinaryInvoker, AppSnapshotV4, SnapshotRead } from '@aotui/runtime/core';
 import { ORDINARY_INVOKER_ABI_V4, type OrdinaryCompileResult, type SnapshotStoreOptions, type SnapshotLimits } from '@aotui/runtime/core';
 // @ts-expect-error The JSON copy budget reason is internal to Core.
 import { JsonCopyLimitError } from '@aotui/runtime/core';
@@ -44,7 +44,7 @@ export function declarationCategory(result: OrdinaryCompileResult) {
 import { ORDINARY_INVOCATION_MODE } from '@aotui/runtime/core';
 // @ts-expect-error V3 is the sole public AppSnapshot DTO.
 import type { AppSnapshotV2 } from '@aotui/runtime/core';
-// @ts-expect-error AppSnapshotV3 is the only public AppSnapshot type name.
+// @ts-expect-error AppSnapshotV4 is the only public AppSnapshot type name.
 import type { AppSnapshot } from '@aotui/runtime/core';
 // @ts-expect-error Validation envelope details are not part of the Core package API.
 import type { SnapshotDraftEnvelope } from '@aotui/runtime/core';
@@ -88,7 +88,7 @@ const terminal: ViewToolInvocationTerminal = { phase: 'entered-returned', result
 // @ts-expect-error The former terminal field is retired.
 const oldTerminal: ViewToolInvocationTerminal = { ...terminal, failureEffects: 'partial' };
 const invoke: SafeOrdinaryInvoker = async _args => terminal;
-const readySnapshot = (read: SnapshotRead): AppSnapshotV3 | undefined => read.status === 'ready' ? read.snapshot : undefined;
+const readySnapshot = (read: SnapshotRead): AppSnapshotV4 | undefined => read.status === 'ready' ? read.snapshot : undefined;
 void [ref, oldRef, abi, result, oldResult, oldTerminal, invoke, readySnapshot];
 `);
     const compiler = { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, exactOptionalPropertyTypes: true, skipLibCheck: false,
@@ -103,7 +103,7 @@ import { ideEntryForRoute } from '@agentina/aotui-ide';`;
     const ideTypeAssertions = `const ideFactory: TUIAppFactory = ideDefault;
 const persistenceSupport: 'state-session-v1' = ideFactory.persistenceSupport;
 const ideLifecycleSupport: 'app-lifecycle-v2' = ideFactory.appLifecycleSupport;
-const ideToolAuthoringProtocol: 'view-type-tools-v4' = ideFactory.toolAuthoringProtocol;
+const ideToolAuthoringProtocol: 'view-type-tools-v5' = ideFactory.toolAuthoringProtocol;
 void [persistenceSupport, ideLifecycleSupport, ideToolAuthoringProtocol, ideFactory];`;
     await fs.writeFile(path.join(folder, 'sdk-types.ts'), `import { h } from 'preact';
 import { Type } from 'typebox';
@@ -162,7 +162,7 @@ function Root() { useAppLifecycle(owner); return h(AppTools<ToolSetMap<typeof to
 ${refOnly ? '' : ideTypeAssertions}
 const managedFactory = createTUIApp({ app_name: 'package_types', component: Root });
 const lifecycleSupport: 'app-lifecycle-v2' = managedFactory.appLifecycleSupport;
-const toolAuthoringProtocol: 'view-type-tools-v4' = managedFactory.toolAuthoringProtocol;
+const toolAuthoringProtocol: 'view-type-tools-v5' = managedFactory.toolAuthoringProtocol;
 // @ts-expect-error Managed lifecycle support is the default factory contract, not a config flag.
 createTUIApp({ app_name: 'retired_lifecycle_flag', component: Root, experimentalAppLifecycle: true });
 export default managedFactory;

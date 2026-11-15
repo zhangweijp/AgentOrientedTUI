@@ -1,3 +1,4 @@
+import { detailFrame, publishedTool } from '../../../tests/fixtures/app-frame.js';
 import { expect, it, vi } from 'vitest';
 import { AppKernel } from './AppKernel.js';
 const defer = () => { let resolve!: () => void;const promise = new Promise<void>(yes => { resolve = yes; });return { promise, resolve }; };
@@ -22,12 +23,7 @@ it('passes the enabled lifecycle port to the App and waits for its cleanup', asy
 });
 it.each(['sync', 'async'])('C2-18 %s unmount failure still clears owned registries', async kind => {
     const f = fixture(context => {
-        context.projection.beginCommit();
-        const identity = context.viewTools.mount('v', 'Detail');
-        context.setViewReader(() => [{ id: 'v', viewInstanceId: identity, type: 'Detail', name: 'v',
-            kind: 'state', content: { format: 'markdown-v1', value: '' } }]);
-        context.refExporter.registerRef('v', 'key', {});
-        expect(context.projection.endCommit()).toBe('prepared');
+        context.publishFrame(() => ({ views: [detailFrame({ refs: [{ id: 'key', refType: 'Value', token: context.refExporter.captureRef({}) }] })] }));
         return { close: () => { if (kind === 'sync') throw Error('private sync');return Promise.reject(Error('private async')); } };
     });
     await f.open();expect(f.kernel.getViewOwnedViewInstances()).toHaveLength(1);expect(f.kernel.getViewRefs()).toHaveLength(1);
@@ -40,8 +36,7 @@ it('C2-19 closing during initialization owns the late renderer without registeri
     const f = fixture(async () => { entered.resolve();await finish.promise;return { close: unmount }; });
     const opening = f.open();expect(f.open()).toBe(opening);await entered.promise;const closing = f.kernel.onClose();
     expect(f.runtime().registerView).toBeUndefined();expect(f.runtime().allocateViewId).toBeUndefined();expect(f.runtime().typeTools).toBeUndefined();
-    expect(() => f.runtime().refExporter.registerRef('v', 'r', {})).toThrow(expect.objectContaining({ code: 'APP_KERNEL_CLOSED' }));
-    expect(() => f.runtime().viewTools.mount('later', 'Detail')).toThrow(expect.objectContaining({ code: 'APP_KERNEL_CLOSED' }));
+    expect(() => f.runtime().mountView('later', 'Detail')).toThrow(expect.objectContaining({ code: 'APP_KERNEL_CLOSED' }));
     expect(f.runtime().markDirty).toBeUndefined();
     await expect(f.kernel.onReinitialize()).rejects.toHaveProperty('code', 'APP_KERNEL_CLOSED');
     finish.resolve();await expect(opening).rejects.toHaveProperty('code', 'APP_KERNEL_CLOSED');await closing;expect(unmount).toHaveBeenCalledTimes(1);
@@ -61,34 +56,39 @@ it.each(['sync', 'async'])('C2-20 %s delete failure is fixed, called once and jo
 });
 
 it.each(['delete','close'] as const)('PF01 %s hanging rejects ordinary and Ref parameters on the shared type path without cancelling entered handlers',async stage=>{
-    const lifecycle=defer(),entered=defer(),handlerGate=defer(),enteredHandler=defer(),calls:string[]=[];let releaseTool:(()=>void)|undefined,viewInstanceId='';
+    const lifecycle=defer(),entered=defer(),handlerGate=defer(),enteredHandler=defer(),calls:string[]=[];
     const f=fixture(context=>{
-        viewInstanceId=context.viewTools.mount('v','Detail');
-        const handler=(name:string)=>async()=>{calls.push(name);if(name==='held'){enteredHandler.resolve();await handlerGate.promise;}return {success:true,data:{value:19}};};
-        const ordinary=(name:string)=>({safeOrdinaryParametersInvocationMode:'ordinary-invoker/v4',createSafeOrdinaryParametersInvoker:()=>async()=>({phase:'entered-returned',result:await handler(name)()})});
-        const register=(name:string,inputSchema:any,mutating=false)=>context.appTypeTools.registerTypeTool({viewType:'Detail',name,description:name,inputSchema},ordinary(name));
-        releaseTool=register('held',{type:'object',properties:{},additionalProperties:false});
-        register('parameters',{type:'object',properties:{n:{type:'number'}},required:['n'],additionalProperties:false});
-        register('snapshot',{type:'object',properties:{file:{type:'string',minLength:1,'x-aotui-ref-kind':'File','x-aotui-ref-value':{type:'object'}}},required:['file'],additionalProperties:false});
+        const schema = (properties: Record<string, unknown>) => ({
+            type: 'object', properties, required: Object.keys(properties), additionalProperties: false,
+        });
+        const schemas = {
+            held: schema({}),
+            parameters: schema({ n: { type: 'number' } }),
+            snapshot: schema({ file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }),
+        };
+        context.defineTools(Object.entries(schemas).map(([name, inputSchema]) => ({ viewType: 'Detail', name, description: name, inputSchema })));
+        context.publishFrame(() => ({ views: [detailFrame({ bindings: Object.keys(schemas).map(name => ({
+            name, enabled: true, async execute() {
+                calls.push(name);
+                if (name === 'held') { enteredHandler.resolve(); await handlerGate.promise; }
+                return { success: true, data: { value: 19 } };
+            },
+        })) })] }));
         return {async close(){if(stage==='close'){entered.resolve();await lifecycle.promise;}}};
     },{onDelete:async()=>{entered.resolve();await lifecycle.promise;}});
-    await f.open();const tools=new Map(f.kernel.getToolDefinitions().map(tool=>[tool.name,tool]));
-    const source=(name:string)=>tools.get(name)! as any,execution=(name:string)=>source(name).execution;
-    const invoke=[
-        ()=>f.kernel.invokeBoundTypeTool(source('held'),execution('held'),{}),
-        ()=>f.kernel.invokeBoundTypeTool(source('parameters'),execution('parameters'),{n:1}),
-        ()=>f.kernel.invokeBoundTypeTool(source('snapshot'),execution('snapshot'),{file:{}}),
+    await f.open();
+    const operations = [
+        { ...publishedTool(f.kernel, 'held'), args: {} },
+        { ...publishedTool(f.kernel, 'parameters'), args: { n: 1 } },
+        { ...publishedTool(f.kernel, 'snapshot'), args: { file: {} } },
     ];
+    const invoke = operations.map(({ tool, receiver, args }) => () => f.kernel.invokeBoundTypeTool(tool, receiver, args));
     // Prove every registered mode is usable before the close barrier, not merely rejected everywhere.
     for(const call of invoke.slice(1))expect((await call() as any).phase).toBe('entered-returned');
     const running=invoke[0]();await enteredHandler.promise;const initial=calls.length;
     const closing=stage==='delete'?f.kernel.onDelete():f.kernel.onClose();await entered.promise;
-    expect(f.kernel.validateBoundTypeTool(source('held'),execution('held')).success).toBe(false);
-    expect(f.kernel.validateBoundTypeTool(source('parameters'),execution('parameters')).success).toBe(false);
-    expect(f.kernel.validateBoundTypeTool(source('snapshot'),execution('snapshot')).success).toBe(false);
+    for (const { tool, receiver } of operations) expect(f.kernel.validateBoundTypeTool(tool, receiver).success).toBe(false);
     for(const call of invoke){const result:any=await call();expect(result.result?.success).toBe(false);if('phase'in result)expect(result.phase).toBe('not-entered');}
     expect(calls).toHaveLength(initial);handlerGate.resolve();expect(await running).toMatchObject({phase:'entered-returned',result:{success:true,data:{value:19}}});
-    // Cleanup capabilities remain usable while ordinary calls are refused.
-    releaseTool?.();f.runtime().viewTools.unmount(viewInstanceId);
     lifecycle.resolve();await closing;await f.kernel.onClose();expect(f.kernel.getViewOwnedViewInstances()).toHaveLength(0);
 });

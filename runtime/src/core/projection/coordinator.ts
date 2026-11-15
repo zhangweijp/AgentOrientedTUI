@@ -6,16 +6,20 @@ import { copyJson, createJsonCopier, SnapshotDataError } from '../snapshot/json.
 import { captureSnapshotPrepareIssue, DEFAULT_SNAPSHOT_LIMITS as limits, isSnapshotPrepareIssueCode, refKey } from '../snapshot/snapshot-support.js';
 import {
     SNAPSHOT_SCHEMA_VERSION,
-    type JsonValue, type PreparedAppSnapshotDraftV3, type PreparedSnapshotFailure,
+    type JsonValue, type PreparedAppSnapshotDraftV4, type PreparedSnapshotFailure,
     type RefDescriptorV2, type SnapshotCommitter, type SnapshotIssue,
-    type ToolDescriptorV3, type ViewSnapshotV2,
+    type ToolDescriptorV4, type ViewSnapshotV4,
 } from '../snapshot/types.js';
-import { validatePreparedV3Draft } from '../snapshot/v3-validator.js';
+import { validatePreparedV4Draft } from '../snapshot/v4-validator.js';
 
 export interface ProjectionSource {
     identity(): { readonly appId: string; readonly instanceId: string };
     /** Return the complete rendered frame at the successful commit boundary. */
-    readFrame(): { readonly views: readonly ViewSnapshotV2[]; readonly tools: readonly ToolDescriptorV3[] };
+    readFrame(): {
+        readonly views: readonly ViewSnapshotV4[];
+        readonly tools: readonly ToolDescriptorV4[];
+        readonly accept?: () => void;
+    };
 }
 
 type RefOwner = { readonly viewId: string; readonly viewInstanceId: string };
@@ -32,7 +36,7 @@ type Batch = {
     preparing: boolean;
     issue?: SnapshotIssue;
 };
-type Publication = { draft: PreparedAppSnapshotDraftV3 } | { failure: PreparedSnapshotFailure };
+type Publication = { draft: PreparedAppSnapshotDraftV4 } | { failure: PreparedSnapshotFailure };
 const copyLimits = { ...limits, maxApproxBytes: limits.maxSnapshotBytes * 2 };
 class CapturedRef {} // An expired token cannot be mistaken for plain JSON.
 const asyncFunction = Object.getPrototypeOf(async function () {});
@@ -61,7 +65,7 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
     private epoch = 0;
     private producerSeq = 0;
     private batch?: Batch;
-    private prepared?: PreparedAppSnapshotDraftV3;
+    private prepared?: PreparedAppSnapshotDraftV4;
     private issue?: SnapshotIssue;
     private closed = false;
     private readonly refs = new Map<string, RefEntry>();
@@ -130,7 +134,7 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
                 return 'blocked';
             }
 
-            const { views, tools } = frame ?? this.source.readFrame();
+            const { views, tools, accept } = frame ?? this.source.readFrame();
             const refs: Record<string, RefDescriptorV2> = Object.create(null);
             for (const [entry, payload] of values) {
                 const key = refKey(entry.viewId, entry.viewInstanceId, entry.id);
@@ -140,12 +144,12 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
                     refType: entry.refType ?? 'unknown', target: { kind: 'snapshot-value', payload },
                 };
             }
-            const definitions: Record<string, ToolDescriptorV3> = Object.create(null);
+            const definitions: Record<string, ToolDescriptorV4> = Object.create(null);
             for (const tool of tools) {
                 if (Object.hasOwn(definitions, tool.id)) throw new Error('Duplicate Tool definition');
                 definitions[tool.id] = tool;
             }
-            const checked = validatePreparedV3Draft({
+            const checked = validatePreparedV4Draft({
                 schemaVersion: SNAPSHOT_SCHEMA_VERSION, ...this.source.identity(),
                 sourceEpoch: this.epoch + 1, producerSeq: this.producerSeq + 1, capturedAt: Date.now(),
                 views, refs, tools: definitions,
@@ -153,6 +157,7 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
             if (batch.issue) return this.fail(batch, batch.issue);
             if (!checked.ok) return this.fail(batch, checked.issue);
 
+            accept?.();
             this.prepared = checked.value.draft;
             this.epoch = this.prepared.sourceEpoch;
             this.issue = undefined;

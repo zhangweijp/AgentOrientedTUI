@@ -1,3 +1,4 @@
+import { projectCompleteViews } from '../../core/invocation/observation-registry.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -5,16 +6,14 @@ import { join } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
 import { SemanticSnapshotReceiver } from '../../adapters/snapshot/receiver.js';
 import { SemanticProjectionCoordinator } from '../../core/projection/coordinator.js';
-import type { ToolDescriptorV3 } from '../../core/snapshot/types.js';
+import type { ToolDescriptorV4 } from '../../core/snapshot/types.js';
 import { compileOrdinarySchema } from '../../core/tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../../core/tool/ordinary-parameter-profile.js';
 
-const policy = { project: ({ source }: any) => ({ views: source.views.map((v: any) => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
-    refs: [], toolBindings: [], content: source.views.map((v: any) => ({ view: { viewId: v.id, viewInstanceId: v.viewInstanceId }, decision: 'retain' })) }),
-    authorize: () => true, canReadReceipt: () => true };
+const policy = { project: () => ({ refs: [], toolIds: [] }), authorize: () => true, canReadReceipt: () => true };
 function draft(instanceId: string, seq: number, value = 'current') {
-    return { schemaVersion: 3, appId: 'app', instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
-        views: [{ id: 'file', viewInstanceId: 'file-instance', type: 'File', name: 'File', kind: 'state',
+    return { schemaVersion: 4, appId: 'app', instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
+        views: [{ toolBindings: [], id: 'file', viewInstanceId: 'file-instance', type: 'File', name: 'File', kind: 'state',
             content: { format: 'markdown-v1', value } }], refs: {}, tools: {} };
 }
 const cleanup: Array<() => void> = [];
@@ -55,14 +54,15 @@ describe('refresh before the existing Scope observation', () => {
         if (!compiled.ok) throw new Error('fixture Schema');
         const profile = ordinaryParameterProfile(compiled.contract);
         const target = { viewId: 'file', viewInstanceId: 'file-instance' };
+        const toolId = JSON.stringify(['app', 'File', 'edit']);
         let value = 1;
         const projection = new SemanticProjectionCoordinator({
             identity: () => ({ appId: 'app', instanceId: 'instance' }),
             readFrame: () => ({
-                views: [{ id: target.viewId, viewInstanceId: target.viewInstanceId, type: 'File', name: 'File', kind: 'state',
+                views: [{ toolBindings: [{ toolId, activationId: 'active-' + value }], id: target.viewId, viewInstanceId: target.viewInstanceId, type: 'File', name: 'File', kind: 'state',
                     content: { format: 'markdown-v1', value: 'body:' + value } }],
-                tools: [{ id: JSON.stringify(['app', 'File', 'edit']), name: 'edit', viewType: 'File', description: 'Edit',
-                    inputSchema: profile, execution: { kind: 'view-type', activationId: 'active-' + value } } satisfies ToolDescriptorV3],
+                tools: [{ id: toolId, name: 'edit', viewType: 'File', description: 'Edit',
+                    inputSchema: profile } satisfies ToolDescriptorV4],
             }),
         });
         const publish = () => {
@@ -70,11 +70,7 @@ describe('refresh before the existing Scope observation', () => {
             return 'draft' in publication ? receiver.acceptPrepared(publication.draft) : receiver.acceptPrepareFailure(publication.failure);
         };
         let selected!: ReturnType<typeof projection.registerRef>;
-        const fullPolicy = { ...policy, project: ({ source }: any) => ({
-            ...policy.project({ source }),
-            refs: Object.values(source.refs).map((r: any) => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })),
-            toolBindings: Object.values(source.tools).map((t: any) => ({ toolId: t.id, execution: t.execution })),
-        }) };
+        const fullPolicy = { ...policy, project: projectCompleteViews };
         let businessCalls = 0;
         const binding = { identity: {}, validateInput: () => ({ ok: true as const, value: {} }),
             isLive: () => ({ ok: true as const }), execute: () => ({ kind: 'tool-result' as const, phase: 'entered-returned' as const,
@@ -87,7 +83,7 @@ describe('refresh before the existing Scope observation', () => {
             if (initial.status !== 'observed') throw new Error(initial.issue.code);
             expect(interaction.adoptObservation(initial.observation.observationId)).toEqual({ status: 'adopted' });
             const business = await interaction.invoke({ invocationId: 'ts-business', observationId: initial.observation.observationId,
-                bindingId: initial.observation.bindings[0]!.bindingId, input: {} });
+                toolId: initial.observation.tools[0]!.id, input: { view_id: 'file' } });
             expect(business).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
             projection.beginCommit(); let completed = false;
             const committed = projection.whenCommitted(owner.signal).then(() => { completed = true; });
@@ -96,8 +92,9 @@ describe('refresh before the existing Scope observation', () => {
             expect(publish().status).toBe('published');
             const current = await interaction.observe({ all: true }); expect(current.status).toBe('observed');
             if (current.status === 'observed') interaction.releaseObservation(current.observation.observationId);
-            expect(JSON.stringify(current)).toContain('body:2'); expect(JSON.stringify(current)).toContain('active-2');
+            expect(JSON.stringify(current)).toContain('body:2');
             const latest = (receiver as any).core.store.readLatest('app').snapshot;
+            expect(latest.views[0].toolBindings).toEqual([{ toolId, activationId: 'active-2' }]);
             expect(Object.values(latest.refs)).toMatchObject([{ target: { payload: { value: 2 } } }]);
             const id = receiver.report().snapshotId;
             expect(publish().status).toBe('unchanged');

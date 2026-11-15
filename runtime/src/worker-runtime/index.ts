@@ -1,5 +1,5 @@
-import { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION, STATE_SESSION_VERSION, captureAppMetadata } from '../spi/index.js';
-import { SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY } from '../spi/worker-protocol/types.js';
+import { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION, STATE_SESSION_VERSION, VIEW_TYPE_TOOL_PROTOCOL, captureAppMetadata } from '../spi/index.js';
+import { SNAPSHOT_CAPABILITY, PARAMETERS_V6_CAPABILITY } from '../spi/worker-protocol/types.js';
 import { initializationFailure } from '../adapters/initialization-error.js';
 import { captureAppLifecycleAck } from '../adapters/app-lifecycle-protocol.js';
 import { hasViewTypeToolAuthoringProtocol } from '../spi/app/app-factory.interface.js';
@@ -97,15 +97,15 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
         } catch { sendError(msg.requestId, 'PROJECTION_CLOSED', 'Projection source unavailable'); }
         return;
     }
-    if (msg.type === 'VIEW_TOOL_INVOKE_V5') {
+    if (msg.type === 'VIEW_TOOL_INVOKE_V6') {
         try {
             const kernel = app;
             const response = await invokeTypeParameters(msg, { appId, instanceId: appInstanceId,
                 negotiated: kernel !== null && parametersNegotiated,
-                ...(kernel ? { validateBinding: (tool, execution) => kernel.validateBoundTypeTool(tool, execution),
-                    getParameterContract: (tool, execution) => kernel.getBoundTypeToolContract(tool, execution),
+                ...(kernel ? { validateBinding: (tool, receiver) => kernel.validateBoundTypeTool(tool, receiver),
+                    getParameterContract: (tool, receiver) => kernel.getBoundTypeToolContract(tool, receiver),
                     isRefViewLive: (id, instanceId) => kernel.isRefViewLive(id, instanceId),
-                    invokeBinding: (tool, execution, args) => kernel.invokeBoundTypeTool(tool, execution, args) } : {}),
+                    invokeBinding: (tool, receiver, args) => kernel.invokeBoundTypeTool(tool, receiver, args) } : {}),
             });
             if (response) {
                 // Projection is a separate fact. It cannot erase a trusted business terminal.
@@ -216,7 +216,7 @@ async function handleInit(msg: InitMessage): Promise<void> {
         }
         if (!hasViewTypeToolAuthoringProtocol(factory)) {
             sendError(msg.requestId, 'APP_AUTHORING_PROTOCOL_UNSUPPORTED',
-                'This Runtime requires a TUIAppFactory using view-type-tools-v4');
+                'This Runtime requires a TUIAppFactory using ' + VIEW_TYPE_TOOL_PROTOCOL);
             return;
         }
         const kernelConfig = factory.kernelConfig;
@@ -254,8 +254,8 @@ async function handleInit(msg: InitMessage): Promise<void> {
         app.setPersistence(session.port);
         persistenceRecord = { app, proxy, session };
 
-        parametersNegotiated = requested.capabilities.includes(PARAMETERS_V5_CAPABILITY);
-        const capabilities = parametersNegotiated ? [SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY] : [SNAPSHOT_CAPABILITY];
+        parametersNegotiated = requested.capabilities.includes(PARAMETERS_V6_CAPABILITY);
+        const capabilities = parametersNegotiated ? [SNAPSHOT_CAPABILITY, PARAMETERS_V6_CAPABILITY] : [SNAPSHOT_CAPABILITY];
         parentPort?.postMessage({ type: 'INIT_RESPONSE', requestId: msg.requestId, success: true,
             appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, version: APP_LIFECYCLE_VERSION, instanceId: msg.appInstanceId! },
             persistence: { protocol: STATE_SESSION_PROTOCOL, version: STATE_SESSION_VERSION, instanceId: session.port.instanceId },

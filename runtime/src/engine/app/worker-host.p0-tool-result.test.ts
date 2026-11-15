@@ -28,31 +28,23 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
             const fixture = `
                 import { h } from 'preact';
                 import Type from 'typebox';
-                import { createTUIApp, defineViewTypeTool, AppTools, defineToolSet } from './sdk/src/index.ts';
+                import { createTUIApp, defineViewType } from './sdk/src/index.ts';
                 import { View } from './sdk/src/components/View.tsx';
 
 
-const fixtureTools0 = defineToolSet({
-Fail: defineViewTypeTool({
-                        viewType: 'FileDetail', name: 'fail',
-                        description: 'Fails as business result', inputSchema: Type.Object({}, {additionalProperties:false}), }),
-OK: defineViewTypeTool({
-                        viewType: 'FileDetail', name: 'ok', description: 'Successful Tool',
-                        inputSchema: Type.Object({}, {additionalProperties:false}), }),
-Invalid: defineViewTypeTool({
-                        viewType: 'FileDetail', name: 'invalid', description: 'Reject invalid Tool arguments',
-                        inputSchema: Type.Object({target:Type.String()}, {additionalProperties:false}), })
-});
+
+const _FixtureFileDetail = defineViewType({ name:'FileDetail', tools:{ fail: { description:'Fails as business result', inputSchema:Type.Object({}, {additionalProperties:false}) },
+ok: { description:'Successful Tool', inputSchema:Type.Object({}, {additionalProperties:false}) },
+invalid: { description:'Reject invalid Tool arguments', inputSchema:Type.Object({target:Type.String()}, {additionalProperties:false}) } } });
+
 function App() {
-                    return h(AppTools, { definition: fixtureTools0, bindings: {
-Fail: { execute: async () => ({ success:false, error:{
+                    return h('div', null, h(View,{kind: 'instruction',id:'root',type:_FixtureFileDetail, bindings:{ fail: { execute: async () => ({ success:false, error:{
                         code:'BUSINESS_FAILED', message:'The requested file is locked',
                     }}) },
-OK: { execute: async () => ({success:true,data:{message:'completed'}}) },
-Invalid: { execute: async () => ({success:true,data:{unreachable:true}}) }
-} }, h(View,{kind: 'instruction',id:'root',type:'FileDetail'},'Tool receipts'));
+ok: { execute: async () => ({success:true,data:{message:'completed'}}) },
+invalid: { execute: async () => ({success:true,data:{unreachable:true}}) } }},'Tool receipts'));
                 }
-                export default createTUIApp({app_name:'test_result',component:App});
+                export default createTUIApp({viewTypes:[_FixtureFileDetail], app_name:'test_result',component:App});
             `;
             await build({
                 stdin: {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
 import { refKey } from '../snapshot/snapshot-support.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
-import type { AppSnapshotV3, JsonValue, PreparedAppSnapshotDraftV3, SnapshotStoreOptions, ToolDescriptorV3 } from '../snapshot/types.js';
+import type { AppSnapshotV4, JsonValue, PreparedAppSnapshotDraftV4, SnapshotStoreOptions, ToolDescriptorV4 } from '../snapshot/types.js';
 import { createViewOwnedTools } from '../tool/view-owned-tools.js';
 import { createAppInteraction, DEFAULT_INTERACTION_LIMITS as HARD } from './app-interaction.js';
 import type { CancellationSignal, ExecutionBinding, ExecutionFact, InteractionLimitOverrides, InvocationContext, ReceiptMetadata, ReceiptQuery, InstanceInteraction, AppInvocation } from './app-interaction-types.js';
@@ -76,7 +76,7 @@ describe('R1-F02: await settlement propagates revocation before another public c
         const running = client.invoke(f.request(observed)); await entered.promise;
         const project = deferred<unknown>(), started = deferred<void>(); let getterReads = 0;
         f.controls.project = ctx => { projectSignal = ctx.signal; started.resolve(); return project.promise; };
-        const projecting = client.observe({ viewIds: ['v0'] }); await started.promise; invalidate(f, client, change);
+        const projecting = client.observe({ all: true }); await started.promise; invalidate(f, client, change);
         if (mode === 'reject') project.reject(new Error('synthetic project rejection'));
         else project.resolve(mode === 'uncapturable' ? { get views() { getterReads++; return []; } } : f.grant(f.source, ['v0']));
         const response = await projecting;
@@ -97,7 +97,7 @@ describe('R1-F02: await settlement propagates revocation before another public c
         const running = client.invoke(f.request(observed)); await entered.promise;
         const project = deferred<unknown>(), started = deferred<void>(); let reads = 0;
         f.controls.project = () => { started.resolve(); return project.promise; };
-        const projecting = client.observe({ viewIds: ['v0'] }); await started.promise;
+        const projecting = client.observe({ all: true }); await started.promise;
         if (mode === 'reject') project.reject(new Error('business project refusal'));
         else project.resolve(mode === 'uncapturable' ? { get views() { reads++; return []; } } : f.grant(f.source, ['v0']));
         const response = await projecting; expect(signal.aborted).toBe(false); expect(reads).toBe(0);
@@ -125,7 +125,9 @@ function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverride
     let time = 0, sequence = 0, clockThrows = false, clockMessageReads = 0;
     const now = () => { if (clockThrows) throw { get message() { clockMessageReads++; return 'secret-clock'; } }; return time; };
     const core = createSnapshotCore({ now, ...options.store }); core.lifecycle.startApp('app', 'run');
-    const tools = createViewOwnedTools('app', 'run'), owners = [tools.mount('v0', 'File'), tools.mount('v1', 'File')];
+    const tools = createViewOwnedTools('app', 'run');
+    let pages = ['v0','v1'].map(id => ({id,type:'File',owner:{}}));
+    let owners: ReturnType<ReturnType<typeof createViewOwnedTools>['prepareFrame']>['instances'];
     const ordinary = compileOrdinarySchema({ type: 'object', properties: {} });
     const snapshotValue = compileOrdinarySchema({ type: 'object', properties: {
         file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } },
@@ -135,42 +137,40 @@ function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverride
     const schema: JsonValue = options.schema ?? (options.withRef
         ? snapshotValue.contract.schema : ordinary.contract.schema);
     const typeDefinition = { viewType: 'File', name: 'run', description: 'Synthetic tool', inputSchema: schema };
-    const register = () => tools.registerTypeTool(typeDefinition, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
-        createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned' as const, result: { success: true } }),
-    });
-    let typeRelease = register();
-    function rebindTool() { typeRelease(); typeRelease = register(); }
-    function remountAll() {
-        for (const owner of owners) tools.unmount(owner.viewInstanceId);
-        owners.splice(0, owners.length, tools.mount('v0', 'File'));
+    tools.defineTools([typeDefinition]);
+    function prepare(enabled = true) {
+        const plan = tools.prepareFrame(pages.map(page => ({...page,bindings:[{name:'run',enabled,execute:() => ({success:true})}]})));
+        plan.accept();
+        owners = plan.instances;
+        return plan.tools;
     }
+    function rebindTool() { prepare(false); }
+    function remountAll() { pages = [{id:'v0',type:'File',owner:{}}]; }
     function refs(value: JsonValue = options.payload ?? { version: 'S1' }) {
         return Object.fromEntries(owners.flatMap(owner => (owner.viewId === 'v0' ? ['visible', 'hidden'] : ['visible-v1', 'hidden-v1']).map(id => [refKey(owner.viewId, owner.viewInstanceId, id), {
             id, ownerViewId: owner.viewId, ownerViewInstanceId: owner.viewInstanceId, refType: options.refType ?? 'File',
             target: { kind: 'snapshot-value' as const, payload: value },
         }])));
     }
-    function publish(patch: Partial<PreparedAppSnapshotDraftV3> = {}): AppSnapshotV3 {
-        const seq = ++sequence, result = core.committer.accept({ schemaVersion: 3, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
-            views: owners.map(v => ({ id: v.viewId, viewInstanceId: v.viewInstanceId, type: 'File', name: v.viewId, kind: 'state',
+    function publish(patch: Partial<PreparedAppSnapshotDraftV4> = {}): AppSnapshotV4 {
+        const available = prepare();
+        const seq = ++sequence, result = core.committer.accept({ schemaVersion: 4, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
+            views: owners.map(v => ({ toolBindings: v.toolBindings, id: v.viewId, viewInstanceId: v.viewInstanceId, type: 'File', name: v.viewId, kind: 'state',
                 content: { format: 'markdown-v1', value: 'content-secret-' + v.viewId } })), refs: refs(),
-            tools: Object.fromEntries(tools.listTools().map(t => [t.id, t])), ...patch });
+            tools: Object.fromEntries(available.map(t => [t.id, t])), ...patch });
         expect(['published', 'unchanged']).toContain(result.status);
-        if (result.status === 'rejected' || result.snapshot.schemaVersion !== 3) throw new Error('Expected V3 fixture'); return result.snapshot;
+        if (result.status === 'rejected' || result.snapshot.schemaVersion !== 4) throw new Error('Expected V3 fixture'); return result.snapshot;
     }
     const source = publish();
     const calls = { project: 0, validate: 0, authorize: 0, handler: 0, read: 0, live: 0, resolve: 0, resolveRef: 0 };
     const seen: { validateInput?: Readonly<Record<string, JsonValue>>; authorize?: InvocationContext; execute?: InvocationContext; metadata?: ReceiptMetadata; validateSignal?: CancellationSignal; readSignal?: CancellationSignal } = {};
     function grant(snapshot = source, visible = ['v0', 'v1'], refIds = ['visible']): ObservationGrant {
-        return { views: snapshot.views.filter(v => visible.includes(v.id)).map(v => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
-            refs: Object.values(snapshot.refs).filter(r => visible.includes(r.ownerViewId) && refIds.includes(r.id)).map(r => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })),
-            toolBindings: Object.values(snapshot.tools).filter(tool => snapshot.views.some(view => view.type === tool.viewType && visible.includes(view.id)))
-                .map(tool => ({ toolId: tool.id, execution: tool.execution })), content: [] };
-
+        return { refs: Object.values(snapshot.refs).filter(r => visible.includes(r.ownerViewId) && refIds.includes(r.id))
+            .map(r => ({ viewId:r.ownerViewId, viewInstanceId:r.ownerViewInstanceId, refId:r.id })),
+            toolIds: Object.keys(snapshot.tools) };
     }
     const controls = {
-        project: (ctx: Parameters<import('./app-interaction-types.js').AppInteractionPolicy['project']>[0]): unknown => grant(ctx.source, ctx.selection.viewIds as string[]),
+        project: (ctx: Parameters<import('./app-interaction-types.js').AppInteractionPolicy['project']>[0]): unknown => grant(ctx.source),
         validate: (_source: unknown, input: Readonly<Record<string, JsonValue>>, _signal?: CancellationSignal): unknown => ({ ok: true, value: input }),
         authorize: (_ctx: InvocationContext): unknown => true,
         execute: (_ctx: InvocationContext): unknown => success(),
@@ -191,12 +191,12 @@ function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverride
         limits: options.limits, observationLimits: options.observationLimits });
     function open() { return authority; }
     async function observe(client: InstanceInteraction) {
-        const viewed = await client.observe({ viewIds: ['v0', 'v1'] }); expect(viewed.status).toBe('observed');
+        const viewed = await client.observe({ all: true }); expect(viewed.status).toBe('observed');
         if (viewed.status !== 'observed') throw new Error(viewed.issue.code);
         expect(client.adoptObservation(viewed.observation.observationId)).toEqual({ status: 'adopted' }); return viewed.observation;
     }
     function request(viewed: Observation, id = 'invocation', input: Readonly<Record<string, JsonValue>> = options.withRef ? { file: 'v0.visible', line: '7' } : {}): AppInvocation {
-        return { invocationId: id, observationId: viewed.observationId, bindingId: viewed.bindings[0]!.bindingId, input };
+        return { invocationId: id, observationId: viewed.observationId, toolId: viewed.tools[0]!.id, input: {view_id:"v0", ...input} };
     }
     function zero() {
         authority.close(); expect(authority.inspect()).toMatchObject({ receiptEntries: 0, receiptContents: 0,
@@ -232,13 +232,13 @@ describe('B2-T01/T02: real instance publication and trusted assembly', () => {
     it('runs the ordinary closed loop and isolates observations across App instances', async () => {
         const f = fixture(), g = fixture({ namespace: 'other-instance' }), a = f.open(), b = g.open(), observed = await f.observe(a);
         expect(Object.isFrozen(a)).toBe(true);
-        expect(JSON.stringify(observed)).not.toMatch(/payload-secret|content-secret|hidden/);
+        expect(JSON.stringify(observed)).not.toMatch(/payload-secret|"refId":"hidden"/);
         const response = receipt(await a.invoke(f.request(observed)));
         expect(response).toMatchObject({ executionPhase: 'entered-returned', outcome: { status: 'succeeded' }, source: { snapshotId: f.source.id } });
         expect(f.calls.handler).toBe(1);
         expect(await b.invoke(f.request(observed))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
         expect(g.calls.handler).toBe(0);
-        expect(Object.keys(f.seen.metadata!).sort()).toEqual(['appId', 'bindingId', 'instanceId', 'invocationId', 'observationId', 'source']); f.zero(); g.zero();
+        expect(Object.keys(f.seen.metadata!).sort()).toEqual(['appId', 'instanceId', 'invocationId', 'observationId', 'source', 'toolId']); f.zero(); g.zero();
     });
     it.each(['actor', 'mode', 'source', 'effects', 'tasks'])('refuses caller-selected %s before any business callback', async key => {
         const f = fixture(), client = f.open(), observation = await f.observe(client), before = { ...f.calls };
@@ -255,18 +255,18 @@ describe('B2-T01/T02: real instance publication and trusted assembly', () => {
     it('retains B1 project reservations until a cancelled real policy Promise settles', async () => {
         const f = fixture(), client = f.open(), gate = deferred<ObservationGrant>(), started = deferred<void>();
         f.controls.project = () => { started.resolve(); return gate.promise; };
-        const observed = client.observe({ viewIds: ['v0'] }); await started.promise; client.close();
+        const observed = client.observe({ all: true }); await started.promise; client.close();
         expect(f.authority.inspect()).toMatchObject({ observations: { reservations: 1, cancelledReservations: 1 } });
         expect((await client.observe({ all: true })).status).toBe('rejected');
         gate.resolve(f.grant()); expect((await observed).status).toBe('rejected'); expect(f.authority.inspect().combinedBytes).toBe(0); f.zero();
     });
     it('detaches original selection and invocation input before caller mutation', async () => {
-        const f = fixture(), client = f.open(), selection = { viewIds: ['v0'] }, gate = deferred<ObservationGrant>(), started = deferred<void>();
-        f.controls.project = ctx => { expect(ctx.selection.viewIds).toEqual(['v0']); started.resolve(); return gate.promise; };
-        const pending = client.observe(selection); selection.viewIds[0] = 'v1'; await started.promise; gate.resolve(f.grant(f.source, ['v0']));
+        const f = fixture(), client = f.open(), selection = { all: true }, gate = deferred<ObservationGrant>(), started = deferred<void>();
+        f.controls.project = ctx => { expect(ctx.source.views.map(view => view.id)).toEqual(['v0','v1']); started.resolve(); return gate.promise; };
+        const pending = client.observe(selection); selection.all = false; await started.promise; gate.resolve(f.grant(f.source, ['v0']));
         const result = await pending; expect(result.status).toBe('observed'); if (result.status !== 'observed') return;
         expect(client.adoptObservation(result.observation.observationId)).toEqual({ status: 'adopted' });
-        const request = { ...f.request(result.observation), input: { value: 'captured' } }, invoked = client.invoke(request);
+        const request = { ...f.request(result.observation), input: { view_id: 'v0', value: 'captured' } }, invoked = client.invoke(request);
         request.input.value = 'mutated'; receipt(await invoked); expect(f.seen.execute!.rawInput.value).toBe('captured'); f.zero();
     });
 });
@@ -403,10 +403,9 @@ describe('B2-T06: post-await original source and callable revalidation', () => {
     });
     it('publishes an empty semantic projection through all after the App removes its Views', async () => {
         const f = fixture(), client = f.open();
-        for (const owner of f.owners) f.tools.unmount(owner.viewInstanceId);
         f.publish({ views: [], refs: {}, tools: {} });
         expect(await client.observe({ all: true })).toMatchObject({ status: 'observed',
-            observation: { views: [], refs: [], tools: [], bindings: [] } });
+            observation: { views: [], refs: [], tools: [] } });
         expect(f.calls.project).toBe(1); expect(f.calls.handler).toBe(0); f.zero();
     });
     it.each(['validate', 'authorize'] as const)('uses the original Ref snapshot after %s is suspended', async stage => {
@@ -494,7 +493,7 @@ describe('B2-T07/T08/T09: phases, current reading and deletable results', () => 
         const before = f.authority.inspect();
         const calls = { ...f.calls };
         expect(receipt(await client.readReceipt(receiptQuery(request)))).toEqual(original);
-        expect(f.seen.metadata).toMatchObject({ appId: 'app', instanceId: 'run', bindingId: request.bindingId, source: original.source });
+        expect(f.seen.metadata).toMatchObject({ appId: 'app', instanceId: 'run', toolId: request.toolId, source: original.source });
         expect(f.authority.inspect()).toEqual(before);
         expect(f.calls).toEqual({ ...calls, read: calls.read + 1 });
         expect(await client.invoke({ ...request, invocationId: 'new-call-with-released-ref' }))
@@ -586,10 +585,10 @@ describe('B2-T01/T11 additional revocation and completion faults', () => {
     it('keeps settled reading separate from temporary degraded source availability', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client);
         receipt(await client.invoke(f.request(observation)));
-        expect(f.core.committer.accept({ schemaVersion: 3, ...context, producerSeq: 20, sourceEpoch: 20, capturedAt: 0,
+        expect(f.core.committer.accept({ schemaVersion: 4, ...context, producerSeq: 20, sourceEpoch: 20, capturedAt: 0,
             views: f.source.views, refs: { malformed: null }, tools: f.source.tools }).status).toBe('rejected');
         expect(f.core.store.readLatest('app').status).toBe('degraded');
-        receipt(await client.invoke(f.request(observation))); expect((await client.observe({ viewIds: ['v0'] })).status).toBe('rejected'); f.zero();
+        receipt(await client.invoke(f.request(observation))); expect((await client.observe({ all: true })).status).toBe('rejected'); f.zero();
     });
     it('settles a dispatched call while now throws without reading its exception or retaining active fees', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client), started = deferred<void>(), gate = deferred<unknown>();
@@ -679,8 +678,12 @@ describe('B2-T12: individual counters and transactional byte responsibility', ()
     });
     it('honors independent Store lease limits without widening them', async () => {
         const f = fixture({ store: { maxActiveLeases: 2 } }), client = f.open(), observation = await f.observe(client);
-        expect(receipt(await client.invoke(f.request(observation))).outcome).toMatchObject({ status: 'rejected', code: 'SNAPSHOT_CAPACITY' });
-        expect(f.calls.handler).toBe(0); f.zero();
+        const held = f.core.store.acquire(f.source.id, { lifetime: 'owner' });
+        if (held.status !== 'acquired') throw Error(held.issue.code);
+        try {
+            expect(receipt(await client.invoke(f.request(observation))).outcome).toMatchObject({ status: 'rejected', code: 'SNAPSHOT_CAPACITY' });
+            expect(f.calls.handler).toBe(0);
+        } finally { held.lease.release(); f.zero(); }
     });
     it('rejects canonical control-character amplification at the new entry without calling business', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client);
@@ -689,7 +692,7 @@ describe('B2-T12: individual counters and transactional byte responsibility', ()
     });
     it('preserves dedup even when a lowered receipt profile cannot represent a fixed rejection', async () => {
         const f = fixture({ limits: { receipt: { maxCanonicalBytes: 1 }, maxReceiptsPerObservation: 1 } }), client = f.open(), observation = await f.observe(client);
-        const raw = { ...f.request(observation), bindingId: 'unknown' };
+        const raw = { ...f.request(observation), toolId: 'unknown' };
         expect(code(await client.invoke(raw))).toBe('RESULT_UNAVAILABLE'); expect(code(await client.invoke(raw))).toBe('RESULT_UNAVAILABLE');
         expect(f.authority.inspect()).toMatchObject({ receiptEntries: 1, receiptContents: 0, resultBytes: 0, workBytes: 0, sourceBytes: 0 });
         expect(await client.invoke(f.request(observation, 'another'))).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' }); expect(f.calls.handler).toBe(0); f.zero();
@@ -725,7 +728,7 @@ describe('B2-T12: independent depth/node/approximate/canonical profiles', () => 
         }
     });
     it.each(fields)('bounds ordinary input %s before validator entry', async field => {
-        const n = measure(sample, field);
+        const n = measure({ view_id: 'v0', ...sample }, field);
         for (const delta of [-1, 0, 1]) {
             const f = fixture({ limits: { ordinaryInput: { [field]: n + delta } } }), client = f.open(), observed = await f.observe(client);
             const result = receipt(await client.invoke(f.request(observed, 'profile', sample)));
@@ -735,7 +738,7 @@ describe('B2-T12: independent depth/node/approximate/canonical profiles', () => 
     });
     it.each(fields)('bounds filled metadata %s and never expands beyond its admission reservation', async field => {
         const probe = fixture(), p = probe.open(), po = await probe.observe(p), raw = probe.request(po, 'profile'), got = receipt(await p.invoke(raw));
-        const metadata = { ...context, invocationId: raw.invocationId, observationId: raw.observationId, bindingId: raw.bindingId, source: got.source };
+        const metadata = { ...context, invocationId: raw.invocationId, observationId: raw.observationId, toolId: raw.toolId, source: got.source };
         const n = measure(metadata, field); probe.zero();
         for (const delta of [-1, 0, 1]) {
             const f = fixture({ limits: { metadata: { [field]: n + delta } } }), client = f.open(), observation = await f.observe(client), result = receipt(await client.invoke(f.request(observation, 'profile')));
@@ -766,7 +769,7 @@ describe('B2-T12: independent depth/node/approximate/canonical profiles', () => 
     it.each(fields)('reuses the bounded B1 source %s profile for B2 reference billing', async field => {
         const probe = fixture(), n = measure(probe.source, field); probe.zero();
         for (const delta of [-1, 0, 1]) {
-            const f = fixture({ observationLimits: { source: { [field]: n + delta } } }), client = f.open(), result = await client.observe({ viewIds: ['v0', 'v1'] });
+            const f = fixture({ observationLimits: { source: { [field]: n + delta } } }), client = f.open(), result = await client.observe({ all: true });
             expect(result.status).toBe(delta < 0 ? 'rejected' : 'observed');
             if (result.status === 'observed') { expect(client.adoptObservation(result.observation.observationId)).toEqual({ status: 'adopted' }); expect(receipt(await client.invoke(f.request(result.observation))).outcome.status).toBe('succeeded'); }
             else expect(f.authority.inspect().receiptEntries).toBe(0); f.zero();
@@ -786,7 +789,7 @@ describe('B2-Q01: identity replacement before a new projection exists', () => {
         if (how === 'stop-start') f.core.lifecycle.stopApp('app', 'run'); f.core.lifecycle.startApp('app', 'run-2');
         expect(f.core.store.readLatest('app')).toEqual({ status: 'unready' });
         expect(code(await client.invoke(f.request(observation)))).toBe('APP_INTERACTION_UNAVAILABLE');
-        expect((await client.observe({ viewIds: ['v0'] })).status).toBe('rejected');
+        expect((await client.observe({ all: true })).status).toBe('rejected');
         expect(code(await client.invoke(f.request(observation, 'new')))).toBe('APP_INTERACTION_UNAVAILABLE');
         expect(f.calls.handler).toBe(1); expect(f.authority.inspect()).toMatchObject({ receiptEntries: 0, combinedBytes: 0 }); f.zero();
     });
@@ -795,7 +798,7 @@ describe('B2-Q01: identity replacement before a new projection exists', () => {
         const client = f.open(), gate = deferred<unknown>(), started = deferred<void>(); let signal: CancellationSignal | undefined;
         if (stage === 'project') {
             f.controls.project = ctx => { signal = ctx.signal; started.resolve(); return gate.promise; };
-            const pending = client.observe({ viewIds: ['v0'] }); await started.promise;
+            const pending = client.observe({ all: true }); await started.promise;
             f.core.lifecycle.stopApp('app', 'run'); f.core.lifecycle.startApp('app', 'run-2');
             expect(f.authority.inspect()).toMatchObject({ observations: { reservations: 1, cancelledReservations: 1 } });
             expect(signal!.aborted).toBe(true); gate.resolve(f.grant()); expect((await pending).status).toBe('rejected'); f.zero(); return;
@@ -826,18 +829,15 @@ describe('B2-Q01: identity replacement before a new projection exists', () => {
         const f = fixture(), old = f.open(), first = await f.observe(old); receipt(await old.invoke(f.request(first)));
         f.core.lifecycle.startApp('app', 'run-2'); expect(code(await old.invoke(f.request(first)))).toBe('APP_INTERACTION_UNAVAILABLE');
         const replacement = createAppInteraction(f.store, { ...f.input, instanceId: 'run-2', namespace: 'replacement', now: f.now });
-        expect(code(await replacement.observe({ viewIds: ['v0'] }))).toBe('SNAPSHOT_UNREADY');
+        expect(code(await replacement.observe({ all: true }))).toBe('SNAPSHOT_UNREADY');
         f.core.lifecycle.stopApp('app', 'run'); expect(f.core.store.readAppIdentity('app')).toEqual({ status: 'active', instanceId: 'run-2' });
-        const next = createViewOwnedTools('app', 'run-2'), mounted = next.mount('v0', 'File');
-        const nextSchema = compileOrdinarySchema({ type: 'object', properties: {} }); if (!nextSchema.ok) throw new Error('Next instance Tool schema must compile');
-        next.registerTypeTool({ viewType: 'File', name: 'run', description: 'Synthetic tool', inputSchema: nextSchema.contract.schema }, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
-            createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: { success: true } }),
-        });
-        const tool = next.listTools()[0]!;
-        f.publish({ instanceId: 'run-2', views: [{ id: 'v0', viewInstanceId: mounted.viewInstanceId, type: 'File', name: 'new', kind: 'state', content: { format: 'markdown-v1', value: 'new' } }],
+        const next = createViewOwnedTools('app', 'run-2');
+        next.defineTools([{ viewType:'File',name:'run',description:'Synthetic tool',inputSchema:{type:'object',properties:{}} }]);
+        const plan = next.prepareFrame([{id:'v0',type:'File',owner:{},bindings:[{name:'run',enabled:true,execute:()=>({success:true})}]}]);
+        const mounted = plan.instances[0]!, tool = plan.tools[0]!;
+        f.publish({ instanceId: 'run-2', views: [{ toolBindings: mounted.toolBindings, id: 'v0', viewInstanceId: mounted.viewInstanceId, type: 'File', name: 'new', kind: 'state', content: { format: 'markdown-v1', value: 'new' } }],
             refs: {}, tools: { [tool.id]: tool } });
-        const observed = await replacement.observe({ viewIds: ['v0'] }); expect(observed.status).toBe('observed'); if (observed.status !== 'observed') return;
+        const observed = await replacement.observe({ all: true }); expect(observed.status).toBe('observed'); if (observed.status !== 'observed') return;
         expect(replacement.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
         expect(receipt(await replacement.invoke(f.request(observed.observation, 'new'))).source?.instanceId).toBe('run-2');
         old.close(); replacement.close(); replacement.close(); f.zero();

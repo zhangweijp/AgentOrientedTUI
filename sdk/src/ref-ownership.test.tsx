@@ -9,8 +9,11 @@ import { useArrayRef } from './hooks/useArrayRef.js';
 import { useDataRef } from './hooks/useRef.js';
 import { ViewRuntimeContext } from './contexts/view-runtime-context.js';
 
+import {defineViewType} from './tools/view-type-tool.js';
+const RecordType=defineViewType({name:'Record',tools:{}});
+const WorkspaceType=defineViewType({name:'Workspace',tools:{}});
 function setup(component: () => any) {
-  const factory = createTUIApp({ app_name: 'ref_ownership', component });
+  const factory = createTUIApp({ app_name: 'ref_ownership', viewTypes:[RecordType,WorkspaceType], component });
   const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
   kernel.setId('ref_ownership_app' as any);
   kernel.enableAppLifecycle();
@@ -29,14 +32,15 @@ const refsOf = (kernel: AppKernel) => Object.fromEntries(
 
 describe('Ref registration ownership', () => {
   it('rejects a second live owner and makes update/release owner-bound and idempotent', async () => {
-    const x = setup(() => h(View, { id: 'view', type: 'Record', kind: 'state' }));
+    const x = setup(() => h(View, { id: 'view', type: RecordType, kind: 'state' }));
     await x.open();
     const projection = x.kernel.getProjectionCoordinator();
     const firstValue = { id: 'first' };
-    let first!: ReturnType<AppKernel['registerRef']>;
+    const owner=x.kernel.getViewOwnedViewInstances()[0]!;
+    let first!: ReturnType<typeof projection.registerRef>;
     projection.commit(() => {
-      first = x.kernel.registerRef('view', 'selected', firstValue);
-      expect(() => x.kernel.registerRef('view', 'selected', { id: 'duplicate' }))
+      first = projection.registerRef(owner, 'selected', firstValue);
+      expect(() => projection.registerRef(owner, 'selected', { id: 'duplicate' }))
         .toThrow(expect.objectContaining({ code: 'REF_ALREADY_REGISTERED' }));
     });
 
@@ -51,8 +55,8 @@ describe('Ref registration ownership', () => {
     first.release();
     expect(() => first.update({ id: 'stale' })).toThrow('is no longer active');
     const successorValue = { id: 'successor' };
-    let successor!: ReturnType<AppKernel['registerRef']>;
-    projection.commit(() => { successor = x.kernel.registerRef('view', 'selected', successorValue); });
+    let successor!: ReturnType<typeof projection.registerRef>;
+    projection.commit(() => { successor = projection.registerRef(owner, 'selected', successorValue); });
     first.release();
     expect(refsOf(x.kernel)['view:selected']).toEqual(successorValue);
 
@@ -73,7 +77,7 @@ describe('Ref registration ownership', () => {
       return null;
     }
     function App() {
-      return h(View, {kind: 'state', id: 'workspace', type: 'Workspace' }, [
+      return h(View, {kind: 'state', id: 'workspace', type: WorkspaceType }, [
         h(FirstPublisher, { key: 'first' }),
         h(SecondPublisher, { key: 'second' }),
       ]);
@@ -94,8 +98,8 @@ describe('Ref registration ownership', () => {
       useDataRef(state.refId, value);
       return null;
     }
-    const x = setup(() => h(View, {kind: 'state', id: 'workspace', type: 'Workspace' }, h(Content, {})));
-    const registerRef = vi.spyOn(x.kernel, 'registerRef');
+    const x = setup(() => h(View, {kind: 'state', id: 'workspace', type: WorkspaceType }, h(Content, {})));
+    const registerRef = vi.spyOn(x.kernel.getProjectionCoordinator(), 'registerRef');
     await x.open();
     expect((refsOf(x.kernel)['workspace:selected'] as any)?.id).toBe('one');
     const initialBinding = registerRef.mock.results[0]!.value;

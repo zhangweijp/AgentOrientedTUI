@@ -36,19 +36,15 @@ export {
   type ListRefFormatter,
   type ItemRefFormatter,
 } from './hooks/useArrayRef.js';
-export { defineToolSet, defineViewTypeTool, getToolCatalog, refParam } from './tools/view-type-tool.js';
+export { defineViewType, getToolCatalog, refParam } from './tools/view-type-tool.js';
 export type {
   ArgsOf,
   DeepReadonly,
-  DefinedViewTypeTool,
   JsonSchemaObject,
-  SchemaOf,
   ToolBinding,
-  ToolBindings,
+  ViewBindings,
+  ViewType,
   ToolCatalogEntry,
-  ToolSet,
-  ToolSetMap,
-  ViewTypeToolDeclaration,
 } from './tools/view-type-tool.js';
 export { useLLMUsage } from './hooks/useLLMUsage.js';
 export type {
@@ -68,8 +64,8 @@ export type {
 } from '@aotui/runtime/spi';
 export { AOTUIError } from '@aotui/runtime/spi';
 
-export { AppTools, ToolCatalog } from './components/AppTools.js';
-export type { AppToolsProps, ToolCatalogProps } from './components/AppTools.js';
+export { ToolCatalog } from './components/ToolCatalog.js';
+export type { ToolCatalogProps } from './components/ToolCatalog.js';
 
 export { formatRef } from './app-factory/refs.js';
 export type { RefOptions } from './app-factory/refs.js';

@@ -1,6 +1,6 @@
 {
   "name": "@aotui/sdk",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Build Agent-Oriented TUI Apps with TypeScript or Preact",
   "type": "module",
   "main": "dist/index.js",
@@ -33,7 +33,7 @@
     }
   },
   "dependencies": {
-    "@aotui/runtime": "7.0.0"
+    "@aotui/runtime": "8.0.0"
   },
   "devDependencies": {
     "@testing-library/preact": "^3.2.4",

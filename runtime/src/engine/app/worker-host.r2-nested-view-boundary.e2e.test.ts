@@ -1,3 +1,4 @@
+import { projectCompleteViews } from '../../core/invocation/observation-registry.js';
 import { Worker } from 'node:worker_threads';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,7 +18,10 @@ function appSource(): string {
         import { h } from 'preact';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
         import Type from 'typebox';
-        import { createTUIApp, defineViewTypeTool, View, useDataRef, AppTools, defineToolSet } from '@aotui/sdk';
+        import { createTUIApp, View, useDataRef, defineViewType } from '@aotui/sdk';
+const _FixtureParent = defineViewType({ name:'Parent', tools:{ parent_action: { description:'Run the parent action', inputSchema:Type.Object({}, {additionalProperties:false}) } } });
+const _FixtureSibling = defineViewType({ name:'Sibling', tools:{ sibling_action: { description:'Run the sibling action', inputSchema:Type.Object({}, {additionalProperties:false}) } } });
+
 
         function Parent({ state }) {
             const ref = useDataRef('parent_ref', useMemo(() => ({ owner: 'parent' }), []));
@@ -40,14 +44,7 @@ function appSource(): string {
         }
 
 
-const fixtureTools0 = defineToolSet({
-ParentActionUI: defineViewTypeTool({
-                viewType: 'Parent', name: 'parent_action', description: 'Run the parent action',
-                inputSchema: Type.Object({}, {additionalProperties:false}), }),
-SiblingActionUI: defineViewTypeTool({
-                viewType: 'Sibling', name: 'sibling_action', description: 'Run the sibling action',
-                inputSchema: Type.Object({}, {additionalProperties:false}), })
-});
+
 function Root() {
             const [state, setState] = useState({
                 parentText: 'PARENT_INITIAL_MARKER', injectRawView: false, siblingOpen: true,
@@ -69,16 +66,13 @@ function Root() {
                 parentPort.on('message', onCommand);
                 return () => parentPort.off('message', onCommand);
             }, []);
-            return h(AppTools, { definition: fixtureTools0, bindings: {
-ParentActionUI: { execute: async () => ({ success: true, data: { owner: 'parent' } }) },
-SiblingActionUI: { execute: async () => ({ success: true, data: { owner: 'sibling' } }) }
-} }, h('main', {}, [
-                h(View, {kind: 'state', id: 'parent', type: 'Parent' }, h(Parent, { state })),
-                state.siblingOpen ? h(View, {kind: 'state', id: 'sibling', type: 'Sibling' }, h(Sibling)) : null,
+            return h('div', null, h('main', {}, [
+                h(View, {kind: 'state', id: 'parent', type: _FixtureParent, bindings:{ parent_action: { execute: async () => ({ success: true, data: { owner: 'parent' } }) } } }, h(Parent, { state })),
+                state.siblingOpen ? h(View, {kind: 'state', id: 'sibling', type: _FixtureSibling, bindings:{ sibling_action: { execute: async () => ({ success: true, data: { owner: 'sibling' } }) } } }, h(Sibling)) : null,
             ]));
         }
 
-        export default createTUIApp({ app_name: 'nested_view_rejection', component: Root });
+        export default createTUIApp({viewTypes:[_FixtureParent,_FixtureSibling],  app_name: 'nested_view_rejection', component: Root });
     `;
 }
 
@@ -139,18 +133,7 @@ function waitForCapture(worker: Worker, captures: Capture[], after: number): Pro
 
 function policyForSelection(): AppInteractionPolicy {
     return {
-        project: ({ source, selection }) => {
-            const selected = new Set(selection.viewIds);
-            const views = source.views.filter(view => selected.has(view.id));
-            return {
-                views: views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-                refs: Object.values(source.refs).filter(ref => selected.has(ref.ownerViewId))
-                    .map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
-                toolBindings: Object.values(source.tools).flatMap(tool => 
-                    views.some(view => view.type === tool.viewType) ? [{ toolId: tool.id, execution: tool.execution }] : []),
-                content: views.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' as const })),
-            };
-        },
+        project: projectCompleteViews,
         authorize: () => true,
         canReadReceipt: () => true,
     };
@@ -201,19 +184,19 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
                 const scope = host!.getAppInteraction(policy);
                 expect(scope.status).toBe('ready');
                 if (scope.status !== 'ready') throw new Error(scope.issue.code);
-                const observed = await scope.interaction.observe({ viewIds: [viewId] });
+                const observed = await scope.interaction.observe({ all: true });
                 expect(observed.status).toBe('observed');
                 if (observed.status !== 'observed') throw new Error(observed.issue.code);
                 expect(scope.interaction.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
                 const tool = observed.observation.tools.find(candidate => candidate.name === name);
                 expect(tool).toBeDefined();
-                const binding = observed.observation.bindings.find(candidate => candidate.toolId === tool?.id);
-                expect(binding).toBeDefined();
+                const target = observed.observation.views.find(view => view.type === tool?.viewType);
+                expect(target).toBeDefined();
                 const result = await scope.interaction.invoke({
                     invocationId,
                     observationId: observed.observation.observationId,
-                    bindingId: binding!.bindingId,
-                    input: {},
+                    toolId: tool!.id,
+                    input: { view_id: target!.id },
                 });
                 scope.interaction.releaseObservation(observed.observation.observationId);
                 return result;

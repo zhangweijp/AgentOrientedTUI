@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createSnapshotCore } from './store.js';
-import { validatePreparedV3Draft } from './v3-validator.js';
+import { validatePreparedV4Draft } from './v4-validator.js';
 import { canonicalJson } from './json.js';
 import { DEFAULT_SNAPSHOT_LIMITS, VIEW_METADATA_BYTES } from './snapshot-support.js';
 import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
@@ -14,33 +14,31 @@ if (!empty.ok) throw new Error('Fixture Tool schema must compile');
 const emptySchema = ordinaryParameterProfile(empty.contract);
 const expected = {
     canonicalContent: canonicalJson({
-        schemaVersion: 3,
-        views: [{ id: 'view', viewInstanceId: 'mount', type: 'Type', name: 'View', kind: 'state',
+        schemaVersion: 4,
+        views: [{ toolBindings: [{ toolId, activationId: 'active-read' }], id: 'view', viewInstanceId: 'mount', type: 'Type', name: 'View', kind: 'state',
             content: { format: 'markdown-v1', value: text } }],
         refs: { [refId]: { id: 'ref', ownerViewId: 'view', ownerViewInstanceId: 'mount', refType: 'Value',
             target: { kind: 'snapshot-value', payload: { text } } } },
         tools: { [toolId]: { id: toolId, name: 'read', viewType: 'Type', description: 'Read value',
-            inputSchema: emptySchema, 
-            execution: { kind: 'view-type', activationId: 'ta:v1:["instance",1]' } } },
+            inputSchema: emptySchema } },
     } as any),
-    contentDigest: 'fnv1a64:96ea30e097d1651f',
-    bytes: 819,
-    emptyCanonicalContent: '{"refs":{},"schemaVersion":3,"tools":{},"views":[]}',
-    emptyContentDigest: 'fnv1a64:adb8bb3e2428af24',
+    contentDigest: 'fnv1a64:f36c3df3509907f3',
+    bytes: 833,
+    emptyCanonicalContent: '{"refs":{},"schemaVersion":4,"tools":{},"views":[]}',
+    emptyContentDigest: 'fnv1a64:55733d24549dbcb7',
     emptyBytes: 136,
 };
 
 function fixture() {
     return {
-        schemaVersion: 3 as const, appId: 'app', instanceId: 'instance',
+        schemaVersion: 4 as const, appId: 'app', instanceId: 'instance',
         producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
-        views: [{ id: 'view', viewInstanceId: 'mount', type: 'Type', name: 'View', kind: 'state',
+        views: [{ toolBindings: [{ toolId, activationId: 'active-read' }], id: 'view', viewInstanceId: 'mount', type: 'Type', name: 'View', kind: 'state',
             content: { format: 'markdown-v1', value: text } }],
         refs: { [refId]: { id: 'ref', ownerViewId: 'view', ownerViewInstanceId: 'mount', refType: 'Value',
             target: { kind: 'snapshot-value', payload: { text } } } },
         tools: { [toolId]: { id: toolId, name: 'read', viewType: 'Type', description: 'Read value',
-            inputSchema: emptySchema, 
-            execution: { kind: 'view-type' as const, activationId: 'ta:v1:["instance",1]' } } },
+            inputSchema: emptySchema } },
     };
 }
 
@@ -65,11 +63,11 @@ function frozenData(value: unknown): void {
     }
 }
 
-describe('V3 complete metadata boundary', () => {
+describe('V4 complete metadata boundary', () => {
     it('keeps complete metadata, escaped Unicode data, and detached frozen maps', () => {
         const input = fixture();
         const original = structuredClone(input);
-        const checked = validatePreparedV3Draft(input);
+        const checked = validatePreparedV4Draft(input);
         expect(checked.ok).toBe(true);
         if (!checked.ok) throw new Error('Expected a valid fixture');
         expect(checked.value).toEqual({
@@ -92,7 +90,7 @@ describe('V3 complete metadata boundary', () => {
         Object.defineProperty(input.views[0].content, 'value', {
             enumerable: true, configurable: true, get() { calls++; return text; },
         });
-        const checked = validatePreparedV3Draft(input);
+        const checked = validatePreparedV4Draft(input);
         expect(checked.ok).toBe(false);
         if (checked.ok) throw new Error('Expected accessor rejection');
         expect(checked.issue.code).toBe('SNAPSHOT_SERIALIZATION_ERROR');
@@ -102,9 +100,9 @@ describe('V3 complete metadata boundary', () => {
     });
 
     it('keeps strict field rejection ahead of invalid identity', () => {
-        const checked = validatePreparedV3Draft({ ...fixture(), appId: '', extra: true });
+        const checked = validatePreparedV4Draft({ ...fixture(), appId: '', extra: true });
         expect(checked).toEqual({ ok: false, issue: {
-            code: 'SNAPSHOT_INVALID', path: '$.extra', message: 'Unknown V3 field',
+            code: 'SNAPSHOT_INVALID', path: '$.extra', message: 'Unknown Snapshot field',
         } });
         expect(Reflect.ownKeys(checked)).toEqual(['ok', 'issue']);
         expect(Object.isFrozen(checked)).toBe(true);
@@ -112,23 +110,23 @@ describe('V3 complete metadata boundary', () => {
 
     it('accepts wider Core View IDs while keeping the canonical View metadata byte limit', () => {
         const base = fixture();
-        const view = { ...base.views[0]!, id: '', name: 'Item' };
+        const view = { ...base.views[0]!, id: '', name: 'Item', toolBindings: [] };
         const draft = (id: string) => ({ ...base, views: [{ ...view, id }], refs: {}, tools: {} });
-        expect(validatePreparedV3Draft(draft('file-甲\n')).ok).toBe(true);
-        const { content: _content, ...metadata } = view;
+        expect(validatePreparedV4Draft(draft('file-甲\n')).ok).toBe(true);
+        const { content: _content, toolBindings: _bindings, ...metadata } = view;
         const id = 'x'.repeat(VIEW_METADATA_BYTES - canonicalBytes(metadata));
-        expect(validatePreparedV3Draft(draft(id)).ok).toBe(true);
-        expect(validatePreparedV3Draft(draft(id + 'x'))).toMatchObject({
+        expect(validatePreparedV4Draft(draft(id)).ok).toBe(true);
+        expect(validatePreparedV4Draft(draft(id + 'x'))).toMatchObject({
             ok: false, issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$.views[0]' },
         });
     });
 
     it.each([-1, 0, 1])('keeps the final byte boundary at the fixed size %+i', delta => {
         const input = boundaryFixture(), bytes = canonicalBytes(input);
-        const checked = validatePreparedV3Draft(input, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: bytes + delta });
+        const checked = validatePreparedV4Draft(input, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: bytes + delta });
         expect(checked.ok).toBe(delta >= 0);
         if (!checked.ok) expect(checked).toEqual({ ok: false, issue: {
-            code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$', message: 'V3 Snapshot byte budget exceeded',
+            code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$', message: 'Snapshot byte budget exceeded',
         }, envelope: { appId: 'app', instanceId: 'instance', producerSeq: 1, sourceEpoch: 1 } });
         else expect(checked.value.bytes).toBe(bytes);
     });
@@ -162,19 +160,19 @@ describe('V3 complete metadata boundary', () => {
     });
 });
 
-it('retains complete metadata for a legal empty V3 application', () => {
+it('retains complete metadata for a legal empty V4 application', () => {
     const input = { ...fixture(), views: [], refs: {}, tools: {} };
-    const checked = validatePreparedV3Draft(input);
-    if (!checked.ok) throw new Error('Expected legal empty V3');
+    const checked = validatePreparedV4Draft(input);
+    if (!checked.ok) throw new Error('Expected legal empty V4');
     expect(checked.value).toEqual({ draft: input, canonicalContent: expected.emptyCanonicalContent,
         contentDigest: expected.emptyContentDigest, bytes: expected.emptyBytes });
     frozenData(checked.value.draft);
 });
 
-it('enforces the V3 whole-envelope byte limit directly', () => {
+it('enforces the V4 whole-envelope byte limit directly', () => {
     const input = boundaryFixture();
-    const checked = validatePreparedV3Draft(input, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: canonicalBytes(input) - 1 });
+    const checked = validatePreparedV4Draft(input, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: canonicalBytes(input) - 1 });
     expect(checked).toMatchObject({ ok: false, issue: {
-        code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$', message: 'V3 Snapshot byte budget exceeded',
+        code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$', message: 'Snapshot byte budget exceeded',
     } });
 });

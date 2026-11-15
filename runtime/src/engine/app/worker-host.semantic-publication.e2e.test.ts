@@ -1,3 +1,4 @@
+import { projectCompleteViews } from '../../core/invocation/observation-registry.js';
 import { Worker } from 'node:worker_threads';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -31,7 +32,12 @@ function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, f
         import { h } from 'preact';
         import Type from 'typebox';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
-        import { createTUIApp, defineViewTypeTool, View, useDataRef, AppTools, defineToolSet } from '@aotui/sdk';
+        import { createTUIApp, View, useDataRef, defineViewType } from '@aotui/sdk';
+const _FixtureWorkspace = defineViewType({ name:'Workspace', tools:{ refresh: { description:'Refresh the current view', inputSchema:Type.Object({ query: Type.String() }, { additionalProperties: false }) },
+extra: { description:'Additional view action', inputSchema:Type.Object({ selector: Type.String() }, { additionalProperties: false }) },
+fault_after_commit: { description:'Commit the fixture business change', inputSchema:Type.Object({reason: Type.String()}, {additionalProperties:false}) },
+stats: { description:'Read fixture business calls', inputSchema:Type.Object({query: Type.String()}, {additionalProperties:false}) } } });
+
 
         Date.now = () => 1700000000000;
         let businessCalls = 0;
@@ -46,26 +52,12 @@ function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, f
         }
 
 
-const fixtureTools0 = defineToolSet({
-RefreshUI: defineViewTypeTool({
-                viewType: 'Workspace', name: 'refresh', description: 'Refresh the current view',
-                inputSchema: Type.Object({ query: Type.String() }, { additionalProperties: false }),
-            }),
-ExtraUI: defineViewTypeTool({
-                viewType: 'Workspace', name: 'extra', description: 'Additional view action',
-                inputSchema: Type.Object({ selector: Type.String() }, { additionalProperties: false }),
-            }),
-Fault: defineViewTypeTool({viewType: 'Workspace', name: 'fault_after_commit', description: 'Commit the fixture business change', inputSchema: Type.Object({reason: Type.String()}, {additionalProperties:false})}),
-Stats: defineViewTypeTool({viewType: 'Workspace', name: 'stats', description: 'Read fixture business calls', inputSchema: Type.Object({query: Type.String()}, {additionalProperties:false})})
-});
+
 function Root() {
             const [state, setState] = useState({
                 open: ${initiallyOpen}, text: 'initial', refValue: 'seed',
                 toolEnabled: true, extraToolEnabled: false, invalidRef: false, invalidLayout: false,
             });
-            const RefreshUI = fixtureTools0.RefreshUI;
-            const ExtraUI = fixtureTools0.ExtraUI;
-            void RefreshUI; void ExtraUI;
             useLayoutEffect(() => {
                 const onCommand = message => {
                     if (message.type !== 'TEST_COMMAND') return;
@@ -88,20 +80,18 @@ function Root() {
                 parentPort.on('message', onCommand);
                 return () => parentPort.off('message', onCommand);
             }, []);
-            return h(AppTools, { definition: fixtureTools0, bindings: {
-RefreshUI: { execute: async () => {
+            return h('div', null, state.open
+                ? h(View, {kind: 'state', id: 'workspace', type: _FixtureWorkspace, bindings:{ refresh: { execute: async () => {
                     businessCalls++;
                     return { success: true, data: { calls: businessCalls } };
                 }, enabled: state.toolEnabled },
-ExtraUI: { execute: async () => ({ success: true }), enabled: state.extraToolEnabled },
-Fault: {enabled: ${faultTools}, execute: async () => {businessCalls++; setState(current => ({...current, invalidRef: true})); return {success:true, data:{calls:businessCalls}};}},
-Stats: {enabled: ${faultTools}, execute: async () => ({success:true, data:{calls:businessCalls}})}
-} }, state.open
-                ? h(View, {kind: 'state', id: 'workspace', type: 'Workspace', name: 'Workspace' }, h(Workspace, { state, setState }))
+extra: { execute: async () => ({ success: true }), enabled: state.extraToolEnabled },
+fault_after_commit: {enabled: ${faultTools}, execute: async () => {businessCalls++; setState(current => ({...current, invalidRef: true})); return {success:true, data:{calls:businessCalls}};}},
+stats: {enabled: ${faultTools}, execute: async () => ({success:true, data:{calls:businessCalls}})} }, name: 'Workspace' }, h(Workspace, { state, setState }))
                 : null);
         }
 
-        export default createTUIApp({ app_name: 'publication_fixture', component: Root, ${policy} });
+        export default createTUIApp({viewTypes:[_FixtureWorkspace],  app_name: 'publication_fixture', component: Root, ${policy} });
     `;
 }
 
@@ -231,18 +221,7 @@ function viewCount(host: AppWorkerHost): number {
 
 function allViewsPolicy(): AppInteractionPolicy {
     return {
-        project: ({ source, selection }) => {
-            const ids = new Set(selection.viewIds);
-            const views = source.views.filter(view => ids.has(view.id));
-            return {
-                views: views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-                refs: Object.values(source.refs).filter(ref => ids.has(ref.ownerViewId))
-                    .map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
-                toolBindings: Object.values(source.tools).flatMap(tool =>
-                    views.some(view => view.type === tool.viewType) ? [{ toolId: tool.id, execution: tool.execution }] : []),
-                content: views.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' as const })),
-            };
-        },
+        project: projectCompleteViews,
         authorize: () => true,
         canReadReceipt: () => true,
     };
@@ -254,20 +233,20 @@ async function createToolCaller(host: AppWorkerHost, name: string, input: Record
     const scope = host.getAppInteraction(publicationPolicy);
     expect(scope.status).toBe('ready');
     if (scope.status !== 'ready') throw new Error(scope.issue.code);
-    const observed = await scope.interaction.observe({ viewIds: ['workspace'] });
+    const observed = await scope.interaction.observe({ all: true });
     if (observed.status === 'observed') expect(scope.interaction.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
     expect(observed.status).toBe('observed');
     if (observed.status !== 'observed') throw new Error(observed.issue.code);
     const tool = observed.observation.tools.find(candidate => candidate.name === name);
     expect(tool).toBeDefined();
-    const binding = observed.observation.bindings.find(candidate => candidate.toolId === tool!.id);
-    expect(binding).toBeDefined();
+    const target = observed.observation.views.find(view => view.type === tool?.viewType);
+    expect(target).toBeDefined();
     return {
         invoke: (invocationId: string) => scope.interaction.invoke({
             invocationId,
             observationId: observed.observation.observationId,
-            bindingId: binding!.bindingId,
-            input,
+            toolId: tool!.id,
+            input: { view_id: target!.id, ...input },
         }),
         close: () => scope.interaction.releaseObservation(observed.observation.observationId),
     };

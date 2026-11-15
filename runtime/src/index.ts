@@ -48,7 +48,7 @@ export type {
     ReceiptMetadata,
     Issue as InteractionIssue,
 } from './core/invocation/app-interaction-types.js';
-export type { Observation, ObservationSelection, ObservationGrant } from './core/invocation/observation-types.js';
+export type { Observation, ObservationSelection, ObservationGrant, ObservedTool } from './core/invocation/observation-types.js';
 
 export {
     AOTUIError,

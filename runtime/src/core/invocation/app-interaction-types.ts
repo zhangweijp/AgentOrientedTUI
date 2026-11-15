@@ -1,6 +1,6 @@
 /** Core owns these contracts. The Runtime root also exposes the Host-facing types. */
-import type { AppSnapshotV3, JsonValue, ObservedToolExecutionV3, ToolDescriptorV3 } from '../snapshot/types.js';
-import type { Observation, ObservedView, ObservationSelection, ObservationGrant, ObservationSource, ObservationRegistryStats, ObservationJsonLimits } from './observation-types.js';
+import type { AppSnapshotV4, JsonValue, ViewToolReceiver, ToolDescriptorV4 } from '../snapshot/types.js';
+import type { Observation, ObservedView, ObservationGrant, ObservationSource, ObservationRegistryStats, ObservationJsonLimits } from './observation-types.js';
 import type { SnapshotValueRefSource } from '../tool/snapshot-value-arguments.js';
 export type { AppIdentityRead, AppIdentityReader } from '../snapshot/types.js';
 type JsonObject = Readonly<Record<string, JsonValue>>;
@@ -25,7 +25,7 @@ export type ExecutionFact =
 export interface AppInvocation {
   readonly invocationId:string;
   readonly observationId:string;
-  readonly bindingId:string;
+  readonly toolId:string;
   readonly input:JsonObject;
 }
 export interface ReceiptQuery {
@@ -36,21 +36,21 @@ export interface InvocationSource {
   readonly appId:string;
   readonly instanceId:string;
   readonly snapshotId:string;
-  readonly tool:ToolDescriptorV3;
-  readonly execution:ObservedToolExecutionV3;
+  readonly tool:ToolDescriptorV4;
+  readonly receiver:ViewToolReceiver;
 }
 export interface ReceiptMetadata {
   readonly appId:string;
   readonly instanceId:string;
   readonly invocationId:string;
   readonly observationId:string;
-  readonly bindingId:string;
+  readonly toolId:string;
   readonly source:ObservationSource|null;
 }
 export interface InvocationReceipt {
   readonly invocationId:string;
   readonly observationId:string;
-  readonly bindingId:string;
+  readonly toolId:string;
   readonly source:ObservationSource|null;
   /** When this receipt was produced. A deadline receipt can precede execution completion. */
   readonly completedAt:number;
@@ -86,7 +86,7 @@ export interface ExecutionResolver {
   resolve(source:InvocationSource):ExecutionBinding|null;
 }
 export interface AppInteractionPolicy {
-  project(context:Readonly<{source:AppSnapshotV3; selection:ObservationSelection; signal:CancellationSignal}>):ObservationGrant|Promise<ObservationGrant>;
+  project(context:Readonly<{source:AppSnapshotV4; signal:CancellationSignal}>):ObservationGrant|Promise<ObservationGrant>;
   authorize(context:InvocationContext):boolean|Promise<boolean>;
   canReadReceipt(metadata:ReceiptMetadata, signal:CancellationSignal):boolean|Promise<boolean>;
 }

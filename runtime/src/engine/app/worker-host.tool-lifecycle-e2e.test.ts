@@ -58,25 +58,18 @@ async function start(id = 'app', options: { holdInitialization?: boolean; existi
 function scope(x: any) {
     const controls = { authorize: (_c: any): boolean | Promise<boolean> => true };
     const opened = x.host.getAppInteraction({
-        project: ({ source, selection }: any) => {
-            const ids = new Set(selection.viewIds);
-            const views = source.views.filter((v: any) => ids.has(v.id));
-            return { views: views.map((v: any) => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
-                refs: [],
-                toolBindings: Object.values(source.tools).flatMap((tool: any) => 
-                    views.some((view: any) => view.type === tool.viewType) ? [{ toolId: tool.id, execution: tool.execution }] : []),
-                content: [] };
-        }, authorize: (c: any) => controls.authorize(c), canReadReceipt: () => true,
+        project: ({ source }: any) => ({ refs: [], toolIds: Object.keys(source.tools) }),
+        authorize: (c: any) => controls.authorize(c), canReadReceipt: () => true,
     });
     expect(opened.status).toBe('ready'); if (opened.status !== 'ready') throw Error(opened.issue.code);
     return { ...opened.interaction, controls, async observeCounter() {
-        const observed = await opened.interaction.observe({ viewIds: ['counter'] });
+        const observed = await opened.interaction.observe({ all: true });
         if (observed.status === 'observed') expect(opened.interaction.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
         expect(observed.status).toBe('observed'); return observed.observation;
     } };
 }
 const request = (observation: any, input: Record<string, unknown> = { view_id: 'counter', amount: 1 }) => ({ invocationId: 'invoke-' + ++sequence,
-    observationId: observation.observationId, bindingId: observation.bindings[0].bindingId, input });
+    observationId: observation.observationId, toolId: observation.tools[0].id, input });
 function outcome(result: any) { expect(result.kind).toBe('receipt'); return result.receipt.outcome; }
 async function close(x: any, fail = false) {
     if (fail) await control(x, 'reject-close');
@@ -133,13 +126,13 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         if (action === 'disable') { const at = x.messages.length; await control(x, 'enable'); await wait(x, m => m.type === 'SNAPSHOT_PREPARED', at); }
         expect(outcome(await s.invoke(request(await s.observeCounter()))).status).toBe('succeeded'); await close(x);
     }, 15000);
-    it('keeps the type-level binding across a View remount and invokes the current App handler', async () => {
+    it('revokes the replaced receiver and invokes its successor after observation', async () => {
         const x = await start('binding-remount'), s = scope(x), old = await s.observeCounter(), from = x.messages.length;
         await control(x, 'remount'); await wait(x, m => m.type === 'SNAPSHOT_PREPARED', from);
-        expect(outcome(await s.invoke(request(old))).status).toBe('succeeded');
-        expect((await control(x, 'inspect'))).toMatchObject({ value: 1, entries: 1 });
+        expect(outcome(await s.invoke(request(old)))).toMatchObject({ status: 'rejected', code: 'VIEW_INSTANCE_REVOKED' });
+        expect((await control(x, 'inspect'))).toMatchObject({ value: 0, entries: 0 });
         expect(outcome(await s.invoke(request(await s.observeCounter()))).status).toBe('succeeded');
-        expect((await control(x, 'inspect'))).toMatchObject({ value: 2, entries: 2 });
+        expect((await control(x, 'inspect'))).toMatchObject({ value: 1, entries: 1 });
         await close(x);
     }, 15000);
     it.each(['declined', 'after-update', 'throw'])('reports %s and never executes a replay twice', async failure => {
@@ -185,7 +178,7 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         expect(await sb.invoke(request(oa))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' }); expect((await control(b, 'inspect')).entries).toBe(0);
         expect(outcome(await sa.invoke(request(oa))).status).toBe('succeeded');
         expect((await control(a, 'inspect')).value).toBe(1); expect((await control(b, 'inspect')).value).toBe(0);
-        // The type-level capability stays live across a View replacement; its handler is App-owned.
+        // Before the remount, the original receiver is still live.
         expect(outcome(await sa.invoke(request(oa))).status).toBe('succeeded');
         expect((await control(a, 'inspect')).entries).toBe(2);
         const from = a.messages.length; await control(a, 'remount');
@@ -196,18 +189,18 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         try {
             await reached.promise;
             const changed = a.messages.length; await control(a, 'remount'); await wait(a, m => m.type === 'SNAPSHOT_PREPARED', changed);
-            authorized.resolve(true); expect(outcome(await pending).status).toBe('succeeded');
-            expect((await control(a, 'inspect')).entries).toBe(3);
+            authorized.resolve(true); expect(outcome(await pending)).toMatchObject({ status: 'rejected', code: 'VIEW_INSTANCE_REVOKED' });
+            expect((await control(a, 'inspect')).entries).toBe(2);
         } finally { authorized.resolve(true); await pending.catch(() => undefined); }
         expect(outcome(await sb.invoke(request(ob))).status).toBe('succeeded');
         await close(a); await close(b);
-        expect(JSON.parse(await readFile(join(a.root, 'state/app-state/d/a/counter.json'), 'utf8')).value).toBe(3);
+        expect(JSON.parse(await readFile(join(a.root, 'state/app-state/d/a/counter.json'), 'utf8')).value).toBe(2);
     }, 20000);
     it('checks the current View at Worker entry and lets the App cancel a held handler on stop', async () => {
         const x = await start(), s = scope(x), observation = await s.observeCounter();
         const send = x.worker.postMessage.bind(x.worker);
-        x.worker.postMessage = (message: any) => send(message.type === 'VIEW_TOOL_INVOKE_V5' && message.argumentMode === 'view-type-parameters-v1'
-            ? { ...message, execution: { kind: 'view-type', activationId: 'stale-activation' } } : message);
+        x.worker.postMessage = (message: any) => send(message.type === 'VIEW_TOOL_INVOKE_V6' && message.argumentMode === 'view-type-parameters-v1'
+            ? { ...message, receiver: { ...message.receiver, activationId: 'stale-activation' } } : message);
         expect(outcome(await s.invoke(request(observation))).status).toBe('rejected');
         expect((await control(x, 'inspect')).entries).toBe(0); x.worker.postMessage = send;
         const pending = s.invoke(request(observation, { view_id: 'counter', amount: 1, hold: true }));
@@ -215,7 +208,7 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         await wait(x, m => m.type === 'TEST_STOPPED');
         expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: true, core: { activeInvocations: 1 } });
         expect(x.messages.some((message: any) => message.type === 'TEST_CLEANUP_ENTERED')).toBe(false);
-        const terminal = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE', x.messages.length);
+        const terminal = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE', x.messages.length);
         await control(x, 'release-handler');
         expect((await terminal).terminal.phase).toBe('entered-returned');
         // Closing revokes this Scope, including receipt access. It must not

@@ -5,11 +5,12 @@ import { useMemo, useState } from 'preact/hooks';
 import Type from 'typebox';
 import { compileOrdinarySchema } from '@aotui/runtime/core';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
-import { createTUIApp, View, useDataRef, refParam, defineViewTypeTool } from './index.js';
+import { createTUIApp, View, useDataRef, refParam, defineViewType } from './index.js';
 import { refParam as plainRefParam } from './app.js';
 
+const Detail=defineViewType({name:'Detail',tools:{}});
 function setup(Content: () => any) {
- const factory = createTUIApp({ app_name: 'typed_refs', component: () => h(View, {kind: 'state',id:'detail',type:'Detail'},h(Content, {})) });
+ const factory = createTUIApp({ app_name: 'typed_refs', viewTypes:[Detail], component: () => h(View, {kind: 'state',id:'detail',type:Detail},h(Content, {})) });
  const kernel = new AppKernel({...factory.kernelConfig,factory} as any);
  kernel.setId('app' as any);
  kernel.enableAppLifecycle();
@@ -17,7 +18,7 @@ function setup(Content: () => any) {
  async close(){await kernel.onClose();}};
 }
 const schema=Type.Object({id:Type.String(),title:Type.String()},{additionalProperties:false});
-const define=(parameter:any)=>defineViewTypeTool({viewType:'Detail',name:'edit',description:'Edit selected Plan',inputSchema:Type.Object({plan:parameter,title:Type.String()},{additionalProperties:false})});
+const define=(parameter:any)=>defineViewType({name:'Detail',tools:{edit:{description:'Edit selected Plan',inputSchema:Type.Object({plan:parameter,title:Type.String()},{additionalProperties:false})}}}).tools.edit;
 
 describe('typed single-object Ref',()=>{
  it('shares refParam implementation across public entries and preserves the business Schema witness',()=>{
@@ -33,7 +34,7 @@ describe('typed single-object Ref',()=>{
      const data=useMemo(()=>({id:state.id,title:'Plan title'}),[state.id]);
      const ref=useDataRef(state.refId,data,{refType:state.refType});return h('p',{},ref('Selected'));
    }
-   const x=setup(Content);const register=vi.spyOn(x.kernel,'registerRef');
+   const x=setup(Content);const register=vi.spyOn(x.kernel.getProjectionCoordinator(),'registerRef');
    try{
     await x.open();expect(x.container.textContent).toContain('[Selected](Plan:current_plan)');
     expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'current_plan',refType:'Plan',value:{id:'one',title:'Plan title'}}]);
@@ -50,8 +51,8 @@ describe('typed single-object Ref',()=>{
  });
  it('keeps a prefixed two-argument ID untyped and uses the original two-argument registry call',async()=>{
    const x=setup(()=>{const ref=useDataRef('Plan:raw',{id:'one'});return h('p',{},ref('Legacy'));});
-   const register=vi.spyOn(x.kernel,'registerRef');
-   try{await x.open();expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'Plan:raw',value:{id:'one'}}]);expect(x.container.textContent).toContain('[Legacy](Plan:raw)');expect(register.mock.calls[0]).toEqual(['detail','Plan:raw',expect.any(Object),undefined]);}finally{await x.close();}
+   const register=vi.spyOn(x.kernel.getProjectionCoordinator(),'registerRef');
+   try{await x.open();expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'Plan:raw',value:{id:'one'}}]);expect(x.container.textContent).toContain('[Legacy](Plan:raw)');expect(register.mock.calls[0]).toEqual([expect.objectContaining({viewId:'detail'}),'Plan:raw',expect.any(Object),undefined]);}finally{await x.close();}
  });
  it('rejects duplicate typed publishers without replacing the first owner',async()=>{
    function Publisher(){useDataRef('current_plan',{id:'one'},{refType:'Plan'});return null;}
@@ -68,10 +69,11 @@ describe('typed single-object Ref',()=>{
    let hide!:()=>void;
    function Publisher(){useDataRef('current_plan',{id:'first'},{refType:'Plan'});return null;}
    function Content(){const [show,set]=useState(true);hide=()=>set(false);return show?h(Publisher,{}):null;}
-   const x=setup(Content);const register=vi.spyOn(x.kernel,'registerRef');
+   const x=setup(Content);const register=vi.spyOn(x.kernel.getProjectionCoordinator(),'registerRef');
    try{await x.open();const first=register.mock.results[0]!.value;first.release();
-     let successor!: ReturnType<AppKernel['registerRef']>;
-     x.kernel.getProjectionCoordinator().commit(() => { successor=x.kernel.registerRef('detail','current_plan',{id:'successor'},'Plan'); });
+     const projection=x.kernel.getProjectionCoordinator();
+     let successor!: ReturnType<typeof projection.registerRef>;
+     projection.commit(() => { successor=projection.registerRef(x.kernel.getViewOwnedViewInstances()[0]!,'current_plan',{id:'successor'},'Plan'); });
      await act(hide);expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'current_plan',refType:'Plan',value:{id:'successor'}}]);
      successor.release();expect(x.kernel.getViewRefs()).toEqual([]);
    }finally{await x.close();}
@@ -105,7 +107,7 @@ describe('typed single-object Ref',()=>{
  it('captures arrays of Ref names and preserves exact resolved value witnesses',()=>{
    const input=Type.Object({plans:Type.Array(refParam('Plan',schema),{maxItems:3}),
      optional:Type.Optional(refParam('Plan',schema))},{additionalProperties:false});
-   const tool=defineViewTypeTool({viewType:'Plan',name:'choose',description:'Choose Plans',inputSchema:input});
+   const tool=defineViewType({name:'Plan',tools:{choose:{description:'Choose Plans',inputSchema:input}}}).tools.choose;
    const compiled=compileOrdinarySchema(tool.inputSchema);
    expect(compiled.ok).toBe(true);if(!compiled.ok)throw Error('contract');
    expect(compiled.contract.validateModelInput({plans:['detail.a','detail.b']}).ok).toBe(true);

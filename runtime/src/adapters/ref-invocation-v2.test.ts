@@ -9,24 +9,23 @@ import { captureTypeParametersTerminal } from './worker-message-capture.js';
 function fixture() {
     const c = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } }, choice: { type: 'string', enum: ['ok'] } }, required: ['file'], additionalProperties: false });
     if (!c.ok) throw Error('fixture');
-    const execution = { kind: 'view-type' as const, activationId: 'active-1' };
-    return { type: 'VIEW_TOOL_INVOKE_V5', requestId: 'r', appId: 'app', instanceId: 'run', snapshotId: 'source', argumentMode: 'view-type-parameters-v1', execution,
-        tool: { id: JSON.stringify(['app', 'File', 'read']), name: 'read', description: 'Read', viewType: 'File', inputSchema: JSON.parse(JSON.stringify(ordinaryParameterProfile(c.contract))), 
-            execution },
+    const receiver = { viewId: 'v', viewInstanceId: 'mount', activationId: 'active-1' };
+    return { type: 'VIEW_TOOL_INVOKE_V6', requestId: 'r', appId: 'app', instanceId: 'run', snapshotId: 'source', argumentMode: 'view-type-parameters-v1', receiver,
+        tool: { id: JSON.stringify(['app', 'File', 'read']), name: 'read', description: 'Read', viewType: 'File', inputSchema: JSON.parse(JSON.stringify(ordinaryParameterProfile(c.contract))) },
         rawArgs: { file: 'v.id', choice: 'ok' }, effectiveArgs: { file: { opaque: true }, choice: 'ok' },
         refSources: [{ param: 'file', refId: 'id', kind: 'snapshot-value', refType: 'unknown', snapshotId: 'source', viewId: 'v', viewInstanceId: 'mount' }] };
 }
-describe('R03/R04 Ref V5 exact codec and pure correspondence projection', () => {
+describe('R03/R04 Ref V6 exact codec and pure correspondence projection', () => {
     it('retains the original profile and source while checking both complete argument stages', () => {
         const input = fixture(), before = canonicalJson(input as any), message = captureTypeParametersRequest(input);
         expect(validateTypeParameters(message)).toEqual({ success: true });
         expect(canonicalJson(input as any)).toBe(before);expect(message.tool.inputSchema).toEqual(input.tool.inputSchema);
         expect(message.tool.inputSchema).toHaveProperty('x-aotui-parameter-contract', 'view-type-parameters-v1');
     });
-    it.each(['mode', 'type', 'tool', 'execution', 'extra', 'getter', 'oversize'])('rejects malformed request %s before projection', kind => {
+    it.each(['mode', 'type', 'tool', 'receiver', 'extra', 'getter', 'oversize'])('rejects malformed request %s before projection', kind => {
         let reads = 0;const m: any = fixture();
         if (kind === 'mode') m.argumentMode = 'snapshot-value-v1';if (kind === 'type') m.type = 'VIEW_TOOL_INVOKE_REF_V1';
-        if (kind === 'tool') m.tool.unexpected = true;if (kind === 'execution') m.execution = { kind: 'view-type', activationId: 'wrong-branch' };
+        if (kind === 'tool') m.tool.unexpected = true;if (kind === 'receiver') m.receiver = { viewId: 'v', activationId: 'active-1' };
         if (kind === 'extra') m.extra = true;if (kind === 'oversize') m.tool.description = 'x'.repeat(TOOL_REQUEST_LIMITS.maxCanonicalBytes);
         if (kind === 'getter') Object.defineProperty(m, 'rawArgs', { enumerable: true, get() { reads++;return {}; } });
         expect(() => captureTypeParametersRequest(m)).toThrow();expect(reads).toBe(0);
@@ -44,7 +43,7 @@ describe('R03/R04 Ref V5 exact codec and pure correspondence projection', () => 
     });
     it('correlates only exact new terminal type/mode/identity and preserves entered business failure', () => {
         const m = fixture(), terminal = { phase: 'entered-returned' as const, result: { success: false, error: { code: 'BUSINESS', message: 'Expected failure' } } };
-        const response = typeParametersResponse(m, terminal)!;expect(response.type).toBe('VIEW_TOOL_INVOKE_V5_RESPONSE');
+        const response = typeParametersResponse(m, terminal)!;expect(response.type).toBe('VIEW_TOOL_INVOKE_V6_RESPONSE');
         expect(captureTypeParametersTerminal(response, m)).toEqual(terminal);
         for (const patch of [{ type: 'VIEW_TOOL_INVOKE_REF_V1_RESPONSE' }, { argumentMode: 'snapshot-value-v1' }, { requestId: 'other' }, { instanceId: 'other' }, { extra: true }])
             expect(captureTypeParametersTerminal({ ...response, ...patch }, m)).toBe(null);

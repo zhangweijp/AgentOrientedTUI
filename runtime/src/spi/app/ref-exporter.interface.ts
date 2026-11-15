@@ -6,8 +6,6 @@ export type RefValueCheck = (value: JsonValue) => Readonly<{ path: string; messa
 export interface IRefExporter {
     /** Capture the render's value for this batch before layout installs the binding. */
     captureRef(data: unknown, check?: RefValueCheck): object;
-    /** Register a JSON value or a capture token from this commit. */
-    registerRef(viewId: string, refId: string, data: unknown, refType?: string): IRefBinding;
 }
 
 /** A Ref registration handle; only its owner can update or release it. */

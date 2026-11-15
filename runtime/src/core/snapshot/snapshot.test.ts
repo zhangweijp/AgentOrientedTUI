@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { copyJson } from './json.js';
 import { createSnapshotCore } from './store.js';
 import { DEFAULT_SNAPSHOT_LIMITS, refKey } from './snapshot-support.js';
-import { validatePreparedV3Draft } from './v3-validator.js';
+import { validatePreparedV4Draft } from './v4-validator.js';
 import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
-import type { PreparedAppSnapshotDraftV3, SnapshotCore, SnapshotStoreOptions } from './types.js';
+import type { PreparedAppSnapshotDraftV4, SnapshotCore, SnapshotStoreOptions } from './types.js';
 
 const KEY = refKey('workspace', 'mount_1', 'tasks[0]');
 const TOOL = JSON.stringify(['task_app', 'Workspace', 'complete_task']);
@@ -20,16 +20,16 @@ function draft(
     epoch = seq,
     id = 'task-a',
     override: Record<string, unknown> = {},
-): PreparedAppSnapshotDraftV3 {
+): PreparedAppSnapshotDraftV4 {
     return {
-        schemaVersion: 3,
+        schemaVersion: 4,
         appId: 'task_app',
         instanceId: 'instance_a',
         producerSeq: seq,
         sourceEpoch: epoch,
         capturedAt: 1_000 + seq,
         views: [{
-            id: 'workspace',
+            toolBindings: [{ toolId: TOOL, activationId: 'task-tool-activation-1' }], id: 'workspace',
             viewInstanceId: 'mount_1',
             type: 'Workspace',
             name: 'Tasks',
@@ -48,11 +48,10 @@ function draft(
                 id: TOOL, name: 'complete_task', viewType: 'Workspace',
                 description: 'Complete selected task',
                 inputSchema: taskSchema,
-                 execution: { kind: 'view-type', activationId: 'task-tool-activation-1' },
             },
         },
         ...override,
-    } as PreparedAppSnapshotDraftV3;
+    } as PreparedAppSnapshotDraftV4;
 }
 
 function ready(core: SnapshotCore) {
@@ -62,7 +61,7 @@ function ready(core: SnapshotCore) {
     return result.snapshot;
 }
 
-function published(core: SnapshotCore, next: PreparedAppSnapshotDraftV3) {
+function published(core: SnapshotCore, next: PreparedAppSnapshotDraftV4) {
     const result = core.committer.accept(next);
     expect(result.status).toBe('published');
     if (result.status !== 'published') throw Error('not published: ' + JSON.stringify(result));
@@ -84,7 +83,7 @@ describe('Snapshot Store limits', () => {
         core.lifecycle.startApp('task_app', 'instance_a');
         try {
             const first = published(core, draft());
-            const views = [...draft().views, { ...draft().views[0]!, id: 'second', viewInstanceId: 'mount_2' }];
+            const views = [...draft().views, { ...draft().views[0]!, id: 'second', viewInstanceId: 'mount_2', toolBindings: [] }];
             const rejectTwoViews = (seq: number) => {
                 expect(core.committer.accept(draft(seq, seq, 'task-a', { views }))).toMatchObject({
                     status: 'rejected', issue: { path: '$.views' },
@@ -206,11 +205,11 @@ describe('B2-Q01 independent application lifecycle identity', () => {
 
 describe('M1 pure Core — schema & safe value contract', () => {
     it('accepts App/View/Ref/ViewTypeTool in a detached, strictly typed draft', () => {
-        const checked = validatePreparedV3Draft(draft());
+        const checked = validatePreparedV4Draft(draft());
         expect(checked.ok).toBe(true);
         if (!checked.ok) return;
         expect(checked.value.draft.refs[KEY].ownerViewInstanceId).toBe('mount_1');
-        expect(checked.value.draft.tools[TOOL].execution).toEqual({ kind: 'view-type', activationId: 'task-tool-activation-1' });
+        expect(checked.value.draft.views[0]!.toolBindings).toEqual([{ toolId: TOOL, activationId: 'task-tool-activation-1' }]);
         expect(checked.value.contentDigest.startsWith('fnv1a64:')).toBe(true);
         expect(Object.isFrozen(checked.value.draft.refs[KEY].target)).toBe(true);
     });
@@ -221,10 +220,10 @@ describe('M1 pure Core — schema & safe value contract', () => {
         ['Ref owner missing', { refs: { [KEY]: { ...draft().refs[KEY], ownerViewId: 'ghost' } } }, '$.refs', 'SNAPSHOT_INVALID'],
         ['Ref index wrong', { refs: { 'tasks[0]': draft().refs[KEY] } }, '$.refs', 'SNAPSHOT_INVALID'],
         ['Tool schema invalid', { tools: { [TOOL]: { ...draft().tools[TOOL], inputSchema: { type: 'string' } } } }, '$.tools', 'SNAPSHOT_INVALID'],
-        ['Tool identity mismatched', { tools: { [TOOL]: { ...draft().tools[TOOL], viewType: 'FileDetail' } } }, '$.tools', 'SNAPSHOT_INVALID'],
+        ['Tool identity mismatched', { tools: { [TOOL]: { ...draft().tools[TOOL], viewType: 'FileDetail' } } }, '$.views[0].toolBindings', 'SNAPSHOT_INVALID'],
         ['ordinary Tool carries a business target', { tools: { [TOOL]: { ...draft().tools[TOOL], target: { filePath: 'a.txt' } } } }, '$.tools', 'SNAPSHOT_INVALID'],
     ])('rejects %s before publishing', (_, override, path, code) => {
-        const tested = validatePreparedV3Draft({ ...draft(), ...override });
+        const tested = validatePreparedV4Draft({ ...draft(), ...override });
         expect(tested.ok).toBe(false);
         if (tested.ok) return;
         expect(tested.issue.code).toBe(code);
@@ -244,7 +243,7 @@ describe('M1 pure Core — schema & safe value contract', () => {
             (() => { const a = Array(2); a[0] = 'x'; return a; })(),
         ];
         for (const value of cases) {
-            const tested = validatePreparedV3Draft({
+            const tested = validatePreparedV4Draft({
                 ...draft(),
                 refs: {
                     [KEY]: { ...draft().refs[KEY], target: { kind: 'snapshot-value', payload: value } },
@@ -264,7 +263,7 @@ describe('M1 pure Core — schema & safe value contract', () => {
                 [KEY]: { ...draft().refs[KEY], target: { kind: 'snapshot-value', payload: value } },
             },
         };
-        const result = validatePreparedV3Draft(input);
+        const result = validatePreparedV4Draft(input);
         expect(result.ok).toBe(true);
         if (!result.ok) return;
         const payload = (result.value.draft.refs[KEY].target as any).payload;
@@ -276,15 +275,15 @@ describe('M1 pure Core — schema & safe value contract', () => {
 
     it('rejects depth, per-Ref bytes, and whole Snapshot budgets explicitly', () => {
         const deep = { a: { b: { c: { d: 1 } } } };
-        expect(validatePreparedV3Draft({
+        expect(validatePreparedV4Draft({
             ...draft(), refs: { [KEY]: { ...draft().refs[KEY], target: { kind: 'snapshot-value', payload: deep } } },
         }, { ...DEFAULT_SNAPSHOT_LIMITS, maxDepth: 6 }).ok).toBe(false);
         const big = 'x'.repeat(1_000);
         const value = { ...draft(), refs: {
             [KEY]: { ...draft().refs[KEY], target: { kind: 'snapshot-value', payload: { big } } },
         } };
-        expect(validatePreparedV3Draft(value, { ...DEFAULT_SNAPSHOT_LIMITS, maxRefPayloadBytes: 100 }).ok).toBe(false);
-        expect(validatePreparedV3Draft(value, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: 100 }).ok).toBe(false);
+        expect(validatePreparedV4Draft(value, { ...DEFAULT_SNAPSHOT_LIMITS, maxRefPayloadBytes: 100 }).ok).toBe(false);
+        expect(validatePreparedV4Draft(value, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: 100 }).ok).toBe(false);
     });
 });
 
@@ -327,9 +326,10 @@ describe('M1 Core — versioned commit, failure & strict origin', () => {
         const first = published(core, draft());
         const held = core.store.acquire(first.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
         const second = published(core, draft(2, 2, 'task-b'));
-        const third = published(core, draft(3, 3, 'task-b', { tools: {} }));
+        const third = published(core, draft(3, 3, 'task-b', { tools: {}, views: [{ ...draft().views[0]!, toolBindings: [] }] }));
         expect([first.revision, second.revision, third.revision]).toEqual([1, 2, 3]);
-        expect(first.views).toEqual(third.views);
+        expect(first.views[0]!.content).toEqual(third.views[0]!.content);
+        expect(third.views[0]!.toolBindings).toEqual([]);
         expect(core.store.getTool({
             snapshotId: first.id, appId: 'task_app', instanceId: 'instance_a', toolId: TOOL,
         }).status).toBe('found');
@@ -424,7 +424,7 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
         const secondKey = refKey('detail', 'mount_2', 'tasks[0]');
         const changed = draft(1, 1, 'entity-a', {
             views: [...first.views, {
-                id: 'detail', viewInstanceId: 'mount_2', type: 'FileDetail',
+                toolBindings: [], id: 'detail', viewInstanceId: 'mount_2', type: 'FileDetail',
                 name: 'Another View', kind: 'state',
                 content: { format: 'markdown-v1', value: '[Task](tasks[0])' },
             }],
@@ -462,14 +462,12 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
         const source = draft(2, 2, 'entity-b');
         const newer = published(core, {
             ...source,
-            views: source.views.map(view => ({ ...view, viewInstanceId: 'mount_2' })),
+            views: source.views.map(view => ({ ...view, viewInstanceId: 'mount_2',
+                toolBindings: [{ toolId: TOOL, activationId: 'task-tool-activation-2' }] })),
             refs: {
                 [newKey]: {
                     ...source.refs[KEY], ownerViewInstanceId: 'mount_2',
                 },
-            },
-            tools: {
-                [TOOL]: { ...source.tools[TOOL], execution: { kind: 'view-type', activationId: 'task-tool-activation-2' } },
             },
         });
         expect(newer.revision).toBe(2);
@@ -807,7 +805,7 @@ describe('M1 Core — nonpublishable Producer input and explicit prepare failure
                 },
             },
         });
-        const validation = validatePreparedV3Draft(input, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: 1_024 });
+        const validation = validatePreparedV4Draft(input, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: 1_024 });
         expect(validation.ok).toBe(false);
         if (!validation.ok) expect(validation.issue.code).toBe('SNAPSHOT_SERIALIZATION_ERROR');
     });
@@ -820,7 +818,7 @@ describe('M1 Core — edge-case schema and retention gates', () => {
         const accessor = Object.defineProperty({}, 'secret', { enumerable: true, get() { getterCalls++; return 'secret'; } });
         const hidden = Object.defineProperty({ id: 'known' }, 'secret', { value: 'unlisted', enumerable: false });
         for (const payload of [accessor, hidden, [, 1]]) {
-            const result = validatePreparedV3Draft({
+            const result = validatePreparedV4Draft({
                 ...draft(), refs: { [KEY]: {
                     ...draft().refs[KEY], target: { kind: 'snapshot-value', payload },
                 } },
@@ -833,21 +831,21 @@ describe('M1 Core — edge-case schema and retention gates', () => {
 
     it('does not accept a mistaken Tool descriptor or invalid View kind', () => {
         const wrongView = { ...draft().views[0], kind: 'not-state' };
-        const invalidView = validatePreparedV3Draft({ ...draft(), views: [wrongView] });
+        const invalidView = validatePreparedV4Draft({ ...draft(), views: [wrongView] });
         expect(invalidView.ok).toBe(false);
-        const { execution: _removed, ...withoutExecution } = draft().tools[TOOL];
-        const invalidTool = validatePreparedV3Draft({
+        const { inputSchema: _removed, ...withoutSchema } = draft().tools[TOOL];
+        const invalidTool = validatePreparedV4Draft({
             ...draft(),
-            tools: { [TOOL]: withoutExecution },
+            tools: { [TOOL]: withoutSchema },
         });
         expect(invalidTool.ok).toBe(false);
         if (!invalidTool.ok) expect(invalidTool.issue.code).toBe('SNAPSHOT_INVALID');
     });
 
     it('enforces maximum node and view counts instead of allowing unbounded cloning', () => {
-        const tooManyNodes = validatePreparedV3Draft(draft(), { ...DEFAULT_SNAPSHOT_LIMITS, maxNodes: 10 });
+        const tooManyNodes = validatePreparedV4Draft(draft(), { ...DEFAULT_SNAPSHOT_LIMITS, maxNodes: 10 });
         expect(tooManyNodes.ok).toBe(false);
-        const tooManyViews = validatePreparedV3Draft(draft(), { ...DEFAULT_SNAPSHOT_LIMITS, maxViews: 0 });
+        const tooManyViews = validatePreparedV4Draft(draft(), { ...DEFAULT_SNAPSHOT_LIMITS, maxViews: 0 });
         expect(tooManyViews.ok).toBe(false);
         if (!tooManyViews.ok) expect(tooManyViews.issue.path).toBe('$.views');
     });

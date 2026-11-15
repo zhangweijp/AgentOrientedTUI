@@ -38,24 +38,22 @@ export async function invokeObservedTool(
     const client = opened.interaction;
     let observationId: string | undefined;
     try {
-        const state = host.snapshotReceiver.core.store.readLatest(host.appId);
-        if (state.status !== 'ready') throw new Error('Expected a ready Semantic snapshot');
-        const viewIds = targetViewId ? [targetViewId] : state.snapshot.views.map((view: any) => view.id);
-        const observed = await client.observe({ viewIds });
+        const observed = await client.observe({ all: true });
         if (observed.status !== 'observed') throw new Error(observed.issue.code);
         observationId = observed.observation.observationId;
         const adopted = client.adoptObservation(observationId);
         if (adopted.status !== 'adopted') throw new Error(adopted.issue.code);
         const tool = observed.observation.tools.find((candidate: any) => candidate.name === name);
         if (!tool) throw new Error('Observed Tool not found: ' + name);
-        const binding = observed.observation.bindings.find((candidate: any) => candidate.toolId === tool.id &&
-            (!targetViewId || candidate.execution.kind === 'view-type' || candidate.execution.target.viewId === targetViewId));
-        if (!binding) throw new Error('Observed Tool binding not found: ' + name);
+        const viewId = targetViewId ?? (typeof input.view_id === 'string' ? input.view_id : undefined) ??
+            observed.observation.views.find((view: any) => view.type === tool.viewType &&
+                (!tool.eligibleViewIds || tool.eligibleViewIds.includes(view.id)))?.id;
+        if (!viewId) throw new Error('Observed Tool has no target: ' + name);
         return await client.invoke({
             invocationId: `worker-test-${Date.now()}-${++invocationSequence}`,
             observationId: observed.observation.observationId,
-            bindingId: binding.bindingId,
-            input,
+            toolId: tool.id,
+            input: { view_id: viewId, ...input },
         });
     } finally {
         if (observationId) client.releaseObservation(observationId);

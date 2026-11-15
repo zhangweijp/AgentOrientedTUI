@@ -18,6 +18,7 @@ it('forwards the exact usage event to the Worker SDK hook', async () => {
     try {
         await mkdir(join(modules, '@aotui'), { recursive: true });
         await symlink(join(runtimeRoot, 'node_modules/preact'), join(modules, 'preact'), 'dir');
+        await symlink(join(repoRoot, 'sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
         await symlink(join(runtimeRoot, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
         await symlink(runtimeRoot, join(modules, '@aotui/runtime'), 'dir');
 
@@ -36,6 +37,9 @@ it('forwards the exact usage event to the Worker SDK hook', async () => {
                     import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
                     import { View } from './sdk/src/components/View.tsx';
                     import { useLLMUsage } from './sdk/src/hooks/useLLMUsage.ts';
+const _FixtureRoot = defineViewType({ name:'Root', tools:{  } });
+
+import { defineViewType } from './sdk/src/tools/view-type-tool.ts';
 
                     function Content() {
                         useLLMUsage(event => parentPort.postMessage({
@@ -47,9 +51,9 @@ it('forwards the exact usage event to the Worker SDK hook', async () => {
                         return h('p', {}, 'Listening for LLM usage');
                     }
                     function Root() {
-                        return h(View, {kind: 'instruction', id: 'root', type: 'Root' }, h(Content, {}));
+                        return h(View, {kind: 'instruction', id: 'root', type: _FixtureRoot }, h(Content, {}));
                     }
-                    export default createTUIApp({ app_name: 'llm_usage_test', component: Root });
+                    export default createTUIApp({viewTypes:[_FixtureRoot],  app_name: 'llm_usage_test', component: Root });
                 `,
                 resolveDir: repoRoot,
                 sourcefile: 'llm-usage-fixture.tsx',

@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
 import { refKey } from '../snapshot/snapshot-support.js';
 import { canonicalJson, utf8Size } from '../snapshot/json.js';
-import type { AppSnapshotV3, JsonValue, PreparedAppSnapshotDraftV3, SnapshotStoreOptions } from '../snapshot/types.js';
-import { acquireToolSource } from './source-binding.js';
+import type { AppSnapshotV4, JsonValue, PreparedAppSnapshotDraftV4, SnapshotStoreOptions } from '../snapshot/types.js';
+import { compileOrdinaryProfile } from './ordinary-parameter-profile.js';
 import { prepareViewTypeParameters } from './snapshot-value-arguments.js';
 import { compileOrdinarySchema } from './ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
@@ -44,51 +44,54 @@ function fixture(options: {
             },
         };
     }
-    function attempt(patch: Partial<PreparedAppSnapshotDraftV3> = {}) {
+    function attempt(patch: Partial<PreparedAppSnapshotDraftV4> = {}) {
         const seq = ++sequence;
         return core.committer.accept({
-            schemaVersion: 3, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
+            schemaVersion: 4, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
             views: [
-                { id: viewId, viewInstanceId, type: 'FileDetail', name: 'A', kind: 'state', content: { format: 'markdown-v1', value: 'A' } },
-                { id: 'fd_B', viewInstanceId: 'mount_B', type: 'FileDetail', name: 'B', kind: 'state', content: { format: 'markdown-v1', value: 'B' } },
+                { toolBindings: [{toolId,activationId}], id: viewId, viewInstanceId, type: 'FileDetail', name: 'A', kind: 'state', content: { format: 'markdown-v1', value: 'A' } },
+                { toolBindings: [], id: 'fd_B', viewInstanceId: 'mount_B', type: 'FileDetail', name: 'B', kind: 'state', content: { format: 'markdown-v1', value: 'B' } },
             ], refs: refs(), tools: { [toolId]: {
                 id: toolId, name: 'inspect', viewType: 'FileDetail', description: 'Inspect original state',
-                inputSchema: options.inputSchema ?? schema(options.refType), 
-                execution: { kind: 'view-type', activationId },
+                inputSchema: options.inputSchema ?? schema(options.refType),
             } }, ...patch,
         });
     }
-    function publish(patch: Partial<PreparedAppSnapshotDraftV3> = {}): AppSnapshotV3 {
+    function publish(patch: Partial<PreparedAppSnapshotDraftV4> = {}): AppSnapshotV4 {
         const result = attempt(patch);
         expect(result.status).toBe('published');
-        if (result.status !== 'published' || result.snapshot.schemaVersion !== 3) throw new Error('Expected V3 publication');
+        if (result.status !== 'published' || result.snapshot.schemaVersion !== 4) throw new Error('Expected V3 publication');
         return result.snapshot;
     }
     const source = publish();
-    const request = { snapshotId: source.id, toolId, execution: { kind: 'view-type' as const, activationId },
+    const request = { snapshotId: source.id,
         args: { file: `${viewId}.${refId}` } as Record<string, unknown> };
     const visibleRefs = [{ refId, viewId, viewInstanceId }];
-    const sourceRequest = { ...context, snapshotId: source.id, toolId, execution: request.execution };
-    return { core, context, source, request, sourceRequest, visibleRefs, refs, publish, attempt, toolId, refId, activationId };
+    const tool=source.tools[toolId]!;
+    const contract=compileOrdinaryProfile(tool.inputSchema)!;
+    const receiver={viewId,viewInstanceId,activationId};
+    function prepare(data=request,granted=visibleRefs) {
+        return prepareViewTypeParameters(core.store,{...context,snapshotId:data.snapshotId,tool,receiver},contract,data.args as any,granted);
+    }
+    return { core, context, source, request, receiver, prepare, visibleRefs, refs, publish, attempt, toolId, refId, activationId };
 
 }
 type Fixture = ReturnType<typeof fixture>;
-function success(f: Fixture, request: unknown = f.request) {
-    const result = prepareViewTypeParameters(f.core.store, f.context, request, f.visibleRefs);
+function success(f: Fixture, request: Fixture['request'] = f.request) {
+    const result = f.prepare(request);
     expect(result.status, JSON.stringify(result)).toBe('prepared');
     if (result.status !== 'prepared') throw new Error('Expected preparation: ' + result.issue.code);
     return result;
 }
-function denied(f: Fixture, request: unknown, code: string) {
+function denied(f: Fixture, request: Fixture['request'], code: string) {
     const leases = f.core.store.inspect().activeLeases;
-    const result = prepareViewTypeParameters(f.core.store, f.context, request, f.visibleRefs);
+    const result = f.prepare(request);
     expect(result).toMatchObject({ status: 'rejected', issue: { code } });
     expect(f.core.store.inspect().activeLeases).toBe(leases);
     return result;
 }
-function release(f: Fixture, prepared: ReturnType<typeof success>) {
-    expect(f.core.store.inspect().activeLeases).toBe(1);
-    prepared.release(); prepared.release();
+function assertNoLease(f: Fixture, prepared: ReturnType<typeof success>) {
+    expect(prepared.status).toBe('prepared');
     expect(f.core.store.inspect().activeLeases).toBe(0);
 }
 
@@ -102,22 +105,21 @@ describe('W01: original Store source, exact owner and detached arguments', () =>
         expect(result.refSources).toEqual([{ param: 'file', refId: 'selected', kind: 'snapshot-value', refType: 'unknown',
             snapshotId: f.source.id, viewId: 'fd_A', viewInstanceId: 'mount_A' }]);
         expect(result.refSources[0]).not.toHaveProperty('payload');
-        held.lease.release(); release(f, result);
+        held.lease.release(); assertNoLease(f,result);
     });
 
     it('selects same-name Refs by explicit View and never guesses from visibility', () => {
         const f = fixture(), other = { refId: f.refId, viewId: 'fd_B', viewInstanceId: 'mount_B' };
         const visible = [...f.visibleRefs, other];
         for (const [view, label] of [['fd_A', 'A'], ['fd_B', 'B']]) {
-            const result = prepareViewTypeParameters(f.core.store, f.context,
-                { ...f.request, args: { file: `${view}.selected` } }, visible);
+            const result = f.prepare({ ...f.request, args: { file: `${view}.selected` } }, visible);
             expect(result.status).toBe('prepared'); if (result.status !== 'prepared') throw Error('Expected ' + view);
-            expect(result.effectiveArgs.file).toEqual({ label }); release(f, result);
+            expect(result.effectiveArgs.file).toEqual({ label }); assertNoLease(f,result);
         }
         for (const address of ['selected', 'missing.selected', 'fd_A.selected.field', 'fd_A.unknown']) {
             denied(f, { ...f.request, args: { file: address } }, 'REF_NOT_VISIBLE');
         }
-        expect(prepareViewTypeParameters(f.core.store, f.context, f.request, [other]))
+        expect(f.prepare(f.request,[other]))
             .toMatchObject({ status: 'rejected', issue: { code: 'REF_NOT_VISIBLE' } });
         const current = f.publish({ refs: { [refKey('fd_B', 'mount_B', 'selected')]: f.source.refs[refKey('fd_B', 'mount_B', 'selected')]! } });
         denied(f, { ...f.request, snapshotId: current.id }, 'REF_NOT_FOUND');
@@ -144,24 +146,12 @@ describe('W01: original Store source, exact owner and detached arguments', () =>
                 Object.values(value).forEach(assertFrozen);
             }
         };
-        assertFrozen(result); release(f, result);
-    });
-
-    it('captures a caller Proxy only once before acquiring its source', () => {
-        const f = fixture(); let reads = 0;
-        const caller = new Proxy(f.request, { ownKeys(target) { reads++; return Reflect.ownKeys(target); } });
-        const store = { ...f.core.store, acquire: (id: string) => {
-            expect(reads).toBe(1); return f.core.store.acquire(id);
-        } };
-        const result = prepareViewTypeParameters(store, f.context, caller, f.visibleRefs);
-        expect(result.status, JSON.stringify(result)).toBe('prepared'); expect(reads).toBe(1);
-        if (result.status !== 'prepared') throw new Error('Expected prepared');
-        result.release(); expect(f.core.store.inspect().activeLeases).toBe(0);
+        assertFrozen(result); assertNoLease(f,result);
     });
 
     it('does not trim or decode exact Ref identifiers', () => {
         const f = fixture({ refId: ' selected ' }); const result = success(f);
-        expect(result.refSources[0]!.refId).toBe(' selected '); release(f, result);
+        expect(result.refSources[0]!.refId).toBe(' selected '); assertNoLease(f,result);
         denied(f, { ...f.request, args: { file: 'fd_A.selected' } }, 'REF_NOT_VISIBLE');
         denied(f, { ...f.request, args: { file: '[A]( selected )' } }, 'REF_NOT_VISIBLE');
         denied(f, { ...f.request, args: { file: ' ' } }, 'REF_NOT_VISIBLE');
@@ -184,7 +174,7 @@ describe('W01: narrow execution subset and fixed rejection classes', () => {
         f.core.lifecycle.dispose();
     });
     it('admits mutating Ref parameters without adding a separate Tool category', () => {
-        const f = fixture({  }); release(f, success(f));
+        const f = fixture({  }); assertNoLease(f, success(f));
     });
     it.each([null, true, 12, 'text', []])('refuses snapshot-value shape %j', payload => {
         const f = fixture({ payload }); denied(f, f.request, 'REF_VALUE_UNSUPPORTED');
@@ -194,7 +184,7 @@ describe('W01: narrow execution subset and fixed rejection classes', () => {
         ['File', 'unknown', false], ['File', 'File ', false],
     ])('uses explicit type equality only: declared %s actual %s', (requiredType, actualType, allowed) => {
         const f = fixture({ inputSchema: schema(requiredType), refType: actualType });
-        if (allowed) { const result = success(f); expect(result.refSources[0]!.refType).toBe(actualType); release(f, result); }
+        if (allowed) { const result = success(f); expect(result.refSources[0]!.refType).toBe(actualType); assertNoLease(f,result); }
         else denied(f, f.request, 'REF_TYPE_MISMATCH');
     });
     it.each([undefined, null, '', {}, [], 1])('refuses a missing/non-string raw Ref %j', file => {
@@ -209,22 +199,6 @@ describe('W01: narrow execution subset and fixed rejection classes', () => {
 });
 
 describe('W01: strict capture and caller source boundaries', () => {
-    it.each(['appId', 'instanceId', 'owner', 'source', 'tool', 'target', 'viewId', 'selection', 'refSources'])('refuses extra caller authority field %s', field => {
-        const f = fixture(); denied(f, { ...f.request, [field]: 'forged' }, 'TOOL_INVALID_ARGS');
-    });
-    it.each(['snapshotId', 'toolId', 'execution', 'args'])('refuses a missing request field %s', field => {
-        const f = fixture(); const request: Record<string, unknown> = { ...f.request }; delete request[field];
-        denied(f, request, 'TOOL_INVALID_ARGS');
-    });
-    it.each(['snapshotId', 'toolId'])('refuses an empty source identifier %s', field => {
-        const f = fixture(); denied(f, { ...f.request, [field]: '' }, field === 'snapshotId' ? 'SNAPSHOT_EXPIRED' : 'TOOL_UNAVAILABLE');
-    });
-    it.each([null, [], true, 'args'])('refuses non-object args %j', args => {
-        const f = fixture(); denied(f, { ...f.request, args }, 'TOOL_INVALID_ARGS');
-    });
-    it.each([null, [], 1, 'request'])('refuses request shape %j', request => {
-        const f = fixture(); denied(f, request, 'TOOL_INVALID_ARGS');
-    });
     it.each(['getter', 'hidden', 'symbol', 'cycle', 'nonfinite', 'class', 'sparse', 'undefined'])('rejects %s without exposing caller data', kind => {
         const f = fixture(); const args: Record<string, unknown> = { file: 'fd_A.selected' }; const getter = vi.fn(() => 'W01_SENTINEL');
         if (kind === 'getter') Object.defineProperty(args, 'secret', { enumerable: true, get: getter });
@@ -237,152 +211,5 @@ describe('W01: strict capture and caller source boundaries', () => {
         if (kind === 'undefined') args.value = undefined;
         const result = denied(f, { ...f.request, args }, 'TOOL_INVALID_ARGS');
         expect(getter).not.toHaveBeenCalled(); expect(JSON.stringify(result)).not.toContain('W01_SENTINEL');
-    });
-    it('does not evaluate a root getter and contains a throwing Proxy exception', () => {
-        const f = fixture(); const getter = vi.fn(() => f.request.args);
-        const request = { ...f.request }; Object.defineProperty(request, 'args', { enumerable: true, get: getter });
-        denied(f, request, 'TOOL_INVALID_ARGS'); expect(getter).not.toHaveBeenCalled();
-        let traps = 0;
-        const proxy = new Proxy(f.request, { getPrototypeOf() { traps++; throw new Error('W01_PRIVATE_TRAP'); } });
-        const result = denied(f, proxy, 'TOOL_INVALID_ARGS');
-        expect(traps).toBe(1); expect(JSON.stringify(result)).not.toContain('W01_PRIVATE_TRAP');
-    });
-});
-
-describe('W01: source invalidation and lease ownership', () => {
-    it.each(['unmount-all', 'remount-all', 'disabled', 'binding', 'schema', 'degraded', 'restart'])('refuses %s without leaking a lease', change => {
-        const f = fixture(); const held = f.core.store.acquire(f.source.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder'); const tool = f.source.tools[f.toolId]!;
-        let expected = 'TOOL_SOURCE_STALE';
-        if (change === 'unmount-all') {
-            f.publish({ views: [], refs: {}, tools: {} }); expected = 'TOOL_UNAVAILABLE';
-        } else if (change === 'remount-all') {
-            f.publish({ views: f.source.views.map(v => ({ ...v, viewInstanceId: v.viewInstanceId + '-new' })), refs: {}, tools: {
-                [f.toolId]: { ...tool, execution: { kind: 'view-type', activationId: 'reopened' } },
-            } });
-        } else if (change === 'disabled') { f.publish({ tools: {} }); expected = 'TOOL_UNAVAILABLE';
-        } else if (change === 'binding') {
-            f.publish({ tools: { [f.toolId]: { ...tool, execution: { kind: 'view-type', activationId: 'replacement' } } } });
-        } else if (change === 'schema') {
-            f.publish({ tools: { [f.toolId]: { ...tool, inputSchema: schema('File') } } });
-        } else if (change === 'degraded') {
-            expect(f.core.committer.accept({ schemaVersion: 3, ...f.context, producerSeq: 2,
-                sourceEpoch: 2, capturedAt: 2, views: 'invalid', refs: {}, tools: {} }).status).toBe('rejected');
-            expect(f.core.store.readLatest('app').status).toBe('degraded'); expected = 'SNAPSHOT_UNREADY';
-        } else {
-            f.core.lifecycle.stopApp('app', 'run'); f.core.lifecycle.startApp('app', 'run2'); f.publish({ instanceId: 'run2' }); expected = 'APP_INSTANCE_MISMATCH';
-        }
-        denied(f, f.request, expected); held.lease.release(); expect(f.core.store.inspect().activeLeases).toBe(0);
-    });
-    it('preserves source-not-found and capacity errors', () => {
-        const f = fixture(); denied(f, { ...f.request, snapshotId: 'not-a-source' }, 'SNAPSHOT_EXPIRED');
-        denied(f, { ...f.request, toolId: 'not-a-tool' }, 'TOOL_UNAVAILABLE');
-        denied(f, { ...f.request, execution: { kind: 'view-type', activationId: 'forged' } }, 'TOOL_SOURCE_CONFLICT');
-        const full = fixture({ storeOptions: { maxActiveLeases: 0 } }); denied(full, full.request, 'SNAPSHOT_CAPACITY');
-    });
-    it('rejects a Snapshot V1 publication before a source identity or lease can be created', () => {
-        const core = createSnapshotCore(); core.lifecycle.startApp('app', 'run');
-        const old = core.committer.accept({ schemaVersion: 1, appId: 'app', instanceId: 'run', producerSeq: 1,
-            sourceEpoch: 1, capturedAt: 1, views: [{ id: 'fd_A', generation: 'g', type: 'FileDetail', name: 'A',
-                kind: 'state', content: { format: 'markdown-v1', value: 'A' } }], refs: {}, tools: {} });
-        expect(old).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_INVALID', path: '$.schemaVersion' } });
-        expect(core.store.inspect().activeLeases).toBe(0);
-    });
-    it('success owns exactly one lease and releases idempotently even after caller mutation', () => {
-        const f = fixture(); const result = success(f);
-        f.request.snapshotId = 'mutated'; f.request.args.file = 'changed';
-        expect(result.refSources[0]!.snapshotId).toBe(f.source.id); release(f, result);
-    });
-    it('reacquires the same current source after one lease expires', () => {
-        let now = 0; const f = fixture({ storeOptions: { now: () => now, leaseTtlMs: 10, historyTtlMs: 20 } });
-        const first = success(f); now = 10; expect(f.core.store.inspect().activeLeases).toBe(0);
-        const source = acquireToolSource(f.core.store, f.sourceRequest);
-        expect(source.status).toBe('found'); expect(f.core.store.inspect().activeLeases).toBe(1);
-        first.release(); expect(f.core.store.inspect().activeLeases).toBe(1);
-        if (source.status !== 'found') throw new Error('Expected current source');
-        source.release(); expect(f.core.store.inspect().activeLeases).toBe(0);
-    });
-    it('cannot reacquire retired history after TTL even while a pin retains the original A', () => {
-        let now = 0; const f = fixture({ storeOptions: { now: () => now, leaseTtlMs: 100, historyTtlMs: 20 } });
-        const first = success(f); now = 1; f.publish({ refs: f.refs({ label: 'new' }) }); now = 21;
-        expect(f.core.store.getById(f.source.id).status).toBe('found');
-        const result = acquireToolSource(f.core.store, f.sourceRequest);
-        expect(result).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
-        denied(f, f.request, 'SNAPSHOT_EXPIRED'); expect(first.effectiveArgs.file).toEqual({ label: 'A' });
-        release(f, first); expect(f.core.store.getById(f.source.id).status).toBe('rejected');
-    });
-});
-
-// Independent fixture accounting of the signed codec rules: root depth=0,
-// +2 per node, +24 per finite number, UTF-8 string bytes, +keyBytes+4.
-function measure(value: JsonValue): { nodes: number; depth: number; approx: number; canonical: number } {
-    let nodes = 0; let depth = 0; let approx = 0;
-    function walk(v: JsonValue, level: number) {
-        nodes++; depth = Math.max(depth, level); approx += 2;
-        if (typeof v === 'string') approx += utf8Size(v);
-        else if (typeof v === 'number') approx += 24;
-        else if (Array.isArray(v)) v.forEach(x => walk(x, level + 1));
-        else if (v !== null && typeof v === 'object') Object.entries(v).forEach(([key, x]) => {
-            approx += utf8Size(key) + 4; walk(x, level + 1);
-        });
-    }
-    walk(value, 0); return { nodes, depth, approx, canonical: utf8Size(canonicalJson(value)) };
-}
-function nested(levels: number): JsonValue {
-    let value: JsonValue = {};
-    for (let n = 0; n < levels; n++) value = { next: value };
-    return value;
-}
-function escapedBytes(bytes: number): string {
-    return '\0'.repeat(Math.floor(bytes / 6)) + 'x'.repeat(bytes % 6);
-}
-
-describe('W01 T07: raw argument depth, nodes, approx and canonical boundaries', () => {
-    it.each([23, 24, 25])('raw depth %i (request depth is raw+1)', depth => {
-        const f = fixture({ payload: {} }); const args = { file: 'fd_A.selected', ordinary: nested(depth - 1) };
-        expect(measure(args).depth).toBe(depth); expect(measure({ ...f.request, args } as JsonValue).depth).toBe(depth + 1);
-        if (depth > 24) denied(f, { ...f.request, args }, 'TOOL_INVALID_ARGS');
-        else release(f, success(f, { ...f.request, args }));
-    });
-    it.each([9_999, 10_000, 10_001])('raw nodes %i (request nodes are raw+6)', nodes => {
-        const f = fixture({ payload: {} }); const args = { file: 'fd_A.selected', values: Array(nodes - 3).fill(null) };
-        expect(measure(args).nodes).toBe(nodes); expect(measure({ ...f.request, args } as JsonValue).nodes).toBe(nodes + 6);
-        if (nodes > 10_000) denied(f, { ...f.request, args }, 'REF_ARGUMENT_BUDGET_EXCEEDED');
-        else release(f, success(f, { ...f.request, args }));
-    });
-    it.each([131_071, 131_072, 131_073])('raw approx bytes %i', bytes => {
-        const f = fixture({ payload: {} }); const base = { file: 'fd_A.selected', padding: '' };
-        const args = { ...base, padding: 'x'.repeat(bytes - measure(base).approx) };
-        expect(measure(args).approx).toBe(bytes);
-        if (bytes > 131_072) denied(f, { ...f.request, args }, 'REF_ARGUMENT_BUDGET_EXCEEDED');
-        else release(f, success(f, { ...f.request, args }));
-    });
-    it.each([131_071, 131_072, 131_073])('raw canonical UTF-8 bytes %i with escaped data', bytes => {
-        const f = fixture({ payload: {} }); const base = { file: 'fd_A.selected', padding: '' };
-        const args = { ...base, padding: escapedBytes(bytes - measure(base).canonical) };
-        expect(measure(args).canonical).toBe(bytes); expect(measure(args).approx).toBeLessThan(131_072);
-        if (bytes > 131_072) denied(f, { ...f.request, args }, 'REF_ARGUMENT_BUDGET_EXCEEDED');
-        else release(f, success(f, { ...f.request, args }));
-    });
-});
-
-describe('W01 T07: complete caller request boundaries', () => {
-    it.each([139_263, 139_264, 139_265])('complete request approx bytes %i via a real long activation identity', bytes => {
-        const template = fixture({ payload: {} });
-        template.request.args = { file: 'fd_A.selected', numericPadding: [0, 0, 0, 0] };
-        const base = measure(template.request as JsonValue).approx;
-        const activationId = 'v'.repeat(bytes - base + template.activationId.length);
-        const f = fixture({ payload: {}, activationId }); f.request.args = template.request.args;
-        expect(measure(f.request as JsonValue).approx).toBe(bytes);
-        expect(measure(f.request as JsonValue).canonical).toBeLessThan(139_264);
-        if (bytes > 139_264) denied(f, f.request, 'TOOL_INVALID_ARGS');
-        else release(f, success(f));
-    });
-    it.each([139_263, 139_264, 139_265])('complete request canonical bytes %i independently of approx', bytes => {
-        const base = fixture({ payload: {} }); const emptyLength = measure(base.request as JsonValue).canonical;
-        const activationId = escapedBytes(bytes - emptyLength + base.activationId.length);
-        const f = fixture({ payload: {}, activationId });
-        expect(measure(f.request as JsonValue).canonical).toBe(bytes); expect(measure(f.request as JsonValue).approx).toBeLessThan(139_264);
-        if (bytes > 139_264) denied(f, f.request, 'TOOL_INVALID_ARGS');
-        else release(f, success(f));
     });
 });

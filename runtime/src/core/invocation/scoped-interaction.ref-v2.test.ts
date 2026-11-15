@@ -19,11 +19,10 @@ function fixture() {
     const calls = { validate: 0, policy: 0, execute: 0 }, seen: any[] = [];
     const controls = { authorize: (_ctx: any): any => true };
     function publish(label = 'A', mounted = true) {
-        const s = ++seq;const r = core.committer.accept({ schemaVersion: 3, appId: 'app', instanceId: 'run', producerSeq: s, sourceEpoch: s, capturedAt: s,
-            views: mounted ? [{ id: 'aa', viewInstanceId: 'mount', type: 'File', name: 'File', kind: 'state', content: { format: 'markdown-v1', value: label } }] : [],
+        const s = ++seq;const r = core.committer.accept({ schemaVersion: 4, appId: 'app', instanceId: 'run', producerSeq: s, sourceEpoch: s, capturedAt: s,
+            views: mounted ? [{ toolBindings: [{ toolId: id, activationId: label === 'rule' ? 'rule-2' : 'active-1' }], id: 'aa', viewInstanceId: 'mount', type: 'File', name: 'File', kind: 'state', content: { format: 'markdown-v1', value: label } }] : [],
             refs: mounted ? { [refKey('aa', 'mount', 'id')]: { id: 'id', ownerViewId: 'aa', ownerViewInstanceId: 'mount', refType: 'unknown', target: { kind: 'snapshot-value', payload: { label } } } } : {},
-            tools: mounted ? { [id]: { id, name: 'read', viewType: 'File', description: 'Read', inputSchema: schema, 
-                execution: { kind: 'view-type', activationId: label === 'rule' ? 'rule-2' : 'active-1' } } } : {} });
+            tools: mounted ? { [id]: { id, name: 'read', viewType: 'File', description: 'Read', inputSchema: schema } } : {} });
         expect(r.status).toBe('published');if (r.status !== 'published') throw Error('publication');return r.snapshot;
     }
     const original = publish();
@@ -31,15 +30,15 @@ function fixture() {
         calls.validate++;if (!contract.ok) throw Error('fixture');const r = contract.contract.validateResolvedInput!(input);return r.ok ? { ok: true, value: r.value } : { ok: false };
     }, execute: (ctx: any) => { calls.execute++;seen.push(ctx);return { kind: 'tool-result' as const, phase: 'entered-returned' as const, result: { success: true, data: { label: ctx.effectiveInput.file.label } } }; } };
     const client = createAppInteraction(core.store, { namespace: 'ref-v2', now: () => 0, appId: 'app', instanceId: 'run', policy: { project: ({ source }) => ({
-        views: source.views.map(v => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })), refs: Object.values(source.refs).map(r => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })),
-        toolBindings: Object.values(source.tools).map(t => ({ toolId: t.id, execution: t.execution })), content: [] }),
+        refs: Object.values(source.refs).map(r => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })),
+        toolIds: Object.keys(source.tools) }),
         authorize: ctx => { calls.policy++;seen.push(ctx);return controls.authorize(ctx); }, canReadReceipt: () => true }, execution: { resolve: () => binding } });
     return { core, client, controls, calls, seen, publish, original, changeRule() {
         contract = parameters(true);
         if (!contract.ok) throw Error('fixture');schema = ordinaryParameterProfile(contract.contract);publish('rule');
     }, async request(input: any = { file: 'aa.id', choice: 'ok' }) {
-        const o = await client.observe({ viewIds: ['aa'] });if (o.status !== 'observed') throw Error('observation');expect(client.adoptObservation(o.observation.observationId)).toEqual({ status: 'adopted' });const b = o.observation.bindings[0]!;
-        return { invocationId: 'i', observationId: o.observation.observationId, bindingId: b.bindingId, input };
+        const o = await client.observe({ all: true });if (o.status !== 'observed') throw Error('observation');expect(client.adoptObservation(o.observation.observationId)).toEqual({ status: 'adopted' });const tool = o.observation.tools[0]!;
+        return { invocationId: 'i', observationId: o.observation.observationId, toolId: tool.id, input: { view_id: 'aa', ...input } };
     } };
 }
 describe('R08/R09/R11 unchanged Core coordination with versioned Ref admission', () => {
@@ -57,7 +56,7 @@ describe('R08/R09/R11 unchanged Core coordination with versioned Ref admission',
         const f = fixture(), started = deferred(), release = deferred();f.controls.authorize = () => { started.resolve();return release.promise.then(() => true); };
         const running = f.client.invoke(await f.request());await started.promise;
         if (kind === 'rule') f.changeRule();if (kind === 'unmount') f.publish('A', false);if (kind === 'instance') f.client.close();release.resolve();
-        const result: any = await running;expect(f.calls.execute).toBe(0);expect(result.code ?? result.receipt.outcome.code).toBe(kind === 'rule' ? 'TOOL_SOURCE_STALE' : kind === 'unmount' ? 'TOOL_UNAVAILABLE' : 'APP_INTERACTION_UNAVAILABLE');
+        const result: any = await running;expect(f.calls.execute).toBe(0);expect(result.code ?? result.receipt.outcome.code).toBe(kind === 'rule' ? 'TOOL_SOURCE_STALE' : kind === 'unmount' ? 'VIEW_INSTANCE_REVOKED' : 'APP_INTERACTION_UNAVAILABLE');
         f.client.close();expect(f.core.store.inspect().activeLeases).toBe(0);
     });
 });

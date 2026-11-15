@@ -1,5 +1,5 @@
 import { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION, STATE_SESSION_VERSION } from '../../spi/index.js';
-import { SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY } from '../../spi/worker-protocol/types.js';
+import { SNAPSHOT_CAPABILITY, PARAMETERS_V6_CAPABILITY } from '../../spi/worker-protocol/types.js';
 import { initializationError } from '../../adapters/initialization-error.js';
 import { captureAppLifecycleAck, captureAppCleanupReport } from '../../adapters/app-lifecycle-protocol.js';
 import { withExecutableTools } from '../../adapters/semantic-capability-policy.js';
@@ -279,7 +279,7 @@ export class AppWorkerHost {
     private attachInteraction(policy = DEFAULT_APP_INTERACTION_POLICY): InstanceInteraction {
         if (!this.instanceInteraction) {
             const execution = { resolve: this.resolveInteractionSource };
-            this.instanceInteraction = this.snapshotReceiver.interaction(withExecutableTools(policy, execution), execution);
+            this.instanceInteraction = this.snapshotReceiver.interaction(withExecutableTools(policy, () => this.hasOrdinaryParametersCapability()), execution);
             this.interactionPolicy = policy;
         }
         return this.instanceInteraction;
@@ -344,7 +344,7 @@ export class AppWorkerHost {
         if (!this.interactionAvailable() || source.appId !== String(this.appId) || source.instanceId !== this.appInstanceId) return null;
         const existing = this.interactionBindings.get(source);
         if (existing) return existing;
-        if (source.execution.kind !== 'view-type' || !this.hasOrdinaryParametersCapability()) return null;
+        if (!this.hasOrdinaryParametersCapability()) return null;
         const parameters = compileOrdinaryProfile(source.tool.inputSchema);
         if (!parameters) return null;
         const worker = this.worker!, version = this.lifecycleContextVersion;
@@ -355,9 +355,9 @@ export class AppWorkerHost {
             },
             isLive: () => ({ ok: this.interactionAvailable() && this.worker === worker &&
                 this.lifecycleContextVersion === version && this.hasOrdinaryParametersCapability() }),
-            execute: (context: InvocationContext) => this.dispatchTool({ type: 'VIEW_TOOL_INVOKE_V5', requestId: generateRequestId(),
+            execute: (context: InvocationContext) => this.dispatchTool({ type: 'VIEW_TOOL_INVOKE_V6', requestId: generateRequestId(),
                 appId: source.appId as AppID, instanceId: source.instanceId, snapshotId: source.snapshotId,
-                tool: source.tool, argumentMode: PARAMETERS_MODE, execution: source.execution, rawArgs: context.rawInput,
+                tool: source.tool, argumentMode: PARAMETERS_MODE, receiver: source.receiver, rawArgs: context.rawInput,
                 effectiveArgs: context.effectiveInput, refSources: context.refSources,
             }, { worker, version, signal: context.signal }),
         });
@@ -365,7 +365,7 @@ export class AppWorkerHost {
         return binding;
     };
 
-    private dispatchTool(message: import('../../spi/worker-protocol/messages.js').ViewToolInvokeV5Message,
+    private dispatchTool(message: import('../../spi/worker-protocol/messages.js').ViewToolInvokeV6Message,
         expected: { worker: Worker; version: number; signal: CancellationSignal }): ExecutionFact | Promise<ExecutionFact> {
         const refused = (code: string, text: string): ExecutionFact => ({ kind: 'tool-result', phase: 'not-entered',
             result: { success: false, error: { code, message: text } } });
@@ -458,7 +458,7 @@ export class AppWorkerHost {
                     limits: DEFAULT_STATE_SESSION_LIMITS, transport: { ...DEFAULT_STATE_TRANSPORT_LIMITS, timeoutMs: this.timeout } },
                 appInstanceId: this.appInstanceId,
                 appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, version: APP_LIFECYCLE_VERSION, instanceId: this.appInstanceId },
-                requestedCapabilities: this.requestParameters ? [SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY] : [SNAPSHOT_CAPABILITY],
+                requestedCapabilities: this.requestParameters ? [SNAPSHOT_CAPABILITY, PARAMETERS_V6_CAPABILITY] : [SNAPSHOT_CAPABILITY],
             }, 'ready');
         } catch (error) {
             if (!this.closePromise) {
@@ -672,7 +672,7 @@ export class AppWorkerHost {
         }
     }
 
-    private sendRequest<T>(message: Exclude<MainToWorkerMessage, { type: 'VIEW_TOOL_INVOKE_V5' }>): Promise<T> {
+    private sendRequest<T>(message: Exclude<MainToWorkerMessage, { type: 'VIEW_TOOL_INVOKE_V6' }>): Promise<T> {
         if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE'].includes(message.type)) this.lifecycleContextVersion++;
         if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE', 'APP_REINITIALIZE'].includes(message.type)) {
             this.revokeRefCapability();
@@ -729,7 +729,7 @@ export class AppWorkerHost {
         const refPending = typeof id === 'string' ? this.pendingRequests.get(id) : undefined;
         if (refPending?.ref) {
             const { worker, appId, instanceId } = refPending.ref;
-            if (worker !== this.worker || typeField.value !== 'VIEW_TOOL_INVOKE_V5_RESPONSE') return;
+            if (worker !== this.worker || typeField.value !== 'VIEW_TOOL_INVOKE_V6_RESPONSE') return;
             const terminal = captureTypeParametersTerminal(msg, { requestId: id, appId, instanceId });
             if (!terminal) return;
             this.pendingRequests.delete(id);
@@ -816,7 +816,7 @@ export class AppWorkerHost {
                         init.worker === this.worker && init.version === this.lifecycleContextVersion &&
                         this.status !== 'closing' && this.status !== 'closed' && !this.closePromise &&
                         instance === this.appInstanceId && accepted !== null) {
-                        this.ordinaryParametersCapability = accepted.includes(PARAMETERS_V5_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
+                        this.ordinaryParametersCapability = accepted.includes(PARAMETERS_V6_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
                     }
                 }
                 if (pending.initialOpen && msg.success !== true) {

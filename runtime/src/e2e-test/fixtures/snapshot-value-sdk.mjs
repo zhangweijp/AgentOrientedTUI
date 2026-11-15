@@ -3,7 +3,7 @@ import { h } from 'preact';
 import { useLayoutEffect, useState } from 'preact/hooks';
 import { parentPort } from 'node:worker_threads';
 import Type from 'typebox';
-import { createTUIApp, View, useDataRef, useArrayRef, AppTools, defineToolSet, defineViewTypeTool, refParam } from '@aotui/sdk';
+import { createTUIApp, View, useDataRef, useArrayRef, defineViewType, refParam } from '@aotui/sdk';
 
 const SENTINEL = 'W03_B_SDK_PRIVATE_b6143_秘密';
 let calls = 0, handlerEntries = 0, guards = 0;
@@ -13,15 +13,15 @@ parentPort.on('message', message => {
 });
 
 const ref = kind => refParam(kind, Type.Object({}, { additionalProperties: true }));
-const declaration = (name, fields) => defineViewTypeTool({ viewType: 'File', name, description: 'Private original-Ref contract check',
+const declaration = fields => ({ description: 'Private original-Ref contract check',
      inputSchema: Type.Object(fields, { additionalProperties: false }) });
-const tools = defineToolSet({
-    read: declaration('read', { file: ref('Data'), value: Type.Optional(Type.String()),
+const FileType = defineViewType({ name:'File', tools: {
+    read: declaration({ file: ref('Data'), value: Type.Optional(Type.String()),
         choice: Type.Optional(Type.String({ enum: ['allowed'] })), text: Type.Optional(Type.String({ minLength: 1 })), mode: Type.Optional(Type.String()) }),
-    typed: declaration('typed', { file: ref('File') }),
-    diagnostics: declaration('diagnostics', Object.fromEntries([['file', ref('Data')],
+    typed: declaration({ file: ref('File') }),
+    diagnostics: declaration(Object.fromEntries([['file', ref('Data')],
         ...Array.from({ length: 20 }, (_, i) => ['界😀'.repeat(80) + i, Type.Number()])])),
-});
+} });
 const labelFor = owner => owner === 'aa' ? 'alpha' : 'beta';
 function Marker({ owner, text }) {
     const label = labelFor(owner);
@@ -51,8 +51,8 @@ function Root() {
         parentPort.on('message', receive);
         return () => parentPort.off('message', receive);
     }, []);
-    function execute(name, args) {
-        parentPort.postMessage({ type: 'TEST_HANDLER_ENTRY', name, entries: ++handlerEntries });
+    function execute(receiver, name, args) {
+        parentPort.postMessage({ type: 'TEST_HANDLER_ENTRY', name, receiver, entries: ++handlerEntries });
         const owner = args.file.owner, current = state[owner];
         if (!current || !current.enabled) { guards++; parentPort.postMessage({ type: 'TEST_APP_GUARD', owner, guards });
             return { success: false, error: { code: 'VIEW_NOT_OPEN', message: 'The fixture object is unavailable.' } }; }
@@ -69,10 +69,10 @@ function Root() {
             return new Promise(resolve => { releaseHandler = () => resolve({ success: true, data: { calls } }); }); }
         return { success: true, data: { owner, args, calls, revision: current.revision } };
     }
-    const bindings = Object.fromEntries(Object.keys(tools).map(name => [name, { execute: args => execute(name, args), enabled: state.toolEnabled }]));
-    return h(AppTools, { definition: tools, bindings }, h('main', {}, [
-        h(View, {kind: 'state', id: 'aa', type: 'File', key: 'aa' }, h(Content, { owner: 'aa', state: state.aa })),
-        h(View, {kind: 'state', id: 'bb', type: 'File', key: 'bb' }, h(Content, { owner: 'bb', state: state.bb })),
-    ]));
+    const bindings = receiver => Object.fromEntries(Object.keys(FileType.tools).map(name => [name, { execute: args => execute(receiver, name, args), enabled: state.toolEnabled }]));
+    return h('main', {}, [
+        h(View, {kind: 'state', id: 'aa', type: FileType, key: 'aa', bindings: bindings('aa') }, h(Content, { owner: 'aa', state: state.aa })),
+        h(View, {kind: 'state', id: 'bb', type: FileType, key: 'bb', bindings: bindings('bb') }, h(Content, { owner: 'bb', state: state.bb })),
+    ]);
 }
-export default createTUIApp({ app_name: 'ref_sdk_fixture', component: Root });
+export default createTUIApp({ app_name: 'ref_sdk_fixture', component: Root, viewTypes:[FileType] });

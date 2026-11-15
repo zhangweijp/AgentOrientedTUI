@@ -1,13 +1,13 @@
 import { transformElement } from '../engine/view/transformer/pure.js';
 import type { ViewID } from '../spi/index.js';
-import type { ViewSnapshotV2 } from '../core/snapshot/types.js';
+import type { ViewSnapshotV4 } from '../core/snapshot/types.js';
 
 export interface WorkerRuntimeViewFragment {
     viewId: ViewID;
     viewType: string;
     viewName?: string;
     markup: string;
-    kind: ViewSnapshotV2['kind'];
+    kind: ViewSnapshotV4['kind'];
 }
 
 function viewIdentity(node: Element): string {

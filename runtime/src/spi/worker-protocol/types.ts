@@ -1,6 +1,6 @@
 import { SNAPSHOT_SCHEMA_VERSION } from '../../core/snapshot/types.js';
 export const SNAPSHOT_CAPABILITY = `app-snapshot/v${SNAPSHOT_SCHEMA_VERSION}` as const;
-export const PARAMETERS_V5_CAPABILITY = 'view-tool-parameters-invoke/v5' as const;
+export const PARAMETERS_V6_CAPABILITY = 'view-tool-parameters-invoke/v6' as const;
 /**
  * Worker Protocol - Type Definitions
  * 

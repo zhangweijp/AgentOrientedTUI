@@ -1,4 +1,4 @@
-import type { ObservedToolExecutionV3, SnapshotIssueCode, ToolDescriptorV3, ViewSnapshotV2 } from '../snapshot/types.js';
+import type { SnapshotIssueCode, ToolDescriptorV4, ViewSnapshotV4 } from '../snapshot/types.js';
 
 export interface ObservationJsonLimits {
     readonly maxDepth: number;
@@ -10,7 +10,6 @@ export interface ObservationRegistryLimits {
     readonly maxViews: number;
     readonly maxRefs: number;
     readonly maxTools: number;
-    readonly maxBindings: number;
     readonly capture: ObservationJsonLimits;
     readonly metadata: ObservationJsonLimits;
     readonly observation: ObservationJsonLimits;
@@ -37,13 +36,12 @@ export interface ObservationSource {
     readonly snapshotId: string;
     readonly revision: number;
 }
-export interface ObservationSelection { readonly viewIds: readonly string[] }
-export interface ObservationBinding {
-    readonly bindingId: string;
-    readonly toolId: string;
-    readonly execution: ObservedToolExecutionV3;
+export interface ObservationSelection { readonly all: true }
+export type ObservedView = Readonly<Omit<ViewSnapshotV4, 'toolBindings'>>;
+export interface ObservedTool extends ToolDescriptorV4 {
+    /** Omitted when every observed View of this type can receive the Tool. */
+    readonly eligibleViewIds?: readonly string[];
 }
-export type ObservedView = Readonly<Omit<ViewSnapshotV2, 'content'> & { readonly content?: ViewSnapshotV2['content'] }>;
 export interface Observation {
     readonly observationId: string;
     readonly source: ObservationSource;
@@ -51,22 +49,15 @@ export interface Observation {
     readonly expiresAt: number | null;
     readonly views: readonly ObservedView[];
     readonly refs: readonly Readonly<RefIdentity & { refType: string; kind: 'snapshot-value' | 'entity' }>[];
-    readonly tools: readonly ToolDescriptorV3[];
-    readonly bindings: readonly ObservationBinding[];
-}
-export interface ToolObservationGrant {
-    readonly toolId: string;
-    readonly execution: ObservedToolExecutionV3;
+    readonly tools: readonly ObservedTool[];
 }
 export interface ObservationGrant {
-    readonly views: readonly ViewIdentity[];
     readonly refs: readonly RefIdentity[];
-    readonly toolBindings: readonly ToolObservationGrant[];
-    readonly content: readonly Readonly<{ view: ViewIdentity; decision: 'retain' | 'hide' }>[];
+    readonly toolIds: readonly string[];
 }
 export type ObservationIssueCode = SnapshotIssueCode | 'APP_INTERACTION_UNAVAILABLE' |
     'RESERVATION_UNAVAILABLE' | 'OBSERVATION_INVALID' | 'OBSERVATION_PROJECTION_INVALID' |
-    'OBSERVATION_UNAVAILABLE' | 'OBSERVATION_NOT_ADOPTED' | 'BINDING_UNAVAILABLE' | 'OBSERVATION_CAPACITY' | 'OBSERVATION_INTERNAL_ERROR';
+    'OBSERVATION_UNAVAILABLE' | 'OBSERVATION_NOT_ADOPTED' | 'OBSERVATION_CAPACITY' | 'OBSERVATION_INTERNAL_ERROR';
 export interface ObservationIssue { readonly code: ObservationIssueCode; readonly message: string; readonly path?: string }
 export interface ObservationRejected { readonly status: 'rejected'; readonly issue: ObservationIssue }
 export interface ObservationRegistryStats {

@@ -1,21 +1,21 @@
 import { SNAPSHOT_SCHEMA_VERSION } from '../snapshot/types.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
-import type { AppIdentityReader, AppSnapshotV3, ObservedToolExecutionV3, SnapshotLease, SnapshotStore } from '../snapshot/types.js';
-import { acquireToolSource } from '../tool/source-binding.js';
+import type { AppIdentityReader, AppSnapshotV4, SnapshotLease, SnapshotStore } from '../snapshot/types.js';
+import { sameToolDefinition, viewToolReceiver } from '../tool/source-binding.js';
 import type { AppPreviewResult, AppInteractionPolicy } from './app-interaction-types.js';
 import { DEFAULT_SNAPSHOT_LIMITS as snapshotLimits, OBSERVATION_METADATA_BYTES } from '../snapshot/snapshot-support.js';
 import type {
-    Observation, ObservationBinding, ObservationGrant, ObservationIssue,
+    Observation, ObservationGrant, ObservationIssue, ObservedView,
     ObservationIssueCode, ObservationJsonLimits, ObservationRegistryLimits,
-    ObservationRegistryOptions, ObservationRegistryStats, ObservationRejected, ObservationSelection,
-    ObservationSource, RefIdentity, ReservationHandle, ViewIdentity,
+    ObservationRegistryOptions, ObservationRegistryStats, ObservationRejected,
+    RefIdentity, ReservationHandle,
 } from './observation-types.js';
 
 const KiB = 1024, MiB = KiB * KiB;
 const profile = (maxDepth: number, maxNodes: number, bytes: number): ObservationJsonLimits =>
     Object.freeze({ maxDepth, maxNodes, maxApproxBytes: bytes, maxCanonicalBytes: bytes });
 export const DEFAULT_OBSERVATION_REGISTRY_LIMITS: ObservationRegistryLimits = Object.freeze({
-    maxViews: 256, maxRefs: 512, maxTools: 256, maxBindings: 256,
+    maxViews: 256, maxRefs: 512, maxTools: 256,
     capture: profile(4, 1024, 16 * KiB), metadata: profile(12, 8192, OBSERVATION_METADATA_BYTES),
     observation: profile(snapshotLimits.maxDepth + 2, snapshotLimits.maxNodes + 4_000,
         snapshotLimits.maxViewContentBytes + snapshotLimits.maxToolSchemaBytes + 2 * OBSERVATION_METADATA_BYTES),
@@ -24,21 +24,18 @@ export const DEFAULT_OBSERVATION_REGISTRY_LIMITS: ObservationRegistryLimits = Ob
     maxMetadataBytes: 8 * MiB, maxTotalBytes: 64 * MiB,
 });
 
-/** The default Host selection keeps complete Views and their visible capabilities. */
-export const projectCompleteViews: AppInteractionPolicy['project'] = ({ source, selection }) => {
-    const selected = new Set(selection.viewIds);
-    const views = source.views.filter(view => selected.has(view.id));
-    const types = new Set(views.map(view => view.type));
-    const identities = views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
-    return {
-        views: identities,
-        refs: Object.values(source.refs).filter(ref => selected.has(ref.ownerViewId)).map(ref => ({
-            viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id,
-        })),
-        toolBindings: Object.values(source.tools).filter(tool => types.has(tool.viewType)).map(tool => ({ toolId: tool.id, execution: tool.execution })),
-        content: identities.map(view => ({ view, decision: 'retain' })),
-    };
-};
+/** The default Host grants the full set of executable data and Tools. */
+export const projectCompleteViews: AppInteractionPolicy['project'] = ({ source }) => ({
+    refs: Object.values(source.refs).map(ref => ({
+        viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id,
+    })),
+    toolIds: Object.keys(source.tools),
+});
+
+function observedViews(source: AppSnapshotV4): readonly ObservedView[] {
+    return source.views.map(({ id, viewInstanceId, type, name, kind, content }) =>
+        Object.freeze({ id, viewInstanceId, type, name, kind, content }));
+}
 
 export function previewCommittedApp(store: SnapshotStore, appId: string, instanceId: string): AppPreviewResult {
     const result = store.readLatest(appId);
@@ -47,18 +44,19 @@ export function previewCommittedApp(store: SnapshotStore, appId: string, instanc
         issue: { code: 'APP_INTERACTION_UNAVAILABLE', message: 'Current App projection is unavailable' } };
     const snapshot = result.snapshot;
     return Object.freeze({ status: 'previewed', source: Object.freeze({ appId, instanceId, snapshotId: snapshot.id,
-        revision: snapshot.revision }), views: snapshot.views });
+        revision: snapshot.revision }), views: Object.freeze(observedViews(snapshot)) });
 }
 
 class RegistryFailure {
-    constructor(readonly code: ObservationIssueCode, readonly path?: string) {}
+    constructor(readonly code: ObservationIssueCode, readonly path?: string, readonly message?: string) {}
 }
-function fail(code: ObservationIssueCode, path?: string): never { throw new RegistryFailure(code, path); }
+function fail(code: ObservationIssueCode, path?: string, message?: string): never { throw new RegistryFailure(code, path, message); }
 const issue = (error: unknown): ObservationIssue => Object.freeze({
     code: error instanceof RegistryFailure ? error.code : 'OBSERVATION_INTERNAL_ERROR',
-    message: error instanceof RegistryFailure && error.code === 'OBSERVATION_CAPACITY'
-        ? 'The selected Views and Tool metadata exceed the complete observation limit. Select fewer complete Views or page the App content.'
-        : 'Observation registry request could not be completed',
+    message: error instanceof RegistryFailure && error.message ? error.message
+        : error instanceof RegistryFailure && error.code === 'OBSERVATION_CAPACITY'
+            ? 'All open Views and their Tool metadata exceed the observation limit. Close a View or page the App content.'
+            : 'Observation registry request could not be completed',
     ...(error instanceof RegistryFailure && error.path ? { path: error.path } : {}),
 });
 const rejected = (error: unknown): ObservationRejected => Object.freeze({ status: 'rejected', issue: issue(error) });
@@ -69,10 +67,7 @@ function object(value: unknown, keys: readonly string[], code: ObservationIssueC
     return record;
 }
 const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
-const viewKey = (view: ViewIdentity): string => JSON.stringify([view.viewId, view.viewInstanceId]);
 const refKey = (ref: RefIdentity): string => JSON.stringify([ref.viewId, ref.viewInstanceId, ref.refId]);
-const executionKey = (toolId: string, execution: ObservedToolExecutionV3): string =>
-    JSON.stringify([toolId, 'view-type', execution.activationId]);
 function bounded<T>(input: unknown, limits: ObservationJsonLimits, code: ObservationIssueCode, path?: string): { value: T; bytes: number } {
     try {
         const value = copyJson(input, limits);
@@ -94,22 +89,14 @@ function configuration(input: unknown, allowed: readonly string[]): Record<strin
     return Object.fromEntries(Object.entries(descriptors).map(([key, value]) => [key, value.value]));
 }
 
-interface Hold { readonly source: AppSnapshotV3; readonly lease: SnapshotLease }
+interface Hold { readonly source: AppSnapshotV4; readonly lease: SnapshotLease }
 export interface Reservation extends Hold {
     readonly observationId: string;
-    readonly selection: ObservationSelection;
     cancelled: boolean;
-}
-interface Metadata {
-    readonly observationId: string;
-    readonly source: ObservationSource;
-    readonly views: readonly ViewIdentity[];
-    readonly refs: readonly RefIdentity[];
-    readonly bindings: readonly ObservationBinding[];
 }
 export interface RegisteredObservation extends Hold {
     readonly observation: Observation;
-    readonly metadata: Metadata;
+    readonly metadata: ObservationGrant;
     readonly publicBytes: number;
     readonly metadataBytes: number;
 }
@@ -155,7 +142,7 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
     } catch { throw new TypeError('Invalid observation registry configuration'); }
     let sequence = 0;
     let sourceBytes = 0, observationBytes = 0, metadataBytes = 0;
-    const sources = new Map<string, { readonly source: AppSnapshotV3; readonly bytes: number; references: number }>();
+    const sources = new Map<string, { readonly source: AppSnapshotV4; readonly bytes: number; references: number }>();
     const id = (kind: string): string => {
         if (sequence === Number.MAX_SAFE_INTEGER) fail('OBSERVATION_CAPACITY');
         const value = namespace + ':' + kind + ':' + ++sequence;
@@ -186,14 +173,14 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
     function requireActive(): void {
         if (state.closing) fail('APP_INTERACTION_UNAVAILABLE');
     }
-    function ready(): AppSnapshotV3 {
+    function ready(): AppSnapshotV4 {
         const latest = store.readLatest(state.appId);
         if (latest.status !== 'ready') fail(latest.status === 'stopped' ? 'APP_STOPPED' : 'SNAPSHOT_UNREADY');
         if (latest.snapshot.instanceId !== state.instanceId) fail('APP_INSTANCE_MISMATCH');
         if (latest.snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) fail('SNAPSHOT_INVALID');
         return latest.snapshot;
     }
-    function reacquire(source: AppSnapshotV3): void {
+    function reacquire(source: AppSnapshotV4): void {
         ready();
         const result = store.acquire(source.id);
         if (result.status === 'rejected') fail(result.issue.code);
@@ -219,84 +206,56 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
             observationBytes, metadataBytes, totalBytes: sourceBytes + observationBytes + metadataBytes,
             ...(error === undefined ? {} : { issue: issue(error) }) });
     }
-    function project(value: Reservation, input: unknown): { observation: Observation; metadata: Metadata; publicBytes: number; metadataBytes: number } {
-        let grant: ObservationGrant;
-        try {
-            grant = bounded<ObservationGrant>(input, limits.metadata, 'OBSERVATION_PROJECTION_INVALID').value;
-            object(grant, ['views', 'refs', 'toolBindings', 'content']);
-            if (![grant.views, grant.refs, grant.toolBindings, grant.content].every(Array.isArray)) fail('OBSERVATION_PROJECTION_INVALID');
-            if (grant.views.length > limits.maxViews || grant.refs.length > limits.maxRefs || grant.toolBindings.length > limits.maxBindings) fail('OBSERVATION_CAPACITY');
-            const sourceViews = new Set(value.source.views.filter(v => value.selection.viewIds.includes(v.id))
-                .map(v => viewKey({ viewId: v.id, viewInstanceId: v.viewInstanceId })));
-            const sourceRefs = Object.values(value.source.refs);
-            const originalRefs = new Set(sourceRefs.map(r => refKey({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })));
-            const sourceTools = new Map(Object.values(value.source.tools).map(tool => [tool.id, tool]));
-            const originalBindings = new Set(Object.values(value.source.tools).map(tool => executionKey(tool.id, tool.execution)));
-            const views = new Set<string>(), refs = new Set<string>(), toolBindings = new Map<string, ObservedToolExecutionV3>(), content = new Map<string, string>();
-            const view = (v: ViewIdentity): string => {
-                object(v, ['viewId', 'viewInstanceId']);
-                if (!text(v.viewId) || !text(v.viewInstanceId)) fail('OBSERVATION_PROJECTION_INVALID');
-                return viewKey(v);
-            };
-            for (const v of grant.views) {
-                const key = view(v);
-                if (!sourceViews.has(key) || views.has(key)) fail('OBSERVATION_PROJECTION_INVALID');
-                views.add(key);
-            }
-            for (const r of grant.refs) {
-                object(r, ['viewId', 'viewInstanceId', 'refId']);
-                if (!text(r.viewId) || !text(r.viewInstanceId) || !text(r.refId)) fail('OBSERVATION_PROJECTION_INVALID');
-                const key = refKey(r);
-                if (!views.has(viewKey(r)) || !originalRefs.has(key) || refs.has(key)) fail('OBSERVATION_PROJECTION_INVALID');
-                refs.add(key);
-            }
-            for (const binding of grant.toolBindings) {
-                object(binding, ['toolId', 'execution']);
-                if (!text(binding.toolId)) fail('OBSERVATION_PROJECTION_INVALID');
-                const tool = sourceTools.get(binding.toolId);
-                if (!tool) fail('OBSERVATION_PROJECTION_INVALID');
-                let execution: ObservedToolExecutionV3;
-                if (!binding.execution || typeof binding.execution !== 'object' || Array.isArray(binding.execution)) fail('OBSERVATION_PROJECTION_INVALID');
-                if (binding.execution.kind === 'view-type') {
-                    object(binding.execution, ['kind', 'activationId']);
-                    if (!text(binding.execution.activationId)) fail('OBSERVATION_PROJECTION_INVALID');
-                    execution = { kind: 'view-type', activationId: binding.execution.activationId };
-                    const hasMatchingView = grant.views.some(selected => views.has(viewKey(selected)) &&
-                        value.source.views.some(view => view.id === selected.viewId &&
-                            view.viewInstanceId === selected.viewInstanceId && view.type === tool.viewType));
-                    if (tool.execution.kind !== 'view-type' || tool.execution.activationId !== execution.activationId || !hasMatchingView)
-                        fail('OBSERVATION_PROJECTION_INVALID');
-                } else fail('OBSERVATION_PROJECTION_INVALID');
-                const key = executionKey(binding.toolId, execution);
-                if (!originalBindings.has(key) || toolBindings.has(key)) fail('OBSERVATION_PROJECTION_INVALID');
-                toolBindings.set(key, execution);
-            }
-            for (const c of grant.content) {
-                object(c, ['view', 'decision']); const key = view(c.view);
-                if (!views.has(key) || content.has(key) || !['retain', 'hide'].includes(c.decision)) fail('OBSERVATION_PROJECTION_INVALID');
-                if (c.decision === 'retain' && sourceRefs.some(r => r.ownerViewId === c.view.viewId &&
-                    r.ownerViewInstanceId === c.view.viewInstanceId && !refs.has(refKey({ ...c.view, refId: r.id })))) fail('OBSERVATION_PROJECTION_INVALID');
-                content.set(key, c.decision);
-            }
-            const projectedViews = value.source.views.filter(v => views.has(viewKey({ viewId: v.id, viewInstanceId: v.viewInstanceId })))
-                .map(({ content: original, ...v }) => ({ ...v,
-                    ...(content.get(viewKey({ viewId: v.id, viewInstanceId: v.viewInstanceId })) === 'retain' ? { content: original } : {}) }));
-            const projectedRefs = sourceRefs.filter(r => refs.has(refKey({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })))
-                .map(r => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id, refType: r.refType, kind: r.target.kind }));
-            const tools = Object.values(value.source.tools).filter(tool => toolBindings.has(executionKey(tool.id, tool.execution)));
-            if (tools.length > limits.maxTools) fail('OBSERVATION_CAPACITY');
-            const bindings: ObservationBinding[] = tools.map(tool => ({ bindingId: id('binding'), toolId: tool.id,
-                execution: { kind: 'view-type', activationId: tool.execution.activationId } }));
-            const source = { appId: value.source.appId, instanceId: value.source.instanceId, snapshotId: value.source.id, revision: value.source.revision };
-            const output = bounded<Observation>({ observationId: value.observationId, source, expiresAt: null,
-                views: projectedViews, refs: projectedRefs, tools, bindings }, limits.observation, 'OBSERVATION_CAPACITY', '$.observation');
-            const metadata = bounded<Metadata>({ observationId: value.observationId, source, views: projectedViews.map(v => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
-                refs: projectedRefs.map(({ viewId, viewInstanceId, refId }) => ({ viewId, viewInstanceId, refId })), bindings }, limits.metadata, 'OBSERVATION_CAPACITY', '$.observation');
-            return { observation: output.value, metadata: metadata.value, publicBytes: output.bytes, metadataBytes: metadata.bytes };
-        } catch (error) {
-            if (error instanceof RegistryFailure && error.code === 'OBSERVATION_CAPACITY') throw error;
-            return fail('OBSERVATION_PROJECTION_INVALID');
+    function project(value: Reservation, input: unknown) {
+        const invalid = 'OBSERVATION_PROJECTION_INVALID';
+        const grant = bounded<ObservationGrant>(input, limits.metadata, invalid).value;
+        object(grant, ['refs', 'toolIds'], invalid);
+        if (!Array.isArray(grant.refs) || !Array.isArray(grant.toolIds)) fail(invalid);
+        if (grant.refs.length > limits.maxRefs || grant.toolIds.length > limits.maxTools) fail('OBSERVATION_CAPACITY');
+        const sourceRefs = Object.values(value.source.refs);
+        const originalRefs = new Set(sourceRefs.map(ref => refKey({
+            viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id,
+        })));
+        const refs = new Set<string>();
+        for (const ref of grant.refs) {
+            object(ref, ['viewId', 'viewInstanceId', 'refId'], invalid);
+            if (!text(ref.viewId) || !text(ref.viewInstanceId) || !text(ref.refId)) fail(invalid);
+            const key = refKey(ref);
+            if (!originalRefs.has(key) || refs.has(key)) fail(invalid);
+            refs.add(key);
         }
+        const toolIds = new Set<string>();
+        for (const toolId of grant.toolIds) {
+            if (!text(toolId) || !Object.hasOwn(value.source.tools, toolId) || toolIds.has(toolId)) fail(invalid);
+            toolIds.add(toolId);
+        }
+
+        const counts = new Map<string, number>();
+        const eligible = new Map<string, string[]>();
+        for (const { id, type, toolBindings } of value.source.views) {
+            counts.set(type, (counts.get(type) ?? 0) + 1);
+            for (const binding of toolBindings) {
+                if (!toolIds.has(binding.toolId)) continue;
+                const candidates = eligible.get(binding.toolId) ?? [];
+                candidates.push(id);
+                eligible.set(binding.toolId, candidates);
+            }
+        }
+        const tools = Object.values(value.source.tools).flatMap(tool => {
+            const candidates = eligible.get(tool.id);
+            return !candidates ? [] : [candidates.length === counts.get(tool.viewType)
+                ? tool : { ...tool, eligibleViewIds: candidates }];
+        });
+        const projectedRefs = sourceRefs.flatMap(ref => {
+            const identity = { viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id };
+            return refs.has(refKey(identity)) ? [{ ...identity, refType: ref.refType, kind: ref.target.kind }] : [];
+        });
+        const source = { appId: value.source.appId, instanceId: value.source.instanceId, snapshotId: value.source.id, revision: value.source.revision };
+        const output = bounded<Observation>({ observationId: value.observationId, source, expiresAt: null,
+            views: observedViews(value.source), refs: projectedRefs, tools }, limits.observation, 'OBSERVATION_CAPACITY', '$.observation');
+        const metadata = bounded<ObservationGrant>({ refs: grant.refs, toolIds: tools.map(tool => tool.id) },
+            limits.metadata, 'OBSERVATION_CAPACITY', '$.observation');
+        return { observation: output.value, metadata: metadata.value, publicBytes: output.bytes, metadataBytes: metadata.bytes };
     }
     return Object.freeze({
         limits,
@@ -306,18 +265,11 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
             try {
                 refresh(); requireActive();
                 const captured = bounded<Record<string, unknown>>(input, limits.capture, 'OBSERVATION_INVALID').value;
-                const all = captured !== null && typeof captured === 'object' && Object.hasOwn(captured, 'all');
-                const data = object(captured, all ? ['all'] : ['viewIds']);
-                if (all && data.all !== true) fail('OBSERVATION_INVALID');
-                if (!all && (!Array.isArray(data.viewIds) || data.viewIds.length === 0 ||
-                    data.viewIds.length > DEFAULT_OBSERVATION_REGISTRY_LIMITS.maxViews ||
-                    data.viewIds.some(v => !text(v)) || new Set(data.viewIds).size !== data.viewIds.length)) fail('OBSERVATION_INVALID');
+                if (object(captured, ['all']).all !== true) fail('OBSERVATION_INVALID');
                 if (state.reservations.size || state.observations.size > (state.adoptedObservationId ? 1 : 0))
                     fail('OBSERVATION_CAPACITY');
                 const source = ready();
-                const viewIds = all ? source.views.map(view => view.id) : data.viewIds as string[];
-                if (viewIds.length > DEFAULT_OBSERVATION_REGISTRY_LIMITS.maxViews) fail('OBSERVATION_CAPACITY');
-                if (viewIds.some(viewId => !source.views.some(v => v.id === viewId))) fail('OBSERVATION_INVALID');
+                if (source.views.length > limits.maxViews) fail('OBSERVATION_CAPACITY', '$.views');
                 const acquired = store.acquire(source.id, { lifetime: 'owner' });
                 if (acquired.status === 'rejected') fail(acquired.issue.code);
                 lease = acquired.lease;
@@ -326,14 +278,13 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
                 capacity(sourceBytes + (existing ? 0 : bytes), observationBytes + limits.observation.maxCanonicalBytes,
                     metadataBytes + limits.metadata.maxCanonicalBytes);
                 const token = Object.freeze({ reservation: true as const });
-                const selection: ObservationSelection = Object.freeze({ viewIds: Object.freeze([...viewIds]) });
-                const value = { source, lease, selection, observationId: id('observation'), cancelled: false };
+                const value = { source, lease, observationId: id('observation'), cancelled: false };
                 if (existing) existing.references++;
                 else { sources.set(source.id, { source, bytes, references: 1 }); sourceBytes += bytes; }
                 state.reservations.set(token, value);
                 observationBytes += limits.observation.maxCanonicalBytes; metadataBytes += limits.metadata.maxCanonicalBytes;
                 lease = undefined;
-                return Object.freeze({ status: 'reserved' as const, reservation: token, source, selection });
+                return Object.freeze({ status: 'reserved' as const, reservation: token, source });
             } catch (error) { return rejected(error); }
             finally { lease?.release(); }
         },
@@ -359,25 +310,28 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
             const value = state.reservations.get(token);
             if (value) settle(token, value);
         },
-        resolveBinding(input: unknown) {
+        resolveTool({ observationId, toolId, viewId }: { observationId: string; toolId: string; viewId: string }) {
             try {
                 refresh(); requireActive();
-                const data = object(bounded(input, limits.capture, 'OBSERVATION_INVALID').value, ['observationId', 'bindingId']);
-                if (!text(data.observationId) || !text(data.bindingId)) fail('OBSERVATION_INVALID');
-                const value = state.observations.get(data.observationId);
+                const value = state.observations.get(observationId);
                 if (!value) fail('OBSERVATION_UNAVAILABLE');
-                if (state.adoptedObservationId !== data.observationId) fail('OBSERVATION_NOT_ADOPTED');
-                const binding = value.metadata.bindings.find(b => b.bindingId === data.bindingId);
-                if (!binding) fail('BINDING_UNAVAILABLE');
-                const execution = binding.execution;
-                const sourceRequest = Object.freeze({ appId: state.appId, instanceId: state.instanceId,
-                    snapshotId: value.source.id, toolId: binding.toolId, execution });
-                const selected = acquireToolSource(store, sourceRequest);
-                if (selected.status === 'rejected') fail(selected.issue.code);
-                try {
-                    return Object.freeze({ status: 'found' as const, sourceRequest, tool: selected.tool,
-                        execution: selected.execution, visibleRefs: value.metadata.refs });
-                } finally { selected.release(); }
+                if (state.adoptedObservationId !== observationId) fail('OBSERVATION_NOT_ADOPTED');
+                const tool = value.metadata.toolIds.includes(toolId) ? value.source.tools[toolId] : undefined;
+                if (!tool) fail('TOOL_UNAVAILABLE', undefined, 'The original observation did not grant this Tool.');
+                const view = value.source.views.find(candidate => candidate.id === viewId && candidate.type === tool.viewType);
+                const receiver = view && viewToolReceiver(view, toolId);
+                if (!receiver) fail('TOOL_UNAVAILABLE', '$.view_id',
+                    'The selected View could not receive this Tool in the original observation. Choose an eligible XML id.');
+                const latest = ready();
+                const liveView = latest.views.find(candidate => candidate.id === viewId);
+                if (!liveView || liveView.viewInstanceId !== receiver.viewInstanceId)
+                    fail('VIEW_INSTANCE_REVOKED', '$.view_id', 'The receiving View closed or was replaced. Observe the current Views.');
+                const liveTool = latest.tools[toolId];
+                if (!liveTool || !sameToolDefinition(tool, liveTool) ||
+                    viewToolReceiver(liveView, toolId)?.activationId !== receiver.activationId)
+                    fail('TOOL_SOURCE_STALE', '$.view_id', 'The receiving View no longer has this Tool activation. Observe the current Tools.');
+                return Object.freeze({ status: 'found' as const, snapshotId: value.source.id, tool, receiver,
+                    visibleRefs: value.metadata.refs });
             } catch (error) { return rejected(error); }
         },
         adoptObservation(observationId: string) {

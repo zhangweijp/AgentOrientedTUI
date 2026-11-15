@@ -8,25 +8,27 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 const REF_A = 'aa.alpha', REF_B = 'bb.beta', BIG_A = 'aa.capacity_alpha';
 const NORMAL_HOST_TIMEOUT_MS = 3000;
 const FAULT_HOST_TIMEOUT_MS = 1500;
-const invokes = (m: any) => m.type === 'VIEW_TOOL_INVOKE_V5';
+const invokes = (m: any) => m.type === 'VIEW_TOOL_INVOKE_V6';
 const closing: Array<() => Promise<void> | void> = [], facts: any[] = [];
 let tag = 0;
 afterEach(async () => { for (const close of closing.splice(0)) await close();vi.restoreAllMocks(); });
 function deferred() { let resolve!: () => void;const promise = new Promise<void>(yes => { resolve = yes; });return { promise, resolve }; }
-function project({ source, selection }: any) {
-    const ids = new Set(selection.viewIds);return { views: source.views.filter((v: any) => ids.has(v.id)).map((v: any) => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
-        refs: Object.values(source.refs).filter((r: any) => ids.has(r.ownerViewId)).map((r: any) => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })),
-        toolBindings: Object.values(source.tools).flatMap((tool: any) => tool.execution.kind === 'view-type' &&
-            source.views.some((view: any) => ids.has(view.id) && view.type === tool.viewType)
-                ? [{ toolId: tool.id, execution: tool.execution }] : []), content: [] };
+function project({source}:any, visible:string[]) {
+    return {refs:Object.values(source.refs).filter((ref:any)=>visible.includes(ref.ownerViewId))
+        .map((ref:any)=>({viewId:ref.ownerViewId,viewInstanceId:ref.ownerViewInstanceId,refId:ref.id})),toolIds:Object.keys(source.tools)};
+}
+function activation(snapshot:any, tool:any, id='aa') {
+    return snapshot.views.find((view:any)=>view.id===id)?.toolBindings.find((ref:any)=>ref.toolId===tool.id)?.activationId;
 }
 function scope(x: any, visible = ['aa', 'bb']) {
     const authorizations: any[] = [], invocations: any[] = [], observations: any[] = [], control = { authorize: (_c: any): any => true };
-    const opened = x.host.getAppInteraction({ project: (ctx: any) => project(ctx), authorize: (c: any) => { authorizations.push({ source: c.source, rawInput: c.rawInput, effectiveInput: c.effectiveInput, refSources: c.refSources });return control.authorize(c); }, canReadReceipt: () => true });
+    const opened = x.host.getAppInteraction({ project: (ctx: any) => project(ctx,visible), authorize: (c: any) => { authorizations.push({ source: c.source, rawInput: c.rawInput, effectiveInput: c.effectiveInput, refSources: c.refSources });return control.authorize(c); }, canReadReceipt: () => true });
     expect(opened.status).toBe('ready');if (opened.status !== 'ready') throw Error(opened.issue.code);
     const client = opened.interaction;x.scopes ??= [];x.scopes.push({ authorizations, invocations, observations });
-    return { client, control, authorizations, async observe(ids = visible) { const r = await client.observe({ viewIds: ids });observations.push(r);expect(r.status).toBe('observed');expect(client.adoptObservation(r.observation.observationId)).toEqual({ status: 'adopted' });return r.observation; },
-        request(o: any, name = 'inspect', input: any = { file: REF_A, choice: 'ok' }, view = 'aa') { const tool = o.tools.find((t: any) => t.name === name);expect(tool).toBeDefined();const binding = o.bindings.find((b: any) => b.toolId === tool.id && b.execution.kind === 'view-type');expect(binding).toBeDefined();return { invocationId: 'i-' + (++tag), observationId: o.observationId, bindingId: binding.bindingId, input }; },
+    return { client, control, authorizations, async observe(ids = visible) { visible=ids; const r = await client.observe({ all:true });observations.push(r);expect(r.status).toBe('observed');expect(client.adoptObservation(r.observation.observationId)).toEqual({ status: 'adopted' });return r.observation; },
+        request(o: any, name = 'inspect', input: any = { file: REF_A, choice: 'ok' }, view = 'aa') { const tool = o.tools.find((t: any) => t.name === name);expect(tool).toBeDefined();const args = Object.create(Object.getPrototypeOf(input), Object.getOwnPropertyDescriptors(input));
+            Object.defineProperty(args, 'view_id', { value: view, enumerable: true });
+            return { invocationId: 'i-' + (++tag), observationId: o.observationId, toolId: tool.id, input: args }; },
         async invoke(request: any) { const id = Object.getOwnPropertyDescriptor(request, 'invocationId')?.value;const result = await client.invoke(request);invocations.push({ invocationId: id, result });return result; } };
 }
 function receipt(r: any) { expect(r.kind).toBe('receipt');return r.receipt; }
@@ -46,20 +48,16 @@ async function control(x: any, type: string, data: any = {}) {
     } finally { x.host.timeout = previousTimeout; }
 }
 async function change(x: any, patch: any, predicate: (draft: any) => boolean) { const from = x.messages.length;await control(x, 'state', { patch });return wait(x, m => m.type === 'SNAPSHOT_PREPARED' && predicate(m.draft), from); }
-function assertDeclarationReplacement(x: any, before: any) {
+function assertReceiverReplacement(x: any, before: any) {
     const after = x.snapshot();
-    const identities = (snapshot: any) => snapshot.views.map((v: any) => [v.id, v.viewInstanceId, v.type]).sort();
-    const oldTool: any = Object.values(before.tools).find((t: any) => t.name === 'inspect');
-    const newTool: any = Object.values(after.tools).find((t: any) => t.name === 'inspect');
-    expect(identities(after)).toEqual(identities(before));
-    expect(newTool.inputSchema).not.toEqual(oldTool.inputSchema);
-    expect(newTool.execution.activationId).not.toBe(oldTool.execution.activationId);
-    facts.push({ kind: 'owner-only declaration replacement', caseId: expect.getState().currentTestName,
-        viewsBefore: identities(before), viewsAfter: identities(after),
-        schemaBefore: oldTool.inputSchema, schemaAfter: newTool.inputSchema,
-        activationBefore: oldTool.execution.activationId, activationAfter: newTool.execution.activationId,
-        activationPreservedClaimed: false });
+    const oldTool: any = Object.values(before.tools).find((tool: any) => tool.name === 'inspect');
+    const newTool: any = Object.values(after.tools).find((tool: any) => tool.name === 'inspect');
+    expect(newTool).toEqual(oldTool);
+    expect(activation(after, newTool)).not.toBe(activation(before, oldTool));
 }
+const remounted = (previous: any, draft: any, id = 'aa') =>
+    draft.views.some((view: any) => view.id === id &&
+        view.viewInstanceId !== previous.views.find((old: any) => old.id === id)?.viewInstanceId);
 async function start(options: any = {}) {
     const caseId = expect.getState().currentTestName;
     const worker = options.existing ?? new Worker(workerFile, { stdout: true, stderr: true, env: { ...process.env, AOTUI_DATA_DIR: join(temporary, 'data-' + (++tag)) } });
@@ -109,7 +107,7 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V5 wire', (
         const x = await start(), s = scope(x), o = await s.observe(), input = { file: REF_A, choice: 'ok', text: '😀', tags: ['a', 'b'] };
         const a = value(await s.invoke(s.request(o, 'inspect', input, 'aa'))), b = value(await s.invoke(s.request(o, 'inspect', { ...input, file: REF_B }, 'bb')));
         expect(a.data.view).toBe('aa');expect(b.data.view).toBe('bb');expect(a.data.args.file).toMatchObject({ label: 'A', view: 'aa' });expect(Object.hasOwn(a.data.args, 'n')).toBe(false);
-        const post = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V5' && m.execution.kind === 'view-type' && m.refSources[0].viewId === 'aa');expect(post.rawArgs).toEqual(input);expect(post.effectiveArgs).toEqual(a.data.args);expect(post.tool.inputSchema['x-aotui-parameter-contract']).toBe('view-type-parameters-v1');
+        const post = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V6' && m.refSources[0].viewId === 'aa');expect(post.rawArgs).toEqual(input);expect(post.effectiveArgs).toEqual(a.data.args);expect(post.tool.inputSchema['x-aotui-parameter-contract']).toBe('view-type-parameters-v1');
         expect(post.refSources[0]).toMatchObject({ refId: 'alpha', snapshotId: post.snapshotId, viewId: 'aa' });expect(s.authorizations.find(a => a.effectiveInput.file.view === 'aa').effectiveInput).toEqual(a.data.args);
         expect(x.entries().filter((e: any) => e.name === 'inspect')).toHaveLength(2);
     });
@@ -122,10 +120,10 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V5 wire', (
         expect(s.authorizations).toHaveLength(0);expect(x.posts()).toHaveLength(0);expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);expect(reads).toBe(0);expect(JSON.stringify([x.sent, x.logs])).not.toContain('REF_V2_PRIVATE_INPUT');
     });
     it('R09/R13 uses historical A while the current committed handler observes revision2 without rebind', async () => {
-        const x = await start(), s = scope(x), o = await s.observe();const request = s.request(o);const binding = o.bindings.find((b: any) => b.bindingId === request.bindingId);
+        const x = await start(), s = scope(x), o = await s.observe();const request = s.request(o);const tool = o.tools.find((tool:any)=>tool.id===request.toolId); const expected=activation(x.snapshot(),tool);
         await change(x, { text: 'B', revision: 2 }, d => Object.values(d.refs).some((r: any) => r.ownerViewId === 'aa' && r.id === 'alpha' && r.target.payload.label === 'B'));
         const output = value(await s.invoke(request));expect(output.data.args.file.label).toBe('A');expect(output.data.revision).toBe(2);
-        expect(x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V5' && m.argumentMode === 'view-type-parameters-v1').execution.activationId).toBe(binding.execution.activationId);
+        expect(x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V6' && m.argumentMode === 'view-type-parameters-v1').receiver.activationId).toBe(expected);
     });
     it('R21 preserves open ordinary literals and whitespace without treating data as Schema markers', async () => {
         const x = await start(), s = scope(x), o = await s.observe();const extra = { 'x-aotui-ref': { kind: 'DATA' }, 'x-aotui-parameter-contract': 'DATA', refSource: 'DATA', text: '  unchanged  ' };
@@ -136,7 +134,7 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V5 wire', (
         const x = await start(), s = scope(x), o = await s.observe();const names = ['', '__proto__', 'constructor', 'x-aotui-ref', 'x-aotui-parameter-contract', 'line\nname'];
         for (const [index, param] of names.entries()) {
             const result = value(await s.invoke(s.request(o, 'special_' + index, Object.fromEntries([[param, REF_A]]))));expect(Object.hasOwn(result.data.args, param)).toBe(true);expect(result.data.args[param]).toMatchObject({ label: 'A', view: 'aa' });
-            const request = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V5' && m.tool.name === 'special_' + index);expect(request.refSources[0].param).toBe(param);
+            const request = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V6' && m.tool.name === 'special_' + index);expect(request.refSources[0].param).toBe(param);
         }
         expect(x.entries()).toHaveLength(names.length);expect(x.entries().every((e: any) => e.frozen && e.refFrozen)).toBe(true);
     });
@@ -150,12 +148,12 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V5 wire', (
         const running = s.invoke(s.request(o));await entered.promise;
         const beforeReplacement = x.snapshot();
         try {
-        if (kind === 'default') await change(x, { defaultValue: 3 }, d => Object.values(d.tools).some((t: any) => t.name === 'inspect' && t.inputSchema.properties.n.default === 3));
-        if (kind === 'ref-metadata') await change(x, { refType: 'File' }, d => Object.values(d.tools).some((t: any) => t.name === 'inspect' && t.inputSchema.properties.file['x-aotui-ref-kind'] === 'File'));
-        if (kind === 'default' || kind === 'ref-metadata') assertDeclarationReplacement(x, beforeReplacement);
+        if (kind === 'default') await change(x, { defaultValue: 3 }, draft => remounted(beforeReplacement, draft));
+        if (kind === 'ref-metadata') await change(x, { refType: 'File' }, draft => remounted(beforeReplacement, draft));
+        if (kind === 'default' || kind === 'ref-metadata') assertReceiverReplacement(x, beforeReplacement);
         if (kind === 'unmount') await change(x, { show: false }, d => !d.views.some((v: any) => v.id === 'aa'));if (kind === 'close') x.host.beginInteractionClose();
         } finally { release.resolve(); await running.catch(() => undefined); }
-        const result = await running;expect(result.code ?? result.receipt.outcome.code).toBe(kind === 'default' || kind === 'ref-metadata' ? 'TOOL_SOURCE_STALE' : kind === 'unmount' ? 'TOOL_UNAVAILABLE' : 'APP_INTERACTION_UNAVAILABLE');expect(x.posts()).toHaveLength(0);expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);
+        const result = await running;expect(result.code ?? result.receipt.outcome.code).toBe(kind === 'close' ? 'APP_INTERACTION_UNAVAILABLE' : 'VIEW_INSTANCE_REVOKED');expect(x.posts()).toHaveLength(0);expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);
     });
     it.each([5001, 10000])('R20 dispatches a legal %i-node Ref through the real Worker', async nodes => {
         const x = await start();await change(x, { capacityNodes: nodes }, d => Object.values(d.refs).some((r: any) => r.ownerViewId === 'aa' && r.id === 'capacity_alpha' && r.target.payload.list.length === nodes - 4));
@@ -176,7 +174,7 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V5 wire', (
     it('checks the original Ref owner again in the Worker when the Host has yet to receive the removal', async () => {
         const x = await start(), s = scope(x), o = await s.observe(), entered = deferred(), release = deferred();
         s.control.authorize = () => { entered.resolve(); return release.promise.then(() => true); };
-        const running = s.invoke(s.request(o));
+        const running = s.invoke(s.request(o, 'inspect', { file: REF_A, choice: 'ok' }, 'bb'));
         try {
             await entered.promise;
             x.transform((message: any) => message.type === 'SNAPSHOT_PREPARED' ? null : message);
@@ -202,26 +200,26 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V5 wire', (
         await change(x, { show: true }, d => d.views.some((v: any) => v.id === 'aa'));expect(receipt(await s.invoke(stale)).outcome.status).toBe('rejected');expect(x.handlerEntries()).toHaveLength(handlersBeforeClose);value(await s.invoke(s.request(await s.observe(['aa']))));
     });
     it('R10 actual Worker rejects a foreign App instance before entering its callable', async () => {
-        const x = await start(), s = scope(x), o = await s.observe();value(await s.invoke(s.request(o)));const source = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V5');
+        const x = await start(), s = scope(x), o = await s.observe();value(await s.invoke(s.request(o)));const source = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V6');
         const requestId = 'foreign-' + (++tag), from = x.messages.length, count = x.entries().length, handlerCount = x.handlerEntries().length;
         x.worker.postMessage({ ...source, requestId, instanceId: 'other' });
-        const response = await wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE' && m.requestId === requestId, from);expect(response.terminal).toMatchObject({ phase: 'not-entered', result: { error: { code: 'APP_INSTANCE_MISMATCH' } } });expect(x.entries()).toHaveLength(count);expect(x.handlerEntries()).toHaveLength(handlerCount);
+        const response = await wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE' && m.requestId === requestId, from);expect(response.terminal).toMatchObject({ phase: 'not-entered', result: { error: { code: 'APP_INSTANCE_MISMATCH' } } });expect(x.entries()).toHaveLength(count);expect(x.handlerEntries()).toHaveLength(handlerCount);
     });
     it.each(['disable', 'replace'])('R15 Worker refuses the old binding after a queued request is %s', async kind => {
         const x = await start();await change(x, { showSecond: false }, d => !d.views.some((v: any) => v.id === 'bb'));const s = scope(x, ['aa']), o = await s.observe(), queued: any[] = [], held = deferred();
-        const physical = x.worker.postMessage.bind(x.worker);x.worker.postMessage = (m: any) => { if (m.type === 'VIEW_TOOL_INVOKE_V5') { queued.push(m);held.resolve(); }else physical(m); };
+        const physical = x.worker.postMessage.bind(x.worker);x.worker.postMessage = (m: any) => { if (m.type === 'VIEW_TOOL_INVOKE_V6') { queued.push(m);held.resolve(); }else physical(m); };
         const running = s.invoke(s.request(o));await held.promise;const beforeReplacement = x.snapshot();
         if (kind === 'disable') await change(x, { enabled: false }, d => !Object.values(d.tools).some((t: any) => t.name === 'inspect'));
-        else { await change(x, { defaultValue: 3 }, d => Object.values(d.tools).some((t: any) => t.name === 'inspect' && t.inputSchema.properties.n.default === 3));assertDeclarationReplacement(x, beforeReplacement); }
+        else { await change(x, { defaultValue: 3 }, draft => remounted(beforeReplacement, draft));assertReceiverReplacement(x, beforeReplacement); }
         expect(queued).toHaveLength(1);expect(queued[0].tool.inputSchema['x-aotui-parameter-contract']).toBe('view-type-parameters-v1');physical(queued[0]);
         const result = receipt(await running);expect(result.outcome.status).toBe('rejected');expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);expect(x.host.getInteractionReport().workerToolPending).toBe(false);
-        const terminal = x.rawMessages.find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE' && m.requestId === queued[0].requestId);expect(terminal.terminal.phase).toBe('not-entered');
+        const terminal = x.rawMessages.find((m: any) => m.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE' && m.requestId === queued[0].requestId);expect(terminal.terminal.phase).toBe('not-entered');
     });
     it.each(['business', 'throw'])('R16 distinguishes %s failure and settles the Worker request', async mode => {
         const x = await start();
         await control(x, 'mode', { mode });
         const s = scope(x), o = await s.observe(), result = receipt(await s.invoke(s.request(o)));
-        const reply = x.rawMessages.find((message: any) => message.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE');
+        const reply = x.rawMessages.find((message: any) => message.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE');
         if (mode === 'business') {
             expect(result).toMatchObject({ executionPhase: 'entered-returned', outcome: {
                 status: 'failed', details: { result: { error: { code: 'BUSINESS' } } },
@@ -237,7 +235,7 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V5 wire', (
     it.each(['drop', 'type', 'mode', 'instance', 'request', 'huge'])('R17 %s terminal cannot settle an active invocation', async kind => {
         const x = await start();
         x.host.timeout = FAULT_HOST_TIMEOUT_MS;
-        x.transform((m: any) => m.type !== 'VIEW_TOOL_INVOKE_V5_RESPONSE' ? m : kind === 'drop' ? null : kind === 'type' ? { ...m, type: 'VIEW_TOOL_INVOKE_REF_V1_RESPONSE' } : kind === 'mode' ? { ...m, argumentMode: 'snapshot-value-v1' } : kind === 'instance' ? { ...m, instanceId: 'other' } : kind === 'request' ? { ...m, requestId: 'other' }
+        x.transform((m: any) => m.type !== 'VIEW_TOOL_INVOKE_V6_RESPONSE' ? m : kind === 'drop' ? null : kind === 'type' ? { ...m, type: 'VIEW_TOOL_INVOKE_REF_V1_RESPONSE' } : kind === 'mode' ? { ...m, argumentMode: 'snapshot-value-v1' } : kind === 'instance' ? { ...m, instanceId: 'other' } : kind === 'request' ? { ...m, requestId: 'other' }
             : { ...m, terminal: { phase: 'entered-returned', result: { success: true, data: 'x'.repeat(9 * 1024 * 1024) } } });
         const s = scope(x), o = await s.observe(), result = receipt(await s.invoke(s.request(o)));expect(result.outcome.status).toBe('unknown');expect(x.host.getInteractionReport().workerToolPending).toBe(true);expect(x.entries()).toHaveLength(1);
         const count = x.posts().length;await s.invoke(s.request(o));expect(x.posts()).toHaveLength(count);x.host.terminate();expect((await x.host.waitForResourceRelease()).worker).toBe('exited');

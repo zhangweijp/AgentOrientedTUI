@@ -1,16 +1,11 @@
-import { SemanticProjectionCoordinator } from '../projection/coordinator.js';
 import { describe, expect, it } from 'vitest';
-import { parseHTML } from 'linkedom';
 import { canonicalJson, copyJson, utf8Size } from './json.js';
 import { createSnapshotCore } from './store.js';
 import { refKey } from './snapshot-support.js';
-import { validatePreparedV3Draft } from './v3-validator.js';
-import type { JsonValue, PreparedAppSnapshotDraftV3, SnapshotCore } from './types.js';
-import type { ViewID } from '../../spi/index.js';
-import { acquireToolSource } from '../tool/source-binding.js';
+import { validatePreparedV4Draft } from './v4-validator.js';
+import type { JsonValue, PreparedAppSnapshotDraftV4, SnapshotCore } from './types.js';
 import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
-import { captureDOMViews } from '../../worker-runtime/dom-snapshot-producer.js';
 
 // Evidence of CURRENT Core/DOM-adapter behavior, not a proposed Ref executor.
 // Identities and declarations below are fixtures, not mounts performed by SDK.
@@ -21,14 +16,14 @@ const mountB = 'fixture-mount-B';
 const toolId = JSON.stringify([appId, 'FileDetail', 'inspect']);
 const argsLimits = { maxDepth: 24, maxNodes: 10_000, maxApproxBytes: 128 * 1024 };
 const refParameters = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: true });
-if (!refParameters.ok) throw new Error('Invalid Ref V3 fixture');
+if (!refParameters.ok) throw new Error('Invalid Ref fixture');
 
-function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): PreparedAppSnapshotDraftV3 {
+function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): PreparedAppSnapshotDraftV4 {
     return {
-        schemaVersion: 3, appId, instanceId,
+        schemaVersion: 4, appId, instanceId,
         producerSeq: sequence, sourceEpoch: sequence, capturedAt: sequence,
         views: [['fd_A', a], ['fd_B', mountB]].map(([id, viewInstanceId]) => ({
-            id, viewInstanceId, type: 'FileDetail', name: id, kind: 'state',
+            toolBindings: [{ toolId, activationId: 'active-' + viewInstanceId }], id, viewInstanceId, type: 'FileDetail', name: id, kind: 'state',
             content: { format: 'markdown-v1', value: '[File](file)' },
         })),
         refs: {
@@ -44,7 +39,6 @@ function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): Pr
         tools: { [toolId]: {
             id: toolId, name: 'inspect', viewType: 'FileDetail', description: 'Inspect',
             inputSchema: ordinaryParameterProfile(refParameters.contract),
-            execution: { kind: 'view-type', activationId: 'active-1' },
         } },
     };
 }
@@ -56,56 +50,13 @@ function start(options: Parameters<typeof createSnapshotCore>[0] = {}) {
 function publish(core: SnapshotCore, input = draft()) {
     const result = core.committer.accept(input);
     expect(result.status).toBe('published');
-    if (result.status !== 'published' || result.snapshot.schemaVersion !== 3) throw new Error('Expected V3');
+    if (result.status !== 'published' || result.snapshot.schemaVersion !== 4) throw new Error('Expected a committed snapshot');
     return result.snapshot;
 }
 function selector(snapshotId: string, viewId = 'fd_A', viewInstanceId = mountA, refId = 'file') {
     return { snapshotId, appId, instanceId, viewId, viewInstanceId, refId };
 }
-function select(core: SnapshotCore, snapshotId: string, viewId = 'fd_A') {
-    const source = core.store.getTool({ snapshotId, appId, instanceId, toolId });
-    if (source.status !== 'found') return { status: 'rejected' as const, issue: source.issue };
-    return acquireToolSource(core.store, { snapshotId, appId, instanceId, toolId, execution: source.tool.execution });
-}
-
-describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', () => {
-    it('the Semantic DOM producer reads the committed Ref manifest and keeps marker-shaped values as data', () => {
-        const fixture = draft();
-        const { document } = parseHTML('<html><body><main></main></body></html>');
-        const container = document.querySelector('main')!;
-        for (const view of fixture.views) {
-            const node = document.createElement('section');
-            node.setAttribute('data-view-id', view.id);
-            node.setAttribute('data-view-instance-id', view.viewInstanceId);
-            container.appendChild(node);
-        }
-        const mounted = fixture.views.map(view => ({ viewId: view.id, viewType: view.type, viewInstanceId: view.viewInstanceId }));
-        const fragments = fixture.views.map(view => ({
-            viewId: view.id as ViewID, viewType: view.type, viewName: view.name,
-            kind: 'state' as const, markup: '[File](file)',
-        }));
-        const projection = new SemanticProjectionCoordinator({
-            identity: () => ({ appId, instanceId }),
-            readFrame: () => ({ views: captureDOMViews(container, fragments, mounted), tools: [] }),
-        });
-        expect(projection.commit(() => {
-            projection.registerRef(mounted[0]!, 'file', { value: 'A' });
-            projection.registerRef(mounted[1]!, 'file', { $aotuiEntityRefV1: { entityType: 'File', entityId: 'B', entityVersion: 'v1' } });
-        })).toBe('prepared');
-        const publication = projection.nextPublication();
-        if (!('draft' in publication)) throw new Error(publication.failure.issue.message);
-        const captured = publication.draft;
-        expect(captured.refs[refKey('fd_A', mountA, 'file')]).toMatchObject({
-            refType: 'unknown', target: { kind: 'snapshot-value', payload: { value: 'A' } },
-        });
-        expect(captured.refs[refKey('fd_B', mountB, 'file')]).toMatchObject({
-            refType: 'unknown', target: { kind: 'snapshot-value', payload: {
-                $aotuiEntityRefV1: { entityType: 'File', entityId: 'B', entityVersion: 'v1' },
-            } },
-        });
-        expect(validatePreparedV3Draft(captured).ok).toBe(true);
-    });
-
+describe('Wave 2B: exact historical Ref lookup', () => {
     it('resolves two same-named Refs by exact source owner, without suffix fallback', () => {
         const core = start(); const source = publish(core);
         expect(core.store.resolveRef(selector(source.id))).toMatchObject({
@@ -137,9 +88,7 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
         expect(core.store.resolveRef(selector(fresh.id))).toMatchObject({
             status: 'resolved', target: { payload: { nested: { value: 'B' } } },
         });
-        const selection = select(core, old.id);
-        expect(selection.status).toBe('found');
-        if (selection.status === 'found') selection.release();
+        expect(core.store.getTool({ snapshotId: old.id, appId, instanceId, toolId })).toMatchObject({ status: 'found' });
         held.lease.release(); expect(core.store.inspect().activeLeases).toBe(0);
     });
 
@@ -156,8 +105,9 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
         expect(core.store.resolveRef(selector(old.id, 'fd_A', 'fixture-new-A'))).toMatchObject({
             status: 'rejected', issue: { code: 'VIEW_INSTANCE_REVOKED' },
         });
-        const retainedTool = select(core, old.id); expect(retainedTool.status).toBe('found');
-        if (retainedTool.status === 'found') retainedTool.release();
+        expect(fresh.views.find(view => view.id === 'fd_B')?.toolBindings).toEqual(old.views.find(view => view.id === 'fd_B')?.toolBindings);
+        expect(fresh.views.find(view => view.id === 'fd_A')?.toolBindings).not.toEqual(old.views.find(view => view.id === 'fd_A')?.toolBindings);
+        expect(fresh.tools).toEqual(old.tools);
         held.lease.release(); expect(core.store.inspect().activeLeases).toBe(0);
     });
 
@@ -202,10 +152,10 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
             { ...input.refs[key], target: { kind: 'resource', payload: {} } },
             { ...input.refs[key], target: { kind: 'entity', entityType: 'File', entityId: 'old' } },
             { ...input.refs[key], extraAuthority: true },
-        ]) expect(validatePreparedV3Draft({ ...input, refs: { ...input.refs, [key]: ref } })).toMatchObject({
+        ]) expect(validatePreparedV4Draft({ ...input, refs: { ...input.refs, [key]: ref } })).toMatchObject({
             ok: false, issue: { code: 'SNAPSHOT_INVALID' },
         });
-        expect(validatePreparedV3Draft({ ...input, tools: {
+        expect(validatePreparedV4Draft({ ...input, tools: {
             [toolId]: { ...input.tools[toolId], refParams: { file: 'File' } },
         } })).toMatchObject({ ok: false, issue: { code: 'SNAPSHOT_INVALID' } });
     });
@@ -219,17 +169,16 @@ describe('Wave 2B: exact historical Ref lookup and data-only DOM projection', ()
         now = 21;
         expect(core.store.resolveRef(selector(old.id))).toMatchObject({ status: 'resolved', target: { payload: { value: 'A' } } });
         expect(core.store.acquire(old.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
-        expect(select(core, old.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
         lease.lease.release();
         expect(core.store.resolveRef(selector(old.id))).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
     });
 
-    it('stopping App prevents Tool acquisition without pretending historical Ref data was erased', () => {
+    it('stopping an App removes its current Snapshot while pinned Ref data is retained', () => {
         const core = start(); const source = publish(core);
         const held = core.store.acquire(source.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
         core.lifecycle.stopApp(appId, instanceId);
         expect(core.store.resolveRef(selector(source.id)).status).toBe('resolved');
-        expect(select(core, source.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_UNREADY' } });
+        expect(core.store.readLatest(appId)).toMatchObject({ status: 'stopped' });
         held.lease.release(); expect(core.store.inspect().activeLeases).toBe(0);
     });
 });
@@ -257,7 +206,7 @@ describe('Wave 2B: current JSON budgets at prospective expansion boundaries (no 
         let value: JsonValue = 'leaf';
         for (let n = 0; n < 24; n++) value = { child: value };
         expect(() => copyJson(value, argsLimits)).not.toThrow();
-        expect(validatePreparedV3Draft(draft(1, value)).ok).toBe(true);
+        expect(validatePreparedV4Draft(draft(1, value)).ok).toBe(true);
         expect(() => copyJson({ file: value }, argsLimits)).toThrow('Depth budget');
     });
 

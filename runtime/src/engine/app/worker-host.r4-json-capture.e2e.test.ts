@@ -1,3 +1,4 @@
+import { projectCompleteViews } from '../../core/invocation/observation-registry.js';
 import { Worker } from 'node:worker_threads';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,7 +18,9 @@ function appSource(): string {
         import { h } from 'preact';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
         import Type from 'typebox';
-        import { createTUIApp, defineViewTypeTool, View, useDataRef, AppTools, defineToolSet } from '@aotui/sdk';
+        import { createTUIApp, View, useDataRef, defineViewType } from '@aotui/sdk';
+const _FixtureDetail = defineViewType({ name:'Detail', tools:{ stats: { description:'Read the getter counter', inputSchema:Type.Object({}, {additionalProperties:false}) } } });
+
 
         let getterCalls = 0;
         const getterData = {};
@@ -38,11 +41,7 @@ function appSource(): string {
         }
 
 
-const fixtureTools0 = defineToolSet({
-StatsUI: defineViewTypeTool({
-                viewType: 'Detail', name: 'stats', description: 'Read the getter counter',
-                inputSchema: Type.Object({}, {additionalProperties:false}), })
-});
+
 function Root() {
             const [state, setState] = useState({ mode: 'valid' });
             useLayoutEffect(() => {
@@ -56,12 +55,10 @@ function Root() {
                 parentPort.on('message', onCommand);
                 return () => parentPort.off('message', onCommand);
             }, []);
-            return h(AppTools, { definition: fixtureTools0, bindings: {
-StatsUI: { execute: async () => ({ success: true, data: { getterCalls } }) }
-} }, h(View, {kind: 'state', id: 'detail', type: 'Detail' }, h(Detail, { state })));
+            return h('div', null, h(View, {kind: 'state', id: 'detail', type: _FixtureDetail, bindings:{ stats: { execute: async () => ({ success: true, data: { getterCalls } }) } } }, h(Detail, { state })));
         }
 
-        export default createTUIApp({ app_name: 'strict_json_capture', component: Root });
+        export default createTUIApp({viewTypes:[_FixtureDetail],  app_name: 'strict_json_capture', component: Root });
     `;
 }
 
@@ -122,18 +119,7 @@ function waitForCapture(worker: Worker, captures: Capture[], after: number): Pro
 
 function policyForSelection(): AppInteractionPolicy {
     return {
-        project: ({ source, selection }) => {
-            const selected = new Set(selection.viewIds);
-            const views = source.views.filter(view => selected.has(view.id));
-            return {
-                views: views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-                refs: Object.values(source.refs).filter(ref => selected.has(ref.ownerViewId))
-                    .map(ref => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
-                toolBindings: Object.values(source.tools).flatMap(tool => 
-                    views.some(view => view.type === tool.viewType) ? [{ toolId: tool.id, execution: tool.execution }] : []),
-                content: views.map(view => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' as const })),
-            };
-        },
+        project: projectCompleteViews,
         authorize: () => true,
         canReadReceipt: () => true,
     };
@@ -204,19 +190,19 @@ describe('R4 strict JSON capture in a real Worker', () => {
             const openedScope = host.getAppInteraction(policyForSelection());
             expect(openedScope.status).toBe('ready');
             if (openedScope.status !== 'ready') throw new Error(openedScope.issue.code);
-            const observed = await openedScope.interaction.observe({ viewIds: ['detail'] });
+            const observed = await openedScope.interaction.observe({ all: true });
             expect(observed.status).toBe('observed');
             if (observed.status !== 'observed') throw new Error(observed.issue.code);
             expect(openedScope.interaction.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
             const stats = observed.observation.tools.find(tool => tool.name === 'stats');
             expect(stats).toBeDefined();
-            const binding = observed.observation.bindings.find(candidate => candidate.toolId === stats?.id);
-            expect(binding).toBeDefined();
+            const target = observed.observation.views.find(view => view.type === stats?.viewType);
+            expect(target).toBeDefined();
             const statsResult = await openedScope.interaction.invoke({
                 invocationId: 'read-getter-counter',
                 observationId: observed.observation.observationId,
-                bindingId: binding!.bindingId,
-                input: {},
+                toolId: stats!.id,
+                input: { view_id: target!.id },
             });
             expect(statsResult).toMatchObject({ kind: 'receipt', receipt: {
                 outcome: { status: 'succeeded', value: { success: true, data: { getterCalls: 0 } } },

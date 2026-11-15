@@ -6,12 +6,18 @@ import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel
 import { createTUIApp } from './app-factory/createTUIApp.js';
 import { View } from './components/View.js';
 import { useDataRef } from './hooks/useRef.js';
-import { AppTools } from './components/AppTools.js';
-import { defineViewTypeTool, defineToolSet } from './tools/view-type-tool.js';
+import { defineViewType, type ViewType } from './tools/view-type-tool.js';
 import Type from 'typebox';
 
-function setup(component: () => any) {
-    const factory = createTUIApp({ app_name: 'nested_view_fixture', component });
+const descriptors=Object.fromEntries(['child','parent','ready','recovered'].map(name=>[name,defineViewType({name,tools:{}})]));
+function toolsOf(kernel:AppKernel) {
+    const projection=kernel.getProjectionCoordinator();
+    if (!projection.token().ready) return [];
+    const result=projection.nextPublication();
+    return 'draft' in result ? Object.values(result.draft.tools) : [];
+}
+function setup(component: () => any, viewTypes:readonly ViewType[]=Object.values(descriptors)) {
+    const factory = createTUIApp({ app_name: 'nested_view_fixture', component, viewTypes });
     const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
     kernel.setId('nested_fixture' as any);
     kernel.setAppExecutionInstanceId('nested_fixture_run');
@@ -65,7 +71,7 @@ describe('View nesting boundary', () => {
             return h('p', {}, value('Nested'));
         }
         function NestedWrapper() {
-            return h(View, {kind: 'state', type: 'child', id: 'child' }, h(NestedPayload, {}));
+            return h(View, {kind: 'state', type: descriptors.child, id: 'child' }, h(NestedPayload, {}));
         }
         function RecoveryPayload() {
             const value = useDataRef('recovered_record', { value: 'recovered' });
@@ -75,17 +81,17 @@ describe('View nesting boundary', () => {
             const [nested, update] = useState(true);
             setNested = update;
             const nestedAttempt = kind === 'direct'
-                ? h(View, {kind: 'state', type: 'child', id: 'child' }, h(NestedPayload, {}))
+                ? h(View, {kind: 'state', type: descriptors.child, id: 'child' }, h(NestedPayload, {}))
                 : h(NestedWrapper, {});
             return h('main', {}, [
-                h(View, {kind: 'state', type: 'parent', id: 'parent' }, h('section', {}, [
+                h(View, {kind: 'state', type: descriptors.parent, id: 'parent' }, h('section', {}, [
                     h('p', {}, 'Ordinary component content'),
                     h(ErrorBoundary, {
                         key: nested ? 'attempt' : 'recovered',
                         onError(error) { captured = error; },
                     }, nested ? nestedAttempt : h('p', {}, 'Removed nested declaration')),
                 ])),
-                !nested ? h(View, {kind: 'state', type: 'recovered', id: 'recovered' }, h(RecoveryPayload, {})) : null,
+                !nested ? h(View, {kind: 'state', type: descriptors.recovered, id: 'recovered' }, h(RecoveryPayload, {})) : null,
             ]);
         }
 
@@ -98,10 +104,11 @@ describe('View nesting boundary', () => {
                 parentViewId: 'parent',
                 childViewId: 'child',
             });
-            expect((captured as Error).message).toContain('Declare both Views as independent siblings');
+            expect((captured as Error).message).toContain('Declare independent sibling Views');
             expect(nestedPayloadRendered).toBe(false);
             expect(x.container.querySelector('[data-view-id="child"]')).toBeNull();
-            expect(instances(x.kernel)).toEqual(['parent']);
+            expect(instances(x.kernel)).toEqual([]);
+            expect(x.kernel.getProjectionCoordinator().failed).toBe(true);
             expect(refs(x.kernel)).toEqual([]);
 
             await act(async () => setNested(false));
@@ -130,13 +137,13 @@ describe('View nesting boundary', () => {
         }
         function Root() {
             return h('main', {}, [
-                h(View, {kind: 'state', type: 'ready', id: 'ready' }, h(ExistingPayload, {})),
-                h(View, {kind: 'state', type: 'parent', id: 'parent' }, h(View, {kind: 'state', type: 'child', id: 'child' }, h(NestedPayload, {}))),
+                h(View, {kind: 'state', type: descriptors.ready, id: 'ready' }, h(ExistingPayload, {})),
+                h(View, {kind: 'state', type: descriptors.parent, id: 'parent' }, h(View, {kind: 'state', type: descriptors.child, id: 'child' }, h(NestedPayload, {}))),
             ]);
         }
 
         const x = setup(Root);
-        const registerRef = vi.spyOn(x.kernel, 'registerRef');
+        const registerRef = vi.spyOn(x.kernel.getProjectionCoordinator(), 'registerRef');
         try {
             await expect(x.open()).rejects.toMatchObject({
                 code: 'NESTED_VIEW_UNSUPPORTED',
@@ -145,7 +152,7 @@ describe('View nesting boundary', () => {
             });
 
             expect(nestedPayloadRendered).toBe(false);
-            expect(registerRef.mock.calls.every(([viewId]) => viewId !== 'child')).toBe(true);
+            expect(registerRef.mock.calls.every(([owner]) => owner.viewId !== 'child')).toBe(true);
             expect(instances(x.kernel)).toEqual([]);
             expect(refs(x.kernel)).toEqual([]);
             expect(x.container).toBeNull();
@@ -159,10 +166,8 @@ describe('View nesting boundary', () => {
 
     it('allows ordinary component nesting and independently declared sibling Views through dynamic close and reopen', async () => {
         let setLeftOpen!: (open: boolean) => void;
-        const toolDefinition = defineViewTypeTool({
-            viewType: 'Card', name: 'inspect_card', description: 'Inspect the current Card.',
-            inputSchema: Type.Object({}),
-        });
+        const Card=defineViewType({name:'Card',tools:{inspect_card:{description:'Inspect the current Card.',inputSchema:Type.Object({})}}});
+        const bindings={inspect_card:{execute:()=>({success:true as const})}};
         function Content({ owner }: { owner: string }) {
             const value = useDataRef(`${owner}_record`, { owner });
             return h('section', {}, h('p', {}, value(owner)));
@@ -170,29 +175,28 @@ describe('View nesting boundary', () => {
         function OrdinaryWrapper({ children }: { children?: ComponentChildren }) {
             return h('article', {}, children);
         }
-        const boundTools = defineToolSet({ tool: toolDefinition });
 
         function Root() {
             const [leftOpen, updateLeft] = useState(true);
             setLeftOpen = updateLeft;
-            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => ({ success: true }) } } }, h('main', {}, [
+            return h('main',{},[
                 h('p', {}, 'Application content'),
-                leftOpen ? h(View, {kind: 'state', id: 'left', key: 'left', type: 'Card' },
+                leftOpen ? h(View, {kind: 'state', id: 'left', key: 'left', type: Card, bindings },
                     h(OrdinaryWrapper, {}, [h(Content, { owner: 'left' })])) : null,
-                h(View, {kind: 'state', id: 'right', key: 'right', type: 'Card' },
+                h(View, {kind: 'state', id: 'right', key: 'right', type: Card, bindings },
                     h(OrdinaryWrapper, {}, [h(Content, { owner: 'right' })])),
-            ]));
+            ]);
         }
 
-        const x = setup(Root);
+        const x = setup(Root,[Card]);
         try {
             await x.open();
             expect(instances(x.kernel)).toEqual(['left', 'right']);
             expect(refs(x.kernel)).toEqual(['left:left_record', 'right:right_record']);
-            const initialTool = x.kernel.getToolDefinitions().find(tool => tool.name === 'inspect_card')!;
-            expect(initialTool.execution.kind).toBe('view-type');
-            expect(initialTool.execution).not.toHaveProperty('targets');
-            expect(x.kernel.getToolDefinitions()).toHaveLength(1);
+            const initialTool = toolsOf(x.kernel).find(tool => tool.name === 'inspect_card')!;
+            expect(initialTool).toMatchObject({name:'inspect_card',viewType:'Card'});
+            expect(initialTool).not.toHaveProperty('execution');
+            expect(toolsOf(x.kernel)).toHaveLength(1);
 
             expect(x.container.querySelectorAll('[data-view-id]')).toHaveLength(2);
             expect(x.container.textContent).toContain('Application content');
@@ -200,20 +204,20 @@ describe('View nesting boundary', () => {
             await act(async () => setLeftOpen(false));
             expect(instances(x.kernel)).toEqual(['right']);
             expect(refs(x.kernel)).toEqual(['right:right_record']);
-            expect(x.kernel.getToolDefinitions()).toHaveLength(1);
-            expect(x.kernel.getToolDefinitions()[0]!.execution).toEqual(initialTool.execution);
+            expect(toolsOf(x.kernel)).toHaveLength(1);
+            expect(toolsOf(x.kernel)[0]).toEqual(initialTool);
 
             await act(async () => setLeftOpen(true));
             expect(instances(x.kernel)).toEqual(['left', 'right']);
             expect(refs(x.kernel)).toEqual(['left:left_record', 'right:right_record']);
-            expect(x.kernel.getToolDefinitions()).toHaveLength(1);
-            expect(x.kernel.getToolDefinitions()[0]!.execution).toEqual(initialTool.execution);
+            expect(toolsOf(x.kernel)).toHaveLength(1);
+            expect(toolsOf(x.kernel)[0]).toEqual(initialTool);
         } finally {
             await x.close();
         }
 
         expect(instances(x.kernel)).toEqual([]);
         expect(refs(x.kernel)).toEqual([]);
-        expect(x.kernel.getToolDefinitions()).toEqual([]);
+        expect(toolsOf(x.kernel)).toEqual([]);
     });
 });

@@ -27,26 +27,29 @@ async function facts(name: string, value: object) {
 async function fixture(scenario = 'normal') {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-sandbox-')), app = join(dir, 'app.mjs');
     await linkPreactPeer(dir);
-    const body = `import {h} from 'preact';import Type from 'typebox';import {createTUIApp,defineViewTypeTool,usePersistentState,useAppRuntimeContext,View,AppTools, defineToolSet} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};
+    const body = `import {h} from 'preact';import Type from 'typebox';import {createTUIApp,defineViewType,usePersistentState,useAppRuntimeContext,View} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};
 let setter,value,port;globalThis.__p1Probe=(globalThis.__p1Probe??0)+1;let inspections=0;const noArgs=Type.Object({}, {additionalProperties:false});
 
 
 
 
 
-const fixtureTools0 = defineToolSet({
-Set: defineViewTypeTool({viewType:'Root',name:'set',description:'Set persisted value',inputSchema:Type.Object({value:Type.Number()}, {additionalProperties:false}),}),
-Flush: defineViewTypeTool({viewType:'Root',name:'flush',description:'Flush persisted state',inputSchema:noArgs,}),
-Inspect: defineViewTypeTool({viewType:'Root',name:'inspect',description:'Inspect persisted state',inputSchema:noArgs,})
-});
-function Tools(){
-return h(AppTools, { definition: fixtureTools0, bindings: {
-Set: { execute: async args=>{setter(args.value);return {success:true};} },
-Flush: { execute: async()=>({success:true,data:await port.flush()}) },
-Inspect: { execute: async()=>({success:true,data:{value,inspections:++inspections,realm:globalThis.__p1Probe}}) }
-} }, 'Persistent state');}
-function Root(){${scenario === 'initial-failure' ? "usePersistentState('value',0);" : ''}[value,setter]=usePersistentState('value',0);port=useAppRuntimeContext().persistence;return h(View,{kind: 'instruction',id:'root',type:'Root'},h(Tools));}
-const factory=createTUIApp({app_name:'c1',component:Root});
+const RootType = defineViewType({ name: 'Root', tools: {
+  set: { description:'Set persisted value', inputSchema: Type.Object({value:Type.Number()}, {additionalProperties:false}) },
+  flush: { description:'Flush persisted state', inputSchema: noArgs },
+  inspect: { description:'Inspect persisted state', inputSchema: noArgs },
+} });
+function Root() {
+  ${scenario === 'initial-failure' ? "usePersistentState('value',0);" : ''}
+  [value,setter] = usePersistentState('value',0);
+  port = useAppRuntimeContext().persistence;
+  return h(View, {kind:'instruction', id:'root', type:RootType, bindings:{
+    set: {execute: async args=>{setter(args.value);return {success:true};}},
+    flush: {execute: async()=>({success:true,data:await port.flush()})},
+    inspect: {execute: async()=>({success:true,data:{value,inspections:++inspections,realm:globalThis.__p1Probe}})},
+  }}, 'Persistent state');
+}
+const factory=createTUIApp({app_name:'c1',component:Root,viewTypes:[RootType]});
 ${scenario === 'unmount-failure' ? "const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,close(){renderer.close();throw Error('private unmount failure');}};};" : ''}
 export default factory;`;
     await capture(app, body);

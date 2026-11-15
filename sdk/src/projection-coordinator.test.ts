@@ -10,8 +10,7 @@ import { createTUIApp } from './app-factory/createTUIApp.js';
 import { View } from './components/View.js';
 import { useDataRef } from './hooks/useRef.js';
 import { useArrayRef } from './hooks/useArrayRef.js';
-import { AppTools } from './components/AppTools.js';
-import { defineViewTypeTool, defineToolSet } from './tools/view-type-tool.js';
+import { defineViewType, type ViewType } from './tools/view-type-tool.js';
 import Type from 'typebox';
 import { ViewRuntimeContext } from './contexts/view-runtime-context.js';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
@@ -21,8 +20,15 @@ const refsOf = (kernel: AppKernel) => Object.fromEntries(
     kernel.getViewRefs().map(ref => [`${ref.viewId}:${ref.refId}`, ref.value]),
 );
 
-function setup(component: () => any) {
-    const factory = createTUIApp({ app_name: 'm3_app', component });
+const EmptyWorkspace=defineViewType({name:'Workspace',tools:{}});
+function toolsOf(kernel:AppKernel) {
+    const projection=kernel.getProjectionCoordinator();
+    if (!projection.token().ready) return [];
+    const result=projection.nextPublication();
+    return 'draft' in result ? Object.values(result.draft.tools) : [];
+}
+function setup(component: () => any, viewTypes: readonly ViewType[] = [EmptyWorkspace]) {
+    const factory = createTUIApp({ app_name: 'm3_app', component, viewTypes });
     const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
     kernel.setId('m3_app_0' as any);
     kernel.enableAppLifecycle();
@@ -40,7 +46,7 @@ function setup(component: () => any) {
 }
 
 describe('M3 SDK semantic projection commit', () => {
-    it('exposes View, Ref, ArrayRef and one V3 type activation on the initial committed frame', async () => {
+    it('exposes View, Ref, ArrayRef and one Tool activation on the initial committed frame', async () => {
         function Content() {
             const [task] = useState({ id: 'A' });
             const ref = useDataRef('selected', task);
@@ -51,22 +57,17 @@ describe('M3 SDK semantic projection commit', () => {
                 h('p', { key: 'list' }, listLabel('List')),
             ]);
         }
-        const boundTools = defineToolSet({ tool: defineViewTypeTool({
-                viewType: 'Workspace', name: 'complete', description: 'Complete the current task.',
-                inputSchema: Type.Object({}),
-            }) });
+        const Workspace=defineViewType({name:'Workspace',tools:{complete:{description:'Complete the current task.',inputSchema:Type.Object({})}}});
 
         function App() {
-            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => ({ success: true }) } } }, h('main', {}, [
-                h(View, {kind: 'state', id: 'workspace', type: 'Workspace' }, h(Content, {})),
-            ]));
+            return h(View,{kind:'state',id:'workspace',type:Workspace,bindings:{complete:{execute:()=>({success:true})}}},h(Content,{}));
         }
-        const x = setup(App);
+        const x = setup(App,[Workspace]);
         try {
             await x.open();
             const view = x.container.querySelector('[data-view-id="workspace"]');
             expect(view).not.toBeNull();
-            expect(view?.getAttribute('data-view-instance-id')).toBeTruthy();
+            expect(x.kernel.getViewOwnedViewInstances()[0]?.viewInstanceId).toEqual(expect.any(String));
             expect(Object.keys(refsOf(x.kernel)).sort()).toEqual([
                 'workspace:pending[0]',
                 'workspace:pending',
@@ -77,10 +78,10 @@ describe('M3 SDK semantic projection commit', () => {
             expect(allRefs['workspace:pending']).toHaveLength(1);
             expect(x.container.innerHTML).toContain('(Task:pending[0])');
             expect(x.container.innerHTML).toContain('(Task[]:pending)');
-            const tools = x.kernel.getToolDefinitions();
+            const tools = toolsOf(x.kernel);
             expect(tools).toHaveLength(1);
-            expect(tools[0]!.execution).toMatchObject({ kind: 'view-type', activationId: expect.any(String) });
-            expect(tools[0]!.execution).not.toHaveProperty('targets');
+            expect(tools[0]).toMatchObject({name:'complete',viewType:'Workspace'});
+            expect(tools[0]).not.toHaveProperty('execution');
             const token = x.kernel.getProjectionCoordinator().token();
             expect(token.ready).toBe(true);
             expect(token.epoch).toBeGreaterThan(0);
@@ -96,35 +97,31 @@ describe('M3 SDK semantic projection commit', () => {
             const right = useDataRef('right', { id });
             return h('section', {}, [h('p', { key: 'left' }, left('Stable')), h('p', { key: 'right' }, right('Stable'))]);
         }
-        const boundTools = defineToolSet({ tool: defineViewTypeTool({
-                viewType: 'Workspace', name: 'inspect', description: 'Inspect the Workspace.',
-                inputSchema: Type.Object({}),
-            }) });
+        const Workspace=defineViewType({name:'Workspace',tools:{inspect:{description:'Inspect the Workspace.',inputSchema:Type.Object({})}}});
 
         function App() {
             const [state, setState] = useState({ id: 'A', enabled: true }); update = setState;
-            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => ({ success: true }), ...({ enabled: state.enabled }) } } }, h('main', {}, [
-                h(View, {kind: 'state', id: 'workspace', type: 'Workspace' }, h(Content, { id: state.id })),
-            ]));
+            return h(View,{kind:'state',id:'workspace',type:Workspace,bindings:{inspect:{enabled:state.enabled,execute:()=>({success:true})}}},
+                h(Content,{id:state.id}));
         }
-        const x = setup(App);
+        const x = setup(App,[Workspace]);
         const seen: Array<{ left?: string; right?: string; toolCount: number; ready: boolean }> = [];
         const unsubscribe = x.kernel.getProjectionCoordinator().subscribe(token => {
             seen.push({
                 left: (refsOf(x.kernel)['workspace:left'] as any)?.id,
                 right: (refsOf(x.kernel)['workspace:right'] as any)?.id,
-                toolCount: x.kernel.getToolDefinitions().length,
+                toolCount: toolsOf(x.kernel).length,
                 ready: token.ready,
             });
         });
         try {
             await x.open();
-            expect(x.kernel.getToolDefinitions()).toHaveLength(1);
+            expect(toolsOf(x.kernel)).toHaveLength(1);
             seen.length = 0;
             await act(async () => update({ id: 'B', enabled: false }));
             expect((refsOf(x.kernel)['workspace:left'] as any)?.id).toBe('B');
             expect((refsOf(x.kernel)['workspace:right'] as any)?.id).toBe('B');
-            expect(x.kernel.getToolDefinitions()).toEqual([]);
+            expect(toolsOf(x.kernel)).toEqual([]);
             expect(seen.length).toBeGreaterThan(0);
             expect(seen.every(item => item.left === 'B' && item.right === 'B' && item.toolCount === 0 && item.ready)).toBe(true);
 
@@ -132,7 +129,7 @@ describe('M3 SDK semantic projection commit', () => {
             await act(async () => update({ id: 'C', enabled: true }));
             expect((refsOf(x.kernel)['workspace:left'] as any)?.id).toBe('C');
             expect((refsOf(x.kernel)['workspace:right'] as any)?.id).toBe('C');
-            expect(x.kernel.getToolDefinitions()).toHaveLength(1);
+            expect(toolsOf(x.kernel)).toHaveLength(1);
             expect(seen.length).toBeGreaterThan(0);
             expect(seen.every(item => item.left === 'C' && item.right === 'C' && item.toolCount === 1 && item.ready)).toBe(true);
         } finally {
@@ -149,7 +146,7 @@ describe('M3 SDK semantic projection commit', () => {
             const ref = useDataRef('selected', value);
             return h('p', {}, ref('Stable label'));
         }
-        function App() { return h(View, {kind: 'state', id: 'workspace', type: 'Workspace' }, h(Content, {})); }
+        function App() { return h(View, {kind: 'state', id: 'workspace', type: EmptyWorkspace }, h(Content, {})); }
         const x = setup(App);
         const epochs: number[] = [];
         const unsub = x.kernel.getProjectionCoordinator().subscribe(token => epochs.push(token.epoch));
@@ -181,19 +178,20 @@ describe('M3 SDK semantic projection commit', () => {
         function App() {
             const [visible, update] = useState(true);
             setVisible = update;
-            return visible ? h(View, {kind: 'state', id: 'workspace', type: 'Workspace' }, h('p', {}, 'Visible')) : null;
+            return visible ? h(View, {kind: 'state', id: 'workspace', type: EmptyWorkspace }, h('p', {}, 'Visible')) : null;
         }
         const x = setup(App);
         try {
             await x.open();
-            const original = x.container.querySelector('[data-view-id="workspace"]')?.getAttribute('data-view-instance-id');
+            const original = x.kernel.getViewOwnedViewInstances()[0]?.viewInstanceId;
             expect(original).toBeTruthy();
             setVisible(false);
             await sleep(35);
             expect(x.container.querySelector('[data-view-id="workspace"]')).toBeNull();
+            expect(x.kernel.getViewOwnedViewInstances()).toEqual([]);
             setVisible(true);
             await sleep(35);
-            const fresh = x.container.querySelector('[data-view-id="workspace"]')?.getAttribute('data-view-instance-id');
+            const fresh = x.kernel.getViewOwnedViewInstances()[0]?.viewInstanceId;
             expect(fresh).toBeTruthy();
             expect(fresh).not.toBe(original);
             expect(x.kernel.getProjectionCoordinator().token().ready).toBe(true);
@@ -216,7 +214,7 @@ describe('M3 observable commit-phase consistency', () => {
                 h('p', {key:'right'}, right('Fixed label')),
             ]);
         }
-        function App() { return h(View, {kind: 'state', id: 'workspace', type: 'Workspace' }, h(Content, {})); }
+        function App() { return h(View, {kind: 'state', id: 'workspace', type: EmptyWorkspace }, h(Content, {})); }
         const x = setup(App);
         const seen: Array<{ left?: string; right?: string; ready: boolean }> = [];
         const unsubscribe = x.kernel.getProjectionCoordinator().subscribe(token => {
@@ -261,7 +259,7 @@ describe('M3 ArrayRef marker and registry parity', () => {
                 h('p', { key: 'first' }, state.items.length ? item(0, 'Stable') : 'None'),
             ]);
         }
-        function App() { return h(View, {kind: 'state', id: 'workspace', type: 'Workspace' }, h(Content, {})); }
+        function App() { return h(View, {kind: 'state', id: 'workspace', type: EmptyWorkspace }, h(Content, {})); }
         const x = setup(App);
         const key = (ref: string) => 'workspace:' + ref;
         try {
@@ -317,39 +315,36 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
                 data.length ? h('p', { key: 'first' }, item(0, 'Stable')) : null,
             ]);
         }
-        const boundTools = defineToolSet({ tool: defineViewTypeTool({
-                viewType: 'Workspace', name: 'inspect', description: 'Inspect the current Workspace.',
-                inputSchema: Type.Object({}),
-            }) });
+        const Workspace=defineViewType({name:'Workspace',tools:{inspect:{description:'Inspect the current Workspace.',inputSchema:Type.Object({})}}});
 
         function App() {
             const [state, set] = useState<State>(expected);
             mutate = next => { expected = next; set(next); };
-            return h(AppTools, { definition: boundTools, bindings: { tool: { execute: async () => ({ success: true }), ...({ enabled: state.enabled }) } } }, state.show
-                ? h(View, {kind: 'state', id: 'workspace', type: 'Workspace' },
-                    h('section', {}, [h(Details, { key: 'refs', data: state.data })]))
-                : null);
+            return state.show
+                ? h(View,{kind:'state',id:'workspace',type:Workspace,bindings:{inspect:{enabled:state.enabled,execute:()=>({success:true})}}},
+                    h('section',{},h(Details,{data:state.data})))
+                : null;
         }
-        const x = setup(App);
+        const x = setup(App,[Workspace]);
         const observed: string[] = [];
         let torn = 0;
         const unlisten = x.kernel.getProjectionCoordinator().subscribe(token => {
             const views = x.kernel.getViewOwnedViewInstances();
             const refs = refsOf(x.kernel) as Record<string, any>;
             const ids = Object.keys(refs);
-            const tools = x.kernel.getToolDefinitions();
+            const tools = toolsOf(x.kernel);
             if (!token.ready) torn++;
             if (views.length === 0) {
                 if (ids.length || tools.length || x.container.querySelector('[data-view-id=workspace]')) torn++;
             } else {
                 const domNode = x.container.querySelector('[data-view-id="workspace"]');
-                if (!domNode || !domNode.getAttribute('data-view-instance-id')) torn++;
+                if (!domNode || !views[0]?.viewInstanceId) torn++;
                 // An emitted Ref must be registered under the same exact key.
                 if (!Object.hasOwn(refs, 'workspace:tasks')) torn++;
                 if (Object.hasOwn(refs, 'workspace:tasks[0]') &&
                     !domNode?.textContent?.includes('(Task:tasks[0])')) torn++;
                 if (tools.length !== (expected.enabled ? 1 : 0)) torn++;
-                if (tools.length && (tools[0]!.execution.kind !== 'view-type' || Object.hasOwn(tools[0]!.execution, 'targets'))) torn++;
+                if (tools.length && tools[0]!.viewType !== 'Workspace') torn++;
             }
             observed.push(views.length + '/' + ids.length + '/' + tools.length);
         });
@@ -370,7 +365,7 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
                 await sleep(8);
                 const currentViews = x.kernel.getViewOwnedViewInstances();
                 const refs = refsOf(x.kernel);
-                const tools = x.kernel.getToolDefinitions();
+                const tools = toolsOf(x.kernel);
                 if (!show) {
                     expect(currentViews).toHaveLength(0);
                     expect(Object.keys(refs)).toHaveLength(0);
@@ -426,7 +421,7 @@ describe('M3 untyped ArrayRef marker and registry parity', () => {
             const [, item] = useArrayRef('pending', [{ id: 'A' }]);
             return h('p', {}, item(0, 'Stable'));
         }
-        function App() { return h(View, {kind: 'state', id: 'workspace', type: 'Workspace' }, h(Content, {})); }
+        function App() { return h(View, {kind: 'state', id: 'workspace', type: EmptyWorkspace }, h(Content, {})); }
         const x = setup(App);
         try {
             await x.open();
@@ -453,7 +448,7 @@ describe('M3 batched semantic updates', () => {
             ]);
         }
         function App() {
-            return h(View, {kind: 'state', id: 'workspace', type: 'Workspace' }, h(Content, {}));
+            return h(View, {kind: 'state', id: 'workspace', type: EmptyWorkspace }, h(Content, {}));
         }
         const x = setup(App);
         const events: Array<{ epoch: number; id: string }> = [];
