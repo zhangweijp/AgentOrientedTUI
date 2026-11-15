@@ -42,7 +42,6 @@ export type {
   DeepReadonly,
   DefinedViewTypeTool,
   JsonSchemaObject,
-  JsonSchemaValue,
   SchemaOf,
   ToolBinding,
   ToolBindings,

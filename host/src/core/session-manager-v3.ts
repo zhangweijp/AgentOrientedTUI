@@ -258,11 +258,6 @@ export class SessionManagerV3 extends EventEmitter {
                     modelId,
                 };
 
-                if ((desktop as any).getLLMOutputChannel) {
-                    const channel = (desktop as any).getLLMOutputChannel();
-                    channel.push(desktop.id, payload, meta);
-                }
-
                 if ((desktop as any).broadcastLLMOutput) {
                     (desktop as any).broadcastLLMOutput(payload, 'complete', meta);
                 }

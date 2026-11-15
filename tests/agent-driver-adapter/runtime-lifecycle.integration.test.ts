@@ -163,7 +163,7 @@ it('rejects invalid tool settings and the retired Host key before registering an
     try {
         await expect(install(runtime, 'd', 'bad-value', 'false' as any)).rejects.toMatchObject({ code: 'TOOLS_ENABLED_INVALID' });
         for (const value of [[], ['view-type-parameters-v1'], undefined]) {
-            await expect(install(runtime, 'd', 'retired', undefined, { interactionModes: value })).rejects.toMatchObject({ code: 'TOOLS_ENABLED_INVALID' });
+            await expect(install(runtime, 'd', 'retired', undefined, { interactionModes: value })).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
         }
         expect(runtime.getDesktop('d').getInstalledApps()).toEqual([]);
     } finally { await runtime.beginShutdown().completion; }

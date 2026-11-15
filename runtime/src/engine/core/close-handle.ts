@@ -82,7 +82,7 @@ export function newCloseState(scope: CloseReport['scope'], intent: CloseReport['
         resources: { retainedStorageOwners: 0, storageActualIO: 0, openingStorageOwners: 0 },
         interactions: { verified: true, retainedOperations: 0, retainedBytes: 0 },
         workers: { ownership: 'not-owned', report: null }, beforeClose: 'not-provided',
-        cleanup: { signalBus: 'not-owned', llmOutput: 'not-owned', logger: 'not-owned' },
+        cleanup: { signalBus: 'not-owned', logger: 'not-owned' },
         failures: [], failureCount: 0, samplesTruncated: false };
 }
 export function addCloseFailure(state: CloseState, stage: Stage, codes: readonly Code[], ids: { desktopId?: string; appId?: string } = {}): void {

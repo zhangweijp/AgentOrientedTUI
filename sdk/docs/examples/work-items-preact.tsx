@@ -1,8 +1,9 @@
 import { useState } from 'preact/hooks';
-import { AppTools, createTUIApp, useAppLifecycle, useArrayRef, useDataRef, View, type JsonSchemaValue } from '@aotui/sdk';
+import { AppTools, createTUIApp, useAppLifecycle, useArrayRef, useDataRef, View } from '@aotui/sdk';
+import type { JsonValue } from '@aotui/sdk/app';
 import { bindings, initialState, itemValue, label, otherViewId, selectedViewId, tools, workspaceText, type WorkItemOptions } from './work-items.js';
 
-function Item({ value, items }: { readonly value: JsonSchemaValue; readonly items?: readonly JsonSchemaValue[] }) {
+function Item({ value, items }: { readonly value: JsonValue; readonly items?: readonly JsonValue[] }) {
     const selected = useDataRef('selected', value, { refType: 'Data', schema: itemValue });
     return <div>
         <p>{selected(items === undefined ? 'Other item' : label)}</p>
@@ -10,7 +11,7 @@ function Item({ value, items }: { readonly value: JsonSchemaValue; readonly item
     </div>;
 }
 
-function Items({ values }: { readonly values: readonly JsonSchemaValue[] }) {
+function Items({ values }: { readonly values: readonly JsonValue[] }) {
     const [list, element] = useArrayRef('items', values, { itemType: 'Data' });
     return <>
         <p>{list('All items')}</p>

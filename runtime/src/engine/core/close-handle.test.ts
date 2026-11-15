@@ -14,7 +14,7 @@ function fixture() {
         persistence: { managedApps: 0, unnegotiatedApps: 0, notUsedApps: 0, closeReceipts: 0, missingCloseReceipts: 0, confirmedFlushes: 0, failedFlushes: 0, absentFlushes: 0, unknownApps: 0, unsavedKeys: 0 },
         resources: { retainedStorageOwners: 0, storageActualIO: 0, openingStorageOwners: 0 },
         workers: { ownership: 'not-owned', report: null }, beforeClose: 'not-provided',
-        cleanup: { signalBus: 'not-owned', llmOutput: 'not-owned', logger: 'not-owned' },
+        cleanup: { signalBus: 'not-owned', logger: 'not-owned' },
         failures: [], failureCount: 0, samplesTruncated: false,
     };
     const completion = new Promise<RuntimeCloseReport>(resolve => { finish = resolve; });

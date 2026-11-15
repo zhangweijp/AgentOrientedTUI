@@ -19,7 +19,7 @@ import { AOTUIError } from '../../spi/core/errors.js';
 import type { TUIConfig, AppConfigEntry } from './config.js';
 import type { AppLaunchConfig } from '../../spi/app/app-config.interface.js';
 import type { AppInteractionOptions } from '../../spi/runtime/app-interaction.interface.js';
-import { captureToolsEnabled } from './interaction-config.js';
+import { captureOptions } from './interaction-config.js';
 import { createDefaultConfig, validateConfig } from './config.js';
 // [Option C] ESM-compatible imports for file system access
 import * as fs from 'fs';
@@ -60,6 +60,12 @@ export interface AppRegistryInstallOptions extends AppInteractionOptions {
     defaultWorkerScript?: string;
     dynamicConfig?: AppLaunchConfig;
 }
+
+const installFields = { defaultWorkerScript: 'string', dynamicConfig: 'object', toolsEnabled: 'boolean' } as const;
+const entryFields = {
+    name: 'string', source: 'string', enabled: 'boolean', installedAt: 'string', workerScript: 'string',
+    autoStart: 'boolean', originalSource: 'string', distribution: 'object',
+} as const;
 
 export interface AppRegistryFailure {
     readonly name: string;
@@ -127,19 +133,30 @@ export class AppRegistry {
     /** Discover static App manifests from explicit Host configuration. */
     async loadFromEntries(entries: AppRegistryEntry[], options?: { replace?: boolean }): Promise<AppDiscoveryResult[]> {
         if (!Array.isArray(entries)) throw new AOTUIError('CONFIG_INVALID', { reason: 'Expected an array of App entries' });
+        options = captureOptions(options, { replace: 'boolean' });
         if (options?.replace !== false) {
             this.apps.clear();
             this.entryConfigs.clear();
         }
         const seen = new Set<string>();
         return Array.from(entries, (entry, index) => {
-            const path = `apps[${index}].name`;
-            if (!entry || typeof entry.name !== 'string' || !entry.name.trim()) return failedApp(
-                `apps[${index}]`, 'discovery', new AOTUIError('CONFIG_INVALID', { path, reason: 'Provide the App name' }));
-            const { name, ...appEntry } = entry;
-            if (seen.has(name)) return failedApp(name, 'discovery', new AOTUIError('APP_ALREADY_REGISTERED', { appName: name, path }));
-            seen.add(name);
-            return this.loadEntry(name, appEntry);
+            let name = `apps[${index}]`;
+            const path = `${name}.name`;
+            try {
+                const candidate = entry && Object.getOwnPropertyDescriptor(entry, 'name')?.value;
+                if (typeof candidate !== 'string' || !candidate.trim()) {
+                    throw new AOTUIError('CONFIG_INVALID', { path, reason: 'Provide the App name' });
+                }
+                name = candidate;
+                if (seen.has(name)) throw new AOTUIError('APP_ALREADY_REGISTERED', { appName: name, path });
+                seen.add(name);
+                this.apps.delete(name);
+                this.entryConfigs.delete(name);
+                const { name: _name, ...appEntry } = captureOptions(entry, entryFields, 'apps.' + name)!;
+                return this.loadEntry(name, appEntry);
+            } catch (error) {
+                return failedApp(name, 'discovery', error, path);
+            }
         });
     }
 
@@ -159,7 +176,8 @@ export class AppRegistry {
             distribution?: AppConfigEntry['distribution'];
         }
     ): Promise<string> {
-        if (options && Object.hasOwn(options, 'alias')) throw new AOTUIError('CONFIG_INVALID', { reason: 'Registry aliases are not supported; use the generated canonical app_name' });
+        options = captureOptions(options, { force: 'boolean', enabled: 'boolean', autoStart: 'boolean',
+            originalSource: 'string', distribution: 'object' });
         const loaded = this.readManifest(source);
         const name = loaded.name;
 
@@ -319,6 +337,7 @@ export class AppRegistry {
         desktop: IDesktop,
         options?: AppRegistryInstallOptions
     ): Promise<AppInstallResult[]> {
+        options = captureOptions(options, installFields);
         // 获取默认 Worker 脚本路径
         const defaultWorkerScript = options?.defaultWorkerScript
             ?? this.config.runtime?.workerScript;
@@ -329,7 +348,7 @@ export class AppRegistry {
         return this.installEntries(desktop, Array.from(this.apps.keys()), {
             defaultWorkerScript,
             dynamicConfig: options?.dynamicConfig,
-            toolsEnabled: captureToolsEnabled(options),
+            toolsEnabled: options?.toolsEnabled,
         });
     }
 
@@ -338,13 +357,14 @@ export class AppRegistry {
         names: string[],
         options?: AppRegistryInstallOptions
     ): Promise<AppInstallResult[]> {
+        options = captureOptions(options, installFields);
         const defaultWorkerScript = options?.defaultWorkerScript
             ?? this.config.runtime?.workerScript;
 
         return this.installEntries(desktop, names, {
             defaultWorkerScript,
             dynamicConfig: options?.dynamicConfig,
-            toolsEnabled: captureToolsEnabled(options),
+            toolsEnabled: options?.toolsEnabled,
         });
     }
 
@@ -444,7 +464,6 @@ export class AppRegistry {
     }
 
     private loadEntry(name: string, entry: AppConfigEntry): AppDiscoveryResult {
-        this.apps.delete(name);
         this.entryConfigs.set(name, { ...entry });
         try {
             if (typeof entry.source !== 'string' || typeof entry.enabled !== 'boolean') {
@@ -453,9 +472,6 @@ export class AppRegistry {
             if (!entry.enabled) return { name, status: 'disabled' };
             const loaded = this.readManifest(entry.source);
             if (name !== loaded.name) throw new AOTUIError('APP_IDENTITY_MISMATCH', { expected: loaded.name, actual: name, path: 'registry.key' });
-            const override = ['alias', 'description', 'whatItIs', 'whenToUse'].find(key => Object.hasOwn(entry, key));
-            if (override) throw new AOTUIError('CONFIG_INVALID', { path: 'apps.' + name + '.' + override,
-                reason: `${override} is App metadata; remove the override and rebuild the App manifest` });
             this.apps.set(name, loaded);
             return { name, status: 'loaded' };
         } catch (error) {

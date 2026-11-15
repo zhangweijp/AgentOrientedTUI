@@ -19,7 +19,7 @@ export {
     createViewId,
 } from './core/id-factory.js';
 export type { ToolError, ToolResult } from './core/tool-result.js';
-export { AOTUIError, ERROR_CODES } from './core/errors.js';
+export { AOTUIError } from './core/errors.js';
 export type { ErrorCode } from './core/errors.js';
 export type { UpdateSignal } from './core/signals.js';
 export type { LLMOutputEvent, LLMOutputEventMeta, LLMOutputListener } from './core/llm-output.js';
@@ -73,7 +73,6 @@ export type {
     AppInteractionResult,
 } from './runtime/app-interaction.interface.js';
 export type { IRuntimeContext } from './runtime/context.interface.js';
-export type { ILLMOutputChannelService } from './runtime/llm-output-channel.interface.js';
 
 // SDK-facing Runtime ports. These are typed capabilities, not Worker IPC.
 export type { IProjectionPort, ProjectionToken } from './runtime/projection.interface.js';

@@ -6,71 +6,7 @@
  * @module @aotui/runtime/spi/core/errors
  */
 
-// ============================================================================
-// Error Code Registry (按域分组)
-// ============================================================================
-
-/**
- * AOTUI 错误码常量
- * 
- * 命名规范: DOMAIN_SPECIFIC_ERROR
- * 例如: DESKTOP_NOT_FOUND, CONFIG_INVALID
- */
-export const ERROR_CODES = {
-    // ─────────────────────────────────────────────────────────────
-    //  Desktop Domain
-    // ─────────────────────────────────────────────────────────────
-    DESKTOP_NOT_FOUND: 'DESKTOP_NOT_FOUND',
-    DESKTOP_DISPOSED: 'DESKTOP_DISPOSED',
-
-    // ─────────────────────────────────────────────────────────────
-    //  App Domain
-    // ─────────────────────────────────────────────────────────────
-    APP_NOT_FOUND: 'APP_NOT_FOUND',
-    APP_INVALID_EXPORT: 'APP_INVALID_EXPORT',
-    APP_MANIFEST_INVALID: 'APP_MANIFEST_INVALID',
-    APP_IDENTITY_MISMATCH: 'APP_IDENTITY_MISMATCH',
-
-    // ─────────────────────────────────────────────────────────────
-    //  App Domain
-    // ─────────────────────────────────────────────────────────────
-    APP_ALREADY_REGISTERED: 'APP_ALREADY_REGISTERED',
-
-    // ─────────────────────────────────────────────────────────────
-    //  Worker Domain
-    // ─────────────────────────────────────────────────────────────
-    WORKER_NOT_STARTED: 'WORKER_NOT_STARTED',
-
-    // ─────────────────────────────────────────────────────────────
-    //  Config Domain
-    // ─────────────────────────────────────────────────────────────
-    CONFIG_INVALID: 'CONFIG_INVALID',
-    CONFIG_NOT_SUPPORTED: 'CONFIG_NOT_SUPPORTED',
-
-    // ─────────────────────────────────────────────────────────────
-    //  Generic
-    // ─────────────────────────────────────────────────────────────
-    RUNTIME_SHUTDOWN: 'RUNTIME_SHUTDOWN',
-    INTERNAL_ERROR: 'INTERNAL_ERROR',
-} as const;
-
-/**
- * 错误码类型
- */
-export type ErrorCode = typeof ERROR_CODES[keyof typeof ERROR_CODES];
-
-// ============================================================================
-// Error Message Templates
-// ============================================================================
-
-type MessageFormatter = (ctx: Record<string, unknown>) => string;
-
-/**
- * 错误消息模板
- * 
- * 每个错误码对应一个消息格式化函数，接收 context 参数生成人类可读的消息。
- */
-const ERROR_MESSAGES: Record<ErrorCode, MessageFormatter> = {
+const ERROR_MESSAGES = {
     // Desktop
     DESKTOP_NOT_FOUND: (c) => `Desktop '${c.desktopId ?? 'unknown'}' not found`,
     DESKTOP_DISPOSED: (c) => `Desktop '${c.desktopId ?? 'unknown'}' has been disposed`,
@@ -94,8 +30,9 @@ const ERROR_MESSAGES: Record<ErrorCode, MessageFormatter> = {
 
     // Generic
     RUNTIME_SHUTDOWN: (c) => `Runtime has been shut down${c.reason ? `: ${c.reason}` : ''}`,
-    INTERNAL_ERROR: (c) => `Internal error: ${c.message ?? 'unknown'}`,
-};
+} satisfies Record<string, (context: Record<string, unknown>) => string>;
+
+export type ErrorCode = keyof typeof ERROR_MESSAGES;
 
 // ============================================================================
 // AOTUIError Class
@@ -129,26 +66,11 @@ export class AOTUIError extends Error {
     readonly timestamp: number;
 
     constructor(code: ErrorCode, context: Record<string, unknown> = {}) {
-        const message = AOTUIError.formatMessage(code, context);
-        super(message);
+        super(Object.hasOwn(ERROR_MESSAGES, code) ? ERROR_MESSAGES[code](context) : `[${code}]`);
 
         this.name = 'AOTUIError';
         this.code = code;
         this.context = context;
         this.timestamp = Date.now();
-
-        // 保持原型链正确 (TypeScript 继承 Error 的已知问题)
-        Object.setPrototypeOf(this, AOTUIError.prototype);
-    }
-
-    /**
-     * 格式化错误消息
-     */
-    private static formatMessage(code: ErrorCode, context: Record<string, unknown>): string {
-        const formatter = ERROR_MESSAGES[code];
-        if (formatter) {
-            return formatter(context);
-        }
-        return `[${code}]`;
     }
 }

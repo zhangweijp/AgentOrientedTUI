@@ -1,19 +1,17 @@
 import type { StateStorageBackend } from '../app/state-storage-host.js';
 import type { WorkerCapacity } from '../app/worker-capacity.js';
-import type { IDesktop, DesktopID, AppID, UpdateSignal, AppDiscoveryInfo, DesktopStatus, ILLMOutputChannelService, IRuntimeContext, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
+import type { IDesktop, DesktopID, AppID, UpdateSignal, AppDiscoveryInfo, DesktopStatus, IRuntimeContext, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from '../../spi/index.js';
 import { createDesktopId } from '../../spi/index.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import { SignalBus, type SignalListener } from './signal-bus.js';
-import type { LLMOutputListener } from '../../spi/core/llm-output.js';
 import type { AppManagerCloseHandle, AppManagerCloseReport, DesktopCloseOptions, DesktopCloseHandle, DesktopCloseReport } from '../../spi/runtime/close.interface.js';
 import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseHandle, displayCloseId, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from './close-handle.js';
 import { DesktopLogger, type LogEntry } from './desktop-logger.js';
 import { AppManager } from '../app/manager.js';
-import { LLMOutputChannelService } from './llm-output-channel.js';
 import { RuntimeConfig, RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
 import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
-import { captureToolsEnabled } from '../app/interaction-config.js';
+import { appInstallFields, captureOptions } from '../app/interaction-config.js';
 
 
 /**
@@ -32,10 +30,6 @@ export interface DesktopOptions {
     appManager?: AppManager;
     // [RFC-005] Runtime Config
     runtimeConfig?: RuntimeConfig;
-
-    // [RFC-011] LLM Output Channel Service
-    /** 使用外部 ILLMOutputChannelService */
-    llmOutputChannelService?: ILLMOutputChannelService;
 
     // [RFC-026] Runtime Context Injection
     context?: IRuntimeContext;
@@ -59,9 +53,7 @@ export class Desktop implements IDesktop {
     private closeIntent: 'close' | 'delete' = 'close';
     private selectedBeforeClose?: WeakRef<() => Promise<void>>;
     private readonly subscriptions = new Map<SignalListener, () => void>();
-    private readonly llmSubscriptions = new Map<LLMOutputListener, () => void>();
     private outputFacade?: IDesktop['output'];
-    private llmFacade?: ILLMOutputChannelService;
 
     // Use injected SignalBus or create internal instance
     private signalBus: SignalBus;
@@ -73,9 +65,6 @@ export class Desktop implements IDesktop {
     private appManager: AppManager;
 
     private config: RuntimeConfig;
-
-    // [RFC-011] LLM Output Channel Service
-    private llmOutputChannel: ILLMOutputChannelService;
 
     constructor(id?: DesktopID, options?: DesktopOptions) {
         this.id = id ?? createDesktopId();
@@ -91,9 +80,6 @@ export class Desktop implements IDesktop {
         });
 
         this.appManager = options?.appManager || new AppManager(this, { workerCapacity: options?.workerCapacity, runtimeConfig: this.config, storageBackend: options?.storageBackend });
-
-        // [RFC-011] LLM Output Channel Service
-        this.llmOutputChannel = options?.llmOutputChannelService ?? new LLMOutputChannelService();
 
         this.logSystem('Desktop initialized.');
         if (this.context) {
@@ -122,29 +108,6 @@ export class Desktop implements IDesktop {
                 if (this._isDraining || !this.subscriptions.has(listener)) cancel();else this.subscriptions.set(listener, cancel);
             },
             unsubscribe: (listener: SignalListener) => { const cancel = this.subscriptions.get(listener);this.subscriptions.delete(listener);cancel?.(); }
-        });
-    }
-
-    // [RFC-011] Expose LLM Output Channel for Bridge access
-    public getLLMOutputChannel(): ILLMOutputChannelService {
-        const scope = (id: DesktopID) => { if (id !== this.id) throw closeError('DESKTOP_SCOPE_MISMATCH'); };
-        return this.llmFacade ??= Object.freeze({
-            subscribe: (id: DesktopID, listener: LLMOutputListener) => {
-                scope(id);this.assertActive();
-                let cancel = this.llmSubscriptions.get(listener);
-                if (!cancel) {
-                    this.llmSubscriptions.set(listener, () => {});
-                    try { cancel = this.llmOutputChannel.subscribe(this.id, event => { if (!this._isDraining) listener(event); }); }
-                    catch (error) { this.llmSubscriptions.delete(listener);throw error; }
-                    if (this._isDraining || !this.llmSubscriptions.has(listener)) cancel();else this.llmSubscriptions.set(listener, cancel);
-                }
-                // Capture this lifetime's cancellation, never look up a successor by ID.
-                const captured = cancel;
-                return () => { if (this.llmSubscriptions.get(listener) === captured) this.llmSubscriptions.delete(listener);captured?.(); };
-            },
-            push: (id: DesktopID, payload: Parameters<ILLMOutputChannelService['push']>[1], meta?: Parameters<ILLMOutputChannelService['push']>[2]) => { scope(id);this.assertActive();this.llmOutputChannel.push(this.id, payload, meta); },
-            getHistory: (id: DesktopID) => { scope(id);return this._isDraining ? [] : [...this.llmOutputChannel.getHistory(this.id)]; },
-            cleanup: (id: DesktopID) => { scope(id);this.assertActive();for (const cancel of this.llmSubscriptions.values()) cancel();this.llmSubscriptions.clear();this.llmOutputChannel.cleanup(this.id); }
         });
     }
 
@@ -231,7 +194,7 @@ export class Desktop implements IDesktop {
 
         }
     ): Promise<string> {
-        const toolsEnabled = captureToolsEnabled(options);
+        options = captureOptions(options, appInstallFields);
         this.assertActive();
         // [RFC-026] Merge Runtime Context into AppLaunchConfig
         // Priority: App Specific Config > Runtime Context
@@ -258,7 +221,7 @@ export class Desktop implements IDesktop {
                 whenToUse: options?.whenToUse,
                 config: mergedConfig, // [RFC-026] Injected Config
                 runtimeConfig: this.config, // [RFC-005] Pass Runtime Config
-                toolsEnabled
+                toolsEnabled: options?.toolsEnabled,
             }
         );
     }
@@ -276,7 +239,9 @@ export class Desktop implements IDesktop {
         workerScriptPath?: string;
         config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
     }): Promise<string> {
-        const toolsEnabled = captureToolsEnabled(options);
+        const captured = captureOptions(options, { ...appInstallFields, modulePath: 'string' });
+        if (!captured?.modulePath) throw new AOTUIError('CONFIG_INVALID', { path: 'options.modulePath', reason: 'Provide the App module path' });
+        options = captured;
         this.assertActive();
         return this.appManager.registerPendingApp({
             appId: options.appId as any,
@@ -288,7 +253,7 @@ export class Desktop implements IDesktop {
             workerScriptPath: options.workerScriptPath,
             config: { ...this.context?.env, ...options.config },
             runtimeConfig: this.config,
-            toolsEnabled
+            toolsEnabled: options.toolsEnabled,
         });
     }
     // --- Lifecycle Methods ---
@@ -430,7 +395,7 @@ export class Desktop implements IDesktop {
                 if (this.closeState.beforeClose === 'failed') addCloseFailure(this.closeState, 'before-close', ['BEFORE_CLOSE_FAILED'], { desktopId: this.id });
                 else if (this.closeState.beforeClose !== 'done') addCloseFailure(this.closeState, 'before-close', ['BEFORE_CLOSE_SKIPPED'], { desktopId: this.id });
             }
-            const cleanup = async (key: 'signalBus' | 'llmOutput' | 'logger', action: () => unknown, stage: 'signals' | 'llm-output' | 'logger') => {
+            const cleanup = async (key: 'signalBus' | 'logger', action: () => unknown, stage: 'signals' | 'logger') => {
                 this.closeState.cleanup[key] = 'pending';
                 try { await action();this.closeState.cleanup[key] = 'done'; }
                 catch { this.closeState.cleanup[key] = 'failed';this.closeState.resourcesReleased = false;addCloseFailure(this.closeState, stage, ['DESKTOP_CLEANUP_FAILED'], { desktopId: this.id }); }
@@ -443,12 +408,6 @@ export class Desktop implements IDesktop {
                     try { await this.signalBus.cleanup(this.id); } catch { throw closeError('DESKTOP_CLEANUP_FAILED'); }
                     if (results.some(result => result.status === 'rejected')) throw closeError('DESKTOP_CLEANUP_FAILED');
                 }, 'signals'),
-                cleanup('llmOutput', async () => {
-                    const cancellations = [...this.llmSubscriptions.values()];this.llmSubscriptions.clear();
-                    const results = await Promise.allSettled(cancellations.map(async cancel => { cancel(); }));
-                    try { await this.llmOutputChannel.cleanup(this.id); } catch { throw closeError('DESKTOP_CLEANUP_FAILED'); }
-                    if (results.some(result => result.status === 'rejected')) throw closeError('DESKTOP_CLEANUP_FAILED');
-                }, 'llm-output'),
                 cleanup('logger', () => this.logger.cleanup(this.id), 'logger'),
                 (async () => {
                     try { await this.appManager.cleanupAsync(); }

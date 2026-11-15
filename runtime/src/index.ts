@@ -52,7 +52,6 @@ export type { Observation, ObservationSelection, ObservationGrant } from './core
 
 export {
     AOTUIError,
-    ERROR_CODES,
     createDesktopId,
     createAppId,
     createViewId,

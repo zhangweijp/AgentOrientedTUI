@@ -62,7 +62,7 @@ SDK 工厂自动提供 `view-type-tools-v4`、托管状态和 `app-lifecycle-v2`
 
 ## Host installation and instance interaction
 
-Tool execution is enabled by default. Install with the trusted Host option `toolsEnabled: false` to keep observation and preview read-only. The retired `interactionModes` key is rejected with `TOOLS_ENABLED_INVALID`. Use the matched Runtime and SDK packages.
+Tool execution is enabled by default. Install with the trusted Host option `toolsEnabled: false` to keep observation and preview read-only. Installation rejects unknown Host options with `CONFIG_INVALID` and invalid `toolsEnabled` values with `TOOLS_ENABLED_INVALID` before allocation. Use the matched Runtime and SDK packages.
 
 Construct the Runtime with `createRuntime()`. The returned `IKernel` includes App interaction and shutdown reporting. Use `getDesktop()` for the `IDesktop` contract. These interfaces replace imports of the concrete `Kernel`, `IDesktopManager`, and the separate access and shutdown reporting interfaces.
 

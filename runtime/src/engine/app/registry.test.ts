@@ -341,7 +341,7 @@ describe('AppRegistry', () => {
             expect(mockDesktop.installDynamicWorkerApp.mock.calls[0][1].toolsEnabled).toBeUndefined();
             mockDesktop.installDynamicWorkerApp.mockClear();
             await expect(registry.installAll(mockDesktop, { interactionModes: [] } as any))
-                .rejects.toMatchObject({ code: 'TOOLS_ENABLED_INVALID' });
+                .rejects.toMatchObject({ code: 'CONFIG_INVALID', context: { path: 'options.interactionModes' } });
             expect(mockDesktop.installDynamicWorkerApp).not.toHaveBeenCalled();
         });
 

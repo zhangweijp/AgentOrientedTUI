@@ -12,7 +12,7 @@ import type { IDesktopManager } from '../spi/runtime/desktop-manager.interface.j
 import { AOTUIError } from '../spi/core/errors.js';
 import type { DesktopCloseOptions, DesktopCloseHandle, RuntimeCloseHandle, RuntimeCloseReport, ShutdownOptions } from '../spi/runtime/close.interface.js';
 import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseHandle, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from '../engine/core/close-handle.js';
-import { captureToolsEnabled } from '../engine/app/interaction-config.js';
+import { appInstallFields, captureOptions } from '../engine/app/interaction-config.js';
 import { appInteractionUnavailable, type AppInteractionResult } from '../spi/runtime/app-interaction.interface.js';
 import type { AppInteractionPolicy } from '../core/invocation/app-interaction-types.js';
 
@@ -128,8 +128,7 @@ export class Kernel implements IKernel {
      */
     installDynamicWorkerApp(desktopId: DesktopID, appModulePath: string, options?: Parameters<IKernel['installDynamicWorkerApp']>[2]): Promise<string> {
         try {
-            const toolsEnabled = captureToolsEnabled(options);
-            const captured = { ...options, toolsEnabled };
+            const captured = captureOptions(options, appInstallFields);
             return this.business(() => this.installDynamicWorkerAppAccepted(desktopId, appModulePath, captured));
         } catch (error) { return Promise.reject(error); }
     }
