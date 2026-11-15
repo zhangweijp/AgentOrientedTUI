@@ -4,9 +4,8 @@
  * @module @aotui/runtime/engine/app-sandbox
  */
 
-import type { AppID, DesktopID, ViewID } from '../../spi/index.js';
-import { AOTUIError } from '../../spi/core/errors.js';
-import type { LLMOutputEventMeta } from '../../spi/core/llm-output.js';
+import type { AppID, DesktopID } from '../../spi/index.js';
+import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
 import { AppWorkerHost, type HostResourceReport } from './worker-host.js';
 import type { WorkerCapacity } from './worker-capacity.js';
 import type { StateStorageBackend } from './state-storage-host.js';
@@ -19,10 +18,9 @@ import { captureToolsEnabled } from './interaction-config.js';
  * 
  * 状态转换:
  * created → running (installDynamic)
- * running ↔ paused
- * running/paused → closed
+ * running → closed
  */
-export type SandboxStatus = 'created' | 'running' | 'paused' | 'closed';
+export type SandboxStatus = 'created' | 'running' | 'closed';
 
 /**
  * WorkerSandbox 配置
@@ -130,42 +128,10 @@ export class WorkerSandbox {
         void this.installPromise.catch(() => {});return this.installPromise;
     }
 
-    /**
-     * 暂停 App
-     */
-    async pause(): Promise<void> {
-        this.ensureNotClosed();
-
-        if (this._status !== 'running') {
-            return;
-        }
-
-        if (this.workerHost) {
-            await this.workerHost.pause();
-        }
-        if (!this.intent) this._status = 'paused';
-    }
-
-    /**
-     * 恢复 App
-     */
-    async resume(): Promise<void> {
-        this.ensureNotClosed();
-
-        if (this._status !== 'paused') {
-            return;
-        }
-
-        if (this.workerHost) {
-            await this.workerHost.resume();
-        }
-        if (!this.intent) this._status = 'running';
-    }
-
     async reinitialize(reason?: string): Promise<void> {
         this.ensureNotClosed();
 
-        if (this._status !== 'running' && this._status !== 'paused') {
+        if (this._status !== 'running') {
             return;
         }
 
@@ -235,40 +201,8 @@ export class WorkerSandbox {
     }
     disposeAsync(): Promise<SandboxCloseReport> { return this.beginCleanup(this.intent ?? 'close'); }
 
-    /**
-     * 发送外部事件
-     */
-    async sendExternalEvent(
-        viewId: ViewID,
-        eventType: string,
-        data: Record<string, unknown>
-    ): Promise<void> {
-        this.ensureNotClosed();
-        if (!this.workerHost) {
-            throw new AOTUIError('WORKER_NOT_STARTED', { appId: this.appId });
-        }
-        await this.workerHost.sendExternalEvent(viewId, eventType, data);
-    }
-
-    // ════════════════════════════════════════════════════════════════
-    //  [RFC-011] LLM Output Channel
-    // ════════════════════════════════════════════════════════════════
-
-    /**
-     * [RFC-011] Push LLM text to Worker
-     * [RFC-020] Now accepts structured payload { reasoning?, content? }
-     */
-    pushLLMOutput(
-        payload: { reasoning?: string; content?: string },
-        type: 'complete',
-        meta?: Pick<LLMOutputEventMeta, 'model' | 'providerId' | 'modelId' | 'usage'>
-    ): void {
-        if (this.intent) return;
-        if (!this.workerHost) {
-            console.warn(`[WorkerSandbox] Cannot push LLM text: Worker not started for ${this.appId}`);
-            return;
-        }
-        this.workerHost.pushLLMOutput(payload, type, meta);
+    pushLLMUsage(event: LLMUsageEvent): void {
+        if (!this.intent) this.workerHost?.pushLLMUsage(event);
     }
 
 

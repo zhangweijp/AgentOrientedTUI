@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { buildViewMessageMarkup } from './adapters/view-message.js';
+import { buildViewMessageMarkup } from '@aotui/runtime/adapters';
 
 /**
  * agentina CLI - Third-Party App Management
@@ -17,15 +17,13 @@ import { buildViewMessageMarkup } from './adapters/view-message.js';
  * @module @aotui/cli
  */
 
-import { AppRegistry } from './engine/app/registry.js';
-import { createRuntime } from './facades/facades.js';
-import type { AppID } from './spi/core/types.js';
+import { AppRegistry, createRuntime, type AppID } from '@aotui/runtime';
 import * as readline from 'readline';
 import fs from 'fs';
-import { installNpmPackage } from './cli/npm-installer.js';
-import { searchCatalog } from './cli/catalog.js';
-import { parseInstallSource, type ParsedInstallSource } from './cli/sources.js';
-import { resolveCatalog, resolveCatalogOptionsFromConfig } from './cli/catalog-resolver.js';
+import { installNpmPackage, removeInstalledApp } from './npm-installer.js';
+import { searchCatalog } from './catalog.js';
+import { parseInstallSource, type ParsedInstallSource } from './sources.js';
+import { resolveCatalog, resolveCatalogOptionsFromConfig } from './catalog-resolver.js';
 import { renderInstalledAppLines } from './cli-list.js';
 
 const HELP = `
@@ -250,7 +248,7 @@ async function handleRemove(registry: AppRegistry, args: string[]): Promise<void
     }
 
     const name = args[0];
-    await registry.remove(name);
+    await removeInstalledApp(registry, name);
     console.log(`✅ Successfully removed: ${name}`);
 }
 
@@ -393,8 +391,7 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
         return;
     }
 
-    console.log('[TUI] Runtime ready. Type JSON event to send, or "exit" to quit.');
-    console.log('Example: {"type":"EXTERNAL_EVENT", "eventType":"grep-result", "data":{"line":"foo"}}');
+    console.log('[TUI] Runtime ready. Type "snapshot" to show current views, or "exit" to quit.');
 
     isInteractive = true;
     rl.prompt();
@@ -406,36 +403,7 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
             return;
         }
 
-        if (input.startsWith('{')) {
-            try {
-                const event = JSON.parse(input);
-                if (event.type === 'EXTERNAL_EVENT') {
-                    // Send to all running apps
-                    for (const appId of runningAppIds) {
-                        const workerSandbox = ((desktop as any).appManager as any).workers.get(appId);
-                        if (workerSandbox && workerSandbox.workerHost) {
-                             workerSandbox.workerHost.worker.postMessage({
-                                type: 'EXTERNAL_EVENT',
-                                requestId: `cli_${Date.now()}`,
-                                viewId: event.viewId || 'view_0',
-                                eventType: event.eventType,
-                                data: event.data
-                             });
-                             console.log(`[TUI] Sent event to ${appId}`);
-                        }
-                    }
-                } else {
-                    console.log('Unknown command. Support JSON with type="EXTERNAL_EVENT"');
-                }
-            } catch (e) {
-                console.error('Invalid JSON');
-            }
-        } else {
-             // Render Snapshot check
-             if (input === 'snapshot') {
-                 await printCurrentViews();
-             }
-        }
+        if (input === 'snapshot') await printCurrentViews();
         rl.prompt();
     });
 }

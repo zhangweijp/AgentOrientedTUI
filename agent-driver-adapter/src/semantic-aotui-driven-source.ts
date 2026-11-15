@@ -165,7 +165,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                     return descriptor && 'value' in descriptor ? descriptor.value : undefined;
                 };
                 const status = value('status');
-                if (!['pending', 'running', 'paused', 'closed', 'collapsed'].includes(status as string)) return undefined;
+                if (!['pending', 'running', 'closed', 'collapsed'].includes(status as string)) return undefined;
                 const appInstanceId = value('appInstanceId');
                 return { appId: candidateId as AppID, status: status as AppDiscoveryInfo['status'],
                     ...(typeof appInstanceId === 'string' ? { appInstanceId } : {}) };
@@ -406,10 +406,10 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                 instanceBound: false,
                 invalidTargetMessage: 'Select a pending or closed application by App ID from the current Desktop application list.',
                 execute: id => this.desktop.openApp(id) },
-            { action: 'close', statuses: ['running', 'collapsed', 'paused'],
-                description: 'Close a running, collapsed, or paused application using its App ID from the current Desktop application list.',
+            { action: 'close', statuses: ['running', 'collapsed'],
+                description: 'Close a running or collapsed application using its App ID from the current Desktop application list.',
                 instanceBound: true,
-                invalidTargetMessage: 'Select a running, collapsed, or paused application with a live instance by App ID from the current Desktop application list.',
+                invalidTargetMessage: 'Select a running or collapsed application with a live instance by App ID from the current Desktop application list.',
                 execute: (id, instanceId) => this.desktop.closeApp(id, instanceId) },
             { action: 'collapse', statuses: ['running'], description: 'Collapse an application.', instanceBound: true,
                 execute: (id, instanceId) => this.desktop.collapseApp(id, instanceId) },

@@ -22,17 +22,14 @@ import {
     type AppLaunchConfig,
     // Third-party Apps
     AppRegistry,
-    installNpmPackage,
-    parseInstallSource,
-    resolveCatalog,
-    resolveCatalogOptionsFromConfig,
-    searchCatalog,
     type AppConfigEntry,
     type AppRegistryEntry,
     type AppRegistryFailure,
-    type CatalogSearchResult,
-    type ResolvedCatalog
 } from '@aotui/runtime';
+import { installNpmPackage, removeInstalledApp } from '../app-distribution/npm-installer.js';
+import { parseInstallSource } from '../app-distribution/sources.js';
+import { resolveCatalog, resolveCatalogOptionsFromConfig, type ResolvedCatalog } from '../app-distribution/catalog-resolver.js';
+import { searchCatalog, type CatalogSearchResult } from '../app-distribution/catalog.js';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
@@ -126,7 +123,7 @@ export class DesktopManager {
      * Chat/conversation is handled by ConversationManager in the Product Layer.
      * 
      * [Option D] Third-party apps are installed via AppRegistry.installAll()
-     * using config-driven workerScript from ~/.agentina/config.json
+     * using the Runtime package Worker
      * 
      * @param desktopId - Optional: specify a custom Desktop ID (for historical topics)
      * @param config - Optional: runtime config to inject into apps (e.g. projectPath)
@@ -313,7 +310,7 @@ export class DesktopManager {
     }
 
     async removeApp(name: string): Promise<void> {
-        await this.appRegistry.remove(name);
+        await removeInstalledApp(this.appRegistry, name);
     }
 
     async setAppEnabled(name: string, enabled: boolean): Promise<void> {

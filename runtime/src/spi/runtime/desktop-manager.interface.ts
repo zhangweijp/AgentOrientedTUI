@@ -8,8 +8,6 @@ export interface IDesktopManager {
     create(desktopId?: DesktopID, context?: IRuntimeContext): Promise<DesktopID>;
     get(desktopId: DesktopID): IDesktop | undefined;
     listDesktopIds(): DesktopID[];
-    suspend(desktopId: DesktopID): Promise<void>;
-    resume(desktopId: DesktopID): Promise<void>;
     beginShutdown(): RuntimeCloseHandle;
     beginDesktopShutdown(id: DesktopID, options?: DesktopCloseOptions): DesktopCloseHandle;
 }

@@ -52,7 +52,6 @@ export type { Observation, ObservationSelection, ObservationGrant } from './core
 
 export {
     AOTUIError,
-    ERROR_CODES,
     createDesktopId,
     createAppId,
     createViewId,
@@ -71,14 +70,11 @@ export type {
     DesktopCloseOptions,
     DesktopCloseReport,
     DesktopID,
-    DesktopStatus,
     ErrorCode,
     IDesktop,
     IKernel,
     InteractionCloseReport,
-    LLMOutputEvent,
-    LLMOutputEventMeta,
-    LLMOutputListener,
+    LLMUsageEvent,
     ToolError,
     ToolResult,
     ReinitializeDesktopAppsOptions,
@@ -98,24 +94,3 @@ export type { StateStorageBackend } from './engine/app/state-storage-host.js';
 export { AppRegistry } from './engine/app/registry.js';
 export type { LoadedApp, AppRegistryEntry, AppRegistryOptions, AppRegistryInstallOptions, AppRegistryFailure, AppDiscoveryResult, AppInstallResult } from './engine/app/registry.js';
 export type { TUIConfig, AppConfigEntry } from './engine/app/config.js';
-
-// ============================================================================
-// 🟢 Public: App Distribution Helpers
-// Used by Product Layer / CLI for discovery and installation workflows
-// ============================================================================
-export {
-    searchCatalog,
-    type CatalogSearchResult
-} from './cli/catalog.js';
-export {
-    resolveCatalog,
-    resolveCatalogOptionsFromConfig,
-    type ResolvedCatalog
-} from './cli/catalog-resolver.js';
-export {
-    parseInstallSource,
-} from './cli/sources.js';
-export {
-    installNpmPackage,
-} from './cli/npm-installer.js';
-

@@ -8,10 +8,7 @@ import { exportTypeBoxSchema, schemaDeclarationError, TypeBoxSchemaExportError }
 
 const ORDINARY_INVOKER_ABI = 'ordinary-invoker/v4' as const;
 
-/** JSON values captured from TypeBox and normalized by Runtime. */
-export type JsonSchemaValue = JsonValue;
-
-export type JsonSchemaObject = Readonly<Record<string, JsonSchemaValue>>;
+export type JsonSchemaObject = Readonly<Record<string, JsonValue>>;
 
 type TypeBoxObjectSchema = Type.TSchema & {
     readonly type: 'object';

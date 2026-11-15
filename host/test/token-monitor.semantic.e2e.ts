@@ -1,3 +1,4 @@
+import type { IDesktop } from '@aotui/runtime';
 /** Real Token Monitor app + default Runtime/Node Worker; all usage is local and deterministic. */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -65,19 +66,6 @@ const originalEnv = new Map(envNames.map(name => [name, process.env[name]]));
 const activeContexts = new Set<any>();
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-type LLMOutputDesktop = {
-    readonly id: string;
-    getInstalledApps(): readonly { appId: string; name?: string; status: string }[];
-    closeApp(appId: string): Promise<void>;
-    /** Same Desktop extension used by Host's SessionManager LLM-output bridge. */
-    broadcastLLMOutput(payload: { content?: string; reasoning?: string }, type: 'complete', meta?: {
-        model?: string;
-        providerId?: string;
-        modelId?: string;
-        usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
-    }): void;
-};
-
 function messageText(message: any): string {
     if (typeof message.content === 'string') return message.content;
     return Array.isArray(message.content)
@@ -107,7 +95,7 @@ async function eventuallyContext(source: any, check: (context: any) => boolean, 
 
 let runtime: any;
 let source: any;
-let desktop: LLMOutputDesktop | undefined;
+let desktop: IDesktop | undefined;
 let shutdown: Promise<any> | undefined;
 
 try {
@@ -152,7 +140,7 @@ try {
     assert.ok(installIssue, 'Failed init is diagnosed separately');
     assert.equal((installIssue[1] as { code: string }).code, 'APP_INVALID_EXPORT');
     assert.equal((installIssue[1] as { path: string }).path, path.join(broken, 'index.mjs'));
-    desktop = manager.getDesktop(info.desktopId) as LLMOutputDesktop;
+    desktop = manager.getDesktop(info.desktopId) ?? undefined;
     assert.ok(desktop, 'Host installed the app on a real Runtime Desktop');
     assert.equal(info.thirdPartyAppCount, 1);
     assert.deepEqual(desktop.getInstalledApps().map(candidate => candidate.name), ['token_monitor']);
@@ -168,11 +156,9 @@ try {
     } finally { release(initial); }
 
     // Host's normal bridge sends this through Desktop -> AppManager -> WorkerHost -> Worker Runtime -> SDK hook.
-    desktop.broadcastLLMOutput({ content: 'local usage fixture' }, 'complete', {
-        model: 'Token Monitor local fixture',
-        providerId: 'aotui-local-fixture',
-        modelId: 'token-monitor-test-model',
-        usage: { promptTokens: 750, completionTokens: 0, totalTokens: 750 },
+    desktop.broadcastLLMUsage({
+        timestamp: Date.now(), providerId: 'aotui-local-fixture', modelId: 'token-monitor-test-model',
+        promptTokens: 750, completionTokens: 0, totalTokens: 750,
     });
     const threshold = await eventuallyContext(source, context => {
         const [view] = monitorViews(context);
@@ -183,7 +169,6 @@ try {
         assert.equal(monitorViews(threshold).length, 1, 'One current Monitor View is projected');
         assert.ok(warningView!.includes('Warn threshold: 75 %'));
         for (const metadata of [
-            'Token Monitor local fixture',
             'aotui-local-fixture',
             'token-monitor-test-model',
             '750 | 0 | 750 | 75%',
@@ -192,11 +177,9 @@ try {
         }
     } finally { release(threshold); }
 
-    desktop.broadcastLLMOutput({ content: 'updated local usage fixture' }, 'complete', {
-        model: 'Token Monitor local fixture',
-        providerId: 'aotui-local-fixture',
-        modelId: 'token-monitor-test-model',
-        usage: { promptTokens: 900, completionTokens: 0, totalTokens: 900 },
+    desktop.broadcastLLMUsage({
+        timestamp: Date.now(), providerId: 'aotui-local-fixture', modelId: 'token-monitor-test-model',
+        promptTokens: 900, completionTokens: 0, totalTokens: 900,
     });
     const latest = await eventuallyContext(source, context => {
         const [view] = monitorViews(context);
@@ -212,9 +195,9 @@ try {
     await desktop.closeApp(app.appId);
     assert.equal(desktop.getInstalledApps().find(candidate => candidate.appId === app.appId)?.status, 'closed',
         'Closing Token Monitor completes its real Worker unmount and app cleanup');
-    desktop.broadcastLLMOutput({ content: 'post-close usage fixture' }, 'complete', {
-        model: 'Token Monitor local fixture', providerId: 'aotui-local-fixture', modelId: 'token-monitor-test-model',
-        usage: { promptTokens: 950, completionTokens: 0, totalTokens: 950 },
+    desktop.broadcastLLMUsage({
+        timestamp: Date.now(), providerId: 'aotui-local-fixture', modelId: 'token-monitor-test-model',
+        promptTokens: 950, completionTokens: 0, totalTokens: 950,
     });
     const closed = await eventuallyContext(source, context => monitorViews(context).length === 0, 'no Monitor View after app close');
     release(closed);

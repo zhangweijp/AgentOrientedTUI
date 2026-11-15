@@ -11,7 +11,6 @@ vi.mock('./worker-sandbox.js', () => ({ WorkerSandbox: class {
         return this.cleaning = (async () => { const cleaning = controls.clean(this);await this.installing?.catch(() => {});this.released = await cleaning;this.state = 'settled';return this.getCloseReport(); })(); }
     delete() { if (this.intent === 'close') return Promise.reject(Error('LIFECYCLE_CONFLICT'));this.deleteCalls++;this.intent = 'delete';return Promise.resolve(); }
     async reinitialize(reason?: string) { this.reinitializeCalls.push(reason);await controls.reinitialize(this, reason); }
-    async pause() { this.status = 'paused'; }async resume() { this.status = 'running'; }
 } }));
 import { AppManager } from './manager.js';
 import { WorkerSandbox } from './worker-sandbox.js';

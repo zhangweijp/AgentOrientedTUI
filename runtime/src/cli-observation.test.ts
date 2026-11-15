@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAppInteraction, createSnapshotCore, createViewOwnedTools, refKey } from './core/index.js';
 import type { AppInteraction, AppInteractionPolicy } from './core/index.js';
 
-const cli = transformSync(readFileSync(new URL('./cli.ts', import.meta.url), 'utf8'), { loader: 'ts', target: 'es2022' }).code;
+const cli = transformSync(readFileSync(new URL('../../host/src/app-distribution/cli.ts', import.meta.url), 'utf8'), { loader: 'ts', target: 'es2022' }).code;
 const example = readFileSync(new URL('../../demo-apps/aotui-ide/examples/local-scoped-ide.mjs', import.meta.url), 'utf8');
 // Extract the actual operations without depending on the removed TypeScript JS compiler API.
 function extract(source: string, selector: string, read: (node: Rule.Node, code: SourceCode) => string = (node, code) => code.getText(node)): string {

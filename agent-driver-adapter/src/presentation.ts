@@ -4,10 +4,9 @@ export function formatTimestamp(timestamp: number): string {
     return date.toISOString().replace('T', ' ').slice(0, 19);
 }
 
-export function formatAppStatus(status: 'pending' | 'running' | 'paused' | 'closed' | 'collapsed'): string {
+export function formatAppStatus(status: 'pending' | 'running' | 'closed' | 'collapsed'): string {
     switch (status) {
         case 'running': return 'running';
-        case 'paused': return 'paused';
         case 'pending': return 'available (not started)';
         case 'closed': return 'not launched';
         case 'collapsed': return 'minimized';

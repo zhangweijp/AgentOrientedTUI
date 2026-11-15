@@ -21,10 +21,9 @@ export interface AppReinitializeContext extends AppContext {
  * 控制 App 何时触发 UpdateSignal。
  * 
  * - 'auto' (默认): DOM 变化自动触发 UpdateSignal
- * - 'manual': 仅显式调用 emitSignal() 时触发
  * - 'never': 永不触发信号 (被动 App，如 Thought Recorder)
  */
-export type SignalPolicy = 'auto' | 'manual' | 'never';
+export type SignalPolicy = 'auto' | 'never';
 
 /**
  * App Kernel Configuration
@@ -65,7 +64,6 @@ export interface AppKernelConfig {
      * 控制此 App 何时触发 UpdateSignal 通知 Agent。
      * 
      * - 'auto' (默认): DOM 变化自动触发，适合交互式 App
-     * - 'manual': 仅显式调用时触发，适合批量更新场景
      * - 'never': 永不触发，适合被动 App（如 Thought Recorder）
      * 
      * @default 'auto'

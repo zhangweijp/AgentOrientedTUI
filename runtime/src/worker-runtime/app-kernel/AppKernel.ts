@@ -19,7 +19,7 @@ import type {
     AppContext,
     AppKernelConfig,
     AppLaunchConfig,
-    IRefExporter, AppInstance, ExternalAppEvent, RuntimeContext, TUIAppFactory,
+    IRefExporter, AppInstance, RuntimeContext, TUIAppFactory,
 } from '../../spi/index.js';
 import type { IRefBinding, RefValueCheck } from '../../spi/app/ref-exporter.interface.js';
 import { AOTUIError } from '../../spi/core/errors.js';
@@ -35,7 +35,7 @@ import type { AppStatePersistence } from '../../spi/runtime/state-persistence.in
 import { SnapshotDataError } from '../../core/snapshot/json.js';
 import { randomUUID } from 'node:crypto';
 import { closeError } from '../../engine/core/close-handle.js';
-import type { LLMOutputEvent } from '../../spi/core/llm-output.js';
+import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
 
 /**
  * App Kernel Implementation
@@ -245,14 +245,8 @@ export class AppKernel implements IRefExporter {
     //  Private: View Initialization
     // ─────────────────────────────────────────────────────────────
 
-    dispatchExternalEvent(event: ExternalAppEvent): boolean {
-        if (!this.instance || this.closing || this.projectionOwner.signal.aborted) return false;
-        this.instance.onExternalEvent?.(event);
-        return true;
-    }
-
-    dispatchLLMOutput(event: LLMOutputEvent): void {
-        if (!this.closing && !this.projectionOwner.signal.aborted) this.instance?.onLLMOutput?.(event);
+    dispatchLLMUsage(event: LLMUsageEvent): void {
+        if (!this.closing && !this.projectionOwner.signal.aborted) this.instance?.onLLMUsage?.(event);
     }
 
     private async initializeInstance(): Promise<void> {

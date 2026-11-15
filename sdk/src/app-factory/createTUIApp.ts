@@ -110,8 +110,7 @@ export async function mountPreactApp(RootComponent: ComponentType, container: HT
 
     return {
         whenCommitted: whenRenderCommitted,
-        onExternalEvent: event => dispatchDOMAppEvent(container, 'aotui:external-event', event),
-        onLLMOutput: event => dispatchDOMAppEvent(container, 'aotui:llm-text', { ...event, id: `llm_${event.timestamp}` }),
+        onLLMUsage: event => dispatchDOMAppEvent(container, 'aotui:llm-usage', event),
         close,
     };
 }

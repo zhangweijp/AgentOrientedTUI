@@ -5,6 +5,7 @@
  */
 
 import type { DesktopID, AppID } from '../core/types.js';
+import type { LLMUsageEvent } from '../core/llm-usage.js';
 import type { UpdateSignal } from '../core/signals.js';
 import type { IRuntimeContext } from './context.interface.js'; // New
 import type { ShutdownOptions, DesktopCloseOptions, DesktopCloseHandle, RuntimeCloseHandle } from './close.interface.js';
@@ -38,7 +39,7 @@ export interface AppDiscoveryInfo {
     /** Runtime-owned identity of the current Worker execution, absent when no execution is active. */
     readonly appInstanceId?: string;
     readonly name?: string;
-    readonly status: 'pending' | 'running' | 'paused' | 'closed' | 'collapsed';
+    readonly status: 'pending' | 'running' | 'closed' | 'collapsed';
     readonly description?: string;
     readonly whatItIs?: string;
     readonly whenToUse?: string;
@@ -48,6 +49,8 @@ export interface IDesktop {
     getAppInteraction(appId: string, expectedInstanceId: string, policy?: AppInteractionPolicy): AppInteractionResult;
     beginClose(options?: DesktopCloseOptions): DesktopCloseHandle;
     id: DesktopID;
+
+    broadcastLLMUsage(event: LLMUsageEvent): void;
 
     /** Installed application catalog used by Semantic context and lifecycle controls. */
     getInstalledApps(): readonly AppDiscoveryInfo[];
@@ -59,12 +62,10 @@ export interface IDesktop {
      * 
      * App 运行在独立的 Worker Thread 中。
      * 
-     * [C1 Fix] workerScriptPath 现在是可选的，默认使用 Runtime 内置的 worker-runtime
      */
     installDynamicWorkerApp(
         appModulePath: string,
         options?: AppInteractionOptions & {
-            workerScriptPath?: string;
             appId?: string;
             name?: string;
             /** [RFC-013] App description for Agent */
@@ -88,7 +89,6 @@ export interface IDesktop {
         whatItIs?: string;
         whenToUse?: string;
         modulePath: string;
-        workerScriptPath?: string;
         config?: import('../app/app-config.interface.js').AppLaunchConfig;
     }): Promise<string>;
 
@@ -140,17 +140,14 @@ export interface IKernel {
      * 
      * @param desktopId - 目标桌面 ID
      * @param appModulePath - App 模块路径
-     * @param workerScriptPath - Worker 脚本路径 (可选，默认使用 Runtime 内置)
      * @param options - 可选配置
      * @returns 分配的 appId
      * 
-     * [C1 Fix] workerScriptPath 现在是可选的
      */
     installDynamicWorkerApp(
         desktopId: DesktopID,
         appModulePath: string,
         options?: AppInteractionOptions & {
-            workerScriptPath?: string;
             appId?: string;
             name?: string;
             /** [RFC-013] App description for Agent */
@@ -173,9 +170,6 @@ export interface IKernel {
         options?: ReinitializeDesktopAppsOptions
     ): Promise<ReinitializeDesktopAppsResult>;
 
-    // [H3 FIX] Changed from void to Promise<void> - Desktop methods are async
-    suspend(desktopId: DesktopID): Promise<void>;
-    resume(desktopId: DesktopID): Promise<void>;
 
     /**
      * [RFC-015] 删除 Desktop

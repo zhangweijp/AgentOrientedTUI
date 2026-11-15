@@ -4,7 +4,6 @@ import { addCloseFailure, createCloseHandle, freezeClose, newCloseState, snapsho
 import type { AppManagerCloseReport } from '../../spi/runtime/close.interface.js';
 import { SignalBus } from './signal-bus.js';
 import { DesktopLogger } from './desktop-logger.js';
-import { LLMOutputChannelService } from './llm-output-channel.js';
 
 function appBarrier() {
     const state = newCloseState('app-manager');state.resourcesReleased = false;
@@ -24,7 +23,7 @@ describe('Desktop actual close ownership', () => {
         expect(Object.isFrozen(snapshot.cleanup)).toBe(true);expect(handle.inspect()).not.toBe(snapshot);
         const report = await handle.completion;await voidPromise;
         expect(report).toMatchObject({ ok: true, resourcesReleased: true, verification: 'managed', state: 'settled', desktops: { accepted: 1, settled: 1, pending: 0 } });
-        expect(snapshot.state).toBe('closing');expect(report.cleanup).toMatchObject({ signalBus: 'done', llmOutput: 'done', logger: 'done' });
+        expect(snapshot.state).toBe('closing');expect(report.cleanup).toMatchObject({ signalBus: 'done', logger: 'done' });
         expect(report.cleanup).not.toHaveProperty('registry');
     });
     it('beginClose closes admission immediately, waits for App cleanup, and shares one close handle', async () => {
@@ -83,14 +82,13 @@ describe('Desktop actual close ownership', () => {
         const child = appBarrier(), skipped = vi.fn(async () => {}), desktop = new Desktop('failed-drain', { appManager: child.manager as any });
         const handle = desktop.beginClose({ beforeClose: skipped });child.release(true);
         expect((await handle.completion).beforeClose).toBe('skipped-drain-failed');expect(skipped).not.toHaveBeenCalled();expect(child.manager.cleanupAsync).toHaveBeenCalledOnce();
-        const bus = new SignalBus(), logger = new DesktopLogger(), llm = new LLMOutputChannelService();
+        const bus = new SignalBus(), logger = new DesktopLogger();
         const cleanBus = vi.spyOn(bus, 'cleanup').mockImplementation(() => { throw Error('private'); });
         const cleanLog = vi.spyOn(logger, 'cleanup').mockImplementation(() => { throw Error('private'); });
-        const cleanLLM = vi.spyOn(llm, 'cleanup');
-        const other = new Desktop('failures', { signalBus: bus, logger, llmOutputChannelService: llm });
+        const other = new Desktop('failures', { signalBus: bus, logger });
         const final = await other.beginClose({ beforeClose: async () => { throw Error('user secret'); } }).completion;
-        expect(final).toMatchObject({ hasFailures: true, resourcesReleased: false, beforeClose: 'failed', cleanup: { signalBus: 'failed', logger: 'failed', llmOutput: 'done' } });
-        expect(cleanBus).toHaveBeenCalledOnce();expect(cleanLog).toHaveBeenCalledOnce();expect(cleanLLM).toHaveBeenCalledOnce();
+        expect(final).toMatchObject({ hasFailures: true, resourcesReleased: false, beforeClose: 'failed', cleanup: { signalBus: 'failed', logger: 'failed' } });
+        expect(cleanBus).toHaveBeenCalledOnce();expect(cleanLog).toHaveBeenCalledOnce();
         expect(JSON.stringify(final)).not.toMatch(/private|user secret/);
     });
     it('uses the single managed AppManager close owner and preserves its report', async () => {

@@ -42,7 +42,6 @@ export type {
   DeepReadonly,
   DefinedViewTypeTool,
   JsonSchemaObject,
-  JsonSchemaValue,
   SchemaOf,
   ToolBinding,
   ToolBindings,
@@ -51,7 +50,7 @@ export type {
   ToolSetMap,
   ViewTypeToolDeclaration,
 } from './tools/view-type-tool.js';
-export { useLLMOutputChannel } from './hooks/useLLMOutputChannel.js';
+export { useLLMUsage } from './hooks/useLLMUsage.js';
 export type {
   AppID,
   ViewID,
@@ -60,8 +59,7 @@ export type {
   ToolResult,
   AppContext,
   AppReinitializeContext,
-  LLMOutputEvent,
-  LLMOutputListener,
+  LLMUsageEvent,
   AppStatePersistence,
   StateValue,
   StateBindingStatus,

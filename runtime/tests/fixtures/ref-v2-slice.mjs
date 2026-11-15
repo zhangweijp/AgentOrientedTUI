@@ -57,13 +57,14 @@ function NewTools({ view, state, tools }) {
 function Root() {
     const [state, set] = useState({ text: 'A', revision: 1, rule: false, defaultValue: 2, enabled: true, show: true, showSecond: true, refType: '', capacityNodes: 8, tag: 0 });
     useLayoutEffect(() => {
-        const receive = event => {
-            const { type, data } = event.detail;
+        const receive = message => {
+            if (message.type !== 'TEST_COMMAND') return;
+            const { command: type, data } = message;
             if (type === 'state') set(previous => ({ ...previous, ...data.patch, tag: data.tag }));
             else if (type === 'mode') { mode = data.mode;parentPort.postMessage({ type: 'REF_V2_CONTROL_ACK', tag: data.tag }); }
             else if (type === 'release') { held.get(data.id)?.();held.delete(data.id);parentPort.postMessage({ type: 'REF_V2_CONTROL_ACK', tag: data.tag }); }
         };
-        document.body.addEventListener('aotui:external-event', receive);return () => document.body.removeEventListener('aotui:external-event', receive);
+        parentPort.on('message', receive);return () => parentPort.off('message', receive);
     }, []);
     useLayoutEffect(() => { parentPort.postMessage({ type: 'REF_V2_COMMITTED', state, tag: state.tag }); }, [state]);
     const tools = useMemo(() => makeTools(state), [state.rule, state.defaultValue, state.refType]);

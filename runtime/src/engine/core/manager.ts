@@ -104,16 +104,6 @@ export class DesktopManager implements IDesktopManager {
     //  Desktop 生命周期
     // ─────────────────────────────────────────────────────────────
 
-    async suspend(desktopId: DesktopID): Promise<void> {
-        const desktop = this.getDesktopOrThrow(desktopId);
-        await desktop.suspend();
-    }
-
-    async resume(desktopId: DesktopID): Promise<void> {
-        const desktop = this.getDesktopOrThrow(desktopId);
-        await desktop.resume();
-    }
-
     private report(): RuntimeCloseReport {
         const state = structuredClone(this.closeState);state.state = this.phase;
         for (const handle of this.closeTargets?.values() ?? []) mergeCloseReport(state, handle.inspect());
@@ -147,16 +137,4 @@ export class DesktopManager implements IDesktopManager {
     // ─────────────────────────────────────────────────────────────
     //  Internal Helpers
     // ─────────────────────────────────────────────────────────────
-
-    /**
-     * 获取 Desktop 或抛出 E_NOT_FOUND 错误
-     */
-    private getDesktopOrThrow(desktopId: DesktopID): Desktop {
-        this.assertActive();
-        const desktop = this.desktops.get(desktopId);
-        if (!desktop) {
-            throw new AOTUIError('DESKTOP_NOT_FOUND', { desktopId });
-        }
-        return desktop;
-    }
 }

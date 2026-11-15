@@ -6,14 +6,15 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createRuntime, type RuntimeOptions } from '../facades/facades.js';
-import { WorkerSandbox } from '../engine/app/worker-sandbox.js';
+import type { RuntimeOptions } from '../facades/facades.js';
 import { createNodeStateStorage } from '../adapters/storage/node-state-storage.js';
 import { DEFAULT_NODE_STATE_LIMITS } from '../engine/app/state-storage-host.js';
 
 const repo=resolve(process.cwd(),'..'),url=(file:string)=>pathToFileURL(file).href;
 const sdkDist=process.env.AOTUI_C03_SDK_DIST??join(repo,'sdk/dist/index.js');
 const runtimeDist=process.env.AOTUI_C03_RUNTIME_DIST??join(repo,'runtime/dist');
+const { createRuntime }: typeof import('../facades/facades.js') = await import(url(join(runtimeDist, 'index.js')));
+const { WorkerSandbox }: typeof import('../engine/app/worker-sandbox.js') = await import(url(join(runtimeDist, 'engine/app/worker-sandbox.js')));
 const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(yes=>{resolve=yes;});return {promise,resolve};};
 async function capture(file:string,body:string){
     await writeFile(file,body);const root=process.env.AOTUI_W08_C1_FACTS_DIR;
@@ -49,8 +50,7 @@ const makeRuntime=(options?: RuntimeOptions)=>createRuntime({worker:{timeoutMs:4
 function sandbox(runtime:any,id='d',app='app'):any{return (runtime.getDesktop(id) as any).appManager.getWorkerSandbox(app);}
 async function install(runtime:any,f:Awaited<ReturnType<typeof fixture>>,id='d',app='app',extra={}){
     if(!(runtime as any).desktopManager.get(id))await runtime.createDesktop(id);
-    // Vitest loads the parent from src; the actual Node Worker must consume built JS.
-    return runtime.installDynamicWorkerApp(id,url(f.app),{appId:app,workerScriptPath:join(runtimeDist,'worker-runtime/index.js'),config:{AOTUI_DATA_DIR:f.data,AOTUI_APP_KEY:'close'},...extra});
+    return runtime.installDynamicWorkerApp(id,url(f.app),{appId:app,config:{AOTUI_DATA_DIR:f.data,AOTUI_APP_KEY:'close'},...extra});
 }
 async function invoke(runtime:any,id='d',app='app',name='set',input={value:1}){
     const instanceId=runtime.getDesktop(id).getInstalledApps().find((item:any)=>item.appId===app)?.appInstanceId;
@@ -156,11 +156,11 @@ it.each(['open','replace'] as const)('C2-27 real Node storage %s crosses a calle
     }finally{finish.resolve();await installing?.catch(()=>{});await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
 },20000);
 
-it('C2-28 two Runtime capacity owners / two Desktop IDs / two script paths are isolated',async()=>{
-    const f=await fixture(),alternate=join(f.dir,'alternate-worker.mjs');await capture(alternate,`import ${JSON.stringify(url(join(runtimeDist,'worker-runtime/index.js')))};`);
+it('C2-28 two Runtime capacity owners / two Desktop IDs are isolated',async()=>{
+    const f=await fixture();
     const a=makeRuntime(),b=makeRuntime();
     try{
-        for(const runtime of [a,b]){await install(runtime,f,'one','app',{config:{AOTUI_DATA_DIR:join(f.dir,runtime===a?'a':'b'),AOTUI_APP_KEY:'close'}});await install(runtime,f,'two','app',{workerScriptPath:alternate,config:{AOTUI_DATA_DIR:join(f.dir,runtime===a?'a':'b'),AOTUI_APP_KEY:'close'}});}
+        for(const runtime of [a,b]){await install(runtime,f,'one','app',{config:{AOTUI_DATA_DIR:join(f.dir,runtime===a?'a':'b'),AOTUI_APP_KEY:'close'}});await install(runtime,f,'two','app',{config:{AOTUI_DATA_DIR:join(f.dir,runtime===a?'a':'b'),AOTUI_APP_KEY:'close'}});}
         const aWorkers=['one','two'].map(id=>sandbox(a,id).workerHost.worker),bWorkers=['one','two'].map(id=>sandbox(b,id).workerHost.worker);expect(new Set([...aWorkers,...bWorkers]).size).toBe(4);
         const aReport=await a.beginShutdown().completion;expect(aReport.ok).toBe(true);expect(aWorkers.every(worker=>worker.threadId===-1)).toBe(true);expect(bWorkers.every(worker=>worker.threadId>0)).toBe(true);
         for(const id of ['one','two'])expect((await invoke(b,id,'app','set',{value:52})).success).toBe(true);
@@ -275,7 +275,7 @@ it('C2-29 emitted createRuntime + real SDK naturally exits a fresh Node child',a
         `import {createRuntime} from ${JSON.stringify(url(join(runtimeDist,'index.js')))};`,
         "const runtime=createRuntime({worker:{timeoutMs:4000,maxWorkers: 1}});",
         "await runtime.createDesktop('d');",
-        `await runtime.installDynamicWorkerApp('d',${JSON.stringify(url(f.app))},{appId:'app',workerScriptPath:${JSON.stringify(join(runtimeDist,'worker-runtime/index.js'))},config:{AOTUI_DATA_DIR:${JSON.stringify(f.data)},AOTUI_APP_KEY:'close'}});`,
+        `await runtime.installDynamicWorkerApp('d',${JSON.stringify(url(f.app))},{appId:'app',config:{AOTUI_DATA_DIR:${JSON.stringify(f.data)},AOTUI_APP_KEY:'close'}});`,
         "const desktop=runtime.getDesktop('d'),box=desktop.appManager.getWorkerSandbox('app'),worker=box.workerHost.worker;",
         "const opened=runtime.getAppInteraction('d','app',box.appInstanceId);",
         "assert.equal(opened.status,'ready');",

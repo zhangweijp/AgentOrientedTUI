@@ -3,7 +3,7 @@ import { act } from 'preact/test-utils';
 import { renderToString } from 'preact-render-to-string';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as SDK from './index.js';
-import { createTUIApp, View, useState, useDataRef, useLLMOutputChannel, useAppRuntimeContext } from './index.js';
+import { createTUIApp, View, useState, useDataRef, useLLMUsage, useAppRuntimeContext } from './index.js';
 import { useContext } from 'preact/hooks';
 import { ViewRuntimeContext } from './contexts/view-runtime-context.js';
 import { AppRuntimeContext } from './context/AppRuntimeContext.js';
@@ -20,9 +20,10 @@ async function mount(Body: () => any, options: { outside?: boolean } = {}) {
     await act(async () => { await kernel.onOpen({ appId: 'app' as any, desktopId: 'desktop' as any }); });
     return { kernel, container: document.getElementById('app-root-app')!, close };
 }
-const currentOutputEvent = 'aotui:llm-text';
-const outputEvents = [currentOutputEvent, 'aotui:llm-output'];
-function emit(name = currentOutputEvent, detail: any = { content: 'value' }) { document.dispatchEvent(new CustomEvent(name, { detail })); }
+const currentOutputEvent = 'aotui:llm-usage';
+const outputEvents = [currentOutputEvent, 'aotui:llm-text'];
+const usage = { timestamp: 10, providerId: 'provider', modelId: 'model', promptTokens: 2, completionTokens: 1, totalTokens: 3 };
+function emit(name = currentOutputEvent, detail = usage) { document.dispatchEvent(new CustomEvent(name, { detail })); }
 const calls = (spy: any) => spy.mock.calls.filter((args: any[]) => outputEvents.includes(args[0]));
 
 describe('C04/C09 SDK root exports and app context', () => {
@@ -42,7 +43,7 @@ describe('C04/C09 SDK root exports and app context', () => {
             'useCallback',
             'useDataRef',
             'useEffect',
-            'useLLMOutputChannel',
+            'useLLMUsage',
             'useMemo',
             'usePersistentState',
             'useReducer',
@@ -55,7 +56,7 @@ describe('C04/C09 SDK root exports and app context', () => {
         for (const name of [
             'ViewRegistry', 'createInlineView', 'useViewSelector', 'useRefRegistry',
             'defineParams', 'escapeHtml', 'escapeJsonForAttr', 'useAppConfig',
-            'useAppEnv', 'useLLMOutputHistory', 'useViewSnapshotTool',
+            'useAppEnv', 'useLLMOutputChannel', 'useLLMOutputHistory', 'useViewSnapshotTool',
             'createToolBindings', 'ToolRef', 'useViewContext',
         ]) {
             expect(Object.hasOwn(SDK, name), name).toBe(false);
@@ -123,16 +124,15 @@ describe('C01/C02 actual component capability honesty', () => {
 describe('C03–C06 actual component subscriptions', () => {
     it('subscribes during commit to the current DOM event and cleans it up exactly', async () => {
         const add = vi.spyOn(document, 'addEventListener'), remove = vi.spyOn(document, 'removeEventListener'), received: any[] = [];let update!: () => void;
-        function Body() { const [revision, set] = useState(1);update = () => set(2);useLLMOutputChannel(e => received.push({ revision, event: e }));return null; }
+        function Body() { const [revision, set] = useState(1);update = () => set(2);useLLMUsage(e => received.push({ revision, event: e }));return null; }
         const x = await mount(Body, { outside: true });expect(x.kernel.getViewOwnedViewInstances()).toHaveLength(0);expect(calls(add)).toHaveLength(1);
-        emit(currentOutputEvent, { content: 'content' });emit(currentOutputEvent, { reasoning: 'reasoning' });emit(currentOutputEvent, { meta: { usage: { totalTokens: 3 } } });expect(received).toHaveLength(3);
-        expect(received[0].event.content).toBe('content');expect(received[1].event.reasoning).toBe('reasoning');expect(received[2].event.meta.usage.totalTokens).toBe(3);
-        emit('aotui:llm-output', { content: 'retired alias' });expect(received).toHaveLength(3);
+        emit();expect(received).toEqual([{ revision: 1, event: usage }]);
+        emit('aotui:llm-text');expect(received).toHaveLength(1);
         await act(update);emit();expect(received.at(-1).revision).toBe(2);expect(calls(add)).toHaveLength(1);
-        await x.close();expect(calls(remove)).toHaveLength(1);emit(currentOutputEvent);emit('aotui:llm-output');expect(received).toHaveLength(4);
+        await x.close();expect(calls(remove)).toHaveLength(1);emit();expect(received).toHaveLength(2);
     });
     it('rejects unavailable live output in a no-document SSR hook environment', () => {
         vi.stubGlobal('document', undefined);
-        expect(() => renderToString(h(() => { useLLMOutputChannel(() => {});return null; }, {}))).toThrow(/SDK_LLM_OUTPUT_UNAVAILABLE.*document event bridge/);
+        expect(() => renderToString(h(() => { useLLMUsage(() => {});return null; }, {}))).toThrow(/SDK_LLM_USAGE_UNAVAILABLE.*document event bridge/);
     });
 });

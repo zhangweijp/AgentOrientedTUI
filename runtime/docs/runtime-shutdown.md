@@ -85,7 +85,7 @@ App 关闭尝试结束后，已知关闭故障会令回调记为 `skipped-drain-
 
 - closing 即拒绝新业务，不能通过之前保存的 Desktop 对象绕过。重复 App/Desktop ID 在活动、关闭中或资源未确认释放时不能覆盖。
 - `getInstalledApps()` 返回独立的目录记录。记录只包含 `AppDiscoveryInfo` 声明的字段，启动配置留在 Runtime 内部。重开 pending 或 closed 的 App 使用内部保存的配置。
-- `Desktop.output` 和 `getLLMOutputChannel()` 返回本实例缓存 facade。关闭后不能新增订阅；旧取消函数只取消旧订阅，无法作用于同 ID 后继。后者保持服务方法形状，但要求本 Desktop ID，不再等于注入的原始 service 对象；错误 ID 为 `DESKTOP_SCOPE_MISMATCH`。关闭后的旧 facade 历史查询为空，push/subscribe/外部 cleanup 拒绝。
+- `Desktop.output` 的信号订阅属于本次 Desktop 实例。关闭时撤销订阅，经旧实例解除订阅只影响旧实例。
 - `logSystem`、`emitSignal` 的迟到诊断无副作用。Logger 按精确 Desktop ID 隔离，包括带冒号的 ID。App 生命周期事件使用同一系统日志；独立 App 操作日志缓存及 `logAppActivity` 已退出。
 - AppManager 与 Kernel 分别最多接受 128 个规定类别的未完成异步业务操作，超额在依赖副作用之前以 `LIFECYCLE_CAPACITY_EXCEEDED` 拒绝。复用操作不重复占 AppManager 槽，清理、释放和查询不占 Kernel 槽，也没有隐藏等待队列。
 

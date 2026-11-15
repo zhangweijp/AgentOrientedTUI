@@ -4,7 +4,7 @@ import { initializationError } from '../../adapters/initialization-error.js';
 import { captureAppLifecycleAck, captureAppCleanupReport } from '../../adapters/app-lifecycle-protocol.js';
 import { withExecutableTools } from '../../adapters/semantic-capability-policy.js';
 import type { AppCleanupReport } from '../../spi/runtime/app-lifecycle.interface.js';
-import type { LLMOutputEventMeta } from '../../spi/core/llm-output.js';
+import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
 import { createStateStorageHost, resolveStateDirectory, type StateStorageBackend } from './state-storage-host.js';
 import { capturePersistenceAck, captureManagedPersistenceReport, DEFAULT_STATE_SESSION_LIMITS, DEFAULT_STATE_TRANSPORT_LIMITS, STATE_SESSION_PROTOCOL } from '../../adapters/storage/state-storage-protocol.js';
 import type { ManagedPersistenceReport } from '../../worker-runtime/state-persistence.js';
@@ -38,7 +38,7 @@ import { closeError } from '../core/close-handle.js';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 
-import type { AppID, DesktopID, ViewID } from '../../spi/index.js';
+import type { AppID, DesktopID } from '../../spi/index.js';
 import { WORKER_DEFAULTS, type WorkerConfig } from '../../spi/config/index.js';
 
 import {
@@ -98,7 +98,7 @@ export interface AppWorkerHostConfig {
 /**
  * Worker 状态
  */
-export type WorkerStatus = 'starting' | 'ready' | 'running' | 'paused' | 'closing' | 'closed' | 'error';
+export type WorkerStatus = 'starting' | 'ready' | 'running' | 'closing' | 'closed' | 'error';
 export interface HostResourceReport {
     readonly state: 'active' | 'closing' | 'settled';
     readonly worker: 'not-created' | 'owned' | 'retiring' | 'exited';
@@ -519,26 +519,6 @@ export class AppWorkerHost {
         }, 'running');
     }
 
-    async pause(): Promise<void> {
-        if (this.status === 'closing' || this.status === 'closed') {
-            throw new Error('Cannot pause an App while shutdown is pending');
-        }
-        await this.sendLifecycleRequest({
-            type: 'APP_PAUSE',
-            requestId: generateRequestId(),
-        }, 'paused');
-    }
-
-    async resume(): Promise<void> {
-        if (this.status === 'closing') {
-            throw new Error('Cannot resume an App while shutdown is pending');
-        }
-        await this.sendLifecycleRequest({
-            type: 'APP_RESUME',
-            requestId: generateRequestId(),
-        }, 'running');
-    }
-
     async reinitialize(reason?: string): Promise<void> {
         this.beginInteractionClose();
         if (this.status === 'closing' || this.status === 'closed') {
@@ -631,59 +611,9 @@ export class AppWorkerHost {
 
     // ════════════════════════════════════════════════════════════════
     //  External Event
-    // ════════════════════════════════════════════════════════════════
-
-    async sendExternalEvent(
-        viewId: ViewID,
-        eventType: string,
-        data: Record<string, unknown>
-    ): Promise<void> {
-        await this.sendRequest<void>({
-            type: 'EXTERNAL_EVENT',
-            requestId: generateRequestId(),
-            viewId,
-            eventType,
-            data,
-        });
-    }
-
-    // ════════════════════════════════════════════════════════════════
-    //  Render
-    // ════════════════════════════════════════════════════════════════
-
-
-    // ════════════════════════════════════════════════════════════════
-    //  [RFC-011] LLM Output Channel
-    // ════════════════════════════════════════════════════════════════
-
-    /**
-     * [RFC-011] Push LLM text to Worker for SDK's useLLMOutputChannel
-     * [RFC-020] Now accepts structured payload { reasoning?, content? }
-     * 
-     * Fire-and-forget: no response expected from Worker
-     */
-    pushLLMOutput(
-        payload: { reasoning?: string; content?: string },
-        type: 'complete',
-        meta?: Pick<LLMOutputEventMeta, 'model' | 'providerId' | 'modelId' | 'usage'>
-    ): void {
+    pushLLMUsage(event: LLMUsageEvent): void {
         if (this.status === 'closing' || this.status === 'closed') return;
-        if (!this.worker) {
-            console.warn('[AppWorkerHost] Cannot push LLM text: Worker not started');
-            return;
-        }
-
-        const totalLength = (payload.reasoning?.length ?? 0) + (payload.content?.length ?? 0);
-        console.log(`[AppWorkerHost] Pushing LLM text to Worker ${this.appId}, total length: ${totalLength}`);
-
-        this.worker.postMessage({
-            type: 'LLM_OUTPUT_PUSH',
-            reasoning: payload.reasoning,
-            content: payload.content,
-            eventType: type,
-            timestamp: Date.now(),
-            meta,
-        } as MainToWorkerMessage);
+        this.worker?.postMessage({ type: 'LLM_USAGE', event } satisfies MainToWorkerMessage);
     }
 
 

@@ -12,7 +12,7 @@ import type { IDesktopManager } from '../spi/runtime/desktop-manager.interface.j
 import { AOTUIError } from '../spi/core/errors.js';
 import type { DesktopCloseOptions, DesktopCloseHandle, RuntimeCloseHandle, RuntimeCloseReport, ShutdownOptions } from '../spi/runtime/close.interface.js';
 import { addCloseFailure, closeError, closeTimeout, closeVoid, createCloseHandle, freezeClose, mergeCloseReport, newCloseState, snapshotClose } from '../engine/core/close-handle.js';
-import { captureToolsEnabled } from '../engine/app/interaction-config.js';
+import { appInstallFields, captureOptions } from '../engine/app/interaction-config.js';
 import { appInteractionUnavailable, type AppInteractionResult } from '../spi/runtime/app-interaction.interface.js';
 import type { AppInteractionPolicy } from '../core/invocation/app-interaction-types.js';
 
@@ -22,7 +22,7 @@ import type { AppInteractionPolicy } from '../core/invocation/app-interaction-ty
  * Responsibilities:
  * - Creates and manages Desktop instances (via IDesktopManager)
  * - Exposes App instance interaction
- * - Manages Desktop lifecycle (create, suspend, resume, close)
+ * - Manages Desktop lifecycle (create and close)
  * 
  */
 export class Kernel implements IKernel {
@@ -124,12 +124,10 @@ export class Kernel implements IKernel {
     /**
      * [Worker-Only] 安装 App
      * 
-     * [C1 Fix] workerScriptPath 现在是可选的，默认使用 Runtime 内置的 worker-runtime
      */
     installDynamicWorkerApp(desktopId: DesktopID, appModulePath: string, options?: Parameters<IKernel['installDynamicWorkerApp']>[2]): Promise<string> {
         try {
-            const toolsEnabled = captureToolsEnabled(options);
-            const captured = { ...options, toolsEnabled };
+            const captured = captureOptions(options, appInstallFields);
             return this.business(() => this.installDynamicWorkerAppAccepted(desktopId, appModulePath, captured));
         } catch (error) { return Promise.reject(error); }
     }
@@ -159,26 +157,6 @@ export class Kernel implements IKernel {
         }
 
         this.assertDesktopAvailable(desktop);return desktop.reinitializeApps(options);
-    }
-
-    /**
-     * [C1 FIX] Now type-safe via IDesktopManager
-     */
-    suspend(desktopId: DesktopID): Promise<void> { return this.business(() => this.suspendAccepted(desktopId)); }
-    private async suspendAccepted(desktopId: DesktopID): Promise<void> {
-        this.assertRuntimeAvailable();
-        const desktop = this.desktopManager.get(desktopId);if (desktop) this.assertDesktopAvailable(desktop);
-        await this.desktopManager.suspend(desktopId);
-    }
-
-    /**
-     * [C1 FIX] Now type-safe via IDesktopManager
-     */
-    resume(desktopId: DesktopID): Promise<void> { return this.business(() => this.resumeAccepted(desktopId)); }
-    private async resumeAccepted(desktopId: DesktopID): Promise<void> {
-        this.assertRuntimeAvailable();
-        const desktop = this.desktopManager.get(desktopId);if (desktop) this.assertDesktopAvailable(desktop);
-        await this.desktopManager.resume(desktopId);
     }
 
     deleteDesktop(desktopId: DesktopID): Promise<void> {

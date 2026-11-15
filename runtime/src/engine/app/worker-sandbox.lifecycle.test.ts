@@ -32,7 +32,7 @@ vi.mock('./worker-host.js', () => ({ AppWorkerHost: class {
     }
     getStatus() { return this.state; }
     getAppInteraction() { control.log.push('scope');return { status: 'rejected', issue: { code: 'APP_INTERACTION_UNAVAILABLE' } }; }
-    pushLLMOutput() { control.log.push('push'); }
+    pushLLMUsage() { control.log.push('push'); }
 } }));
 
 import { WorkerSandbox } from './worker-sandbox.js';
@@ -83,9 +83,8 @@ it('keeps the first close intent and stops new App events and scopes synchronous
     const gate = defer();control.close = gate.promise;
     const closing = s.close();
     await expect(s.delete()).rejects.toMatchObject({ code: 'LIFECYCLE_CONFLICT' });
-    for (const action of [() => s.pause(), () => s.resume(), () => s.reinitialize(), () => s.sendExternalEvent('v', 'e', {})])
-        await expect(action()).rejects.toMatchObject({ code: 'SANDBOX_CLOSED' });
-    s.pushLLMOutput({}, 'complete');
+    await expect(s.reinitialize()).rejects.toMatchObject({ code: 'SANDBOX_CLOSED' });
+    s.pushLLMUsage({ timestamp: 0, providerId: 'p', modelId: 'm', promptTokens: 0, completionTokens: 0, totalTokens: 0 });
     expect(s.getAppInteraction('instance')).toMatchObject({ status: 'rejected', issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });
     expect(control.log).not.toContain('push');
     expect(control.log).not.toContain('scope');

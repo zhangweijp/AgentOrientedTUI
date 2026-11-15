@@ -39,11 +39,10 @@ export interface CloseReport {
     readonly beforeClose: 'not-provided' | 'pending' | 'running' | 'done' | 'failed' | 'skipped-drain-failed' | 'skipped-deadline';
     readonly cleanup: {
         readonly signalBus: 'pending' | 'done' | 'failed' | 'not-owned' | 'unverified';
-        readonly llmOutput: 'pending' | 'done' | 'failed' | 'not-owned' | 'unverified';
         readonly logger: 'pending' | 'done' | 'failed' | 'not-owned' | 'unverified';
     };
     readonly failures: readonly {
-            readonly stage: 'admission' | 'apps' | 'persistence' | 'worker' | 'before-close' | 'signals' | 'llm-output' | 'logger' | 'manager';
+            readonly stage: 'admission' | 'apps' | 'persistence' | 'worker' | 'before-close' | 'signals' | 'logger' | 'manager';
         readonly codes: readonly ('INSTALL_FAILED' | 'DELETE_FAILED' | 'APP_CLOSE_FAILED' | 'APP_CLOSE_DEADLINE_EXCEEDED' | 'RESOURCE_RELEASE_FAILED' |
             'WORKER_ERROR' | 'WORKER_EXITED_UNEXPECTEDLY' | 'WORKER_TERMINATION_FAILED' | 'PERSISTENCE_CLOSE_FAILED' |
             'APP_UNMOUNT_FAILED' | 'APP_DELETE_FAILED' | 'BEFORE_CLOSE_FAILED' | 'BEFORE_CLOSE_SKIPPED' | 'DESKTOP_CLEANUP_FAILED' |

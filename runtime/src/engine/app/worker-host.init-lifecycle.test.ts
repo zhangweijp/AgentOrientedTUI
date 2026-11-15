@@ -51,11 +51,10 @@ beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { for (const host of hosts.splice(0)) host.terminate(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('Worker Host owns exactly one application initialization', () => {
-    it.each(modes.flatMap(mode => ['ready', 'running', 'paused'].map(state => ({ ...mode, state }))))(
+    it.each(modes.flatMap(mode => ['ready', 'running'].map(state => ({ ...mode, state }))))(
         'rejects repeated start for $name in $state while preserving the first instance', async ({ toolsEnabled, state }) => {
             const { host, worker } = make({ toolsEnabled }); const first = host.start(); worker.reply(worker.last); await first;
             if (state !== 'ready') { const opened = host.open(); worker.reply(worker.last); await opened; }
-            if (state === 'paused') { const paused = host.pause(); worker.reply(worker.last); await paused; }
             worker.emit('message', { type: 'SNAPSHOT_PREPARED', draft: draft(host) });
             const before = host.getSemanticSnapshotReport(); const capability = host.hasOrdinaryParametersCapability();
             const listeners = ['message', 'error', 'exit'].map(name => worker.listenerCount(name));

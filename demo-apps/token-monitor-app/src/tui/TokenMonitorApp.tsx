@@ -1,14 +1,14 @@
-import { createTUIApp, View, useCallback, useEffect, useLLMOutputChannel, useRef, useState } from '@aotui/sdk';
-import type { LLMOutputEvent } from '@aotui/sdk';
+import { createTUIApp, View, useCallback, useEffect, useLLMUsage, useRef, useState } from '@aotui/sdk';
+import type { LLMUsageEvent } from '@aotui/sdk';
 import { RootView } from './RootView.js';
 import { MonitorView } from './MonitorView.js';
-import type { TokenUsageSnapshot, TokenMonitorSettings } from '../types.js';
+import type { TokenMonitorSettings } from '../types.js';
 
 function TokenMonitorRoot() {
     const [settings, setSettings] = useState<TokenMonitorSettings>({
         warnThresholdPercent: 75
     });
-    const [history, setHistory] = useState<TokenUsageSnapshot[]>([]);
+    const [history, setHistory] = useState<LLMUsageEvent[]>([]);
     const [modelLimits, setModelLimits] = useState<Record<string, number | null>>({});
     const modelLimitsRef = useRef(modelLimits);
     const modelsDevCacheRef = useRef<{ data?: any; promise?: Promise<any> }>({});
@@ -61,40 +61,20 @@ function TokenMonitorRoot() {
         setSettings(next);
     }, []);
 
-    const handleUsage = useCallback((snapshot: TokenUsageSnapshot) => {
-        setHistory((prev: TokenUsageSnapshot[]) => {
+    const handleUsage = useCallback((snapshot: LLMUsageEvent) => {
+        setHistory((prev: LLMUsageEvent[]) => {
             const next = [...prev, snapshot];
             return next.slice(-10);
         });
     }, []);
 
-    useLLMOutputChannel((event: LLMOutputEvent) => {
-        const usage = event.meta?.usage;
-        if (!usage) {
-            return;
-        }
-
-        const snapshot: TokenUsageSnapshot = {
-            timestamp: event.timestamp,
-            promptTokens: usage.promptTokens,
-            completionTokens: usage.completionTokens,
-            totalTokens: usage.totalTokens,
-            model: event.meta?.model,
-            providerId: event.meta?.providerId,
-            modelId: event.meta?.modelId,
-        };
-
-        handleUsage(snapshot);
-
-        if (snapshot.providerId && snapshot.modelId) {
-            void resolveModelLimit(snapshot.providerId, snapshot.modelId);
-        }
+    useLLMUsage(event => {
+        handleUsage(event);
+        void resolveModelLimit(event.providerId, event.modelId);
     });
 
     const latest = history.length > 0 ? history[history.length - 1] : undefined;
-    const latestKey = latest?.providerId && latest?.modelId
-        ? `${latest.providerId}:${latest.modelId}`
-        : undefined;
+    const latestKey = latest && `${latest.providerId}:${latest.modelId}`;
     const latestMaxTokens = latestKey ? modelLimits[latestKey] ?? null : null;
     const usagePercent = latest && latestMaxTokens
         ? Math.round((latest.totalTokens / latestMaxTokens) * 100)

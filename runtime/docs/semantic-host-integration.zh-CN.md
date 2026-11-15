@@ -127,7 +127,7 @@ Source 构造模型 Tools 时校验 `appName-ViewType-toolName`，例如 `system
 
 Source 的 Desktop 应用列表按话题启用状态筛选，呈现应用用途、状态和 App ID。没有单独禁用的应用时，还呈现最近 5 条系统日志。Host 的 Desktop 预览可显示整个桌面的安装状态，供诊断和展示使用。Agent 从同一份 Context 的应用列表和 Tools 选择操作。
 
-Apps Source 启用时，`system-open_app` 和 `system-close_app` 始终随 Context 提供。空 Desktop、没有符合条件的目标或所有 App 都被单项禁用时，两项定义也相同。调用只接受必填的字符串 `app_id`，使用本轮 Desktop 列表中的 App ID。`open_app` 启动 `pending` 或 `closed` 的已安装应用。`close_app` 关闭 `running`、`collapsed` 或 `paused` 的应用，目标须有当前执行实例。参数不合法或目标在该轮不符合条件时，返回 `INVALID_APP_TARGET`。关闭整个 Apps Source 会移除该 Source 的全部工具。
+Apps Source 启用时，`system-open_app` 和 `system-close_app` 始终随 Context 提供。空 Desktop、没有符合条件的目标或所有 App 都被单项禁用时，两项定义也相同。调用只接受必填的字符串 `app_id`，使用本轮 Desktop 列表中的 App ID。`open_app` 启动 `pending` 或 `closed` 的已安装应用。`close_app` 关闭 `running` 或 `collapsed` 的应用，目标须有当前执行实例。参数不合法或目标在该轮不符合条件时，返回 `INVALID_APP_TARGET`。关闭整个 Apps Source 会移除该 Source 的全部工具。
 
 `system-collapse_app` 与 `system-show_app` 随可用状态和实例动态提供。`close_app`、`collapse_app` 和 `show_app` 绑定到捕获 Context 时的执行实例。调用前重查应用状态和话题启用资格，Runtime 在生命周期入口再同步核对实例。状态变化时返回 `APP_STATE_CHANGED`，实例变化时返回 `APP_INSTANCE_CHANGED`。业务 View 和 App + ViewType Tool 继续随运行中的应用和当前观察发布。
 

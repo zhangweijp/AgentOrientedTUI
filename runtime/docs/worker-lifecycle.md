@@ -15,7 +15,9 @@ const runtime = createRuntime({ worker: { maxWorkers: 4, timeoutMs: 30000 } });
 
 `maxWorkers` 取代旧配置中的 `worker.pool.maxSize`。预热与空闲 Worker 配置已退出。一个 Runtime 的多个 Desktop 共享名额，不同 Runtime 各自计数。独立 AppManager 也拥有自己的限额。App 启动配置可以传递到 Host/Worker，不能改变父级 Runtime 的总容量。
 
-线程创建前先占一个名额。构造失败撤销该次预留，已创建线程等实际退出才归还。满额时拒绝启动，容量原因是 `WORKER_CAPACITY_EXCEEDED`，由安装入口包装为 `INSTALL_FAILED`。自定义 Worker 脚本路径按启动方工作目录解析。
+线程创建前先占一个名额。构造失败撤销该次预留，已创建线程等实际退出才归还。满额时拒绝启动，容量原因是 `WORKER_CAPACITY_EXCEEDED`，由安装入口包装为 `INSTALL_FAILED`。正式安装统一使用 Runtime 随包 Worker。
+
+Desktop 目录报告 `pending`、`running`、`collapsed` 或 `closed`。折叠只影响呈现。关闭结束当前实例，重开或冷重启创建新的实例身份。
 
 `defineRuntimeConfig` 接受普通或 null-prototype 对象上的自有、可枚举数据字段。访问器、未知字段和无效值以 `CONFIG_INVALID` 拒绝，诊断给出字段路径。省略或显式传 `undefined` 使用默认值。
 

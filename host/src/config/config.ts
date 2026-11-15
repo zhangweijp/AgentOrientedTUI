@@ -74,7 +74,6 @@ export interface TuiAppConfigEntry {
 
 export interface TuiInfo {
   version?: number
-  runtime?: Record<string, unknown>
   modelInputLimits?: Record<string, ModelInputLimits>
   apps?: Record<string, TuiAppConfigEntry>
   [key: string]: unknown
@@ -350,7 +349,6 @@ export namespace Config {
     const merged: TuiInfo = {
       ...existing,
       version: typeof existing.version === "number" ? existing.version : 2,
-      runtime: existing.runtime ?? { workerScript: "" },
       apps,
     }
 

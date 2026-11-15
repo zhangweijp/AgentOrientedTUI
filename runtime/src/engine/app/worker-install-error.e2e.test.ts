@@ -1,15 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { build } from 'esbuild';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { AppManager } from './manager.js';
+let AppManager: typeof import('./manager.js').AppManager;
 import { defineRuntimeConfig } from '../../spi/config/index.js';
 
 describe('installation errors across a real Worker and AppManager', () => {
     const root = resolve(process.cwd());
-    let temp: string, workerScript: string;
+    let temp: string;
     beforeAll(async () => {
         temp = await mkdtemp(join(tmpdir(), 'aotui-install-error-'));
         await mkdir(join(temp, 'node_modules'));
@@ -18,9 +17,7 @@ describe('installation errors across a real Worker and AppManager', () => {
         for (const name of ['linkedom', 'preact']) {
             await symlink(join(root, 'node_modules', name), join(temp, 'node_modules', name), 'dir');
         }
-        workerScript = join(temp, 'worker.mjs');
-        await build({ entryPoints: [join(root, 'src/worker-runtime/index.ts')], outfile: workerScript,
-            bundle: true, platform: 'node', format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent' });
+        ({ AppManager } = await import(pathToFileURL(join(root, 'dist/engine/app/manager.js')).href));
     });
     afterAll(async () => { if (temp) await rm(temp, { recursive: true, force: true }); });
 
@@ -31,7 +28,7 @@ describe('installation errors across a real Worker and AppManager', () => {
             id: 'diagnostics' as any, emitSignal() {}, logSystem() {},
         }, { runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 3000, maxWorkers: 1 } }) });
         const installing = manager.install(pathToFileURL(file).href, {
-            appId: id as any, workerScriptPath: workerScript,
+            appId: id as any,
             config: { AOTUI_APP_KEY: id, AOTUI_DATA_DIR: join(temp, 'data-' + id) },
         });
         return { manager, installing, sandbox: manager.getWorkerSandbox(id as any) };

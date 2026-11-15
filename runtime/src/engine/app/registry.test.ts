@@ -66,17 +66,6 @@ describe('AppRegistry', () => {
             expect(config.apps).toEqual({});
         });
 
-        it('rejects an invalid shared Worker script before changing discovery', async () => {
-            const registry = new AppRegistry({ configPath });
-            const directory = await writeApp('healthy');
-            await registry.registerTransient('local:' + directory);
-            await fs.writeFile(configPath, JSON.stringify({ version: 2, runtime: { workerScript: 42 },
-                apps: { healthy: { source: 'local:' + directory, enabled: true } } }));
-            await expect(registry.loadFromConfig()).rejects.toMatchObject({ code: 'CONFIG_INVALID',
-                context: { path: 'runtime.workerScript' } });
-            expect(registry.get('healthy')?.modulePath).toBe(path.join(directory, 'dist/index.mjs'));
-        });
-
         it('should load existing config', async () => {
             // 写入测试配置
             const testConfig = {
@@ -169,75 +158,6 @@ describe('AppRegistry', () => {
             expect(await registry.loadFromEntries([{ name: 'canonical', source: `local:${appDir}`, enabled: true, description: 'second source' } as never]))
                 .toMatchObject([{ name: 'canonical', status: 'failed', issue: { code: 'CONFIG_INVALID' } }]);
             expect(registry.get('canonical')).toBeUndefined();
-        });
-
-        it('should delete managed npm install artifacts on remove', async () => {
-            const registry = new AppRegistry({ configPath });
-            await registry.loadFromConfig();
-
-            const installRoot = path.join(tempDir, '.agentina', 'apps', 'npm', 'scope-agentina__aotui-ide', 'latest');
-            const installedPath = path.join(installRoot, 'node_modules', '@agentina', 'aotui_ide');
-            await fs.mkdir(installedPath, { recursive: true });
-            await fs.writeFile(path.join(installRoot, 'package.json'), JSON.stringify({ name: 'agentina-app-cache', private: true }));
-
-            // @ts-ignore
-            registry['config'].apps['aotui_ide'] = {
-                source: `local:${installedPath}`,
-                enabled: true,
-                originalSource: 'npm:@agentina/aotui-ide',
-                distribution: {
-                    type: 'npm',
-                    packageName: '@agentina/aotui-ide',
-                    installedPath,
-                }
-            };
-            // @ts-ignore
-            registry['apps'].set('aotui_ide', {
-                name: 'aotui_ide',
-                source: `local:${installedPath}`,
-                modulePath: '/mock/module/path', metadata: { app_name: 'aotui_ide', description: 'aotui_ide App' },
-            });
-            // @ts-ignore
-            registry.getDefaultNpmCacheRoot = vi.fn().mockReturnValue(path.join(tempDir, '.agentina', 'apps', 'npm'));
-
-            await registry.remove('aotui_ide');
-
-            await expect(fs.stat(installRoot)).rejects.toThrow();
-            expect(registry.getConfig().apps['aotui_ide']).toBeUndefined();
-        });
-
-        it('should not delete npm artifacts outside managed root on remove', async () => {
-            const registry = new AppRegistry({ configPath });
-            await registry.loadFromConfig();
-
-            const installRoot = path.join(tempDir, 'external-cache', 'latest');
-            const installedPath = path.join(installRoot, 'node_modules', '@agentina', 'aotui_ide');
-            await fs.mkdir(installedPath, { recursive: true });
-
-            // @ts-ignore
-            registry['config'].apps['aotui_ide'] = {
-                source: `local:${installedPath}`,
-                enabled: true,
-                originalSource: 'npm:@agentina/aotui-ide',
-                distribution: {
-                    type: 'npm',
-                    packageName: '@agentina/aotui-ide',
-                    installRoot,
-                    installedPath,
-                }
-            };
-            // @ts-ignore
-            registry['apps'].set('aotui_ide', {
-                name: 'aotui_ide',
-                source: `local:${installedPath}`,
-                modulePath: '/mock/module/path', metadata: { app_name: 'aotui_ide', description: 'aotui_ide App' },
-            });
-            // @ts-ignore
-            registry.getDefaultNpmCacheRoot = vi.fn().mockReturnValue(path.join(tempDir, '.agentina', 'apps', 'npm'));
-
-            await registry.remove('aotui_ide');
-
-            expect(await fs.stat(installRoot)).toBeDefined();
         });
     });
 
@@ -341,7 +261,9 @@ describe('AppRegistry', () => {
             expect(mockDesktop.installDynamicWorkerApp.mock.calls[0][1].toolsEnabled).toBeUndefined();
             mockDesktop.installDynamicWorkerApp.mockClear();
             await expect(registry.installAll(mockDesktop, { interactionModes: [] } as any))
-                .rejects.toMatchObject({ code: 'TOOLS_ENABLED_INVALID' });
+                .rejects.toMatchObject({ code: 'CONFIG_INVALID', context: { path: 'options.interactionModes' } });
+            await expect(registry.installSelected(mockDesktop, ['semantic_app'], { defaultWorkerScript: '/unused' } as never))
+                .rejects.toMatchObject({ code: 'CONFIG_INVALID', context: { path: 'options.defaultWorkerScript' } });
             expect(mockDesktop.installDynamicWorkerApp).not.toHaveBeenCalled();
         });
 

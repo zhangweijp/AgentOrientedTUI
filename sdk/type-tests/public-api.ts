@@ -17,8 +17,7 @@ import {
   type DesktopID,
   type ArgsOf,
   type ItemRefFormatter,
-  type LLMOutputEvent,
-  type LLMOutputListener,
+  type LLMUsageEvent,
   type ListRefFormatter,
   type ToolError,
   type ToolResult,
@@ -54,7 +53,7 @@ import type { ParamType } from '../src/index.js';
 // The live channel takes only a listener.
 // @ts-expect-error The retired options type is not part of the SDK root API.
 import type { LLMOutputChannelOptions } from '../src/index.js';
-import { useLLMOutputChannel, usePersistentState } from '../src/index.js';
+import { useLLMUsage, usePersistentState } from '../src/index.js';
 import './view-type-tool.js';
 
 // @ts-expect-error Launch config is read from useAppRuntimeContext().
@@ -113,8 +112,8 @@ void checkPublicContextShape;
 type PublicTypes = [
   AppContext, AppID, AppReinitializeContext, ArrayRefHandle,
   DeepReadonly<unknown>, DesktopID, ArgsOf<typeof readRecord>,
-  ItemRefFormatter, LLMOutputEvent,
-  LLMOutputListener, ListRefFormatter, ToolError, ToolResult,
+  ItemRefFormatter, LLMUsageEvent,
+  ListRefFormatter, ToolError, ToolResult,
   PersistMeta, PersistOptions<string>, PersistStatus, RefHandle,
   StateBindingStatus, StateFlushReport, StateIssue,
   StateValue,
@@ -130,11 +129,11 @@ type NoViewCloseHandler = AssertNever<Extract<keyof ViewProps, 'onClose'>>;
 type PublicShapeChecks = [NoRefHandleProperties, NoViewCloseHandler];
 void (null as unknown as PublicShapeChecks);
 
-useLLMOutputChannel(() => {});
+useLLMUsage(() => {});
 void useAppEnv;
 void useLLMOutputHistory;
 // @ts-expect-error The live channel accepts no configuration object.
-useLLMOutputChannel(() => {}, { includeHistory: false });
+useLLMUsage(() => {}, { includeHistory: false });
 usePersistentState('public-api-type-check', 0, {
   storageKey: 'explicit-key',
   serialize: value => value,

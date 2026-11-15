@@ -19,12 +19,11 @@ import { AOTUIError } from '../../spi/core/errors.js';
 import type { TUIConfig, AppConfigEntry } from './config.js';
 import type { AppLaunchConfig } from '../../spi/app/app-config.interface.js';
 import type { AppInteractionOptions } from '../../spi/runtime/app-interaction.interface.js';
-import { captureToolsEnabled } from './interaction-config.js';
+import { captureOptions } from './interaction-config.js';
 import { createDefaultConfig, validateConfig } from './config.js';
 // [Option C] ESM-compatible imports for file system access
 import * as fs from 'fs';
 import * as pathModule from 'path';
-import * as os from 'os';
 
 // Re-export
 export type { TUIConfig, AppConfigEntry } from './config.js';
@@ -57,9 +56,14 @@ export interface AppRegistryOptions {
 
 /** Host-owned installation policy; business launch config cannot enable Runtime capabilities. */
 export interface AppRegistryInstallOptions extends AppInteractionOptions {
-    defaultWorkerScript?: string;
     dynamicConfig?: AppLaunchConfig;
 }
+
+const installFields = { dynamicConfig: 'object', toolsEnabled: 'boolean' } as const;
+const entryFields = {
+    name: 'string', source: 'string', enabled: 'boolean', installedAt: 'string',
+    autoStart: 'boolean', originalSource: 'string', distribution: 'object',
+} as const;
 
 export interface AppRegistryFailure {
     readonly name: string;
@@ -127,19 +131,30 @@ export class AppRegistry {
     /** Discover static App manifests from explicit Host configuration. */
     async loadFromEntries(entries: AppRegistryEntry[], options?: { replace?: boolean }): Promise<AppDiscoveryResult[]> {
         if (!Array.isArray(entries)) throw new AOTUIError('CONFIG_INVALID', { reason: 'Expected an array of App entries' });
+        options = captureOptions(options, { replace: 'boolean' });
         if (options?.replace !== false) {
             this.apps.clear();
             this.entryConfigs.clear();
         }
         const seen = new Set<string>();
         return Array.from(entries, (entry, index) => {
-            const path = `apps[${index}].name`;
-            if (!entry || typeof entry.name !== 'string' || !entry.name.trim()) return failedApp(
-                `apps[${index}]`, 'discovery', new AOTUIError('CONFIG_INVALID', { path, reason: 'Provide the App name' }));
-            const { name, ...appEntry } = entry;
-            if (seen.has(name)) return failedApp(name, 'discovery', new AOTUIError('APP_ALREADY_REGISTERED', { appName: name, path }));
-            seen.add(name);
-            return this.loadEntry(name, appEntry);
+            let name = `apps[${index}]`;
+            const path = `${name}.name`;
+            try {
+                const candidate = entry && Object.getOwnPropertyDescriptor(entry, 'name')?.value;
+                if (typeof candidate !== 'string' || !candidate.trim()) {
+                    throw new AOTUIError('CONFIG_INVALID', { path, reason: 'Provide the App name' });
+                }
+                name = candidate;
+                if (seen.has(name)) throw new AOTUIError('APP_ALREADY_REGISTERED', { appName: name, path });
+                seen.add(name);
+                this.apps.delete(name);
+                this.entryConfigs.delete(name);
+                const { name: _name, ...appEntry } = captureOptions(entry, entryFields, 'apps.' + name)!;
+                return this.loadEntry(name, appEntry);
+            } catch (error) {
+                return failedApp(name, 'discovery', error, path);
+            }
         });
     }
 
@@ -159,7 +174,8 @@ export class AppRegistry {
             distribution?: AppConfigEntry['distribution'];
         }
     ): Promise<string> {
-        if (options && Object.hasOwn(options, 'alias')) throw new AOTUIError('CONFIG_INVALID', { reason: 'Registry aliases are not supported; use the generated canonical app_name' });
+        options = captureOptions(options, { force: 'boolean', enabled: 'boolean', autoStart: 'boolean',
+            originalSource: 'string', distribution: 'object' });
         const loaded = this.readManifest(source);
         const name = loaded.name;
 
@@ -228,7 +244,6 @@ export class AppRegistry {
             throw new AOTUIError('APP_NOT_FOUND', { appId: name });
         }
 
-        await this.cleanupInstalledArtifacts(entry);
         const shouldPersistRemoval = this.config.apps[name] !== undefined;
         delete this.config.apps[name];
         this.apps.delete(name);
@@ -308,47 +323,17 @@ export class AppRegistry {
     /**
      * [Option D] 为 Desktop 安装所有已注册的 App (配置驱动)
      * 
-     * 使用 config.json 中的 runtime.workerScript 作为默认 Worker 脚本，
-     * 各 App 可以通过 workerScript 字段覆盖。
-     * 
      * @param desktop - 目标 Desktop
      * @param options - 可选配置
      * @returns 每个 App 的安装或登记结果
      */
-    async installAll(
-        desktop: IDesktop,
-        options?: AppRegistryInstallOptions
-    ): Promise<AppInstallResult[]> {
-        // 获取默认 Worker 脚本路径
-        const defaultWorkerScript = options?.defaultWorkerScript
-            ?? this.config.runtime?.workerScript;
-
-        // [C1 Fix] defaultWorkerScript is now optional
-        // If not provided, Runtime will use its built-in worker-runtime
-
-        return this.installEntries(desktop, Array.from(this.apps.keys()), {
-            defaultWorkerScript,
-            dynamicConfig: options?.dynamicConfig,
-            toolsEnabled: captureToolsEnabled(options),
-        });
+    async installAll(desktop: IDesktop, options?: AppRegistryInstallOptions): Promise<AppInstallResult[]> {
+        return this.installSelected(desktop, Array.from(this.apps.keys()), options);
     }
 
-    async installSelected(
-        desktop: IDesktop,
-        names: string[],
-        options?: AppRegistryInstallOptions
-    ): Promise<AppInstallResult[]> {
-        const defaultWorkerScript = options?.defaultWorkerScript
-            ?? this.config.runtime?.workerScript;
-
-        return this.installEntries(desktop, names, {
-            defaultWorkerScript,
-            dynamicConfig: options?.dynamicConfig,
-            toolsEnabled: captureToolsEnabled(options),
-        });
+    async installSelected(desktop: IDesktop, names: string[], options?: AppRegistryInstallOptions): Promise<AppInstallResult[]> {
+        return this.installEntries(desktop, names, captureOptions(options, installFields) ?? {});
     }
-
-
 
     /** Resolve the generated entry without importing any App code. */
     public resolveModulePath(source: string): string {
@@ -413,13 +398,6 @@ export class AppRegistry {
             if (!validateConfig(config) || Array.isArray(config.apps)) {
                 throw new AOTUIError('CONFIG_INVALID', { path: this.configPath, reason: 'Expected a registry version and App entries' });
             }
-            if (config.runtime !== undefined && (!config.runtime || typeof config.runtime !== 'object' || Array.isArray(config.runtime))) {
-                throw new AOTUIError('CONFIG_INVALID', { path: 'runtime', reason: 'Expected a Runtime configuration object' });
-            }
-            if (config.runtime?.workerScript !== undefined && typeof config.runtime.workerScript !== 'string') {
-                throw new AOTUIError('CONFIG_INVALID', { path: 'runtime.workerScript', reason: 'Expected a Worker script path' });
-            }
-
             return config;
         } catch (error: any) {
             if (error.code === 'ENOENT') {
@@ -444,7 +422,6 @@ export class AppRegistry {
     }
 
     private loadEntry(name: string, entry: AppConfigEntry): AppDiscoveryResult {
-        this.apps.delete(name);
         this.entryConfigs.set(name, { ...entry });
         try {
             if (typeof entry.source !== 'string' || typeof entry.enabled !== 'boolean') {
@@ -453,9 +430,6 @@ export class AppRegistry {
             if (!entry.enabled) return { name, status: 'disabled' };
             const loaded = this.readManifest(entry.source);
             if (name !== loaded.name) throw new AOTUIError('APP_IDENTITY_MISMATCH', { expected: loaded.name, actual: name, path: 'registry.key' });
-            const override = ['alias', 'description', 'whatItIs', 'whenToUse'].find(key => Object.hasOwn(entry, key));
-            if (override) throw new AOTUIError('CONFIG_INVALID', { path: 'apps.' + name + '.' + override,
-                reason: `${override} is App metadata; remove the override and rebuild the App manifest` });
             this.apps.set(name, loaded);
             return { name, status: 'loaded' };
         } catch (error) {
@@ -478,7 +452,6 @@ export class AppRegistry {
             const dynamicConfig: AppLaunchConfig = { ...options.dynamicConfig, AOTUI_APP_KEY: options.dynamicConfig?.AOTUI_APP_KEY ?? name };
             const autoStart = configEntry?.autoStart ?? true;
             const modulePath = app.modulePath;
-            const workerScript = configEntry?.workerScript ?? options.defaultWorkerScript;
 
             try {
                 const { description, whatItIs, whenToUse } = app.metadata;
@@ -487,7 +460,6 @@ export class AppRegistry {
                     const appId = await desktop.installDynamicWorkerApp(
                         modulePath,
                         {
-                            workerScriptPath: workerScript,
                             name,
                             description,
                             whatItIs,
@@ -505,7 +477,6 @@ export class AppRegistry {
                         whatItIs,
                         whenToUse,
                         modulePath,
-                        workerScriptPath: workerScript,
                         config: dynamicConfig,
                         toolsEnabled: options.toolsEnabled,
                     });
@@ -519,87 +490,6 @@ export class AppRegistry {
 
         return results;
     }
-
-    private async cleanupInstalledArtifacts(entry: AppConfigEntry): Promise<void> {
-        if (entry.distribution?.type !== 'npm') {
-            return;
-        }
-
-        const installRoot = this.resolveNpmInstallRoot(entry);
-        if (!installRoot) {
-            return;
-        }
-
-        const allowedRoot = this.getDefaultNpmCacheRoot();
-        const normalizedAllowedRoot = pathModule.resolve(allowedRoot);
-        const normalizedInstallRoot = pathModule.resolve(installRoot);
-
-        if (
-            normalizedInstallRoot !== normalizedAllowedRoot &&
-            !normalizedInstallRoot.startsWith(`${normalizedAllowedRoot}${pathModule.sep}`)
-        ) {
-            console.warn(`[AppRegistry] Skip deleting npm cache outside managed root: ${normalizedInstallRoot}`);
-            return;
-        }
-
-        const fsPromises = await import('fs/promises');
-        await fsPromises.rm(normalizedInstallRoot, { recursive: true, force: true });
-        await this.pruneEmptyParentDirs(pathModule.dirname(normalizedInstallRoot), normalizedAllowedRoot);
-    }
-
-    private resolveNpmInstallRoot(entry: AppConfigEntry): string | null {
-        const explicitInstallRoot = entry.distribution?.installRoot;
-        if (typeof explicitInstallRoot === 'string' && explicitInstallRoot.trim()) {
-            return explicitInstallRoot;
-        }
-
-        const installedPath = entry.distribution?.installedPath;
-        if (typeof installedPath !== 'string' || !installedPath.trim()) {
-            return null;
-        }
-
-        const packageName = entry.distribution?.packageName;
-        if (typeof packageName === 'string' && packageName.trim()) {
-            const nodeModulesSuffix = pathModule.join('node_modules', ...packageName.split('/'));
-            const normalizedInstalledPath = pathModule.normalize(installedPath);
-            if (normalizedInstalledPath.endsWith(nodeModulesSuffix)) {
-                return normalizedInstalledPath.slice(0, normalizedInstalledPath.length - nodeModulesSuffix.length - 1);
-            }
-        }
-
-        const segments = pathModule.normalize(installedPath).split(pathModule.sep);
-        const nodeModulesIndex = segments.lastIndexOf('node_modules');
-        if (nodeModulesIndex > 0) {
-            return segments.slice(0, nodeModulesIndex).join(pathModule.sep) || pathModule.sep;
-        }
-
-        return null;
-    }
-
-    private getDefaultNpmCacheRoot(): string {
-        return pathModule.join(os.homedir(), '.agentina', 'apps', 'npm');
-    }
-
-    private async pruneEmptyParentDirs(startDir: string, stopDir: string): Promise<void> {
-        const fsPromises = await import('fs/promises');
-        let current = pathModule.resolve(startDir);
-        const normalizedStop = pathModule.resolve(stopDir);
-
-        while (current.startsWith(`${normalizedStop}${pathModule.sep}`)) {
-            try {
-                const entries = await fsPromises.readdir(current);
-                if (entries.length > 0) {
-                    break;
-                }
-                await fsPromises.rmdir(current);
-                current = pathModule.dirname(current);
-            } catch {
-                break;
-            }
-        }
-    }
-
-
 }
 
 export type { TUIAppFactory } from '../../spi/index.js';

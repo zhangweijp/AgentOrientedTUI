@@ -4,7 +4,35 @@ import path from 'path';
 import { promises as fs } from 'fs';
 import { DEFAULT_APP_CATALOG, type CatalogData } from './default-catalog.js';
 import { isCatalogData } from './catalog.js';
-import type { CatalogConfig, CatalogTrustKeyConfig } from '../engine/app/config.js';
+
+interface CatalogTrustKeyConfig {
+    keyId: string;
+    algorithm?: 'ed25519';
+    publicKey: string;
+}
+
+interface CatalogConfig {
+    /**
+     * 远端应用目录地址（静态 JSON / API）
+     */
+    url?: string;
+
+    /**
+     * 目录缓存文件路径
+     * 为空时使用 ~/.agentina/cache/app-catalog.json
+     */
+    cachePath?: string;
+
+    /**
+     * 是否强制要求远端目录签名有效
+     */
+    requireSignature?: boolean;
+
+    /**
+     * 受信任的签名公钥集合
+     */
+    trustedKeys?: CatalogTrustKeyConfig[];
+}
 
 export interface CatalogSignature {
     keyId: string;
@@ -48,7 +76,8 @@ export interface ResolvedCatalog {
     warnings: string[];
 }
 
-export function resolveCatalogOptionsFromConfig(config?: CatalogConfig): CatalogResolverOptions {
+export function resolveCatalogOptionsFromConfig(value?: unknown): CatalogResolverOptions {
+    const config = value && typeof value === 'object' ? value as CatalogConfig : undefined;
     return {
         remoteUrl: config?.url ?? process.env.AOTUI_APP_CATALOG_URL,
         cachePath: config?.cachePath,

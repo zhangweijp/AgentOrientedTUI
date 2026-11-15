@@ -18,7 +18,7 @@ describe('Kernel close reporting', () => {
         await desktop.registerPendingApp({ appId: 'registered', name: 'pending_app', modulePath: '/pending' });
         const closing=kernel.beginDesktopShutdown(id,{beforeClose:()=>gate.promise});
         await expect(desktop.openApp('app')).rejects.toHaveProperty('code','DESKTOP_DISPOSED');
-        for(const call of [()=>kernel.reinitializeDesktopApps(id),()=>kernel.suspend(id),()=>kernel.resume(id)])await expect(call()).rejects.toHaveProperty('code','DESKTOP_DISPOSED');
+        for(const call of [()=>kernel.reinitializeDesktopApps(id)])await expect(call()).rejects.toHaveProperty('code','DESKTOP_DISPOSED');
         expect(kernel.getDesktop(id)).toBe(desktop);
         expect(desktop.getInstalledApps()).toMatchObject([{ appId: 'registered', name: 'pending_app', status: 'pending' }]);
         gate.resolve();await closing.completion;await kernel.shutdown();
@@ -34,7 +34,7 @@ describe('Kernel close reporting', () => {
         const childReport=():AppManagerCloseReport=>freezeClose({...snapshotClose(childState),scope:'app-manager'});
         vi.spyOn((desktop as any).appManager,'beginClose').mockReturnValue(createCloseHandle(childReport,gate.promise.then(()=>{childState.state='settled';childState.resourcesReleased=true;return childReport();})));
         const install=vi.spyOn(desktop,'installDynamicWorkerApp'),shutdown=kernel.beginShutdown();
-        for(const call of [()=>kernel.createDesktop(),()=>kernel.installDynamicWorkerApp(id,'/none'),()=>kernel.reinitializeDesktopApps(id),()=>kernel.suspend(id),()=>kernel.resume(id)])await expect(call()).rejects.toHaveProperty('code','RUNTIME_SHUTDOWN');
+        for(const call of [()=>kernel.createDesktop(),()=>kernel.installDynamicWorkerApp(id,'/none'),()=>kernel.reinitializeDesktopApps(id)])await expect(call()).rejects.toHaveProperty('code','RUNTIME_SHUTDOWN');
         expect(install).not.toHaveBeenCalled();expect(kernel.getDesktop(id)).toBe(desktop);
         expect(desktop.getInstalledApps()).toEqual([]);
         gate.resolve();await shutdown.completion;await original().completion;

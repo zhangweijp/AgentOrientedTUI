@@ -7,6 +7,7 @@ import { isAbsolute, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
 let directory: string, app: string, runtimePackage: any, adaptersPackage: any;
+let AppWorkerHost: any;
 const facts: any[] = [];
 const output = process.env.AOTUI_W08_C1_FACTS_DIR;
 const installedConsumer = process.env.AOTUI_PACKAGE_CONSUMER_DIR;
@@ -58,6 +59,7 @@ beforeAll(async () => {
         runtimeDocs = join(modules, '@aotui', 'runtime', 'docs');
         facts.push({ consumer: directory, selfPackageLinks: false, thirdPartyLinks: links, completeCleanInstall: false });
     }
+    ({ AppWorkerHost } = await import(pathToFileURL(join(runtimeDocs, '../dist/engine/app/worker-host.js')).href));
     const document = await readFile(join(runtimeDocs, 'runtime-app-interaction.md'), 'utf8');
     const body = document.match(/<!-- b2-app:start -->\n```js\n([\s\S]*?)\n```\n<!-- b2-app:end -->/)?.[1];if (!body) throw Error('App example markers');
     const executableBody = body.replace("if (args.filePath !== '/open/note.txt')", `if (args.text === 'throw') throw new Error('PRIVATE_CONTROLLED_FAILURE');
@@ -163,7 +165,7 @@ it('rejects invalid tool settings and the retired Host key before registering an
     try {
         await expect(install(runtime, 'd', 'bad-value', 'false' as any)).rejects.toMatchObject({ code: 'TOOLS_ENABLED_INVALID' });
         for (const value of [[], ['view-type-parameters-v1'], undefined]) {
-            await expect(install(runtime, 'd', 'retired', undefined, { interactionModes: value })).rejects.toMatchObject({ code: 'TOOLS_ENABLED_INVALID' });
+            await expect(install(runtime, 'd', 'retired', undefined, { interactionModes: value })).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
         }
         expect(runtime.getDesktop('d').getInstalledApps()).toEqual([]);
     } finally { await runtime.beginShutdown().completion; }
@@ -320,14 +322,19 @@ parentPort.on('message',m=>{
   respond(m);
 });
 `);
+        const start = AppWorkerHost.prototype.start;
+        const override = vi.spyOn(AppWorkerHost.prototype, 'start').mockImplementationOnce(function (this: any) {
+            this.workerScriptPath = script;
+            return start.call(this);
+        });
         try {
-            await expect(install(runtime, 'd', 'a', undefined, { workerScriptPath: script })).rejects.toMatchObject({ code: 'INSTALL_FAILED' });
+            await expect(install(runtime, 'd', 'a')).rejects.toMatchObject({ code: 'INSTALL_FAILED' });
             const installed = runtime.getDesktop('d').getInstalledApps().find((entry: any) => entry.appId === 'a');
             expect(installed).toBeUndefined();
             const report = await runtime.beginShutdown().completion;
             facts.push({ case: `capability-ack-${variant}`, report, installedStatus: installed?.status });
             expect(report).toMatchObject({ resourcesReleased: true, hasFailures: false, verification: 'managed', interactions: { verified: true, retainedOperations: 0, retainedBytes: 0 } });
-        } finally { await runtime.beginShutdown().completion; }
+        } finally { override.mockRestore(); await runtime.beginShutdown().completion; }
     }
 }, 15000);
 
@@ -399,16 +406,15 @@ it.each((['authorize', 'auto-read', 'duplicate-read'] as const).flatMap(stage =>
     }
 }, 25000);
 
-it('B2 C06/10–12/16 public pending/collapse/pause/reopen/reinitialize keeps the trusted setting and permanently closes old clients', async () => {
+it('B2 C06/10–12/16 public pending/collapse/show/reopen/reinitialize keeps the trusted setting and permanently closes old clients', async () => {
     const runtime = makeRuntime();try {
         const id = await runtime.createDesktop('d'), desktop = runtime.getDesktop(id);
         const pending = { appId: 'a', modulePath: pathToFileURL(app).href, toolsEnabled: true };
         await desktop.registerPendingApp(pending); pending.toolsEnabled = false;
         expect(runtime.getAppInteraction(id, 'a', 'missing').issue.code).toBe('APP_INTERACTION_UNAVAILABLE');await desktop.openApp('a');
         const s = scope(runtime), first = await s.observe();await desktop.collapseApp('a');expect(runtime.getAppInteraction(id, 'a', s.instanceId).interaction).toBe(s.client);
-        await runtime.suspend(id);expect(runtime.getAppInteraction(id, 'a', s.instanceId, s.policy).issue.code).toBe('APP_INTERACTION_UNAVAILABLE');
-        const paused = await s.client.invoke(request(first));expect(paused).toMatchObject({ kind: 'refused', code: 'APP_INTERACTION_UNAVAILABLE' });await runtime.resume(id);
-        expect((await s.client.invoke(request(first, 'ordinary', { text: 'change' }, 'resumed'))).receipt.outcome.status).toBe('succeeded');
+        await desktop.showApp('a');
+        expect((await s.client.invoke(request(first, 'ordinary', { text: 'change' }, 'shown'))).receipt.outcome.status).toBe('succeeded');
         await desktop.closeApp('a');expect((await s.client.observe({ viewIds: ['detail'] })).status).toBe('rejected');await desktop.openApp('a');
         const reopened = scope(runtime), next = await reopened.observe();expect(next.source.instanceId).not.toBe(first.source.instanceId);
         const reinitializing = runtime.reinitializeDesktopApps(id);expect(runtime.getAppInteraction(id, 'a', s.instanceId, s.policy).status).toBe('rejected');

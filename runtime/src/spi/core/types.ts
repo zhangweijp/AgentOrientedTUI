@@ -31,6 +31,3 @@ export type AppID = string & { readonly [__brand]: 'AppID' };
 
 /** 视图唯一标识 (Branded Type) */
 export type ViewID = string & { readonly [__brand]: 'ViewID' };
-
-/** Desktop 状态 */
-export type DesktopStatus = 'active' | 'suspended';

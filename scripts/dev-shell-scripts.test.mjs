@@ -9,6 +9,7 @@ test('setup.sh does not rely on root workspace install or include mobile-ai-nati
   assert.equal(content.includes('pnpm install --ignore-workspace'), true);
   assert.equal(content.includes('pnpm install\n'), false);
   assert.equal(content.includes('pnpm --filter ./runtime build'), false);
+  assert.match(content, /^cd host\nnpm link$/m);
 });
 
 test('run.sh builds explicit app/package directories and skips mobile-ai-native-react-native', async () => {

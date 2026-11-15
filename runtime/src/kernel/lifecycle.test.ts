@@ -13,25 +13,6 @@ describe('Kernel Lifecycle Management', () => {
         kernel = new Kernel(desktopManager);
     });
 
-    describe('suspend/resume', () => {
-        // [H3 FIX] Tests updated for async suspend/resume
-        it('suspend throws NOT_FOUND for non-existent desktop', async () => {
-            await expect(kernel.suspend(createDesktopId('non_existent'))).rejects.toThrow(/not found/);
-        });
-
-        it('resume throws NOT_FOUND for non-existent desktop', async () => {
-            await expect(kernel.resume(createDesktopId('non_existent'))).rejects.toThrow(/not found/);
-        });
-
-        it('suspend and resume work on valid desktop', async () => {
-            const id = await kernel.createDesktop();
-
-            // Should not throw (now async)
-            await expect(kernel.suspend(id)).resolves.not.toThrow();
-            await expect(kernel.resume(id)).resolves.not.toThrow();
-        });
-    });
-
     describe('runtime shutdown', () => {
         it('shutdown is idempotent and rejects further Runtime requests', async () => {
             const id1 = await kernel.createDesktop();

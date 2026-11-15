@@ -12,7 +12,7 @@
     },
     "dependencies": {
         "@aotui/sdk": "0.8.0",
-        "preact": "^10.25.4"
+        "preact": "^10.29.1"
     },
     "devDependencies": {
         "@aotui/runtime": "7.0.0",

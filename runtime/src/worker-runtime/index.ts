@@ -31,7 +31,6 @@ import type {
     WorkerError,
     WorkerInitializationDiagnostic,
     RequestID,
-    ViewID,
     AppID,
     DesktopID,
 } from '../spi/worker-protocol/index.js';
@@ -46,7 +45,6 @@ import { captureSnapshotPrepareIssue } from '../core/snapshot/snapshot-support.j
 import { AppKernel } from './app-kernel/AppKernel.js';
 import { captureViewToolCapabilities } from '../adapters/worker-message-capture.js';
 import { invokeTypeParameters } from './ordinary-invocation-v2.js';
-import type { LLMOutputEventMeta } from '../spi/core/llm-output.js';
 
 // [RFC-002] Global Ref Registry from SDK -> REMOVED
 // Ref data is now exported via AppKernel (explicit dependency)
@@ -130,8 +128,6 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
             case 'APP_OPEN':
                 await handleAppOpen(msg.requestId);
                 break;
-            case 'APP_PAUSE':
-            case 'APP_RESUME':
             case 'APP_STOP':
                 sendLifecycleResponse(msg.requestId);
                 break;
@@ -147,12 +143,8 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
             case 'APP_DELETE':
                 await handleAppDelete(msg.requestId);
                 break;
-            case 'EXTERNAL_EVENT':
-                await handleExternalEvent(msg.requestId, msg.viewId, msg.eventType, msg.data);
-                break;
-            case 'LLM_OUTPUT_PUSH':
-                // [RFC-011] Handle LLM text push from main thread
-                handleLLMTextPush(msg as any);
+            case 'LLM_USAGE':
+                app?.dispatchLLMUsage(msg.event);
                 break;
         }
     } catch (error) {
@@ -306,9 +298,7 @@ async function handleAppOpen(requestId: RequestID): Promise<void> {
     }
 
     projectionUnsubscribe?.();
-    if (signalPolicy !== 'manual') {
-        projectionUnsubscribe = openingApp.getProjectionCoordinator().subscribe(schedulePublication);
-    }
+    projectionUnsubscribe = openingApp.getProjectionCoordinator().subscribe(schedulePublication);
     pushSemanticSnapshot();
 
     sendLifecycleResponse(requestId);
@@ -352,40 +342,6 @@ async function handleAppDelete(requestId: RequestID): Promise<void> {
     }
     sendLifecycleResponse(requestId);
 }
-
-async function handleExternalEvent(
-    requestId: RequestID,
-    viewId: ViewID,
-    eventType: string,
-    data: Record<string, unknown>
-): Promise<void> {
-    if (!app?.dispatchExternalEvent({ viewId, type: eventType, data, timestamp: Date.now() })) {
-        sendError(requestId, 'E_NOT_INITIALIZED', 'App instance not initialized');
-        return;
-    }
-
-    sendLifecycleResponse(requestId);
-}
-
-/**
- * [RFC-011] Handle LLM text push from main thread
- * [RFC-020] Now supports structured payload { reasoning?, content? }
- * 
- * Dispatches a custom event to appContainer for SDK's useLLMTextChannel hook.
- */
-function handleLLMTextPush(msg: {
-    reasoning?: string;
-    content?: string;
-    eventType: 'complete';
-    timestamp: number;
-    meta?: Pick<LLMOutputEventMeta, 'model' | 'providerId' | 'modelId' | 'usage'>
-}): void {
-    app?.dispatchLLMOutput({
-        desktopId, type: msg.eventType, timestamp: msg.timestamp,
-        content: msg.content, reasoning: msg.reasoning, meta: msg.meta,
-    });
-}
-
 
 // ============================================================================
 // 辅助函数

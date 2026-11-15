@@ -2,7 +2,7 @@ import type { CancellationSignal } from '../../core/invocation/app-interaction-t
 import type { ViewInstance } from '../../core/tool/view-owned-tools.js';
 import type { ViewSnapshotV2 } from '../../core/snapshot/types.js';
 import type { AppID, DesktopID } from '../core/types.js';
-import type { LLMOutputEvent } from '../core/llm-output.js';
+import type { LLMUsageEvent } from '../core/llm-usage.js';
 import type { IProjectionPort } from '../runtime/projection.interface.js';
 import type { IViewOwnedToolPort } from '../runtime/view-owned-tools.interface.js';
 import type { AppFrameTool, IAppTypeToolPort } from '../runtime/app-type-tools.interface.js';
@@ -42,17 +42,9 @@ export interface RuntimeContext {
     publishFrame(build: () => AppProjectionFrame): void;
 }
 
-export interface ExternalAppEvent {
-    readonly viewId: string;
-    readonly type: string;
-    readonly data: Readonly<Record<string, unknown>>;
-    readonly timestamp: number;
-}
-
 export interface AppInstance {
     close(): void | Promise<void>;
     /** Join already queued commits without waiting for unrelated business work. */
     whenCommitted?(signal: CancellationSignal): Promise<void>;
-    onExternalEvent?(event: ExternalAppEvent): void;
-    onLLMOutput?(event: LLMOutputEvent): void;
+    onLLMUsage?(event: LLMUsageEvent): void;
 }

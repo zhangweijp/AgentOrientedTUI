@@ -1,3 +1,4 @@
+import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
 import type { StateStorageBackend } from './state-storage-host.js';
 /**
  * AppManager - App 安装与生命周期管理
@@ -6,7 +7,7 @@ import type { StateStorageBackend } from './state-storage-host.js';
  * 
  * 职责:
  * - App 安装 (Worker 模式)
- * - App 生命周期 (open/close/pause/resume)
+ * - App 生命周期 (open/close)
  * - App 状态查询
  * - 管理 WorkerSandbox 集合
  * 
@@ -44,16 +45,13 @@ interface InstalledApp extends AppInteractionOptions {
      * [RFC-014] App 状态
      * - 'pending': 已注册但未启动 (懒加载)
      * - 'running': 正在运行
-     * - 'paused': 已暂停
      * - 'closed': 已关闭
      * - 'collapsed': 已折叠
      */
-    status: 'pending' | 'running' | 'paused' | 'closed' | 'collapsed';
+    status: 'pending' | 'running' | 'closed' | 'collapsed';
 
     /** [RFC-014] 懒加载: 模块路径 */
     modulePath?: string;
-    /** [RFC-014] 懒加载: Worker 脚本路径 */
-    workerScript?: string;
 
     /** [RFC-025] Reopen 时复用的启动配置 */
     config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
@@ -90,7 +88,6 @@ type PendingOptions = AppInteractionOptions & {
         whatItIs?: string;
         whenToUse?: string;
         modulePath: string;
-        workerScriptPath?: string;
         config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
         runtimeConfig?: import('../../spi/config/index.js').RuntimeConfig;
     };
@@ -168,7 +165,7 @@ export class AppManager {
         return this.track(id, 'install', async () => {
             const meta: InstalledApp = { appId: id, name: options?.name, description: options?.description, whatItIs: options?.whatItIs,
                 whenToUse: options?.whenToUse, status: 'pending', modulePath: appModulePath,
-                workerScript: options?.workerScriptPath, config: options?.config, runtimeConfig: options?.runtimeConfig,
+                config: options?.config, runtimeConfig: options?.runtimeConfig,
                 toolsEnabled: options?.toolsEnabled };
             this.installedApps.set(id, meta);
             try { await this.installMeta(meta); }
@@ -187,7 +184,7 @@ export class AppManager {
                 __aotuiLifecycle: { startupKind: reinitialize ? 'reinitialize' : 'normal', reason: reinitialize?.reason },
             };
             const worker = new WorkerSandbox({ appId: meta.appId, desktopId: this.desktop.id, name: meta.name, appModulePath: meta.modulePath!,
-                workerScriptPath: meta.workerScript, config,
+                config,
                 runtimeConfig: meta.runtimeConfig ?? this.options.runtimeConfig, workerCapacity: this.workerCapacity,
                 toolsEnabled: meta.toolsEnabled, persistenceBackend: this.options.storageBackend });
             record = this.owned(meta.appId, worker);record.meta = meta;this.workers.set(meta.appId, worker);
@@ -217,7 +214,7 @@ export class AppManager {
         this.assertActive();const id = options.appId ?? this.allocateId();
         if (this.installedApps.has(id) || this.workers.has(id) || this.appTasks.has(id)) throw closeError('APP_ALREADY_EXISTS');
         this.installedApps.set(id, { appId: id, name: options.name, description: options.description, whatItIs: options.whatItIs, whenToUse: options.whenToUse,
-            status: 'pending', modulePath: options.modulePath, workerScript: options.workerScriptPath,
+            status: 'pending', modulePath: options.modulePath,
             config: options.config, runtimeConfig: options.runtimeConfig,
             toolsEnabled });
         this.desktop.logSystem(`Registered pending app: ${id} (${options.name ?? 'unnamed'})`);return id;
@@ -362,16 +359,6 @@ export class AppManager {
         const mapped = this.contribution(record);if (mapped.hasFailures || !report.resourcesReleased) throw closeError('APP_CLOSE_FAILED', mapped);
         this.desktop.logSystem(`Closed application: ${id}`);this.desktop.emitSignal('dom_mutation');
     }
-    async pauseAll(): Promise<void> {
-        this.assertActive();for (const [id, worker] of this.workers) if (worker.status === 'running') {
-            const meta = this.installedApps.get(id);await worker.pause();this.assertActive();if (this.workers.get(id) === worker && this.installedApps.get(id) === meta && meta) meta.status = 'paused';
-        }
-    }
-    async resumeAll(): Promise<void> {
-        this.assertActive();for (const [id, worker] of this.workers) if (worker.status === 'paused') {
-            const meta = this.installedApps.get(id);await worker.resume();this.assertActive();if (this.workers.get(id) === worker && this.installedApps.get(id) === meta && meta) meta.status = 'running';
-        }
-    }
     async collapseApp(id: AppID, expectedInstanceId?: string): Promise<void> { this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'collapsed';this.desktop.logSystem(`Collapsed application: ${id}`);this.desktop.emitSignal('dom_mutation'); }
     async showApp(id: AppID, expectedInstanceId?: string): Promise<void> { this.assertActive();const worker = this.workers.get(id);this.assertExpectedInstance(worker, expectedInstanceId);if (!worker) return;const meta = this.installedApps.get(id);if (meta) meta.status = 'running';this.desktop.logSystem(`Shown application: ${id}`);this.desktop.emitSignal('dom_mutation'); }
     getInstalledApps(): readonly AppDiscoveryInfo[] {
@@ -394,7 +381,8 @@ export class AppManager {
         if (!current()) return appInteractionUnavailable();
         return result;
     }
-    broadcastLLMOutput(payload: { reasoning?: string; content?: string }, type: 'complete', meta?: Parameters<WorkerSandbox['pushLLMOutput']>[2]): void {
-        if (this.phase !== 'active') return;for (const worker of this.workers.values()) worker.pushLLMOutput(payload, type, meta);
+    broadcastLLMUsage(event: LLMUsageEvent): void {
+        if (this.phase !== 'active') return;
+        for (const worker of this.workers.values()) worker.pushLLMUsage(event);
     }
 }

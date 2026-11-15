@@ -173,7 +173,10 @@ function build(name) {
                 }
             }
             const payload = recordInventory(extracted, path.join(target, 'payload.json'));
-            if (pkg === 'runtime') assert.ok(read(path.join(out, payload.file))['dist/cli.js'].mode & 0o111, 'Runtime CLI must be executable');
+            if (pkg === 'runtime') {
+                assert.equal(metadata.bin, undefined);
+                assert.ok(!Object.keys(read(path.join(out, payload.file))).some(file => /^dist\/cli(?:\/|[.-])/.test(file)));
+            }
             built[pkg] = { name: metadata.name, version: metadata.version, tar: relative(tar), sha256: hashFile(tar), payload, compiler: tsc,
                 dependencies: metadata.dependencies, peerDependencies: metadata.peerDependencies, optionalDependencies: metadata.optionalDependencies };
         }, failed && `Requires ${name}-${failed}`);

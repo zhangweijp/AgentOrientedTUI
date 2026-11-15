@@ -67,14 +67,15 @@ function Detail({ state, viewId }) {
 function Root() {
   const [state, set] = useState({ revision: 1, enabled: true, show: true, rule: false, bad: false, tag: 0 });
   useLayoutEffect(() => {
-    const receive = event => {
-      const { type, data } = event.detail;
+    const receive = message => {
+      if (message.type !== 'TEST_COMMAND') return;
+      const { command: type, data } = message;
       if (type === 'mode') { behaviour = data.mode; parentPort.postMessage({ type: 'TEST_CONTROL_ACK', tag: data.tag }); }
       else if (type === 'release') { held.get(data.id)?.(); held.delete(data.id); parentPort.postMessage({ type: 'TEST_CONTROL_ACK', tag: data.tag }); }
       else if (type === 'state') set(current => ({ ...current, ...data.patch, tag: data.tag }));
     };
-    document.body.addEventListener('aotui:external-event', receive);
-    return () => document.body.removeEventListener('aotui:external-event', receive);
+    parentPort.on('message', receive);
+    return () => parentPort.off('message', receive);
   }, []);
   useLayoutEffect(() => { parentPort.postMessage({ type: 'TEST_COMMITTED', state, tag: state.tag }); }, [state]);
 

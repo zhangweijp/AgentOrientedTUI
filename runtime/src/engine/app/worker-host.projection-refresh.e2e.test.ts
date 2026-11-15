@@ -28,6 +28,7 @@ beforeAll(async () => {
     await build({ entryPoints: [join(runtime, 'src/worker-runtime/index.ts')], outfile: workerPath,
         platform: 'node', format: 'esm', bundle: true, packages: 'external', logLevel: 'silent' });
     await build({ stdin: { resolveDir: runtime, sourcefile: 'refresh-app.tsx', loader: 'tsx', contents: `
+        import { parentPort } from 'node:worker_threads';
         import { h, options } from 'preact';
         import { useState, useLayoutEffect, useMemo } from 'preact/hooks';
         import Type from 'typebox';
@@ -53,14 +54,16 @@ beforeAll(async () => {
         function App() {
             const [state,set]=useState({value:0,invalid:false});
             useLayoutEffect(()=>{
-                const event=e=>{ if(e.detail.type==='release') {while(queued.length)queued.shift()();}
-                    if(e.detail.type==='repair')set(s=>({...s,invalid:false}));
-                    if(e.detail.type==='mutate-live')currentRecord.value = 9;
-                    if(e.detail.type==='redraw-file')redrawFile();
-                    if(e.detail.type==='redraw-other')redrawOther();
+                const onCommand = message => {
+                    if (message.type !== 'TEST_COMMAND') return;
+                    if (message.command === 'release') {while(queued.length)queued.shift()();}
+                    if(message.command==='repair')set(s=>({...s,invalid:false}));
+                    if(message.command==='mutate-live')currentRecord.value = 9;
+                    if(message.command==='redraw-file')redrawFile();
+                    if(message.command==='redraw-other')redrawOther();
                 };
-                document.addEventListener('aotui:external-event',event);
-                return ()=>document.removeEventListener('aotui:external-event',event);
+                parentPort.on('message', onCommand);
+                return ()=>parentPort.off('message', onCommand);
             },[]);
             return h(AppTools,{definition:tools,bindings:{
                 change:{execute:args=>{calls++;set({value:args.value,invalid:args.invalid??false});return {success:true,data:{calls}};}},
@@ -103,9 +106,9 @@ describe('real SDK Worker observation refresh', () => {
     it('adopts a new observation without retargeting old Refs or retaining retired source data', async () => {
         const { host, client } = await start(); const initial = await observe(client);
         await invoke(client, initial, 'change', { value: 1 });
-        const waiting = observe(client); await host.sendExternalEvent('workspace' as any, 'release'); const first = await waiting;
+        const waiting = observe(client); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' }); const first = await waiting;
         await invoke(client, first, 'change', { value: 2 });
-        const preparing = client.observe({ all: true }); await host.sendExternalEvent('workspace' as any, 'release');
+        const preparing = client.observe({ all: true }); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
         const next = await preparing; if (next.status !== 'observed') throw Error(next.issue.code);
         expect((await client.preview()).status).toBe('previewed');
         expect(await invoke(client, next.observation, 'read', { record: 'file.selected' }))
@@ -127,7 +130,7 @@ describe('real SDK Worker observation refresh', () => {
         const business = await invoke(client, initial, 'change', { value: 1 });
         expect(business).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { calls: 1 } } } } });
         const observing = observe(client);
-        await host.sendExternalEvent('workspace' as any, 'release');
+        host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
         const next = await observing;
         expect(JSON.stringify(next)).toContain('file:1'); expect(next.tools.map(t => t.name)).toContain('edit');
         const snapshot = (host as any).snapshotReceiver.core.store.readLatest(host.appId).snapshot;
@@ -147,9 +150,9 @@ describe('real SDK Worker observation refresh', () => {
         const { host, client } = await start();
         const initial = await observe(client);
         await invoke(client, initial, 'change', { value: 1 });
-        await host.sendExternalEvent('workspace' as any, 'release');
+        host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
         const first = await observe(client);
-        const event = (name: string) => host.sendExternalEvent('workspace' as any, name);
+        const event = (name: string) => host['worker']!.postMessage({ type: 'TEST_COMMAND', command: name });
         const resultFor = (value: number) => ({ kind: 'receipt', receipt: {
             outcome: { status: 'succeeded', value: { data: { value } } },
         } });
@@ -176,14 +179,14 @@ describe('real SDK Worker observation refresh', () => {
         const { host, client } = await start(); const initial = await observe(client);
         const receipt = await invoke(client, initial, 'change', { value: 1, invalid: true });
         expect(receipt).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { calls: 1 } } } } });
-        const failed = client.observe({ all: true }); await host.sendExternalEvent('workspace' as any, 'release');
+        const failed = client.observe({ all: true }); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
         expect(await failed).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } });
         expect(host.getSemanticSnapshotReport()!.health).toBe('degraded');
-        await host.sendExternalEvent('workspace' as any, 'redraw-other'); await host.sendExternalEvent('workspace' as any, 'release');
+        host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'redraw-other' }); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
         expect(await client.observe({ all: true })).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } });
         const source = (host as any).snapshotReceiver.core.store.readLatest(host.appId);
         expect(source).toMatchObject({ status: 'degraded', lastGood: { id: initial.source.snapshotId } });
-        await host.sendExternalEvent('workspace' as any, 'repair'); await host.sendExternalEvent('workspace' as any, 'release');
+        host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'repair' }); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
         const recovered = await observe(client);
         expect(await invoke(client, recovered, 'stats', {})).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { calls: 1 } } } } });
         expect(receipt).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });

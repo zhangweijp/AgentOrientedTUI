@@ -41,7 +41,7 @@ async function control(x: any, type: string, data: any = {}) {
     const id = ++tag, from = x.messages.length, previousTimeout = x.host.timeout;
     if (previousTimeout < NORMAL_HOST_TIMEOUT_MS) x.host.timeout = NORMAL_HOST_TIMEOUT_MS;
     try {
-        await x.host.sendExternalEvent('ref-v2-probe', type, { ...data, tag: id });
+        x.worker.postMessage({ type: 'TEST_COMMAND', command: type, data: { ...data, tag: id } });
         return await wait(x, m => m.type === (type === 'state' ? 'REF_V2_COMMITTED' : 'REF_V2_CONTROL_ACK') && m.tag === id, from);
     } finally { x.host.timeout = previousTimeout; }
 }

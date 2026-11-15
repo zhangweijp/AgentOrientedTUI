@@ -13,6 +13,7 @@ type Capture =
 
 function appSource(): string {
     return `
+        import { parentPort } from 'node:worker_threads';
         import { h } from 'preact';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
         import Type from 'typebox';
@@ -45,14 +46,15 @@ StatsUI: defineViewTypeTool({
 function Root() {
             const [state, setState] = useState({ mode: 'valid' });
             useLayoutEffect(() => {
-                const onExternalEvent = event => {
-                    const mode = event.detail?.type;
+                const onCommand = message => {
+                    if (message.type !== 'TEST_COMMAND') return;
+                    const mode = message.command;
                     if (mode === 'getter' || mode === 'oversized' || mode === 'recover') {
                         setState({ mode: mode === 'recover' ? 'valid' : mode });
                     }
                 };
-                document.addEventListener('aotui:external-event', onExternalEvent);
-                return () => document.removeEventListener('aotui:external-event', onExternalEvent);
+                parentPort.on('message', onCommand);
+                return () => parentPort.off('message', onCommand);
             }, []);
             return h(AppTools, { definition: fixtureTools0, bindings: {
 StatsUI: { execute: async () => ({ success: true, data: { getterCalls } }) }
@@ -169,7 +171,7 @@ describe('R4 strict JSON capture in a real Worker', () => {
             const publishEvent = async (type: string): Promise<Capture> => {
                 const after = sequence(captures.at(-1));
                 const result = waitForCapture(worker!, captures, after);
-                await host!.sendExternalEvent('detail' as any, type, {});
+                worker!.postMessage({ type: 'TEST_COMMAND', command: type });
                 return result;
             };
 

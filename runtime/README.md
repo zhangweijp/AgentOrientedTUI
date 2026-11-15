@@ -33,6 +33,8 @@ source.dispose();
 
 Use `runtime.getAppInteraction(desktopId, appId, expectedInstanceId, policy?)` for a running App. The ready result contains the bound interaction. Read the current instance ID from the Desktop app list. Use `preview()` for rendering without a calling observation. Use the Desktop close API to end the instance.
 
+AppRegistry registers resolved local App packages and validates their generated manifests. The Host product package `@aotui/system-chat` provides the `agentina` executable, remote catalog discovery, and npm package installation.
+
 ## Current interaction contract
 
 Tool execution is enabled by default. The trusted Host can install with `toolsEnabled: false` to keep View observation and preview read-only. One App/ViewType Tool contract covers ordinary parameters and multiple top-level object or object-list Refs, including optional fields and ordered arrays of Ref names. A whole-array Ref remains a single string input; a multi-selection is an array of strings. Runtime resolves the complete Ref name from the bound Observation and supplies frozen values. A read-only payload does not make the Tool read-only: the App owns business mutation and validation. Worker negotiation, activation, source checks and authorization still apply. The retired `interactionModes` option is rejected.

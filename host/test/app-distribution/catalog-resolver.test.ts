@@ -3,13 +3,13 @@ import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { generateKeyPairSync, sign } from 'crypto';
-import { DEFAULT_APP_CATALOG, type CatalogData } from './default-catalog.js';
+import { DEFAULT_APP_CATALOG, type CatalogData } from '../../src/app-distribution/default-catalog.js';
 import {
     resolveCatalog,
     stableStringify,
     type CatalogSignature,
     type TrustedCatalogKey
-} from './catalog-resolver.js';
+} from '../../src/app-distribution/catalog-resolver.js';
 
 function createFetchResponse(payload: unknown, ok = true, status = 200, statusText = 'OK'): Response {
     return {

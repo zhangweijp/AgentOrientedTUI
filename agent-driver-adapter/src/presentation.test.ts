@@ -4,7 +4,6 @@ import { formatAppStatus, formatTimestamp } from './presentation.js';
 describe('shared presentation helpers', () => {
     it('formats application statuses consistently', () => {
         expect(formatAppStatus('running')).toBe('running');
-        expect(formatAppStatus('paused')).toBe('paused');
         expect(formatAppStatus('pending')).toBe('available (not started)');
         expect(formatAppStatus('closed')).toBe('not launched');
         expect(formatAppStatus('collapsed')).toBe('minimized');

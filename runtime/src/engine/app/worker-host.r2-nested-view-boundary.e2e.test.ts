@@ -13,6 +13,7 @@ type Capture =
 
 function appSource(): string {
     return `
+        import { parentPort } from 'node:worker_threads';
         import { h } from 'preact';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
         import Type from 'typebox';
@@ -52,8 +53,9 @@ function Root() {
                 parentText: 'PARENT_INITIAL_MARKER', injectRawView: false, siblingOpen: true,
             });
             useLayoutEffect(() => {
-                const onExternalEvent = event => {
-                    switch (event.detail?.type) {
+                const onCommand = message => {
+                    if (message.type !== 'TEST_COMMAND') return;
+                    switch (message.command) {
                         case 'inject-raw-view':
                             setState(current => ({ ...current, parentText: 'PARENT_INVALID_ATTEMPT', injectRawView: true }));
                             break;
@@ -64,8 +66,8 @@ function Root() {
                         case 'open-sibling': setState(current => ({ ...current, siblingOpen: true })); break;
                     }
                 };
-                document.addEventListener('aotui:external-event', onExternalEvent);
-                return () => document.removeEventListener('aotui:external-event', onExternalEvent);
+                parentPort.on('message', onCommand);
+                return () => parentPort.off('message', onCommand);
             }, []);
             return h(AppTools, { definition: fixtureTools0, bindings: {
 ParentActionUI: { execute: async () => ({ success: true, data: { owner: 'parent' } }) },
@@ -191,7 +193,7 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
             const sendEvent = async (eventType: string): Promise<Capture> => {
                 const after = sequence(captures.at(-1));
                 const capture = waitForCapture(worker!, captures, after);
-                await host!.sendExternalEvent('parent' as any, eventType, {});
+                worker!.postMessage({ type: 'TEST_COMMAND', command: eventType });
                 return capture;
             };
             const policy = policyForSelection();
