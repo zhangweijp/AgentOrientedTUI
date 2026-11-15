@@ -149,7 +149,8 @@ describe('ModelRegistry Service', () => {
         // Default mock for fs calls
         vi.mocked(fs.mkdir).mockResolvedValue(undefined);
         vi.mocked(fs.writeFile).mockResolvedValue(undefined);
-        vi.mocked(fs.readFile).mockRejectedValue(new Error('File not found'));
+        vi.mocked(fs.readFile).mockReset().mockRejectedValue(new Error('File not found'));
+        mockFetch.mockReset();
     });
 
     afterEach(() => {
@@ -218,8 +219,8 @@ describe('ModelRegistry Service', () => {
             const models = await registry.getModels();
 
             expect(models).toHaveLength(5); // 2 OpenAI + 2 Anthropic + 1 Google
-            expect(models.some(m => m.id === 'openai/gpt-4o')).toBe(true);
-            expect(models.some(m => m.id === 'anthropic/claude-3-5-sonnet-20241022')).toBe(true);
+            expect(models.some(m => m.id === 'gpt-4o')).toBe(true);
+            expect(models.some(m => m.id === 'claude-3-5-sonnet-20241022')).toBe(true);
         });
     });
 
@@ -241,19 +242,10 @@ describe('ModelRegistry Service', () => {
             expect(providers[0].id).toBe('openai');
         });
 
-        it('should use default providers when API fails and no cache exists', async () => {
-            // Mock cache file doesn't exist
+        it('reports that no catalog is available when both the connection and cache fail', async () => {
             vi.mocked(fs.readFile).mockRejectedValueOnce(new Error('File not found'));
-
-            // Mock API failure
             mockFetch.mockRejectedValueOnce(new Error('Network error'));
-
-            const providers = await registry.getProviders();
-
-            // Should return default providers
-            expect(providers.length).toBeGreaterThan(0);
-            expect(providers.some(p => p.id === 'openai')).toBe(true);
-            expect(providers.some(p => p.id === 'anthropic')).toBe(true);
+            await expect(registry.getProviders()).rejects.toThrow('no cache available');
         });
 
         it('should handle HTTP error responses', async () => {
@@ -474,16 +466,16 @@ describe('ModelRegistry Service', () => {
             const models = await registry.getModels();
 
             expect(models).toHaveLength(5);
-            expect(models.map(m => m.id)).toContain('openai/gpt-4o');
-            expect(models.map(m => m.id)).toContain('anthropic/claude-3-5-sonnet-20241022');
+            expect(models.map(m => m.id)).toContain('gpt-4o');
+            expect(models.map(m => m.id)).toContain('claude-3-5-sonnet-20241022');
         });
 
         it('should filter models by providerId', async () => {
             const models = await registry.getModels({ providerId: 'openai' });
 
             expect(models).toHaveLength(2);
-            expect(models.every(m => m.id.startsWith('openai/'))).toBe(true);
-            expect(models.map(m => m.id)).toEqual(['openai/gpt-4o', 'openai/gpt-4o-mini']);
+            expect(models.every(m => m.catalogId?.startsWith('openai/'))).toBe(true);
+            expect(models.map(m => m.id)).toEqual(['gpt-4o', 'gpt-4o-mini']);
         });
 
         it('should only return models from the specified provider', async () => {
@@ -491,11 +483,11 @@ describe('ModelRegistry Service', () => {
             const anthropicModels = await registry.getModels({ providerId: 'anthropic' });
 
             expect(anthropicModels).toHaveLength(2);
-            expect(anthropicModels.every(m => m.id.startsWith('anthropic/'))).toBe(true);
+            expect(anthropicModels.every(m => m.catalogId?.startsWith('anthropic/'))).toBe(true);
             
             // Ensure no models from other providers are included
-            expect(anthropicModels.some(m => m.id.startsWith('openai/'))).toBe(false);
-            expect(anthropicModels.some(m => m.id.startsWith('google/'))).toBe(false);
+            expect(anthropicModels.some(m => m.catalogId?.startsWith('openai/'))).toBe(false);
+            expect(anthropicModels.some(m => m.catalogId?.startsWith('google/'))).toBe(false);
         });
 
         it('should return empty array for non-existent provider', async () => {
@@ -516,7 +508,7 @@ describe('ModelRegistry Service', () => {
 
             expect(models.length).toBeGreaterThan(0);
             expect(models.every(m => m.reasoning === true)).toBe(true);
-            expect(models.some(m => m.id === 'anthropic/claude-3-opus-20240229')).toBe(true);
+            expect(models.some(m => m.id === 'claude-3-opus-20240229')).toBe(true);
         });
 
         it('should filter models by vision capability', async () => {
@@ -524,7 +516,7 @@ describe('ModelRegistry Service', () => {
 
             expect(models.length).toBeGreaterThan(0);
             expect(models.every(m => m.modalities?.input?.includes('image'))).toBe(true);
-            expect(models.some(m => m.id === 'google/gemini-2.0-flash-exp')).toBe(true);
+            expect(models.some(m => m.id === 'gemini-2.0-flash-exp')).toBe(true);
         });
 
         it('should filter models by maxInputCost', async () => {
@@ -532,7 +524,7 @@ describe('ModelRegistry Service', () => {
 
             expect(models.length).toBeGreaterThan(0);
             expect(models.every(m => (m.cost?.input ?? Infinity) <= 1)).toBe(true);
-            expect(models.some(m => m.id === 'openai/gpt-4o-mini')).toBe(true);
+            expect(models.some(m => m.id === 'gpt-4o-mini')).toBe(true);
         });
 
         it('should combine multiple filters', async () => {
@@ -543,7 +535,7 @@ describe('ModelRegistry Service', () => {
             });
 
             expect(models).toHaveLength(1);
-            expect(models[0].id).toBe('openai/gpt-4o-mini');
+            expect(models[0].id).toBe('gpt-4o-mini');
         });
 
         it('should return empty array when no models match filter', async () => {
@@ -559,7 +551,7 @@ describe('ModelRegistry Service', () => {
             const models = await registry.getModels({ maxInputCost: 10 });
 
             // Google model has 0 cost, should be included
-            expect(models.some(m => m.id === 'google/gemini-2.0-flash-exp')).toBe(true);
+            expect(models.some(m => m.id === 'gemini-2.0-flash-exp')).toBe(true);
         });
     });
 
@@ -630,79 +622,15 @@ describe('ModelRegistry Service', () => {
             expect(mockFetch).toHaveBeenCalledTimes(2);
         });
 
-        it('should clear provider registry on refresh', async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: async () => mockModelsDevData,
-            });
+        it('uses the last cached catalog when refresh fails', async () => {
+            mockFetch.mockResolvedValueOnce({ ok: true, json: async () => mockModelsDevData });
+            const before = await registry.getProviders();
 
-            await registry.getProviderRegistry();
-
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: async () => mockModelsDevData,
-            });
-
+            mockFetch.mockRejectedValueOnce(new Error('Network error'));
+            vi.mocked(fs.readFile).mockResolvedValueOnce(JSON.stringify({ data: mockModelsDevData, timestamp: Date.now() }));
             await registry.refresh();
 
-            // Provider registry should be recreated
-            const newRegistry = await registry.getProviderRegistry();
-            expect(newRegistry).toBeDefined();
-        });
-
-        it('should handle refresh errors gracefully', async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: async () => mockModelsDevData,
-            });
-
-            await registry.getProviders();
-
-            // Refresh fails
-            mockFetch.mockRejectedValueOnce(new Error('Network error'));
-
-            // Should use default providers (fallback)
-            await registry.refresh();
-
-            const providers = await registry.getProviders();
-            expect(providers.length).toBeGreaterThan(0); // Should have default providers
-        });
-    });
-
-    describe('Default Provider Configuration', () => {
-        it('should have default providers for major LLM services', async () => {
-            mockFetch.mockRejectedValueOnce(new Error('Network error'));
-            vi.mocked(fs.readFile).mockRejectedValueOnce(new Error('No cache'));
-
-            const providers = await registry.getProviders();
-
-            expect(providers.some(p => p.id === 'openai')).toBe(true);
-            expect(providers.some(p => p.id === 'anthropic')).toBe(true);
-            expect(providers.some(p => p.id === 'google')).toBe(true);
-            expect(providers.some(p => p.id === 'xai')).toBe(true);
-        });
-
-        it('should have default models for each provider', async () => {
-            mockFetch.mockRejectedValueOnce(new Error('Network error'));
-            vi.mocked(fs.readFile).mockRejectedValueOnce(new Error('No cache'));
-
-            const models = await registry.getModels();
-
-            expect(models.length).toBeGreaterThan(0);
-            expect(models.some(m => m.id.includes('gpt'))).toBe(true);
-            expect(models.some(m => m.id.includes('claude'))).toBe(true);
-        });
-
-        it('should have cost information in default models', async () => {
-            mockFetch.mockRejectedValueOnce(new Error('Network error'));
-            vi.mocked(fs.readFile).mockRejectedValueOnce(new Error('No cache'));
-
-            const models = await registry.getModels();
-
-            const modelWithCost = models.find(m => m.cost);
-            expect(modelWithCost).toBeDefined();
-            expect(modelWithCost?.cost?.input).toBeDefined();
-            expect(modelWithCost?.cost?.output).toBeDefined();
+            expect(await registry.getProviders()).toEqual(before);
         });
     });
 

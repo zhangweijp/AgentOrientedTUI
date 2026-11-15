@@ -115,16 +115,16 @@ describe('Bug Fix: Provider Model Filtering', () => {
         expect(deepseekModels).toHaveLength(2);
 
         // Verify all models belong to deepseek provider
-        expect(deepseekModels.every(m => m.id.startsWith('deepseek/'))).toBe(true);
+        expect(deepseekModels.every(m => m.catalogId?.startsWith('deepseek/'))).toBe(true);
 
         // Verify specific models
         expect(deepseekModels.map(m => m.id)).toEqual([
-            'deepseek/deepseek-chat',
-            'deepseek/deepseek-reasoner',
+            'deepseek-chat',
+            'deepseek-reasoner',
         ]);
 
         // CRITICAL: Should NOT include openai/deepseek-compatible
-        expect(deepseekModels.some(m => m.id === 'openai/deepseek-compatible')).toBe(false);
+        expect(deepseekModels.some(m => m.id === 'deepseek-compatible')).toBe(false);
     });
 
     it('should only return models from the specified provider (openai)', async () => {
@@ -135,14 +135,14 @@ describe('Bug Fix: Provider Model Filtering', () => {
         expect(openaiModels).toHaveLength(2);
 
         // Verify all models belong to openai provider
-        expect(openaiModels.every(m => m.id.startsWith('openai/'))).toBe(true);
+        expect(openaiModels.every(m => m.catalogId?.startsWith('openai/'))).toBe(true);
 
         // Verify specific models
-        expect(openaiModels.map(m => m.id)).toContain('openai/gpt-4o');
-        expect(openaiModels.map(m => m.id)).toContain('openai/deepseek-compatible');
+        expect(openaiModels.map(m => m.id)).toContain('gpt-4o');
+        expect(openaiModels.map(m => m.id)).toContain('deepseek-compatible');
 
         // Should NOT include deepseek models
-        expect(openaiModels.some(m => m.id.startsWith('deepseek/'))).toBe(false);
+        expect(openaiModels.some(m => m.catalogId?.startsWith('deepseek/'))).toBe(false);
     });
 
     it('should not leak models between providers', async () => {
@@ -194,9 +194,9 @@ describe('Bug Fix: Provider Model Filtering', () => {
         expect(allModels).toHaveLength(5);
 
         // Verify models from all providers are included
-        expect(allModels.some(m => m.id.startsWith('deepseek/'))).toBe(true);
-        expect(allModels.some(m => m.id.startsWith('openai/'))).toBe(true);
-        expect(allModels.some(m => m.id.startsWith('anthropic/'))).toBe(true);
+        expect(allModels.some(m => m.catalogId?.startsWith('deepseek/'))).toBe(true);
+        expect(allModels.some(m => m.catalogId?.startsWith('openai/'))).toBe(true);
+        expect(allModels.some(m => m.catalogId?.startsWith('anthropic/'))).toBe(true);
     });
 
     it('should correctly filter by provider even with similar model names', async () => {
@@ -215,11 +215,11 @@ describe('Bug Fix: Provider Model Filtering', () => {
         expect(deepseekModels).toHaveLength(2);
         expect(deepseekModels.every(m => {
             // Must start with "deepseek/" (provider prefix)
-            return m.id.startsWith('deepseek/');
+            return m.catalogId?.startsWith('deepseek/');
         })).toBe(true);
 
         // Explicitly verify the bug is fixed
-        const hasOpenAIModel = deepseekModels.some(m => m.id === 'openai/deepseek-compatible');
+        const hasOpenAIModel = deepseekModels.some(m => m.id === 'deepseek-compatible');
         expect(hasOpenAIModel).toBe(false);
     });
 });

@@ -77,7 +77,6 @@ const createMockModelRegistry = (): ModelRegistry => ({
         providerCount: 0,
         modelCount: 0,
     }),
-    getProviderRegistry: vi.fn().mockResolvedValue({}),
 } as any);
 
 describe('HostManagerV2 Integration', () => {

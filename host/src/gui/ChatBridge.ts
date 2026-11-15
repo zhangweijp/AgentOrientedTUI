@@ -682,11 +682,11 @@ export class ChatBridge {
 
     // ============ LLM Config Methods ============
 
-    async getAllLLMConfigs(): Promise<any[]> {
+    async getAllLLMConfigs() {
         return this.getTrpcClient().llmConfig.getAll.query();
     }
 
-    async getActiveLLMConfig(): Promise<any | null> {
+    async getActiveLLMConfig() {
         return this.getTrpcClient().llmConfig.getActive.query();
     }
 

@@ -30,7 +30,8 @@ const mockDb = {
 let mockConfigs: any[] = [];
 
 vi.mock('../src/db/index.js', () => ({
-    getDb: () => mockDb
+    getDb: () => mockDb,
+    persistDatabase: vi.fn()
 }));
 
 // Mock fetch for models.dev API
@@ -415,12 +416,10 @@ describe('LLMConfigService Integration Tests', () => {
         });
 
         it('should recommend appropriate config based on capabilities', async () => {
-            // Get all reasoning models
-            const reasoningModels = await modelRegistry.getModels({ capability: 'reasoning' });
+            const reasoningModels = await modelRegistry.getModels({ providerId: 'openai', capability: 'reasoning' });
 
             for (const model of reasoningModels) {
-                const [providerId, modelId] = model.id.split('/');
-                const config = await service.getModelRecommendedConfig(providerId, modelId);
+                const config = await service.getModelRecommendedConfig('openai', model.id);
 
                 expect(config.temperature).toBe(0.5);
                 expect(config.maxSteps).toBe(20);

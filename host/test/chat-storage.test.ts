@@ -18,8 +18,8 @@ it('writes and reloads ModelMessage history through the current Host while leavi
     vi.stubEnv('HOME', home);
     vi.stubEnv('USERPROFILE', home);
     vi.stubEnv('DB_PATH', location);
-    vi.spyOn(LLMConfigService.prototype, 'getActiveLLMConfig').mockResolvedValue({
-        model: 'openai:local-synthetic',
+    vi.spyOn(LLMConfigService.prototype, 'resolveLLMConfig').mockResolvedValue({
+        model: 'local-synthetic', provider: { id: 'openai' },
         inputBudget: async () => ({ contextWindow: 32_000, maxOutputTokens: 1_000 }),
     });
     const provider = vi.spyOn(LLMClient.prototype, 'call').mockResolvedValue({

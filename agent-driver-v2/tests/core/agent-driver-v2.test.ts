@@ -119,7 +119,7 @@ describe('AgentDriverV2', () => {
         driver = createDriver({
             sources: [source1, source2],
             llm: {
-                model: 'gpt-4',
+                model: 'gpt-4', provider: { id: 'openai' },
             },
             workLoop: {
                 debounceMs: 10,
@@ -184,7 +184,7 @@ describe('AgentDriverV2', () => {
 
         const localDriver = createDriver({
             sources: [source1, source2],
-            llm: { model: 'gpt-4' },
+            llm: { model: 'gpt-4', provider: { id: 'openai' } },
             workLoop: { debounceMs: 10 },
         });
 
@@ -225,7 +225,7 @@ describe('AgentDriverV2', () => {
 
         const localDriver = createDriver({
             sources: [source1],
-            llm: { model: 'gpt-4' },
+            llm: { model: 'gpt-4', provider: { id: 'openai' } },
             workLoop: { debounceMs: 10 },
         });
 
@@ -262,7 +262,7 @@ describe('AgentDriverV2', () => {
 
         const localDriver = createDriver({
             sources: [source1],
-            llm: { model: 'gpt-4' },
+            llm: { model: 'gpt-4', provider: { id: 'openai' } },
             workLoop: { debounceMs: 10 },
         });
 
@@ -335,7 +335,7 @@ describe('AgentDriverV2', () => {
         // Create a dedicated driver instance for this test to ensure timers are faked
         const localDriver = createDriver({
             sources: [source1],
-            llm: { model: 'gpt-4' },
+            llm: { model: 'gpt-4', provider: { id: 'openai' } },
             workLoop: { debounceMs: 10 },
         });
 
@@ -364,7 +364,7 @@ describe('AgentDriverV2', () => {
 
         const newDriver = createDriver({
             sources: [source1],
-            llm: { model: 'gpt-4' },
+            llm: { model: 'gpt-4', provider: { id: 'openai' } },
         });
 
         newDriver.dispose();
@@ -391,7 +391,7 @@ describe('AgentDriverV2', () => {
             };
             const split = new MockDrivenSource('split', [{ role: 'user', content: 'split', timestamp: 2 }], { split: tool });
             const readContext = vi.spyOn(split, 'getContext');
-            const localDriver = createDriver({ sources: [atomic, split], llm: { model: 'gpt-4' } });
+            const localDriver = createDriver({ sources: [atomic, split], llm: { model: 'gpt-4', provider: { id: 'openai' } } });
 
             await runTurn(localDriver);
 
@@ -417,7 +417,7 @@ describe('AgentDriverV2', () => {
             const release = vi.fn();
             const healthy = contextSource('healthy', { messages, tools: { healthy: tool }, release });
             const onRunError = vi.fn();
-            const localDriver = createDriver({ sources: [bad, healthy], llm: { model: 'gpt-4' }, onRunError });
+            const localDriver = createDriver({ sources: [bad, healthy], llm: { model: 'gpt-4', provider: { id: 'openai' } }, onRunError });
             await runTurn(localDriver);
             expect(bad.getContext).toHaveBeenCalledTimes(1);
             expect(model).toHaveBeenCalledTimes(1);
@@ -439,7 +439,7 @@ describe('AgentDriverV2', () => {
             };
             const later = contextSource('later', { messages, tools: {} });
             const onRunError = vi.fn();
-            const localDriver = createDriver({ sources: [earlier, failed, later], llm: { model: 'gpt-4' }, onRunError });
+            const localDriver = createDriver({ sources: [earlier, failed, later], llm: { model: 'gpt-4', provider: { id: 'openai' } }, onRunError });
 
             await runTurn(localDriver);
 
@@ -460,7 +460,7 @@ describe('AgentDriverV2', () => {
             const secondContext: DrivenSourceContext = { messages: [], tools: { shared: winner }, executeTool: secondExecute, release: vi.fn() };
             const first = contextSource('first', firstContext), second = contextSource('second', secondContext);
             const result = vi.fn(), onRunError = vi.fn();
-            const localDriver = createDriver({ sources: [first, second], llm: { model: 'gpt-4' }, onToolResult: result, onRunError });
+            const localDriver = createDriver({ sources: [first, second], llm: { model: 'gpt-4', provider: { id: 'openai' } }, onToolResult: result, onRunError });
             model.mockImplementationOnce(async (_messages, tools, callbacks) => {
                 await callbacks?.beforeRequest?.('winner definition');
                 expect(tools.shared).toBe(winner);
@@ -508,7 +508,7 @@ describe('AgentDriverV2', () => {
             const source = contextSource('selection', context);
             if (mode === 'context') Reflect.set(source, 'executeTool', fallback);
             const result = vi.fn();
-            const localDriver = createDriver({ sources: [source], llm: { model: 'gpt-4' }, onToolResult: result });
+            const localDriver = createDriver({ sources: [source], llm: { model: 'gpt-4', provider: { id: 'openai' } }, onToolResult: result });
             model.mockImplementationOnce(async () => {
                 // A later Source executor must never replace a missing Context executor.
                 if (mode === 'late-source') Reflect.set(source, 'executeTool', execute);
@@ -550,7 +550,7 @@ describe('AgentDriverV2', () => {
             const calls = [{ toolCallId: 'gate-1', toolName: 'first', args: {} }, { toolCallId: 'gate-2', toolName: 'second', args: {} }];
             model.mockResolvedValueOnce(response(calls));
             const result = vi.fn(), assistant = vi.fn();
-            localDriver = createDriver({ sources: [first, second], llm: { model: 'gpt-4' }, onToolResult: result, onAssistantMessage: assistant });
+            localDriver = createDriver({ sources: [first, second], llm: { model: 'gpt-4', provider: { id: 'openai' } }, onToolResult: result, onAssistantMessage: assistant });
             const work = runTurn(localDriver);
             try {
                 await entered.promise;

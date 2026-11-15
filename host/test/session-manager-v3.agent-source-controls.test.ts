@@ -49,7 +49,7 @@ describe('SessionManagerV3 persisted source controls', () => {
     const catalog = vi.spyOn(MCP, 'tools').mockRejectedValue(new Error('MCP is closed for this Topic'));
     const kernel = createRuntime();
     const llm = new LLMConfigService(new ModelRegistry());
-    vi.spyOn(llm, 'getActiveLLMConfig').mockResolvedValue({ model: 'openai:synthetic' });
+    vi.spyOn(llm, 'resolveLLMConfig').mockResolvedValue({ model: 'synthetic', provider: { id: 'openai' } });
     manager = new SessionManagerV3(kernel, new DesktopManager({ kernel }), llm, new MessageServiceV2());
 
     expect((await manager.getSourceControlState(topicId)).mcp).toEqual({ enabled: false, allowedServers: ['tools'], disabledItems: ['tools::search'] });

@@ -213,15 +213,8 @@ export interface AgentDriverV2Config {
  * };
  */
 export interface ProviderConfig {
-    /** 
-     * Provider ID (可选，从 model 推断)
-     * 
-     * 支持的 Provider:
-     * - 'openai', 'anthropic', 'google', 'xai'
-     * - 'alibaba', 'moonshotai', 'deepseek', 'z-ai'
-     * - 'custom' (自定义 Provider)
-     */
-    id?: string;
+    /** The selected Provider identifier. */
+    id: string;
 
     /** 
      * 自定义 Base URL
@@ -237,41 +230,6 @@ export interface ProviderConfig {
     headers?: Record<string, string>;
 }
 
-/**
- * LLMConfig - LLM 配置
- * 
- * 支持灵活的模型配置格式：
- * 
- * @example
- * // 格式 1: 简单格式 (自动推断 Provider)
- * const config: LLMConfig = {
- *   model: 'gpt-4',  // 自动推断为 openai
- * };
- * 
- * // 格式 2: 显式指定 Provider
- * const config: LLMConfig = {
- *   model: 'openai:gpt-4',  // 或 'gpt-4@openai'
- * };
- * 
- * // 格式 3: 自定义 Provider 配置
- * const config: LLMConfig = {
- *   model: 'qwen3-max',
- *   provider: {
- *     id: 'alibaba',
- *     baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
- *   },
- * };
- * 
- * // 格式 4: 使用 OpenRouter
- * const config: LLMConfig = {
- *   model: 'meta-llama/llama-4-scout-17b-16e-instruct',
- *   provider: {
- *     id: 'openrouter',
- *     baseURL: 'https://openrouter.ai/api/v1',
- *   },
- *   apiKey: process.env.OPENROUTER_API_KEY,
- * };
- */
 export interface ModelInputLimits {
     readonly contextWindow: number;
     readonly maxInputTokens?: number;
@@ -280,39 +238,14 @@ export interface ModelInputLimits {
 }
 
 export interface LLMConfig {
-    /** 
-     * 模型 ID
-     * 
-     * 格式支持:
-     * - 'gpt-4' (自动推断为 openai)
-     * - 'openai:gpt-4' 或 'gpt-4@openai' (显式指定)
-     * - 'claude-3.5-sonnet' (自动推断为 anthropic)
-     * - 'gemini-2.5-flash' (自动推断为 google)
-     * - 'qwen3-max' (自动推断为 alibaba)
-     */
+    /** Nonempty model ID sent to the selected Provider verbatim. */
     model: string;
 
-    /** 
-     * API Key (可选)
-     * 
-     * 如果不提供，将从环境变量自动读取：
-     * - OpenAI: OPENAI_API_KEY
-     * - Anthropic: ANTHROPIC_API_KEY
-     * - Google: GOOGLE_API_KEY
-     * - xAI: XAI_API_KEY
-     * - Alibaba: DASHSCOPE_API_KEY
-     * - Moonshot: MOONSHOT_API_KEY
-     * - DeepSeek: DEEPSEEK_API_KEY
-     * - Z.AI: ZHIPU_API_KEY
-     */
-    apiKey?: string;
+    /** The Provider and its optional endpoint and headers. */
+    provider: ProviderConfig;
 
-    /** 
-     * Provider 配置 (可选)
-     * 
-     * 用于自定义 Provider 行为
-     */
-    provider?: ProviderConfig;
+    /** Defaults to the API key environment variable for the selected Provider. */
+    apiKey?: string;
 
     /** 
      * 最大步数 (默认 5)

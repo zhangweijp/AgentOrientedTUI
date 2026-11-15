@@ -247,7 +247,7 @@ try {
     await database.initDatabase();
 
     class InMemoryLLMConfigService extends LLMConfigService {
-        override async getActiveLLMConfig(): Promise<LLMConfig> { return llmConfig; }
+        override async resolveLLMConfig(): Promise<LLMConfig> { return llmConfig; }
     }
     class PrivateTestMessageService extends MessageServiceV2 {
         override addMessage(topicId: string, message: ModelMessage): Message {

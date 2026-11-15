@@ -24,8 +24,8 @@ it('keeps the Topic directory and Driver within the saved MCP server selection',
     const agent = { id: 'agent', name: 'Agent', modelId: '', prompt: '', enabledMCPs: ['west'],
         enabledApps: [], enabledSkills: {}, disabledMcpTools: [], skin: {} };
 
-    vi.spyOn(LLMConfigService.prototype, 'getActiveLLMConfig').mockResolvedValue({
-        model: 'openai:synthetic',
+    vi.spyOn(LLMConfigService.prototype, 'resolveLLMConfig').mockResolvedValue({
+        model: 'synthetic', provider: { id: 'openai' },
         inputBudget: async () => ({ contextWindow: 32_000, maxOutputTokens: 1_000 }),
     });
     const requests = new Map<string, string[]>();

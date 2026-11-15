@@ -31,9 +31,8 @@ export class CustomProviderStore {
     }
 
     async getById(id: string): Promise<CustomProviderRecord | null> {
-        const normalizedId = this.normalizeId(id);
         const providers = await this.list();
-        return providers.find((item) => item.id === normalizedId) || null;
+        return providers.find((item) => item.id === id) || null;
     }
 
     async create(input: {

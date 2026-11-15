@@ -66,10 +66,10 @@ const db = await import('../src/db/index.js');
 await desktopManagerReady;
 const runtime = createRuntime();
 const installation = new DesktopManager({ kernel: runtime, appRegistry: new AppRegistry({ configPath: join(fixture, 'apps.json') }) });
-const llm: LLMConfig = { model: 'acceptance:fixture', apiKey: 'test-only', maxSteps: 1,
+const llm: LLMConfig = { model: 'fixture', apiKey: 'test-only', maxSteps: 1,
     provider: { id: 'acceptance', baseURL: 'http://127.0.0.1:1/v1' }, modelCapabilities: { toolCall: true } };
 class FixtureLLMConfig extends LLMConfigService {
-    override async getActiveLLMConfig() { return llm; }
+    override async resolveLLMConfig() { return llm; }
     override withModelInputBudget(config: LLMConfig) { return config; }
 }
 const manager = new SessionManagerV3(runtime, installation, new FixtureLLMConfig(new ModelRegistry()), new MessageServiceV2());

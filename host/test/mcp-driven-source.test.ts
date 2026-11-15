@@ -132,7 +132,7 @@ describe('McpDrivenSource through the current Driver and model SDK', () => {
         const provider = vi.spyOn(LLMClient.prototype as unknown as { createProvider: () => unknown }, 'createProvider').mockReturnValue(model);
         const onAssistantMessage = vi.fn(), onToolResult = vi.fn(), onRunError = vi.fn();
         const driver = new AgentDriverV2({
-            sources: [instructions, source], llm: { model: 'openai:controlled-mcp-owner', apiKey: 'unused-no-network' },
+            sources: [instructions, source], llm: { model: 'controlled-mcp-owner', provider: { id: 'openai' }, apiKey: 'unused-no-network' },
             onAssistantMessage, onToolResult, onRunError,
         });
         try {
@@ -194,7 +194,7 @@ describe('MCP capture failure and live controls', () => {
             return { text: '', finishReason: 'tool-calls', toolCalls: [{ toolName: 'action', toolCallId: 'captured', args: {} }] };
         });
         const result = vi.fn();
-        const driver = new AgentDriverV2({ sources: [source], llm: { model: 'openai:controlled-mcp-identity' }, onToolResult: result });
+        const driver = new AgentDriverV2({ sources: [source], llm: { model: 'controlled-mcp-identity', provider: { id: 'openai' } }, onToolResult: result });
         try {
             await driver.trigger(); await driver['runInFlight'];
             expect(calls).toEqual(['A']); expect(original.mock.contexts[0]).toBe(a);
@@ -261,7 +261,7 @@ describe('MCP capture failure and live controls', () => {
             return { text: '', finishReason: 'tool-calls', toolCalls: names.map((toolName, i) => ({ toolName, toolCallId: 'gate-' + i, args: {} })) };
         });
         const result = vi.fn(), error = vi.fn();
-        const driver = new AgentDriverV2({ sources: [source], llm: { model: 'openai:controlled-mcp-live' }, onToolResult: result, onRunError: error });
+        const driver = new AgentDriverV2({ sources: [source], llm: { model: 'controlled-mcp-live', provider: { id: 'openai' } }, onToolResult: result, onRunError: error });
         try {
             await driver.trigger();
             const work = driver['runInFlight'];
@@ -431,7 +431,7 @@ describe('MCP completion subscriber isolation candidate', () => {
         const provider = vi.spyOn(LLMClient.prototype as unknown as { createProvider: () => unknown }, 'createProvider').mockReturnValue(model);
         const runErrors = vi.fn();
         const driver = new AgentDriverV2({
-            sources: [conversation, source], llm: { model: 'openai:controlled-completion', apiKey: 'unused-no-network' },
+            sources: [conversation, source], llm: { model: 'controlled-completion', provider: { id: 'openai' }, apiKey: 'unused-no-network' },
             onAssistantMessage: message => { history.push({ ...message, timestamp: history.length + 1, region: 'session' }); },
             onToolResult: message => { receipts.push(structuredClone(message)); history.push({ ...message, timestamp: history.length + 1, region: 'session' }); },
             onRunError: runErrors,

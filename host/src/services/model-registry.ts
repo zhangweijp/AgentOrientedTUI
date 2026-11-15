@@ -1,18 +1,15 @@
 /**
  * Host - Model Registry Service
  * 
- * 基于 models.dev 和 Vercel AI SDK 的模型注册表
+ * models.dev model and Provider catalog.
  * 
  * 设计原则:
- * - 复用 AI SDK 的 createProviderRegistry 和 Provider 数据模型
  * - 从 models.dev 获取模型元数据（定价、能力等）
  * - 提供统一的 Provider 配置和模型查询接口
  * - 支持缓存持久化到文件系统
  * - 提供降级策略（缓存 + 默认配置）
  */
 
-import { createOpenAI } from '@ai-sdk/openai';
-import { createProviderRegistry } from 'ai';
 import { Logger } from '../utils/logger.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -22,7 +19,7 @@ import * as os from 'os';
  * models.dev API 数据结构
  */
 export interface ModelsDevModel {
-    id: string; // e.g., "anthropic/claude-3.5-sonnet"
+    id: string;
     name: string;
     family?: string;
     attachment?: boolean;
@@ -47,6 +44,11 @@ export interface ModelsDevModel {
         input?: number;
         output?: number;
     };
+}
+
+export interface CatalogModel extends ModelsDevModel {
+    /** Original catalog ID if it differs from the Provider's model key. */
+    catalogId?: string;
 }
 
 /**
@@ -118,7 +120,6 @@ interface CacheEntry {
  * - 提供降级策略（缓存 + 默认配置）
  * 
  * 设计特点:
- * - 复用 AI SDK 的 createProviderRegistry
  * - 懒加载: 首次调用时才获取数据
  * - 缓存机制: 24小时 TTL，持久化到文件系统
  * - 降级策略: API 失败时使用缓存或默认配置
@@ -128,7 +129,6 @@ export class ModelRegistry {
     private modelsDevData: ModelsDevAPI | null = null;
     private lastFetch: number = 0;
     private cacheTTL: number = 24 * 60 * 60 * 1000; // 24小时
-    private providerRegistry: ReturnType<typeof createProviderRegistry> | null = null;
     private cacheDir: string;
     private cacheFile: string;
 
@@ -136,77 +136,6 @@ export class ModelRegistry {
         this.logger = new Logger('ModelRegistry');
         this.cacheDir = path.join(os.homedir(), '.aotui', 'cache');
         this.cacheFile = path.join(this.cacheDir, 'models-dev.json');
-    }
-
-    /**
-     * 获取 Vercel AI SDK Provider Registry
-     * 
-     * 复用 AI SDK 的 createProviderRegistry，动态注册所有 Provider
-     */
-    async getProviderRegistry(): Promise<ReturnType<typeof createProviderRegistry>> {
-        await this.ensureFresh();
-
-        if (this.providerRegistry) {
-            return this.providerRegistry;
-        }
-
-        // 构建 Provider Registry
-        const providers: Record<string, any> = {};
-
-        // 注册官方 Provider (使用 AI SDK 原生实例)
-        // 使用动态导入以支持可选依赖
-        try {
-            const anthropicModule = await import('@ai-sdk/anthropic') as any;
-            providers['anthropic'] = anthropicModule.createAnthropic({
-                apiKey: process.env.ANTHROPIC_API_KEY || '',
-            });
-        } catch (error) {
-            this.logger.debug('Anthropic SDK not available', { error });
-        }
-
-        providers['openai'] = createOpenAI({
-            apiKey: process.env.OPENAI_API_KEY || '',
-        });
-
-        try {
-            const googleModule = await import('@ai-sdk/google') as any;
-            providers['google'] = googleModule.google;
-        } catch (error) {
-            this.logger.debug('Google SDK not available', { error });
-        }
-
-        try {
-            const xaiModule = await import('@ai-sdk/xai') as any;
-            providers['xai'] = xaiModule.xai;
-        } catch (error) {
-            this.logger.debug('xAI SDK not available', { error });
-        }
-
-        // 注册 models.dev 中的其他 Provider (OpenAI 兼容)
-        if (this.modelsDevData) {
-            Object.values(this.modelsDevData).forEach((provider) => {
-                // 跳过已注册的官方 Provider
-                if (providers[provider.id]) {
-                    return;
-                }
-
-                // 获取 API Key (从环境变量)
-                const apiKey = this.getProviderApiKey(provider);
-
-                // 使用 OpenAI 兼容接口
-                providers[provider.id] = createOpenAI({
-                    apiKey: apiKey || '',
-                    baseURL: provider.api,
-                });
-            });
-        }
-
-        this.providerRegistry = createProviderRegistry(providers);
-        this.logger.info('Provider registry created', {
-            providerCount: Object.keys(providers).length,
-        });
-
-        return this.providerRegistry;
     }
 
     /**
@@ -238,26 +167,18 @@ export class ModelRegistry {
      * @param filter - 过滤条件 (可选)
      * @returns 模型列表
      */
-    async getModels(filter?: ModelFilter): Promise<ModelsDevModel[]> {
+    async getModels(filter?: ModelFilter): Promise<CatalogModel[]> {
         await this.ensureFresh();
 
-        let models: ModelsDevModel[] = [];
-
-        // 按 provider 过滤 - 直接从指定 provider 获取模型
-        if (filter?.providerId) {
-            const provider = this.modelsDevData?.[filter.providerId];
-            if (provider) {
-                models = Object.values(provider.models);
-            }
-        } else {
-            // 没有 provider 过滤时，提取所有模型
-            if (this.modelsDevData) {
-                const providers = Object.values(this.modelsDevData);
-                providers.forEach((provider) => {
-                    models.push(...Object.values(provider.models));
-                });
-            }
-        }
+        const providers = this.modelsDevData ?? {};
+        const selected = filter?.providerId
+            ? (Object.hasOwn(providers, filter.providerId) ? [providers[filter.providerId]!] : [])
+            : Object.values(providers);
+        let models = selected.flatMap(provider => Object.entries(provider.models).map(([id, model]) => ({
+            ...model,
+            id,
+            ...(model.id !== id ? { catalogId: model.id } : {}),
+        })));
 
         // 按 capability 过滤
         if (filter?.capability) {
@@ -321,7 +242,6 @@ export class ModelRegistry {
     async refresh(): Promise<void> {
         this.logger.info('Refreshing model registry data...');
         this.lastFetch = 0; // 强制重新获取
-        this.providerRegistry = null; // 清除 provider registry
         await this.fetchModelsDevData();
     }
 
@@ -475,38 +395,5 @@ export class ModelRegistry {
             this.logger.debug('Cache not found or invalid', { error });
             return null;
         }
-    }
-
-    /**
-     * ❌ 已移除 getDefaultProviders()
-     * 
-     * 原因:
-     * 1. models.dev 快速更新，硬编码会过时
-     * 2. 维护负担：新模型频繁发布，版本更新
-     * 3. 缓存机制已提供足够容错性
-     * 
-     * 替代方案:
-     * - models.dev API (主要数据源)
-     * - 本地缓存文件 (~/.aotui/cache/models-dev.json)
-     * - 如果都失败，抛出明确错误，让用户知道网络问题
-     */
-
-    /**
-     * 获取 Provider 的 API Key (从环境变量)
-     */
-    private getProviderApiKey(provider: ModelsDevProvider): string | undefined {
-        if (!provider.env || provider.env.length === 0) {
-            return undefined;
-        }
-
-        // 尝试所有可能的环境变量名
-        for (const envKey of provider.env) {
-            const apiKey = process.env[envKey];
-            if (apiKey) {
-                return apiKey;
-            }
-        }
-
-        return undefined;
     }
 }

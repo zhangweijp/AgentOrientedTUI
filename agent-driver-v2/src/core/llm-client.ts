@@ -10,10 +10,10 @@
  */
 
 import { createHash } from 'node:crypto';
-import { streamText, wrapLanguageModel, type Tool, type ModelMessage } from 'ai';
+import { APICallError, streamText, wrapLanguageModel, type Tool, type ModelMessage } from 'ai';
 import type { LLMConfig, LLMResponse, ModelInputLimits } from './interfaces.js';
 import { Logger } from '../utils/logger.js';
-import { createLanguageModel, type ModelTarget } from './provider-factory.js';
+import { createLanguageModel, validateModelConfig } from './provider-factory.js';
 
 export class ModelInputError extends Error {
     constructor(readonly code: 'MODEL_INPUT_BUDGET_EXCEEDED' | 'MODEL_INPUT_LIMITS_UNAVAILABLE' | 'MODEL_INPUT_UNMEASURABLE', message: string, readonly details?: Readonly<Record<string, number | string>>) {
@@ -43,128 +43,16 @@ function checkInputBudget(limits: ModelInputLimits, request: string, messages: n
  */
 export class LLMClient {
     private logger: Logger;
-    private config: LLMConfig;
-    private modelId: string;
+    private readonly config: LLMConfig;
 
     constructor(config: LLMConfig) {
-        this.config = config;
+        validateModelConfig(config);
+        this.config = { ...config, provider: { ...config.provider } };
         this.logger = new Logger('LLMClient');
-
-        // 解析 model 字符串并标准化为 providerId:modelId
-        this.modelId = this.resolveModelTarget(config.model).registryModelId;
-
-        this.logger.info('LLMClient initialized', {
-            model: this.modelId,
-            hasCustomConfig: !!config.provider,
-            providerId: config.provider?.id,
-            baseURL: config.provider?.baseURL,
-            hasApiKey: !!config.apiKey,
-        });
     }
 
-    /**
-     * 解析 Model ID
-     * 
-     * 支持 Vercel AI SDK ProviderRegistry 格式: 'providerId:modelId' (冒号)
-     * - 'openai:gpt-4'
-     * - 'anthropic:claude-3.5-sonnet'
-     * 
-     * 如果只提供 model 名称 (如 'gpt-4')，将自动补全为 'openai:gpt-4'
-     * 
-     * Without an explicit provider, stored Host configurations can still use the legacy model syntax.
-     */
-    private resolveModelTarget(model: string): ModelTarget {
-        const configuredProviderId = this.config.provider?.id;
-        const normalizedModel = model.trim();
-
-        if (configuredProviderId) {
-            const colonPrefix = `${configuredProviderId}:`;
-            const modelName = normalizedModel.startsWith(colonPrefix)
-                ? normalizedModel.slice(colonPrefix.length)
-                : normalizedModel;
-            if (!modelName.trim()) throw new Error('Model name is required.');
-
-            return {
-                providerId: configuredProviderId,
-                modelName,
-                registryModelId: `${configuredProviderId}:${modelName}`,
-            };
-        }
-
-        // 1. 标准格式: providerId:modelId（只按第一个冒号分割，保留 model 中的其他冒号）
-        if (!normalizedModel) throw new Error('Model name is required.');
-        const separatorIndex = normalizedModel.indexOf(':');
-        if (separatorIndex > 0) {
-            const providerId = normalizedModel.slice(0, separatorIndex);
-            const modelName = normalizedModel.slice(separatorIndex + 1);
-            if (!modelName.trim()) throw new Error('Model name is required.');
-            return {
-                providerId,
-                modelName,
-                registryModelId: `${providerId}:${modelName}`,
-            };
-        }
-
-        // 2. 兼容格式: providerId/modelId
-        if (normalizedModel.includes('/')) {
-            const slashIndex = normalizedModel.indexOf('/');
-            if (slashIndex > 0) {
-                const providerId = normalizedModel.slice(0, slashIndex);
-                const modelName = normalizedModel.slice(slashIndex + 1);
-                if (!modelName.trim()) throw new Error('Model name is required.');
-                return {
-                    providerId,
-                    modelName,
-                    registryModelId: `${providerId}:${modelName}`,
-                };
-            }
-        }
-
-        // 3. 否则，推断 provider 并使用冒号格式
-        const providerId = this.inferProviderFromModel(normalizedModel);
-        return {
-            providerId,
-            modelName: normalizedModel,
-            registryModelId: `${providerId}:${normalizedModel}`,
-        };
-    }
-
-    /**
-     * 从 Model 名称推断 Provider
-     * 
-     * 这是向后兼容的 fallback 逻辑
-     */
-    private inferProviderFromModel(model: string): string {
-        if (model.startsWith('gpt-') || model.startsWith('o1-') || model.startsWith('o3-')) {
-            return 'openai';
-        }
-        if (model.startsWith('claude-')) {
-            return 'anthropic';
-        }
-        if (model.startsWith('gemini-')) {
-            return 'google';
-        }
-        if (model.startsWith('grok-')) {
-            return 'xai';
-        }
-
-        // 默认 openai
-        this.logger.warn(`Cannot infer provider for model: ${model}, defaulting to openai`);
-        return 'openai';
-    }
-
-    /**
-     * 创建 Provider 实例
-     * 
-     * 根据 LLMConfig 创建对应的 Provider
-     */
     private createProvider() {
-        const target = this.resolveModelTarget(this.config.model);
-        return createLanguageModel({
-            config: this.config,
-            target,
-            warn: (message) => this.logger.warn(message),
-        });
+        return createLanguageModel(this.config);
     }
 
     /**
@@ -200,13 +88,15 @@ export class LLMClient {
 
             if (shouldDisableTools) {
                 this.logger.warn('Tool calls disabled by model capability metadata', {
-                    model: this.modelId,
+                    model: this.config.model,
+                    providerId: this.config.provider.id,
                     reason: 'models.dev.tool_call=false',
                 });
             }
 
             this.logger.info('Calling LLM', {
-                model: this.modelId,
+                model: this.config.model,
+                providerId: this.config.provider.id,
                 messageCount: messages.length,
                 toolCount: Object.keys(effectiveTools).length,
             });
@@ -222,8 +112,9 @@ export class LLMClient {
                 throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'This Host cannot count media inputs. Remove the attachment to continue.');
             }
             const provider = this.createProvider();
+            const retryWithoutTools = this.config.provider.id === 'openrouter' && Object.keys(effectiveTools).length > 0;
             let admitted: Promise<void> | undefined;
-            const model = budget || callbacks?.beforeRequest ? wrapLanguageModel({ model: provider, middleware: {
+            const model = budget || callbacks?.beforeRequest || retryWithoutTools ? wrapLanguageModel({ model: provider, middleware: {
                 specificationVersion: 'v3',
                 wrapStream: async ({ params, doStream }) => {
                     try {
@@ -240,7 +131,8 @@ export class LLMClient {
                         const input = JSON.stringify({ messages: params.prompt, tools: params.tools ?? [], toolChoice: params.toolChoice });
                         if (budget) checkInputBudget(budget, input, params.prompt.length, params.tools?.length ?? 0);
                         if (callbacks?.beforeRequest) {
-                            const signature = createHash('sha256').update(this.modelId).update(input)
+                            const signature = createHash('sha256')
+                                .update(JSON.stringify([this.config.provider.id, this.config.model])).update(input)
                                 .update(String(params.maxOutputTokens)).digest('hex');
                             admitted ??= Promise.resolve().then(() => callbacks.beforeRequest!(signature));
                             await admitted;
@@ -249,11 +141,27 @@ export class LLMClient {
                         requestFailure = error;
                         throw error;
                     }
-                    return doStream();
+                    try {
+                        return await doStream();
+                    } catch (error) {
+                        if (!retryWithoutTools || !params.tools?.length || !this.isToolCompatibilityError(error)) {
+                            throw error;
+                        }
+                        this.logger.warn('OpenRouter tool-call compatibility issue detected, retrying without tools', {
+                            model: this.config.model,
+                        });
+                        return provider.doStream({ ...params, tools: undefined, toolChoice: undefined });
+                    }
                 },
             } }) : provider;
 
-            const result = await this.streamWithOpenRouterFallback(model, messages, effectiveTools, budget?.maxOutputTokens);
+            const result = streamText({
+                model,
+                messages,
+                tools: effectiveTools,
+                maxOutputTokens: budget?.maxOutputTokens,
+                temperature: this.config.temperature ?? 0.7,
+            });
 
             let text: string;
             let reasoningParts: Array<{ type: 'reasoning'; text: string }> = [];
@@ -430,14 +338,14 @@ export class LLMClient {
 
     private async inputLimits(): Promise<ModelInputLimits | undefined> {
         if (!this.config.inputBudget) return;
-        const target = this.resolveModelTarget(this.config.model);
+        const { provider, model } = this.config;
         let budget: ModelInputLimits | undefined;
-        try { budget = await this.config.inputBudget({ providerId: target.providerId, modelId: target.modelName }); }
+        try { budget = await this.config.inputBudget({ providerId: provider.id, modelId: model }); }
         catch { /* Missing or inaccessible metadata prevents sending this request. */ }
         if (!budget || ![budget.contextWindow, budget.maxOutputTokens, budget.maxInputTokens ?? 1]
             .every(value => Number.isSafeInteger(value) && value > 0) || budget.maxOutputTokens >= budget.contextWindow) {
             throw new ModelInputError('MODEL_INPUT_LIMITS_UNAVAILABLE',
-                `No valid input window and output limit for ${target.registryModelId}. Set model limits in the Host or choose a model with known limits.`);
+                `No valid input window and output limit for ${provider.id}:${model}. Set model limits in the Host or choose a model with known limits.`);
         }
         return budget;
     }
@@ -529,60 +437,14 @@ export class LLMClient {
         });
     }
 
-    private async streamWithOpenRouterFallback(
-        model: any,
-        messages: ModelMessage[],
-        tools: Record<string, Tool>,
-        maxOutputTokens?: number,
-    ) {
-        try {
-            return await streamText({
-                model,
-                messages,
-                tools,
-                maxOutputTokens,
-                temperature: this.config.temperature ?? 0.7,
-            });
-        } catch (error) {
-            const shouldRetryWithoutTools =
-                this.modelId.startsWith('openrouter:') &&
-                Object.keys(tools).length > 0 &&
-                this.isLikelyToolCompatibilityError(error);
-
-            if (!shouldRetryWithoutTools) {
-                throw error;
-            }
-
-            this.logger.warn('OpenRouter tool-call compatibility issue detected, retrying without tools', {
-                model: this.modelId,
-                error: error instanceof Error ? error.message : String(error),
-            });
-
-            return await streamText({
-                model,
-                messages,
-                tools: {},
-                maxOutputTokens,
-                temperature: this.config.temperature ?? 0.7,
-            });
+    private isToolCompatibilityError(error: unknown): boolean {
+        if (!APICallError.isInstance(error)) return false;
+        const message = error.message.trim();
+        if (error.statusCode === 404) {
+            return /^No endpoints found that support tool use\b/i.test(message);
         }
-    }
-
-    private isLikelyToolCompatibilityError(error: unknown): boolean {
-        const errorText = [
-            (error as any)?.message,
-            (error as any)?.responseBody,
-            (error as any)?.data?.error?.message,
-        ]
-            .filter(Boolean)
-            .join(' ')
-            .toLowerCase();
-
-        return (
-            errorText.includes('tool') ||
-            errorText.includes('function') ||
-            errorText.includes('no output generated') ||
-            errorText.includes('invalid')
-        );
+        if (error.statusCode !== 400) return false;
+        return /\b(?:does not|doesn't) support (?:tools|tool use|(?:tool|function) calling)(?=$|[.!](?:\s|$))/i.test(message)
+            || /\b(?:tool|function) calling is not supported(?: for this model)?(?=$|[.!](?:\s|$))/i.test(message);
     }
 }

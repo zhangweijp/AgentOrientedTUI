@@ -18,8 +18,7 @@ vi.mock('../src/core/llm-config-service.js', () => {
     return {
         LLMConfigService: vi.fn(function () {
             return {
-                getActiveLLMConfig: vi.fn(),
-                getAvailableProviders: vi.fn()
+                resolveLLMConfig: vi.fn(),
             };
         })
     };
@@ -37,7 +36,6 @@ const createMockModelRegistry = (): ModelRegistry => ({
         providerCount: 0,
         modelCount: 0,
     }),
-    getProviderRegistry: vi.fn().mockResolvedValue({}),
 } as any);
 
 let sessionManagerMock: {

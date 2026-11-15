@@ -31,7 +31,6 @@ import { Logger } from '../utils/logger.js';
 import type { DesktopManager } from './desktop-manager.js';
 import * as db from '../db/index.js';
 import { projectService } from './project-service.js';
-import { toLLMConfig } from '../types/llm-config.js';
 import { isMcpItemKey, parseMcpServerItemKey, MCP_PERMISSION_RECONFIGURE } from '../shared/source-control-keys.js';
 import { Config } from '../config/config.js';
 import { applySourceControlsToSources, createSourceControlsFromAgent, normalizeSourceControlsSnapshot, type SourceControlsSnapshot } from './source-controls.js';
@@ -165,6 +164,12 @@ export class SessionManagerV3 extends EventEmitter {
         const desktopId = topicId as any; // Topic ID = Desktop ID
 
         const topic = db.getTopic(topicId);
+        const config = topic?.agentId ? await Config.get() : undefined;
+        const agent = config?.agents?.list.find(item => item.id === topic?.agentId);
+        const modelSelection = topic?.modelOverride?.trim() ? topic.modelOverride : agent?.modelId;
+        const effectiveLLMConfig = await this.llmConfigService.resolveLLMConfig(modelSelection);
+        const effectiveSystemPrompt = agent?.prompt || topic?.promptOverride?.trim() || this.getSystemPrompt();
+
         const projectPath = topic?.projectId
             ? projectService.getProject(topic.projectId)?.path
             : undefined;
@@ -189,131 +194,6 @@ export class SessionManagerV3 extends EventEmitter {
             throw new Error(`Failed to create desktop for topic: ${topicId}`);
         }
 
-        // 2. 获取 LLM 配置（支持 topic-level override）
-        const llmConfig = await this.llmConfigService.getActiveLLMConfig();
-        if (!llmConfig) {
-            throw new Error('No active LLM config found. Please configure an LLM provider first.');
-        }
-
-        // [Agent Customization] Apply Agent Snapshot if agentId is present
-        const topicModelOverride = topic?.modelOverride?.trim();
-        let effectiveModelOverride = topicModelOverride;
-        let effectivePromptOverride = topic?.promptOverride?.trim();
-        const config = topic?.agentId ? await Config.get() : undefined;
-
-        if (config && topic?.agentId) {
-            const agent = config.agents?.list.find(item => item.id === topic.agentId);
-            if (agent) {
-                // Topic-level model override must win over agent snapshot model.
-                // This allows users to switch models per topic (e.g. vision model) without being overridden by agent defaults.
-                if (!effectiveModelOverride && agent.modelId) {
-                    effectiveModelOverride = agent.modelId;
-                } else if (effectiveModelOverride && agent.modelId && effectiveModelOverride !== agent.modelId) {
-                    this.logger.info('Topic model override takes precedence over agent model snapshot', {
-                        topicId,
-                        topicModelOverride: effectiveModelOverride,
-                        agentModelId: agent.modelId,
-                    });
-                }
-                if (agent.prompt) effectivePromptOverride = agent.prompt;
-
-            }
-        }
-
-        const modelOverride = effectiveModelOverride;
-        const effectiveLLMConfig = await (async () => {
-            if (!modelOverride) return llmConfig;
-
-            // Custom provider IDs are "custom:XXX", so the full model string is
-            // "custom:XXX:model-name". We must split at the SECOND colon, not the first.
-            let overrideProviderId: string | undefined;
-            let overrideModelId: string;
-
-            if (modelOverride.startsWith('custom:')) {
-                const secondColon = modelOverride.indexOf(':', 'custom:'.length);
-                if (secondColon > 0) {
-                    overrideProviderId = modelOverride.slice(0, secondColon);
-                    overrideModelId   = modelOverride.slice(secondColon + 1);
-                } else {
-                    // e.g. "custom:my-provider" with no model — treat whole thing as provider
-                    overrideProviderId = modelOverride;
-                    overrideModelId   = '';
-                }
-            } else {
-                const colonIndex = modelOverride.indexOf(':');
-                overrideProviderId = colonIndex > 0 ? modelOverride.slice(0, colonIndex) : llmConfig.provider?.id;
-                overrideModelId   = colonIndex > 0 ? modelOverride.slice(colonIndex + 1) : modelOverride;
-            }
-
-            const allConfigs = this.llmConfigService.getAllConfigs();
-            const providerConfigs = allConfigs.filter((record) => record.providerId === overrideProviderId);
-            const exactProviderModelConfig = providerConfigs.find((record) => {
-                const recordModel = (record.model || '').trim();
-                if (!recordModel) return false;
-                const normalizedRecordModel = recordModel.startsWith(`${overrideProviderId}/`)
-                    ? recordModel.slice((overrideProviderId || '').length + 1)
-                    : recordModel;
-                return normalizedRecordModel === overrideModelId;
-            });
-            const providerConfigRecord = exactProviderModelConfig || providerConfigs[0];
-
-            // Custom provider records (providerId = "custom:xxx") must be converted to
-            // runtime protocol providers (openai/anthropic). Otherwise AI SDK registry
-            // splits at the first colon and looks up "custom" instead of "custom:xxx".
-            if (overrideProviderId?.startsWith('custom:') && providerConfigRecord) {
-                const customProviders = await this.llmConfigService.listCustomProviders();
-                const customProvider = customProviders.find((provider) => provider.id === overrideProviderId);
-
-                if (customProvider) {
-                    const recordModel = (providerConfigRecord.model || '').trim();
-                    let normalizedRecordModel = recordModel;
-
-                    const slashPrefix = `${overrideProviderId}/`;
-                    const colonPrefix = `${overrideProviderId}:`;
-                    if (normalizedRecordModel.startsWith(slashPrefix)) {
-                        normalizedRecordModel = normalizedRecordModel.slice(slashPrefix.length);
-                    } else if (normalizedRecordModel.startsWith(colonPrefix)) {
-                        normalizedRecordModel = normalizedRecordModel.slice(colonPrefix.length);
-                    }
-
-                    const protocolPrefix = `${customProvider.protocol}:`;
-                    if (normalizedRecordModel.startsWith(protocolPrefix)) {
-                        normalizedRecordModel = normalizedRecordModel.slice(protocolPrefix.length);
-                    }
-
-                    const resolvedModelName = (overrideModelId || normalizedRecordModel).trim();
-
-                    return {
-                        ...llmConfig,
-                        model: `${customProvider.protocol}:${resolvedModelName}`,
-                        provider: {
-                            id: customProvider.protocol,
-                            baseURL: providerConfigRecord.baseUrl || customProvider.baseUrl,
-                        },
-                        apiKey: providerConfigRecord.apiKey || customProvider.apiKey || llmConfig.apiKey,
-                        temperature: providerConfigRecord.temperature,
-                        maxSteps: providerConfigRecord.maxSteps,
-                    };
-                }
-            }
-
-            const providerResolvedConfig = providerConfigRecord ? toLLMConfig(providerConfigRecord) : null;
-
-            return {
-                ...llmConfig,
-                model: overrideProviderId ? `${overrideProviderId}:${overrideModelId}` : overrideModelId,
-                provider: providerResolvedConfig?.provider
-                    ? {
-                        ...providerResolvedConfig.provider,
-                        id: overrideProviderId || providerResolvedConfig.provider.id,
-                    }
-                    : (overrideProviderId ? { id: overrideProviderId } : llmConfig.provider),
-                apiKey: providerResolvedConfig?.apiKey ?? llmConfig.apiKey,
-            };
-        })();
-
-        const effectiveSystemPrompt = effectivePromptOverride || this.getSystemPrompt();
-
         // 3. 创建 DrivenSources
         const systemPromptSource = new SystemPromptDrivenSource({
             systemPrompt: effectiveSystemPrompt,
@@ -336,33 +216,7 @@ export class SessionManagerV3 extends EventEmitter {
         });
 
         // 4. 创建 AgentDriver
-        const { providerId, modelId, modelLabel } = (() => {
-            const rawModel = effectiveLLMConfig.model;
-            const inferredProvider = effectiveLLMConfig.provider?.id;
-            const colonIndex = rawModel.indexOf(':');
-            if (colonIndex > 0) {
-                const provider = rawModel.slice(0, colonIndex);
-                const model = rawModel.slice(colonIndex + 1);
-                return {
-                    providerId: inferredProvider ?? provider,
-                    modelId: model,
-                    modelLabel: model,
-                };
-            }
-            if (rawModel.includes('@')) {
-                const [model, provider] = rawModel.split('@');
-                return {
-                    providerId: inferredProvider ?? provider,
-                    modelId: model,
-                    modelLabel: model,
-                };
-            }
-            return {
-                providerId: inferredProvider,
-                modelId: rawModel,
-                modelLabel: rawModel,
-            };
-        })();
+        const { model: modelId, provider: { id: providerId } } = effectiveLLMConfig;
 
         const agentDriver = new AgentDriverV2({
             sources: [
@@ -399,7 +253,7 @@ export class SessionManagerV3 extends EventEmitter {
                 const payload = { content: undefined, reasoning: undefined };
                 const meta = {
                     usage,
-                    model: modelLabel,
+                    model: modelId,
                     providerId,
                     modelId,
                 };

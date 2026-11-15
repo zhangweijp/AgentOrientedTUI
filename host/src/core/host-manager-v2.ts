@@ -44,7 +44,6 @@ import type { IMInboundMessage } from '../im/types.js';
 import { appendIMMessage, listIMMessages, replaceIMMessages } from '../im/message-store.js';
 import { deleteIMSession, getIMSession, listIMSessions, upsertIMSession, type IMPersistedSession } from '../im/session-store.js';
 import { Config } from '../config/config.js';
-import { toLLMConfig } from '../types/llm-config.js';
 import {
     applySourceControlsToSources,
     createSourceControlsFromAgent,
@@ -513,108 +512,13 @@ export class HostManagerV2 {
         systemPrompt: string;
         sourceControls: SourceControlsSnapshot;
     }> {
-        const llmConfig = await this.llmConfigService.getActiveLLMConfig();
-        if (!llmConfig) {
-            throw new Error('No active LLM config found. Please configure an LLM provider first.');
-        }
-
-        let effectiveLLMConfig = llmConfig;
-        let systemPrompt = this.getDefaultSystemPrompt();
-
         const config = await Config.get();
         const agent = config.agents?.list.find(item => item.id === agentId);
-        const sourceControls = createSourceControlsFromAgent(agent, Object.keys(await this.getAppsConfig()));
-
-        if (agent?.prompt) {
-            systemPrompt = agent.prompt;
-        }
-
-        const modelOverride = typeof agent?.modelId === 'string' ? agent.modelId.trim() : '';
-        if (!modelOverride) {
-            return { llmConfig: effectiveLLMConfig, systemPrompt, sourceControls };
-        }
-
-        let overrideProviderId: string | undefined;
-        let overrideModelId: string;
-
-        if (modelOverride.startsWith('custom:')) {
-            const secondColon = modelOverride.indexOf(':', 'custom:'.length);
-            if (secondColon > 0) {
-                overrideProviderId = modelOverride.slice(0, secondColon);
-                overrideModelId = modelOverride.slice(secondColon + 1);
-            } else {
-                overrideProviderId = modelOverride;
-                overrideModelId = '';
-            }
-        } else {
-            const colonIndex = modelOverride.indexOf(':');
-            overrideProviderId = colonIndex > 0 ? modelOverride.slice(0, colonIndex) : llmConfig.provider?.id;
-            overrideModelId = colonIndex > 0 ? modelOverride.slice(colonIndex + 1) : modelOverride;
-        }
-
-        const allConfigs = this.llmConfigService.getAllConfigs();
-        const providerConfigs = allConfigs.filter((record) => record.providerId === overrideProviderId);
-        const exactProviderModelConfig = providerConfigs.find((record) => {
-            const recordModel = (record.model || '').trim();
-            if (!recordModel) return false;
-            const normalizedRecordModel = recordModel.startsWith(`${overrideProviderId}/`)
-                ? recordModel.slice((overrideProviderId || '').length + 1)
-                : recordModel;
-            return normalizedRecordModel === overrideModelId;
-        });
-        const providerConfigRecord = exactProviderModelConfig || providerConfigs[0];
-
-        if (overrideProviderId?.startsWith('custom:') && providerConfigRecord) {
-            const customProviders = await this.llmConfigService.listCustomProviders();
-            const customProvider = customProviders.find((provider) => provider.id === overrideProviderId);
-
-            if (customProvider) {
-                const recordModel = (providerConfigRecord.model || '').trim();
-                let normalizedRecordModel = recordModel;
-
-                const slashPrefix = `${overrideProviderId}/`;
-                const colonPrefix = `${overrideProviderId}:`;
-                if (normalizedRecordModel.startsWith(slashPrefix)) {
-                    normalizedRecordModel = normalizedRecordModel.slice(slashPrefix.length);
-                } else if (normalizedRecordModel.startsWith(colonPrefix)) {
-                    normalizedRecordModel = normalizedRecordModel.slice(colonPrefix.length);
-                }
-
-                const protocolPrefix = `${customProvider.protocol}:`;
-                if (normalizedRecordModel.startsWith(protocolPrefix)) {
-                    normalizedRecordModel = normalizedRecordModel.slice(protocolPrefix.length);
-                }
-
-                const resolvedModelName = (overrideModelId || normalizedRecordModel).trim();
-                effectiveLLMConfig = {
-                    ...llmConfig,
-                    model: `${customProvider.protocol}:${resolvedModelName}`,
-                    provider: {
-                        id: customProvider.protocol,
-                        baseURL: providerConfigRecord.baseUrl || customProvider.baseUrl,
-                    },
-                    apiKey: providerConfigRecord.apiKey || customProvider.apiKey || llmConfig.apiKey,
-                    temperature: providerConfigRecord.temperature,
-                    maxSteps: providerConfigRecord.maxSteps,
-                };
-                return { llmConfig: effectiveLLMConfig, systemPrompt, sourceControls };
-            }
-        }
-
-        const providerResolvedConfig = providerConfigRecord ? toLLMConfig(providerConfigRecord) : null;
-        effectiveLLMConfig = {
-            ...llmConfig,
-            model: overrideProviderId ? `${overrideProviderId}:${overrideModelId}` : overrideModelId,
-            provider: providerResolvedConfig?.provider
-                ? {
-                    ...providerResolvedConfig.provider,
-                    id: overrideProviderId || providerResolvedConfig.provider.id,
-                }
-                : (overrideProviderId ? { id: overrideProviderId } : llmConfig.provider),
-            apiKey: providerResolvedConfig?.apiKey ?? llmConfig.apiKey,
+        return {
+            llmConfig: await this.llmConfigService.resolveLLMConfig(agent?.modelId),
+            systemPrompt: agent?.prompt || this.getDefaultSystemPrompt(),
+            sourceControls: createSourceControlsFromAgent(agent, Object.keys(await this.getAppsConfig())),
         };
-
-        return { llmConfig: effectiveLLMConfig, systemPrompt, sourceControls };
     }
 
     private async resolveIMCompactionPolicy(agentId: string): Promise<{

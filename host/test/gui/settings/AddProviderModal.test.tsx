@@ -6,21 +6,22 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { AddProviderModal } from '../../../src/gui/components/settings/AddProviderModal.js';
-import type { NewProviderConfig } from '../../../src/gui/components/settings/types.js';
 
-// Mock ModelRegistry
-vi.mock('@aotui/agent-driver-v2/browser', () => ({
-    ModelRegistry: vi.fn().mockImplementation(() => ({
-        getProviders: vi.fn().mockResolvedValue([
-            { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', modelCount: 10 },
-            { id: 'anthropic', name: 'Anthropic', baseURL: 'https://api.anthropic.com', modelCount: 5 },
-            { id: 'google', name: 'Google', baseURL: 'https://generativelanguage.googleapis.com/v1beta', modelCount: 8 },
-        ]),
-    })),
-}));
+const catalog = vi.hoisted(() => {
+    const providers = vi.fn();
+    const models = vi.fn();
+    const bridge = { getTrpcClient: () => ({ modelRegistry: {
+        getProviders: { query: providers },
+        getModels: { query: models },
+    } }) };
+    return { bridge, providers, models };
+});
+vi.mock('../../../src/gui/ChatBridge.js', () => ({ useChatBridge: () => catalog.bridge }));
+
+const rawModel = 'openai/team:fast';
 
 describe('AddProviderModal', () => {
     const mockHandlers = {
@@ -30,6 +31,12 @@ describe('AddProviderModal', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        catalog.providers.mockReset().mockResolvedValue([
+            { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', modelCount: 10 },
+            { id: 'anthropic', name: 'Anthropic', baseURL: 'https://api.anthropic.com', modelCount: 5 },
+            { id: 'google', name: 'Google', baseURL: 'https://generativelanguage.googleapis.com/v1beta', modelCount: 8 },
+        ]);
+        catalog.models.mockReset().mockResolvedValue([{ id: rawModel, catalogId: 'openai/' + rawModel }]);
     });
 
     afterEach(() => {
@@ -70,7 +77,7 @@ describe('AddProviderModal', () => {
             );
 
             await waitFor(() => {
-                expect(screen.getByText('Add New Provider')).toBeInTheDocument();
+                expect(screen.getByRole('heading', { name: 'Add Provider' })).toBeInTheDocument();
             });
         });
 
@@ -243,7 +250,7 @@ describe('AddProviderModal', () => {
 
             // Custom name should be auto-filled
             await waitFor(() => {
-                const customNameInput = screen.getByLabelText('Custom Name *') as HTMLInputElement;
+                const customNameInput = screen.getByLabelText('Display Name *') as HTMLInputElement;
                 expect(customNameInput.value).toBe('OpenAI');
             });
         });
@@ -273,7 +280,7 @@ describe('AddProviderModal', () => {
     });
 
     describe('Input validation', () => {
-        it('should show error when provider is not selected', async () => {
+        it('disables submission without a Provider', async () => {
             render(
                 <AddProviderModal
                     isOpen={true}
@@ -286,11 +293,11 @@ describe('AddProviderModal', () => {
             });
 
             // Try to save without selecting provider
-            const saveButton = screen.getByRole('button', { name: /save/i });
+            const saveButton = screen.getByRole('button', { name: 'Add Provider' });
             expect(saveButton).toBeDisabled();
         });
 
-        it('should show error when custom name is empty', async () => {
+        it('disables submission without a display name', async () => {
             render(
                 <AddProviderModal
                     isOpen={true}
@@ -312,15 +319,15 @@ describe('AddProviderModal', () => {
             });
 
             // Clear custom name
-            const customNameInput = screen.getByLabelText('Custom Name *') as HTMLInputElement;
+            const customNameInput = screen.getByLabelText('Display Name *') as HTMLInputElement;
             fireEvent.change(customNameInput, { target: { value: '' } });
 
             // Save button should be disabled
-            const saveButton = screen.getByRole('button', { name: /save/i });
+            const saveButton = screen.getByRole('button', { name: 'Add Provider' });
             expect(saveButton).toBeDisabled();
         });
 
-        it('should show error when API key is empty', async () => {
+        it('disables submission without an API key', async () => {
             render(
                 <AddProviderModal
                     isOpen={true}
@@ -342,7 +349,7 @@ describe('AddProviderModal', () => {
             });
 
             // Custom name is auto-filled, but API key is empty
-            const saveButton = screen.getByRole('button', { name: /save/i });
+            const saveButton = screen.getByRole('button', { name: 'Add Provider' });
             expect(saveButton).toBeDisabled();
         });
 
@@ -373,7 +380,7 @@ describe('AddProviderModal', () => {
 
             // Save button should be enabled
             await waitFor(() => {
-                const saveButton = screen.getByRole('button', { name: /save/i });
+                const saveButton = screen.getByRole('button', { name: 'Add Provider' });
                 expect(saveButton).not.toBeDisabled();
             });
         });
@@ -399,19 +406,49 @@ describe('AddProviderModal', () => {
                 fireEvent.click(openaiOption);
             });
 
-            // Clear custom name to trigger error
-            const customNameInput = screen.getByLabelText('Custom Name *') as HTMLInputElement;
-            fireEvent.change(customNameInput, { target: { value: '' } });
+            const customNameInput = screen.getByLabelText('Display Name *');
+            fireEvent.change(customNameInput, { target: { value: 'X' } });
+            fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'fixture-secret' } });
+            fireEvent.click(screen.getByRole('button', { name: 'Add Provider' }));
+            expect(screen.getByRole('alert')).toHaveTextContent('Custom name must be at least 3 characters');
 
-            // Type in custom name - error should clear
             fireEvent.change(customNameInput, { target: { value: 'My Provider' } });
-
-            // No error should be visible
             expect(screen.queryByRole('alert')).not.toBeInTheDocument();
         });
     });
 
     describe('Save/Cancel handlers', () => {
+        it('uses the new Provider model and clears the previous Key while changing Providers', async () => {
+            let finishOldRequest!: (models: Array<{ id: string }>) => void;
+            catalog.models
+                .mockImplementationOnce(() => new Promise(resolve => { finishOldRequest = resolve; }))
+                .mockResolvedValueOnce([{ id: 'anthropic/team:v2' }]);
+            render(<AddProviderModal isOpen={true} {...mockHandlers} />);
+            await screen.findByText('Select a provider');
+            const provider = screen.getByLabelText('Provider *');
+            fireEvent.click(provider);
+            fireEvent.click(screen.getByRole('option', { name: /openai/i }));
+            await waitFor(() => expect(catalog.models).toHaveBeenCalledWith({ providerId: 'openai' }));
+            const apiKey = screen.getByLabelText('API Key *');
+            fireEvent.change(apiKey, { target: { value: 'fixture-openai' } });
+            const save = screen.getByRole('button', { name: 'Add Provider' });
+            expect(save).toBeDisabled();
+
+            fireEvent.click(provider);
+            fireEvent.click(screen.getByRole('option', { name: /anthropic/i }));
+            await screen.findByText('anthropic/team:v2');
+            await act(async () => finishOldRequest([{ id: rawModel }]));
+            expect(apiKey).toHaveValue('');
+            expect(screen.getByLabelText('Default Model *')).toHaveTextContent('anthropic/team:v2');
+            expect(save).toBeDisabled();
+
+            fireEvent.change(apiKey, { target: { value: 'fixture-anthropic' } });
+            fireEvent.click(save);
+            await waitFor(() => expect(mockHandlers.onSave).toHaveBeenCalledWith(expect.objectContaining({
+                providerId: 'anthropic', model: 'anthropic/team:v2', apiKey: 'fixture-anthropic',
+            })));
+        });
+
         it('should call onSave with correct data when save button is clicked', async () => {
             render(
                 <AddProviderModal
@@ -434,7 +471,7 @@ describe('AddProviderModal', () => {
             });
 
             // Fill custom name
-            const customNameInput = screen.getByLabelText('Custom Name *') as HTMLInputElement;
+            const customNameInput = screen.getByLabelText('Display Name *') as HTMLInputElement;
             fireEvent.change(customNameInput, { target: { value: 'My OpenAI Account' } });
 
             // Fill API key
@@ -442,7 +479,7 @@ describe('AddProviderModal', () => {
             fireEvent.change(apiKeyInput, { target: { value: 'sk-test1234567890abcdef' } });
 
             // Click save
-            const saveButton = screen.getByRole('button', { name: /save/i });
+            const saveButton = screen.getByRole('button', { name: 'Add Provider' });
             fireEvent.click(saveButton);
 
             await waitFor(() => {
@@ -450,6 +487,7 @@ describe('AddProviderModal', () => {
                     providerId: 'openai',
                     customName: 'My OpenAI Account',
                     apiKey: 'sk-test1234567890abcdef',
+                    model: rawModel,
                 });
             });
         });
@@ -479,7 +517,7 @@ describe('AddProviderModal', () => {
             fireEvent.change(apiKeyInput, { target: { value: 'sk-test1234567890abcdef' } });
 
             // Click save
-            const saveButton = screen.getByRole('button', { name: /save/i });
+            const saveButton = screen.getByRole('button', { name: 'Add Provider' });
             fireEvent.click(saveButton);
 
             await waitFor(() => {
@@ -586,7 +624,7 @@ describe('AddProviderModal', () => {
             fireEvent.change(apiKeyInput, { target: { value: 'sk-test1234567890abcdef' } });
 
             // Click save
-            const saveButton = screen.getByRole('button', { name: /save/i });
+            const saveButton = screen.getByRole('button', { name: 'Add Provider' });
             fireEvent.click(saveButton);
 
             // Buttons should be disabled while saving

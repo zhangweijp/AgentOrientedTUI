@@ -4,29 +4,9 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { createProviderRegistry, customProvider } from 'ai';
 import { loadOptionalSetting } from '@ai-sdk/provider-utils';
+import type { LanguageModel } from 'ai';
 import type { LLMConfig } from './interfaces.js';
-
-export interface ModelTarget {
-    providerId: string;
-    modelName: string;
-    registryModelId: string;
-}
-
-export interface ProviderFactoryDeps {
-    config: LLMConfig;
-    target: ModelTarget;
-    warn: (message: string) => void;
-}
-
-const ENV_KEY_MAP: Record<string, string> = {
-    openai: 'OPENAI_API_KEY',
-    anthropic: 'ANTHROPIC_API_KEY',
-    google: 'GOOGLE_API_KEY',
-    xai: 'XAI_API_KEY',
-    openrouter: 'OPENROUTER_API_KEY',
-};
 
 const PROVIDER_BASE_URLS = new Map([
     ['openai', 'https://api.openai.com/v1'],
@@ -45,10 +25,19 @@ export function resolveProviderEndpoint(providerId: string, configuredBaseURL?: 
     return { baseURL: (providerId === 'xai' ? configured || defaultBaseURL : configured ?? defaultBaseURL), defaultBaseURL };
 }
 
-export function createLanguageModel(deps: ProviderFactoryDeps): ReturnType<ReturnType<typeof createProviderRegistry>['languageModel']> {
-    const { config, target } = deps;
-    const { providerId, modelName, registryModelId } = target;
+export function validateModelConfig(config: LLMConfig): void {
+    const id = config?.provider?.id;
+    if (typeof id !== 'string' || !id.trim() || id !== id.trim()) {
+        throw new Error('An explicit provider.id is required.');
+    }
+    if (typeof config.model !== 'string' || !config.model.trim()) {
+        throw new Error('A nonempty model ID is required.');
+    }
+}
 
+export function createLanguageModel(config: LLMConfig): Extract<LanguageModel, { specificationVersion: 'v3' }> {
+    validateModelConfig(config);
+    const { id: providerId, baseURL, headers } = config.provider;
     const apiKey = config.apiKey || getApiKeyFromEnv(providerId);
     if (!apiKey) {
         throw new Error(
@@ -57,24 +46,7 @@ export function createLanguageModel(deps: ProviderFactoryDeps): ReturnType<Retur
         );
     }
 
-    const customBaseURL = config.provider?.id === providerId
-        ? config.provider.baseURL
-        : undefined;
-    const headers = config.provider?.id === providerId
-        ? config.provider.headers
-        : undefined;
-
-    const provider = buildProvider(providerId, apiKey, customBaseURL, headers);
-    const registryProvider = customProvider({
-        languageModels: {},
-        fallbackProvider: provider as any,
-    });
-    const registry = createProviderRegistry({
-        [providerId]: registryProvider,
-    });
-
-    const modelId = (registryModelId || `${providerId}:${modelName}`) as `${string}:${string}`;
-    return registry.languageModel(modelId);
+    return buildProvider(providerId, apiKey, baseURL, headers).languageModel(config.model);
 }
 
 function buildProvider(
@@ -94,11 +66,11 @@ function buildProvider(
         case 'xai':
             return createOpenAI({ apiKey, baseURL, headers });
         case 'openai':
-            if (customBaseURL && !isOpenAIResponsesEndpoint(customBaseURL)) {
+            if (baseURL && !isOpenAIResponsesEndpoint(baseURL)) {
                 return createOpenAICompatible({
                     name: 'openai-compatible',
                     apiKey,
-                    baseURL: customBaseURL,
+                    baseURL,
                     headers,
                 });
             }
@@ -138,10 +110,10 @@ function isOpenAIResponsesEndpoint(baseURL: string): boolean {
 }
 
 function getApiKeyFromEnv(providerId: string): string | undefined {
-    const envKey = getEnvKeyName(providerId);
-    return process.env[envKey];
+    return process.env[getEnvKeyName(providerId)] ||
+        (providerId === 'google' ? process.env.GOOGLE_GENERATIVE_AI_API_KEY : undefined);
 }
 
 function getEnvKeyName(providerId: string): string {
-    return ENV_KEY_MAP[providerId] || `${providerId.toUpperCase()}_API_KEY`;
+    return `${providerId.toUpperCase()}_API_KEY`;
 }

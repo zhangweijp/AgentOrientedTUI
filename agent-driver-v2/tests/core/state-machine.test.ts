@@ -55,7 +55,7 @@ describe('AgentDriver State Machine', () => {
     it('should start at idle state', () => {
         const driver = new AgentDriverV2({
             sources: [mockSource],
-            llm: { model: 'gpt-4' },
+            llm: { model: 'gpt-4', provider: { id: 'openai' } },
             onStateChange: (old, newState) => {
                 stateChangeLog.push({ old, new: newState });
             },
@@ -67,7 +67,7 @@ describe('AgentDriver State Machine', () => {
     it('should transition states when running', async () => {
         const driver = new AgentDriverV2({
             sources: [mockSource],
-            llm: { model: 'gpt-4' },
+            llm: { model: 'gpt-4', provider: { id: 'openai' } },
             onStateChange: (old, newState) => {
                 stateChangeLog.push({ old, new: newState });
             },
@@ -92,7 +92,7 @@ describe('AgentDriver State Machine', () => {
     it('should mark update when busy (thinking)', async () => {
         const driver = new AgentDriverV2({
             sources: [mockSource],
-            llm: { model: 'gpt-4' },
+            llm: { model: 'gpt-4', provider: { id: 'openai' } },
         });
         const call = vi.fn().mockImplementation(async () => {
             await new Promise((resolve) => setTimeout(resolve, 10));
@@ -138,7 +138,7 @@ describe('AgentDriver State Machine', () => {
 
         const driver = new AgentDriverV2({
             sources: [mockSourceWithUnsubscribe],
-            llm: { model: 'gpt-4' },
+            llm: { model: 'gpt-4', provider: { id: 'openai' } },
         });
 
         driver.dispose();
@@ -185,7 +185,7 @@ describe('Tool Mapping', () => {
 
         const driver = new AgentDriverV2({
             sources: [source1, source2],
-            llm: { model: 'gpt-4' },
+            llm: { model: 'gpt-4', provider: { id: 'openai' } },
         });
         stubLlmCall(driver);
 
@@ -224,7 +224,7 @@ describe('Tool Mapping', () => {
 
         const driver = new AgentDriverV2({
             sources: [source],
-            llm: { model: 'gpt-4' },
+            llm: { model: 'gpt-4', provider: { id: 'openai' } },
         });
         stubLlmCall(driver);
 
@@ -269,7 +269,7 @@ describe('Message Collection', () => {
 
         const driver = new AgentDriverV2({
             sources: [source1, source2],
-            llm: { model: 'gpt-4' },
+            llm: { model: 'gpt-4', provider: { id: 'openai' } },
         });
         stubLlmCall(driver);
 

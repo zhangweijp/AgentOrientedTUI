@@ -25,7 +25,7 @@ async function driverToolNames(source: McpDrivenSource): Promise<string[]> {
         seen.push(Object.keys(tools).sort());
         return { text: '', toolCalls: [], finishReason: 'stop' };
     });
-    const driver = new AgentDriverV2({ llm: { model: 'openai:local-probe' }, sources: [source] });
+    const driver = new AgentDriverV2({ llm: { model: 'local-probe', provider: { id: 'openai' } }, sources: [source] });
     try {
         await driver.trigger();
         await driver['runInFlight'];

@@ -37,7 +37,10 @@ vi.mock('../../src/core/message-service-v2.js', () => ({
 vi.mock('../../src/core/llm-config-service.js', async importOriginal => {
   const { LLMConfigService } = await importOriginal<typeof import('../../src/core/llm-config-service.js')>();
   return { LLMConfigService: class extends LLMConfigService {
-    override async getActiveLLMConfig() { return { model: 'openai:controlled-im-receipt', apiKey: 'unused-no-network' }; }
+    override getActiveLLMConfigRecord() {
+      return { id: 1, name: 'IM fixture', model: 'controlled-im-receipt', providerId: 'openai', apiKey: 'unused-no-network',
+        baseUrl: 'https://api.openai.com/v1', temperature: 0.7, maxSteps: 10, isActive: true, createdAt: 1, updatedAt: 1 };
+    }
     override getAllConfigs() { return []; }
   } };
 });

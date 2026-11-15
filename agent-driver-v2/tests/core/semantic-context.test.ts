@@ -19,7 +19,7 @@ function makeSource(getContext: () => Promise<DrivenSourceContext>): ContextDriv
 }
 
 function makeDriver(source: DrivenSource | DrivenSource[], call: ReturnType<typeof vi.fn>, onToolResult = vi.fn(), onRunError = vi.fn()) {
-    const driver = new AgentDriverV2({ sources: Array.isArray(source) ? source : [source], llm: { model: 'gpt-4' }, onToolResult, onRunError });
+    const driver = new AgentDriverV2({ sources: Array.isArray(source) ? source : [source], llm: { model: 'gpt-4', provider: { id: 'openai' } }, onToolResult, onRunError });
     const modelCall: LLMClient['call'] = async (messages, tools, callbacks) => {
         await callbacks?.beforeRequest?.(JSON.stringify({ messages, tools }));
         return call(messages, tools);

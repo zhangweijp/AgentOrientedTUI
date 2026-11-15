@@ -128,6 +128,7 @@ function initSchema() {
             chat_type TEXT NOT NULL,
             peer_id TEXT NOT NULL,
             account_id TEXT DEFAULT NULL,
+            source_controls TEXT DEFAULT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             last_access_time INTEGER NOT NULL
@@ -183,6 +184,7 @@ function migrateSchema() {
             chat_type TEXT NOT NULL,
             peer_id TEXT NOT NULL,
             account_id TEXT DEFAULT NULL,
+            source_controls TEXT DEFAULT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             last_access_time INTEGER NOT NULL
@@ -191,6 +193,12 @@ function migrateSchema() {
         CREATE INDEX IF NOT EXISTS idx_im_sessions_updated_at ON im_sessions(updated_at);
         CREATE INDEX IF NOT EXISTS idx_im_sessions_channel ON im_sessions(channel);
     `);
+
+    const imSessionColumns = db.exec('PRAGMA table_info(im_sessions)')[0]?.values;
+    if (!imSessionColumns?.some(column => column[1] === 'source_controls')) {
+        db.run('ALTER TABLE im_sessions ADD COLUMN source_controls TEXT DEFAULT NULL');
+        saveToDisk();
+    }
 
     // [RFC-025] Add Projects table
     db.run(`

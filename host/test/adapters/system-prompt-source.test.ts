@@ -83,7 +83,7 @@ describe('SystemPromptDrivenSource', () => {
                 onUpdate: () => () => {},
             };
             const driver = new AgentDriverV2({
-                sources: [source, healthy], llm: { model: 'openai:controlled-prompt-read' }, onRunError,
+                sources: [source, healthy], llm: { model: 'controlled-prompt-read', provider: { id: 'openai' } }, onRunError,
             });
             try {
                 failRead = true;

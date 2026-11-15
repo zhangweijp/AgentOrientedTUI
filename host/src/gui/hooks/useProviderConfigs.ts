@@ -132,14 +132,15 @@ export function useProviderConfigs(): UseProviderConfigsResult {
         try {
             setError(null);
 
+            const model = config.model?.trim();
+            if (!model) throw new Error('Choose a model for this Provider.');
             const input: LLMConfigInput = {
                 name: config.customName,
-                model: config.model || 'gpt-4o', // 使用更合理的默认模型
+                model,
                 providerId: config.providerId,
                 apiKey: config.apiKey,
                 temperature: config.temperature ?? 0.7,
                 maxSteps: config.maxSteps ?? 10,
-                skipValidation: !config.model, // 如果没有指定模型，跳过验证
             };
 
             await bridge.createLLMConfig(input);

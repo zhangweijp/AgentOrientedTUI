@@ -143,9 +143,9 @@ export function App() {
                 return;
             }
 
-            if (!activeConfig.providerId || !activeConfig.model) {
+            if (!activeConfig.model?.trim()) {
                 setCanSendMessage(false);
-                setSendBlockedReason('当前 LLM 配置不完整（缺少 Provider 或模型）。请前往 Settings 修复。');
+                setSendBlockedReason('当前 LLM 配置缺少模型。请前往 Settings 重新选择。');
                 return;
             }
 
@@ -181,7 +181,7 @@ export function App() {
             );
 
             const configuredGroupsMap = new Map<string, Set<string>>();
-            (allConfigs || []).forEach((config: any) => {
+            allConfigs.forEach((config) => {
                 const providerId = config?.providerId?.trim();
                 const model = config?.model?.trim();
                 if (!providerId || !model) {
@@ -201,16 +201,7 @@ export function App() {
                 if (!isCustom) {
                     try {
                         const models = await bridge.getTrpcClient().modelRegistry.getModels.query({ providerId });
-                        (models as Array<{ id?: string; name?: string }>).forEach((item) => {
-                            const raw = item?.id || item?.name;
-                            if (!raw || typeof raw !== 'string') {
-                                return;
-                            }
-                            const normalized = raw.startsWith(`${providerId}/`) ? raw.slice(providerId.length + 1) : raw;
-                            if (normalized.trim()) {
-                                mergedModels.add(normalized.trim());
-                            }
-                        });
+                        for (const model of models) mergedModels.add(model.id);
                     } catch (error) {
                         console.warn(`[App] Failed to load models from registry for provider: ${providerId}`, error);
                     }
@@ -229,7 +220,7 @@ export function App() {
             setActiveModelId(
                 activeConfig?.providerId && activeConfig?.model
                     ? `${activeConfig.providerId}:${activeConfig.model}`
-                    : null,
+                    : activeConfig?.model || null,
             );
         } catch (error) {
             console.error('[App] Failed to load model groups:', error);

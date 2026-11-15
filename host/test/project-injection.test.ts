@@ -21,7 +21,7 @@ it.each(['/synthetic/project', undefined])('passes the selected project path to 
     const desktopManager = new DesktopManager({ kernel });
     const createDesktop = vi.spyOn(desktopManager, 'createDesktop');
     const llm = new LLMConfigService(new ModelRegistry());
-    vi.spyOn(llm, 'getActiveLLMConfig').mockResolvedValue({ model: 'openai:synthetic' });
+    vi.spyOn(llm, 'resolveLLMConfig').mockResolvedValue({ model: 'synthetic', provider: { id: 'openai' } });
     const manager = new SessionManagerV3(kernel, desktopManager, llm, new MessageServiceV2());
     try {
         await manager.ensureSession(desktopId);

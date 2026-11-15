@@ -5,6 +5,7 @@
  * Model tab uses provider→model two-step selection.
  * "Add Model Provider →" link switches to Settings Model page.
  */
+import { parseModelSelection } from '../../../../types/llm-config.js';
 import React, { useEffect, useState, useCallback } from 'react';
 import { AgentEditorModal } from './AgentEditorModal.js';
 import { useChatBridge } from '../../../ChatBridge.js';
@@ -137,12 +138,7 @@ export const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
                     if (!isCustom) {
                         try {
                             const models = await trpc.modelRegistry.getModels.query({ providerId });
-                            (models as Array<{ id?: string; name?: string }>).forEach((item: any) => {
-                                const raw = item?.id || item?.name;
-                                if (!raw || typeof raw !== 'string') return;
-                                const normalized = raw.startsWith(`${providerId}/`) ? raw.slice(providerId.length + 1) : raw;
-                                if (normalized.trim()) mergedModels.add(normalized.trim());
-                            });
+                            for (const model of models) mergedModels.add(model.id);
                         } catch { /* skip */ }
                     }
                     return { providerId, models: Array.from(mergedModels).sort((a, b) => a.localeCompare(b)), displayName: customNameMap.get(providerId) };
@@ -219,9 +215,8 @@ export const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
     })).filter(g => g.models.length > 0);
 
     const currentModelSelection = (() => {
-        if (!modelId || !modelId.includes(':')) return { provider: '—', model: '—' };
-        const idx = modelId.indexOf(':');
-        return { provider: modelId.slice(0, idx), model: modelId.slice(idx + 1) };
+        const selected = parseModelSelection(modelId);
+        return { provider: selected?.providerId ?? '—', model: selected?.modelId ?? (modelId || '—') };
     })();
 
     const filteredTemplates = promptTemplates.filter(t =>

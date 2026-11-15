@@ -1,3 +1,4 @@
+import { parseModelSelection } from '../../types/llm-config.js';
 import React, { useRef, useEffect, useState } from 'react';
 import { Button, Spinner, Card, CardBody } from "@heroui/react";
 import { IconPlay, IconPause, IconAgentSleeping, IconAgentIdle, IconAgentWorking, IconAgentPaused, IconApps, IconSkills, IconPlug, IconBrain, IconPrompt, IconWrench } from './Icons.js';
@@ -272,14 +273,8 @@ export function ChatArea({ messages, agentThinking, agentReasoning, onSendMessag
         if (!selectedModel) {
             return { provider: '—', model: 'Not selected' };
         }
-        const separatorIndex = selectedModel.indexOf(':');
-        if (separatorIndex < 0) {
-            return { provider: '—', model: selectedModel };
-        }
-        return {
-            provider: selectedModel.slice(0, separatorIndex),
-            model: selectedModel.slice(separatorIndex + 1),
-        };
+        const selected = parseModelSelection(selectedModel);
+        return { provider: selected?.providerId ?? '—', model: selected?.modelId ?? selectedModel };
     }, [selectedModel]);
 
     const modelButtonLabel = currentModelSelection.model && currentModelSelection.model !== 'Not selected'

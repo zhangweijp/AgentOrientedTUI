@@ -45,12 +45,18 @@ export const context: DrivenSourceContext = {
 };
 export const source: ContextDrivenSource = { name: 'public', getContext: async () => context, onUpdate: callback => { void callback; return () => {}; } };
 export const config: AgentDriverV2Config = {
-  sources: [source], llm: { model: 'openai:test', apiKey: 'LOCAL_TEST_ONLY' },
+  sources: [source], llm: { provider: { id: 'openai' }, model: 'test', apiKey: 'LOCAL_TEST_ONLY' },
   onAssistantMessage: (message: ModelMessage) => { void message; },
   onToolResult: (message: ModelMessage) => { void message; },
 };
 export const createPublicDriver = () => new AgentDriverV2(config);
-export const createPublicModel = () => createLanguageModel({ config: config.llm, target: { providerId: 'openai', modelName: 'test', registryModelId: 'openai:test' }, warn: () => {} });
+export const createPublicModel = () => createLanguageModel(config.llm);
+export function rejectImplicitModelRouting() {
+  // @ts-expect-error A model string alone does not identify the Provider.
+  createLanguageModel({ model: 'openai:test' });
+  // @ts-expect-error An empty Provider configuration has no routing identity.
+  createLanguageModel({ model: 'test', provider: {} });
+}
 export type AdapterMatchesSource = Expect<SemanticAOTUIDrivenSource extends ContextDrivenSource ? true : false>;
 
 export type PortableModelV3 = Expect<Same<ReturnType<typeof createLanguageModel>['specificationVersion'], 'v3'>>;

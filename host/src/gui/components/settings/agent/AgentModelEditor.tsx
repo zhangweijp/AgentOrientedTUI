@@ -39,30 +39,20 @@ export const AgentModelEditor: React.FC<AgentModelEditorProps> = ({
                 ]);
                 const providerModels = new Map<string, Set<string>>();
                 const providerDisplayNames = new Map<string, string>();
-                for (const config of configs as any[]) {
-                    const pid = config.providerId || 'unknown';
-                    if (!providerModels.has(pid)) providerModels.set(pid, new Set<string>());
-                    if (config.model) {
-                        const modelName = config.model.includes(':') ? config.model.split(':').slice(1).join(':') : config.model;
-                        providerModels.get(pid)!.add(modelName);
-                    }
+                for (const config of configs) {
+                    if (!config.providerId || !config.model) continue;
+                    if (!providerModels.has(config.providerId)) providerModels.set(config.providerId, new Set<string>());
+                    providerModels.get(config.providerId)!.add(config.model);
                 }
-                for (const cp of customProviders as any[]) {
-                    if (!providerModels.has(cp.id)) providerModels.set(cp.id, new Set<string>());
+                for (const cp of customProviders) {
                     providerDisplayNames.set(cp.id, cp.name || cp.id);
                 }
-                const standardProviders = ['openai', 'anthropic', 'google', 'xai'];
-                for (const pid of standardProviders) {
-                    if (providerModels.has(pid)) {
-                        try {
-                            const registryModels = await trpc.modelRegistry.getModels.query({ providerId: pid });
-                            for (const m of registryModels as any[]) {
-                                const modelId = m.id || m.modelId || '';
-                                if (modelId) providerModels.get(pid)!.add(modelId);
-                            }
-                        } catch { /* registry unavailable */ }
-                    }
-                }
+                await Promise.all([...providerModels].map(async ([providerId, models]) => {
+                    if (providerId.startsWith('custom:')) return;
+                    try {
+                        for (const model of await trpc.modelRegistry.getModels.query({ providerId })) models.add(model.id);
+                    } catch { /* Registry unavailable. */ }
+                }));
                 const groups: ModelGroup[] = [];
                 for (const [providerId, models] of providerModels.entries()) {
                     if (models.size === 0) continue;
