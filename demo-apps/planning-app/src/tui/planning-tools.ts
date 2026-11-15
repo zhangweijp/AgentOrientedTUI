@@ -1,4 +1,4 @@
-import { defineViewTypeTool, defineToolSet, refParam, type ArgsOf, type ToolBinding } from '@aotui/sdk';
+import { defineViewType, refParam, type ArgsOf, type ToolBinding } from '@aotui/sdk';
 import Type from 'typebox';
 import { PlanSchema, PhaseSchema, TaskSchema } from './ref-schemas.js';
 import type { PhaseInput, Plan, TaskInput } from '../types.js';
@@ -94,38 +94,38 @@ export function createPlanListBindings(actions: PlanListActions) {
         return plan;
     };
     return {
-        createPlan: ({ execute: async (args: ArgsOf<typeof planningTools.createPlan>) => {
+        create_plan: ({ execute: async (args: ArgsOf<typeof PlanListType.tools.create_plan>) => {
                 const phases: PhaseInput[] = (args.phases ?? []).map(({ title, description, tasks }) => ({
                     title, description, tasks: [...(tasks ?? [])],
                 }));
                 await actions.createPlan(args.title, args.description, phases);
                 const taskCount = phases.reduce((sum, phase) => sum + (phase.tasks?.length ?? 0), 0);
                 return { success: true, data: { message: `Plan created with ${phases.length} phases and ${taskCount} tasks.` } };
-            } } satisfies ToolBinding<typeof planningTools.createPlan>),
-        updatePlan: ({ execute: async (args: ArgsOf<typeof planningTools.updatePlan>) => {
+            } } satisfies ToolBinding<typeof PlanListType.tools.create_plan>),
+        update_plan: ({ execute: async (args: ArgsOf<typeof PlanListType.tools.update_plan>) => {
                 const plan = shownPlan(args.plan.id);
                 if (!plan) return { success: false, error: { code: 'PLAN_NOT_FOUND', message: 'Observe PlanList and select a current View-qualified Plan Ref for plan.' } };
                 if (!await actions.updatePlan(plan.id, { title: args.title, description: args.description })) {
                     return { success: false, error: { code: 'PLAN_UPDATE_FAILED', message: 'Plan update failed' } };
                 }
                 return { success: true, data: { message: 'Plan updated.' } };
-            } } satisfies ToolBinding<typeof planningTools.updatePlan>),
-        deletePlan: ({ execute: async (args: ArgsOf<typeof planningTools.deletePlan>) => {
+            } } satisfies ToolBinding<typeof PlanListType.tools.update_plan>),
+        delete_plan: ({ execute: async (args: ArgsOf<typeof PlanListType.tools.delete_plan>) => {
                 const plan = shownPlan(args.plan.id);
                 if (!plan) return { success: false, error: { code: 'PLAN_NOT_FOUND', message: 'Observe PlanList and select a current View-qualified Plan Ref for plan.' } };
                 if (!await actions.deletePlan(plan.id)) return { success: false, error: { code: 'PLAN_DELETE_FAILED', message: 'Plan delete failed' } };
                 return { success: true, data: { message: 'Plan deleted.' } };
-            } } satisfies ToolBinding<typeof planningTools.deletePlan>),
-        openPlan: ({ execute: async ({ plan }: ArgsOf<typeof planningTools.openPlan>) => {
+            } } satisfies ToolBinding<typeof PlanListType.tools.delete_plan>),
+        open_plan: ({ execute: async ({ plan }: ArgsOf<typeof PlanListType.tools.open_plan>) => {
                 if (!shownPlan(plan.id)) return { success: false, error: { code: 'PLAN_NOT_FOUND', message: 'Refresh PlanList and select a current View-qualified Plan Ref name for plan.' } };
                 if (!await actions.openPlan(plan.id)) return { success: false, error: { code: 'PLAN_OPEN_FAILED', message: 'Plan open failed' } };
                 return { success: true, data: { message: 'Plan opened.' } };
-            } } satisfies ToolBinding<typeof planningTools.openPlan>),
-        closePlan: ({ execute: async () => {
+            } } satisfies ToolBinding<typeof PlanListType.tools.open_plan>),
+        close_plan: ({ execute: async () => {
                 if (!actions.activePlan) return { success: false, error: { code: 'PLAN_NOT_FOUND', message: 'There is no active plan to close.' } };
                 actions.closePlan();
                 return { success: true, data: { message: 'Active plan closed.' } };
-            } } satisfies ToolBinding<typeof planningTools.closePlan>),
+            } } satisfies ToolBinding<typeof PlanListType.tools.close_plan>),
     };
 }
 
@@ -143,128 +143,99 @@ export function createPlanDetailBindings(actions: PlanDetailActions) {
     const inactivePlan = () => ({ success: false as const, error: { code: 'PLAN_NOT_ACTIVE', message: 'Open the intended Plan and select a Ref from its current PlanDetail.' } });
 
     return {
-        addPhase: ({ execute: async (args: ArgsOf<typeof planningTools.addPhase>) => {
+        add_phase: ({ execute: async (args: ArgsOf<typeof PlanDetailType.tools.add_phase>) => {
                 if (!findActivePlan(actions.activePlan, args.plan.id)) return inactivePlan();
                 const tasks = [...(args.tasks ?? [])];
                 if (!await actions.addPhase(args.title, args.description, tasks)) return { success: false, error: { code: 'PHASE_ADD_FAILED', message: 'Add phase failed' } };
                 return { success: true, data: { message: `Phase added with ${tasks.length} tasks.` } };
-            } } satisfies ToolBinding<typeof planningTools.addPhase>),
-        deletePhase: ({ execute: async (args: ArgsOf<typeof planningTools.deletePhase>) => {
+            } } satisfies ToolBinding<typeof PlanDetailType.tools.add_phase>),
+        delete_phase: ({ execute: async (args: ArgsOf<typeof PlanDetailType.tools.delete_phase>) => {
                 const { plan, phase } = phaseFor(args.phase.id);
                 if (!plan) return inactivePlan();
                 if (!phase) return { success: false, error: { code: 'PHASE_NOT_FOUND', message: 'Observe the active PlanDetail and select a current View-qualified Phase Ref from that Plan.' } };
                 if (!await actions.deletePhase(phase.id)) return { success: false, error: { code: 'PHASE_DELETE_FAILED', message: 'Phase delete failed' } };
                 return { success: true, data: { message: 'Phase deleted.' } };
-            } } satisfies ToolBinding<typeof planningTools.deletePhase>),
-        completePhase: ({ execute: async (args: ArgsOf<typeof planningTools.completePhase>) => {
+            } } satisfies ToolBinding<typeof PlanDetailType.tools.delete_phase>),
+        complete_phase: ({ execute: async (args: ArgsOf<typeof PlanDetailType.tools.complete_phase>) => {
                 const { plan, phase } = phaseFor(args.phase.id);
                 if (!plan) return inactivePlan();
                 if (!phase) return { success: false, error: { code: 'PHASE_NOT_FOUND', message: 'Observe the active PlanDetail and select a current View-qualified Phase Ref from that Plan.' } };
                 if (!await actions.completePhase(phase.id)) return { success: false, error: { code: 'PHASE_COMPLETE_FAILED', message: 'Complete phase failed' } };
                 return { success: true, data: { message: 'Phase completed.' } };
-            } } satisfies ToolBinding<typeof planningTools.completePhase>),
-        addTask: ({ execute: async (args: ArgsOf<typeof planningTools.addTask>) => {
+            } } satisfies ToolBinding<typeof PlanDetailType.tools.complete_phase>),
+        add_task: ({ execute: async (args: ArgsOf<typeof PlanDetailType.tools.add_task>) => {
                 const { plan, phase } = phaseFor(args.phase.id);
                 if (!plan) return inactivePlan();
                 if (!phase) return { success: false, error: { code: 'PHASE_NOT_FOUND', message: 'Observe the active PlanDetail and select a current View-qualified Phase Ref from that Plan.' } };
                 if (!await actions.addTask(phase.id, args.title, args.description)) return { success: false, error: { code: 'TASK_ADD_FAILED', message: 'Add task failed' } };
                 return { success: true, data: { message: 'Task added.' } };
-            } } satisfies ToolBinding<typeof planningTools.addTask>),
-        updateTask: ({ execute: async (args: ArgsOf<typeof planningTools.updateTask>) => {
+            } } satisfies ToolBinding<typeof PlanDetailType.tools.add_task>),
+        update_task: ({ execute: async (args: ArgsOf<typeof PlanDetailType.tools.update_task>) => {
                 const { plan, task } = taskFor(args.task.id);
                 if (!plan) return inactivePlan();
                 if (!task) return { success: false, error: { code: 'TASK_NOT_FOUND', message: 'Observe the active PlanDetail and select a current View-qualified Task Ref from that Plan.' } };
                 if (!await actions.updateTask(task.id, { title: args.title, description: args.description })) return { success: false, error: { code: 'TASK_UPDATE_FAILED', message: 'Update task failed' } };
                 return { success: true, data: { message: 'Task updated.' } };
-            } } satisfies ToolBinding<typeof planningTools.updateTask>),
-        deleteTask: ({ execute: async (args: ArgsOf<typeof planningTools.deleteTask>) => {
+            } } satisfies ToolBinding<typeof PlanDetailType.tools.update_task>),
+        delete_task: ({ execute: async (args: ArgsOf<typeof PlanDetailType.tools.delete_task>) => {
                 const { plan, task } = taskFor(args.task.id);
                 if (!plan) return inactivePlan();
                 if (!task) return { success: false, error: { code: 'TASK_NOT_FOUND', message: 'Observe the active PlanDetail and select a current View-qualified Task Ref from that Plan.' } };
                 if (!await actions.deleteTask(task.id)) return { success: false, error: { code: 'TASK_DELETE_FAILED', message: 'Delete task failed' } };
                 return { success: true, data: { message: 'Task deleted.' } };
-            } } satisfies ToolBinding<typeof planningTools.deleteTask>),
-        completeTask: ({ execute: async (args: ArgsOf<typeof planningTools.completeTask>) => {
+            } } satisfies ToolBinding<typeof PlanDetailType.tools.delete_task>),
+        complete_task: ({ execute: async (args: ArgsOf<typeof PlanDetailType.tools.complete_task>) => {
                 const { plan, task } = taskFor(args.task.id);
                 if (!plan) return inactivePlan();
                 if (!task) return { success: false, error: { code: 'TASK_NOT_FOUND', message: 'Observe the active PlanDetail and select a current View-qualified Task Ref from that Plan.' } };
                 if (!await actions.completeTask(task.id)) return { success: false, error: { code: 'TASK_COMPLETE_FAILED', message: 'Complete task failed' } };
                 return { success: true, data: { message: 'Task completed.' } };
-            } } satisfies ToolBinding<typeof planningTools.completeTask>),
+            } } satisfies ToolBinding<typeof PlanDetailType.tools.complete_task>),
     };
 }
 
-export const planningTools = defineToolSet({
-createPlan: defineViewTypeTool({
-            viewType: 'PlanList',
-            name: 'create_plan',
-            description: 'Create a new plan, optionally with phases and tasks.',
+export const RootType = defineViewType({ name: 'Root', tools: {} });
+
+export const PlanListType = defineViewType({ name: 'PlanList', tools: {
+        create_plan: { description: 'Create a new plan, optionally with phases and tasks.',
             inputSchema: planInput,
-        }),
-updatePlan: defineViewTypeTool({
-            viewType: 'PlanList',
-            name: 'update_plan',
-            description: 'Update the Plan selected by a View-qualified Plan Ref from the current PlanList. The plan parameter is required.',
+        },
+        update_plan: { description: 'Update the Plan selected by a View-qualified Plan Ref from the current PlanList. The plan parameter is required.',
             inputSchema: updatePlanInput,
-        }),
-deletePlan: defineViewTypeTool({
-            viewType: 'PlanList',
-            name: 'delete_plan',
-            description: 'Delete the Plan selected by a View-qualified Plan Ref from the current PlanList. The plan parameter is required.',
+        },
+        delete_plan: { description: 'Delete the Plan selected by a View-qualified Plan Ref from the current PlanList. The plan parameter is required.',
             inputSchema: targetPlanInput,
-        }),
-openPlan: defineViewTypeTool({
-            viewType: 'PlanList',
-            name: 'open_plan',
-            description: 'Open a current unfinished Plan using its View-qualified Plan Ref name from PlanList.',
+        },
+        open_plan: { description: 'Open a current unfinished Plan using its View-qualified Plan Ref name from PlanList.',
             inputSchema: targetPlanInput,
-        }),
-closePlan: defineViewTypeTool({
-            viewType: 'PlanList',
-            name: 'close_plan',
-            description: 'Close the active plan.',
+        },
+        close_plan: { description: 'Close the active plan.',
             inputSchema: emptyInput,
-        }),
-addPhase: defineViewTypeTool({
-            viewType: 'PlanDetail',
-            name: 'add_phase',
-            description: 'Add a phase to the active Plan selected by its View-qualified Plan Ref, optionally with initial tasks.',
+        },
+} });
+
+export const PlanDetailType = defineViewType({ name: 'PlanDetail', tools: {
+        add_phase: { description: 'Add a phase to the active Plan selected by its View-qualified Plan Ref, optionally with initial tasks.',
             inputSchema: addPhaseInput,
-        }),
-deletePhase: defineViewTypeTool({
-            viewType: 'PlanDetail',
-            name: 'delete_phase',
-            description: 'Delete the Phase selected by a View-qualified Phase Ref in the active PlanDetail.',
+        },
+        delete_phase: { description: 'Delete the Phase selected by a View-qualified Phase Ref in the active PlanDetail.',
             inputSchema: planDetailPhaseInput,
-        }),
-completePhase: defineViewTypeTool({
-            viewType: 'PlanDetail',
-            name: 'complete_phase',
-            description: 'Complete the Phase selected by a View-qualified Phase Ref in the active PlanDetail.',
+        },
+        complete_phase: { description: 'Complete the Phase selected by a View-qualified Phase Ref in the active PlanDetail.',
             inputSchema: planDetailPhaseInput,
-        }),
-addTask: defineViewTypeTool({
-            viewType: 'PlanDetail',
-            name: 'add_task',
-            description: 'Add a task to the Phase selected by a View-qualified Phase Ref in the active PlanDetail.',
+        },
+        add_task: { description: 'Add a task to the Phase selected by a View-qualified Phase Ref in the active PlanDetail.',
             inputSchema: addTaskInput,
-        }),
-updateTask: defineViewTypeTool({
-            viewType: 'PlanDetail',
-            name: 'update_task',
-            description: 'Update the Task selected by a View-qualified Task Ref in the active PlanDetail.',
+        },
+        update_task: { description: 'Update the Task selected by a View-qualified Task Ref in the active PlanDetail.',
             inputSchema: updateTaskInput,
-        }),
-deleteTask: defineViewTypeTool({
-            viewType: 'PlanDetail',
-            name: 'delete_task',
-            description: 'Delete the Task selected by a View-qualified Task Ref in the active PlanDetail.',
+        },
+        delete_task: { description: 'Delete the Task selected by a View-qualified Task Ref in the active PlanDetail.',
             inputSchema: planDetailTaskInput,
-        }),
-completeTask: defineViewTypeTool({
-            viewType: 'PlanDetail',
-            name: 'complete_task',
-            description: 'Complete the Task selected by a View-qualified Task Ref in the active PlanDetail.',
+        },
+        complete_task: { description: 'Complete the Task selected by a View-qualified Task Ref in the active PlanDetail.',
             inputSchema: planDetailTaskInput,
-        })
-});
+        },
+} });
+
+export const planningViewTypes = [RootType, PlanListType, PlanDetailType] as const;

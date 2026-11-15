@@ -34,31 +34,24 @@ async function start() {
     worker.on('message', m => messages.push(m));
     const x = { host, worker, messages, sent, logs,
         snapshot: () => (host as any).snapshotReceiver.core.store.readLatest('scoped_sdk').snapshot,
-        refs: () => sent.filter(m => m.type === 'VIEW_TOOL_INVOKE_V5' && m.argumentMode === 'view-type-parameters-v1') };
+        refs: () => sent.filter(m => m.type === 'VIEW_TOOL_INVOKE_V6' && m.argumentMode === 'view-type-parameters-v1') };
     running.push(x); await host.start(); await host.open(); return x;
 }
 function scope(x: Awaited<ReturnType<typeof start>>) {
-    const grant = (ctx: any) => {
-        const selected = ctx.source.views.filter((view: any) => ctx.selection.viewIds.includes(view.id));
-        const selectedOwners = new Set(selected.map((view: any) => JSON.stringify([view.id, view.viewInstanceId])));
-        return {
-            views: selected.map((view: any) => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-            refs: Object.values(ctx.source.refs).filter((ref: any) => selectedOwners.has(JSON.stringify([ref.ownerViewId, ref.ownerViewInstanceId])))
-                .map((ref: any) => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
-            toolBindings: Object.values(ctx.source.tools).flatMap((tool: any) => tool.execution.kind === 'view-type' &&
-                selected.some((view: any) => view.type === tool.viewType) ? [{ toolId: tool.id, execution: tool.execution }] : []),
-            content: [],
-        };
-    };
+    let refView = 'aa';
+    const grant = ({source}: any) => ({
+        refs: Object.values(source.refs).filter((ref:any)=>ref.ownerViewId===refView)
+            .map((ref:any)=>({viewId:ref.ownerViewId,viewInstanceId:ref.ownerViewInstanceId,refId:ref.id})),
+        toolIds: Object.keys(source.tools),
+    });
     const controls = { project: (ctx: any): any => grant(ctx), authorize: (_ctx: any): any => true, read: (_m: any, _s: any): any => true };
     const policy: AppInteractionPolicy = { project: ctx => controls.project(ctx), authorize: ctx => controls.authorize(ctx), canReadReceipt: (m, s) => controls.read(m, s) };
     const opened = x.host.getAppInteraction(policy); expect(opened.status).toBe('ready'); if (opened.status !== 'ready') throw Error(opened.issue.code);
     return { client: opened.interaction, controls, policy, grant,
-        async observe(view = 'aa') { const r = await opened.interaction.observe({ viewIds: [view] }); expect(r.status).toBe('observed'); if (r.status !== 'observed') throw Error(r.issue.code); expect(opened.interaction.adoptObservation(r.observation.observationId)).toEqual({ status: 'adopted' }); return r.observation; },
+        async observe(view = 'aa') { refView=view; const r = await opened.interaction.observe({ all: true }); expect(r.status).toBe('observed'); if (r.status !== 'observed') throw Error(r.issue.code); expect(opened.interaction.adoptObservation(r.observation.observationId)).toEqual({ status: 'adopted' }); return r.observation; },
         request(o: any, id = 'call', input: any = { file: REF_A }, name = 'read', view = 'aa') {
             const tool = o.tools.find((t: any) => t.name === name); expect(tool).toBeDefined();
-            const binding = o.bindings.find((b: any) => b.toolId === tool.id && b.execution.kind === 'view-type'); expect(binding).toBeDefined();
-            return { invocationId: id, observationId: o.observationId, bindingId: binding.bindingId, input };
+            return { invocationId: id, observationId: o.observationId, toolId: tool.id, input: {view_id:view,...input} };
         } };
 }
 async function configure(x: Awaited<ReturnType<typeof start>>, data: any) {
@@ -105,7 +98,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
     });
     afterAll(async () => {
         if (process.env.AOTUI_C_FACTS_FILE) {
-            const runtime = resolve(process.cwd()), paths = ['dist/engine/app/worker-host.js', 'dist/worker-runtime/index.js', 'src/e2e-test/fixtures/snapshot-value-sdk.mjs', '../sdk/dist/app-factory/createTUIApp.js', '../sdk/dist/components/AppTools.js'];
+            const runtime = resolve(process.cwd()), paths = ['dist/engine/app/worker-host.js', 'dist/worker-runtime/index.js', 'src/e2e-test/fixtures/snapshot-value-sdk.mjs', '../sdk/dist/app-factory/createTUIApp.js', '../sdk/dist/components/View.js'];
             const inputs = await Promise.all(paths.map(async path => ({ path: resolve(runtime, path), sha256: createHash('sha256').update(await readFile(resolve(runtime, path))).digest('hex') })));
             await writeFile(process.env.AOTUI_C_FACTS_FILE, JSON.stringify({ kind: 'Actual emitted Host and Node Worker; accepted SDK dist; existing immutable fixture', inputs, cases: facts }, null, 2), { flag: 'wx' });
         }
@@ -114,14 +107,15 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
 
     it('executes concurrent/settled duplicates once, keeps actual aa/bb ownership and rejects ID conflict', async () => {
         const x = await start(), s = scope(x);
-        const both = await s.client.observe({ viewIds: ['aa', 'bb'] }); if (both.status !== 'observed') throw Error(both.issue.code);
+        const both = await s.client.observe({ all: true }); if (both.status !== 'observed') throw Error(both.issue.code);
         expect(s.client.adoptObservation(both.observation.observationId)).toEqual({ status: 'adopted' });
-        const aa = both.observation, bb = both.observation, request = s.request(aa);
+        const aa = both.observation, request = s.request(aa);
         let authorizations = 0, reads = 0; s.controls.authorize = () => { authorizations++; return true; }; s.controls.read = () => { reads++; return true; };
         const [a, b] = await Promise.all([s.client.invoke(request), s.client.invoke(request)]); const first = receipt(a);
         expect(receipt(b)).toEqual(first); expect(receipt(await s.client.invoke(request))).toEqual(first);
         expect(first.outcome).toMatchObject({ status: 'succeeded', value: { success: true, data: { owner: 'aa', calls: 1 } } });
         expect(await s.client.invoke({ ...request, input: { file: REF_A, value: 'different' } })).toMatchObject({ kind: 'refused', code: 'INVOCATION_ID_CONFLICT' });
+        const bb = await s.observe('bb');
         expect(receipt(await s.client.invoke(s.request(bb, 'bb', { file: REF_B }, 'read', 'bb'))).outcome)
             .toMatchObject({ value: { data: { owner: 'bb', calls: 2 } } });
         expect(x.refs()).toHaveLength(2); expect(authorizations).toBe(2); expect(reads).toBe(4);
@@ -194,7 +188,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         expect(o.tools.some(tool => tool.name === 'read')).toBe(true);
         expect(o.tools.some(tool => ['optional', 'multi'].includes(tool.name))).toBe(false);
         expect(receipt(await s.client.invoke({ invocationId: 'plain', observationId: o.observationId,
-            bindingId: 'unobserved-ordinary-binding', input: { file: REF_A } }))).toMatchObject({
+            toolId: 'unobserved-tool', input: {view_id:'aa', file: REF_A } }))).toMatchObject({
             executionPhase: 'not-dispatched', outcome: { status: 'rejected' },
         });
         for (const [id, name, file] of [['unknown-ref', 'read', 'entity'], ['foreign-ref', 'read', 'bb.private_beta']]) {
@@ -253,7 +247,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         expect(store.inspect().historicalSnapshots).toBe(1);
         expect(store.inspect().activeLeases).toBe(2);
         expect(await s.client.invoke(s.request(currentView, 'busy'))).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
-        const correlated = { type: 'VIEW_TOOL_INVOKE_V5_RESPONSE', requestId: wire.requestId, appId: wire.appId,
+        const correlated = { type: 'VIEW_TOOL_INVOKE_V6_RESPONSE', requestId: wire.requestId, appId: wire.appId,
             instanceId: wire.instanceId, argumentMode: wire.argumentMode, success: true,
             terminal: { phase: 'finished-unknown' } };
         x.worker.emit('message', { ...correlated, instanceId: 'another-instance' });
@@ -268,7 +262,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         const shorterReplay = receipt(await s.client.readReceipt(query, 25));
         expect(shorterReplay.outcome.status).toBe('unknown');
         expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: true, core: { activeInvocations: 1 } });
-        const late = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE' && m.requestId === wire.requestId && m.instanceId === wire.instanceId);
+        const late = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE' && m.requestId === wire.requestId && m.instanceId === wire.instanceId);
         x.worker.postMessage({ type: 'TEST_COMMAND', command: 'release-handler', viewId: 'aa' });
         const terminal = await late;
         expect(terminal.terminal.phase).toBe('entered-returned');
@@ -368,7 +362,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         const x = await start(), s = scope(x), o = await s.observe();
         const request = s.request(o, mode, { file: REF_A, mode }), r = receipt(await s.client.invoke(request));
         expect(r).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown' } });
-        const terminal = x.messages.find(m => m.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE' && m.requestId === x.refs()[0].requestId);
+        const terminal = x.messages.find(m => m.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE' && m.requestId === x.refs()[0].requestId);
         expect(terminal?.terminal).toEqual({ phase: 'finished-unknown' });
         expect(receipt(await s.client.invoke(request))).toEqual(r);
         expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: false, core: { activeInvocations: 0, sourceBytes: 0 } });

@@ -14,11 +14,11 @@ SDK 在 View 内注册局部名，展示保留类型提示；Tool 输入使用 *
 | `useArrayRef('notes', notes, { itemType: 'Note' })` 的整数组 | `Note[]:notes` | `detail.notes` |
 | 同一 ArrayRef 的第一个元素 | `Note:notes[0]` | `detail.notes[0]` |
 
-例如 `[First note](Note:notes[0])` 位于 `id="detail"` 的 View 中，调用 `inspect_note` 时传 `{ "note": "detail.notes[0]" }`。使用 XML 中的 id，不使用 ViewType 或 name，也不猜“当前 View”。同一 App 两个 View 的同名 Ref 可分别寻址。业务类型由元数据核对，字符串前缀不能伪造类型。
+例如 `[First note](Note:notes[0])` 位于 `id="detail"` 的 View 中，调用 `inspect_note` 时传 `{ "note": "detail.notes[0]" }`。地址使用来源 View 的 XML `id`。同一 App 运行实例的原 Observation 中，可见且符合参数合同的 Ref 可以来自不同 View。同名 Ref 通过来源 View 的 `id` 区分，Runtime 依据元数据核对类型。
 
 ## 一份 Tool 声明，几种参数形状
 
-完整定义、绑定和发布只维护在 [ref-app.tsx](examples/ref-app.tsx)；它使用与普通参数相同的 `defineViewTypeTool`、`defineToolSet` 和 `AppTools`，没有第二类 Ref Tool。
+完整定义、绑定和发布见 [ref-app.tsx](examples/ref-app.tsx)。`defineViewType` 声明普通参数和 Ref 参数，页面通过 `View.bindings` 提供执行函数。调用传入接收页面的 `view_id` 和显式 Ref 地址，例如 `{ "view_id": "detail", "note": "detail.notes[0]" }`。接收页面和 Ref 的来源页面可以不同。
 
 | 参数 Schema | 模型输入 | handler 接收 |
 | --- | --- | --- |
@@ -46,13 +46,13 @@ App 可用解析对象里的内部 ID 操作自己的状态，不要求模型另
 
 ## 观察与来源
 
-Host 准备 Observation 后显式采用，再使用其中的绑定；标准 Driver 通过 `Context.adopt()` 完成。采用新 Observation 会撤销旧调用资格。单纯发布或诊断预览不会替换观察。原 Ref 所属 View 关闭或同名重开时，旧 Ref 会被拒绝并附参数路径。App 不生成 observationId／bindingId，也不实现私有 Ref 解析器。
+Host 准备 Observation 后显式采用，再使用其中的 Tool ID 和接收页面；标准 Driver 通过 `Context.adopt()` 完成。采用新 Observation 会撤销旧调用资格。单纯发布或诊断预览不会替换观察。原 Ref 所属 View 关闭或同名重开时，旧 Ref 会被拒绝并附参数路径。SDK 将 Runtime 解析后的值提供给 App 的页面 handler。
 
 Runtime 保留 Ref owner、View 实例、类型、原 Snapshot、来源、调用授权和预算检查。Tool 按 App + ViewType 共享，Ref 选择才指定数据；关闭一个页面而同类型其他页面仍打开，不会把共享 Tool 隐式绑定到剩下的某个对象。Tool 收据只报告完成及必要恢复提示，最新业务数据看 View。
 
 ## 数据捕获与失败
 
-Worker 发出 Snapshot 前有界捕获严格 JSON，不冻结或修改 App 拥有的原对象。getter、隐藏字段、Symbol、循环和类实例会被拒绝；当前默认捕获限额为 48 层、100,000 个节点、约 8 MiB 的近似输入字节，Host 仍独立校验完整 V3 Snapshot、归属及规范化字节预算。
+Worker 发出 Snapshot 前有界捕获严格 JSON，不冻结或修改 App 拥有的原对象。getter、隐藏字段、Symbol、循环和类实例会被拒绝；当前默认捕获限额为 48 层、100,000 个节点、约 8 MiB 的近似输入字节，Host 仍独立校验完整 V4 Snapshot、归属及规范化字节预算。
 
 App 为 Ref 提供源 `schema` 时，发布会校验该声明。非法、不支持和超限分别报告 `TOOL_SCHEMA_INVALID`、`TOOL_SCHEMA_UNSUPPORTED` 和 `TOOL_SCHEMA_CAPACITY`。Tool 目标 Schema 则在定义时编译，在 Ref 解引用后用来校验所选值。 [参数合同](tool-parameters.md#声明容量和诊断)
 

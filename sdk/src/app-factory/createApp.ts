@@ -1,103 +1,104 @@
 import { MARKDOWN_VIEW_FORMAT, SnapshotDataError } from '@aotui/runtime/core';
 import {
-    APP_LIFECYCLE_PROTOCOL,
-    type AppLifecycleCallbacks, type AppProjectionFrame, type RuntimeContext, type TUIAppFactory,
+    type AppLifecycleCallbacks, type AppProjectionFrame, type PreparedProjection, type RuntimeContext, type TUIAppFactory,
 } from '@aotui/runtime/spi';
-import { createAppFrameTools, type ExactBindings, type ToolBindings, type ToolMap, type ToolSet } from '../tools/view-type-tool.js';
+import { captureViewBindings, requireViewType, type ViewBindingProps, type ViewType } from '../tools/view-type-tool.js';
 import { createAppFactory, VIEW_ID_PATTERN, type AppConfig } from './app-factory.js';
 import { captureRefEntries, type PublishedRef } from './refs.js';
 
-export interface PublishedView {
+declare const viewHandle: unique symbol;
+export interface ViewHandle { readonly [viewHandle]: true }
+
+export interface AppAuthorContext extends
+    Pick<RuntimeContext, 'appId' | 'desktopId' | 'launchConfig' | 'persistence' | 'signal'> {
+    registerCleanup(callbacks: AppLifecycleCallbacks): void;
+    /** Prepare this complete App projection synchronously. Errors are thrown locally. */
+    publish(frame: { readonly views: readonly ViewHandle[] }): PreparedProjection;
+}
+
+export type CreateAppConfig = AppConfig & {
+    initialize(context: AppAuthorContext): void | Promise<void>;
+};
+
+interface ViewMetadata {
     readonly id: string;
-    readonly type: string;
     readonly kind: 'instruction' | 'state';
     readonly name?: string;
-    readonly body: string;
-    readonly refs?: readonly PublishedRef[];
 }
+type ViewRender = { readonly body: string; readonly refs?: readonly PublishedRef[] };
+const handles = new WeakMap<object, {
+    readonly type: ViewType;
+    readonly metadata: ViewMetadata;
+    readonly render: () => ViewRender & { readonly bindings?: unknown };
+    app?: object;
+}>();
 
-type EmptyTools = Record<never, never>;
-
-type AppFrame<Tools extends ToolMap, Bindings extends ToolBindings<Tools>> = {
-    readonly views: readonly PublishedView[];
-} & (keyof Tools extends never ? { readonly bindings?: never } : {
-    readonly bindings: Bindings & ExactBindings<Bindings, Tools>;
-});
-
-export interface AppAuthorContext<Tools extends ToolMap = EmptyTools> extends
-    Pick<RuntimeContext, 'appId' | 'desktopId' | 'launchConfig' | 'persistence' | 'signal'> {
-    /** Register the instance's application-owned stop and close callbacks. */
-    registerCleanup(callbacks: AppLifecycleCallbacks): void;
-    /** Commit the entire App. Omitted Views and Refs leave the current projection. */
-    publish<const Bindings extends ToolBindings<Tools>>(frame: AppFrame<Tools, Bindings>): void;
+/** Create a stable author handle. Its first publication binds it to the App. */
+export function createView<const Definition extends ViewType>(
+    type: Definition,
+    options: ViewMetadata & { render: () => ViewRender & ViewBindingProps<NoInfer<Definition>> },
+): ViewHandle {
+    const { id, name, kind, render } = options;
+    const handle = Object.freeze({}) as ViewHandle;
+    handles.set(handle, { type, metadata: { id, kind, ...(name === undefined ? {} : { name }) }, render });
+    return handle;
 }
-
-export type CreateAppConfig<Tools extends ToolMap = EmptyTools> = AppConfig & {
-    readonly tools?: ToolSet<Tools>;
-    initialize(context: AppAuthorContext<NoInfer<Tools>>): void | Promise<void>;
-} & (keyof Tools extends never ? unknown : { readonly tools: ToolSet<Tools> });
 
 function invalid(path: string, message: string): never {
     throw new SnapshotDataError('SNAPSHOT_INVALID', path, message);
 }
 
 /** Create a managed App without a renderer or a DOM dependency. */
-export function createApp<const Tools extends ToolMap = EmptyTools>(config: CreateAppConfig<Tools>): TUIAppFactory {
-    const { initialize, tools } = config;
-    return createAppFactory(config, async context => {
+export function createApp(config: CreateAppConfig): TUIAppFactory {
+    const { initialize } = config;
+    return createAppFactory(config, async (context, types) => {
         const { appId, desktopId, persistence, launchConfig, signal, appLifecycle, refExporter } = context;
-        if (appLifecycle?.protocol !== APP_LIFECYCLE_PROTOCOL) throw new Error('Managed App lifecycle unavailable');
-        const toolBindings = tools && createAppFrameTools(tools);
         const capture = refExporter.captureRef.bind(refExporter);
-
-        const publish = <const Bindings extends ToolBindings<Tools>>(frame: AppFrame<Tools, Bindings>): void => {
+        const app = {};
+        const publish: AppAuthorContext['publish'] = frame => context.publishFrame(() => {
             if (signal.aborted) throw Object.assign(new Error('App projection is closed'), { code: 'PROJECTION_CLOSED' });
-            let pendingTools: ReturnType<ReturnType<typeof createAppFrameTools>['prepare']> | undefined;
-            context.publishFrame(() => {
-                if (!toolBindings && frame.bindings !== undefined) invalid('$.bindings', 'Declare a ToolSet before publishing bindings');
-                pendingTools = toolBindings?.prepare(frame.bindings);
-                const viewIds = new Set<string>();
-                const views: AppProjectionFrame['views'][number][] = [];
-                for (const { id, type, kind, name = id, body, refs = [] } of frame.views) {
-                    if (typeof id !== 'string' || !VIEW_ID_PATTERN.test(id) || viewIds.has(id)) {
-                        invalid('$.views', 'View IDs must be unique, non-empty and use only ASCII letters, digits or underscores');
-                    }
-                    viewIds.add(id);
-                    const path = `View ${id}`;
-                    if (typeof type !== 'string' || !type.trim() || kind !== 'instruction' && kind !== 'state' ||
-                        typeof name !== 'string' || !name.trim() || typeof body !== 'string') {
-                        invalid(path, 'Expected View type, kind, name and Markdown body');
-                    }
-                    const refIds = new Set<string>();
-                    const captured: AppProjectionFrame['views'][number]['refs'][number][] = [];
-                    for (const item of refs) {
-                        for (const [refId, token] of captureRefEntries(capture, item)) {
-                            if (typeof refId !== 'string' || !refId.trim() || refId.includes('.') || refIds.has(refId)) {
-                                invalid(`${path}.refs`, 'Ref IDs must be unique, non-empty and contain no dot');
-                            }
-                            refIds.add(refId);
-                            captured.push({ id: refId, token, refType: item.refType });
-                        }
-                    }
-                    views.push({ id, type, name, kind, content: { format: MARKDOWN_VIEW_FORMAT, value: body }, refs: captured });
-                }
-                return { views, tools: pendingTools?.tools ?? [] };
-            });
-            pendingTools?.accept();
-        };
+            const views: AppProjectionFrame['views'][number][] = [];
+            const viewIds = new Set<string>();
+            for (const handle of frame.views) {
+                const view = handles.get(handle);
+                if (!view || view.app !== undefined && view.app !== app)
+                    invalid('$.views', 'Expected a View handle belonging to this App instance');
+                view.app = app;
+                const { metadata: { id, kind, name = id }, render } = view;
+                const type = requireViewType(types, view.type);
+                if (typeof id !== 'string' || !VIEW_ID_PATTERN.test(id) || viewIds.has(id))
+                    invalid('$.views', 'View IDs must be unique and use only ASCII letters, digits or underscores');
+                viewIds.add(id);
+                const path = 'View ' + id;
+                const { body, refs = [], bindings } = render();
+                if (kind !== 'instruction' && kind !== 'state' || typeof name !== 'string' || !name.trim() || typeof body !== 'string')
+                    invalid(path, 'Expected View kind, name and Markdown body');
 
-        try {
-            await initialize({
-                appId, desktopId, signal,
-                ...(persistence === undefined ? {} : { persistence }),
-                ...(launchConfig === undefined ? {} : { launchConfig }),
-                registerCleanup: callbacks => { appLifecycle.register(callbacks); },
-                publish,
-            });
-        } catch (error) {
-            toolBindings?.close();
-            throw error;
-        }
-        return { close() { toolBindings?.close(); } };
+                const refIds = new Set<string>();
+                const captured: AppProjectionFrame['views'][number]['refs'][number][] = [];
+                for (const item of refs) {
+                    for (const [refId, token] of captureRefEntries(capture, item)) {
+                        if (typeof refId !== 'string' || !refId.trim() || refId.includes('.') || refIds.has(refId))
+                            invalid(path + '.refs', 'Ref IDs must be unique, non-empty and contain no dot');
+                        refIds.add(refId);
+                        captured.push({ id: refId, token, refType: item.refType });
+                    }
+                }
+                views.push({
+                    id, type: type.name, name, kind, owner: handle, content: { format: MARKDOWN_VIEW_FORMAT, value: body }, refs: captured,
+                    bindings: captureViewBindings(type, bindings, id),
+                });
+            }
+            return { views };
+        });
+
+        await initialize({
+            appId, desktopId, signal,
+            ...(persistence === undefined ? {} : { persistence }),
+            ...(launchConfig === undefined ? {} : { launchConfig }),
+            registerCleanup: callbacks => { appLifecycle!.register(callbacks); },
+            publish,
+        });
+        return { close() {} };
     });
 }

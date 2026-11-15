@@ -1,11 +1,10 @@
 import Type from 'typebox';
 import {
   createTUIApp,
-  AppTools,
+  View,
   useAppLifecycle,
   useAppRuntimeContext,
-  defineViewTypeTool,
-  defineToolSet,
+  defineViewType,
   refParam,
   type AppLifecycleCallbacks,
   type AppContext,
@@ -30,9 +29,9 @@ import {
   type StateIssue,
   type StateValue,
   type TUIAppConfig,
-  type ViewTypeToolDeclaration,
+  type ViewType,
   type ToolBinding,
-  type AppToolsProps,
+  type ViewBindings,
   type ViewID,
   type ViewProps,
 } from '../src/index.js';
@@ -117,8 +116,8 @@ type PublicTypes = [
   PersistMeta, PersistOptions<string>, PersistStatus, RefHandle,
   StateBindingStatus, StateFlushReport, StateIssue,
   StateValue,
-  typeof defineViewTypeTool, typeof refParam, typeof AppTools,
-  ViewTypeToolDeclaration<ReturnType<typeof Type.Object>>, ToolBinding<typeof readRecord>, AppToolsProps<typeof readTools>,
+  typeof defineViewType, typeof refParam, typeof View,
+  ViewType, ToolBinding<typeof readRecord>, ViewBindings<typeof Reader>,
   ViewID, ViewProps,
 ];
 declare const publicTypes: PublicTypes;
@@ -145,6 +144,7 @@ usePersistentState('public-api-type-check', 0, { debounceMs: 100 });
 
 const config: TUIAppConfig = {
   app_name: 'public_api_types',
+  viewTypes: [],
   component: () => null,
 };
 // @ts-expect-error Application metadata now uses whatItIs and whenToUse.
@@ -152,69 +152,14 @@ const oldDescriptionConfig: TUIAppConfig = { app_name: 'old_description', descri
 void oldDescriptionConfig;
 const factory = createTUIApp(config);
 const lifecycleProtocol: 'app-lifecycle-v2' = factory.appLifecycleSupport;
-const authoringProtocol: 'view-type-tools-v4' = factory.toolAuthoringProtocol;
+const authoringProtocol: 'view-type-tools-v5' = factory.toolAuthoringProtocol;
 void lifecycleProtocol; void authoringProtocol;
 
 const cleanup: AppLifecycleCallbacks = { stop() {}, close() {} };
 useAppLifecycle(cleanup);
 useAppLifecycle({});
 
-const readRecord = defineViewTypeTool({
-  viewType: 'RecordDetail',
-  name: 'read_record',
-  description: 'Read a record.',
-  inputSchema: Type.Object({
-    status: Type.Enum(['ready', 'pending']),
-    limit: Type.Optional(Type.Number()),
-  }),
-});
-const readTools = defineToolSet({ readRecord });
-AppTools({ definition: readTools, bindings: { readRecord: { execute(args) {
-    const status: 'ready' | 'pending' = args.status;
-    const limit: number | undefined = args.limit;
-    void status;
-    void limit;
-    // Readonly ordinary arguments remain immutable, including the canonical
-    // empty/ordinary-v2 Tool path.
-    // @ts-expect-error Read-only Tool arguments are immutable.
-    args.status = 'ready';
-    return { success: true } satisfies ToolResult;
-} } } });
-
-const failedToolResult = {
-  success: false,
-  error: { code: 'PARTIAL_WRITE', message: 'The application reports partial work.' },
-} satisfies ToolResult;
-void failedToolResult;
-
-const inspectSnapshot = defineViewTypeTool({ viewType: 'Record', name: 'inspect_snapshot',
-  description: 'Inspect a displayed snapshot.', 
-  inputSchema: Type.Object({ record: refParam('Record', Type.Object({ title: Type.String() })) }),
-});
-const snapshotTools = defineToolSet({ inspectSnapshot });
-AppTools({ definition: snapshotTools, bindings: { inspectSnapshot: { execute(args) {
-  const title: string = args.record.title;
-  // @ts-expect-error Resolved Ref fields are recursively immutable.
-  args.record.title = title;
-  return { success: true };
-} } } });
-// @ts-expect-error The retired snapshot Hook has no public export.
-import { useViewSnapshotTool } from '../src/index.js';
-
-// A receipt cannot simultaneously claim success and failure; failure requires a JSON error record.
-const shortReceipt: ToolResult = { success: true, data: { message: 'Done' } };
-const knownFailure: ToolResult = { success: false, error: { code: 'BUSINESS_FAILED', message: 'No write', context: { phase: 'invocation' } } };
-const uncertainFailure: ToolResult = { success: false, error: { code: 'BUSINESS_UNKNOWN', message: 'Observe before deciding next action' } };
-// @ts-expect-error Success cannot carry an error.
-const successAndError: ToolResult = { success: true, error: { code: 'BAD', message: 'bad' } };
-// @ts-expect-error Tool receipts have no effects field.
-const successAndEffects: ToolResult = { success: true, effects: 'none' };
-// @ts-expect-error Business failures use the same receipt shape.
-const failureAndEffects: ToolResult = { success: false, error: { code: 'BAD', message: 'bad' }, effects: 'none' };
-// @ts-expect-error Failed results require a transport error record.
-const missingError: ToolResult = { success: false };
-// @ts-expect-error Error context must be JSON, not an exception.
-const errorCause: ToolResult = { success: false, error: { code: 'BAD', message: 'bad', context: { cause: new Error('local only') } } };
-// @ts-expect-error Receipts cannot carry functions as current business data.
-const callbackData: ToolResult = { success: true, data: { callback() {} } };
-void [shortReceipt, knownFailure, uncertainFailure, successAndError, successAndEffects, failureAndEffects, missingError, errorCause, callbackData];
+const Reader = defineViewType({name:'RecordDetail',tools:{
+  read_record:{description:'Read a record.',inputSchema:Type.Object({status:Type.Enum(['ready','pending']),limit:Type.Optional(Type.Number())})},
+}});
+const readRecord = Reader.tools.read_record;

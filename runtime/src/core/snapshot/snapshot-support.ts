@@ -1,5 +1,7 @@
 import { SNAPSHOT_PREPARE_ISSUE_CODES, type SnapshotLimits, type SnapshotPrepareIssue, type SnapshotStoreOptions } from './types.js';
 
+export const MAX_VIEW_TOOL_BINDINGS = 10_000;
+
 export const DEFAULT_SNAPSHOT_LIMITS: Readonly<SnapshotLimits> = Object.freeze({
     maxDepth: 48,
     maxNodes: 100_000,
@@ -49,7 +51,7 @@ export function captureSnapshotLimits(options: SnapshotStoreOptions): SnapshotLi
 
 const KiB = 1024;
 export const OBSERVATION_METADATA_BYTES = 64 * KiB;
-// The default grant repeats View identities for visibility and content decisions.
+// Applies to the per-View identity and presentation fields, independent of body and bindings.
 export const VIEW_METADATA_BYTES = OBSERVATION_METADATA_BYTES / 4;
 
 const jsonProfile = (maxDepth: number, maxNodes: number, bytes: number) => Object.freeze({

@@ -45,7 +45,7 @@ describe('installNpmPackage', () => {
         await fs.writeFile(path.join(installedPath, 'entry.mjs'), 'export default {};');
         await fs.writeFile(path.join(installedPath, 'aoapp.json'), JSON.stringify({
             app_name: 'demo', version: '1.0.0', entry: { main: './entry.mjs' },
-            toolAuthoringProtocol: 'view-type-tools-v4', persistenceSupport: 'state-session-v1',
+            toolAuthoringProtocol: 'view-type-tools-v5', persistenceSupport: 'state-session-v1',
             appLifecycleSupport: 'app-lifecycle-v2',
         }));
         const registry = new AppRegistry({ configPath: path.join(tmpDir, 'registry.json') });

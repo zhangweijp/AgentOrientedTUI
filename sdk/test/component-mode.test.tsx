@@ -13,7 +13,7 @@ describe('[RFC-027] Component Mode', () => {
             return h(View, { kind: 'state', id: 'test_view', type: 'TestView', name: 'TestView' }, 'Hello');
         }
 
-        const app = createTUIApp({
+        const app = createTUIApp({ viewTypes: [],
             app_name: 'test_app',
             component: TestApp,
         } as any);
@@ -32,7 +32,7 @@ describe('[RFC-027] Component Mode', () => {
             return h(View, { kind: 'state', id: 'test_view', type: 'TestView', name: 'TestView' }, 'Hello');
         }
 
-        const app = createTUIApp({
+        const app = createTUIApp({ viewTypes: [],
             app_name: 'test_app',
             component: TestApp,
         } as any);

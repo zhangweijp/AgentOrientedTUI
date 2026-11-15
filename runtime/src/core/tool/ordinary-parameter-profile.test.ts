@@ -5,7 +5,7 @@ import { createSnapshotCore } from '../snapshot/store.js';
 import type { JsonValue } from '../snapshot/types.js';
 import { compileOrdinarySchema, VIEW_TYPE_PARAMETERS_MODE } from './ordinary-parameter-contract.js';
 import { compileOrdinaryProfile, ordinaryParameterProfile } from './ordinary-parameter-profile.js';
-import { createViewOwnedTools, ViewToolContractError } from './view-owned-tools.js';
+import { createViewOwnedTools } from './view-owned-tools.js';
 const marker = 'x-aotui-parameter-contract';
 const make = () => {
   const result = compileOrdinarySchema({ type: 'object', properties: { z: { type: 'string' }, a: { type: 'number', default: 1 } },
@@ -91,11 +91,10 @@ describe('ViewType parameter profile', () => {
 
     const toolId = JSON.stringify(['app', 'Note', 'read']);
     const draft = (inputSchema: JsonValue, seq: number) => ({
-      schemaVersion: 3, appId: 'app', instanceId: 'run', producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
-      views: [{ id: 'note', viewInstanceId: 'mount', type: 'Note', name: 'Note', kind: 'state',
+      schemaVersion: 4, appId: 'app', instanceId: 'run', producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
+      views: [{ toolBindings: [{ toolId, activationId: 'active' }], id: 'note', viewInstanceId: 'mount', type: 'Note', name: 'Note', kind: 'state',
         content: { format: 'markdown-v1', value: String(seq) } }], refs: {},
-      tools: { [toolId]: { id: toolId, name: 'read', viewType: 'Note', description: 'Read', inputSchema,
-        execution: { kind: 'view-type', activationId: 'active' } } },
+      tools: { [toolId]: { id: toolId, name: 'read', viewType: 'Note', description: 'Read', inputSchema } },
     });
     const core = createSnapshotCore();
     const restricted = createSnapshotCore({ limits: { maxToolSchemaBytes: limit - 1 } });
@@ -118,15 +117,13 @@ describe('ViewType parameter profile', () => {
 
   it('rejects profile and declaration capacity before registering or allocating an activation', () => {
     const registry = createViewOwnedTools('app', 'run');
-    registry.mount('note', 'Note');
     const before = registry.inspect();
-    const factory = vi.fn(() => async () => ({ phase: 'entered-returned' as const, result: { success: true } }));
-    const register = (inputSchema: JsonValue, description = 'Read') => registry.registerTypeTool({ viewType: 'Note', name: 'read', description, inputSchema }, {
-      safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: factory,
-    });
+    const execute = vi.fn(() => ({ success: true }));
+    const register = (inputSchema: Readonly<Record<string, unknown>>, description = 'Read') =>
+      registry.defineTools([{ viewType: 'Note', name: 'read', description, inputSchema }]);
     const expensive = { type: 'object', properties: { xs: { type: 'array', items: { type: 'number' }, default: Array(3_000).fill(0) } } };
     for (const schema of [boundarySchema(limit + 1), expensive]) {
-      expect(() => register(schema)).toThrow(expect.objectContaining({ name: ViewToolContractError.name, code: 'TOOL_SCHEMA_CAPACITY' }));
+      expect(() => register(schema)).toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_CAPACITY' }));
     }
     expect(() => register({ type: 'object', properties: { value: { type: 'string', minLength: -1 } } }))
       .toThrow(expect.objectContaining({ code: 'PARAMETER_DECLARATION_INVALID' }));
@@ -134,13 +131,14 @@ describe('ViewType parameter profile', () => {
       .toThrow(expect.objectContaining({ code: 'PARAMETER_DECLARATION_UNSUPPORTED' }));
     expect(() => register(boundarySchema(limit), 'x'.repeat(128 * 1024 + 1)))
       .toThrow(expect.objectContaining({ name: 'SnapshotDataError', code: 'SNAPSHOT_SERIALIZATION_ERROR' }));
-    expect(factory).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
     expect(registry.inspect()).toEqual(before);
-    expect(registry.listTools()).toEqual([]);
-    const release = register(boundarySchema(limit));
-    expect(factory).toHaveBeenCalledOnce();
-    expect(registry.listTools()).toMatchObject([{ execution: { activationId: 'ta:v1:["run",1]' } }]);
-    release();
-    expect(registry.inspect()).toEqual(before);
+    expect(() => register(boundarySchema(limit))).toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_CAPACITY' }));
+    register({ type: 'object', properties: {} });
+    const frame = registry.prepareFrame([{ id: 'note', type: 'Note', owner: {}, bindings: [{ name: 'read', execute, enabled: true }] }]);
+    frame.accept();
+    expect(frame.instances[0]!.toolBindings).toEqual([{ toolId: frame.tools[0]!.id, activationId: 'ta:v2:1' }]);
+    expect(execute).not.toHaveBeenCalled();
+    registry.dispose();
   });
 });

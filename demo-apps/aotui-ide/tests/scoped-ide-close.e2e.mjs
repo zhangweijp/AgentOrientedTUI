@@ -63,7 +63,7 @@ try {
         facts.probes.push({ mode, probes });
         app = await start(root, mode, { worker });
         await invoke(app, 'multi_open_file', { filePaths: [file] });
-        const query = await invoke(app, 'lsp_hover', { file_path: file, line: 1, character: 15 }, { view: fileView(app, file).id });
+        const query = await invoke(app, 'lsp_hover', { line: 1, character: 15 }, { view: fileView(app, file).id });
         const detail = fileView(app, file);
         assert.ok(detail, 'The FileDetail View remains projected after the hover query');
         assert.equal(query.value.data.view_id, detail.id);

@@ -92,16 +92,14 @@ function scope(x) {
 }
 async function invoke(x, name, args, { view = 'workspace', status = 'succeeded', changes = true, observation, client } = {}) {
     const owned = !client, c = client ?? scope(x);
-    const observed = observation ?? (await c.observe({ viewIds: [view] })).observation;
+    const observed = observation ?? (await c.observe({ all: true })).observation;
     assert.ok(observed, 'Observation exists for ' + name);
     if (!observation) assert.equal(c.adoptObservation(observed.observationId).status, 'adopted');
     const tool = observed.tools.find(tool => tool.name === name); assert.ok(tool, 'Tool exists: ' + name);
-    const binding = observed.bindings.find(binding => binding.toolId === tool.id &&
-        binding.execution.activationId === tool.execution.activationId); assert.ok(binding);
     const beforeRevision = snapshot(x).revision;
     const started = performance.now();
     try {
-        const reply = await c.invoke({ invocationId: 'ide-' + ++sequence, observationId: observed.observationId, bindingId: binding.bindingId, input: args });
+        const reply = await c.invoke({ invocationId: 'ide-' + ++sequence, observationId: observed.observationId, toolId: tool.id, input: { view_id: view, ...args } });
         assert.equal(reply.kind, 'receipt', name + ': ' + JSON.stringify(reply));
         const outcome = reply.receipt.outcome;
         facts.calls.push({ name, view, status: outcome.status, elapsedMs: performance.now() - started, outcome });

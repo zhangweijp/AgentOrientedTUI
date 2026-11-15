@@ -18,16 +18,14 @@ async function facts(name: string, value: object) { const root = process.env.AOT
 it.each(['sync', 'async'] as const)('C2-18/20 actual SDK %s unmount failure is fixed and preserves confirmed flush', async mode => {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c2-unmount-')), app = join(dir, 'app.mjs');
     await linkPreactPeer(dir);
-    await capture(app, `import {h} from 'preact';import Type from 'typebox';import {createTUIApp,defineViewTypeTool,usePersistentState,View,AppTools, defineToolSet} from ${JSON.stringify(url(join(repo,'sdk/dist/index.js')))};
+    await capture(app, `import {h} from 'preact';import Type from 'typebox';import { createTUIApp, usePersistentState, View, defineViewType } from ${JSON.stringify(url(join(repo,'sdk/dist/index.js')))};
 let set;
 
-const fixtureTools0 = defineToolSet({
-Save: defineViewTypeTool({viewType:'Root',name:'save',description:'Save a value',inputSchema:Type.Object({value:Type.Number()}, {additionalProperties:false}),})
-});
-function Root(){[,set]=usePersistentState('value',0);return h(AppTools, { definition: fixtureTools0, bindings: {
-Save: { execute: async args=>{set(args.value);return {success:true};} }
-} }, h(View,{kind: 'instruction',id:'root',type:'Root'},'Managed state'));}
-const factory=createTUIApp({app_name:'close',component:Root});
+
+const _FixtureRoot = defineViewType({ name:'Root', tools:{ save: { description:'Save a value', inputSchema:Type.Object({value:Type.Number()}, {additionalProperties:false}) } } });
+
+function Root(){[,set]=usePersistentState('value',0);return h('div', null, h(View,{kind: 'instruction',id:'root',type:_FixtureRoot, bindings:{ save: { execute: async args=>{set(args.value);return {success:true};} } }},'Managed state'));}
+const factory=createTUIApp({viewTypes:[_FixtureRoot], app_name:'close',component:Root});
 const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,${mode === 'async' ? 'async ' : ''}close(){renderer.close();${mode === 'async' ? 'await Promise.resolve();' : ''}throw Error('private renderer detail');}};};export default factory;`);
     const sandbox = new WorkerSandbox({ appId: 'app', desktopId: 'd', appModulePath: url(app),
         workerScriptPath: join(repo,'runtime/dist/worker-runtime/index.js'), runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 3000, maxWorkers: 1 } }), config: { AOTUI_DATA_DIR: join(dir,'data'), AOTUI_APP_KEY: 'close' } });
@@ -42,8 +40,8 @@ const initialize=factory.initialize.bind(factory);factory.initialize=async(...ar
 
 it.each(['sync','async'] as const)('C2-20 actual SDK %s onDelete failure sends a fixed failed lifecycle response exactly once and still unmounts', async mode => {
     const dir=await mkdtemp(join(tmpdir(),'aotui-c2-delete-')),app=join(dir,'app.mjs'),deleted=join(dir,'delete.txt'),unmounted=join(dir,'unmount.txt');
-    await capture(app, `import {appendFile,writeFile} from 'node:fs/promises';import {appendFileSync} from 'node:fs';import {createTUIApp} from ${JSON.stringify(url(join(repo,'sdk/dist/index.js')))};
-const factory=createTUIApp({app_name:'delete',component:()=>null,onDelete:${mode==='async'?'async ':''}()=>{${mode==='async'?`await appendFile(${JSON.stringify(deleted)},'delete\\n');`:`appendFileSync(${JSON.stringify(deleted)},'delete\\n');`}throw Error('private delete detail');}});
+    await capture(app, `import {appendFile,writeFile} from 'node:fs/promises';import {appendFileSync} from 'node:fs';import { createTUIApp, defineViewType } from ${JSON.stringify(url(join(repo,'sdk/dist/index.js')))};
+const factory=createTUIApp({viewTypes:[], app_name:'delete',component:()=>null,onDelete:${mode==='async'?'async ':''}()=>{${mode==='async'?`await appendFile(${JSON.stringify(deleted)},'delete\\n');`:`appendFileSync(${JSON.stringify(deleted)},'delete\\n');`}throw Error('private delete detail');}});
 const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,async close(){renderer.close();await writeFile(${JSON.stringify(unmounted)},'done');}};};export default factory;`);
     const sandbox=new WorkerSandbox({appId:'app',desktopId:'d',appModulePath:url(app),workerScriptPath:join(repo,'runtime/dist/worker-runtime/index.js'),runtimeConfig:defineRuntimeConfig({worker:{timeoutMs:3000,maxWorkers: 1}})});
     try {

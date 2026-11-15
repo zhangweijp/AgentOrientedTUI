@@ -1,15 +1,15 @@
 import { SNAPSHOT_SCHEMA_VERSION } from './types.js';
 import type {
-    AppSnapshotV3, CommitResult, LeaseResult, PreparedSnapshotFailure, RefLookup, RefSelector, SnapshotCore,
+    AppSnapshotV4, CommitResult, LeaseResult, PreparedSnapshotFailure, RefLookup, RefSelector, SnapshotCore,
     SnapshotIssue, SnapshotIssueCode, SnapshotLease, SnapshotLookup, SnapshotRead,
     SnapshotStoreOptions, SnapshotStoreStats, ToolLookup, ToolSelector, AppIdentityRead,
 } from './types.js';
 import { utf8Size } from './json.js';
 import { captureSnapshotLimits, refKey } from './snapshot-support.js';
-import { validatePreparedV3Draft } from './v3-validator.js';
+import { validatePreparedV4Draft } from './v4-validator.js';
 
 interface SnapshotEntry {
-    readonly snapshot: AppSnapshotV3;
+    readonly snapshot: AppSnapshotV4;
     canonical: string | undefined;
     readonly bytes: number;
     readonly leases: Map<object, number | null>;
@@ -74,7 +74,7 @@ function nonEmpty(value: string, label: string): void {
     if (typeof value !== 'string' || !value.trim()) throw new TypeError(label + ' must be non-empty');
 }
 function snapshotId(appId: string, instanceId: string, revision: number): string {
-    return 'aotui-app-snapshot:v3:' + JSON.stringify([appId, instanceId, revision]);
+    return 'aotui-app-snapshot:v' + SNAPSHOT_SCHEMA_VERSION + ':' + JSON.stringify([appId, instanceId, revision]);
 }
 
 /**
@@ -271,7 +271,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
         accept(input: unknown): CommitResult {
             if (disposed) return rejected('APP_STOPPED', 'Snapshot Core is closed');
             const time = clock();
-            const checked = validatePreparedV3Draft(input, limits, (appId, instanceId) => {
+            const checked = validatePreparedV4Draft(input, limits, (appId, instanceId) => {
                 const app = apps.get(appId);
                 return app?.instanceId === instanceId ? app.current?.snapshot.tools : undefined;
             });
@@ -358,7 +358,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
                 refs: data.draft.refs,
                 tools: data.draft.tools,
                 contentDigest: data.contentDigest,
-            }) as AppSnapshotV3;
+            }) as AppSnapshotV4;
             const record: SnapshotEntry = {
                 snapshot, canonical: data.canonicalContent, bytes: data.bytes,
                 leases: new Map(),
@@ -477,7 +477,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
                 });
             }
             const tool = snapshot.tools[selector.toolId];
-            if (tool && tool.execution.kind === 'view-type') return Object.freeze({ status: 'found', tool });
+            if (tool) return Object.freeze({ status: 'found', tool });
             return Object.freeze({ status: 'rejected', issue: issue('TOOL_UNAVAILABLE',
                 'Tool unavailable in source snapshot', { snapshotId: selector.snapshotId }) });
         },

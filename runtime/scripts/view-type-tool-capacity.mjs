@@ -1,238 +1,97 @@
 #!/usr/bin/env node
+import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const coreEntry = process.argv[2]
+const core = await import(process.argv[2]
     ? pathToFileURL(resolve(process.argv[2])).href
-    : new URL('../dist/core/index.js', import.meta.url).href;
-const core = await import(coreEntry);
-const counts = new Map();
-const definitions = [
-    { name: 'read_file', description: 'Read one open file.' },
-    { name: 'edit_file', description: 'Edit one open file.' },
-];
-const inputSchema = {
-    type: 'object',
-    properties: {
-        file_id: { type: 'string' },
-        content: { type: 'string' },
-    },
-    required: ['file_id', 'content'],
-    additionalProperties: false,
-};
+    : new URL('../dist/core/index.js', import.meta.url).href);
 const appId = 'capacity-app';
 const instanceId = 'capacity-instance';
-const compiled = core.compileOrdinarySchema(inputSchema);
-if (!compiled.ok) throw new Error('Capacity parameter schema did not compile');
-
-function elapsed(start) { return Number((performance.now() - start).toFixed(3)); }
-function assert(condition, message) { if (!condition) throw new Error(message); }
-function invocationFor(name) {
-    return async args => {
-        counts.set(name, (counts.get(name) ?? 0) + 1);
-        return { phase: 'entered-returned', result: { success: true, data: { tool: name, file_id: args.file_id } } };
-    };
-}
-function grant(snapshot, selectedIds) {
-    const selected = new Set(selectedIds);
-    const views = snapshot.views.filter(view => selected.has(view.id));
-    return {
-        views: views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-        refs: [],
-        toolBindings: Object.values(snapshot.tools).flatMap(tool =>
-            views.some(view => view.type === tool.viewType)
-                ? [{ toolId: tool.id, execution: tool.execution }] : []),
-        content: [],
-    };
-}
+const names = ['read_file', 'edit_file'];
+const inputSchema = { type: 'object', properties: { content: { type: 'string' } }, additionalProperties: false };
+const bytes = value => Buffer.byteLength(JSON.stringify(value));
+const elapsed = start => Number((performance.now() - start).toFixed(3));
 
 async function runCase(viewCount) {
     const snapshotCore = core.createSnapshotCore();
+    const registry = core.createViewOwnedTools(appId, instanceId);
     snapshotCore.lifecycle.startApp(appId, instanceId);
-    const tools = core.createViewOwnedTools(appId, instanceId);
-    const releases = [];
-    const owners = [];
-    counts.clear();
-    const mountStart = performance.now();
-    for (let index = 0; index < viewCount; index++) owners.push(tools.mount(`file-${index}`, 'File'));
-    const viewMountMs = elapsed(mountStart);
-
-    let toolRegistrationCalls = 0;
-    let toolRegistrationMs = 0;
-    const start = performance.now();
-    for (const definition of definitions) {
-        releases.push(tools.registerTypeTool({
-            viewType: 'File', ...definition, inputSchema,
-        }, {
-            safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
-            createSafeOrdinaryParametersInvoker: () => invocationFor(definition.name),
-        }));
-        toolRegistrationCalls++;
-    }
-    toolRegistrationMs = elapsed(start);
-
-    const snapshotTools = tools.listTools();
-    const draft = {
-        schemaVersion: 3,
-        appId,
-        instanceId,
-        producerSeq: 1,
-        sourceEpoch: 1,
-        capturedAt: Date.now(),
-        views: owners.map(owner => ({ id: owner.viewId, viewInstanceId: owner.viewInstanceId, type: owner.viewType,
-            name: owner.viewId, kind: 'state', content: { format: 'markdown-v1', value: `Open file ${owner.viewId}` } })),
-        refs: {},
-        tools: Object.fromEntries(snapshotTools.map(tool => [tool.id, tool])),
-    };
-    const commitStart = performance.now();
-    const committed = snapshotCore.committer.accept(draft);
-    const commitMs = elapsed(commitStart);
-    assert(committed.status === 'published', `Snapshot commit failed at ${viewCount} Views: ${JSON.stringify(committed)}`);
-    const snapshot = committed.snapshot;
-    const snapshotJsonBytes = Buffer.byteLength(JSON.stringify(snapshot));
-    const snapshotViewsJsonBytes = Buffer.byteLength(JSON.stringify(snapshot.views));
-    const viewDescriptorsJsonBytes = Buffer.byteLength(JSON.stringify(snapshot.views.map(({ content: _content, ...view }) => view)));
-    const viewContentJsonBytes = Buffer.byteLength(JSON.stringify(snapshot.views.map(view => view.content)));
-    const viewContentUtf8Bytes = snapshot.views.reduce((sum, view) => sum + Buffer.byteLength(view.content.value, 'utf8'), 0);
-
-    const bindings = new Map();
-    const authority = core.createAppInteraction(snapshotCore.store, { namespace: `capacity-${viewCount}`, now: Date.now, appId, instanceId,
-        policy: { project: ({ source, selection }) => grant(source, selection.viewIds), authorize: () => true, canReadReceipt: () => true },
-        execution: { resolve(source) {
-            if (!bindings.has(source.tool.id)) bindings.set(source.tool.id, {
-                identity: {},
-                isLive(current) { return { ok: tools.validateTypeToolBinding(current.tool, current.execution).success }; },
-                validateInput(_source, input) { const result = compiled.contract.validateResolvedInput(input);
-                    return result.ok ? { ok: true, value: result.value } : { ok: false }; },
-                async execute(context) { return { kind: 'tool-result', ...await tools.invokeTypeTool(context.source.tool,
-                    context.source.execution, context.effectiveInput) }; },
-            });
-            return bindings.get(source.tool.id);
-        } },
-    });
-    const client = authority;
-    let allViewsObservation;
-    if (viewCount > 256) {
+    let client;
+    let handlerEntries = 0;
+    try {
         const start = performance.now();
-        const attempted = await client.observe({ all: true });
-        allViewsObservation = { status: attempted.status, issue: attempted.status === 'rejected' ? attempted.issue.code : undefined,
-            elapsedMs: elapsed(start) };
-        assert(attempted.status === 'rejected' && attempted.issue.code === 'OBSERVATION_CAPACITY',
-            `Expected the observation View limit to reject ${viewCount} Views`);
+        registry.defineTools(names.map(name => ({ name, viewType: 'File', description: name, inputSchema })));
+        const declarationMs = elapsed(start);
+        const begin = performance.now();
+        const frame = registry.prepareFrame(Array.from({ length: viewCount }, (_, index) => {
+            const id = 'file_' + index;
+            return { id, type: 'File', owner: {}, bindings: names.map(name => ({ name, enabled: true, execute() {
+                handlerEntries++;
+                return { success: true, data: { receiver: id } };
+            } })) };
+        }));
+        const views = frame.instances.map(({ viewId: id, viewType: type, viewInstanceId, toolBindings }) => ({
+            id, type, viewInstanceId, toolBindings, kind: 'state', name: id,
+            content: { format: 'markdown-v1', value: 'Open file ' + id },
+        }));
+        const committed = snapshotCore.committer.accept({
+            schemaVersion: core.SNAPSHOT_SCHEMA_VERSION, appId, instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: Date.now(),
+            views, refs: {}, tools: Object.fromEntries(frame.tools.map(tool => [tool.id, tool])),
+        });
+        assert.equal(committed.status, 'published', JSON.stringify(committed));
+        frame.accept();
+        const commitMs = elapsed(begin);
+        const binding = {
+            identity: {},
+            validateInput: (_source, value) => ({ ok: true, value }),
+            isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.receiver).success }),
+            execute: async context => ({ kind: 'tool-result', ...await registry.invokeTypeTool(
+                context.source.tool, context.source.receiver, context.effectiveInput) }),
+        };
+        client = core.createAppInteraction(snapshotCore.store, { namespace: 'capacity-' + viewCount, now: Date.now, appId, instanceId,
+            policy: { project: ({ source }) => ({ refs: [], toolIds: Object.keys(source.tools) }),
+                authorize: () => true, canReadReceipt: () => true },
+            execution: { resolve: () => binding },
+        });
+        const observing = performance.now();
+        const result = await client.observe({ all: true });
+        const observeMs = elapsed(observing);
+        const report = {
+            views: viewCount, snapshotToolDescriptors: frame.tools.length, snapshotToolBindings: registry.inspect().bindings,
+            snapshotBytes: bytes(committed.snapshot), declarationMs, commitMs, observeMs, observation: result.status,
+        };
+
+        if (viewCount > 256) {
+            assert.equal(result.status === 'rejected' && result.issue.code, 'OBSERVATION_CAPACITY', JSON.stringify(result));
+            return { ...report, issue: result.issue.code };
+        }
+        assert.equal(result.status, 'observed', JSON.stringify(result));
+        const { observation } = result;
+        assert.equal(observation.views.length, viewCount);
+        assert.equal(observation.tools.length, names.length);
+        assert.equal(client.adoptObservation(observation.observationId).status, 'adopted');
+        const dispatching = performance.now();
+        for (const tool of observation.tools) {
+            const result = await client.invoke({ invocationId: tool.name, observationId: observation.observationId,
+                toolId: tool.id, input: { view_id: 'file_0' } });
+            assert.equal(result.kind === 'receipt' && result.receipt.outcome.status, 'succeeded', JSON.stringify(result));
+            assert.equal(result.receipt.outcome.value.data.receiver, 'file_0');
+        }
+        assert.equal(handlerEntries, names.length);
+        return { ...report, observationBytes: bytes(observation), handlerEntries, invokeMs: elapsed(dispatching) };
+    } finally {
+        client?.close();
+        await client?.whenClosed();
+        registry.dispose();
+        snapshotCore.lifecycle.dispose();
+        assert.equal(snapshotCore.store.inspect().activeLeases, 0);
+        assert.equal(registry.inspect().bindings, 0);
+        if (client) assert.equal(client.inspect().combinedBytes, 0);
     }
-
-    const selectedOwners = viewCount > 256 ? owners.slice(0, 100) : owners;
-    const selectedIds = selectedOwners.map(owner => owner.viewId);
-    const observeStart = performance.now();
-    const completed = await client.observe({ viewIds: selectedIds });
-    const observeMs = elapsed(observeStart);
-    assert(completed.status === 'observed', `Observation failed: ${JSON.stringify(completed)}`);
-    const observation = completed.observation;
-    assert(client.adoptObservation(observation.observationId).status === 'adopted', 'Observation adoption failed');
-    const callsBefore = [...counts.values()].reduce((sum, count) => sum + count, 0);
-    const invokeStart = performance.now();
-    for (const tool of observation.tools) {
-        const binding = observation.bindings.find(candidate => candidate.toolId === tool.id);
-        assert(binding, `No observed binding for ${tool.name}`);
-        const args = { file_id: selectedIds[0], content: 'updated' };
-        const result = await client.invoke({ invocationId: tool.name, observationId: observation.observationId,
-            bindingId: binding.bindingId, input: args });
-        assert(result.kind === 'receipt' && result.receipt.executionPhase === 'entered-returned' && result.receipt.outcome.status === 'succeeded',
-            `Tool invocation failed for ${tool.name}: ${JSON.stringify(result)}`);
-    }
-    const invocationMs = elapsed(invokeStart);
-    const callsAfter = [...counts.values()].reduce((sum, count) => sum + count, 0);
-
-    const cleanupStart = performance.now();
-    authority.close(); authority.close();
-    await authority.whenClosed();
-    for (const release of releases) { release(); release(); }
-    for (const owner of owners) { tools.unmount(owner.viewInstanceId); tools.unmount(owner.viewInstanceId); }
-    const emptyRegistry = tools.inspect();
-    tools.dispose();
-    tools.dispose();
-    snapshotCore.lifecycle.stopApp(appId, instanceId);
-    snapshotCore.lifecycle.dispose();
-    const cleanupMs = elapsed(cleanupStart);
-    const interactionStats = authority.inspect();
-    const observationStats = interactionStats.observations;
-    const disposedToolStats = tools.inspect();
-    const snapshotStats = snapshotCore.store.inspect();
-    assert(emptyRegistry.views === 0 && emptyRegistry.bindings === 0, 'Repeated releases/unmounts left live Tool state');
-    assert(disposedToolStats.state === 'disposed' && disposedToolStats.views === 0 && disposedToolStats.bindings === 0,
-        'Repeated registry disposal did not leave an empty registry');
-    assert(observationStats.closed && observationStats.observations === 0 && observationStats.reservations === 0,
-        'Repeated observation close left live observation state');
-    assert(snapshotStats.activeLeases === 0, 'Cleanup left a pinned Snapshot lease');
-    assert(interactionStats.closed && interactionStats.combinedBytes === 0, 'Cleanup left interaction ownership');
-
-    return {
-        views: viewCount,
-        selectedViews: selectedOwners.length,
-        schemaVersion: snapshot.schemaVersion,
-        registryToolRegistrationCalls: toolRegistrationCalls,
-        registryViewCount: owners.length,
-        snapshotToolDescriptors: Object.keys(snapshot.tools).length,
-        snapshotExecutionBindings: Object.values(snapshot.tools).length,
-        allViewsObservation,
-        selectedObservation: {
-            status: 'observed',
-            views: observation.views.length,
-            tools: observation.tools.length,
-            bindings: observation.bindings.length,
-            toolsJsonBytes: Buffer.byteLength(JSON.stringify(observation.tools)),
-            schemasJsonBytes: Buffer.byteLength(JSON.stringify(observation.tools.map(tool => tool.inputSchema))),
-            bindingsJsonBytes: Buffer.byteLength(JSON.stringify(observation.bindings)),
-        },
-        payloadBytes: {
-            snapshotJsonBytes,
-            snapshotViewsJsonBytes,
-            viewDescriptorsJsonBytes,
-            viewContentJsonBytes,
-            viewContentUtf8Bytes,
-        },
-        codeDerivedSchemaWork: {
-            registryOrdinarySchemaCompiles: definitions.length,
-            legacySnapshotValueProfileChecks: 0,
-            basis: 'Per ViewType registration, source calls compileOrdinarySchema once.',
-            outsideBenchmark: 'SDK definition-time compilation, Host resolution, Worker wire validation and their repeated per-call schema work are excluded.',
-        },
-        invocationCount: callsAfter - callsBefore,
-        handlerEntries: Object.fromEntries(counts),
-        cleanupCalls: {
-            scopeClientClose: 2,
-            interactionAuthorityClose: 2,
-            registrationRelease: releases.length * 2,
-            viewUnmount: owners.length * 2,
-            toolRegistryDispose: 2,
-        },
-        finalState: {
-            toolRegistry: disposedToolStats,
-            observations: observationStats,
-            interactions: interactionStats,
-            snapshotStore: { activeLeases: snapshotStats.activeLeases },
-        },
-        timingsMs: { viewMount: viewMountMs, toolRegistration: toolRegistrationMs, commit: commitMs,
-            observe: observeMs, invoke: invocationMs, cleanup: cleanupMs },
-    };
 }
 
 const cases = [];
 for (const count of [1, 10, 100, 1000]) cases.push(await runCase(count));
-console.log(JSON.stringify({
-    benchmark: 'AOTUI Core View/Tool capacity and lifecycle',
-    version: 'view-type-v3',
-    node: process.version,
-    platform: process.platform,
-    arch: process.arch,
-    ordinaryToolKinds: definitions.map(definition => definition.name),
-    notes: {
-        scope: 'Current Core Registry + Snapshot + instance interaction; observe/invoke include the real policy, preparation and receipt path. No Worker, DOM renderer or Host wire cost. Invocation timings are not directly comparable to the retired registry-only benchmark.',
-        schemaCompilation: 'V3 registry compiles the input schema during each type registration. Host resolve and Worker wire validation also compile ordinary profiles; this script does not measure those stages.',
-        payloadBytes: 'JSON byte counts use JSON.stringify on Core snapshot/observation structures. View content UTF-8 bytes are reported separately. These are not XML/Markdown-rendered User Message bytes or model token counts; component byte fields overlap and should not be summed.',
-        comparison: 'This entry measures current ViewType registration only. Historical baseline outputs remain separate immutable evidence.',
-        capacity: 'The 1000-View full observation must be rejected by the hard 256-View observation cap; the 100-View selection is measured separately.',
-    },
-    cases,
-}, null, 2));
+console.log(JSON.stringify({ benchmark: 'View Tool capacity', version: core.SNAPSHOT_SCHEMA_VERSION, node: process.version, cases }, null, 2));

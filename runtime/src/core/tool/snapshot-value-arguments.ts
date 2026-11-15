@@ -1,7 +1,8 @@
 import { canonicalJson, copyJson, utf8Size, type JsonCopyLimits } from '../snapshot/json.js';
-import type { JsonValue, ObservedToolExecutionV3, SnapshotIssueCode, SnapshotStore } from '../snapshot/types.js';
-import { compileOrdinaryProfile } from './ordinary-parameter-profile.js';
-import { acquireToolSource } from './source-binding.js';
+import type { JsonValue, SnapshotIssueCode, SnapshotStore } from '../snapshot/types.js';
+import type { OrdinaryParameterContract } from './ordinary-parameter-contract.js';
+import type { InvocationSource } from '../invocation/app-interaction-types.js';
+import type { RefIdentity } from '../invocation/observation-types.js';
 import { selectedRefParameters } from './versioned-ref-declarations.js';
 import { RAW_TOOL_ARGUMENT_LIMITS as RAW, RESOLVED_TOOL_ARGUMENT_LIMITS as ARGUMENTS,
     RESOLVED_TOOL_ENVELOPE_LIMITS as ENVELOPE } from '../snapshot/snapshot-support.js';
@@ -36,36 +37,17 @@ export function checkRefViews(sources: readonly SnapshotValueRefSource[], raw: R
 }
 
 type Limits = JsonCopyLimits & { readonly maxCanonicalBytes: number };
-// Keep the existing separate argument and envelope budgets for Ref preparation.
-const REQUEST: Limits = Object.freeze({ maxDepth: RAW.maxDepth + 1, maxNodes: RAW.maxNodes + 16,
-    maxApproxBytes: RAW.maxApproxBytes + 8 * 1024, maxCanonicalBytes: RAW.maxCanonicalBytes + 8 * 1024 });
-
-/** Resolve only from the original granted Snapshot; execution remains ViewType-owned. */
+/** Resolve each explicit parameter in the retained original observation, independently of the receiver. */
 export function prepareViewTypeParameters(
-    store: SnapshotStore, context: Readonly<{ appId: string; instanceId: string }>,
-    callerRequest: unknown, visibleRefs: readonly Readonly<{ refId: string; viewId: string; viewInstanceId: string }>[],
+    store: SnapshotStore, source: InvocationSource, contract: OrdinaryParameterContract, input: JsonObject,
+    visibleRefs: readonly RefIdentity[],
 ): Readonly<{ status: 'rejected'; issue: Readonly<{ code: ArgumentIssueCode; message: string; path?: string }> }> | Readonly<{
-    status: 'prepared'; rawArgs: JsonObject; effectiveArgs: JsonObject;
-    refSources: readonly SnapshotValueRefSource[]; release(): void;
+    status: 'prepared'; rawArgs: JsonObject; effectiveArgs: JsonObject; refSources: readonly SnapshotValueRefSource[];
 }> {
-    let request: JsonObject;
+    let rawArgs: JsonObject;
+    try { rawArgs = bounded(input, RAW) as JsonObject; }
+    catch { return rejected('TOOL_INVALID_ARGS', 'Expected bounded JSON business parameters', '$'); }
     try {
-        const value = bounded(callerRequest, REQUEST);
-        if (!object(value) || Object.keys(value).length !== 4 || !object(value.execution) || value.execution.kind !== 'view-type' ||
-            typeof value.snapshotId !== 'string' || typeof value.toolId !== 'string' || !object(value.args))
-            return rejected('TOOL_INVALID_ARGS', 'Expected qualified ViewType parameters');
-        request = value;
-    } catch { return rejected('TOOL_INVALID_ARGS', 'Expected bounded ViewType parameters'); }
-    const selected = acquireToolSource(store, { appId: context.appId, instanceId: context.instanceId,
-        snapshotId: request.snapshotId as string, toolId: request.toolId as string,
-        execution: request.execution as unknown as ObservedToolExecutionV3 });
-    if (selected.status === 'rejected') return rejected(selected.issue.code, 'Tool source is unavailable');
-    let retained = false;
-    try {
-        if (selected.execution.kind !== 'view-type') return rejected('REF_CONTRACT_UNSUPPORTED', 'Expected ViewType execution');
-        const contract = compileOrdinaryProfile(selected.tool.inputSchema);
-        if (!contract) return rejected('REF_CONTRACT_UNSUPPORTED', 'Expected the ViewType parameter profile');
-        const rawArgs = bounded(request.args, RAW) as JsonObject;
         const model = contract.validateModelInput(rawArgs);
         if (!model.ok) {
             const diagnostic = model.diagnostics[0];
@@ -85,8 +67,8 @@ export function prepareViewTypeParameters(
             const owner = visibleByAddress.get(refId);
             if (owner === undefined) return rejected('REF_NOT_VISIBLE', 'Expected a visible View-qualified Ref: view_id.ref_id');
             if (owner === null) return rejected('REF_TARGET_UNSUPPORTED', 'Expected one unambiguous Ref');
-            const resolved = store.resolveRef({ appId: context.appId, instanceId: context.instanceId,
-                snapshotId: request.snapshotId as string, refId: owner.refId, viewId: owner.viewId, viewInstanceId: owner.viewInstanceId });
+            const resolved = store.resolveRef({ appId: source.appId, instanceId: source.instanceId,
+                snapshotId: source.snapshotId, refId: owner.refId, viewId: owner.viewId, viewInstanceId: owner.viewInstanceId });
             if (resolved.status === 'rejected') return rejected(resolved.issue.code, 'Original Ref source is unavailable');
             const expectedType = (field as JsonObject)['x-aotui-ref-kind'] as string;
             if (resolved.ref.refType !== expectedType) return rejected('REF_TYPE_MISMATCH',
@@ -97,7 +79,7 @@ export function prepareViewTypeParameters(
                 (effectiveArgs[param] as JsonValue[])[index] = resolved.target.payload;
             }
             refSources.push({ param, refId: owner.refId, kind: 'snapshot-value', refType: resolved.ref.refType,
-                snapshotId: request.snapshotId as string, viewId: owner.viewId, viewInstanceId: owner.viewInstanceId });
+                snapshotId: source.snapshotId, viewId: owner.viewId, viewInstanceId: owner.viewInstanceId });
         }
         // Budget the complete resolved arguments, not a mix of payloads and unresolved Ref names.
         effectiveArgs = bounded(effectiveArgs, ARGUMENTS) as JsonObject;
@@ -106,19 +88,14 @@ export function prepareViewTypeParameters(
             const diagnostic = effective.diagnostics[0];
             return rejected('REF_VALUE_UNSUPPORTED', diagnostic?.message ?? 'Resolved parameters do not match the contract', diagnostic?.path);
         }
-        const envelope = bounded({ source: { appId: context.appId, instanceId: context.instanceId,
-            snapshotId: request.snapshotId, toolId: request.toolId, activationId: selected.execution.activationId },
+        const envelope = bounded({ source: { appId: source.appId, instanceId: source.instanceId,
+            snapshotId: source.snapshotId, toolId: source.tool.id, receiver: source.receiver },
             effectiveArgs, refSources }, ENVELOPE) as JsonObject;
-        retained = true;
         return Object.freeze({ status: 'prepared', rawArgs,
-            effectiveArgs: envelope.effectiveArgs as JsonObject, refSources: envelope.refSources as unknown as readonly SnapshotValueRefSource[], release: selected.release });
+            effectiveArgs: envelope.effectiveArgs as JsonObject, refSources: envelope.refSources as unknown as readonly SnapshotValueRefSource[] });
     } catch { return rejected('REF_ARGUMENT_BUDGET_EXCEEDED', 'Combined resolved parameters exceed the call limit. Select fewer Ref values.', '$'); }
-    finally { if (!retained) selected.release(); }
 }
 
-function object(value: JsonValue | undefined): value is JsonObject {
-    return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 function bounded(value: unknown, limits: Limits): JsonValue {
     const copied = copyJson(value, limits);
     // Canonicalization only sees an already bounded, getter-free copy.

@@ -111,14 +111,16 @@ For example, this View displays a Phase element and the whole Phase list:
 </view>
 \`\`\`
 
-For a Tool parameter \`phase\` that explicitly requests one Phase Ref, pass:
+Each App page Tool requires \`view_id\`. Choose the XML \`id\` of a current View of the matching type, even when there is only one. If the schema lists eligible IDs, choose from that list. Desktop and other sources specify their own parameters.
+
+For a page Tool on \`plan_b\` with an explicit Phase Ref parameter \`phase\`, pass:
 
 \`\`\`json
-{ "phase": "plan_b.completed_phases[0]" }
+{ "view_id": "plan_b", "phase": "plan_b.completed_phases[0]" }
 \`\`\`
 
 For a parameter requesting the whole list, use \`plan_b.completed_phases\`.
-Combine the containing View's \`id\` with the exact local Ref name, including its index. Do not include \`Phase:\` or \`Phase[]:\` in the input. Use the View id, never its \`type\` or display \`name\`, and never guess the current View. Two Views can publish the same local name; the View id selects which one you mean.
+Combine the containing View's \`id\` with the exact local Ref name, including its index. Do not include \`Phase:\` or \`Phase[]:\` in the input. Use the View id, never its \`type\` or display \`name\`, and never guess the current View. Two Views can publish the same local name. A Ref can come from a different observed View of the same App instance than the operation's receiving View.
 
 Only select a Ref published in the still-valid observed View. An arbitrary Markdown link is not automatically a Ref. Do not upload a replacement payload or add a field-access suffix. Runtime resolves the original observed value and verifies its metadata type and parameter contract; the App still checks its business preconditions. Read the View for the data the App presents.
 

@@ -40,8 +40,10 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                 import { useAppRuntimeContext } from './sdk/src/context/AppRuntimeContext.tsx';
                 import { useDataRef } from './sdk/src/hooks/useRef.ts';
                 import { useArrayRef } from './sdk/src/hooks/useArrayRef.ts';
-                import { AppTools } from './sdk/src/components/AppTools.tsx';
-                import { defineToolSet, defineViewTypeTool } from './sdk/src/tools/view-type-tool.ts';
+
+                import { defineViewType } from './sdk/src/tools/view-type-tool.ts';
+const _FixtureWorkspace = defineViewType({ name:'Workspace', tools:{ complete: { description:'Complete selected task', inputSchema:Type.Object({}, {additionalProperties:false}) } } });
+
                 function Content() {
                     const appId = useAppRuntimeContext().appId;
                     const [target, setTarget] = useState({ id: 'A' });
@@ -65,17 +67,11 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                     ]);
                 }
 
-const fixtureTools0 = defineToolSet({
-Complete: defineViewTypeTool({
-                        viewType: 'Workspace', name: 'complete', description: 'Complete selected task',
-                        inputSchema: Type.Object({}, {additionalProperties:false}), })
-});
+
 function Root() {
-                    return h(AppTools, { definition: fixtureTools0, bindings: {
-Complete: { execute: async () => ({ success: true }) }
-} }, h(View, {kind: 'state',id:'workspace',type:'Workspace'}, h(Content)));
+                    return h('div', null, h(View, {kind: 'state',id:'workspace',type:_FixtureWorkspace, bindings:{ complete: { execute: async () => ({ success: true }) } }}, h(Content)));
                 }
-                export default createTUIApp({app_name:'m3_integration',component:Root});
+                export default createTUIApp({viewTypes:[_FixtureWorkspace], app_name:'m3_integration',component:Root});
             `;
             await build({
                 stdin: {
@@ -125,9 +121,8 @@ Complete: { execute: async () => ({ success: true }) }
             const newRefKey = refKey('workspace', oldViewInstanceId, 'pending[0]');
             expect(newRead.snapshot.refs[newRefKey].target.payload).toMatchObject({ id: 'B' });
             const completeTool = Object.values(newRead.snapshot.tools).find((tool: any) => tool.name === 'complete') as any;
-            expect(completeTool).toMatchObject({ viewType: 'Workspace', execution: {
-                kind: 'view-type', activationId: expect.any(String),
-            } });
+            expect(completeTool).toMatchObject({ viewType: 'Workspace' });
+            expect(newRead.snapshot.views[0]!.toolBindings).toEqual([{ toolId: completeTool!.id, activationId: expect.any(String) }]);
             expect(completeTool).not.toHaveProperty('targets');
             // A historical Ref is pinned to its original object even when the
             // same visible Ref ID is reused in a new Snapshot.

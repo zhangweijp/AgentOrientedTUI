@@ -13,9 +13,9 @@ function fixture() {
         appModulePath: 'unused', config: { AOTUI_DATA_DIR: directory } });
     cleanups.push(() => { (host as any).snapshotReceiver.close();rmSync(directory, { recursive: true, force: true }); });
     const send = (message: unknown) => (host as any).handleMessage(message);
-    const draft = (seq: number, content = 'current') => ({ schemaVersion: 3, appId: 'app',
+    const draft = (seq: number, content = 'current') => ({ schemaVersion: 4, appId: 'app',
         instanceId: (host as any).appInstanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 1,
-        views: [{ id: 'file', viewInstanceId: 'view-instance', type: 'File', name: 'File', kind: 'state',
+        views: [{ toolBindings: [], id: 'file', viewInstanceId: 'view-instance', type: 'File', name: 'File', kind: 'state',
             content: { format: 'markdown-v1', value: content } }], refs: {}, tools: {} });
     const publish = (seq: number, content = 'current', suppressSignal = false) =>
         send({ type: 'SNAPSHOT_PREPARED', draft: draft(seq, content), suppressSignal });

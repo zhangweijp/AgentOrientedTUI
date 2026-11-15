@@ -20,7 +20,7 @@ it('selects same-name lists and elements by View through SDK, Worker and Source,
             const context = await source!.getContext(); contexts.push(context); await context.adopt(); return context;
         };
         const call = (context: typeof contexts[number], type: string, name: string, input: Record<string, unknown>) =>
-            context.executeTool(`refviews-${type}-${name}`, input, 'viewrefs-' + sequence++);
+            context.executeTool(`refviews-${type}-${name}`, { view_id: type === 'Guide' ? 'root' : 'plan_a', ...input }, 'viewrefs-' + sequence++);
         let current = await observe(); const original = current;
         const messages = current.messages.map(message => String(message.content)).join('\n');
         expect(messages).toContain('[Design A](Phase:completed_phases[0])');

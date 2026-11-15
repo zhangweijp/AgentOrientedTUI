@@ -13,7 +13,7 @@ describe('Worker accepts only the managed App factory contract', () => {
     let workerScript: string;
     const root = resolve(process.cwd());
     const lifecycleMarkers = "persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',";
-    const managedMarkers = `${lifecycleMarkers} toolAuthoringProtocol: 'view-type-tools-v4',`;
+    const managedMarkers = `${lifecycleMarkers} toolAuthoringProtocol: 'view-type-tools-v5',`;
 
     beforeAll(async () => {
         temp = await mkdtemp(join(tmpdir(), 'aotui-worker-factory-contract-'));
@@ -115,10 +115,10 @@ describe('Worker accepts only the managed App factory contract', () => {
         ['factory without kernel appName', `export default { ${managedMarkers} kernelConfig: {}, initialize() {} };`],
         ['factory with empty kernel appName', `export default { ${managedMarkers} kernelConfig: { appName: '' }, initialize() {} };`],
         ['factory with invalid kernel appName', `export default { ${managedMarkers} kernelConfig: { appName: 1 }, initialize() {} };`],
-        ['factory missing persistence marker', `export default { appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'missing_persistence' }, initialize() {} };`],
-        ['factory with wrong persistence marker', `export default { persistenceSupport: 'state-session-v0', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'wrong_persistence' }, initialize() {} };`],
-        ['factory missing lifecycle marker', `export default { persistenceSupport: 'state-session-v1', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'missing_lifecycle' }, initialize() {} };`],
-        ['factory with wrong lifecycle marker', `export default { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v1', toolAuthoringProtocol: 'view-type-tools-v4', kernelConfig: { appName: 'wrong_lifecycle' }, initialize() {} };`],
+        ['factory missing persistence marker', `export default { appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v5', kernelConfig: { appName: 'missing_persistence' }, initialize() {} };`],
+        ['factory with wrong persistence marker', `export default { persistenceSupport: 'state-session-v0', appLifecycleSupport: 'app-lifecycle-v2', toolAuthoringProtocol: 'view-type-tools-v5', kernelConfig: { appName: 'wrong_persistence' }, initialize() {} };`],
+        ['factory missing lifecycle marker', `export default { persistenceSupport: 'state-session-v1', toolAuthoringProtocol: 'view-type-tools-v5', kernelConfig: { appName: 'missing_lifecycle' }, initialize() {} };`],
+        ['factory with wrong lifecycle marker', `export default { persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v1', toolAuthoringProtocol: 'view-type-tools-v5', kernelConfig: { appName: 'wrong_lifecycle' }, initialize() {} };`],
     ])('rejects %s', async (_name, source) => {
         const { worker, init } = await launch(source);
         try {
@@ -150,7 +150,7 @@ describe('Worker accepts only the managed App factory contract', () => {
             export default {
                 persistenceSupport: 'state-session-v1',
                 appLifecycleSupport: 'app-lifecycle-v2',
-                toolAuthoringProtocol: 'view-type-tools-v4',
+                toolAuthoringProtocol: 'view-type-tools-v5',
                 kernelConfig: { appName: 'managed', launchConfig: { projectPath: 'retired-default' } },
                 async initialize(context) {
                     if (JSON.stringify(context.launchConfig) !== ${JSON.stringify(JSON.stringify(config))}) throw new Error('WRONG_LAUNCH_CONFIG');

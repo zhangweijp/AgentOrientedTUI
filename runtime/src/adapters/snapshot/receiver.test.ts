@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { SemanticSnapshotReceiver } from './receiver.js';
 
 function draft(seq: number, text = 'current') {
-    return { schemaVersion: 3, appId: 'app', instanceId: 'instance',
+    return { schemaVersion: 4, appId: 'app', instanceId: 'instance',
         producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
-        views: [{ id: 'file', viewInstanceId: 'file-instance', type: 'File', name: 'File', kind: 'state',
+        views: [{ toolBindings: [], id: 'file', viewInstanceId: 'file-instance', type: 'File', name: 'File', kind: 'state',
             content: { format: 'markdown-v1', value: text } }], refs: {}, tools: {} };
 }
 
 const policy = {
-    project: () => ({ views: [{ viewId: 'file', viewInstanceId: 'file-instance' }], refs: [], toolBindings: [], content: [] }),
+    project: () => ({ refs: [], toolIds: [] }),
     authorize: () => true, canReadReceipt: () => true,
 };
 const execution = { resolve: () => null };
@@ -122,7 +122,7 @@ describe('receiver-owned interaction lifetime', () => {
         expect(first.status).toBe('observed');
         time = timeAfter;
         expect(await interaction.observe({ all: true })).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_INTERNAL_ERROR' } });
-        expect(await interaction.invoke({ invocationId: 'bad', observationId: 'bad', bindingId: 'bad', input: {} }))
+        expect(await interaction.invoke({ invocationId: 'bad', observationId: 'bad', toolId: 'bad', input: {} }))
             .toMatchObject({ kind: 'refused', code: 'OBSERVATION_INTERNAL_ERROR' });
         await receiver.close();
         expect(receiver.getInteractionStats()).toMatchObject({ closed: true, combinedBytes: 0 });

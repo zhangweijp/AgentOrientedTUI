@@ -33,9 +33,9 @@ beforeAll(async () => {
     }
     await writeFile(join(consumer, 'package.json'), JSON.stringify({ type: 'module' }));
     await writeFile(join(consumer, 'type-contract.ts'), `
-import { createApp, type ArgsOf } from '@aotui/sdk/app';
-import { tools } from './work-items.js';
-function check(args: ArgsOf<typeof tools.inspect>, count: ArgsOf<typeof tools.count>) {
+import { createView, type ArgsOf } from '@aotui/sdk/app';
+import { ItemType, WorkspaceType } from './work-items.js';
+function check(args: ArgsOf<typeof ItemType.tools.inspect>, count: ArgsOf<typeof ItemType.tools.count>) {
     const n: number = count.selected;
     const value = args.selected;
     if (value === null) return n;
@@ -44,15 +44,15 @@ function check(args: ArgsOf<typeof tools.inspect>, count: ArgsOf<typeof tools.co
     // @ts-expect-error Integer Ref handler receives a number
     const text: string = count.selected;
     // @ts-expect-error Optional string is not nullable
-    const invalid: ArgsOf<typeof tools.inspect> = { selected: null, text: null };
+    const invalid: ArgsOf<typeof ItemType.tools.inspect> = { selected: null, text: null };
     // @ts-expect-error Literal and nested array values preserve their inferred types
-    const unsupported: ArgsOf<typeof tools.update> = { operation: 'null', options: { mode: 'other', numbers: [false] } };
+    const unsupported: ArgsOf<typeof WorkspaceType.tools.update> = { operation: 'null', options: { mode: 'other', numbers: [false] } };
     return { text, invalid, unsupported };
 }
-createApp({ app_name: 'type_test', tools, initialize({ publish }) {
-    // @ts-expect-error The declared ToolSet requires its complete bindings
-    publish({ views: [] });
-}});
+createView(ItemType, { id:'missing', kind:'state',
+    // @ts-expect-error An instance must bind every operation on its descriptor
+    render: () => ({ body:'Missing bindings' }),
+});
 `);
     for (const adapter of adapters) {
         if (adapter === 'preact') await symlink(join(repository, 'sdk/node_modules/preact'), join(consumer, 'node_modules/preact'), 'dir');
@@ -87,7 +87,7 @@ async function appFolder(name: string, code: string) {
     await mkdir(folder);
     await writeFile(join(folder, 'entry.mjs'), code);
     await writeFile(join(folder, 'aoapp.json'), JSON.stringify({
-        app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v4',
+        app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v5',
         persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './entry.mjs' },
     }));
     return folder;
@@ -116,9 +116,11 @@ async function observe(client: AppInteraction): Promise<Observation> {
 const body = (observation: Observation, id = 'workspace') => observation.views.find(view => view.id === id)?.content?.value;
 function request(observation: Observation, name: string, input: Readonly<Record<string, JsonValue>>, invocationId: string) {
     const tool = observation.tools.find(item => item.name === name);
-    const binding = observation.bindings.find(item => item.toolId === tool?.id);
-    if (!binding) throw Error('Missing observed tool ' + name);
-    return { invocationId, observationId: observation.observationId, bindingId: binding.bindingId, input };
+    if (!tool) throw Error('Missing observed tool ' + name);
+    const view = observation.views.find(page => page.type === tool.viewType &&
+        (tool.eligibleViewIds === undefined || tool.eligibleViewIds.includes(page.id)));
+    if (!view) throw Error('Missing receiver ' + name);
+    return { invocationId, observationId: observation.observationId, toolId: tool.id, input: { view_id: view.id, ...input } };
 }
 
 it.each(adapters)('loads and exercises the published %s SDK App through manifest and fresh Worker', async adapter => {
@@ -215,7 +217,7 @@ export default factory;
             expect(modelSchema).not.toHaveProperty('x-aotui-parameter-contract');
             expect(modelSchema).not.toHaveProperty('properties.selected.x-aotui-ref-value');
             expect(modelSchema).not.toHaveProperty('properties.elements.items.x-aotui-ref-kind');
-            expect(await model.executeTool(name + '-Workspace-update', { operation: 'reset', options: { mode: 'keep', numbers: [1, '2'] } }, 'model-error'))
+            expect(await model.executeTool(name + '-Workspace-update', { view_id: 'workspace', operation: 'reset', options: { mode: 'keep', numbers: [1, '2'] } }, 'model-error'))
                 .toMatchObject({ outcomeStatus: 'rejected', error: { code: 'TOOL_INVALID_ARGS', message: expect.stringContaining('$.options.numbers[1]') } });
         } finally { await model.release(); }
 
@@ -292,7 +294,7 @@ export default factory;
         expect(receipt).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'unknown' } } });
         expect(await client.invoke(held, 100)).toMatchObject({
             kind: 'receipt', receipt: { invocationId: held.invocationId, observationId: held.observationId,
-                bindingId: held.bindingId, executionPhase: 'unknown', outcome: { status: 'unknown' } },
+                toolId: held.toolId, executionPhase: 'unknown', outcome: { status: 'unknown' } },
         });
         expect(await call('count', { selected: selectedRef })).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
         expect((await trace(traceFile)).filter(line => line === 'handler-entered')).toHaveLength(1);
@@ -334,16 +336,17 @@ import assert from 'node:assert/strict';
 import Type from 'typebox';
 import * as one from '@aotui/sdk/app';
 import * as two from '@aotui/sdk-copy/app';
-const tool = one.defineViewTypeTool({ viewType:'View', name:'sample', description:'Sample', inputSchema:Type.Object({ n: Type.Integer() }) });
-const set = one.defineToolSet({ tool });
-assert.deepEqual(two.getToolCatalog(set), one.getToolCatalog(two.defineToolSet({ tool })));
-const witness = Object.getOwnPropertySymbols(tool)[0];
-const fake = { ...tool, inputSchema: { type:'object', properties:{ v:{ type:'string', format:'unknown' } } } };
-Object.defineProperty(fake, witness, Object.getOwnPropertyDescriptor(tool, witness));
-assert.throws(() => two.defineToolSet({ fake: Object.freeze(fake) }), { code:'TOOL_SCHEMA_UNSUPPORTED', path:'$.properties.v.format' });
-const legacy = { ...tool };
+const view = one.defineViewType({ name:'View', tools:{ sample:{ description:'Sample',
+    inputSchema:Type.Object({ n: Type.Integer() }) } } });
+assert.deepEqual(two.getToolCatalog([view]), one.getToolCatalog([view]));
+const witness = Object.getOwnPropertySymbols(view)[0];
+const fake = { ...view, tools:{ sample:{ description:'Fake',
+    inputSchema:{ type:'object', properties:{ v:{ type:'string', format:'unknown' } } } } } };
+Object.defineProperty(fake, witness, Object.getOwnPropertyDescriptor(view, witness));
+assert.throws(() => two.getToolCatalog([fake]), { code:'TOOL_SCHEMA_UNSUPPORTED', path:'$.properties.v.format' });
+const legacy = { ...view };
 Object.defineProperty(legacy, witness, { value:'other-version' });
-assert.throws(() => two.defineToolSet({ legacy: Object.freeze(legacy) }), { code:'TOOL_SET_INVALID' });
+assert.throws(() => two.getToolCatalog([legacy]), { code:'VIEW_TYPE_INVALID' });
 `);
     await execute(process.execPath, [check]);
 });
@@ -362,13 +365,13 @@ async function prepare(signal) {
 }
 ${adapter === 'plain' ? `
 import { createApp } from '@aotui/sdk/app';
-export default createApp({ app_name: ${JSON.stringify(name)}, async initialize({ signal, registerCleanup, publish }) {
+export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[], async initialize({ signal, registerCleanup, publish }) {
     await prepare(signal);
     registerCleanup({ stop, close });
     try { publish({ views: [] }); } catch (error) { trace(error.code); throw error; }
 } });` : `
 import { createTUIApp, useAppLifecycle } from '@aotui/sdk';
-const factory = createTUIApp({ app_name: ${JSON.stringify(name)}, component: () => {
+const factory = createTUIApp({ app_name: ${JSON.stringify(name)}, viewTypes: [], component: () => {
     useAppLifecycle({ stop, close }); return null;
 } });
 const initialize = factory.initialize;
@@ -432,15 +435,16 @@ export default workItemsApp(${JSON.stringify(name)}, {
 it('keeps a real declaration error code and path across manifest loading and isolates the healthy App', async () => {
     const name = 'bad_schema', folder = await appFolder(name, `
 import Type from 'typebox';
-import { createApp, defineViewTypeTool } from '@aotui/sdk/app';
-defineViewTypeTool({ viewType: 'Workspace', name: 'bad', description: 'Invalid declaration',
-    inputSchema: Type.Object({ nested: Type.Object({ entry: Type.String({ format: 'email' }) }) }) });
-export default createApp({ app_name: ${JSON.stringify(name)}, initialize({ publish }) { publish({ views: [] }); } });
+import { createApp, defineViewType } from '@aotui/sdk/app';
+defineViewType({ name: 'Workspace', tools: { bad: { description: 'Invalid declaration',
+    inputSchema: Type.Object({ nested: Type.Object({ entry: Type.String({ format: 'email' }) }) }) } } });
+export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[], initialize({ publish }) { publish({ views: [] }); } });
 `);
     const healthy = await appFolder('healthy_schema', `
-import { createApp } from '@aotui/sdk/app';
-export default createApp({ app_name: 'healthy_schema', initialize({ publish }) {
-    publish({ views: [{ id:'workspace', type:'Workspace', kind:'state', body:'Healthy' }] });
+import { createApp, createView, defineViewType } from '@aotui/sdk/app';
+const Workspace = defineViewType({ name:'Workspace', tools:{} });
+export default createApp({ app_name: 'healthy_schema', viewTypes:[Workspace], initialize({ publish }) {
+    publish({ views: [createView(Workspace, { id:'workspace', kind:'state', render:() => ({body:'Healthy'}) })] });
 } });
 `);
     const registry = new AppRegistry();
@@ -469,7 +473,7 @@ export default createApp({ app_name: 'healthy_schema', initialize({ publish }) {
 
 it.each([
     { fault: 'bindings', errorName: 'TypeError', issue: {
-        code: 'TOOL_BINDING_INVALID', path: '$.bindings', message: 'bindings must contain exactly one entry for every ToolSet key',
+        code: 'TOOL_BINDING_INVALID', path: 'View workspace.bindings', message: 'View workspace.bindings must bind exactly change, inspect',
     } },
     { fault: 'schema', errorName: 'TypeBoxSchemaExportError', issue: {
         code: 'TOOL_SCHEMA_UNSUPPORTED', path: '$.properties.value.format', message: 'Declaration uses unsupported ordinary parameter vocabulary.',
@@ -480,30 +484,34 @@ it.each([
     const folder = await appFolder(name, `
 import { appendFileSync, existsSync } from 'node:fs';
 import Type from 'typebox';
-import { createApp, defineToolSet, defineViewTypeTool, ref } from '@aotui/sdk/app';
-const tool = name => defineViewTypeTool({ viewType:'Workspace', name, description:'Test publication', inputSchema:Type.Object({}) });
-const tools = defineToolSet({ change: tool('change'), inspect: tool('inspect') });
-export default createApp({ app_name:${JSON.stringify(name)}, tools, initialize({ publish, signal }) {
-    const workspace = { id:'workspace', type:'Workspace', kind:'state', body:'Committed diagnostic workspace',
+import { createApp, createView, defineViewType, ref } from '@aotui/sdk/app';
+const tool = {description:'Test publication', inputSchema:Type.Object({})};
+const Workspace = defineViewType({ name:'Workspace', tools:{ change:tool, inspect:tool } });
+export default createApp({ app_name:${JSON.stringify(name)}, viewTypes:[Workspace], initialize({ publish, signal }) {
+    let content = { body:'Committed diagnostic workspace',
         refs:[ref('selected', 'last good', { schema:Type.String() })] };
     const bindings = { inspect: { execute: () => ({ success:true }) }, change: { execute() {
-        const candidate = { ...workspace, body:'Rejected diagnostic candidate' };
+        const candidate = { ...content, body:'Rejected diagnostic candidate' };
         if (${JSON.stringify(fault)} === 'schema') candidate.refs = [ref('selected', { value:'item' }, {
             schema:Type.Object({ value:Type.String({ format:'uuid' }) }),
         })];
+        const rejected = createView(Workspace, { id:'workspace', kind:'state', render:() => ({
+            ...candidate, bindings:${fault === 'bindings' ? '{ change:bindings.change }' : 'bindings'},
+        }) });
         try {
-            publish({ views:[candidate], bindings: ${fault === 'bindings' ? '{ change:bindings.change }' : 'bindings'} });
+            publish({ views:[rejected] });
         } catch (error) {
             appendFileSync(${JSON.stringify(log)}, JSON.stringify({ name:error.name, code:error.code, path:error.path, message:error.message }) + '\\n');
             void (async () => {
                 while (!signal.aborted && !existsSync(${JSON.stringify(gate)})) await new Promise(resolve => setTimeout(resolve, 5));
-                if (!signal.aborted) publish({ views:[workspace], bindings });
+                if (!signal.aborted) publish({ views:[workspace] });
             })();
             return { success:true };
         }
         throw Error('Invalid frame committed');
     } } };
-    publish({ views:[workspace], bindings });
+    const workspace = createView(Workspace, { id:'workspace', kind:'state', render:() => ({...content,bindings}) });
+    publish({ views:[workspace] });
 } });
 `);
     const healthy = await appFolder(sibling, `
@@ -566,44 +574,47 @@ it('keeps committed plain View and Tool identities across rejected complete fram
     const folder = await appFolder(name, `
 import { appendFileSync, existsSync } from 'node:fs';
 import Type from 'typebox';
-import { createApp, defineToolSet, defineViewTypeTool, ref, refParam } from '@aotui/sdk/app';
+import { createApp, createView, defineViewType, ref, refParam } from '@aotui/sdk/app';
 const trace = value => appendFileSync(${JSON.stringify(log)}, value + '\\n');
 const schema = Type.String();
-const tools = defineToolSet({
-    change: defineViewTypeTool({ viewType:'Workspace', name:'change', description:'Publish a frame',
-        inputSchema:Type.Object({ operation:Type.Enum(['oversized', 'ref', 'close', 'open']) }) }),
-    inspect: defineViewTypeTool({ viewType:'Item', name:'inspect', description:'Inspect selected item',
-        inputSchema:Type.Object({ selected:refParam('Text', schema) }) }),
-});
-export default createApp({ app_name: ${JSON.stringify(name)}, tools, initialize({ publish }) {
-    const workspace = { id:'workspace', type:'Workspace', kind:'state', body:'Workspace' };
-    const item = { id:'item_a', type:'Item', kind:'state', body:'Item',
-        refs:[ref('selected', 'committed', { refType:'Text', schema })] };
+const Workspace = defineViewType({ name:'Workspace', tools:{
+    change:{description:'Publish a frame', inputSchema:Type.Object({ operation:Type.Enum(['oversized', 'ref', 'close', 'open']) })},
+} });
+const Item = defineViewType({ name:'Item', tools:{
+    inspect:{description:'Inspect selected item', inputSchema:Type.Object({selected:refParam('Text', schema)})},
+} });
+export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspace, Item], initialize({ publish }) {
     const inspect = { execute({ selected }) { trace('entered:' + selected); return { success:true }; } };
-    const bindings = { inspect, change: { execute({ operation }) {
-        if (operation === 'close' || operation === 'open') {
-            publish({ views: operation === 'close' ? [workspace] : [workspace, item], bindings });
+    const item = createView(Item, { id:'item_a', kind:'state', render:() => ({ body:'Item',
+        refs:[ref('selected', 'committed', { refType:'Text', schema })], bindings:{inspect},
+    }) });
+    const workspace = createView(Workspace, { id:'workspace', kind:'state', render:() => ({
+        body:'Workspace', bindings:{ change: { execute({ operation }) {
+            if (operation === 'close' || operation === 'open') {
+                publish({ views: operation === 'close' ? [workspace] : [workspace, item] });
+                return { success:true };
+            }
+            const candidate = createView(Item, {id:'spill',kind:'state',render:() => ({
+                body: operation === 'oversized' ? 'x'.repeat(513 * 1024) : 'Replacement',
+                refs: operation === 'ref' ? [ref('selected', 2, { refType:'Text', schema })] : [],
+                bindings: {inspect:{...inspect,enabled:false}},
+            })});
+            try {
+                publish({ views:[workspace, candidate] });
+                throw Error('Invalid App frame committed');
+            } catch (error) {
+                if (!error.code) throw error;
+                trace(error.code + ':' + error.path);
+            }
+            const repair = async () => {
+                while (!existsSync(${JSON.stringify(log)} + '-' + operation)) await new Promise(resolve => setTimeout(resolve, 5));
+                publish({ views:[workspace, item] });
+            };
+            void repair();
             return { success:true };
-        }
-        const rejectedView = { id:'spill', type:'Other', kind:'state', body:'Replacement' };
-        const candidate = operation === 'oversized'
-            ? { ...rejectedView, body:'x'.repeat(513 * 1024) }
-            : { ...rejectedView, refs:[ref('selected', 2, { refType:'Text', schema })] };
-        try {
-            publish({ views:[workspace, candidate], bindings: { ...bindings, inspect:{ ...inspect, enabled:false } } });
-            throw Error('Invalid App frame committed');
-        } catch (error) {
-            if (!error.code) throw error;
-            trace(error.code + ':' + error.path);
-        }
-        const repair = async () => {
-            while (!existsSync(${JSON.stringify(log)} + '-' + operation)) await new Promise(resolve => setTimeout(resolve, 5));
-            publish({ views:[workspace, item], bindings });
-        };
-        void repair();
-        return { success:true };
-    } } };
-    publish({ views:[workspace, item], bindings });
+        } } },
+    }) });
+    publish({ views:[workspace, item] });
 } });
 `);
     const registry = new AppRegistry();
@@ -616,7 +627,6 @@ export default createApp({ app_name: ${JSON.stringify(name)}, tools, initialize(
         const client = interaction(runtime, desktopId, installation.appId);
         const before = await observe(client);
         const viewIdentity = (observation: Observation) => observation.views.find(view => view.id === 'item_a')?.viewInstanceId;
-        const activation = (observation: Observation) => observation.tools.find(tool => tool.name === 'inspect')?.execution.activationId;
         const entered = { kind: 'receipt', receipt: { executionPhase: 'entered-returned', outcome: { status: 'succeeded' } } };
 
         for (const [operation, code, path] of [
@@ -635,7 +645,6 @@ export default createApp({ app_name: ${JSON.stringify(name)}, tools, initialize(
                 client.releaseObservation(result.observation.observationId);
                 expect(result.observation.source.snapshotId).toBe(before.source.snapshotId);
                 expect(viewIdentity(result.observation)).toBe(viewIdentity(before));
-                expect(activation(result.observation)).toBe(activation(before));
                 return result.status;
             }).toBe('observed');
             expect(await inspect(operation + '-repaired')).toMatchObject(entered);
@@ -645,11 +654,11 @@ export default createApp({ app_name: ${JSON.stringify(name)}, tools, initialize(
         expect(await client.invoke(request(before, 'change', { operation: 'close' }, 'close'))).toMatchObject(entered);
         const closed = await observe(client);
         expect(viewIdentity(closed)).toBeUndefined();
-        expect(activation(closed)).toBeUndefined();
+        expect(closed.tools.some(tool => tool.name === 'inspect')).toBe(false);
         expect(await client.invoke(request(closed, 'change', { operation: 'open' }, 'open'))).toMatchObject(entered);
         const reopened = await observe(client);
         expect(viewIdentity(reopened)).not.toBe(viewIdentity(before));
-        expect(activation(reopened)).not.toBe(activation(before));
+        expect(reopened.tools.some(tool => tool.name === 'inspect')).toBe(true);
     } finally {
         await writeFile(log + '-oversized', '');
         await writeFile(log + '-ref', '');
@@ -661,29 +670,28 @@ it('observes a 300 KiB View and carries one deep, large Ref to the real Worker w
     const name = 'capacity_plain';
     const folder = await appFolder(name, `
 import Type from 'typebox';
-import { createApp, defineToolSet, defineViewTypeTool, ref, refParam } from '@aotui/sdk/app';
-const tools = defineToolSet({
-    inspect: defineViewTypeTool({ viewType: 'Item', name: 'inspect', description: 'Inspect published data',
-        inputSchema: Type.Object({ value: refParam('Data', Type.Unknown()) }, { additionalProperties: false }) }),
-    grow: defineViewTypeTool({ viewType: 'Item', name: 'grow', description: 'Show another page',
-        inputSchema: Type.Object({}, { additionalProperties: false }) }),
-});
-export default createApp({ app_name: ${JSON.stringify(name)}, tools, initialize({ publish }) {
+import { createApp, createView, defineViewType, ref, refParam } from '@aotui/sdk/app';
+const Item = defineViewType({ name:'Item', tools: {
+    inspect: { description:'Inspect published data',
+        inputSchema:Type.Object({ value:refParam('Data', Type.Unknown()) }, {additionalProperties:false}) },
+    grow: { description:'Show another page', inputSchema:Type.Object({}, {additionalProperties:false}) },
+} });
+export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Item], initialize({ publish }) {
     const size = 400 * 1024;
     let value = 'x'.repeat(size);
     for (let index = 0; index < 40; index++) value = [value];
-    const first = { id: 'item_a', type: 'Item', kind: 'state', body: 'a'.repeat(300 * 1024),
-        refs: [ref('data', value, { refType: 'Data' })] };
-    const second = { id: 'item_b', type: 'Item', kind: 'state', body: 'b'.repeat(480 * 1024) };
     const bindings = {
         inspect: { execute({ value }) {
             let depth = 0;
             while (Array.isArray(value)) { value = value[0]; depth++; }
             return { success: true, data: { size: value.length, depth } };
         } },
-        grow: { execute() { publish({ views: [first, second], bindings }); return { success: true }; } },
+        grow: { execute() { publish({ views: [first, second] }); return { success: true }; } },
     };
-    publish({ views: [first], bindings });
+    const first = createView(Item, { id:'item_a', kind:'state', render:() => ({ body:'a'.repeat(300 * 1024),
+        refs:[ref('data', value, {refType:'Data'})], bindings }) });
+    const second = createView(Item, { id:'item_b', kind:'state', render:() => ({ body:'b'.repeat(480 * 1024), bindings }) });
+    publish({ views:[first] });
 }});
 `);
     const open = vi.fn(async () => { throw Error('Non-persistent App accessed Host storage'); });
@@ -718,7 +726,7 @@ it('lists registered pending Apps while hiding a Worker whose first install is s
     const folder = await appFolder(name, `
 import { appendFileSync, existsSync } from 'node:fs';
 import { createApp } from '@aotui/sdk/app';
-export default createApp({ app_name: ${JSON.stringify(name)}, async initialize({ publish }) {
+export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[], async initialize({ publish }) {
     appendFileSync(${JSON.stringify(log)}, 'initializing');
     while (!existsSync(${JSON.stringify(release)})) await new Promise(resolve => setTimeout(resolve, 5));
     publish({ views: [] });
@@ -750,5 +758,164 @@ export default createApp({ app_name: ${JSON.stringify(name)}, async initialize({
         await writeFile(release, '');
         await installing?.catch(() => {});
         await runtime.beginShutdown().completion;
+    }
+}, 15_000);
+
+it('routes one shared Tool to the observed instance and sends its real eligible IDs to the model', async () => {
+    const name = 'page_receivers';
+    const folder = await appFolder(name, `
+import Type from 'typebox';
+import { createApp, createView, defineViewType, ref, refParam, getToolCatalog } from '@aotui/sdk/app';
+const Counter = defineViewType({ name:'Counter', tools:{
+    add: { description:'Add to this counter', inputSchema:Type.Object({
+        delta:Type.Optional(refParam('Count', Type.Integer())),
+    }, {additionalProperties:false}) },
+} });
+const Root = defineViewType({ name:'Root', tools:{
+    change: { description:'Change page membership or eligibility', inputSchema:Type.Object({
+        mode:Type.Enum(['disable','enable','replace','close','reopen']),
+    }, {additionalProperties:false}) },
+} });
+const Empty = defineViewType({name:'Empty',tools:{}});
+const viewTypes = [Root, Counter, Empty];
+export default createApp({ app_name:'page_receivers', viewTypes, initialize({publish}) {
+    let enabled = true, open = true;
+    const make = (id, initial) => {
+        let count = initial;
+        return createView(Counter, { id, kind:'state', name:'Counter <' + id + '>', render:() => ({
+            body:'Count: ' + count + ' & current',
+            refs:[ref('count',count,{refType:'Count'})],
+            bindings:{add:{enabled:id === 'b' || enabled,execute(args) {
+                if (Object.hasOwn(args,'view_id')) throw Error('Router field reached the handler');
+                count += args.delta ?? 1;
+                const {status, sourceEpoch} = commit();
+                return {success:true,data:{status,sourceEpoch}};
+            }}},
+        })});
+    };
+    let a = make('a', 2);
+    const b = make('b', 10);
+    const empty = createView(Empty, {id:'empty',kind:'state',render:() => ({body:''})});
+    const root = createView(Root,{id:'root',kind:'instruction',render:() => ({
+        body:getToolCatalog(viewTypes).map(t => t.viewType + '.' + t.name).join('\\n'),
+        bindings:{change:{ execute({mode}) {
+            if (mode === 'disable') enabled = false;
+            if (mode === 'enable') enabled = true;
+            if (mode === 'replace') a = make('a', 100);
+            if (mode === 'close') open = false;
+            if (mode === 'reopen') open = true;
+            const {status,sourceEpoch} = commit();
+            return {success:true,data:{status,sourceEpoch}};
+        }}},
+    })});
+    function commit() { return publish({ views: open ? [root,a,b,empty] : [root,b,empty] }); }
+    commit();
+}});
+`);
+    const runtime = createRuntime({});
+    const registry = new AppRegistry();
+    let source: SemanticAOTUIDrivenSource | undefined;
+    let mock: ReturnType<typeof vi.spyOn> | undefined;
+    let driver: import('@aotui/agent-driver-v2').AgentDriverV2 | undefined;
+    try {
+        const id = await runtime.createDesktop(createDesktopId(name)), desktop = runtime.getDesktop(id);
+        await registry.registerTransient('local:' + folder);
+        const [installed] = await registry.installAll(desktop);
+        if (!installed || installed.status !== 'installed') throw Error(JSON.stringify(installed));
+        const client = interaction(runtime, id, installed.appId);
+        let first = await observe(client);
+        const add = first.tools.find(tool => tool.name === 'add')!;
+        expect(first.tools.filter(tool => tool.name === 'add')).toHaveLength(1);
+        expect(add.eligibleViewIds).toBeUndefined();
+        expect(first.views.every(view => !Object.hasOwn(view, 'toolBindings'))).toBe(true);
+        expect(first.views.map(view => view.id)).toEqual(['root', 'a', 'b', 'empty']);
+        const call = (name: string, view_id: string, serial: string, args = {}) =>
+            client.invoke(request(first, name, { view_id, ...args }, serial));
+        const entered = { kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } };
+        expect(await call('add','a','a-1')).toMatchObject({ receipt: { outcome: { status:'succeeded', value: {
+            data: { status:'prepared', sourceEpoch: expect.any(Number) },
+        } } } });
+        expect(await call('add','b','a-1')).toMatchObject({ kind:'refused', code:'INVOCATION_ID_CONFLICT' });
+        expect(await call('add','b','b-1',{delta:'a.count'})).toMatchObject(entered);
+        const preview = await client.preview();
+        if (preview.status !== 'previewed') throw Error('Expected preview');
+        expect(preview.views.find(view => view.id === 'a')?.content.value).toBe('Count: 3 & current');
+        expect(preview.views.find(view => view.id === 'b')?.content.value).toBe('Count: 12 & current');
+        for (const view_id of ['', 'a.count', 'root', 'elsewhere']) {
+            expect(await call('add',view_id,'bad-' + view_id)).toMatchObject({ receipt: {
+                executionPhase:'not-dispatched', outcome:{ status:'rejected', path:'$.view_id' },
+            } });
+        }
+        expect(await client.invoke({ invocationId:'missing',observationId:first.observationId,toolId:add.id,input:{} }))
+            .toMatchObject({ receipt:{ outcome:{ code:'TOOL_INVALID_ARGS',path:'$.view_id' } } });
+        expect(await call('change','root','disable',{mode:'disable'})).toMatchObject(entered);
+        await client.preview();
+        expect(await call('add','a','disabled')).toMatchObject({receipt:{outcome:{code:'TOOL_SOURCE_STALE'}}});
+        expect(await call('add','b','still-eligible')).toMatchObject(entered);
+        expect(await call('change','root','enable',{mode:'enable'})).toMatchObject(entered);
+        await client.preview();
+        expect(await call('add','a','old-activation')).toMatchObject({receipt:{outcome:{code:'TOOL_SOURCE_STALE'}}});
+        first = await observe(client);
+        const oldA = first.views.find(view => view.id === 'a')!.viewInstanceId;
+        expect(await call('change','root','replace',{mode:'replace'})).toMatchObject(entered);
+        await client.preview();
+        expect(await call('add','a','old-mount')).toMatchObject({receipt:{outcome:{code:'VIEW_INSTANCE_REVOKED'}}});
+        expect(await call('add','b','old-ref',{delta:'a.count'})).toMatchObject({receipt:{outcome:{code:'REF_VIEW_UNAVAILABLE'}}});
+        first = await observe(client);
+        expect(first.views.find(view => view.id === 'a')?.viewInstanceId).not.toBe(oldA);
+        expect(await call('change','root','disable-again',{mode:'disable'})).toMatchObject(entered);
+        first = await observe(client);
+        expect(first.tools.find(tool => tool.name === 'add')?.eligibleViewIds).toEqual(['b']);
+
+        const { AgentDriverV2 } = await import('@aotui/agent-driver-v2');
+        const { LLMClient } = await import('@aotui/agent-driver-v2/dist/core/llm-client.js');
+        const sent: Array<{ prompt: unknown; tools: unknown }> = [];
+        mock = vi.spyOn(LLMClient.prototype as unknown as { createProvider(): unknown }, 'createProvider')
+            .mockReturnValue({
+                specificationVersion:'v3', provider:'test', modelId:'local', supportedUrls:{},
+                async doStream(input: typeof sent[number]) {
+                    sent.push(input);
+                    return { stream:new ReadableStream({ start(controller) {
+                        controller.enqueue({type:'stream-start',warnings:[]});
+                        controller.enqueue({type:'finish',finishReason:{unified:'stop',raw:'stop'},
+                            usage:{inputTokens:{total:1},outputTokens:{total:1}}});
+                        controller.close();
+                    } }) };
+                },
+            });
+        source = new SemanticAOTUIDrivenSource(desktop, runtime, {includeInstruction:false});
+        let limit = 1500;
+        const errors = vi.fn();
+        driver = new AgentDriverV2({llm:{model:'local',provider:{id:'openai'},apiKey:'unused',
+            inputBudget:() => ({contextWindow:limit,maxOutputTokens:1000})},sources:[source],onRunError:errors});
+        const run = async () => { await driver!.trigger(); await (driver as any).runInFlight; };
+        await run();
+        expect(sent).toHaveLength(0);
+        expect(errors).toHaveBeenCalledWith(expect.objectContaining({code:'MODEL_INPUT_BUDGET_EXCEEDED'}));
+        // The failed request never adopted its candidate, so the previous observation still works.
+        expect(await call('add','b','after-budget-failure')).toMatchObject(entered);
+        limit = 64_000;
+        await run();
+        expect(sent).toHaveLength(1);
+        const model = sent[0]!;
+        const prompt = JSON.stringify(model.prompt);
+        for (const id of ['root','a','b','empty']) expect(prompt).toContain('id=\\"' + id + '\\"');
+        expect(prompt).toContain('Counter &lt;a&gt;');
+        expect(prompt).toContain('Counter.add');
+        expect(prompt).not.toContain('toolBindings');
+        expect(model.tools).toEqual(expect.arrayContaining([
+            expect.objectContaining({name:name + '-Counter-add',inputSchema:expect.objectContaining({
+                required:['view_id'], properties:expect.objectContaining({
+                    view_id:expect.objectContaining({type:'string',enum:['b']}),
+                    delta:expect.objectContaining({description:expect.stringContaining('view_id.ref_id')}),
+                }),
+            })}),
+            expect.objectContaining({name:'system-open_app',inputSchema:expect.not.objectContaining({
+                required:expect.arrayContaining(['view_id']),
+            })}),
+        ]));
+    } finally {
+        driver?.stop(); driver?.dispose(); mock?.mockRestore(); source?.dispose();
+        expect(await runtime.beginShutdown().completion).toMatchObject({ok:true,resourcesReleased:true,workers:{report:{total:0}}});
     }
 }, 15_000);

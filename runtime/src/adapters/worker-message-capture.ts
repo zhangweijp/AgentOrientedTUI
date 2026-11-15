@@ -1,5 +1,5 @@
 import { isToolResultData } from '../spi/core/tool-result.js';
-import { SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY } from '../spi/worker-protocol/types.js';
+import { SNAPSHOT_CAPABILITY, PARAMETERS_V6_CAPABILITY } from '../spi/worker-protocol/types.js';
 import { canonicalJson, copyJson, utf8Size, type JsonCopyLimits } from '../core/snapshot/json.js';
 import type { JsonValue } from '../core/snapshot/types.js';
 import { VIEW_TYPE_PARAMETERS_MODE } from '../core/tool/ordinary-parameter-contract.js';
@@ -52,23 +52,22 @@ export function captureViewToolCapabilities(input: unknown): ViewToolCapabilityC
             !capabilities.every(item => text(item) && item.length <= 128) || new Set(capabilities).size !== capabilities.length) {
             return Object.freeze({ ok: false, code: 'WORKER_CAPABILITY_INVALID' });
         }
-        if (!capabilities.every(item => item === PARAMETERS_V5_CAPABILITY || item === SNAPSHOT_CAPABILITY)) {
+        if (!capabilities.every(item => item === PARAMETERS_V6_CAPABILITY || item === SNAPSHOT_CAPABILITY)) {
             return Object.freeze({ ok: false, code: 'WORKER_CAPABILITY_UNSUPPORTED' });
         }
         return Object.freeze({ ok: true, capabilities });
     } catch { return Object.freeze({ ok: false, code: 'WORKER_CAPABILITY_INVALID' }); }
 }
 
-/** Validate the observed execution branch without accepting extra transport fields. */
-export function invocationExecution(value: JsonValue | undefined): boolean {
-    return invocationObject(value) && value.kind === 'view-type' && exact(value, ['kind', 'activationId']) && text(value.activationId);
+export function invocationReceiver(value: JsonValue | undefined): boolean {
+    return invocationObject(value) && exact(value, ['viewId', 'viewInstanceId', 'activationId']) &&
+        text(value.viewId) && !value.viewId.includes('.') && text(value.viewInstanceId) && text(value.activationId);
 }
 
-/** Strict data shape for the V3 public Tool descriptor carried over Worker IPC. */
-export function invocationToolDescriptorV3(value: JsonValue | undefined): boolean {
-    return invocationObject(value) && exact(value, ['id', 'name', 'viewType', 'description', 'inputSchema', 'execution']) &&
+export function invocationToolDescriptorV4(value: JsonValue | undefined): boolean {
+    return invocationObject(value) && exact(value, ['id', 'name', 'viewType', 'description', 'inputSchema']) &&
         ['id', 'name', 'viewType', 'description'].every(key => text(value[key])) &&
-        invocationObject(value.inputSchema) && value.inputSchema.type === 'object' && invocationExecution(value.execution);
+        invocationObject(value.inputSchema) && value.inputSchema.type === 'object';
 }
 
 /** Capture and correlate a bounded invocation terminal without trusting Worker payloads. */
@@ -80,7 +79,7 @@ export function captureTypeParametersTerminal(
         const value = captureInvocationJson(input);
         if (!invocationObject(value) || !exact(value, [
             'type', 'requestId', 'appId', 'instanceId', 'argumentMode', 'success', 'terminal',
-        ]) || value.type !== 'VIEW_TOOL_INVOKE_V5_RESPONSE' || value.requestId !== expected.requestId ||
+        ]) || value.type !== 'VIEW_TOOL_INVOKE_V6_RESPONSE' || value.requestId !== expected.requestId ||
             value.appId !== expected.appId || value.instanceId !== expected.instanceId ||
             value.argumentMode !== VIEW_TYPE_PARAMETERS_MODE || value.success !== true || !invocationObject(value.terminal)) {
             return null;

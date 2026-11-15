@@ -1,5 +1,5 @@
-import { arrayRef, createApp, defineToolSet, defineViewTypeTool, formatRef, ref, refParam,
-    type PublishedView, type ToolBindings, type ToolResult, type ToolSetMap } from '@aotui/sdk/app';
+import { arrayRef, createApp, createView, defineViewType, formatRef, getToolCatalog, ref, refParam,
+    type PublishedRef, type ToolResult, type ViewBindings } from '@aotui/sdk/app';
 import Type from 'typebox';
 import { Check } from 'typebox/value';
 import { openSqlite, type SqliteIssue } from './sqlite.js';
@@ -20,33 +20,34 @@ const writeCounts = Type.Array(Type.Object({
 }, { additionalProperties: false }), { minItems: 1, maxItems: 1 });
 type Item = Type.Static<typeof row>;
 
-const tools = defineToolSet({
-    openItem: defineViewTypeTool({
-        viewType: 'WorkList', name: 'open_item', description: 'Open a work item from the current list.',
-        inputSchema: Type.Object({ item: refParam('WorkItem', selector) }, { additionalProperties: false }),
-    }),
-    refresh: defineViewTypeTool({
-        viewType: 'WorkList', name: 'refresh', description: 'Read the latest list and selected item from SQLite.',
-        inputSchema: Type.Object({}, { additionalProperties: false }),
-    }),
-    setStatus: defineViewTypeTool({
-        viewType: 'WorkDetail', name: 'set_status', description: 'Set the status of the currently selected work item.',
-        inputSchema: Type.Object({ item: refParam('WorkItem', selector), status }, { additionalProperties: false }),
-    }),
-    closeItem: defineViewTypeTool({
-        viewType: 'WorkDetail', name: 'close_item', description: 'Close the selected work item.',
-        inputSchema: Type.Object({}, { additionalProperties: false }),
-    }),
-});
+export const WorkInstructionsType = defineViewType({ name: 'WorkInstructions', tools: {} });
 
-const root: PublishedView = {
-    id: 'root', type: 'WorkInstructions', kind: 'instruction', name: 'SQLite work items',
-    body: [
-        'WorkList offers open_item and refresh. WorkDetail offers set_status and close_item when available.',
-        'Choose an item by its title. For `[label](WorkItem:local_ref)`, pass `view_id.local_ref` as the item argument. Use `detail.current` to update the selected item.',
-        'After an operation, observe the current Views for work item data. Use refresh after a conflict, a partial or unknown write, or an unavailable View.',
-    ].join('\n'),
-};
+export const WorkListType = defineViewType({ name: 'WorkList', tools: {
+        open_item: { description: 'Open a work item from the current list.',
+            inputSchema: Type.Object({ item: refParam('WorkItem', selector) }, { additionalProperties: false }),
+        },
+        refresh: { description: 'Read the latest list and selected item from SQLite.',
+            inputSchema: Type.Object({}, { additionalProperties: false }),
+        },
+} });
+
+export const WorkDetailType = defineViewType({ name: 'WorkDetail', tools: {
+        set_status: { description: 'Set the status of the currently selected work item.',
+            inputSchema: Type.Object({ item: refParam('WorkItem', selector), status }, { additionalProperties: false }),
+        },
+        close_item: { description: 'Close the selected work item.',
+            inputSchema: Type.Object({}, { additionalProperties: false }),
+        },
+} });
+
+export const workViewTypes = [WorkInstructionsType, WorkListType, WorkDetailType] as const;
+
+const instructions = [
+    'Use the receiving page’s XML id as view_id in each operation.',
+    ...getToolCatalog(workViewTypes).map(tool => `- ${tool.viewType}.${tool.name}`),
+    'Choose an item by its title. For `[label](WorkItem:local_ref)`, pass `view_id.local_ref` as the item argument. Use `detail.current` to update the selected item.',
+    'After an operation, observe the current Views for work item data. Use refresh after a conflict, a partial or unknown write, or an unavailable View.',
+].join('\n');
 
 function failure(error: SqliteIssue): ToolResult { return { success: false, error }; }
 
@@ -63,21 +64,34 @@ function literalBlock(text: string): string {
 
 export default createApp({
     app_name: 'sqlite_work_items',
-    tools,
+    viewTypes: workViewTypes,
     async initialize({ launchConfig, publish, registerCleanup, signal }) {
         const sqlite = openSqlite(launchConfig?.databasePath, launchConfig?.sqliteExecutable);
         registerCleanup({ stop: sqlite.stop, close: sqlite.close });
         let selectedId: number | undefined;
 
-        function bindings(available: boolean): ToolBindings<ToolSetMap<typeof tools>> {
-            return {
-                openItem: { enabled: available, async execute({ item }) {
+        type Content = { readonly body: string; readonly refs?: readonly PublishedRef[] };
+        let available = false;
+        let listContent: Content = { body: 'Loading work items.' };
+        let detailContent: Content = { body: 'Detail unavailable. Use refresh to read it again.' };
+        const root = createView(WorkInstructionsType, {
+            id: 'root', kind: 'instruction', name: 'SQLite work items', render: () => ({ body: instructions }),
+        });
+        const list = createView(WorkListType, {
+            id: 'items', kind: 'state', name: 'Work items',
+            render: () => ({ ...listContent, bindings: {
+                open_item: { enabled: available, async execute({ item }) {
                     selectedId = item.id;
                     return refreshReceipt();
                 } },
                 refresh: { execute: refreshReceipt },
-                setStatus: { enabled: available, async execute({ item, status: nextStatus }) {
-                    if (item.id !== selectedId) return failure({
+            } }),
+        });
+
+        function detailBindings(id: number): ViewBindings<typeof WorkDetailType> {
+            return {
+                set_status: { enabled: available, async execute({ item, status: nextStatus }) {
+                    if (item.id !== id || id !== selectedId) return failure({
                         code: 'WORK_ITEM_NOT_SELECTED', message: 'Use the item Ref from the current detail View.',
                     });
                     if (item.revision === maxRevision) return failure({
@@ -105,21 +119,33 @@ SELECT changes() AS direct, total_changes() AS total;`);
                         ? { written: true, refreshed: false, refreshIssue }
                         : { written: true, refreshed: true } };
                 } },
-                closeItem: { async execute() {
+                close_item: { async execute() {
                     selectedId = undefined;
                     return refreshReceipt();
                 } },
             };
         }
 
+        function createDetail(id: number) {
+            return createView(WorkDetailType, {
+                id: 'detail', kind: 'state', name: 'Work item detail',
+                render: () => ({ ...detailContent, bindings: detailBindings(id) }),
+            });
+        }
+        let detail: { id: number; view: ReturnType<typeof createDetail> } | undefined;
+        function show(detailId: number | undefined) {
+            if (detailId === undefined) detail = undefined;
+            else if (detail?.id !== detailId) detail = { id: detailId, view: createDetail(detailId) };
+            publish({ views: detail ? [root, list, detail.view] : [root, list] });
+        }
+
         function unavailable(issue: SqliteIssue): SqliteIssue {
             if (signal.aborted) return issue;
             const body = `Work item data is unavailable (${issue.code}). ${issue.message} Use refresh to read SQLite.`;
-            const views: PublishedView[] = [root, { id: 'items', type: 'WorkList', kind: 'state', name: 'Work items', body }];
-            if (selectedId !== undefined) views.push({
-                id: 'detail', type: 'WorkDetail', kind: 'state', name: 'Work item detail', body: 'Detail unavailable. Use refresh to read it again.',
-            });
-            try { publish({ views, bindings: bindings(false) }); }
+            available = false;
+            listContent = { body };
+            detailContent = { body: 'Detail unavailable. Use refresh to read it again.' };
+            try { show(selectedId); }
             catch { return { code: 'WORK_ITEMS_PROJECTION_FAILED', message: 'Could not publish the refresh issue.' }; }
             return issue;
         }
@@ -143,20 +169,19 @@ CASE WHEN id = ${selectedId ?? 'NULL'} THEN body ELSE NULL END AS body FROM work
                 code: 'WORK_ITEM_LIMIT', message: `The demo supports at most ${maxItems} work items.` });
             const selected = items.find(item => item.id === selectedId);
             const missing = selectedId !== undefined && !selected;
-            const views: PublishedView[] = [root, {
-                id: 'items', type: 'WorkList', kind: 'state', name: 'Work items',
+            listContent = {
                 body: items.map((item, index) => `- ${itemLine(item, `items[${index}]`)}`).join('\n') || 'No work items.',
                 refs: [arrayRef('items', items.map(({ id, revision }) => ({ id, revision })), { itemType: 'WorkItem', schema: selectors })],
-            }];
+            };
             if (selected) {
                 if (selected.body === null) return unavailable({ code: 'SQLITE_INVALID_OUTPUT', message: 'SQLite omitted the selected body.' });
-                views.push({
-                    id: 'detail', type: 'WorkDetail', kind: 'state', name: 'Work item detail',
+                detailContent = {
                     body: `${itemLine(selected, 'current')}\n\n${literalBlock(selected.body)}`,
                     refs: [ref('current', { id: selected.id, revision: selected.revision }, { refType: 'WorkItem', schema: selector })],
-                });
+                };
             }
-            try { publish({ views, bindings: bindings(true) }); }
+            available = true;
+            try { show(selected?.id); }
             catch { return unavailable({ code: 'WORK_ITEMS_PROJECTION_FAILED', message: 'Could not publish work item data.' }); }
             if (missing) {
                 selectedId = undefined;

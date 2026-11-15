@@ -36,14 +36,14 @@ describe('installation errors across a real Worker and AppManager', () => {
 
     function app(renderBody: string) {
         return `import { h } from 'preact';
-import { createTUIApp } from '@aotui/sdk';
+import { createTUIApp, defineViewType } from '@aotui/sdk';
 export default {
     persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
-    toolAuthoringProtocol: 'view-type-tools-v4',
+    toolAuthoringProtocol: 'view-type-tools-v5',
     kernelConfig: { appName: 'diagnostics' },
     initialize(context) {
         function InitialRender() { ${renderBody} }
-        return createTUIApp({ app_name: 'diagnostics', component: () => h(InitialRender, {}) }).initialize(context);
+        return createTUIApp({viewTypes:[],  app_name: 'diagnostics', component: () => h(InitialRender, {}) }).initialize(context);
     },
 };`;
     }

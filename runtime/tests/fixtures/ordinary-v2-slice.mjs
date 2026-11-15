@@ -27,16 +27,14 @@ class Boundary extends Component {
 }
 
 const flagsSchema = Type.Object({
-  view_id: Type.String(),
   flags: Type.Array(Type.Boolean(), { minItems: 1 }),
 }, { additionalProperties: false });
-const openSchema = Type.Object({ view_id: Type.String(), q: Type.String() }, { additionalProperties: true });
-const zeroSchema = Type.Object({ view_id: Type.String() }, { additionalProperties: false });
+const openSchema = Type.Object({ q: Type.String() }, { additionalProperties: true });
+const zeroSchema = Type.Object({}, { additionalProperties: false });
 
-function declareTools(rule) {
+function declareTools() {
   const findSchema = Type.Object({
-    view_id: Type.String({ description: '当前应用内可见 View 的业务 ID。' }),
-    q: Type.String({ minLength: 1, maxLength: rule ? 2 : 1 }),
+    q: Type.String({ minLength: 1, maxLength: 1 }),
     e: Type.String({ enum: ['1', 'yes'] }),
     items: Type.Array(Type.String(), { minItems: 2, maxItems: 3 }),
     n: Type.Optional(Type.Number({ default: 2, minimum: 1, maximum: 3 })),
@@ -45,21 +43,10 @@ function declareTools(rule) {
   const contracts = [['find', 'Find current symbols.', findSchema],
     ['flags', 'Count flags.', flagsSchema], ['open', 'Preserve open input.', openSchema],
     ['zero', 'Read current state without extra parameters.', zeroSchema]];
-  return SDK.defineToolSet(Object.fromEntries(['File', 'OtherFile'].flatMap(viewType =>
-    contracts.map(([name, description, inputSchema]) => [viewType + '_' + name,
-      SDK.defineViewTypeTool({ viewType, name, description, inputSchema })]))));
+  return ['File','OtherFile'].map(name => SDK.defineViewType({name,
+    tools:Object.fromEntries(contracts.map(([name,description,inputSchema]) => [name,{description,inputSchema}])) }));
 }
-const toolSets = [declareTools(false), declareTools(true)];
-function bindAction(viewType, name, state) {
-  return args => {
-    const view = args.view_id;
-    if ((view !== 'aa' && view !== 'bb') || (view === 'aa' && (!state.show || viewType !== 'File')) ||
-        (view === 'bb' && viewType !== 'OtherFile')) {
-      return { success: false, error: { code: 'VIEW_NOT_OPEN', message: 'The selected business View is not open.' } };
-    }
-    return enter(name, view, args, state.revision);
-  };
-}
+const [File,OtherFile] = declareTools();
 function Detail({ state, viewId }) {
   if (state.bad) throw Error('Controlled render failure');
   return h('p', {}, `Business View ID: ${viewId}`);
@@ -79,11 +66,12 @@ function Root() {
   }, []);
   useLayoutEffect(() => { parentPort.postMessage({ type: 'TEST_COMMITTED', state, tag: state.tag }); }, [state]);
 
-  const tools = toolSets[Number(state.rule)];
-  const bindings = Object.fromEntries(Object.entries(tools).map(([key, tool]) => [key,
-    { enabled: state.enabled, execute: bindAction(tool.viewType, tool.name, state) }]));
-  const view = (id, type) => h(SDK.View, {kind: 'state', key: id, id, type }, h(Boundary, {}, h(Detail, { state, viewId: id })));
-  return h(SDK.AppTools, { key: String(state.rule), definition: tools, bindings },
-    h('main', {}, [state.show ? view('aa', 'File') : null, view('bb', 'OtherFile')]));
+  const view = (id,type) => {
+    const bindings = Object.fromEntries(Object.keys(type.tools).map(name => [name,{
+      enabled:state.enabled,execute:args=>enter(name,id,args,state.revision),
+    }]));
+    return h(SDK.View,{kind:'state',key:id+':'+state.rule,id,type,bindings},h(Boundary,{},h(Detail,{state,viewId:id})));
+  };
+  return h('main',{},[state.show ? view('aa',File) : null,view('bb',OtherFile)]);
 }
-export default SDK.createTUIApp({ app_name: 'ordinary_v3_fixture', component: Root });
+export default SDK.createTUIApp({ app_name: 'ordinary_v3_fixture', component: Root, viewTypes:[File,OtherFile] });

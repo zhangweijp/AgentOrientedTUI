@@ -1,13 +1,13 @@
-import { APP_LIFECYCLE_PROTOCOL, type AppInstance, type RuntimeContext, type TUIAppFactory } from '@aotui/runtime/spi';
+import type { AppInstance, RuntimeContext, TUIAppFactory } from '@aotui/runtime/spi';
 import { createDOMAppRoot, dispatchDOMAppEvent, readDOMAppViews } from '@aotui/runtime/adapters/dom';
 import { h, render, type ComponentType } from 'preact';
 import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
 import { createRenderCommit, trackRenderCommits, whenRenderCommitted } from './render-commit.js';
 import { createAppFactory, type AppConfig } from './app-factory.js';
+import type { ViewType } from '../tools/view-type-tool.js';
 
-// Failed initialization returns no instance. Keep incomplete teardown reachable
-// until the same container or App Tool port is reused.
-const pendingUnmounts = new WeakMap<HTMLElement | NonNullable<RuntimeContext['appTypeTools']>, () => void>();
+// Retain interrupted DOM cleanup until the same container is reused.
+const pendingUnmounts = new WeakMap<HTMLElement, () => void>();
 
 export interface TUIAppConfig extends AppConfig {
     component: ComponentType;
@@ -15,10 +15,10 @@ export interface TUIAppConfig extends AppConfig {
 
 export function createTUIApp(config: TUIAppConfig): TUIAppFactory {
     const RootComponent = config.component;
-    const factory = createAppFactory(config, async context => {
+    const factory = createAppFactory(config, async (context, types) => {
         const root = createDOMAppRoot(context.appId);
         try {
-            const instance = await mountPreactApp(RootComponent, root, context);
+            const instance = await mountPreactApp(RootComponent, root, context, types);
             return {
                 ...instance,
                 close() {
@@ -37,74 +37,48 @@ export function createTUIApp(config: TUIAppConfig): TUIAppFactory {
 }
 
 /** Preact renderer and its owner cleanup, also used by the adapter's unit tests. */
-export async function mountPreactApp(RootComponent: ComponentType, container: HTMLElement, context: RuntimeContext): Promise<AppInstance> {
+export async function mountPreactApp(
+    RootComponent: ComponentType, container: HTMLElement, context: RuntimeContext, viewTypes: ReadonlyMap<string, ViewType>,
+): Promise<AppInstance> {
     trackRenderCommits();
-
-    const toolCleanup = new Set<() => void>();
-    const toolOwners = { closed: false, active: new Set<() => void>() };
-    // 构建AppRuntimeContext value
+    pendingUnmounts.get(container)?.();
+    type ViewInventory = NonNullable<import('preact').ContextType<typeof AppRuntimeContext>>['views'];
+    const views: ViewInventory = new WeakMap();
     const appContextValue = {
-        toolCleanup,
-        toolOwners,
         appId: context.appId,
         desktopId: context.desktopId,
         launchConfig: context.launchConfig,
         refExporter: context.refExporter,
         persistence: context.persistence,
         appLifecycle: context.appLifecycle,
-        viewTools: context.viewTools,
-        appTypeTools: context.appTypeTools,
+        viewTypes,
+        views,
+        mountView: context.mountView,
     };
-
-    if (context.appLifecycle?.protocol !== APP_LIFECYCLE_PROTOCOL)
-        throw new Error('APP_LIFECYCLE_UNSUPPORTED');
-
-    const cleanupKeys = context.appTypeTools ? [container, context.appTypeTools] : [container];
-    for (const key of cleanupKeys) pendingUnmounts.get(key)?.();
-
-    // 创建根VNode
-    const rootVNode = () => h(
-        AppRuntimeContext.Provider,
-        { value: appContextValue },
-        h(RootComponent, {})
-    );
-
+    const root = h(AppRuntimeContext.Provider, { value: appContextValue }, h(RootComponent, {}));
     const commitRender = createRenderCommit(context.projection, appContextValue);
     let attached = true;
     let unmounting = false;
-    const renderCommitted = (node: ReturnType<typeof rootVNode> | null) => commitRender(() => {
-        render(node, container);
-        if (node === null) attached = false;
-    });
-
     const close = () => {
-        if (unmounting) return;
+        if (!attached || unmounting) return;
         unmounting = true;
-        toolOwners.closed = true;
         try {
-            let failure: { error: unknown } | undefined;
-            // Revoke before application cleanup can call a Tool or interrupt traversal.
-            for (const dispose of [...toolOwners.active]) {
-                try { dispose(); } catch (error) { failure ??= { error }; }
-            }
-            if (attached) {
-                try { renderCommitted(null); } catch (error) { failure ??= { error }; }
-            }
-            for (const key of cleanupKeys) {
-                if (attached || toolOwners.active.size > 0) pendingUnmounts.set(key, close);
-                else if (pendingUnmounts.get(key) === close) pendingUnmounts.delete(key);
-            }
-            if (failure) throw failure.error;
+            commitRender(() => render(null, container));
+            attached = false;
+            pendingUnmounts.delete(container);
+        } catch (error) {
+            pendingUnmounts.set(container, close);
+            throw error;
         } finally {
             unmounting = false;
         }
     };
 
-    context.setViewReader(mounted => readDOMAppViews(container, mounted));
+    context.setViewReader(() => readDOMAppViews(container, node => views.get(node)));
     try {
-        renderCommitted(rootVNode());
+        commitRender(() => render(root, container));
     } catch (error) {
-        try { close(); } catch { /* preserve initial error; failed cleanup remains retryable */ }
+        try { close(); } catch { /* Preserve initial failure while cleanup can still be retried. */ }
         throw error;
     }
 

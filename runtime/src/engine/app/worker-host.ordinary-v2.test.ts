@@ -21,16 +21,10 @@ function withBusinessViewId(input: any, viewId: string) {
   if (!Object.hasOwn(descriptors, 'view_id')) Object.defineProperty(copy, 'view_id', { value: viewId, enumerable: true, writable: true, configurable: true });
   return copy;
 }
-function project({ source, selection }: any) {
-  const ids = new Set(selection.viewIds);
-  const selectedViews = source.views.filter((view: any) => ids.has(view.id));
-  const toolBindings: any[] = [];
-  for (const tool of Object.values(source.tools) as any[]) {
-    if (selectedViews.some((view: any) => view.type === tool.viewType)) toolBindings.push({ toolId: tool.id, execution: tool.execution });
-  }
-  return { views: source.views.filter((v: any) => ids.has(v.id)).map((v: any) => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
-    refs: Object.values(source.refs).filter((r: any) => ids.has(r.ownerViewId)).map((r: any) => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })),
-    toolBindings, content: [] };
+function project({source}:any) {return {refs:[],toolIds:Object.keys(source.tools)};}
+function receiver(snapshot:any,tool:any,id='aa') {
+    const view=snapshot.views.find((view:any)=>view.id===id);
+    return {viewId:id,viewInstanceId:view.viewInstanceId,activationId:view.toolBindings.find((ref:any)=>ref.toolId===tool.id).activationId};
 }
 function scope(x: any) {
   const authorized: any[] = [], control = { authorize: (_c: any): any => true, canRead: (_m: any, _s: any): any => true };
@@ -38,7 +32,7 @@ function scope(x: any) {
   (x.scopeFacts ??= []).push(recorded);
   const opened = x.host.getAppInteraction({ project, authorize(c: any) {
     authorized.push(c); recorded.authorizations.push({ invocationId: c.invocationId, rawInput: c.rawInput, effectiveInput: c.effectiveInput,
-      execution: c.source.execution, instanceId: c.source.instanceId }); return control.authorize(c);
+      receiver: c.source.receiver, instanceId: c.source.instanceId }); return control.authorize(c);
   }, canReadReceipt: (m: any, s: any) => control.canRead(m, s) });
   expect(opened.status).toBe('ready'); if (opened.status !== 'ready') throw Error(opened.issue.code);
   const original = opened.interaction;
@@ -47,21 +41,21 @@ function scope(x: any) {
     const response = await original.invoke(request); recorded.invocations.push({ invocationId, response }); return response;
   } };
   return { client, control, authorized, async observe(view = 'aa') {
-    const r = await client.observe({ viewIds: [view] }); recorded.observations.push(r); expect(r.status).toBe('observed');
+    const r = await client.observe({ all: true }); recorded.observations.push(r); expect(r.status).toBe('observed');
     const content = x.snapshot().views.find((item: any) => item.id === view)?.content?.value;
     expect(content).toContain(`Business View ID: ${view}`);
     expect(client.adoptObservation(r.observation.observationId)).toEqual({ status: 'adopted' });
     return r.observation;
   },
     request(o: any, invocationId: string, name = 'find', input: any = {}, view = 'aa') {
-      const tool = o.tools.find((t: any) => t.name === name); expect(tool).toBeDefined();
-      const binding = o.bindings.find((b: any) => b.toolId === tool.id); expect(binding).toBeDefined();
-      return { invocationId, observationId: o.observationId, bindingId: binding.bindingId, input: withBusinessViewId(input, view) };
+      const type = o.views.find((item: any) => item.id === view)?.type;
+      const tool = o.tools.find((t: any) => t.name === name && t.viewType === type); expect(tool).toBeDefined();
+      return { invocationId, observationId: o.observationId, toolId: tool.id, input: withBusinessViewId(input, view) };
     } };
 }
 function receipt(r: any) { expect(r.kind).toBe('receipt'); if (r.kind !== 'receipt') throw Error(r.code); return r.receipt; }
 function value(r: any) { const rcp = receipt(r); expect(rcp.outcome.status).toBe('succeeded'); return rcp.outcome.value; }
-const isInvoke = (m: any) => m.type === 'VIEW_TOOL_INVOKE_V5';
+const isInvoke = (m: any) => m.type === 'VIEW_TOOL_INVOKE_V6';
 
 let temporary: string, Host: any, appFile: string, workerFile: string, legacySdkAppFile: string;
 const facts: any[] = []; let tag = 0;
@@ -81,7 +75,7 @@ async function change(x: any, patch: any, predicate: (draft: any) => boolean) {
   const from = x.messages.length; await control(x, 'state', { patch });
   return wait(x, m => m.type === 'SNAPSHOT_PREPARED' && predicate(m.draft), from);
 }
-const good = { view_id: 'aa', q: '😀', e: '1', items: ['a', 'b'] };
+const good = { q: '😀', e: '1', items: ['a', 'b'] };
 async function start(options: any = {}) {
   const worker = options.existing ?? new Worker(workerFile, { stdout: true, stderr: true,
     env: { ...process.env, AOTUI_DATA_DIR: join(temporary, 'state-' + (++tag)) } });
@@ -137,7 +131,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
       });
       legacyWorker.postMessage({ type: 'INIT', requestId: 'legacy-host-init', appId: 'app', desktopId: 'd',
         appModulePath: 'file:///this-module-must-not-be-imported.mjs', appInstanceId: 'legacy-host-instance',
-        requestedCapabilities: ['app-snapshot/v3', capability] });
+        requestedCapabilities: ['app-snapshot/v4', capability] });
       await expect(responsePromise).resolves.toMatchObject({ type: 'ERROR_RESPONSE', requestId: 'legacy-host-init',
         success: false, error: { code: 'WORKER_CAPABILITY_UNSUPPORTED' } });
     } finally {
@@ -201,7 +195,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     const x = await start(), s = scope(x), o = await s.observe();
     const input = JSON.parse('{"q":"x","extra":[null,{"kept":false}],"__proto__":{"safe":true},"constructor":0,"toString":false}');
     const output = value(await s.client.invoke(s.request(o, 'open-input', 'open', input)));
-    const expected = { ...input, view_id: 'aa' };
+    const expected = input;
     expect(output.data.args).toEqual(expected); expect(s.authorized[0].effectiveInput).toEqual(expected); expect(x.posts()[0].effectiveArgs).toEqual(expected);
     expect(x.entries()[0].args).toEqual(expected); expect(({} as any).safe).toBeUndefined();
   });
@@ -217,30 +211,34 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     try {
       await reached.promise;
       if (kind === 'close') x.host.terminate();
-      else await change(x, kind === 'disable' ? { enabled: false } : kind === 'rebind' ? { rule: true } : { show: false }, d => kind === 'unmount'
-        ? !d.views.some((v: any) => v.id === 'aa') : Object.values(d.tools).filter((t: any) => t.name === 'find' && t.viewType === 'File').every((t: any) => kind === 'disable' ? false : t.inputSchema.properties.q.maxLength === 2));
+      else {
+        const mount = x.snapshot().views.find((view: any) => view.id === 'aa')?.viewInstanceId;
+        await change(x, kind === 'disable' ? { enabled: false } : kind === 'rebind' ? { rule: true } : { show: false }, d => kind === 'unmount'
+        ? !d.views.some((v: any) => v.id === 'aa') : kind === 'disable' ? !Object.values(d.tools).some((t: any) => t.name === 'find' && t.viewType === 'File')
+          : d.views.some((view: any) => view.id === 'aa' && view.viewInstanceId !== mount));
+      }
       gate.resolve(true); const r = await pending; expect(r.kind === 'receipt' ? r.receipt.outcome.status : r.kind).not.toBe('succeeded');
       expect(x.posts()).toHaveLength(0); expect(x.entries()).toHaveLength(0);
     } finally { gate.resolve(true); await pending.catch(() => undefined); }
   });
   it('R15 invalidation while transport holds a dispatched message fails Worker final checks', async () => {
     const x = await start(), s = scope(x), o = await s.observe(), queued: any[] = [], reached = deferred();
-    x.hold((m: any) => { if (m.type !== 'VIEW_TOOL_INVOKE_V5') return false; queued.push(m); reached.resolve(); return true; });
+    x.hold((m: any) => { if (m.type !== 'VIEW_TOOL_INVOKE_V6') return false; queued.push(m); reached.resolve(); return true; });
     const pending = s.client.invoke(s.request(o, 'held-dispatch', 'find', good));
     try {
       await reached.promise;
       await change(x, { enabled: false }, d => !Object.values(d.tools).some((t: any) => t.name === 'find' && t.viewType === 'File'));
       x.physical(queued[0]); const r = receipt(await pending);
       expect(r.outcome.status).toBe('rejected'); expect(x.entries()).toHaveLength(0);
-      expect(x.messages.find((m: any) => m.requestId === queued[0].requestId && m.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE').terminal.phase).toBe('not-entered');
+      expect(x.messages.find((m: any) => m.requestId === queued[0].requestId && m.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE').terminal.phase).toBe('not-entered');
     } finally { x.host.terminate(); await pending.catch(() => undefined); }
   });
   it('R16 direct invalid V5 requests remain not-entered without trusting Host validation', async () => {
     const x = await start(), tool = Object.values(x.snapshot().tools).find((t: any) => t.name === 'find' && t.viewType === 'File') as any;
     const from = x.messages.length;
-    x.physical({ type: 'VIEW_TOOL_INVOKE_V5', requestId: 'direct-invalid', appId: 'app', instanceId: x.host.appInstanceId,
-      snapshotId: x.snapshot().id, tool, execution: tool.execution, argumentMode: 'view-type-parameters-v1', rawArgs: { ...good, e: 1 }, effectiveArgs: { ...good, e: 1 }, refSources: [] });
-    const response = await wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE' && m.requestId === 'direct-invalid', from);
+    x.physical({ type: 'VIEW_TOOL_INVOKE_V6', requestId: 'direct-invalid', appId: 'app', instanceId: x.host.appInstanceId,
+      snapshotId: x.snapshot().id, tool, receiver: receiver(x.snapshot(),tool), argumentMode: 'view-type-parameters-v1', rawArgs: { ...good, e: 1 }, effectiveArgs: { ...good, e: 1 }, refSources: [] });
+    const response = await wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE' && m.requestId === 'direct-invalid', from);
     expect(response.terminal).toMatchObject({ phase: 'not-entered', result: { error: { code: 'E_INVALID_ARGS' } } });
     expect(x.entries()).toHaveLength(0); expect(JSON.stringify(response)).not.toContain('PRIVATE');
   });
@@ -257,7 +255,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     } else {
       expect(r).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown' } });
       expect(r.outcome).not.toHaveProperty('details');
-      expect(x.messages.find((message: any) => message.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE')?.terminal.phase).toBe('finished-unknown');
+      expect(x.messages.find((message: any) => message.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE')?.terminal.phase).toBe('finished-unknown');
       expect(JSON.stringify(r)).not.toContain('W07_PRIVATE_EXCEPTION');
     }
     expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: false, core: { activeInvocations: 0 } });
@@ -287,7 +285,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     expect(await s.client.invoke(s.request(current, 'other-observation', 'find', good))).toMatchObject({ code: 'INVOCATION_CAPACITY' });
     const originalEmit = x.worker.emit.bind(x.worker);
     x.worker.emit = (event: string, ...args: any[]) => {
-      if (event === 'message' && args[0]?.type === 'VIEW_TOOL_INVOKE_V5_RESPONSE') {
+      if (event === 'message' && args[0]?.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE') {
         args[0] = { ...args[0], argumentMode: 'snapshot-value-v2' };
       }
       return originalEmit(event, ...args);
@@ -313,17 +311,16 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
   });
   it('R21 toolsEnabled false still allows View observation without executable bindings', async () => {
     const x = await start({ toolsEnabled: false }), s = scope(x), o = await s.observe();
-    expect(o.views).toHaveLength(1);
+    expect(o.views).toHaveLength(2);
     expect(o.tools).toEqual([]);
-    expect(o.bindings).toEqual([]);
     expect(x.host.getInteractionReport().toolsEnabled).toBe(false);
     const snapshot = x.snapshot(), tool = Object.values(snapshot.tools).find((tool: any) => tool.name === 'find' && tool.viewType === 'File') as any;
     const requestId = 'read-only-probe', from = x.messages.length;
-    x.physical({ type: 'VIEW_TOOL_INVOKE_V5', requestId, appId: 'app', instanceId: x.host.appInstanceId,
-      snapshotId: snapshot.id, tool, execution: tool.execution, argumentMode: 'view-type-parameters-v1',
+    x.physical({ type: 'VIEW_TOOL_INVOKE_V6', requestId, appId: 'app', instanceId: x.host.appInstanceId,
+      snapshotId: snapshot.id, tool, receiver: receiver(x.snapshot(),tool), argumentMode: 'view-type-parameters-v1',
       rawArgs: good, effectiveArgs: good, refSources: [] });
     expect(await wait(x, message => message.requestId === requestId, from)).toMatchObject({
-      type: 'VIEW_TOOL_INVOKE_V5_RESPONSE', terminal: { phase: 'not-entered', result: {
+      type: 'VIEW_TOOL_INVOKE_V6_RESPONSE', terminal: { phase: 'not-entered', result: {
         success: false, error: { code: 'TOOL_EXECUTION_UNAVAILABLE' },
       } },
     });
@@ -332,7 +329,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
   it('R22 the current shared mode includes empty ordinary parameters and reject duplicate initialization', async () => {
     const x = await start(), s = scope(x), o = await s.observe();
     expect(x.host.getInteractionReport().toolsEnabled).toBe(true);
-    expect(value(await s.client.invoke(s.request(o, 'zero', 'zero', {}))).data.args).toEqual({ view_id: 'aa' });
+    expect(value(await s.client.invoke(s.request(o, 'zero', 'zero', {}))).data.args).toEqual({});
     const from = x.messages.length, init = x.sent.find((message: any) => message.type === 'INIT');
     x.physical({ ...init, requestId: 'duplicate-init' });
     const error = await wait(x, message => message.requestId === 'duplicate-init', from);

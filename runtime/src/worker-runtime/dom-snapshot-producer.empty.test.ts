@@ -7,23 +7,26 @@ import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profil
 
 function fixture(ids: string[] = []) {
     const { document } = parseHTML('<html><body><main></main></body></html>'), container = document.querySelector('main')!;
-    const views = ids.map(viewId => ({ viewId, viewInstanceId: 'instance-' + viewId, viewType: 'File' }));
-    for (const view of views) {
+    const attachments = new WeakMap<object, { id: string; type: string; owner: object; bindings: [] }>();
+    for (const id of ids) {
         const node = document.createElement('section');
-        node.setAttribute('data-view-id', view.viewId);
-        node.setAttribute('data-view-instance-id', view.viewInstanceId);
+        node.setAttribute('data-view-id', id);
+        attachments.set(node, { id, type: 'File', owner: {}, bindings: [] });
         container.appendChild(node);
     }
     const fragments = ids.map(viewId => ({ viewId: viewId as any, viewName: viewId, viewType: 'File', markup: 'stable', kind: 'state' as const }));
-    const capture = (current = fragments, mounted = views) => captureDOMViews(container, current, mounted);
-    return { document, container, views, fragments, capture };
+    const capture = (current = fragments) => captureDOMViews(container, current, node => attachments.get(node));
+    const views = (current = fragments) => capture(current).map(({ owner, bindings, ...view }) => ({
+        ...view, viewInstanceId: 'instance-' + view.id, toolBindings: [],
+    }));
+    return { document, container, fragments, capture, views };
 }
 const identity = () => ({ appId: 'app', instanceId: 'run' });
 
-it('C04 explicit empty owned inventories produce a legal V3 snapshot with no tools', () => {
+it('C04 explicit empty owned inventories produce a legal V4 snapshot with no tools', () => {
     const f = fixture(), core = createSnapshotCore();
     core.lifecycle.startApp('app', 'run');
-    const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.capture(), tools: [] }) });
+    const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.views(), tools: [] }) });
     expect(projection.commit(() => {})).toBe('prepared');
     expect(projection.publishTo(core.committer)).toMatchObject({ status: 'published', snapshot: { views: [], refs: {}, tools: {} } });
     projection.close();
@@ -37,7 +40,7 @@ it('retains an empty-body View beside its healthy sibling and publishes the comp
     }));
     const core = createSnapshotCore();
     core.lifecycle.startApp('app', 'run');
-    const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.capture(fragments), tools: [] }) });
+    const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.views(fragments), tools: [] }) });
     expect(projection.commit(() => {})).toBe('prepared');
     expect(projection.publishTo(core.committer).status).toBe('published');
     expect(core.store.readLatest('app')).toMatchObject({
@@ -52,7 +55,7 @@ it('C06 missing inventories fail closed', () => {
     const f = fixture(['a']);
     for (const value of [undefined, null, {}]) {
         expect(() => captureDOMViews(f.container, f.fragments, value as any)).toThrow();
-        const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.capture(), tools: value as any }) });
+        const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.views(), tools: value as any }) });
         expect(projection.commit(() => {})).toBe('failed');
         expect(projection.nextPublication()).toHaveProperty('failure');
     }
@@ -76,26 +79,22 @@ it('C06 fragments must be exactly the owned/DOM identity set, including duplicat
     expect(() => f.capture()).toThrow(/complete set/);
 });
 
-it('C06 duplicate DOM, duplicate owned IDs, wrong instance/type, Ref owner and Tool target checks remain', () => {
+it('C06 duplicate DOM, unattached nodes, wrong types, Ref owner and Tool target checks remain', () => {
     const f = fixture(['a']); const node = f.container.firstElementChild!;
     const duplicate = node.cloneNode(true); f.container.appendChild(duplicate);
     expect(() => f.capture()).toThrow(/Duplicate/); duplicate.remove();
-    expect(() => f.capture(f.fragments, [f.views[0]!, f.views[0]!])).toThrow(/Duplicate/);
-    node.setAttribute('data-view-instance-id', 'wrong');
-    expect(() => f.capture()).toThrow(/identity/);
-    node.setAttribute('data-view-instance-id', f.views[0]!.viewInstanceId);
-    expect(() => f.capture([{ ...f.fragments[0]!, viewType: 'Wrong' }])).toThrow(/identity/);
-    const refs = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.capture(), tools: [] }) });
+    expect(() => captureDOMViews(f.container, f.fragments, () => undefined)).toThrow(/attached View owner/);
+    expect(() => f.capture([{ ...f.fragments[0]!, viewType: 'Wrong' }])).toThrow(/attached View owner/);
+    const refs = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.views(), tools: [] }) });
     expect(refs.commit(() => { refs.registerRef({ viewId: 'missing', viewInstanceId: 'different' }, 'file', { text: 'x' }); })).toBe('failed');
     expect(refs.nextPublication()).toMatchObject({ failure: { issue: { message: expect.stringMatching(/missing View instance/) } } });
 
     const schema = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
     if (!schema.ok) throw new Error('Invalid fixture schema');
     const tools = new SemanticProjectionCoordinator({ identity, readFrame: () => ({
-        views: f.capture(), tools: [{ id: JSON.stringify(['app', 'Missing', 'read']), name: 'read', viewType: 'Missing',
-            description: 'Read', inputSchema: ordinaryParameterProfile(schema.contract),
-            execution: { kind: 'view-type', activationId: 'active' } }],
+        views: f.views(), tools: [{ id: JSON.stringify(['app', 'Missing', 'read']), name: 'read', viewType: 'Missing',
+            description: 'Read', inputSchema: ordinaryParameterProfile(schema.contract) }],
     }) });
     expect(tools.commit(() => {})).toBe('failed');
-    expect(tools.nextPublication()).toMatchObject({ failure: { issue: { message: expect.stringMatching(/matching View is mounted/) } } });
+    expect(tools.nextPublication()).toMatchObject({ failure: { issue: { message: expect.stringMatching(/enabled View binding/) } } });
 });

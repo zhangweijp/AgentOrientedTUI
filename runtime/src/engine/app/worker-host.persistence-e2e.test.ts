@@ -16,35 +16,36 @@ async function fixture(persistent = true) {
     const root = await mkdtemp(path.join(tmpdir(), 'aotui-b2-worker-'));
     await linkPreactPeer(root);
     const file = path.join(root, 'app.mjs');
-    const body = `import { h } from 'preact';import Type from 'typebox';import { createTUIApp, defineViewTypeTool, usePersistentState, useAppRuntimeContext, View, AppTools, defineToolSet } from ${JSON.stringify(url(path.join(repo, 'sdk/dist/index.js')))};
+    const body = `import { h } from 'preact';import Type from 'typebox';import { createTUIApp, usePersistentState, useAppRuntimeContext, View, defineViewType } from ${JSON.stringify(url(path.join(repo, 'sdk/dist/index.js')))};
 let setter, port, value; const generations = new Map();
 const noArgs = Type.Object({}, {additionalProperties:false});
 
 
 
 
+const RootType = defineViewType({ name: 'Root', tools: {
+  set: { description: 'Set persisted value', inputSchema: Type.Object({value:Type.Number()}, {additionalProperties:false}) },
+  old: { description: 'Check a previous setter', inputSchema: noArgs },
+  flush: { description: 'Flush persisted state', inputSchema: noArgs },
+  inspect: { description: 'Inspect persisted state', inputSchema: noArgs },
+} });
 function Root() {
   ${persistent ? `const tuple = usePersistentState('state', 0); [value, setter] = tuple;
   port = useAppRuntimeContext().persistence;
   if (port && !generations.has(port.instanceId)) generations.set(port.instanceId, setter);` : ''}
-  return h(View,{kind: 'instruction',id:'root',type:'Root'},h(Tools));
+  return h(View, {kind: 'instruction', id: 'root', type: RootType, bindings: {
+    set: { execute: async args => { setter(args.value); return {success:true}; } },
+    old: { execute: async () => {
+      const first = [...generations.values()][0];
+      try { first(() => { throw Error('old updater ran'); }); }
+      catch (error) { return {success:true,data:{code:error.code}}; }
+      return {success:true,data:{code:'BAD'}};
+    } },
+    flush: { execute: async () => ({success:true,data:await port.flush()}) },
+    inspect: { execute: async () => ({success:true,data:{value}}) },
+  } }, 'Persistent state');
 }
-
-const fixtureTools0 = defineToolSet({
-Set: defineViewTypeTool({viewType:'Root',name:'set',description:'Set persisted value',inputSchema:Type.Object({value:Type.Number()}, {additionalProperties:false}),}),
-Old: defineViewTypeTool({viewType:'Root',name:'old',description:'Check a previous setter',inputSchema:noArgs,}),
-Flush: defineViewTypeTool({viewType:'Root',name:'flush',description:'Flush persisted state',inputSchema:noArgs,}),
-Inspect: defineViewTypeTool({viewType:'Root',name:'inspect',description:'Inspect persisted state',inputSchema:noArgs,})
-});
-function Tools() {
-  return h(AppTools, { definition: fixtureTools0, bindings: {
-Set: { execute: async args=>{setter(args.value);return {success:true};} },
-Old: { execute: async()=>{const first=[...generations.values()][0];try{first(()=>{throw Error('old updater ran');});}catch(e){return {success:true,data:{code:e.code}};}return {success:true,data:{code:'BAD'}};} },
-Flush: { execute: async()=>({success:true,data:await port.flush()}) },
-Inspect: { execute: async()=>({success:true,data:{value}}) }
-} }, 'Persistent state');
-}
-export default createTUIApp({ app_name: 'test', component: Root });
+export default createTUIApp({viewTypes:[RootType],  app_name: 'test', component: Root });
 `;
     await writeFile(file, body);
     return { root, file, body, data: path.join(root, 'data'), record: path.join(root, 'data/app-state/d/test/state.json') };

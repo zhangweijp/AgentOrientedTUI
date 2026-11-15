@@ -553,6 +553,7 @@ export class AgentDriverV2 {
 
             // 2. 调用 LLM (若配置了流式回调，实时推送增量文本/推理)
             const response = await this.llmClient.call(messages, tools, {
+                preserveTools: retained.some(({ context }) => context.preserveTools),
                 beforeRequest: async signature => {
                     if (!this.running || signature === this.lastInputSignature) throw REQUEST_SKIPPED;
                     for (const { context } of retained) {

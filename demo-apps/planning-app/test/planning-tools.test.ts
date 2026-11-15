@@ -31,9 +31,9 @@ describe('planning app type-level tool handlers', () => {
             completeTask,
         });
 
-        const stalePlan = await tools.addPhase.execute({ plan: previousPlan, title: 'Wrong plan' });
-        const stalePhase = await tools.deletePhase.execute({ phase: previousPlan.phases[0]! });
-        const staleTask = await tools.completeTask.execute({ task: previousPlan.phases[0]!.tasks[0]! });
+        const stalePlan = await tools.add_phase.execute({ plan: previousPlan, title: 'Wrong plan' });
+        const stalePhase = await tools.delete_phase.execute({ phase: previousPlan.phases[0]! });
+        const staleTask = await tools.complete_task.execute({ task: previousPlan.phases[0]!.tasks[0]! });
 
         expect(addPhase).not.toHaveBeenCalled();
         expect(deletePhase).not.toHaveBeenCalled();
@@ -59,9 +59,9 @@ describe('planning app type-level tool handlers', () => {
             completeTask: vi.fn(async () => true),
         });
 
-        const wrongPhase = await tools.addTask.execute({ phase: otherPlan.phases[0]!, title: 'wrong' });
-        const acceptedTask = await tools.addTask.execute({ phase: activePlan.phases[0]!, title: 'right' });
-        const wrongTask = await tools.deleteTask.execute({ task: otherPlan.phases[0]!.tasks[0]! });
+        const wrongPhase = await tools.add_task.execute({ phase: otherPlan.phases[0]!, title: 'wrong' });
+        const acceptedTask = await tools.add_task.execute({ phase: activePlan.phases[0]!, title: 'right' });
+        const wrongTask = await tools.delete_task.execute({ task: otherPlan.phases[0]!.tasks[0]! });
 
         expect(addTask).toHaveBeenCalledTimes(1);
         expect(addTask).toHaveBeenCalledWith('phase-b', 'right', undefined);
@@ -86,9 +86,9 @@ describe('planning app type-level tool handlers', () => {
             closePlan: vi.fn(),
         });
 
-        const stale = await tools.deletePlan.execute({ plan: plan('deleted-plan', 'gone-phase', 'gone-task') });
-        const hidden = await tools.deletePlan.execute({ plan: hiddenCompletedPlan });
-        const current = await tools.deletePlan.execute({ plan: currentPlan });
+        const stale = await tools.delete_plan.execute({ plan: plan('deleted-plan', 'gone-phase', 'gone-task') });
+        const hidden = await tools.delete_plan.execute({ plan: hiddenCompletedPlan });
+        const current = await tools.delete_plan.execute({ plan: currentPlan });
 
         expect(deletePlan).toHaveBeenCalledTimes(1);
         expect(deletePlan).toHaveBeenCalledWith('current');
@@ -110,7 +110,7 @@ describe('planning app type-level tool handlers', () => {
             deleteTask: vi.fn(async () => true),
             completeTask: vi.fn(async () => true),
         });
-        const result = await tools.addTask.execute({ phase: previousPlan.phases[0]!, title: 'Must not be added' });
+        const result = await tools.add_task.execute({ phase: previousPlan.phases[0]!, title: 'Must not be added' });
         expect(addTask).not.toHaveBeenCalled();
         expect(result).toMatchObject({ success: false, error: { code: 'PLAN_NOT_ACTIVE' } });
     });
@@ -127,7 +127,7 @@ describe('planning app type-level tool handlers', () => {
             closePlan: vi.fn(),
         });
 
-        const receipt = await tools.createPlan.execute({ title: 'New plan', phases: [
+        const receipt = await tools.create_plan.execute({ title: 'New plan', phases: [
             { title: 'Design' },
             { title: 'Review', tasks: [{ title: 'Accepted' }] },
         ] });

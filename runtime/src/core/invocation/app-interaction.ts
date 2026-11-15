@@ -1,7 +1,7 @@
 import { SNAPSHOT_SCHEMA_VERSION } from '../snapshot/types.js';
 import { canonicalJson, utf8Size } from '../snapshot/json.js';
-import { RESOLVED_TOOL_ENVELOPE_LIMITS } from '../snapshot/snapshot-support.js';
-import type { AppIdentityReader, AppSnapshotV3, JsonValue, SnapshotStore } from '../snapshot/types.js';
+import { RAW_TOOL_ARGUMENT_LIMITS, RESOLVED_TOOL_ENVELOPE_LIMITS } from '../snapshot/snapshot-support.js';
+import type { AppIdentityReader, AppSnapshotV4, JsonValue, SnapshotStore } from '../snapshot/types.js';
 import { compileOrdinaryProfile } from '../tool/ordinary-parameter-profile.js';
 import { checkRefViews, prepareViewTypeParameters } from '../tool/snapshot-value-arguments.js';
 import { createObservationOperations, previewCommittedApp, type ObservationState } from './observation-registry.js';
@@ -132,7 +132,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
     const state: State = { appId: config.appId as string, instanceId: config.instanceId as string,
         policy, resolve: resolver, observations: new Map(), reservations: new Map(),
         entries: new Map(), controllers: new Set(), closing: false, invocations: 0, reads: 0, projects: 0 };
-    const sources = new Map<string, { readonly source: AppSnapshotV3; readonly bytes: number; count: number }>();
+    const sources = new Map<string, { readonly source: AppSnapshotV4; readonly bytes: number; count: number }>();
     const fees: Fees = { source: 0, fingerprint: 0, metadata: 0, work: 0, result: 0 };
     let closed = false;
     let expiry: ReturnType<typeof setTimeout> | undefined;
@@ -218,7 +218,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         const measured = capture<ReceiptMetadata>({ ...entry.metadata, ...patch }, limits.metadata, 'INVOCATION_CAPACITY');
         entry.metadata = measured.value; // Actual metadata bytes replace the reservation only at settlement.
     }
-    function hold(source: AppSnapshotV3, release: () => void): () => void {
+    function hold(source: AppSnapshotV4, release: () => void): () => void {
         const existing = sources.get(source.id);
         const bytes = existing?.bytes ?? capture<unknown>(source, sourceProfile, 'INVOCATION_CAPACITY').bytes;
         charge({ source: existing ? 0 : bytes });
@@ -245,10 +245,10 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         if (!jsonObject(value) || !exactFields(value, ['ok']) || typeof value.ok !== 'boolean') fail('LIVE_BINDING_CHECK_FAILED');
         if (value.ok !== true) fail('TOOL_SOURCE_STALE');
     }
-    function sourceFor(state: State, request: AppInvocation) {
+    function sourceFor(state: State, request: AppInvocation, viewId: string) {
         active(state);
-        const result = observations.resolveBinding({ observationId: request.observationId, bindingId: request.bindingId });
-        if (result.status === 'rejected') fail(result.issue.code);
+        const result = observations.resolveTool({ observationId: request.observationId, toolId: request.toolId, viewId });
+        if (result.status === 'rejected') fail(result.issue.code, result.issue.message, result.issue.path);
         return result;
     }
     const deadlineIssue = { code: 'INVOCATION_DEADLINE_EXCEEDED', message: 'Invocation deadline elapsed before dispatch' };
@@ -264,8 +264,8 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
     function makeReceipt(entry: Entry, mapping: ExecutionMapping, completedAt: number) {
         const expiresAt = completedAt + limits.receiptTtlMs;
         if (!Number.isSafeInteger(expiresAt)) fail('RESULT_UNAVAILABLE');
-        const { invocationId, observationId, bindingId, source } = entry.metadata;
-        return capture<InvocationReceipt>({ invocationId, observationId, bindingId, source, completedAt, expiresAt,
+        const { invocationId, observationId, toolId, source } = entry.metadata;
+        return capture<InvocationReceipt>({ invocationId, observationId, toolId, source, completedAt, expiresAt,
             executionPhase: mapping.executionPhase, outcome: mapping.outcome }, limits.receipt, 'RESULT_UNAVAILABLE');
     }
     async function run(state: State, entry: Entry, request: AppInvocation, controller: AbortController): Promise<void> {
@@ -273,41 +273,35 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         let mapping: ExecutionMapping = { executionPhase: 'not-dispatched', outcome: unknownOutcome() };
         try {
             checkAdmission(entry, controller);
-            const selected = sourceFor(state, request);
-            const acquired = store.acquire(selected.sourceRequest.snapshotId, { lifetime: 'owner' });
+            const { view_id: viewId, ...input } = request.input;
+            if (typeof viewId !== 'string' || !viewId.trim() || viewId.includes('.'))
+                fail('TOOL_INVALID_ARGS', 'Supply the receiving View\'s XML id in view_id.', '$.view_id');
+            const receiverId = viewId;
+            const selected = sourceFor(state, request, receiverId);
+            const acquired = store.acquire(selected.snapshotId, { lifetime: 'owner' });
             if (acquired.status === 'rejected') fail(acquired.issue.code);
             const snapshot = acquired.lease.snapshot;
             if (snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) { acquired.lease.release(); fail('SNAPSHOT_INVALID'); }
             try { release = hold(snapshot, acquired.lease.release); } catch (error) { acquired.lease.release(); throw error; }
             setMetadata(entry, { source: { appId: snapshot.appId, instanceId: snapshot.instanceId, snapshotId: snapshot.id, revision: snapshot.revision } });
             const source: InvocationSource = Object.freeze({ appId: state.appId, instanceId: state.instanceId,
-                snapshotId: snapshot.id, tool: selected.tool, execution: selected.execution });
+                snapshotId: snapshot.id, tool: selected.tool, receiver: selected.receiver });
             const contract = compileOrdinaryProfile(source.tool.inputSchema);
             if (!contract) fail('REF_CONTRACT_UNSUPPORTED');
             const initial = resolve(state, source);
-            const input = contract.hasRefs ? request.input
-                : capture<InvocationContext['rawInput']>(request.input, limits.ordinaryInput, 'ACTION_INPUT_INVALID').value;
-            const caller = { snapshotId: snapshot.id, toolId: source.tool.id, execution: source.execution, args: input };
-            const prepared = prepareViewTypeParameters(store, state, caller, selected.visibleRefs);
+            capture(request.input, contract.hasRefs ? RAW_TOOL_ARGUMENT_LIMITS : limits.ordinaryInput, 'ACTION_INPUT_INVALID');
+            const prepared = prepareViewTypeParameters(store, source, contract, input, selected.visibleRefs);
             if (prepared.status === 'rejected') fail(prepared.issue.code, prepared.issue.message, prepared.issue.path);
             const { rawArgs: rawInput, effectiveArgs: effectiveInput, refSources } = prepared;
-            let firstCanonical: string;
-            try { firstCanonical = canonicalJson({ effectiveInput, refSources } as unknown as JsonValue); }
-            finally { prepared.release(); }
             function recheck(): void {
                 checkAdmission(entry, controller);
-                const current = sourceFor(state, request);
+                sourceFor(state, request, receiverId);
                 if (refSources.length) {
                     const latest = store.readLatest(state.appId);
                     const issue = checkRefViews(refSources, rawInput, (id, instanceId) => latest.status === 'ready' &&
                         latest.snapshot.views.some(view => view.id === id && view.viewInstanceId === instanceId));
                     if (issue) fail(issue.code, issue.message, issue.path);
                 }
-                const checked = prepareViewTypeParameters(store, state, { ...caller, args: rawInput }, current.visibleRefs);
-                if (checked.status === 'rejected') fail(checked.issue.code, checked.issue.message, checked.issue.path);
-                try {
-                    if (canonicalJson({ effectiveInput: checked.effectiveArgs, refSources: checked.refSources } as unknown as JsonValue) !== firstCanonical) fail('REF_ARGUMENT_CHANGED');
-                } finally { checked.release(); }
                 const latest = resolve(state, source);
                 if (!sameBinding(initial, latest)) fail('TOOL_SOURCE_STALE');
                 live(latest, source);
@@ -430,8 +424,8 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
     function capturedRequest(raw: unknown) {
         const captured = capture<AppInvocation>(raw, limits.request, 'INVOCATION_INVALID');
         const request = captured.value;
-        if (!jsonObject(request) || !exactFields(request, ['invocationId', 'observationId', 'bindingId', 'input']) ||
-            ![request.invocationId, request.observationId, request.bindingId].every(validRequestId) ||
+        if (!jsonObject(request) || !exactFields(request, ['invocationId', 'observationId', 'toolId', 'input']) ||
+            ![request.invocationId, request.observationId].every(validRequestId) || !nonEmpty(request.toolId) ||
             !jsonObject(request.input)) fail('INVOCATION_INVALID');
         return { request, bytes: captured.bytes, fingerprint: canonicalJson(request as unknown as JsonValue) };
     }
@@ -490,7 +484,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
             if (state.reads >= limits.maxReads) fail('RECEIPT_READ_CAPACITY');
             const initial = capture<ReceiptMetadata>({ appId: state.appId, instanceId: state.instanceId,
                 invocationId: request.invocationId, observationId: request.observationId,
-                bindingId: request.bindingId, source: null }, limits.metadata, 'INVOCATION_CAPACITY').value;
+                toolId: request.toolId, source: null }, limits.metadata, 'INVOCATION_CAPACITY').value;
             charge({ fingerprint: bytes, metadata: limits.metadata.maxCanonicalBytes, work: WORK + limits.metadata.maxCanonicalBytes,
                 result: limits.receipt.maxCanonicalBytes });
             const controller = new AbortController(), readController = new AbortController();
@@ -513,7 +507,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
             const reserved = observations.begin(selection);
             if (reserved.status === 'rejected') return reserved;
             token = reserved.reservation; controller = new AbortController(); state.controllers.add(controller); state.projects++;
-            const grant = await state.policy!.project(Object.freeze({ source: reserved.source, selection: reserved.selection, signal: controller.signal }));
+            const grant = await state.policy!.project(Object.freeze({ source: reserved.source, signal: controller.signal }));
             return observations.complete(token, grant);
         } catch (error) { return Object.freeze({ status: 'rejected', issue: problem(error) }); }
         finally {

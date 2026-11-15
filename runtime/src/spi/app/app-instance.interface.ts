@@ -1,11 +1,10 @@
 import type { CancellationSignal } from '../../core/invocation/app-interaction-types.js';
-import type { ViewInstance } from '../../core/tool/view-owned-tools.js';
-import type { ViewSnapshotV2 } from '../../core/snapshot/types.js';
+import type { ViewSnapshotV4 } from '../../core/snapshot/types.js';
 import type { AppID, DesktopID } from '../core/types.js';
 import type { LLMUsageEvent } from '../core/llm-usage.js';
 import type { IProjectionPort } from '../runtime/projection.interface.js';
-import type { IViewOwnedToolPort } from '../runtime/view-owned-tools.interface.js';
-import type { AppFrameTool, IAppTypeToolPort } from '../runtime/app-type-tools.interface.js';
+import type { MountedView } from '../runtime/view-owned-tools.interface.js';
+import type { AppFrameBinding, AppTypeToolDefinition } from '../runtime/app-type-tools.interface.js';
 import type { AppLifecyclePort } from '../runtime/app-lifecycle.interface.js';
 import type { AppStatePersistence } from '../runtime/state-persistence.interface.js';
 import type { AppLaunchConfig } from './app-config.interface.js';
@@ -19,10 +18,14 @@ export interface AppFrameRef {
 }
 
 /** Completed author data. Runtime supplies the mounted identities and Tool activations. */
-export interface AppProjectionFrame {
-    readonly views: readonly (Omit<ViewSnapshotV2, 'viewInstanceId'> & { readonly refs: readonly AppFrameRef[] })[];
-    readonly tools: readonly AppFrameTool[];
+export interface AppFrameView extends Omit<ViewSnapshotV4, 'viewInstanceId' | 'toolBindings'> {
+    readonly owner: object;
+    readonly bindings: readonly AppFrameBinding[];
 }
+export interface AppProjectionFrame {
+    readonly views: readonly (AppFrameView & { readonly refs: readonly AppFrameRef[] })[];
+}
+export type PreparedProjection = Readonly<{ status: 'prepared'; sourceEpoch: number }>;
 
 export interface RuntimeContext {
     readonly appId: AppID;
@@ -32,14 +35,16 @@ export interface RuntimeContext {
     readonly appLifecycle?: AppLifecyclePort;
     readonly refExporter: IRefExporter;
     readonly projection: IProjectionPort;
-    readonly viewTools?: IViewOwnedToolPort;
-    readonly appTypeTools?: IAppTypeToolPort;
     /** Aborted when the instance stops admitting new work. */
     readonly signal: CancellationSignal;
-    /** Install the adapter's reader before its first commit. Called only at commit, never on observe. */
-    setViewReader(read: (mounted: readonly ViewInstance[]) => readonly ViewSnapshotV2[]): void;
-    /** Build and accept one complete frame within the synchronous capture boundary. */
-    publishFrame(build: () => AppProjectionFrame): void;
+    /** Supply the static definitions once before publishing Views. */
+    defineTools(definitions: readonly AppTypeToolDefinition[]): void;
+    /** Obtain a renderer-owned Ref attachment. It becomes executable only after commit. */
+    mountView(id: string, type: string): MountedView;
+    /** Install the renderer's full-frame reader before its first commit. */
+    setViewReader(read: () => readonly AppFrameView[]): void;
+    /** Prepare one complete frame locally. Host acceptance happens separately. */
+    publishFrame(build: () => AppProjectionFrame): PreparedProjection;
 }
 
 export interface AppInstance {

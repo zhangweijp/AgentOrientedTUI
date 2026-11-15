@@ -4,14 +4,14 @@ import { act } from 'preact/test-utils';
 import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import Type from 'typebox';
 import { createTUIApp } from './app-factory/createTUIApp.js';
-import { AppTools } from './components/AppTools.js';
 import { View } from './components/View.js';
 import { useDataRef } from './hooks/useRef.js';
 import { useArrayRef } from './hooks/useArrayRef.js';
-import { defineToolSet, defineViewTypeTool } from './tools/view-type-tool.js';
+import { defineViewType } from './tools/view-type-tool.js';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 import { createSnapshotCore } from '../../runtime/src/core/index.js';
 
+const File = defineViewType({name:'File',tools:{}});
 const previous = options.debounceRendering;
 afterEach(() => { options.debounceRendering = previous; });
 
@@ -19,8 +19,7 @@ async function fixture(insideAct = false) {
     const queue: Array<() => void> = [];
     options.debounceRendering = callback => { queue.push(callback); };
     let update!: (value: number) => void;
-    const tools = defineToolSet({ edit: defineViewTypeTool({ viewType: 'File', name: 'edit',
-        description: 'Edit', inputSchema: Type.Object({}) }) });
+    const Editable=defineViewType({name:'File',tools:{edit:{description:'Edit',inputSchema:Type.Object({})}}});
     function Content({ value }: { value: number }) {
         const data = useMemo(() => ({ value }), [value]);
         const ref = useDataRef('selected', data);
@@ -28,10 +27,9 @@ async function fixture(insideAct = false) {
     }
     function App() {
         const [value, set] = useState(0); update = set;
-        return h(AppTools, { definition: tools, bindings: { edit: { enabled: value > 0, execute: () => ({ success: true }) } } },
-            h(View, {kind: 'state', id: 'file', type: 'File' }, h(Content, { value })));
+        return h(View,{kind:'state',id:'file',type:Editable,bindings:{edit:{enabled:value>0,execute:()=>({success:true})}}},h(Content,{value}));
     }
-    const factory = createTUIApp({ app_name: 'refresh_app', component: App });
+    const factory = createTUIApp({ viewTypes:[Editable], app_name: 'refresh_app', component: App });
     const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
     kernel.setId('refresh_app' as any);
     kernel.enableAppLifecycle();
@@ -52,8 +50,8 @@ describe('SDK queued render commit completion', () => {
             const ref = useDataRef('selected', record);
             return h('p', {}, ref('Value ' + record.value));
         }
-        const factory = createTUIApp({ app_name: 'render_capture', component: () =>
-            h(View, { id: 'file', type: 'File', kind: 'state' }, [h(OtherLayout, { key: 'layout' }), h(Body, { key: 'body' })]) });
+        const factory = createTUIApp({ viewTypes:[File], app_name: 'render_capture', component: () =>
+            h(View, { id: 'file', type: File, kind: 'state' }, [h(OtherLayout, { key: 'layout' }), h(Body, { key: 'body' })]) });
         const kernel = new AppKernel({ ...factory.kernelConfig, factory });
         kernel.enableAppLifecycle();
         try {
@@ -89,9 +87,9 @@ describe('SDK queued render commit completion', () => {
                 const ref = useDataRef('selected', { value });
                 return h('p', {}, ref('B:' + value));
             }
-            const factory = createTUIApp({ app_name: 'failure_batch', component: () => [
-                h(View, { id: 'aa', key: 'a', type: 'File', kind: 'state' }, h(A, {})),
-                h(View, { id: 'bb', key: 'b', type: 'File', kind: 'state' }, h(B, {})),
+            const factory = createTUIApp({ viewTypes:[File], app_name: 'failure_batch', component: () => [
+                h(View, { id: 'aa', key: 'a', type: File, kind: 'state' }, h(A, {})),
+                h(View, { id: 'bb', key: 'b', type: File, kind: 'state' }, h(B, {})),
             ] });
             const kernel = new AppKernel({ ...factory.kernelConfig, factory });
             kernel.enableAppLifecycle();
@@ -148,9 +146,9 @@ describe('SDK queued render commit completion', () => {
             updateB = () => tick(n => n + 1);
             return h('p', {}, `B:${value}`);
         }
-        const factory = createTUIApp({ app_name: 'ref_refresh', component: () => [
-            h(View, { id: 'aa', type: 'File', kind: 'state', key: 'a' }, h(A, {})),
-            h(View, { id: 'bb', type: 'File', kind: 'state', key: 'b' }, h(B, {})),
+        const factory = createTUIApp({ viewTypes:[File], app_name: 'ref_refresh', component: () => [
+            h(View, { id: 'aa', type: File, kind: 'state', key: 'a' }, h(A, {})),
+            h(View, { id: 'bb', type: File, kind: 'state', key: 'b' }, h(B, {})),
         ] });
         const kernel = new AppKernel({ ...factory.kernelConfig, factory });
         kernel.enableAppLifecycle();
@@ -184,6 +182,11 @@ describe('SDK queued render commit completion', () => {
     it.each([false, true])('joins the real queued callback after initialization in act: %s', async insideAct => {
         const x = await fixture(insideAct);
         let committed: Promise<void> | undefined;
+        const toolNames = () => {
+            const publication = x.kernel.getProjectionCoordinator().nextPublication();
+            if (!('draft' in publication)) throw Error('Expected a complete publication');
+            return Object.values(publication.draft.tools).map(tool => tool.name);
+        };
         try {
             x.update(1);
             let complete = false;
@@ -194,12 +197,12 @@ describe('SDK queued render commit completion', () => {
             expect(complete).toBe(false);
             expect(x.container.textContent).toContain('body:0');
             expect(x.kernel.getViewRefs()[0]?.value).toEqual({ value: 0 });
-            expect(x.kernel.getToolDefinitions()).toEqual([]);
+            expect(toolNames()).toEqual([]);
             x.flush(); await committed;
             expect(complete).toBe(true);
             expect(x.container.textContent).toContain('body:1');
             expect(x.kernel.getViewRefs()[0]?.value).toEqual({ value: 1 });
-            expect(x.kernel.getToolDefinitions().map(t => t.name)).toEqual(['edit']);
+            expect(toolNames()).toEqual(['edit']);
             const epoch = x.kernel.getProjectionCoordinator().token();
             await x.kernel.whenProjectionCommitted();
             expect(x.kernel.getProjectionCoordinator().token()).toEqual(epoch);

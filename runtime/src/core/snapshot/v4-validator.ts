@@ -1,18 +1,18 @@
 import { MARKDOWN_VIEW_FORMAT } from './types.js';
 import { SNAPSHOT_SCHEMA_VERSION } from './types.js';
-/** Validate the sole supported V3 snapshot contract before it reaches storage. */
+/** Validate the sole supported V4 snapshot contract before it reaches storage. */
 import { canonicalJson, copyJson, diagnosticDigest, SnapshotDataError, utf8Size } from './json.js';
-import { DEFAULT_SNAPSHOT_LIMITS, REF_VALUE_LIMITS, VIEW_METADATA_BYTES, refKey } from './snapshot-support.js';
+import { DEFAULT_SNAPSHOT_LIMITS, MAX_VIEW_TOOL_BINDINGS, REF_VALUE_LIMITS, VIEW_METADATA_BYTES, refKey } from './snapshot-support.js';
 import { compileCapturedOrdinaryProfile } from '../tool/ordinary-parameter-profile.js';
 import type { SnapshotDraftEnvelope } from './types.js';
 import type {
-    JsonValue, PreparedAppSnapshotDraftV3, SnapshotIssue, SnapshotLimits, ToolDescriptorV3,
+    JsonValue, PreparedAppSnapshotDraftV4, SnapshotIssue, SnapshotLimits, ToolDescriptorV4,
 } from './types.js';
 
 type Plain = Readonly<Record<string, JsonValue>>;
-type V3Result =
+type V4Result =
     | Readonly<{ ok: true; value: Readonly<{
-        draft: PreparedAppSnapshotDraftV3;
+        draft: PreparedAppSnapshotDraftV4;
         canonicalContent: string;
         contentDigest: string;
         bytes: number;
@@ -45,7 +45,7 @@ function exact(value: Plain, fields: readonly string[], path: string): void {
         if (!Object.hasOwn(value, field)) fail(path + '.' + field, 'Required field missing');
     }
     for (const field of Object.keys(value)) {
-        if (!fields.includes(field)) fail(path + '.' + field, 'Unknown V3 field');
+        if (!fields.includes(field)) fail(path + '.' + field, 'Unknown Snapshot field');
     }
 }
 function withinBytes(value: JsonValue, max: number, path: string): string {
@@ -78,23 +78,23 @@ function envelopeFromOwnDescriptors(input: unknown): SnapshotDraftEnvelope | und
         return undefined;
     }
 }
-function rejected(error: unknown, envelope?: SnapshotDraftEnvelope): V3Result {
+function rejected(error: unknown, envelope?: SnapshotDraftEnvelope): V4Result {
     const issue: SnapshotIssue = error instanceof SnapshotDataError
         ? Object.freeze({ code: error.code, path: error.path, message: error.message })
         : Object.freeze({
             code: 'SNAPSHOT_SERIALIZATION_ERROR',
             path: '$',
-            message: error instanceof Error ? error.message : 'Invalid V3 Snapshot',
+            message: error instanceof Error ? error.message : 'Invalid Snapshot',
         });
     return Object.freeze({ ok: false, issue, ...(envelope ? { envelope } : {}) });
 }
 
 /** Validate cross-View identities and type activation references, never any Handler. */
-export function validatePreparedV3Draft(
+export function validatePreparedV4Draft(
     input: unknown,
     limits: SnapshotLimits = DEFAULT_SNAPSHOT_LIMITS,
-    previousTools?: (appId: string, instanceId: string) => Readonly<Record<string, ToolDescriptorV3>> | undefined,
-): V3Result {
+    previousTools?: (appId: string, instanceId: string) => Readonly<Record<string, ToolDescriptorV4>> | undefined,
+): V4Result {
     const envelope = envelopeFromOwnDescriptors(input);
     let copied: JsonValue;
     try {
@@ -109,7 +109,7 @@ export function validatePreparedV3Draft(
         const root = obj(copied, '$');
         exact(root, ['schemaVersion', 'appId', 'instanceId', 'producerSeq', 'sourceEpoch',
             'capturedAt', 'views', 'refs', 'tools'], '$');
-        if (root.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) fail('$.schemaVersion', 'Expected Snapshot V3');
+        if (root.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) fail('$.schemaVersion', 'Expected Snapshot V4');
         const appId = str(root.appId, '$.appId');
         const instanceId = str(root.instanceId, '$.instanceId');
         const previous = previousTools?.(appId, instanceId);
@@ -124,7 +124,7 @@ export function validatePreparedV3Draft(
         for (const [index, value] of views.entries()) {
             const path = '$.views[' + index + ']';
             const view = obj(value, path);
-            exact(view, ['id', 'viewInstanceId', 'type', 'name', 'kind', 'content'], path);
+            exact(view, ['id', 'viewInstanceId', 'type', 'name', 'kind', 'content', 'toolBindings'], path);
             const id = str(view.id, path + '.id');
             if (id.includes('.')) fail(path + '.id', 'View ID cannot contain a dot');
             const instanceId = str(view.viewInstanceId, path + '.viewInstanceId');
@@ -170,34 +170,47 @@ export function validatePreparedV3Draft(
         const tools = obj(root.tools, '$.tools');
         if (Object.keys(tools).length > limits.maxTools) fail('$.tools', 'Tool capacity exceeded');
         const activationIds = new Set<string>();
+        const activeTools = new Set<string>();
+        for (const [index, value] of views.entries()) {
+            const view = value as Plain;
+            const path = '$.views[' + index + '].toolBindings';
+            const names = new Set<string>();
+            for (const [offset, entry] of list(view.toolBindings, path).entries()) {
+                const bindingPath = path + '[' + offset + ']';
+                const binding = obj(entry, bindingPath);
+                exact(binding, ['toolId', 'activationId'], bindingPath);
+                const id = str(binding.toolId, bindingPath + '.toolId');
+                const activation = str(binding.activationId, bindingPath + '.activationId');
+                if (!Object.hasOwn(tools, id) || obj(tools[id]!, bindingPath).viewType !== view.type)
+                    fail(bindingPath, 'Binding requires a Tool from the same ViewType');
+                if (names.has(id) || activationIds.has(activation)) fail(bindingPath, 'Duplicate Tool binding or activation');
+                names.add(id);
+                activationIds.add(activation);
+                if (activationIds.size > MAX_VIEW_TOOL_BINDINGS) fail(path, 'View Tool binding capacity exceeded');
+                activeTools.add(id);
+            }
+        }
         for (const [key, value] of Object.entries(tools)) {
             const path = '$.tools[' + JSON.stringify(key) + ']';
             const tool = obj(value, path);
-            exact(tool, ['id', 'name', 'viewType', 'description', 'inputSchema', 'execution'], path);
+            exact(tool, ['id', 'name', 'viewType', 'description', 'inputSchema'], path);
             const id = str(tool.id, path + '.id');
             const name = str(tool.name, path + '.name');
             const viewType = str(tool.viewType, path + '.viewType');
             if (id !== key || id !== JSON.stringify([appId, viewType, name])) {
-                fail(path + '.id', 'V3 Tool ID must be the canonical App + ViewType + name');
+                fail(path + '.id', 'Tool ID must be the canonical App + ViewType + name');
             }
             str(tool.description, path + '.description');
             const schema = obj(tool.inputSchema, path + '.inputSchema');
             if (schema.type !== 'object') fail(path + '.inputSchema.type', 'Tool inputs must have an object JSON schema');
             const canonical = withinBytes(schema, limits.maxToolSchemaBytes, path + '.inputSchema');
-            const execution = obj(tool.execution, path + '.execution');
-            if (execution.kind !== 'view-type') fail(path + '.execution.kind', 'Only ViewType Tool execution is supported');
-            exact(execution, ['kind', 'activationId'], path + '.execution');
-            const activationId = str(execution.activationId, path + '.execution.activationId');
-            if (activationIds.has(activationId)) fail(path + '.execution.activationId', 'Duplicate Tool activation identity');
-            activationIds.add(activationId);
             if (!compileCapturedOrdinaryProfile(schema, canonical, previous?.[id]?.inputSchema)) fail(path + '.inputSchema', 'Type Tools require a supported normalized parameter profile');
-            const hasView = [...mounted.values()].some(view => view.type === viewType);
-            if (!hasView) fail(path + '.execution', 'Type Tool is visible only while a matching View is mounted');
+            if (!activeTools.has(id)) fail(path, 'Tool requires at least one enabled View binding');
         }
         const bytes = utf8Size(canonicalJson(copied));
         if (bytes > limits.maxSnapshotBytes) {
             throw new SnapshotDataError('SNAPSHOT_SERIALIZATION_ERROR', '$',
-                'V3 Snapshot byte budget exceeded');
+                'Snapshot byte budget exceeded');
         }
         const canonicalContent = canonicalJson({
             schemaVersion: SNAPSHOT_SCHEMA_VERSION, views: root.views!, refs: root.refs!, tools: root.tools!,
@@ -205,7 +218,7 @@ export function validatePreparedV3Draft(
         return Object.freeze({
             ok: true,
             value: Object.freeze({
-                draft: copied as unknown as PreparedAppSnapshotDraftV3,
+                draft: copied as unknown as PreparedAppSnapshotDraftV4,
                 canonicalContent,
                 contentDigest: diagnosticDigest(canonicalContent),
                 bytes,

@@ -2,37 +2,35 @@ import { expect, it, vi } from 'vitest';
 import { performance } from 'node:perf_hooks';
 import { SemanticSnapshotReceiver } from './receiver.js';
 import { createViewOwnedTools } from '../../core/tool/view-owned-tools.js';
-import { compileOrdinarySchema } from '../../core/tool/ordinary-parameter-contract.js';
 import type { SnapshotCore } from '../../core/snapshot/types.js';
 import type { ExecutionBinding, AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
 
 function defer<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }
 function fixture(instance = 'i', stage?: 'authorize' | 'execute', now?: () => number) {
     const r = now ? new SemanticSnapshotReceiver('a', instance, now) : new SemanticSnapshotReceiver('a', instance), core: SnapshotCore = (r as any).core;
-    const registry = createViewOwnedTools('a', instance), view = registry.mount('v', 'T');
-    const contract = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
-    if (!contract.ok) throw Error('Fixture ViewType contract');
-    const handler = async () => ({ success: true });
-    registry.registerTypeTool({ viewType: 'T', name: 'read', description: 'Read', inputSchema: contract.contract.schema }, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
-        createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: await handler() }),
-    });
-    const tool = registry.listTools()[0]!;
-    r.acceptPrepared({ schemaVersion: 3, appId: 'a', instanceId: instance, producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
-        views: [{ id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: 'View', kind: 'state', content: { format: 'markdown-v1', value: 'value' } }],
+    const registry = createViewOwnedTools('a', instance);
+    const inputSchema = { type: 'object', properties: {}, additionalProperties: false };
+    registry.defineTools([{ viewType: 'T', name: 'read', description: 'Read', inputSchema }]);
+    const frame = registry.prepareFrame([{ id: 'v', type: 'T', owner: {},
+        bindings: [{ name: 'read', enabled: true, execute: () => ({ success: true }) }] }]);
+    frame.accept();
+    const view = frame.instances[0]!, tool = frame.tools[0]!;
+    r.acceptPrepared({ schemaVersion: 4, appId: 'a', instanceId: instance, producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+        views: [{ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: 'View',
+            kind: 'state', content: { format: 'markdown-v1', value: 'value' } }],
         refs: {}, tools: { [tool.id]: tool } });
     expect(r.report().health).toBe('ready');
     const entered = defer<void>(), gate = defer<void>(); let handlers = 0, completed = 0;
     const binding: ExecutionBinding = { identity: {}, validateInput: (_source, input) => ({ ok: true, value: input }),
-        isLive: source => ({ ok: registry.validateTypeToolBinding(tool, source.execution).success }),
+        isLive: source => ({ ok: registry.validateTypeToolBinding(tool, source.receiver).success }),
         execute: async () => { handlers++; if (stage === 'execute') { entered.resolve(); await gate.promise; } completed++;
             return { kind: 'tool-result', phase: 'entered-returned', result: { success: true, data: { value: 19 } } }; } };
-    const policy: AppInteractionPolicy = { project: () => ({ views: [{ viewId: 'v', viewInstanceId: view.viewInstanceId }], refs: [], toolBindings: [{ toolId: tool.id, execution: tool.execution }], content: [] }),
+    const policy: AppInteractionPolicy = { project: () => ({ refs: [], toolIds: [tool.id] }),
         authorize: async () => { if (stage === 'authorize') { entered.resolve(); await gate.promise; } return true; }, canReadReceipt: () => true };
     const client = r.interaction(policy, { resolve: () => binding });
-    async function observe() { const o = await client.observe({ viewIds: ['v'] }); if (o.status !== 'observed') throw Error(JSON.stringify(o));
+    async function observe() { const o = await client.observe({ all: true }); if (o.status !== 'observed') throw Error(JSON.stringify(o));
         expect(client.adoptObservation(o.observation.observationId)).toEqual({ status: 'adopted' });
-        return { invocationId: 'call', observationId: o.observation.observationId, bindingId: o.observation.bindings[0].bindingId, input: {} }; }
+        return { invocationId: 'call', observationId: o.observation.observationId, toolId: o.observation.tools[0]!.id, input: { view_id: 'v' } }; }
     return { r, core, client, observe, entered, gate, counts: () => ({ handlers, completed }) };
 }
 
@@ -78,7 +76,7 @@ it('recovers observation and invocation after a rejected injected clock rollback
     try {
         const first = await f.observe();
         time = 9;
-        expect(await f.client.observe({ viewIds: ['v'] })).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_INTERNAL_ERROR' } });
+        expect(await f.client.observe({ all: true })).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_INTERNAL_ERROR' } });
         expect(f.counts().handlers).toBe(0);
         time = 10;
         const recovered = await f.observe();
@@ -129,7 +127,7 @@ it('A18 fresh AppInstance and namespace isolate old Client and serialized reques
 });
 it('A18 negative control: deliberately reusing AppInstance AND namespace violates trusted assembly and collides', async () => {
     const first = fixture('colliding'), request = await first.observe(); first.r.close();
-    const second = fixture('colliding'), current = await second.observe(); expect(current.observationId).toBe(request.observationId); expect(current.bindingId).toBe(request.bindingId);
+    const second = fixture('colliding'), current = await second.observe(); expect(current.observationId).toBe(request.observationId); expect(current.toolId).toBe(request.toolId);
     expect(await second.client.invoke(request)).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
     expect(second.counts().handlers).toBe(1); second.r.close();
 });

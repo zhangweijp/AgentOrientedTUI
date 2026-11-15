@@ -1,3 +1,4 @@
+import { projectCompleteViews } from '../../core/invocation/observation-registry.js';
 import { Worker } from 'node:worker_threads';
 import { mkdtemp, mkdir, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,10 +11,7 @@ import type { AppInteractionPolicy, AppInteraction } from '../../core/invocation
 let directory: string, workerPath: string, appPath: string;
 const hosts: AppWorkerHost[] = [];
 const policy: AppInteractionPolicy = {
-    project: ({ source }) => ({ views: source.views.map(v => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })),
-        refs: Object.values(source.refs).map(r => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })),
-        toolBindings: Object.values(source.tools).map(t => ({ toolId: t.id, execution: t.execution })),
-        content: source.views.map(v => ({ view: { viewId: v.id, viewInstanceId: v.viewInstanceId }, decision: 'retain' })) }),
+    project: projectCompleteViews,
     authorize: () => true, canReadReceipt: () => true,
 };
 
@@ -32,15 +30,17 @@ beforeAll(async () => {
         import { h, options } from 'preact';
         import { useState, useLayoutEffect, useMemo } from 'preact/hooks';
         import Type from 'typebox';
-        import { createTUIApp, View, AppTools, defineToolSet, defineViewTypeTool, useDataRef, refParam } from '@aotui/sdk';
+        import { createTUIApp, View, useDataRef, refParam, defineViewType } from '@aotui/sdk';
+const _FixtureWorkspace = defineViewType({ name:'Workspace', tools:{ change: { description:'Change the fixture', inputSchema:Type.Object({value:Type.Number(),invalid:Type.Optional(Type.Boolean())},{additionalProperties:false}) },
+stats: { description:'Read operation count', inputSchema:Type.Object({}) } } });
+const _FixtureFile = defineViewType({ name:'File', tools:{ edit: { description:'Edit the current file', inputSchema:Type.Object({}) },
+read: { description:'Read observed data', inputSchema:Type.Object({record:refParam('Record',Type.Object({value:Type.Number()}))}) } } });
+const _FixtureOther = defineViewType({ name:'Other', tools:{  } });
+
         const queued = []; options.debounceRendering = cb => queued.push(cb);
         let calls = 0;
         let currentRecord, redrawFile, redrawOther;
-        const tools = defineToolSet({ change: defineViewTypeTool({viewType:'Workspace',name:'change',description:'Change the fixture',
-            inputSchema: Type.Object({value:Type.Number(),invalid:Type.Optional(Type.Boolean())},{additionalProperties:false})}),
-            stats: defineViewTypeTool({viewType:'Workspace',name:'stats',description:'Read operation count',inputSchema:Type.Object({})}),
-            edit: defineViewTypeTool({viewType:'File',name:'edit',description:'Edit the current file',inputSchema:Type.Object({})}),
-            read: defineViewTypeTool({viewType:'File',name:'read',description:'Read observed data',inputSchema:Type.Object({record:refParam('Record',Type.Object({value:Type.Number()}))})}) });
+
         function File({state}) {
             const data=useMemo(()=>state.invalid ? {value:()=>state.value} : {value:state.value},[state.value,state.invalid]);
             const [, tick] = useState(0); redrawFile = () => tick(n => n + 1); currentRecord = data;
@@ -49,7 +49,7 @@ beforeAll(async () => {
         }
         function Other() {
             const [value, tick] = useState(0); redrawOther = () => tick(n => n + 1);
-            return h(View, {kind:'state',id:'other',type:'Other'}, h('p', {}, 'other:'+value));
+            return h(View, {kind:'state',id:'other',type:_FixtureOther}, h('p', {}, 'other:'+value));
         }
         function App() {
             const [state,set]=useState({value:0,invalid:false});
@@ -65,15 +65,13 @@ beforeAll(async () => {
                 parentPort.on('message', onCommand);
                 return ()=>parentPort.off('message', onCommand);
             },[]);
-            return h(AppTools,{definition:tools,bindings:{
-                change:{execute:args=>{calls++;set({value:args.value,invalid:args.invalid??false});return {success:true,data:{calls}};}},
-                stats:{execute:()=>({success:true,data:{calls}})},edit:{enabled:state.value>0,execute:()=>({success:true})},
-                read:{execute:({record})=>({success:true,data:{value:record.value}})}
-            }},[h(View,{kind: 'state',id:'workspace',type:'Workspace',key:'root'},h('p',{},'workspace:'+state.value)),
-                state.value>0?h(View,{kind: 'state',id:'file',type:'File',key:'file'},h(File,{state})):null,
+            return h('div',null,[h(View,{kind: 'state',id:'workspace',type:_FixtureWorkspace, bindings:{ change: {execute:args=>{calls++;set({value:args.value,invalid:args.invalid??false});return {success:true,data:{calls}};}},
+stats: {execute:()=>({success:true,data:{calls}})} },key:'root'},h('p',{},'workspace:'+state.value)),
+                state.value>0?h(View,{kind: 'state',id:'file',type:_FixtureFile, bindings:{ edit: {enabled:state.value>0,execute:()=>({success:true})},
+read: {execute:({record})=>({success:true,data:{value:record.value}})} },key:'file'},h(File,{state})):null,
                 h(Other,{key:'other'})]);
         }
-        export default createTUIApp({app_name:'refresh_fixture',component:App,signalPolicy:'never'});
+        export default createTUIApp({viewTypes:[_FixtureWorkspace,_FixtureFile,_FixtureOther], app_name:'refresh_fixture',component:App,signalPolicy:'never'});
     ` }, outfile: appPath, platform: 'node', format: 'esm', bundle: true, packages: 'external',
         alias: { '@aotui/sdk': resolve(runtime, '../sdk/src/index.ts') }, logLevel: 'silent' });
 });
@@ -98,8 +96,9 @@ async function observe(client: AppInteraction) {
 }
 let invocation = 0;
 function invoke(client: AppInteraction, observed: Awaited<ReturnType<typeof observe>>, name: string, input: Record<string, unknown>) {
-    const tool = observed.tools.find(t => t.name === name)!; const binding = observed.bindings.find(b => b.toolId === tool.id)!;
-    return client.invoke({ invocationId: 'refresh-' + ++invocation, observationId: observed.observationId, bindingId: binding.bindingId, input });
+    const tool = observed.tools.find(t => t.name === name)!;
+    const view = observed.views.find(view => view.type === tool.viewType)!;
+    return client.invoke({ invocationId: 'refresh-' + ++invocation, observationId: observed.observationId, toolId: tool.id, input: { view_id: view.id, ...input } });
 }
 
 describe('real SDK Worker observation refresh', () => {

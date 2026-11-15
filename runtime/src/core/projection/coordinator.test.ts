@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SemanticProjectionCoordinator } from './coordinator.js';
 import { createSnapshotCore } from '../snapshot/store.js';
-import type { ViewSnapshotV2 } from '../snapshot/types.js';
+import type { ViewSnapshotV4 } from '../snapshot/types.js';
 
 const aa = { viewId: 'aa', viewInstanceId: 'a1' };
 const bb = { viewId: 'bb', viewInstanceId: 'b1' };
-const view = (owner = aa, value = 'body'): ViewSnapshotV2 => ({
-    id: owner.viewId, name: owner.viewId, type: 'File', viewInstanceId: owner.viewInstanceId,
+const view = (owner = aa, value = 'body'): ViewSnapshotV4 => ({
+    toolBindings: [], id: owner.viewId, name: owner.viewId, type: 'File', viewInstanceId: owner.viewInstanceId,
     kind: 'state', content: { format: 'markdown-v1', value },
 });
 

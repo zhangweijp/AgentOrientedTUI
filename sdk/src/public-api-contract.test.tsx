@@ -3,7 +3,7 @@ import { act } from 'preact/test-utils';
 import { renderToString } from 'preact-render-to-string';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as SDK from './index.js';
-import { createTUIApp, View, useState, useDataRef, useLLMUsage, useAppRuntimeContext } from './index.js';
+import { createTUIApp, defineViewType, View, useState, useDataRef, useLLMUsage, useAppRuntimeContext } from './index.js';
 import { useContext } from 'preact/hooks';
 import { ViewRuntimeContext } from './contexts/view-runtime-context.js';
 import { AppRuntimeContext } from './context/AppRuntimeContext.js';
@@ -11,8 +11,9 @@ import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel
 
 const closing: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of closing.splice(0)) await close();vi.restoreAllMocks();vi.unstubAllGlobals(); });
+const Detail = defineViewType({name:'Detail',tools:{}});
 async function mount(Body: () => any, options: { outside?: boolean } = {}) {
-    const factory = createTUIApp({ app_name: 'public_api', component: () => options.outside ? h(Body, {}) : h(View, {kind: 'state', id: 'detail', type: 'Detail' }, h(Body, {})) });
+    const factory = createTUIApp({ app_name: 'public_api', viewTypes:[Detail], component: () => options.outside ? h(Body, {}) : h(View, {kind: 'state', id: 'detail', type: Detail }, h(Body, {})) });
     const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);kernel.setId('app' as any);kernel.setAppExecutionInstanceId('public_api_run');
     kernel.enableAppLifecycle();
     let closed = false;
@@ -29,12 +30,11 @@ const calls = (spy: any) => spy.mock.calls.filter((args: any[]) => outputEvents.
 describe('C04/C09 SDK root exports and app context', () => {
     it('exposes exactly the supported JavaScript entry points', () => {
         expect(Object.keys(SDK).sort()).toEqual([
-            'AOTUIError', 'AppTools',
+            'AOTUIError',
             'ToolCatalog',
             'View',
             'createTUIApp',
-            'defineToolSet',
-            'defineViewTypeTool',
+            'defineViewType',
             'formatRef', 'getToolCatalog',
             'refParam',
             'useAppLifecycle',
@@ -57,7 +57,7 @@ describe('C04/C09 SDK root exports and app context', () => {
             'ViewRegistry', 'createInlineView', 'useViewSelector', 'useRefRegistry',
             'defineParams', 'escapeHtml', 'escapeJsonForAttr', 'useAppConfig',
             'useAppEnv', 'useLLMOutputChannel', 'useLLMOutputHistory', 'useViewSnapshotTool',
-            'createToolBindings', 'ToolRef', 'useViewContext',
+            'createToolBindings', 'AppTools', 'defineToolSet', 'defineViewTypeTool', 'ToolRef', 'useViewContext',
         ]) {
             expect(Object.hasOwn(SDK, name), name).toBe(false);
         }

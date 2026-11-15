@@ -1,5 +1,4 @@
 import type { ToolResultData } from '../../spi/core/tool-result.js';
-import { VIEW_TYPE_TOOL_PROTOCOL } from '../../spi/index.js';
 /**
  * AOTUI Runtime - App Kernel
  *
@@ -19,17 +18,16 @@ import type {
     AppContext,
     AppKernelConfig,
     AppLaunchConfig,
-    IRefExporter, AppInstance, RuntimeContext, TUIAppFactory,
+    IRefExporter, AppFrameView, AppInstance, RuntimeContext, TUIAppFactory,
 } from '../../spi/index.js';
-import type { IRefBinding, RefValueCheck } from '../../spi/app/ref-exporter.interface.js';
+import type { RefValueCheck } from '../../spi/app/ref-exporter.interface.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import type { ViewToolInvocationTerminal } from '../../spi/worker-protocol/index.js';
 
 import { SemanticProjectionCoordinator, type CompleteProjectionFrame } from '../../core/projection/coordinator.js';
 import { createViewOwnedTools } from '../../core/tool/view-owned-tools.js';
 import type { OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
-import type { ToolDescriptorV3, ObservedToolExecutionV3 } from '../../core/snapshot/types.js';
-import type { AppTypeToolDefinition, AppTypeToolRegistrationOptions } from '../../spi/runtime/app-type-tools.interface.js';
+import type { ToolDescriptorV4, ViewToolReceiver } from '../../core/snapshot/types.js';
 import { createAppLifecycle } from '../app-lifecycle.js';
 import type { AppStatePersistence } from '../../spi/runtime/state-persistence.interface.js';
 import { SnapshotDataError } from '../../core/snapshot/json.js';
@@ -50,10 +48,7 @@ export class AppKernel implements IRefExporter {
 
     private readonly projection = new SemanticProjectionCoordinator({
         identity: () => ({ appId: this.id, instanceId: this.appExecutionInstanceId }),
-        readFrame: () => ({
-            views: this.readViews?.(this.getViewOwnedViewInstances()) ?? [],
-            tools: this.getToolDefinitions(),
-        }),
+        readFrame: () => this.readViews ? this.prepareFrame(this.readViews()) : { views: [], tools: [] },
     });
     private appExecutionInstanceId: string = randomUUID();
     private viewOwnedTools?: ReturnType<typeof createViewOwnedTools>;
@@ -105,35 +100,30 @@ export class AppKernel implements IRefExporter {
         this.appExecutionInstanceId = instanceId;
     }
 
-    /** Detached V3 Tool metadata for the configured producers. */
-    getToolDefinitions(): readonly ToolDescriptorV3[] {
-        return this.viewOwnedTools?.listTools() ?? Object.freeze([]);
-    }
-
     /**
      * Stage 6 preflight: checks LIVE Runtime-owned Tool binding without invoking
      * a Handler. A trusted Host must still independently authorize any I/O.
      */
-    validateBoundTypeTool(source: ToolDescriptorV3, execution: ObservedToolExecutionV3): ToolResultData {
+    validateBoundTypeTool(source: ToolDescriptorV4, receiver: ViewToolReceiver): ToolResultData {
         if (this.closing) return this.closedToolResult();
         if (this.projection.failed) return this.failedProjectionResult();
         if (!this.viewOwnedTools) return { success: false, error: {
             code: 'TOOL_UNAVAILABLE', message: 'ViewType Tool registry not initialized',
         } };
-        return this.viewOwnedTools.validateTypeToolBinding(source, execution);
+        return this.viewOwnedTools.validateTypeToolBinding(source, receiver);
     }
 
-    getBoundTypeToolContract(source: ToolDescriptorV3, execution: ObservedToolExecutionV3): OrdinaryParameterContract | undefined {
-        return this.closing ? undefined : this.viewOwnedTools?.getTypeToolContract(source, execution);
+    getBoundTypeToolContract(source: ToolDescriptorV4, receiver: ViewToolReceiver): OrdinaryParameterContract | undefined {
+        return this.closing ? undefined : this.viewOwnedTools?.getTypeToolContract(source, receiver);
     }
 
-    invokeBoundTypeTool(source: ToolDescriptorV3, execution: ObservedToolExecutionV3,
+    invokeBoundTypeTool(source: ToolDescriptorV4, receiver: ViewToolReceiver,
         args: Readonly<Record<string, unknown>>): ViewToolInvocationTerminal | Promise<ViewToolInvocationTerminal> {
         if (this.closing) return { phase: 'not-entered', result: this.closedToolResult() };
         if (this.projection.failed) return { phase: 'not-entered', result: this.failedProjectionResult() };
         if (!this.viewOwnedTools) return { phase: 'not-entered', result: { success: false,
             error: { code: 'TOOL_UNAVAILABLE', message: 'ViewType Tool registry not initialized' } } };
-        return this.viewOwnedTools.invokeTypeTool(source, execution, args);
+        return this.viewOwnedTools.invokeTypeTool(source, receiver, args);
     }
 
     isRefViewLive(viewId: string, viewInstanceId: string): boolean {
@@ -179,22 +169,14 @@ export class AppKernel implements IRefExporter {
         if (this.closePromise) return this.closePromise;
         this.beginShutdown();
         let failed = false;
-        const revokeViews = () => {
-            for (const view of this.viewOwnedTools?.listViews() ?? []) {
-                try { this.viewOwnedTools!.unmount(view.viewInstanceId); } catch { failed = true; }
-            }
-        };
-        revokeViews();
+        this.viewOwnedTools?.dispose();
         this.closePromise = Promise.resolve().then(async () => {
             await Promise.allSettled([this.openPromise, this.deletePromise]);
             try { await this.instance?.close(); } catch { failed = true; }
             this.instance = undefined;
             this.readViews = undefined;
             try { await this.appLifecycle?.close(); } catch { failed = true; }
-            revokeViews();
-            for (const clear of [() => this.viewOwnedTools?.dispose(), () => this.projection.close()]) {
-                try { clear(); } catch { failed = true; }
-            }
+            try { this.projection.close(); } catch { failed = true; }
             if (failed) throw closeError('APP_UNMOUNT_FAILED');
         });
         void this.closePromise.catch(() => {});return this.closePromise;
@@ -229,14 +211,6 @@ export class AppKernel implements IRefExporter {
         return this.projection.captureRef(data, check);
     }
 
-    registerRef(viewId: string, refId: string, data: unknown, refType?: string): IRefBinding {
-        this.assertActive();
-        const owner = this.viewOwnedTools?.getView(viewId);
-        if (!owner) throw Object.assign(new Error('Ref owner is not mounted: ' + viewId), { code: 'REF_VIEW_UNMOUNTED' });
-        const binding = this.projection.registerRef(owner, refId, data, refType);
-        return { update: next => { this.assertActive(); binding.update(next); }, release: binding.release };
-    }
-
     getViewRefs() {
         return this.projection.getViewRefs();
     }
@@ -247,6 +221,19 @@ export class AppKernel implements IRefExporter {
 
     dispatchLLMUsage(event: LLMUsageEvent): void {
         if (!this.closing && !this.projectionOwner.signal.aborted) this.instance?.onLLMUsage?.(event);
+    }
+
+    private prepareFrame(views: readonly AppFrameView[]) {
+        this.assertActive();
+        const plan = this.viewOwnedTools!.prepareFrame(views);
+        return {
+            views: views.map(({ id, type, name, kind, content }, index) => {
+                const { viewInstanceId, toolBindings } = plan.instances[index]!;
+                return { id, type, name, kind, content, viewInstanceId, toolBindings };
+            }),
+            tools: plan.tools,
+            accept: plan.accept,
+        };
     }
 
     private async initializeInstance(): Promise<void> {
@@ -266,21 +253,46 @@ export class AppKernel implements IRefExporter {
                 if (this.readViews) throw new Error('App view reader already installed');
                 this.readViews = read;
             },
+            defineTools: definitions => {
+                this.assertActive();
+                this.projection.assertWritable();
+                owned.defineTools(definitions);
+            },
+            mountView: (id, type) => {
+                this.assertActive();
+                this.projection.assertWritable();
+                const mount = owned.prepareMount(id, type);
+                let released = false;
+                return {
+                    owner: mount.owner,
+                    registerRef: (refId, data, refType) => {
+                        this.assertActive();
+                        if (released) throw new Error('View Ref owner was detached');
+                        return this.projection.registerRef(mount.view, refId, data, refType);
+                    },
+                    release: () => {
+                        if (released) return;
+                        this.projection.releaseView(mount.view.viewInstanceId);
+                        mount.release();
+                        released = true;
+                    },
+                };
+            },
             publishFrame: build => {
                 this.assertActive();
                 this.projection.beginCommit();
-                let plan: ReturnType<typeof owned.prepareFrame>;
                 let candidate: CompleteProjectionFrame;
                 try {
                     const frame = build();
-                    plan = owned.prepareFrame(frame.views, frame.tools);
-                    const refs: (typeof candidate.refs)[number][] = [];
-                    const views = frame.views.map(({ refs: viewRefs, ...view }, index) => {
-                        const { viewId, viewInstanceId } = plan.instances[index]!;
-                        for (const ref of viewRefs) refs.push({ ...ref, viewId, viewInstanceId });
-                        return { ...view, viewInstanceId };
-                    });
-                    candidate = { views, refs, tools: plan.tools };
+                    if (!frame || Object.keys(frame).length !== 1 || !Array.isArray(frame.views))
+                        throw new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Expected a complete View frame');
+                    const prepared = this.prepareFrame(frame.views);
+                    const refs: CompleteProjectionFrame['refs'][number][] = [];
+                    for (const [index, view] of frame.views.entries()) {
+                        const { viewInstanceId } = prepared.views[index]!;
+                        for (const ref of view.refs) refs.push({ ...ref, viewId: view.id, viewInstanceId });
+                    }
+                    candidate = { ...prepared, refs };
                 } catch (error) {
                     this.projection.endCommit({ error });
                     throw error;
@@ -289,38 +301,10 @@ export class AppKernel implements IRefExporter {
                     const failure = this.projection.failure!;
                     throw new SnapshotDataError(failure.code, failure.path ?? '$', failure.message);
                 }
-                // Apply the validated inventory before any publication subscriber runs.
-                plan.accept();
+                return Object.freeze({ status: 'prepared', sourceEpoch: this.projection.token().epoch });
             },
             persistence: this.persistence,
             appLifecycle: this.appLifecycle?.port,
-            viewTools: {
-                mount: (viewId: string, viewType: string) => {
-                    this.assertActive();
-                    this.projection.assertWritable();
-                    return owned.mount(viewId, viewType).viewInstanceId;
-                },
-                unmount: (viewInstanceId: string) => {
-                    this.projection.assertWritable();
-                    owned.unmount(viewInstanceId);
-                    this.projection.releaseView(viewInstanceId);
-                },
-            },
-            appTypeTools: {
-                protocol: VIEW_TYPE_TOOL_PROTOCOL,
-                registerTypeTool: (definition: AppTypeToolDefinition, options: AppTypeToolRegistrationOptions) => {
-                    this.assertActive();
-                    this.projection.assertWritable();
-                    // Core owns strict capture, compilation, callable qualification, and reentry checks.
-                    // Pass the original values so custom prototypes/accessors cannot be laundered here.
-                    const release = owned.registerTypeTool(definition, options);
-                    if (this.closing) {
-                        release();
-                        throw closeError('APP_KERNEL_CLOSED');
-                    }
-                    return () => { this.projection.assertWritable(); release(); };
-                },
-            },
         };
 
         const instance = await this.config.factory.initialize(runtimeContext);

@@ -1,6 +1,6 @@
 # 安装 SDK 与 Runtime
 
-普通 TypeScript App 使用 `@aotui/sdk/app` 和 TypeBox。Preact App 另外安装 Preact，从 `@aotui/sdk` 根入口使用 `createTUIApp` 与 `AppTools`。两个入口都导出同一合同的托管工厂，并复用 Runtime 的参数与调用验证。[App 作者指南](app-authoring.md)
+普通 TypeScript App 使用 `@aotui/sdk/app` 和 TypeBox。Preact App 另外安装 Preact，从 `@aotui/sdk` 根入口使用 `createTUIApp` 与 `View.bindings`。两个入口都导出同一合同的托管工厂，并复用 Runtime 的参数与调用验证。[App 作者指南](app-authoring.md)
 
 ## 安装本地交付包
 
@@ -11,8 +11,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@aotui/runtime": "file:../../artifacts/aotui-runtime-7.0.0.tgz",
-    "@aotui/sdk": "file:../../artifacts/aotui-sdk-0.8.0.tgz",
+    "@aotui/runtime": "file:../../artifacts/aotui-runtime-8.0.0.tgz",
+    "@aotui/sdk": "file:../../artifacts/aotui-sdk-0.9.0.tgz",
     "typebox": "1.4.3"
   },
   "devDependencies": {
@@ -21,7 +21,7 @@
   },
   "pnpm": {
     "overrides": {
-      "@aotui/runtime": "file:../../artifacts/aotui-runtime-7.0.0.tgz"
+      "@aotui/runtime": "file:../../artifacts/aotui-runtime-8.0.0.tgz"
     }
   }
 }

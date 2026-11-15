@@ -1,4 +1,4 @@
-import { defineViewTypeTool, defineToolSet, type ArgsOf, type ToolBinding } from '@aotui/sdk';
+import { defineViewType, type ArgsOf, type ToolBinding } from '@aotui/sdk';
 import Type from 'typebox';
 import type { FetchFormat, SearchQuery, SearchResultItem } from '../types.js';
 
@@ -31,7 +31,7 @@ const fetchUrlInput = Type.Object({
 }, { additionalProperties: false });
 
 export function createSearchWebBinding(onSearch: BrowserActions['onSearch']) {
-    return ({ execute: async (args: ArgsOf<typeof browserTools.searchWeb>) => {
+    return ({ execute: async (args: ArgsOf<typeof SearchType.tools.search_web>) => {
             try {
                 const result = await onSearch({
                     query: args.query,
@@ -44,11 +44,11 @@ export function createSearchWebBinding(onSearch: BrowserActions['onSearch']) {
             } catch (error) {
                 return { success: false, error: { code: 'SEARCH_FAILED', message: (error as Error).message } };
             }
-        } } satisfies ToolBinding<typeof browserTools.searchWeb>);
+        } } satisfies ToolBinding<typeof SearchType.tools.search_web>);
 }
 
 export function createOpenResultBinding(results: SearchResultItem[], onOpenResult: BrowserActions['onOpenResult']) {
-    return ({ execute: async ({ url }: ArgsOf<typeof browserTools.openResult>) => {
+    return ({ execute: async ({ url }: ArgsOf<typeof ResultListType.tools.open_result>) => {
             if (!results.some(result => result.url === url)) {
                 return { success: false, error: { code: 'RESULT_UNAVAILABLE', message: 'That URL is no longer in the current results. Observe the result list again.' } };
             }
@@ -58,18 +58,18 @@ export function createOpenResultBinding(results: SearchResultItem[], onOpenResul
             } catch (error) {
                 return { success: false, error: { code: 'OPEN_RESULT_FAILED', message: (error as Error).message } };
             }
-        } } satisfies ToolBinding<typeof browserTools.openResult>);
+        } } satisfies ToolBinding<typeof ResultListType.tools.open_result>);
 }
 
 export function createClearResultsBinding(onClearResults: BrowserActions['onClearResults']) {
     return ({ execute: async () => {
             onClearResults();
             return { success: true, data: { message: 'Search results cleared.' } };
-        } } satisfies ToolBinding<typeof browserTools.clearResults>);
+        } } satisfies ToolBinding<typeof ResultListType.tools.clear_results>);
 }
 
 export function createFetchUrlBinding(onFetch: BrowserActions['onFetch']) {
-    return ({ execute: async (args: ArgsOf<typeof browserTools.fetchUrl>) => {
+    return ({ execute: async (args: ArgsOf<typeof RootType.tools.fetch_url>) => {
             try {
                 const viewId = await onFetch({
                     url: args.url,
@@ -80,45 +80,41 @@ export function createFetchUrlBinding(onFetch: BrowserActions['onFetch']) {
             } catch (error) {
                 return { success: false, error: { code: 'FETCH_FAILED', message: (error as Error).message } };
             }
-        } } satisfies ToolBinding<typeof browserTools.fetchUrl>);
+        } } satisfies ToolBinding<typeof RootType.tools.fetch_url>);
 }
 
 export function createClosePageBinding(onClosePage: BrowserActions['onClosePage']) {
     return ({ execute: async () => {
             onClosePage();
             return { success: true, data: { message: 'Page closed.' } };
-        } } satisfies ToolBinding<typeof browserTools.closePage>);
+        } } satisfies ToolBinding<typeof PageType.tools.close_page>);
 }
 
-export const browserTools = defineToolSet({
-searchWeb: defineViewTypeTool({
-        viewType: 'Search',
-        name: 'search_web',
-        description: 'Run a web search. Read the results from Search and ResultList Views.',
-        inputSchema: searchWebInput,
-    }),
-openResult: defineViewTypeTool({
-        viewType: 'ResultList',
-        name: 'open_result',
-        description: 'Open a URL from the current result list. Page will contain the fetched content.',
-        inputSchema: openResultInput,
-    }),
-clearResults: defineViewTypeTool({
-        viewType: 'ResultList',
-        name: 'clear_results',
-        description: 'Remove the current result list and its tools.',
-        inputSchema: emptyInput,
-    }),
-fetchUrl: defineViewTypeTool({
-        viewType: 'Root',
-        name: 'fetch_url',
-        description: 'Fetch a URL and show its content in Page.',
-        inputSchema: fetchUrlInput,
-    }),
-closePage: defineViewTypeTool({
-        viewType: 'Page',
-        name: 'close_page',
-        description: 'Close the current Page View and remove its tool.',
-        inputSchema: emptyInput,
-    })
-});
+export const SearchType = defineViewType({ name: 'Search', tools: {
+        search_web: { description: 'Run a web search. Read the results from Search and ResultList Views.',
+            inputSchema: searchWebInput,
+        },
+} });
+
+export const ResultListType = defineViewType({ name: 'ResultList', tools: {
+        open_result: { description: 'Open a URL from the current result list. Page will contain the fetched content.',
+            inputSchema: openResultInput,
+        },
+        clear_results: { description: 'Remove the current result list and its tools.',
+            inputSchema: emptyInput,
+        },
+} });
+
+export const RootType = defineViewType({ name: 'Root', tools: {
+        fetch_url: { description: 'Fetch a URL and show its content in Page.',
+            inputSchema: fetchUrlInput,
+        },
+} });
+
+export const PageType = defineViewType({ name: 'Page', tools: {
+        close_page: { description: 'Close the current Page View and remove its tool.',
+            inputSchema: emptyInput,
+        },
+} });
+
+export const browserViewTypes = [SearchType, ResultListType, RootType, PageType] as const;

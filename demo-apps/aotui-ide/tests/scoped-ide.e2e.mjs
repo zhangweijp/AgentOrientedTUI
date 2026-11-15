@@ -26,10 +26,13 @@ function assertJsonRecord(actual, expected, label) {
 }
 async function inspectTools(app, viewId) {
     const client = scope(app);
-    const observed = await client.observe({ viewIds: [viewId] });
+    const observed = await client.observe({ all: true });
     assert.equal(observed.status, 'observed', JSON.stringify(observed));
     client.releaseObservation(observed.observation.observationId);
-    return observed.observation;
+    const view = observed.observation.views.find(view => view.id === viewId);
+    assert.ok(view, 'Expected to observe ' + viewId);
+    return { ...observed.observation, tools: observed.observation.tools.filter(tool =>
+        tool.viewType === view.type && (!tool.eligibleViewIds || tool.eligibleViewIds.includes(viewId))) };
 }
 try {
     const root = path.join(working, 'workspace'), other = path.join(working, 'workspace-sibling');
@@ -51,10 +54,10 @@ try {
         assert.equal(onlyA.length, 1);
         const secondBefore = await fs.readFile(second, 'utf8');
         const rejectedB = await invoke(a, 'edit_file', { filePath: second, oldString: '7', newString: '8' }, {
-            view: onlyA[0].id, status: 'failed', changes: false,
+            view: onlyA[0].id, status: 'rejected', changes: false,
         });
         assert.equal(Object.hasOwn(rejectedB, 'effects'), false);
-        assert.equal(rejectedB.details.result.error.code, 'IDE_FILE_NOT_LOADED', 'the app rejects b while only a is open');
+        assert.equal(rejectedB.code, 'TOOL_INVALID_ARGS', 'Runtime refuses a path override for the selected View');
         assert.equal(await fs.readFile(second, 'utf8'), secondBefore, 'the unopened b file is unchanged');
         await invoke(a, 'multi_close_file', { filePaths: [file] });
         assert.ok(!toolNames(a).includes('batch_edit'), 'batch_edit is withdrawn after the last loaded file closes');
@@ -67,16 +70,14 @@ try {
             for (const name of fileMutations) {
                 const tool = observed.tools.find(tool => tool.name === name); assert.ok(tool, name + ' belongs to the loaded FileDetail');
                 assert.equal(tool.viewType, 'FileDetail');
-                assert.equal(tool.execution.kind, 'view-type', 'ordinary FileDetail Tools bind to the ViewType');
-                assert.ok(!Object.hasOwn(tool.execution, 'targets'), 'ordinary ViewType Tools have no per-instance target');
-                const priorActivation = activations.get(name);
-                if (priorActivation === undefined) activations.set(name, tool.execution.activationId);
-                else assert.equal(tool.execution.activationId, priorActivation, name + ' uses the same activation across FileDetail instances');
-                const binding = observed.bindings.find(binding => binding.toolId === tool.id);
-                assert.deepEqual(binding?.execution, tool.execution, 'the observation binds the shared ViewType activation');
-                assert.equal(observed.bindings.filter(binding => binding.toolId === tool.id).length, 1);
-                const targetParam = name === 'rename_file' ? 'oldPath' : 'filePath';
-                assert.ok(tool.inputSchema.required.includes(targetParam));
+                const activation = detail.toolBindings.find(binding => binding.toolId === tool.id)?.activationId;
+                assert.ok(activation, name + ' is bound to this FileDetail');
+                const previous = activations.get(name);
+                if (previous === undefined) activations.set(name, activation);
+                else assert.notEqual(activation, previous, name + ' has independent activation per FileDetail');
+                assert.equal(observed.tools.filter(candidate => candidate.id === tool.id).length, 1);
+                assert.ok(!Object.hasOwn(tool.inputSchema.properties, 'filePath'));
+                assert.ok(!Object.hasOwn(tool.inputSchema.properties, 'oldPath'));
             }
         }
         const workspace = await inspectTools(a, 'workspace');
@@ -95,23 +96,23 @@ try {
     });
     await runCase('real TypeScript seven queries, current document changes, readonly diagnostic slice', async () => {
         await invoke(b, 'multi_open_file', { filePaths: [second] });
-        const otherApp = await invoke(b, 'lsp_hover', { file_path: second, line: 1, character: 14 }, { view: fileView(b, second).id });
+        const otherApp = await invoke(b, 'lsp_hover', { line: 1, character: 14 }, { view: fileView(b, second).id });
         assert.ok(panel(b, fileView(b, second).id, 'hover').value); assert.equal(snapshot(b).views.filter(view => view.type === 'FileDetail').length, 1);
         const otherFile = path.join(other, 'other.ts'); await fs.writeFile(otherFile, 'export const otherRoot = "other";\n');
         await invoke(a, 'multi_open_file', { filePaths: [otherFile] });
-        await invoke(a, 'lsp_hover', { file_path: otherFile, line: 1, character: 16 }, { view: fileView(a, otherFile).id });
+        await invoke(a, 'lsp_hover', { line: 1, character: 16 }, { view: fileView(a, otherFile).id });
         assert.ok(panel(a, fileView(a, otherFile).id, 'hover').value);
         let view = fileView(a, file).id;
         const queries = [
-            ['lsp_hover', { file_path: file, line: 1, character: 18 }],
-            ['lsp_goto_definition', { file_path: file, line: 2, character: 43 }],
-            ['lsp_find_references', { file_path: file, line: 1, character: 18 }],
-            ['lsp_get_diagnostics', { file_path: file }],
-            ['lsp_document_symbol', { file_path: file }],
-            ['lsp_incoming_calls', { file_path: file, line: 1, character: 18 }],
-            ['lsp_outgoing_calls', { file_path: file, line: 2, character: 18 }],
+            ['lsp_hover', { line: 1, character: 18 }],
+            ['lsp_goto_definition', { line: 2, character: 43 }],
+            ['lsp_find_references', { line: 1, character: 18 }],
+            ['lsp_get_diagnostics', {}],
+            ['lsp_document_symbol', {}],
+            ['lsp_incoming_calls', { line: 1, character: 18 }],
+            ['lsp_outgoing_calls', { line: 2, character: 18 }],
         ];
-        const client = scope(a), observation = (await client.observe({ viewIds: [view] })).observation;
+        const client = scope(a), observation = (await client.observe({ all: true })).observation;
         assert.equal(client.adoptObservation(observation.observationId).status, 'adopted');
         try {
             for (const [name, args] of queries) {
@@ -122,24 +123,24 @@ try {
                 assert.equal(outcome.value.data.view_id, view);
             }
         } finally { client.releaseObservation(observation.observationId); }
-        let loaded = await invoke(a, 'read_loaded_diagnostics', { filePath: file }, { view, changes: false });
+        let loaded = await invoke(a, 'read_loaded_diagnostics', {}, { view, changes: false });
         assert.ok(panel(a, view, 'diagnostics').value.some(d => d.code === 2322));
-        await invoke(a, 'edit_file', { filePath: file, oldString: '"wrong"', newString: '1' }, { view: fileView(a, file).id });
+        await invoke(a, 'edit_file', { oldString: '"wrong"', newString: '1' }, { view: fileView(a, file).id });
         assert.match(await fs.readFile(file, 'utf8'), /const broken: number = 1;/, 'the opened file was edited by the shared FileDetail Tool');
         view = fileView(a, file).id;
-        const fresh = await invoke(a, 'lsp_get_diagnostics', { file_path: file }, { view });
+        const fresh = await invoke(a, 'lsp_get_diagnostics', {}, { view });
         assert.equal(panel(a, view, 'diagnostics').value.some(d => d.code === 2322), false);
-        loaded = await invoke(a, 'read_loaded_diagnostics', { filePath: file }, { view, changes: false });
+        loaded = await invoke(a, 'read_loaded_diagnostics', {}, { view, changes: false });
         assert.equal(panel(a, view, 'diagnostics').value.some(d => d.code === 2322), false);
-        const selectedB = await invoke(a, 'lsp_hover', { file_path: second, line: 1, character: 14 }, { view });
-        assert.equal(selectedB.value.data.view_id, fileView(a, second).id, 'the shared Tool selects any opened business path and reports its actual View');
-        assert.ok(panel(a, fileView(a, second).id, 'hover').value, 'LSP output appears in the selected file View, not the invoking file View');
+        const selectedB = await invoke(a, 'lsp_hover', { line: 1, character: 14 }, { view: fileView(a, second).id });
+        assert.equal(selectedB.value.data.view_id, fileView(a, second).id, 'the shared Tool runs on the selected View instance');
+        assert.ok(panel(a, fileView(a, second).id, 'hover').value, 'LSP output appears in the selected file View');
     });
     await runCase('search completeness, complete View-owned contracts and ViewType exclusive creation', async () => {
         await invoke(a, 'search_files_by_pattern', { pattern: '**/*.ts' });
         assert.deepEqual([...new Set(toolNames(a))].sort(), [...workspaceTools, ...fileMutations, ...languageTools,
             'close_file_detail', 'close_search_view', 'read_loaded_diagnostics', 'create_file_if_absent'].sort());
-        await invoke(a, 'close_search_view', { view_id: 'search' }, { view: 'search' });
+        await invoke(a, 'close_search_view', {}, { view: 'search' });
         assert.equal(toolNames(a).includes('close_search_view'), false);
         await invoke(a, 'search_files_by_content', { pattern: 'caller\\(', include: '**/*.ts' });
         await eventually(() => viewText(a, 'search').includes(file) && toolNames(a).includes('close_search_view'),
@@ -152,23 +153,23 @@ try {
         assert.equal(viewText(a, 'search'), before);
         const createView = snapshot(a).views.find(view => view.type === 'WorkspaceCreate' && view.name === 'Workspace: ' + root).id;
         const relativePath = 'src/slice.ts', target = path.join(root, relativePath), content = 'export const 雪 = "😀";\n';
-        const created = await invoke(a, 'create_file_if_absent', { workspacePath: root, relativePath, content }, { view: createView });
+        const created = await invoke(a, 'create_file_if_absent', { relativePath, content }, { view: createView });
         assertJsonRecord(created.value, { success: true, data: {
             filePath: target, bytesWritten: Buffer.byteLength(content),
             message: 'create_file_if_absent completed. Read the current IDE Views for the updated state.', view_id: 'workspace',
         } }, 'created file receipt');
         assert.equal(await fs.readFile(target, 'utf8'), content);
-        const duplicate = await invoke(a, 'create_file_if_absent', { workspacePath: root, relativePath, content: 'overwrite' }, { view: createView, status: 'failed', changes: false });
+        const duplicate = await invoke(a, 'create_file_if_absent', { relativePath, content: 'overwrite' }, { view: createView, status: 'failed', changes: false });
         assert.equal(Object.hasOwn(duplicate, 'effects'), false);
         assertJsonRecord(duplicate.details.result, { success: false, error: { code: 'RESOURCE_ALREADY_EXISTS', message: 'Target already exists' } }, 'duplicate file result');
         assert.equal(await fs.readFile(target, 'utf8'), content, 'A duplicate request never overwrites the created file');
-        const missingParent = await invoke(a, 'create_file_if_absent', { workspacePath: root, relativePath: 'missing/slice.ts', content }, { view: createView, status: 'failed', changes: false });
+        const missingParent = await invoke(a, 'create_file_if_absent', { relativePath: 'missing/slice.ts', content }, { view: createView, status: 'failed', changes: false });
         assert.equal(Object.hasOwn(missingParent, 'effects'), false);
         assertJsonRecord(missingParent.details.result, { success: false, error: { code: 'RESOURCE_PARENT_UNAVAILABLE', message: 'Target parent must already exist' } }, 'missing parent result');
         await assert.rejects(fs.stat(path.join(root, 'missing')), { code: 'ENOENT' });
     });
     await runCase('observed writes, ordered batch, rename identity, stale same-content inode and deletes', async () => {
-        await invoke(a, 'write_file', { filePath: second, content: 'export const sibling = 8;\n' }, { view: fileView(a, second).id });
+        await invoke(a, 'write_file', { content: 'export const sibling = 8;\n' }, { view: fileView(a, second).id });
         await invoke(a, 'batch_edit', { edits: [{ filePath: second, oldString: '8', newString: '9' }, { filePath: second, oldString: '9', newString: '10' }] });
         assert.match(await fs.readFile(second, 'utf8'), /10/);
         // A two-item batch can publish its first commit before the final one.
@@ -177,27 +178,27 @@ try {
         const created = path.join(root, 'new/deep/file.ts');
         await invoke(a, 'create_file', { filePath: created, content: 'export const created = true;\n' });
         const renamed = path.join(root, 'move/nested/file.ts'), beforeView = fileView(a, created);
-        await invoke(a, 'rename_file', { oldPath: created, newPath: renamed }, { view: beforeView.id });
+        await invoke(a, 'rename_file', { newPath: renamed }, { view: beforeView.id });
         assert.equal(fileView(a, renamed).id, beforeView.id); assert.equal(fileView(a, renamed).viewInstanceId, beforeView.viewInstanceId);
         const renamedView = fileView(a, renamed), content = await fs.readFile(renamed), stale = scope(a);
-        const observed = await stale.observe({ viewIds: [renamedView.id] });
+        const observed = await stale.observe({ all: true });
         assert.equal(observed.status, 'observed', JSON.stringify(observed));
         const observation = observed.observation;
         assert.equal(stale.adoptObservation(observation.observationId).status, 'adopted');
         const writeTool = observation.tools.find(tool => tool.name === 'write_file');
-        assert.equal(writeTool.execution.kind, 'view-type');
-        assert.ok(observation.bindings.some(binding => binding.toolId === writeTool.id && binding.execution.kind === 'view-type' &&
-            binding.execution.activationId === writeTool.execution.activationId), 'stale-write check is bound to the observed FileDetail Tool activation');
+        assert.ok(writeTool);
+        assert.ok(snapshot(a).views.find(view => view.id === renamedView.id)?.toolBindings.some(binding =>
+            binding.toolId === writeTool.id), 'the observed file owns the write operation');
         const replacement = renamed + '.replacement'; await fs.writeFile(replacement, content); await fs.rename(replacement, renamed);
-        try { await invoke(a, 'write_file', { filePath: renamed, content: 'bad' }, { view: renamedView.id, status: 'failed', changes: false, client: stale, observation }); }
+        try { await invoke(a, 'write_file', { content: 'bad' }, { view: renamedView.id, status: 'failed', changes: false, client: stale, observation }); }
         finally { stale.releaseObservation(observation.observationId); }
         assert.deepEqual(await fs.readFile(renamed), content);
         await invoke(a, 'multi_open_file', { filePaths: [renamed] }, { changes: false });
-        await invoke(a, 'delete_file', { filePath: renamed }, { view: fileView(a, renamed).id });
+        await invoke(a, 'delete_file', {}, { view: fileView(a, renamed).id });
         await assert.rejects(fs.stat(renamed), { code: 'ENOENT' });
         const absent = path.join(root, 'create/file.ts'); await invoke(a, 'create_file', { filePath: absent, content: 'absent only' });
         assert.equal(await fs.readFile(absent, 'utf8'), 'absent only');
-        await invoke(a, 'close_file_detail', { view_id: fileView(a, absent).id }, { view: fileView(a, absent).id });
+        await invoke(a, 'close_file_detail', {}, { view: fileView(a, absent).id });
         await invoke(a, 'multi_close_file', { filePaths: [second, second] });
     });
     await runCase('shutdown, actual resource release, fresh Worker and managed restoration', async () => {

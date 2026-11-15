@@ -1,64 +1,65 @@
 # Runtime App 公共交互
 
-可信 Host 安装 App 并选择唯一当前执行 mode `view-type-parameters-v1`。所有 Tool 都是 App + ViewType 注册：普通值直接作为参数，Ref/ArrayRef 用 `refParam` 在同一合同中声明。一次观察固定 View、Ref 来源、类型 activation 与 Binding；当前数据通过 View，调用返回短收据。
+可信 Host 安装 App、管理实例并决定工具授权。一次 Observation 采用同一份已提交快照中的全部打开页面、获准解析的 Ref 和动态工具。业务数据通过 View 呈现，Tool 返回操作收据。
 
-普通 App 作者从 `@aotui/sdk` 包内 `docs/app-authoring.md` 和完整文件／Ref 示例开始。本文面向安装 App、选择授权与管理资源的可信 Host。
+应用作者可以从 [SDK 作者指南](../../sdk/docs/app-authoring.md) 开始。
 
 ## 应用声明
 
-下面保留一个普通路径编辑工具与一个 Ref 检查工具。文件打开/编辑继续使用有业务意义的普通 filePath；Ref 工具只演示从已展示快照中取数据，不是文件打开/编辑的必需入口。对已展示的 File 对象，模型传入所属 `view_id.ref_id`，不携带展示类型前缀，不再另抄内部业务 ID。Ref 数据冻结不限制 App 执行自己的业务变更。应用自己校验是否打开、版本/权限和父子归属。
+文件详情页自己持有正文和编辑操作。SDK 根据类型声明生成共享工具定义，Runtime 根据模型传入的 `view_id` 执行该页的 handler。显式 Ref 参数根据原 Observation 解析，可以独立选择数据来源。
 
 <!-- b2-app:start -->
 ```js
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import Type from 'typebox';
-import { AppTools, ToolCatalog, createTUIApp, defineToolSet, defineViewTypeTool,
-  refParam, View, useDataRef } from '@aotui/sdk';
+import { ToolCatalog, createTUIApp, defineViewType, refParam, View, useDataRef } from '@aotui/sdk';
 
 const FileSchema = Type.Object({ filePath: Type.String(), text: Type.String() }, { additionalProperties: false });
-const tools = defineToolSet({
-  ordinary: defineViewTypeTool({ viewType: 'Detail', name: 'ordinary',
-    description: 'Apply text to an open file path; read the updated Detail.',
-    inputSchema: Type.Object({ filePath: Type.String(), text: Type.String() }, { additionalProperties: false }) }),
-  ref: defineViewTypeTool({ viewType: 'Detail', name: 'ref',
-    description: 'Inspect the displayed File Ref.',
-    inputSchema: Type.Object({ file: refParam('File', FileSchema) }, { additionalProperties: false }) }),
-});
-function Detail({ count, text }) {
-  const file = useDataRef('file', { filePath: '/open/note.txt', text }, { refType: 'File' });
-  return h('section', {}, h('p', {}, 'Open file: /open/note.txt'), h('p', {}, file('Current file value')), h('pre', {}, text),
-    h('p', {}, `Completed actions: ${count}`));
+const Guide = defineViewType({ name: 'Root', tools: {} });
+const FileDetail = defineViewType({ name: 'Detail', tools: {
+  ordinary: { description: 'Apply text to the selected file. Read the updated Detail.',
+    inputSchema: Type.Object({ text: Type.String() }, { additionalProperties: false }) },
+  ref: { description: 'Inspect the displayed File Ref.',
+    inputSchema: Type.Object({ file: refParam('File', FileSchema) }, { additionalProperties: false }) },
+} });
+const viewTypes = [Guide, FileDetail];
+
+function FileBody({ count, text, filePath }) {
+  const file = useDataRef('file', { filePath, text }, { refType: 'File' });
+  return h('section', {}, h('p', {}, 'Open file: ' + filePath), h('p', {}, file('Current file value')), h('pre', {}, text),
+    h('p', {}, 'Completed actions: ' + count));
 }
-function Root() {
+function Detail({ id, filePath }) {
   const [count, setCount] = useState(0), [text, setText] = useState('original');
-  return h(AppTools, { definition: tools, bindings: {
+  return h(View, { kind: 'state', id, type: FileDetail, bindings: {
     ordinary: { execute: async args => {
-      if (args.filePath !== '/open/note.txt') return { success: false,
-        error: { code: 'VIEW_NOT_OPEN', message: 'This Detail is not open.' } };
       setText(args.text); setCount(current => current + 1);
       return { success: true, data: { message: 'Change completed.' } };
     } },
     ref: { execute: async args => {
-      if (args.file.filePath !== '/open/note.txt') return { success: false,
-        error: { code: 'VIEW_NOT_OPEN', message: 'Refresh the current File Ref.' } };
+      if (args.file.filePath !== filePath) return { success: false,
+        error: { code: 'REF_WRONG_FILE', message: 'Select the displayed file.' } };
       return { success: true, data: { currentValueAvailable: true } };
     } },
-  } }, [
-    h(View, {kind: 'instruction', id: 'root', type: 'Root' }, h('section', {},
+  } }, h(FileBody, { count, text, filePath }));
+}
+function Root() {
+  return h('main', {}, [
+    h(View, { kind: 'instruction', id: 'root', type: Guide }, h('section', {},
       h('h1', {}, 'File Application Instruction'),
-      h('p', {}, 'Use a meaningful file path for editing, or the containing View id plus the local File Ref for inspection (detail.file). Read Detail for data.'),
-      h(ToolCatalog, { definition: tools }))),
-    h(View, {kind: 'state', id: 'detail', type: 'Detail' }, h(Detail, { count, text })),
+      h('p', {}, 'Select the receiving View by XML id. For a File Ref, combine its View id and local name (detail.file).'),
+      h(ToolCatalog, { viewTypes }))),
+    h(Detail, { id: 'detail', filePath: '/open/note.txt' }),
   ]);
 }
-export default createTUIApp({ app_name: 'interaction_example', component: Root });
+export default createTUIApp({ app_name: 'interaction_example', viewTypes, component: Root });
 ```
 <!-- b2-app:end -->
 
-SDK 工厂自动提供 `view-type-tools-v4`、托管状态和 `app-lifecycle-v2` 标记；不需 App 手写协议或生命周期开关。有自有资源才使用 useAppLifecycle。
+SDK 工厂自动提供 `view-type-tools-v5`、托管状态和 `app-lifecycle-v2` 标记。应用可以用 `useAppLifecycle` 管理自己创建的资源。
 
-低层 SDK 适配器使用 managed factory 的 `AppInstance` 和 Ref 注册接口 `IRefRegistry`。`IAOTUIApp` 和 `IViewMeta` 已退出 Runtime SPI。
+低层 SDK 适配器通过 managed factory 的 `RuntimeContext` 发布完整页面，Renderer 可用 `mountView` 获取对应的 Ref 所有者。
 
 ## Host installation and instance interaction
 
@@ -66,9 +67,9 @@ Tool execution is enabled by default. Install with the trusted Host option `tool
 
 Construct the Runtime with `createRuntime()`. The returned `IKernel` includes App interaction and shutdown reporting. Use `getDesktop()` for the `IDesktop` contract. These interfaces replace imports of the concrete `Kernel`, `IDesktopManager`, and the separate access and shutdown reporting interfaces.
 
-The Worker handshake requires `app-snapshot/v3`. The Host also requests `view-tool-parameters-invoke/v5` when execution is enabled. A malformed capability list receives `WORKER_CAPABILITY_INVALID`. Retired capabilities, including Tool IPC v4, receive `WORKER_CAPABILITY_UNSUPPORTED`. Current Tool calls use `VIEW_TOOL_INVOKE_V5` and its matching response. Snapshot publications notify the Host. The separate trusted invoker registration requires `ordinary-invoker/v4` for the shared ordinary and Ref parameter contract. `TOOL_INVOKER_ABI_UNSUPPORTED` in an installation cause means the App needs to be rebuilt with the matching SDK and Runtime.
+The Worker handshake requires `app-snapshot/v4`. When execution is enabled, the Host also requests `view-tool-parameters-invoke/v6`. Incompatible factories or required capabilities fail at load time. The `VIEW_TOOL_INVOKE_V6` request carries the receiving View ID, mount identity, and activation separately from business arguments. The Worker checks the current receiver before entering its handler.
 
-B03 validates the complete normalized Tool profile, including its internal marker, against the inclusive 64 KiB canonical JSON UTF-8 limit at generation, registration and consumption. A custom Snapshot Core can set a lower limit. SDK author diagnostics include a Schema path and distinguish invalid, unsupported and over-capacity declarations. [Core limits and declaration diagnostics](core-public-entry.md#snapshot-limits)
+Both the complete normalized Tool profile and the model schema, including the derived receiver and any eligibility enum, are checked against the inclusive 64 KiB canonical JSON UTF-8 limit. A custom Snapshot Core can set a lower limit. SDK author diagnostics include a Schema path and distinguish invalid, unsupported and over-capacity declarations. [Core limits and declaration diagnostics](core-public-entry.md#snapshot-limits)
 
 <!-- b2-example:start -->
 ```ts
@@ -87,7 +88,7 @@ export async function runExample(appUrl: string, dataDirectory: string) {
         desktop.output.subscribe(notify);
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
-          const result = await client.observe({ viewIds: ['detail'] });
+          const result = await client.observe({ all: true });
           if (result.status === 'observed') return result.observation;
           if (result.issue.code === 'APP_INTERACTION_UNAVAILABLE') throw Error(result.issue.code);
           await Promise.race([changed, new Promise<never>((_, reject) => {
@@ -114,15 +115,14 @@ export async function runExample(appUrl: string, dataDirectory: string) {
       const adopted = client.adoptObservation(observation.observationId);
       if (adopted.status !== 'adopted') throw Error(adopted.status);
       const requests = [
-        { name: 'ordinary', input: { filePath: '/open/note.txt', text: 'change' } },
+        { name: 'ordinary', input: { text: 'change' } },
         { name: 'ref', input: { file: 'detail.file' } },
       ];
       for (const [index, request] of requests.entries()) {
         const tool = observation.tools.find(tool => tool.name === request.name);
-        const binding = observation.bindings.find(binding => binding.toolId === tool?.id);
-        if (!binding) throw Error('Tool binding unavailable');
+        if (!tool) throw Error('Tool unavailable');
         const result = await client.invoke({ invocationId: `example-${index}`, observationId: observation.observationId,
-          bindingId: binding.bindingId, input: request.input });
+          toolId: tool.id, input: { view_id: 'detail', ...request.input } });
         if (result.kind !== 'receipt') throw Error(result.code);
         if (result.receipt.outcome.status !== 'succeeded') throw Error(result.receipt.outcome.status);
         outcomes.push(result.receipt.outcome);
@@ -148,7 +148,7 @@ export async function runExample(appUrl: string, dataDirectory: string) {
 
 The readiness wait subscribes before observing and unsubscribes in finally; it waits for a publication signal rather than guessing with a fixed sleep. The deadline is an error boundary, not evidence that any business work ended. The Host obtains the running instance by App ID and expected execution instance ID. Reopening starts a new Worker and requires a new handle.
 
-The granted views determine the visible Ref owners and matching type Tools. They do not bind a shared Tool to one file. The framework resolves Ref parameters only from the original granted Observation, validates their metadata type/Schema and rechecks source and activation. A plain path is still checked by the App; a resolved Ref's internal identity is also checked against current business state. A same-type View can keep the shared Tool active after another closes. An explicit Ref to the original closed View fails with `REF_VIEW_UNAVAILABLE` and its parameter path. Host authorization remains independent. The example uses the default policy for a trusted Host. Pass a fixed `AppInteractionPolicy` when the Host needs narrower projection, execution, or receipt access.
+An Observation always contains the complete committed set of open Views. The Host policy grants Ref identities and Tool IDs. For each Tool, `eligibleViewIds` is present when only a subset of that ViewType can receive the operation. Use the receiving XML View ID in `input.view_id`. For a Ref parameter, use the address of its data, such as `detail.file`. The Runtime resolves it from the adopted Observation and verifies that its source View is still live. A closed or replaced receiver and a closed Ref source are checked independently. The App owns current business validation, and the Host owns execution and receipt authorization.
 
 Both example calls use one Observation: the Ref remains its original frozen value after the edit. The current View contains the updated business text. Receipts do not repeat either text. Observe prepares one candidate alongside the current observation. Adoption revokes the previous calling eligibility and releases its source. Use preview() for read-only rendering without reserving a candidate.
 
@@ -158,7 +158,7 @@ The B02 Runtime adds the two-field `readReceipt({ observationId, invocationId },
 
 模块初始化或首次渲染失败时，宿主可检查本地 cause 链；见 [INIT / OPEN 诊断说明](initialization-diagnostics.md)。这些开发诊断不会自动进入 ToolResult 或 View。
 
-Host 可以用 `client.invoke(request, timeoutMs)` 为一次等待指定期限。已派发调用在等待截止时可返回 unknown，原执行在 Worker 内继续受 Runtime 跟踪。采用新观察后发起新调用须使用新的 Observation 及其绑定。关闭及存储释放合同见 [Worker 与 App 资源归属](worker-lifecycle.md)。
+Host 可以用 `client.invoke(request, timeoutMs)` 为一次等待指定期限。已派发调用在等待截止时可返回 unknown，原执行在 Worker 内继续受 Runtime 跟踪。采用新观察后发起新调用须使用新的 Observation、其中的 Tool ID 和接收页面。关闭及存储释放合同见 [Worker 与 App 资源归属](worker-lifecycle.md)。
 
 ## 身份与元数据来源
 
@@ -171,17 +171,17 @@ Host 可以用 `client.invoke(request, timeoutMs)` 为一次等待指定期限�
 | App instanceId | Runtime；每次逻辑执行新建 | 旧 Context 不得命中同 App ID 的继任执行；每次使用全新 Worker |
 | View id/type/name | 作者；id 在 App 的当前挂载集合内唯一 | id 是逻辑页面，type 激活共享工具，name 是呈现标签。SDK 的 id 使用非空 ASCII 字母、数字或下划线；纯 Core 的 id 遵循非空、无点、唯一性与容量规则。 |
 | View instanceId | Runtime；每次挂载新建 | 同 id 重挂不恢复旧 Ref 资格；Core 的 owner 与实例来源检查使用它 |
-| Tool name 与内部 id | 作者声明 name，Runtime/Core 生成 `[appId, viewType, name]` 的结构化标识 | 同类型共享一个注册；内部身份不拆解外部工具名。注册／handler 更新与 activation 资格分别维护 |
+| Tool name 与内部 id | 作者声明 name，Runtime/Core 生成 `[appId, viewType, name]` 的结构化标识 | 同类型共享一份定义。运行绑定由各打开的页面提供，内部身份独立于外部工具名 |
 | 原生 Tool 别名 | Source 按三个字段确定生成 | ASCII 字母/数字/下划线，连字符只作分隔，总长至多64；这是原生入口约束，不是 Core 结构化名字的限制。失败只隔离对应 App，无覆盖、截断或自动别名 |
 | Ref 局部名与调用地址 | 作者；同一个 View 内唯一 | 展示保持类型提示；调用为 view_id.local_ref。只有所绑定 Observation 的来源和 View instance 可解析，局部名可在其他 View 复用 |
 | Snapshot id/revision | Core；绑定 App 执行实例的已提交版本 | 当前状态只显示最新有效版本；不是业务对象 ID，也不能作为无需再观察的永久资格 |
 | Observation id | App instance | 一次准备出的来源集合；显式采用新观察撤销本实例的旧资格并释放旧观察专属数据 |
-| Binding/activation id | Runtime/Core；注册和类型活跃期 | handler-only 更新保留注册，禁用／最后 View 关闭后旧资格失效，重新激活产生新身份；Context 捕获执行目标 |
+| activation id | Runtime/Core；每个 View 实例的每项启用操作 | 持续启用时更新 handler 保留资格，单个页面禁用或关闭即撤销其资格。再次启用生成新身份 |
 | 状态 appKey | 可信 Host；既有 StateAddress 的 namespace | Registry 默认使用 canonical app_name；Host 可显式传 AOTUI_APP_KEY 选择独立 namespace，不改变注册名、调用目标或 Ref 资格。无通用数据作用域系统 |
 
 SDK 从作者声明的 `app_name` 生成 `kernelConfig.appName`。生成器用它写入 `aoapp.json`，Worker 校验工厂与安装时登记的名称一致。AppKernel 使用 Runtime 分配的 App ID。Host 可用 `AOTUI_APP_KEY` 显式指定持久化命名空间。
 
-当前常量随拥有合同的 Runtime SPI/Core 导出。工厂／端口使用 view-type-tools-v4，Snapshot 仍为3，工具 IPC 使用 view-tool-parameters-invoke/v5，生命周期仍为2，持久化会话与记录各自仍为1。INIT 的请求／ACK 必须包含 app-snapshot/v3；启用工具时还必须确认工具能力。不支持的组合在加载／OPEN前明确拒绝，数据的后续严格捕获与来源检查依然独立；没有新 spec 包或通用协商平台。
+工厂标记为 `view-type-tools-v5`，快照为 V4，工具 IPC 为 V6。生命周期和持久化继续使用 `app-lifecycle-v2` 与 `state-session-v1`。SDK、Runtime 与 Source 应使用同一批兼容版本。
 
 ## 2026-11-09 减法迁移
 

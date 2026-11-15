@@ -35,6 +35,7 @@ class MemoryTaskApp {
         return 'completed';
     }
     draft() {
+        const toolId = JSON.stringify([this.appId, 'TaskList', 'complete_task']);
         const refs: Record<string, unknown> = {};
         const labels: string[] = [];
         for (const [index, id] of this.order.entries()) {
@@ -48,20 +49,19 @@ class MemoryTaskApp {
             labels.push('[' + task.title + '](' + refId + ')');
         }
         return {
-            schemaVersion: 3, appId: this.appId, instanceId: this.instanceId,
+            schemaVersion: 4, appId: this.appId, instanceId: this.instanceId,
             producerSeq: ++this.producerSeq, sourceEpoch: this.sourceEpoch, capturedAt: this.producerSeq,
             views: [{
-                id: 'task_list', viewInstanceId: 'mount_1', type: 'TaskList',
+                toolBindings: [{ toolId, activationId: 'active-complete' }], id: 'task_list', viewInstanceId: 'mount_1', type: 'TaskList',
                 name: 'Tasks', kind: 'state',
                 content: { format: 'markdown-v1', value: labels.join('\n') },
             }],
             refs,
             tools: {
-                [JSON.stringify([this.appId, 'TaskList', 'complete_task'])]: {
-                    id: JSON.stringify([this.appId, 'TaskList', 'complete_task']), name: 'complete_task', viewType: 'TaskList',
+                [toolId]: {
+                    id: toolId, name: 'complete_task', viewType: 'TaskList',
                     description: 'Complete a task only after business CAS verification',
                     inputSchema: ordinaryParameterProfile(taskToolSchema.contract),
-                     execution: { kind: 'view-type', activationId: 'ta:v1:["task-instance-1",1]' },
                 },
             },
         };

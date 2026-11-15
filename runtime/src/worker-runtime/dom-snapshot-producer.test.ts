@@ -22,7 +22,6 @@ describe('DOM producer preserves Ref payloads as snapshot data', () => {
     const setup = (refs: Record<string, unknown>) => {
         const root = documentWithView();
         const node = root.querySelector('[data-view-id]')!;
-        node.setAttribute('data-view-instance-id', 'vi:v1:["logical-run",1]');
         const toolId = JSON.stringify(['task_app', 'Workspace', 'replace_file']);
         const compiled = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: false });
         if (!compiled.ok) throw Error('Ref Schema fixture');
@@ -30,10 +29,13 @@ describe('DOM producer preserves Ref payloads as snapshot data', () => {
         const projection = new SemanticProjectionCoordinator({
             identity: () => ({ appId: 'task_app', instanceId: 'logical-run' }),
             readFrame: () => ({
-                views: captureDOMViews(root, [fragment('workspace')], [owner]),
+                views: captureDOMViews(root, [fragment('workspace')], current => current === node
+                    ? { id: owner.viewId, type: owner.viewType, owner, bindings: [] } : undefined)
+                    .map(({ owner: _owner, bindings: _bindings, ...view }) => ({
+                        ...view, viewInstanceId: owner.viewInstanceId, toolBindings: [{ toolId, activationId: 'active-1' }],
+                    })),
                 tools: [{ id: toolId, viewType: 'Workspace', name: 'replace_file',
-                    description: 'Replace file with a version guard', inputSchema: ordinaryParameterProfile(compiled.contract),
-                    execution: { kind: 'view-type', activationId: 'active-1' } }],
+                    description: 'Replace file with a version guard', inputSchema: ordinaryParameterProfile(compiled.contract) }],
             }),
         });
         const prepare = () => {
@@ -63,7 +65,7 @@ describe('DOM producer preserves Ref payloads as snapshot data', () => {
         } });
         expect(draft.refs[refKey('workspace', instanceId, 'selected')].target)
             .toEqual({ kind: 'snapshot-value', payload: { id: 'other data' } });
-        expect(draft.tools[toolId].execution).toMatchObject({ kind: 'view-type', activationId: 'active-1' });
+        expect(draft.views[0]!.toolBindings).toEqual([{ toolId, activationId: 'active-1' }]);
 
         const core = createSnapshotCore();
         core.lifecycle.startApp('task_app', 'logical-run');

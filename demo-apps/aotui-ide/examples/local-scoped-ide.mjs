@@ -68,7 +68,7 @@ if (values.help) {
                 const deadline = Date.now() + 15000;
                 let ready;
                 while (!closing) {
-                    ready = await client.observe({ viewIds: ['root', 'workspace'] });
+                    ready = await client.observe({ all: true });
                     if (ready.status === 'observed') {
                         // This marker belongs to this packaged IDE's Root View.
                         // Workspace contents can contain arbitrary file names/text.
@@ -104,10 +104,10 @@ if (values.help) {
                                 value = preview.views.map(({ id, type, name }) => ({ viewId: id, viewType: type, viewName: name }));
                                 break;
                             }
-                            case 'observe': value = await client.observe({ viewIds: command.viewIds }); break;
+                            case 'observe': value = await client.observe({ all: true }); break;
                             case 'adopt': value = client.adoptObservation(command.observationId); break;
                             case 'invoke': value = await client.invoke({ invocationId: command.invocationId ?? randomUUID(),
-                                observationId: command.observationId, bindingId: command.bindingId, input: command.input }); break;
+                                observationId: command.observationId, toolId: command.toolId, input: command.input }); break;
                             case 'release': client.releaseObservation(command.observationId); value = { released: true }; break;
                             default: throw new Error('Unknown op: ' + command.op);
                         }

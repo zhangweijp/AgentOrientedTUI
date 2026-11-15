@@ -1,4 +1,4 @@
-import { createTUIApp, View, useCallback, useMemo, useRef, useState, useAppRuntimeContext, AppTools } from '@aotui/sdk';
+import { createTUIApp, View, useCallback, useMemo, useRef, useState, useAppRuntimeContext } from '@aotui/sdk';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import os from 'os';
 import { RootView } from './RootView.js';
@@ -7,7 +7,7 @@ import { TerminalView } from './TerminalView.js';
 import {
     createCloseTerminalBinding,
     createLoadMoreOutputBinding,
-    terminalTools,
+    RootType, TerminalType, TerminalConsoleType, terminalViewTypes,
     createNewTerminalBinding,
     createSendCommandBinding,
 } from './TerminalTools.js';
@@ -209,27 +209,24 @@ function TerminalRoot() {
         return { success: true, terminalId: terminal.id, message: result.message };
     }, [addTerminal, closeTerminal, sendCommand]);
 
-    const bindings = {
-        newTerminal: createNewTerminalBinding(sendCommandNewTerminal),
-        sendCommand: { ...createSendCommandBinding(terminals, sendCommand), enabled: terminals.some(terminal => terminal.status !== 'running') },
-        loadMoreOutput: createLoadMoreOutputBinding(setOutputTail),
-        closeTerminal: createCloseTerminalBinding(closeTerminal),
-    };
-
     return (
-        <AppTools definition={terminalTools} bindings={bindings}>
-            <View kind="instruction" id="root" type="Root" name="Root">
+        <>
+            <View kind="instruction" id="root" type={RootType} name="Root">
                 <RootView />
             </View>
-            <View kind="state" id="term_console" type="TerminalConsole" name="TerminalConsole">
+            <View kind="state" id="term_console" type={TerminalConsoleType} bindings={{ new_terminal_and_send_command: createNewTerminalBinding(sendCommandNewTerminal) }} name="TerminalConsole">
                 <TerminalConsoleView projectPath={projectPath} terminals={terminals} />
             </View>
             {terminals.map((terminal: TerminalSession) => (
-                <View kind="state" key={terminal.id} id={terminal.id} type="Terminal" name={`Terminal ${terminal.id}`}>
+                <View kind="state" key={terminal.id} id={terminal.id} type={TerminalType} bindings={{
+                    send_command_to_exist_terminal: createSendCommandBinding(terminal, sendCommand),
+                    load_more_output: createLoadMoreOutputBinding(terminal.id, setOutputTail),
+                    close_terminal: createCloseTerminalBinding(terminal.id, closeTerminal),
+                }} name={`Terminal ${terminal.id}`}>
                     <TerminalView terminal={terminal} />
                 </View>
             ))}
-        </AppTools>
+        </>
     );
 }
 
@@ -238,4 +235,5 @@ export default createTUIApp({
     whatItIs: 'A multi-terminal shell application with command history, working directory tracking, and output tailing for LLM workflows.',
     whenToUse: 'Run shell commands in the project workspace, manage terminal sessions, and inspect command status and output.',
     component: TerminalRoot,
+    viewTypes: terminalViewTypes,
 });

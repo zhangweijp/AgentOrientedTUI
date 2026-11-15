@@ -3,11 +3,10 @@ import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import { parentPort } from 'node:worker_threads';
 import { open } from 'node:fs/promises';
 import Type from 'typebox';
-import { createTUIApp, View, AppTools, defineToolSet, defineViewTypeTool,
+import { createTUIApp, View, defineViewType,
     useAppLifecycle, useAppRuntimeContext, usePersistentState } from '@aotui/sdk';
 
 const incrementInput = Type.Object({
-    view_id: Type.String({ description: 'The counter business ID shown in the open Counter View.' }),
     amount: Type.Number(),
     hold: Type.Optional(Type.Boolean()),
     failure: Type.Optional(Type.String({ enum: ['declined', 'after-update', 'throw'] })),
@@ -22,21 +21,15 @@ function Counter({ owner, id, generation, enabled }) {
 }
 
 
-function createFixtureTools(binding) { return defineToolSet({
-Increment: defineViewTypeTool({
-        viewType: 'Counter',
-        name: 'increment',
-        description: 'Increment the counter ' + binding + '; use the business ID shown in the Counter View.',
-        inputSchema: incrementInput,
-    })
-}); }
+const CounterType = defineViewType({ name:'Counter', tools: {
+    increment: { description:'Increment the selected Counter.', inputSchema:incrementInput },
+} });
 function Root() {
     const context = useAppRuntimeContext();
     const [, save] = usePersistentState('counter', 0);
     const owner = useMemo(() => ({ value: 0, secondaryValue: 0, live: true, entries: 0, save,
         resource: undefined, handlerRelease: undefined, cleanupRelease: undefined, rejectClose: false }), [save]);
     const [view, setView] = useState({ generation: 1, enabled: true, binding: 1 });
-const fixtureTools0 = useMemo(() => createFixtureTools(view.binding), [view.binding]);
     const [, refresh] = useState(0);
 
     useAppLifecycle({ stop() { owner.live = false; parentPort.postMessage({ type: 'TEST_STOPPED', value: owner.value }); },
@@ -64,32 +57,30 @@ const fixtureTools0 = useMemo(() => createFixtureTools(view.binding), [view.bind
         };
         parentPort.on('message', owner.listener);
     }, []);
-    return h(AppTools, { key: view.binding,  definition: fixtureTools0, bindings: {
-Increment: { execute: async args => {
-            if (!['counter', 'counter2'].includes(args.view_id) || !view.enabled) {
-                return { success: false, error: { code: 'VIEW_NOT_OPEN', message: 'The requested counter is not open and enabled.' } };
-            }
+    const bindings = id => ({
+        increment: { execute: async args => {
             owner.entries++; parentPort.postMessage({ type: 'TEST_ENTERED', entries: owner.entries });
             if (args.hold) await new Promise(resolve => { owner.handlerRelease = resolve; });
             // The application decides whether a suspended task may commit.
             if (!owner.live) return { success: false, error: { code: 'APP_STOPPED', message: 'App is stopping' } };
             if (args.failure === 'declined') return { success: false, error: { code: 'EXPECTED', message: 'Counter was not updated' } };
-            if (args.view_id === 'counter') { owner.value += args.amount; owner.save(owner.value); }
+            if (id === 'counter') { owner.value += args.amount; owner.save(owner.value); }
             else owner.secondaryValue += args.amount;
             refresh(x => x + 1);
             if (args.failure === 'after-update') return { success: false, error: { code: 'EXPECTED', message: 'Counter was updated' }, data: { counterUpdated: true } };
             if (args.failure === 'throw') throw Error('PRIVATE_COUNTER_EXCEPTION');
-            return { success: true, data: { value: args.view_id === 'counter' ? owner.value : owner.secondaryValue,
-                view_id: args.view_id, generation: view.generation, entries: owner.entries } };
-        }, enabled: view.enabled }
-} }, h('main', {}, [
-        h(View, {kind: 'state', id: 'counter', type: 'Counter', key: view.generation },
+            return { success: true, data: { value: id === 'counter' ? owner.value : owner.secondaryValue,
+                view_id: id, generation: view.generation, entries: owner.entries } };
+        }, enabled: id === 'counter2' || view.enabled }
+    });
+    return h('main', {}, [
+        h(View, {kind: 'state', id: 'counter', type: CounterType, key: view.generation + ':' + view.binding, bindings:bindings('counter') },
             h(Counter, { owner, id: 'counter', generation: view.generation, enabled: view.enabled })),
-        h(View, {kind: 'state', id: 'counter2', type: 'Counter' },
+        h(View, {kind: 'state', id: 'counter2', type: CounterType, bindings:bindings('counter2') },
             h(Counter, { owner, id: 'counter2', generation: 1, enabled: view.enabled })),
-    ]));
+    ]);
 }
-const factory = createTUIApp({ app_name: 'tool_lifecycle', component: Root });
+const factory = createTUIApp({ app_name: 'tool_lifecycle', component: Root, viewTypes:[CounterType] });
 const initialize = factory.initialize;
 factory.initialize = async (...args) => {
     if (args[0].launchConfig.holdInitialization) {

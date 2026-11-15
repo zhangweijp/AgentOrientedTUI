@@ -10,7 +10,8 @@ import type { AppLifecyclePort } from '@aotui/runtime/spi';
 import type { AppStatePersistence } from '@aotui/runtime/spi';
 import { createContext } from 'preact';
 import { useContext, useMemo } from 'preact/hooks';
-import type { AppID, DesktopID, IRefExporter, IViewOwnedToolPort, IAppTypeToolPort, AppLaunchConfig } from '@aotui/runtime/spi';
+import type { ViewType } from '../tools/view-type-tool.js';
+import type { AppID, DesktopID, IRefExporter, AppFrameView, RuntimeContext, AppLaunchConfig } from '@aotui/runtime/spi';
 
 // ═══════════════════════════════════════════════════════════════
 //  Types
@@ -38,17 +39,9 @@ interface AppRuntimeContextValue {
      */
     refExporter: IRefExporter;
 
-    /** SDK renderer retries only controller cleanups that have failed. */
-    toolCleanup?: Set<() => void> | undefined;
-
-    /** Managed renderer owns these callbacks even when Preact skips child cleanup. */
-    toolOwners?: { closed: boolean; active: Set<() => void> } | undefined;
-
-    /** View mount identities activate the App's shared ViewType Tools. */
-    viewTools?: IViewOwnedToolPort | undefined;
-
-    /** App-owned, ViewType-scoped ordinary Tool registration port. */
-    appTypeTools?: IAppTypeToolPort | undefined;
+    viewTypes: ReadonlyMap<string, ViewType>;
+    views: WeakMap<Element, Pick<AppFrameView, 'id' | 'type' | 'owner' | 'bindings'>>;
+    mountView: RuntimeContext['mountView'];
 }
 
 interface AppRuntimePublicContextValue {

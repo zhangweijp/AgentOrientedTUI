@@ -13,11 +13,7 @@
   },
   "include": [
     "type-tests/public-api.ts",
-    "type-tests/view-type-tool.ts",
-    "type-tests/static-tools.ts",
-    "type-tests/binding-tools.ts",
-    "type-tests/ref-parameters.ts",
-    "type-tests/app-tools.tsx",
+    "type-tests/view-type-tool.tsx",
     "type-tests/view-metadata.tsx"
   ],
   "exclude": []

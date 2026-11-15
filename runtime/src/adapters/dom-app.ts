@@ -1,5 +1,4 @@
 import { parseHTML } from 'linkedom';
-import type { ViewInstance } from '../core/tool/view-owned-tools.js';
 import { captureDOMViews } from '../worker-runtime/dom-snapshot-producer.js';
 import { extractViewFragments } from '../worker-runtime/view-fragment-extractor.js';
 
@@ -16,8 +15,8 @@ export function createDOMAppRoot(appId: string): HTMLElement {
     return root;
 }
 
-export function readDOMAppViews(root: Element, mounted: readonly ViewInstance[]) {
-    return captureDOMViews(root, extractViewFragments(root), mounted);
+export function readDOMAppViews(root: Element, attachment: Parameters<typeof captureDOMViews>[2]) {
+    return captureDOMViews(root, extractViewFragments(root), attachment);
 }
 
 export function dispatchDOMAppEvent(root: Element, type: string, detail: unknown): void {

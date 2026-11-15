@@ -8,7 +8,7 @@ import { ChatBridge } from '../../src/gui/ChatBridge.js';
 import { TuiDesktopViewer } from '../../src/gui/components/TuiDesktopViewer.js';
 import { appRouter } from '../../src/trpc/router.js';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
-import { createSnapshotCore, createAppInteraction, createViewOwnedTools, compileOrdinarySchema,
+import { createSnapshotCore, createAppInteraction, createViewOwnedTools,
     type ExecutionBinding } from '@aotui/runtime/core';
 
 // Existing DI boundaries: no singleton DesktopManager, user database/config,
@@ -32,26 +32,24 @@ function deferred() {
 function assembly(topicId: string, instanceId: string) {
     const core = createSnapshotCore(); core.lifecycle.startApp('preview_app', instanceId);
     const registry = createViewOwnedTools('preview_app', instanceId);
-    const view = registry.mount('work', 'Workspace');
-    const input = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
-    if (!input.ok) throw Error('Invalid controlled Schema');
+    const inputSchema = { type: 'object', properties: {}, additionalProperties: false };
     let entries = 0;
-    const unregister = registry.registerTypeTool({ viewType: 'Workspace', name: 'inspect', description: 'Inspect current work.', inputSchema: input.contract.schema }, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: () => async () => {
-            entries++; return { phase: 'entered-returned', result: { success: true, data: { completed: true } } };
+    registry.defineTools([{ viewType: 'Workspace', name: 'inspect', description: 'Inspect current work.', inputSchema }]);
+    const frame = registry.prepareFrame([{ id: 'work', type: 'Workspace', owner: {}, bindings: [{
+        name: 'inspect', enabled: true, execute: () => {
+            entries++;
+            return { success: true, data: { completed: true } };
         },
-    });
+    }] }]);
+    frame.accept();
+    const view = frame.instances[0]!;
     const binding: ExecutionBinding = { identity: {},
         validateInput: (_source, value) => ({ ok: true, value }),
-        isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.execution).success }),
+        isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.receiver).success }),
         execute: async () => { entries++; return { kind: 'tool-result', phase: 'entered-returned', result: { success: true } }; },
     };
     const authority = createAppInteraction(core.store, { namespace: 'preview:' + instanceId, now: Date.now, appId: 'preview_app', instanceId,
-        policy: { project({ source }) {
-            const views = source.views.map(view => ({ viewId: view.id, viewInstanceId: view.viewInstanceId }));
-            return { views, refs: [], toolBindings: Object.values(source.tools).map(tool => ({ toolId: tool.id, execution: tool.execution })),
-                content: views.map(view => ({ view, decision: 'retain' })) };
-        }, authorize: () => true, canReadReceipt: () => true }, execution: { resolve: () => binding } });
+        policy: { project: ({ source }) => ({ refs: [], toolIds: Object.keys(source.tools) }), authorize: () => true, canReadReceipt: () => true }, execution: { resolve: () => binding } });
     const listeners = new Set<() => void>();
     let hold: { started: ReturnType<typeof deferred>; resume: ReturnType<typeof deferred> } | undefined;
     const gates: Array<ReturnType<typeof deferred>> = [];
@@ -63,11 +61,11 @@ function assembly(topicId: string, instanceId: string) {
     };
     function publish(body: string, notify = true) {
         businessValue = body;
-        const accepted = core.committer.accept({ schemaVersion: 3, appId: 'preview_app', instanceId,
+        const accepted = core.committer.accept({ schemaVersion: 4, appId: 'preview_app', instanceId,
             producerSeq: ++sequence, sourceEpoch: sequence, capturedAt: Date.now(),
-            views: [{ id: view.viewId, viewInstanceId: view.viewInstanceId, type: 'Workspace', kind: 'state', name: 'Current work',
+            views: [{ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: 'Workspace', kind: 'state', name: 'Current work',
                 content: { format: 'markdown-v1', value: body } }], refs: {},
-            tools: Object.fromEntries(registry.listTools().map(tool => [tool.id, tool])),
+            tools: Object.fromEntries(frame.tools.map(tool => [tool.id, tool])),
         });
         expect(accepted.status).toBe('published');
         if (notify) for (const listener of [...listeners]) listener();
@@ -81,7 +79,7 @@ function assembly(topicId: string, instanceId: string) {
             if (barrier) { barrier.started.resolve(); await barrier.resume.promise; }
             return result;
         } } }),
-        async dispose() { for (const gate of gates) gate.resolve(); authority.close(); await authority.whenClosed(); unregister(); registry.dispose(); core.lifecycle.dispose(); },
+        async dispose() { for (const gate of gates) gate.resolve(); authority.close(); await authority.whenClosed(); registry.dispose(); core.lifecycle.dispose(); },
     };
 }
 function fixture() {
@@ -163,7 +161,7 @@ describe('current Host preview subscription', () => {
                 expect(screen.getByText('Committed two')).toBeInTheDocument();
                 expect(screen.queryByText('Initial topic_a')).toBeNull();
                 expect(f.sessions.get('topic_a').state).toBe('paused');
-                expect((await context.executeTool!('preview_app-Workspace-inspect', {}, 'agent-still-qualified'))?.outcomeStatus).toBe('succeeded');
+                expect((await context.executeTool!('preview_app-Workspace-inspect', { view_id: 'work' }, 'agent-still-qualified'))?.outcomeStatus).toBe('succeeded');
                 expect(app.entries()).toBe(1);
                 // The GUI initiates no second request; notifications drive independent reads.
                 expect(queries.mock.calls.length).toBeGreaterThan(initialQueries);

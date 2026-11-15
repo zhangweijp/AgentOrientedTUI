@@ -1,5 +1,5 @@
 import Type from 'typebox';
-import { defineToolSet, defineViewTypeTool, refParam, type JsonValue, type ToolBindings, type ToolSetMap } from '@aotui/sdk/app';
+import { defineViewType, refParam, type JsonValue, type ViewBindings } from '@aotui/sdk/app';
 
 const jsonList = Type.Array(Type.Unknown(), { maxItems: 8 });
 export const itemValue = Type.Union([
@@ -7,36 +7,37 @@ export const itemValue = Type.Union([
     Type.Object({ nested: jsonList }, { additionalProperties: false }),
 ]);
 const operation = Type.Enum(['null', 'reset', 'reverse', 'empty', 'close', 'open', 'invalid', 'oversized', 'wait']);
-const tool = (viewType: string, name: string, description: string) => ({ viewType, name, description });
 
-export const tools = defineToolSet({
-    update: defineViewTypeTool({
-        ...tool('Workspace', 'update', 'Change which work items and values are shown.'),
-        inputSchema: Type.Object({
-            operation,
-            options: Type.Optional(Type.Object({
-                numbers: Type.Array(Type.Union([Type.Integer({ minimum: 0, maximum: 5 }), Type.Null()]), { maxItems: 2 }),
-                mode: Type.Literal('keep'),
-                'x-aotui-ref-kind': Type.Optional(Type.String({ pattern: '^[a-z]+$' })),
-            }, { additionalProperties: false })),
-        }, { additionalProperties: false }),
-    }),
-    inspect: defineViewTypeTool({
-        ...tool('Item', 'inspect', 'Record a selection in the Workspace View.'),
-        inputSchema: Type.Object({
-            selected: refParam('Data', itemValue),
-            elements: Type.Optional(Type.Array(refParam('Data', itemValue), { maxItems: 3 })),
-            text: Type.Optional(Type.String({ default: 'example' })),
-            'x-aotui-ref-value': Type.Optional(Type.Object({
-                'x-aotui-parameter-contract': Type.Literal('business'),
-            }, { default: { 'x-aotui-parameter-contract': 'business' }, additionalProperties: false })),
-        }, { additionalProperties: false }),
-    }),
-    count: defineViewTypeTool({
-        ...tool('Item', 'count', 'Confirm the selected value is a non-negative integer.'),
-        inputSchema: Type.Object({ selected: refParam('Data', Type.Integer({ minimum: 0 })) }, { additionalProperties: false }),
-    }),
-});
+export const WorkspaceType = defineViewType({ name: 'Workspace', tools: {
+        update: { description: 'Change which work items and values are shown.',
+            inputSchema: Type.Object({
+        operation,
+        options: Type.Optional(Type.Object({
+            numbers: Type.Array(Type.Union([Type.Integer({ minimum: 0, maximum: 5 }), Type.Null()]), { maxItems: 2 }),
+            mode: Type.Literal('keep'),
+            'x-aotui-ref-kind': Type.Optional(Type.String({ pattern: '^[a-z]+$' })),
+        }, { additionalProperties: false })),
+    }, { additionalProperties: false }),
+        },
+} });
+
+export const ItemType = defineViewType({ name: 'Item', tools: {
+        inspect: { description: 'Record a selection in the Workspace View.',
+            inputSchema: Type.Object({
+        selected: refParam('Data', itemValue),
+        elements: Type.Optional(Type.Array(refParam('Data', itemValue), { maxItems: 3 })),
+        text: Type.Optional(Type.String({ default: 'example' })),
+        'x-aotui-ref-value': Type.Optional(Type.Object({
+            'x-aotui-parameter-contract': Type.Literal('business'),
+        }, { default: { 'x-aotui-parameter-contract': 'business' }, additionalProperties: false })),
+    }, { additionalProperties: false }),
+        },
+        count: { description: 'Confirm the selected value is a non-negative integer.',
+            inputSchema: Type.Object({ selected: refParam('Data', Type.Integer({ minimum: 0 })) }, { additionalProperties: false }),
+        },
+} });
+
+export const workViewTypes = [WorkspaceType, ItemType] as const;
 
 export const label = 'Selected [work] \\ item';
 export const selectedViewId = 'billing_export_2026_11';
@@ -64,10 +65,10 @@ export interface WorkItemOptions {
     onClose?(): void | Promise<void>;
 }
 
-export function bindings(
+export function workspaceBindings(
     change: (update: (state: State) => State) => void,
     options: WorkItemOptions,
-): ToolBindings<ToolSetMap<typeof tools>> {
+): ViewBindings<typeof WorkspaceType> {
     return {
         update: { async execute({ operation }) {
             if (operation === 'wait') await options.prepare?.();
@@ -90,6 +91,11 @@ export function bindings(
             }
             return { success: true };
         } },
+    };
+}
+
+export function itemBindings(change: (update: (state: State) => State) => void): ViewBindings<typeof ItemType> {
+    return {
         inspect: { execute(args) {
             change(state => ({ ...state, inspections: state.inspections + 1,
                 note: JSON.stringify({ selected: args.selected, elements: args.elements, text: args.text,

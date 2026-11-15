@@ -1,5 +1,6 @@
-/** Mounted View identities activate the App's shared ViewType Tools. */
-export interface IViewOwnedToolPort {
-    mount(viewId: string, viewType: string): string;
-    unmount(viewInstanceId: string): void;
+import type { IRefRegistry } from '../app/ref-exporter.interface.js';
+
+export interface MountedView extends Pick<IRefRegistry, 'registerRef'> {
+    readonly owner: object;
+    release(): void;
 }

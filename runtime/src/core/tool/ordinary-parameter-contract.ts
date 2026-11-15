@@ -1,7 +1,7 @@
 export const VIEW_TYPE_PARAMETERS_MODE = 'view-type-parameters-v1' as const;
 import { canonicalJson, copyJson, JsonCopyLimitError, SnapshotDataError, utf8Size } from '../snapshot/json.js';
 import type { JsonValue } from '../snapshot/types.js';
-import { RAW_TOOL_ARGUMENT_LIMITS as INPUT, RESOLVED_TOOL_ARGUMENT_LIMITS } from '../snapshot/snapshot-support.js';
+import { DEFAULT_SNAPSHOT_LIMITS, RAW_TOOL_ARGUMENT_LIMITS as INPUT, RESOLVED_TOOL_ARGUMENT_LIMITS } from '../snapshot/snapshot-support.js';
 
 type JsonObject = Readonly<Record<string, JsonValue>>;
 type DeclarationCode = 'PARAMETER_DECLARATION_INVALID' | 'PARAMETER_DECLARATION_UNSUPPORTED' | 'PARAMETER_DECLARATION_CAPACITY';
@@ -266,6 +266,10 @@ export function compileValueSchema(input: unknown): Readonly<
 }
 
 function finish(root: JsonValue): CompileResult {
+  if (object(root) && object(root.properties) && has(root.properties, 'view_id')) {
+    throw new DeclarationError('PARAMETER_DECLARATION_INVALID',
+      'view_id is reserved for the receiving View. Declare only business parameters.', '$.properties.view_id');
+  }
   // Compile fields once. The root assembles their diagnostics, retaining the
   // existing limit and the parameter name as well as the nested JSON path.
   const compiled = compileValue(root, '$', 'root');
@@ -309,18 +313,16 @@ function finish(root: JsonValue): CompileResult {
   }) });
 }
 
-/** Derive the model descriptor without walking defaults, constants, or property names as keywords. */
-export function modelToolSchema(input: JsonObject): JsonObject;
-export function modelToolSchema(input: JsonValue): JsonValue;
-export function modelToolSchema(input: JsonValue): JsonValue {
+function stripInternalSchema(input: JsonValue): JsonValue {
   if (!object(input)) return input;
   const schema = Object.fromEntries(Object.entries(input).flatMap(([key, value]) => {
     if (key === MARKER || key === REF_KIND || key === REF_VALUE) return [];
     if (key === 'properties' && object(value)) {
-      return [[key, Object.fromEntries(Object.entries(value).map(([name, schema]) => [name, modelToolSchema(schema)]))]];
+      const properties = Object.fromEntries(Object.entries(value).map(([name, schema]) => [name, stripInternalSchema(schema)]));
+      return [[key, Object.freeze(properties)]];
     }
-    if (key === 'items') return [[key, modelToolSchema(value)]];
-    if (key === 'anyOf' && Array.isArray(value)) return [[key, value.map(modelToolSchema)]];
+    if (key === 'items') return [[key, stripInternalSchema(value)]];
+    if (key === 'anyOf' && Array.isArray(value)) return [[key, Object.freeze(value.map(stripInternalSchema))]];
     return [[key, value]];
   }));
   if (typeof input[REF_KIND] === 'string') {
@@ -328,7 +330,32 @@ export function modelToolSchema(input: JsonValue): JsonValue {
     schema.description = typeof input.description === 'string' && input.description
       ? input.description + ' ' + address : address;
   }
-  return schema;
+  return Object.freeze(schema);
+}
+
+/** Derive the one model schema for a page operation from its business contract. */
+export function modelToolSchema(input: JsonValue, viewType: string, eligibleViewIds?: readonly string[]): JsonObject {
+  const schema = stripInternalSchema(input);
+  if (!object(schema) || !object(schema.properties) || !Array.isArray(schema.required) ||
+      has(schema.properties, 'view_id') || eligibleViewIds?.length === 0) {
+    throw new SnapshotDataError('TOOL_SCHEMA_INVALID', '$', 'Invalid View Tool model contract');
+  }
+  const result = Object.freeze({
+    ...schema,
+    properties: Object.freeze({
+      view_id: Object.freeze({
+        type: 'string',
+        description: 'Receiving ' + viewType + ' View XML id.',
+        ...(eligibleViewIds === undefined ? {} : { enum: Object.freeze([...eligibleViewIds]) }),
+      }),
+      ...schema.properties,
+    }),
+    required: Object.freeze(['view_id', ...schema.required]),
+  });
+  if (utf8Size(canonicalJson(result)) > DEFAULT_SNAPSHOT_LIMITS.maxToolSchemaBytes) {
+    throw new SnapshotDataError('TOOL_SCHEMA_CAPACITY', '$', 'View Tool model schema exceeds the byte limit');
+  }
+  return result;
 }
 
 /** Compile the ViewType Tool schema for model arguments and resolved handler input. */

@@ -1,5 +1,5 @@
 import { ToolCatalog } from '@aotui/sdk';
-import { browserTools } from './BrowserTools.js';
+import { browserViewTypes } from './BrowserTools.js';
 
 export function RootView() {
     return <section>
@@ -22,6 +22,7 @@ export function RootView() {
         <h4>Tool Preconditions</h4><p>Use a non-empty search query, a valid URL for fetching, and a URL from the current results for open_result. Result and Page actions require their respective Views to remain open.</p>
         <p>Available Tools is a static catalog by View Type. Only tools attached to the current context are callable; ResultList and Page tools require their Views to be open.</p>
         <p>Tool receipts describe each call. Read search results and page content from their current Views.</p>
-        <ToolCatalog definition={browserTools} />
+        <p>Choose the current page’s XML id as view_id in each operation.</p>
+        <ToolCatalog viewTypes={browserViewTypes} />
     </section>;
 }

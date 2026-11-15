@@ -27,21 +27,19 @@ async function fixture(scenario='normal'){
     await symlink(join(repo,'sdk/node_modules/preact'),join(dir,'node_modules/preact'),'dir');
     await symlink(join(repo,'sdk/node_modules/typebox'),join(dir,'node_modules/typebox'),'dir');
     const body=`import {writeFile} from 'node:fs/promises';import {existsSync} from 'node:fs';
-import {h} from 'preact';import {Type} from 'typebox';import {createTUIApp,View,defineViewTypeTool,AppTools, defineToolSet,usePersistentState,useAppRuntimeContext} from ${JSON.stringify(url(sdkDist))};
+import {h} from 'preact';import {Type} from 'typebox';import { createTUIApp, View, usePersistentState, useAppRuntimeContext, defineViewType } from ${JSON.stringify(url(sdkDist))};
 let setter,value,port;function Detail(){
 return h('section',{},h('p',{},String(value)));}
 
-const fixtureTools0 = defineToolSet({
-Set: defineViewTypeTool({viewType:'Detail',name:'set',description:'Set persisted value',inputSchema:Type.Object({value:Type.Number()},{additionalProperties:false}),}),
-Flush: defineViewTypeTool({viewType:'Detail',name:'flush',description:'Flush persisted state',inputSchema:Type.Object({},{additionalProperties:false}),})
-});
+
+const _FixtureDetail = defineViewType({ name:'Detail', tools:{ set: { description:'Set persisted value', inputSchema:Type.Object({value:Type.Number()},{additionalProperties:false}) },
+flush: { description:'Flush persisted state', inputSchema:Type.Object({},{additionalProperties:false}) } } });
+
 function Root(){
 [value,setter]=usePersistentState('value',0);port=useAppRuntimeContext().persistence;
-return h(AppTools, { definition: fixtureTools0, bindings: {
-Set: { execute: async args=>{setter(args.value);return {success:true,data:{value:args.value}};} },
-Flush: { execute: async()=>({success:true,data:await port.flush()}) }
-} }, h(View,{kind: 'state',id:'detail',type:'Detail'},h(Detail)));}
-const factory=createTUIApp({app_name:'close',component:Root});
+return h('div', null, h(View,{kind: 'state',id:'detail',type:_FixtureDetail, bindings:{ set: { execute: async args=>{setter(args.value);return {success:true,data:{value:args.value}};} },
+flush: { execute: async()=>({success:true,data:await port.flush()}) } }},h(Detail)));}
+const factory=createTUIApp({viewTypes:[_FixtureDetail], app_name:'close',component:Root});
 ${scenario==='async-unmount'||scenario==='failed-unmount'?`const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,async close(){${scenario==='async-unmount'?`await writeFile(${JSON.stringify(entered)},'entered');while(!existsSync(${JSON.stringify(release)}))await new Promise(resolve=>setTimeout(resolve,5));`:''}renderer.close();${scenario==='failed-unmount'?"throw Error('private unmount detail');":''}}};};`:''}
 export default factory;`;
     await capture(app,body);return {dir,app,entered,release,data:join(dir,'data'),record:(desktop='d',name='close')=>join(dir,'data/app-state',desktop,name,'value.json')};
@@ -60,9 +58,9 @@ async function invoke(runtime:any,id='d',app='app',name='set',input={value:1}){
     try{
         await vi.waitFor(async()=>{const result=await client.observe({all:true});expect(result.status).toBe('observed');if(result.status==='observed')observation=result.observation;},{timeout:6000});
         expect(client.adoptObservation(observation.observationId)).toEqual({status:'adopted'});
-        const tool=observation.tools.find((item:any)=>item.name===name),binding=observation.bindings.find((item:any)=>item.toolId===tool?.id&&item.execution.kind==='view-type');
-        if(!binding)throw new Error('Missing Semantic Tool binding '+name);
-        const result=await client.invoke({invocationId:randomUUID(),observationId:observation.observationId,bindingId:binding.bindingId,input});
+        const tool=observation.tools.find((item:any)=>item.name===name);
+        if(!tool)throw new Error('Missing View Tool '+name);
+        const result=await client.invoke({invocationId:randomUUID(),observationId:observation.observationId,toolId:tool.id,input:{view_id:'detail',...input}});
         if(result.kind!=='receipt'||result.receipt.outcome.status!=='succeeded')return {success:false};
         return result.receipt.outcome.value as any;
     }finally{if(observation)client.releaseObservation(observation.observationId);}
@@ -281,8 +279,8 @@ it('C2-29 emitted createRuntime + real SDK naturally exits a fresh Node child',a
         "assert.equal(opened.status,'ready');",
         "const observed=await opened.interaction.observe({all:true});assert.equal(observed.status,'observed');",
         "assert.equal(opened.interaction.adoptObservation(observed.observation.observationId).status,'adopted');",
-        "const observation=observed.observation,tool=observation.tools.find(item=>item.name==='set'),binding=observation.bindings.find(item=>item.toolId===tool.id&&item.execution.kind==='view-type');assert.ok(binding);",
-        "const result=await opened.interaction.invoke({invocationId:'child-call',observationId:observation.observationId,bindingId:binding.bindingId,input:{value:74}});",
+        "const observation=observed.observation,tool=observation.tools.find(item=>item.name==='set');assert.ok(tool);",
+        "const result=await opened.interaction.invoke({invocationId:'child-call',observationId:observation.observationId,toolId:tool.id,input:{view_id:'detail',value:74}});",
         "assert.equal(result.kind,'receipt');assert.equal(result.receipt.outcome.status,'succeeded');opened.interaction.releaseObservation(observation.observationId);",
         "await runtime.shutdown();const report=await runtime.beginShutdown().completion;",
         "assert.equal(report.ok,true);assert.equal(report.workers.report.total,0);assert.equal(worker.threadId,-1);",

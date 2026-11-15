@@ -1,118 +1,51 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import * as contracts from '../core/tool/ordinary-parameter-contract.js';
+import { expect, it, vi } from 'vitest';
 import { AppKernel } from './app-kernel/AppKernel.js';
-import { invokeTypeParameters } from './ordinary-invocation-v2.js';
-import type { IAppTypeToolPort, IViewOwnedToolPort } from '../spi/index.js';
-import type { OrdinaryParameterContract } from '../core/tool/ordinary-parameter-contract.js';
+import { detailFrame, publishedTool } from '../../tests/fixtures/app-frame.js';
+import type { AppContext, RuntimeContext } from '../spi/index.js';
 
-async function setup() {
-  let port!: IAppTypeToolPort, views!: IViewOwnedToolPort;
-  const kernel = new AppKernel({ appName: 'test_app', factory: {
-    initialize: async (context) => {
-      port = context.appTypeTools!; views = context.viewTools!;
-      return { close() {} };
-    },
-  } });
-  kernel.setId('app' as never); kernel.setAppExecutionInstanceId('run');
-  await kernel.onOpen({ appId: 'app' as never, desktopId: 'd' as never });
-  views.mount('detail', 'File');
-  const context = { appId: 'app', instanceId: 'run', negotiated: true,
-    validateBinding: kernel.validateBoundTypeTool.bind(kernel),
-    getParameterContract: (tool: Parameters<typeof kernel.validateBoundTypeTool>[0], execution: Parameters<typeof kernel.validateBoundTypeTool>[1]) =>
-      kernel.getBoundTypeToolContract(tool, execution),
-    isRefViewLive: () => true,
-    invokeBinding: kernel.invokeBoundTypeTool.bind(kernel),
-  };
-  return { kernel, port, views, context };
-}
+it.each([false, true])('reuses the shared contract across View reactivation and replacement (Ref=%s)', async typed => {
+    let runtime!: RuntimeContext;
+    const property = typed
+        ? { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } }
+        : { type: 'string' };
+    const inputSchema = { type: 'object', properties: { file: property }, additionalProperties: false };
+    const execute = vi.fn(() => ({ success: true }));
+    let owner = {};
+    const publish = (enabled = true) => runtime.publishFrame(() => ({ views: [detailFrame({
+        owner, bindings: [{ name: 'read', enabled, execute }],
+    })] }));
+    const kernel = new AppKernel({ appName: 'example', factory: { initialize(context) {
+        runtime = context;
+        context.defineTools([{ viewType: 'Detail', name: 'read', description: 'Read', inputSchema }]);
+        publish();
+        return { close() {} };
+    } } } as any);
 
-afterEach(() => vi.restoreAllMocks());
-
-describe('registered parameter contract through Worker dispatch and AppKernel', () => {
-  it.each([false, true])('compiles once for repeated calls (Ref=%s)', async ref => {
-    const x = await setup(), compile = vi.spyOn(contracts, 'compileOrdinarySchema');
-    const handler = vi.fn(async (args: Readonly<Record<string, unknown>>) => ({ success: true, data: { value: args.value } }));
-    let compiled!: OrdinaryParameterContract;
     try {
-      x.port.registerTypeTool({ viewType: 'File', name: 'read', description: 'Read', inputSchema: {
-        type: 'object', properties: { value: ref ? { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File',
-          'x-aotui-ref-value': { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false } }
-          : { type: 'string' } }, required: ['value'], additionalProperties: false,
-      } }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: contract => {
-        compiled = contract;
-        return async args => ({ phase: 'entered-returned', result: await handler(args) });
-      } });
-      const tool = x.kernel.getToolDefinitions()[0]!;
-      expect(compile).toHaveBeenCalledOnce();
-      for (let index = 0; index < 4; index++) {
-        const rawArgs = { value: ref ? 'detail.current' : 'value-' + index };
-        const effectiveArgs = { value: ref ? { text: 'value-' + index } : rawArgs.value };
-        const response = await invokeTypeParameters({ type: 'VIEW_TOOL_INVOKE_V5', requestId: 'r-' + index,
-          appId: 'app', instanceId: 'run', snapshotId: 'source', tool, execution: tool.execution,
-          argumentMode: 'view-type-parameters-v1', rawArgs, effectiveArgs, refSources: ref ? [{
-            param: 'value', refId: 'current', kind: 'snapshot-value', refType: 'File', snapshotId: 'source',
-            viewId: 'detail', viewInstanceId: x.kernel.getViewOwnedViewInstances()[0]!.viewInstanceId,
-          }] : [] }, x.context);
-        expect(response?.terminal).toMatchObject({ phase: 'entered-returned', result: { success: true, data: effectiveArgs } });
-      }
-      expect(handler).toHaveBeenCalledTimes(4);
-      expect(compile).toHaveBeenCalledOnce();
-      expect(x.context.getParameterContract(tool, tool.execution)).toBe(compiled);
-    } finally { await x.kernel.onClose(); }
-  });
+        await kernel.onOpen({ appId: 'example', desktopId: 'desktop' } as AppContext);
+        const first = publishedTool(kernel, 'read');
+        const contract = kernel.getBoundTypeToolContract(first.tool, first.receiver);
+        expect(contract?.hasRefs).toBe(typed);
+        const input = { file: typed ? { path: 'a.txt' } : 'a.txt' };
+        expect(await kernel.invokeBoundTypeTool(first.tool, first.receiver, input)).toMatchObject({ phase: 'entered-returned' });
+        expect(execute).toHaveBeenCalledOnce();
 
-  it('keeps public trusted-factory entry distinct from Worker parameter rejection', async () => {
-    const x = await setup(), handler = vi.fn(async (_args: Readonly<Record<string, unknown>>) => ({ success: true }));
-    try {
-      x.port.registerTypeTool({ viewType: 'File', name: 'read', description: 'Read', inputSchema: {
-        type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false,
-      } }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: () =>
-        async args => ({ phase: 'entered-returned', result: await handler(args) }) });
-      const tool = x.kernel.getToolDefinitions()[0]!;
-      expect((await x.kernel.invokeBoundTypeTool(tool, tool.execution, { value: 7 })).phase).toBe('entered-returned');
-      const reply = await invokeTypeParameters({ type: 'VIEW_TOOL_INVOKE_V5', requestId: 'invalid', appId: 'app',
-        instanceId: 'run', snapshotId: 'source', tool, execution: tool.execution, argumentMode: 'view-type-parameters-v1',
-        rawArgs: { value: 7 }, effectiveArgs: { value: 7 }, refSources: [] }, x.context);
-      expect(reply?.terminal).toMatchObject({ phase: 'not-entered', result: { success: false, error: { code: 'E_INVALID_ARGS' } } });
-      expect(handler).toHaveBeenCalledOnce();
-    } finally { await x.kernel.onClose(); }
-  });
+        publish(false);
+        expect(kernel.getBoundTypeToolContract(first.tool, first.receiver)).toBeUndefined();
+        publish();
+        const again = publishedTool(kernel, 'read');
+        expect(again.receiver.viewInstanceId).toBe(first.receiver.viewInstanceId);
+        expect(again.receiver.activationId).not.toBe(first.receiver.activationId);
+        expect(kernel.getBoundTypeToolContract(again.tool, again.receiver)).toBe(contract);
 
-  it('keeps the compiled contract with its registration across View reactivation, replacement and close', async () => {
-    const x = await setup(), compile = vi.spyOn(contracts, 'compileOrdinarySchema');
-    const handler = vi.fn(async (args: Readonly<Record<string, unknown>>) => ({ success: true, data: { value: args.value } }));
-    const register = (type: string) => x.port.registerTypeTool({ viewType: 'File', name: 'read', description: 'Read',
-      inputSchema: { type: 'object', properties: { value: { type } }, required: ['value'], additionalProperties: false },
-    }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: () =>
-      async args => ({ phase: 'entered-returned', result: await handler(args) }) });
-    try {
-      const release = register('string'), old = x.kernel.getToolDefinitions()[0]!;
-      const first = x.kernel.getBoundTypeToolContract(old, old.execution);
-      x.views.unmount(x.kernel.getViewOwnedViewInstances()[0]!.viewInstanceId);
-      expect(x.kernel.getBoundTypeToolContract(old, old.execution)).toBeUndefined();
-      x.views.mount('detail', 'File');
-      const reopened = x.kernel.getToolDefinitions()[0]!;
-      expect(reopened.execution).not.toEqual(old.execution);
-      expect(x.kernel.getBoundTypeToolContract(reopened, reopened.execution)).toBe(first);
-      expect(x.kernel.getBoundTypeToolContract(old, old.execution)).toBeUndefined();
-      release(); register('number');
-      const current = x.kernel.getToolDefinitions()[0]!;
-      expect(x.kernel.getBoundTypeToolContract(current, current.execution)).not.toBe(first);
-      const request = (tool: typeof current, value: unknown) => ({ type: 'VIEW_TOOL_INVOKE_V5', requestId: 'r',
-        appId: 'app', instanceId: 'run', snapshotId: 'source', tool, execution: tool.execution,
-        argumentMode: 'view-type-parameters-v1', rawArgs: { value }, effectiveArgs: { value }, refSources: [] });
-      expect((await invokeTypeParameters(request(old, 'old'), x.context))?.terminal.phase).toBe('not-entered');
-      expect((await invokeTypeParameters(request(reopened, 'old'), x.context))?.terminal.phase).toBe('not-entered');
-      expect(handler).not.toHaveBeenCalled();
-      expect((await invokeTypeParameters(request(current, 7), x.context))?.terminal).toMatchObject({
-        phase: 'entered-returned', result: { success: true, data: { value: 7 } },
-      });
-      expect(handler).toHaveBeenCalledOnce(); expect(compile).toHaveBeenCalledTimes(2);
-      await x.kernel.onClose();
-      expect(x.kernel.getBoundTypeToolContract(current, current.execution)).toBeUndefined();
-      expect((await invokeTypeParameters(request(current, 8), x.context))?.terminal.phase).toBe('not-entered');
-      expect(handler).toHaveBeenCalledOnce();
-    } finally { await x.kernel.onClose(); }
-  });
-
+        owner = {};
+        publish();
+        const replacement = publishedTool(kernel, 'read');
+        expect(replacement.receiver.viewInstanceId).not.toBe(first.receiver.viewInstanceId);
+        expect(kernel.getBoundTypeToolContract(replacement.tool, replacement.receiver)).toBe(contract);
+        expect(await kernel.invokeBoundTypeTool(first.tool, first.receiver, input)).toMatchObject({ phase: 'not-entered' });
+        expect(execute).toHaveBeenCalledOnce();
+    } finally {
+        await kernel.onClose();
+    }
 });

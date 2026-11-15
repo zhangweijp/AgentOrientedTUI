@@ -9,12 +9,12 @@ const header = { requestId: 'r', appId: 'a', instanceId: 'i' };
 const fixture = () => {
   const c = compileOrdinarySchema({ type: 'object', properties: { q: { type: 'string', maxLength: 1 } }, required: ['q'], additionalProperties: false });
   if (!c.ok) throw Error('Fixture');
-  const execution = { kind: 'view-type' as const, activationId: 'activation' };
-  return { ...header, type: 'VIEW_TOOL_INVOKE_V5', argumentMode: 'view-type-parameters-v1', snapshotId: 's', rawArgs: { q: '😀' }, effectiveArgs: { q: '😀' }, refSources: [], execution,
+  const receiver = { viewId: 'v', viewInstanceId: 'mount', activationId: 'activation' };
+  return { ...header, type: 'VIEW_TOOL_INVOKE_V6', argumentMode: 'view-type-parameters-v1', snapshotId: 's', rawArgs: { q: '😀' }, effectiveArgs: { q: '😀' }, refSources: [], receiver,
     tool: { id: 'tool', name: 'find', viewType: 'File', description: 'Find', 
-      inputSchema: ordinaryParameterProfile(c.contract), execution } };
+      inputSchema: ordinaryParameterProfile(c.contract) } };
 };
-describe('R10 precise qualified V5 message grammar', () => {
+describe('R10 precise qualified V6 message grammar', () => {
   it('captures the canonical immutable request and terminal', () => {
     const input = fixture(), message = captureTypeParametersRequest(input);
     expect(message).toEqual(input); expect(message).not.toBe(input); expect(Object.isFrozen(message.rawArgs)).toBe(true);
@@ -23,14 +23,14 @@ describe('R10 precise qualified V5 message grammar', () => {
     const response = typeParametersResponse(header, terminal);
     expect(captureTypeParametersTerminal(response, header)).toEqual(terminal);
   });
-  it.each(['type', 'retired-v4', 'mode', 'extra', 'missing', 'execution', 'nonjson', 'argument-bytes', 'whole-bytes'])('rejects request %s', kind => {
+  it.each(['type', 'retired-v4', 'mode', 'extra', 'missing', 'receiver', 'nonjson', 'argument-bytes', 'whole-bytes'])('rejects request %s', kind => {
     const message: any = fixture();
     if (kind === 'type') message.type = 'VIEW_TOOL_INVOKE_ORDINARY_V2';
     if (kind === 'retired-v4') message.type = 'VIEW_TOOL_INVOKE_V4';
     if (kind === 'mode') message.argumentMode = 'ordinary-v1';
     if (kind === 'extra') message.extra = true;
     if (kind === 'missing') delete message.snapshotId;
-    if (kind === 'execution') message.execution = { ...message.execution, activationId: 'stale' };
+    if (kind === 'receiver') message.receiver = { ...message.receiver, kind: 'view-type' };
     if (kind === 'nonjson') message.rawArgs.q = undefined;
     if (kind === 'argument-bytes') message.rawArgs.q = 'x'.repeat(RAW_TOOL_ARGUMENT_LIMITS.maxCanonicalBytes);
     if (kind === 'whole-bytes') message.tool.description = 'x'.repeat(TOOL_REQUEST_LIMITS.maxCanonicalBytes);

@@ -1,12 +1,12 @@
-import { ORDINARY_INVOKER_ABI_V4 } from './invocation-terminal.js';
-import { VIEW_TYPE_TOOL_PROTOCOL } from '../../spi/runtime/app-type-tools.interface.js';
-import { compileOrdinarySchema, type OrdinaryParameterContract } from './ordinary-parameter-contract.js';
-import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
+import type { AppFrameBinding, AppTypeToolDefinition } from '../../spi/runtime/app-type-tools.interface.js';
 import type { ToolResultData } from '../../spi/core/tool-result.js';
 import { canonicalJson, copyJson, SnapshotDataError, utf8Size } from '../snapshot/json.js';
-import type { JsonValue, ObservedToolExecutionV3, ToolDescriptorV3 } from '../snapshot/types.js';
-import type { SafeOrdinaryInvoker, ViewToolInvocationTerminal } from './invocation-terminal.js';
-import type { AppFrameTool, AppTypeToolDefinition, AppTypeToolRegistrationOptions } from '../../spi/runtime/app-type-tools.interface.js';
+import { DEFAULT_SNAPSHOT_LIMITS, MAX_VIEW_TOOL_BINDINGS } from '../snapshot/snapshot-support.js';
+import type { JsonValue, ToolDescriptorV4, ViewToolBinding, ViewToolReceiver } from '../snapshot/types.js';
+import { compileOrdinarySchema, modelToolSchema, type OrdinaryParameterContract } from './ordinary-parameter-contract.js';
+import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
+import type { ViewToolInvocationTerminal } from './invocation-terminal.js';
+import { sameToolDefinition } from './source-binding.js';
 
 export interface ViewInstance {
     readonly viewId: string;
@@ -26,15 +26,18 @@ export interface ViewOwnedToolsStats {
     readonly retainedBytes: number;
 }
 
-type TypeToolRegistration = {
-    readonly token: object;
-    readonly definition: Readonly<Omit<AppTypeToolDefinition, 'inputSchema'> & { inputSchema: JsonValue }>;
-    readonly bytes: number;
-    readonly invoke: SafeOrdinaryInvoker;
-    readonly contract: OrdinaryParameterContract;
-    activationId?: string;
-    activationBytes: number;
-    frameOwner?: AppFrameTool;
+type Tool = { readonly descriptor: ToolDescriptorV4; readonly contract: OrdinaryParameterContract };
+type Binding = ViewToolBinding & Pick<AppFrameBinding, 'execute'>;
+type Mounted = {
+    readonly owner: object;
+    readonly view: ViewInstance;
+    readonly bindings: ReadonlyMap<string, Binding>;
+};
+type ViewCandidate = {
+    readonly id: string;
+    readonly type: string;
+    readonly owner: object;
+    readonly bindings: readonly AppFrameBinding[];
 };
 
 export class ViewToolContractError extends Error {
@@ -44,416 +47,214 @@ export class ViewToolContractError extends Error {
     }
 }
 
-function nonEmpty(value: string, label: string): void {
-    if (typeof value !== 'string' || !value.trim()) {
-        throw new ViewToolContractError('TOOL_INVALID', label + ' must be non-empty');
-    }
+function fail(code: string, message: string): never {
+    throw new ViewToolContractError(code, message);
 }
 
-function failure(code: string, message: string): ToolResultData {
+function rejected(code: string, message: string): ToolResultData {
     return { success: false, error: { code, message } };
 }
 
-function captureOptions(value: unknown, fields: readonly string[], label: string): Readonly<Record<string, unknown>> {
-    try {
-        if (!value || typeof value !== 'object' || Array.isArray(value) ||
-            ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw 0;
-        const descriptors = Object.getOwnPropertyDescriptors(value);
-        if (Reflect.ownKeys(descriptors).length !== fields.length || Reflect.ownKeys(descriptors).some(key =>
-            typeof key !== 'string' || !fields.includes(key) || !descriptors[key]!.enumerable || !('value' in descriptors[key]!))) throw 0;
-        return Object.freeze(Object.fromEntries(fields.map(field => [field, descriptors[field]!.value])));
-    } catch {
-        throw new ViewToolContractError('TOOL_INVALID', 'Invalid ' + label + ' options');
-    }
+function nonEmpty(value: unknown): value is string {
+    return typeof value === 'string' && value.trim().length > 0;
 }
 
-/**
- * One App instance, its live View identities and Tool bindings.
- *
- * No DOM/Worker/model imports. Does not publish snapshots or authorize external
- * calls. Invocation adapters must obtain observed identity from a validated,
- * pinned Runtime-owned V3 snapshot before invoking this registry.
- */
+/** Owns the committed View identities and their enabled operations for one App instance. */
 export function createViewOwnedTools(appId: string, appInstanceId: string, limits: Partial<ViewOwnedToolLimits> = {}) {
-    const ceilings: ViewOwnedToolLimits = { maxViews: 1000, maxBindings: 10000, maxRetainedBytes: 32 * 1024 * 1024 };
+    const ceilings: ViewOwnedToolLimits = {
+        maxViews: DEFAULT_SNAPSHOT_LIMITS.maxViews, maxBindings: MAX_VIEW_TOOL_BINDINGS, maxRetainedBytes: 32 * 1024 * 1024,
+    };
     for (const key of Reflect.ownKeys(limits)) {
         if (typeof key !== 'string' || !Object.hasOwn(ceilings, key)) throw new RangeError('Unknown View-owned limit');
     }
-    const captured = {
-        maxViews: limits.maxViews === undefined ? ceilings.maxViews : limits.maxViews,
-        maxBindings: limits.maxBindings === undefined ? ceilings.maxBindings : limits.maxBindings,
-        maxRetainedBytes: limits.maxRetainedBytes === undefined ? ceilings.maxRetainedBytes : limits.maxRetainedBytes,
-    };
-    for (const key of Object.keys(ceilings) as Array<keyof ViewOwnedToolLimits>) {
-        const value = captured[key];
-        if (!Number.isSafeInteger(value) || value < 0 || value > ceilings[key]) throw new RangeError(key + ' must be a safe integer within its hard limit');
+    const { maxViews = ceilings.maxViews, maxBindings = ceilings.maxBindings, maxRetainedBytes = ceilings.maxRetainedBytes } = limits;
+    for (const [key, value] of Object.entries({ maxViews, maxBindings, maxRetainedBytes })) {
+        if (!Number.isSafeInteger(value) || value < 0 || value > ceilings[key as keyof ViewOwnedToolLimits])
+            throw new RangeError(key + ' must be a safe integer within its hard limit');
     }
-    if (typeof appId === 'string' && typeof appInstanceId === 'string' && appId.length + appInstanceId.length > captured.maxRetainedBytes) {
-        throw new ViewToolContractError('VIEW_CAPACITY', 'App identity exceeds maxRetainedBytes');
-    }
-    nonEmpty(appId, 'appId');
-    nonEmpty(appInstanceId, 'appInstanceId');
-    let retainedBytes = utf8Size(canonicalJson({ appId, appInstanceId }));
-    if (retainedBytes > captured.maxRetainedBytes) throw new ViewToolContractError('VIEW_CAPACITY', 'App identity exceeds maxRetainedBytes');
-    let encodedAppInstanceId: string | undefined = JSON.stringify(appInstanceId);
-    let encodedAppInstanceIdBytes = utf8Size(encodedAppInstanceId);
-    let disposed = false;
-    let bindingCount = 0;
+    if (!nonEmpty(appId) || !nonEmpty(appInstanceId)) fail('VIEW_INVALID', 'App and instance IDs are required');
+    if (appId.length + appInstanceId.length > maxRetainedBytes) fail('VIEW_CAPACITY', 'App identity exceeds retention limit');
+    let staticBytes = utf8Size(canonicalJson({ appId, appInstanceId }));
+    if (staticBytes > maxRetainedBytes) fail('VIEW_CAPACITY', 'App identity exceeds retention limit');
 
-    let byViewId = new Map<string, string>();
-    let byInstanceId = new Map<string, ViewInstance>();
-    let typeTools = new Map<string, Map<string, TypeToolRegistration>>();
+    let disposed = false;
+    let defined = false;
+    let mounted = new Map<string, Mounted>();
+    let declared = new Map<string, ReadonlyMap<string, Tool>>();
+    let prospective = new WeakMap<object, ViewInstance>();
     let mountSequence = 0;
     let activationSequence = 0;
+    let bindingCount = 0;
+    let liveBytes = 0;
 
     function assertActive(): void {
-        if (disposed) throw new ViewToolContractError('VIEW_REGISTRY_CLOSED', 'View-owned Registry is closed');
-    }
-    function viewBytes(view: ViewInstance): number {
-        return utf8Size(canonicalJson(view as unknown as JsonValue));
-    }
-    function matchingViewCount(viewType: string): number {
-        let count = 0;
-        for (const view of byInstanceId.values()) if (view.viewType === viewType) count++;
-        return count;
+        if (disposed) fail('VIEW_REGISTRY_CLOSED', 'View registry is closed');
     }
 
-    function activationIdFor(sequence: number): string {
-        if (encodedAppInstanceId === undefined) throw new ViewToolContractError('VIEW_REGISTRY_CLOSED', 'View-owned Registry is closed');
-        return 'ta:v1:[' + encodedAppInstanceId + ',' + sequence + ']';
+    function identity(id: string, type: string): ViewInstance {
+        if (!nonEmpty(id) || id.includes('.') || !nonEmpty(type)) fail('VIEW_INVALID', 'Expected a View type and an ID without a dot');
+        if (id.length + type.length > maxRetainedBytes) fail('VIEW_CAPACITY', 'View identity exceeds retention limit');
+        if (mountSequence >= Number.MAX_SAFE_INTEGER) fail('VIEW_CAPACITY', 'View mount sequence exhausted');
+        return Object.freeze({ viewId: id, viewType: type, viewInstanceId: 'vi:v1:' + JSON.stringify([appInstanceId, ++mountSequence]) });
     }
 
-    function activationBytesFor(sequence: number): number {
-        // `ta:v1:[` + JSON string + comma + decimal sequence + `]`.
-        if (encodedAppInstanceId === undefined) throw new ViewToolContractError('VIEW_REGISTRY_CLOSED', 'View-owned Registry is closed');
-        return 8 + encodedAppInstanceIdBytes + String(sequence).length + 1;
+    function current(tool: ToolDescriptorV4, receiver: ViewToolReceiver) {
+        const view = mounted.get(receiver.viewId);
+        if (view?.view.viewInstanceId !== receiver.viewInstanceId || view.view.viewType !== tool.viewType)
+            return { error: rejected('VIEW_INSTANCE_REVOKED', 'The receiving View was closed or replaced. Observe the current Views.') };
+        const binding = view.bindings.get(tool.id);
+        if (!binding || binding.activationId !== receiver.activationId)
+            return { error: rejected('TOOL_SOURCE_STALE', 'The receiving View no longer has this Tool activation. Observe the current Tools.') };
+        const declaration = declared.get(tool.viewType)?.get(tool.name);
+        if (!declaration || !sameToolDefinition(declaration.descriptor, tool))
+            return { error: rejected('TOOL_SOURCE_CONFLICT', 'Tool definition does not match the current ViewType') };
+        return { binding, contract: declaration.contract };
     }
 
-    function nextActivation(): Readonly<{ id: string; bytes: number }> {
-        if (activationSequence >= Number.MAX_SAFE_INTEGER) {
-            throw new ViewToolContractError('TOOL_CAPACITY', 'Tool activation sequence exhausted');
-        }
-        const sequence = ++activationSequence;
-        return Object.freeze({ id: activationIdFor(sequence), bytes: activationBytesFor(sequence) });
-    }
-
-    function expireTypeActivations(viewType: string): void {
-        for (const registration of typeTools.get(viewType)?.values() ?? []) {
-            if (registration.activationId) retainedBytes -= registration.activationBytes;
-            registration.activationId = undefined;
-            registration.activationBytes = 0;
-        }
-    }
-
-    function planTypeActivation(viewType: string, reserveBytes = 0): Readonly<{
-        lastSequence: number;
-        bytes: number;
-        entries: readonly Readonly<{ registration: TypeToolRegistration; id: string; bytes: number }>[];
-    }> {
-        const registrations = typeTools.get(viewType);
-        const pending = [...(registrations?.values() ?? [])].filter(registration => !registration.activationId);
-        if (pending.length > Number.MAX_SAFE_INTEGER - activationSequence) {
-            throw new ViewToolContractError('TOOL_CAPACITY', 'Tool activation sequence exhausted');
-        }
-        const lastSequence = activationSequence + pending.length;
-        let bytes = 0;
-        for (let index = 0; index < pending.length; index++) bytes += activationBytesFor(activationSequence + index + 1);
-        if (bytes > captured.maxRetainedBytes - retainedBytes - reserveBytes) {
-            throw new ViewToolContractError('TOOL_CAPACITY', 'Tool activation retention limit reached');
-        }
-        const entries = pending.map((registration, index) => {
-            const sequence = activationSequence + index + 1;
-            const activationBytes = activationBytesFor(sequence);
-            return Object.freeze({ registration, id: activationIdFor(sequence), bytes: activationBytes });
-        });
-        return Object.freeze({ lastSequence, bytes, entries: Object.freeze(entries) });
-    }
-
-    function activateTypeTools(plan: ReturnType<typeof planTypeActivation>): void {
-        for (const entry of plan.entries) {
-            entry.registration.activationId = entry.id;
-            entry.registration.activationBytes = entry.bytes;
-        }
-        activationSequence = plan.lastSequence;
-        retainedBytes += plan.bytes;
-    }
-
-    function toolId(viewType: string, name: string): string {
-        // Structured ID is unambiguous. The Agent-facing tool name is adapter-owned.
-        return JSON.stringify([appId, viewType, name]);
-    }
-
-    function validateTypeToolBinding(tool: ToolDescriptorV3, execution: ObservedToolExecutionV3): ToolResultData {
-        if (disposed) return failure('VIEW_INSTANCE_REVOKED', 'View-owned Registry is closed');
-        if (execution.kind !== 'view-type' || tool.execution.kind !== 'view-type' ||
-            tool.execution.activationId !== execution.activationId || tool.id !== toolId(tool.viewType, tool.name)) {
-            return failure('TOOL_SOURCE_CONFLICT', 'Observed execution identity does not match the Tool');
-        }
-        const registration = typeTools.get(tool.viewType)?.get(tool.name);
-        if (!registration) return failure('TOOL_UNAVAILABLE', 'ViewType Tool is no longer registered');
-        if (!registration.activationId || registration.activationId !== execution.activationId || matchingViewCount(tool.viewType) === 0) {
-            return failure('TOOL_UNAVAILABLE', 'ViewType Tool is not active');
-        }
-        const expected = {
-            id: toolId(tool.viewType, tool.name), name: registration.definition.name, viewType: registration.definition.viewType,
-            description: registration.definition.description, inputSchema: registration.definition.inputSchema,
-            execution: { kind: 'view-type', activationId: registration.activationId },
-        };
-        if (canonicalJson(tool as unknown as JsonValue) !== canonicalJson(expected as unknown as JsonValue)) {
-            return failure('TOOL_SOURCE_STALE', 'Tool contract changed since the source observation');
-        }
-        if (typeof registration.invoke !== 'function') return failure('TOOL_EXECUTION_UNAVAILABLE', 'Current Tool has no trusted callable');
-        return { success: true };
-    }
-
-    function removeTool(viewType: string, name: string, registration: TypeToolRegistration): void {
-        const current = typeTools.get(viewType);
-        if (current?.get(name)?.token !== registration.token) return;
-        current!.delete(name);
-        if (current!.size === 0) typeTools.delete(viewType);
-        retainedBytes -= registration.bytes + registration.activationBytes;
-        bindingCount--;
-    }
-
-    function removeView(viewInstanceId: string, retainedTypes?: ReadonlySet<string>): void {
-        const view = byInstanceId.get(viewInstanceId);
-        if (!view) return;
-        retainedBytes -= viewBytes(view);
-        byInstanceId.delete(viewInstanceId);
-        if (byViewId.get(view.viewId) === viewInstanceId) byViewId.delete(view.viewId);
-        if (!retainedTypes?.has(view.viewType) && matchingViewCount(view.viewType) === 0) expireTypeActivations(view.viewType);
-    }
-
-    function inventory() {
-        return { byViewId, byInstanceId, typeTools, mountSequence, activationSequence, retainedBytes, bindingCount };
-    }
-
-    function useInventory(next: ReturnType<typeof inventory>): void {
-        ({ byViewId, byInstanceId, typeTools, mountSequence, activationSequence, retainedBytes, bindingCount } = next);
-    }
-
-    const registry = Object.freeze({
-        /** Prepare View and Tool identities for one complete SDK frame. */
-        prepareFrame(views: readonly Readonly<{ id: string; type: string }>[], tools: readonly AppFrameTool[]): {
-            instances: readonly ViewInstance[]; tools: readonly ToolDescriptorV3[]; accept(): void;
-        } {
+    return Object.freeze({
+        defineTools(definitions: readonly AppTypeToolDefinition[]): void {
             assertActive();
-            if (views.length > captured.maxViews || tools.length > captured.maxBindings) {
-                throw new ViewToolContractError('VIEW_CAPACITY', 'App frame exceeds the View or Tool retention limit');
+            if (defined) fail('TOOL_DUPLICATE', 'App Tool definitions were already supplied');
+            if (!Array.isArray(definitions) || definitions.length > DEFAULT_SNAPSHOT_LIMITS.maxTools)
+                fail('TOOL_CAPACITY', 'App Tool definition limit exceeded');
+            const types = new Map<string, Map<string, Tool>>();
+            let bytes = staticBytes;
+            for (const input of definitions) {
+                const definition = copyJson(input, { maxDepth: 48, maxNodes: 10_000, maxApproxBytes: 128 * 1024 }) as unknown as AppTypeToolDefinition;
+                if (!definition || typeof definition !== 'object' || Array.isArray(definition) ||
+                    Object.keys(definition).length !== 4 || !nonEmpty(definition.viewType) ||
+                    !nonEmpty(definition.name) || !nonEmpty(definition.description) || !Object.hasOwn(definition, 'inputSchema'))
+                    fail('TOOL_INVALID', 'Expected four fields in a ViewType Tool definition');
+                const { viewType, name, description } = definition;
+                const type = types.get(viewType) ?? new Map<string, Tool>();
+                if (type.has(name)) fail('TOOL_DUPLICATE', 'Duplicate Tool ' + viewType + '.' + name);
+                const compiled = compileOrdinarySchema(definition.inputSchema);
+                if (!compiled.ok) {
+                    const { code, message, path } = compiled.issue;
+                    throw new ViewToolContractError(code === 'PARAMETER_DECLARATION_CAPACITY' ? 'TOOL_SCHEMA_CAPACITY' : code, message, path);
+                }
+                const inputSchema = ordinaryParameterProfile(compiled.contract);
+                modelToolSchema(inputSchema, viewType);
+                const descriptor = Object.freeze({ id: JSON.stringify([appId, viewType, name]), viewType, name, description, inputSchema });
+                bytes += utf8Size(canonicalJson(descriptor));
+                if (bytes > maxRetainedBytes) fail('TOOL_CAPACITY', 'App Tool definitions exceed retention limit');
+                type.set(name, { descriptor, contract: compiled.contract });
+                types.set(viewType, type);
             }
-            const nextViews = new Map(views.map(view => [view.id, view.type]));
-            const nextTools = new Map(tools.map(tool => [toolId(tool.definition.viewType, tool.definition.name), tool]));
-            if (nextViews.size !== views.length) throw new ViewToolContractError('VIEW_DUPLICATE', 'Duplicate View in App frame');
-            if (nextTools.size !== tools.length) throw new ViewToolContractError('TOOL_DUPLICATE', 'Duplicate Tool in App frame');
-            const retainedTypes = new Set(nextViews.values());
-            const previous = inventory();
-            useInventory({ ...previous, byViewId: new Map(byViewId), byInstanceId: new Map(byInstanceId),
-                typeTools: new Map([...typeTools].map(([type, registrations]) => [
-                    type, new Map([...registrations].map(([name, registration]) => [name, { ...registration }])),
-                ])) });
-            try {
-                for (const [type, registrations] of typeTools) {
-                    for (const [name, registration] of registrations) {
-                        if (!registration.frameOwner || nextTools.get(toolId(type, name)) !== registration.frameOwner) removeTool(type, name, registration);
-                    }
-                }
-                for (const view of byInstanceId.values()) {
-                    if (nextViews.get(view.viewId) !== view.viewType) removeView(view.viewInstanceId, retainedTypes);
-                }
-                const instances = views.map(({ id, type }): ViewInstance => registry.getView(id) ?? registry.mount(id, type));
-                for (const tool of tools) {
-                    const { viewType, name } = tool.definition;
-                    if (typeTools.get(viewType)?.has(name)) continue;
-                    registry.registerTypeTool(tool.definition, tool.options);
-                    typeTools.get(viewType)!.get(name)!.frameOwner = tool;
-                }
-                const candidate = inventory();
-                return { instances, tools: registry.listTools(), accept() { useInventory(candidate); } };
-            } finally {
-                useInventory(previous);
-            }
+            assertActive();
+            if (defined || mounted.size) fail('TOOL_DUPLICATE', 'App Tool definitions must precede View publication');
+            declared = types;
+            staticBytes = bytes;
+            defined = true;
         },
-        protocol: VIEW_TYPE_TOOL_PROTOCOL,
+
+        /** A DOM attachment needs a Ref owner before layout effects. It has no live Tool bindings yet. */
+        prepareMount(id: string, type: string) {
+            assertActive();
+            const owner = Object.freeze({});
+            const view = identity(id, type);
+            prospective.set(owner, view);
+            return { owner, view, release: () => { prospective.delete(owner); } };
+        },
+
+        /** Build the entire next inventory without changing any currently executable handler. */
+        prepareFrame(views: readonly ViewCandidate[]) {
+            assertActive();
+            if (!Array.isArray(views) || views.length > maxViews) fail('VIEW_CAPACITY', 'App frame exceeds the View limit');
+            const previous = mounted;
+            const next = new Map<string, Mounted>();
+            const owners = new Set<object>();
+            const tools = new Map<string, ToolDescriptorV4>();
+            let bytes = 0;
+            let count = 0;
+            let entries = 0;
+            const instances = views.map(({ id, type, owner, bindings }) => {
+                if (next.has(id) || owners.has(owner)) fail('VIEW_DUPLICATE', 'Duplicate View in App frame: ' + id);
+                if (!owner || typeof owner !== 'object') fail('VIEW_INVALID', 'View requires a stable owner');
+                owners.add(owner);
+                const prior = previous.get(id);
+                const continuous = prior && prior.owner === owner && prior.view.viewType === type ? prior : undefined;
+                const reserved = prospective.get(owner);
+                if (reserved && (reserved.viewId !== id || reserved.viewType !== type))
+                    fail('VIEW_INVALID', 'Mounted View owner does not match candidate');
+                const view = continuous?.view ?? reserved ?? identity(id, type);
+                const definitions = declared.get(type);
+                if (!Array.isArray(bindings) || bindings.length !== (definitions?.size ?? 0))
+                    throw new SnapshotDataError('TOOL_BINDING_INVALID', `View ${id}`, 'Expected one binding for each ViewType operation');
+                entries += bindings.length;
+                if (entries > maxBindings) fail('TOOL_CAPACITY', 'App frame exceeds the View Tool binding limit');
+                bytes += utf8Size(canonicalJson(view as unknown as JsonValue));
+                const active = new Map<string, Binding>();
+                const seen = new Set<string>();
+                const toolBindings: ViewToolBinding[] = [];
+                for (const { name, execute, enabled } of bindings) {
+                    const tool = definitions?.get(name);
+                    if (!tool || seen.has(name) || typeof execute !== 'function' || typeof enabled !== 'boolean')
+                        throw new SnapshotDataError('TOOL_BINDING_INVALID', `View ${id}`, 'Invalid or duplicate View Tool binding');
+                    seen.add(name);
+                    if (!enabled) continue;
+                    const toolId = tool.descriptor.id;
+                    const old = continuous?.bindings.get(toolId);
+                    if (!old && activationSequence >= Number.MAX_SAFE_INTEGER) fail('TOOL_CAPACITY', 'Tool activation sequence exhausted');
+                    const activationId = old?.activationId ?? 'ta:v2:' + ++activationSequence;
+                    const reference = Object.freeze({ toolId, activationId });
+                    bytes += utf8Size(canonicalJson(reference));
+                    count++;
+                    active.set(toolId, { ...reference, execute });
+                    tools.set(toolId, tool.descriptor);
+                    toolBindings.push(reference);
+                }
+                if (bytes + staticBytes > maxRetainedBytes) fail('TOOL_CAPACITY', 'View Tool retention limit exceeded');
+                next.set(id, { owner, view, bindings: active });
+                return { ...view, toolBindings: Object.freeze(toolBindings) };
+            });
+            return {
+                instances,
+                tools: [...tools.values()].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+                accept() {
+                    assertActive();
+                    if (mounted !== previous) fail('VIEW_INVALID', 'Prepared View inventory was superseded');
+                    mounted = next;
+                    for (const owner of owners) prospective.delete(owner);
+                    liveBytes = bytes;
+                    bindingCount = count;
+                },
+            };
+        },
+
+        getView(id: string): ViewInstance | undefined { return mounted.get(id)?.view; },
+        listViews(): readonly ViewInstance[] { return [...mounted.values()].map(item => item.view); },
+        inspect(): ViewOwnedToolsStats {
+            return { state: disposed ? 'disposed' : 'active', views: mounted.size, bindings: bindingCount, retainedBytes: staticBytes + liveBytes };
+        },
+        validateTypeToolBinding(tool: ToolDescriptorV4, receiver: ViewToolReceiver): ToolResultData {
+            return current(tool, receiver).error ?? { success: true };
+        },
+        getTypeToolContract(tool: ToolDescriptorV4, receiver: ViewToolReceiver): OrdinaryParameterContract | undefined {
+            return current(tool, receiver).contract;
+        },
+        async invokeTypeTool(tool: ToolDescriptorV4, receiver: ViewToolReceiver,
+            args: Readonly<Record<string, unknown>>): Promise<ViewToolInvocationTerminal> {
+            const initial = current(tool, receiver);
+            if (initial.error) return { phase: 'not-entered', result: initial.error };
+            const validated = initial.contract!.validateResolvedInput(args);
+            if (!validated.ok || Object.hasOwn(validated.value, 'view_id'))
+                return { phase: 'not-entered', result: rejected('E_INVALID_ARGS', 'Expected only valid business arguments') };
+            const selected = current(tool, receiver);
+            if (selected.error) return { phase: 'not-entered', result: selected.error };
+            // Call synchronously after checking the current instance and activation.
+            const execute = selected.binding!.execute;
+            const result = await execute(validated.value);
+            return { phase: 'entered-returned', result };
+        },
         dispose(): void {
             if (disposed) return;
             disposed = true;
-            byViewId.clear();
-            byInstanceId.clear();
-            typeTools.clear();
-            retainedBytes = 0;
-            bindingCount = 0;
-            appId = '';
-            appInstanceId = '';
-            encodedAppInstanceId = undefined;
-            encodedAppInstanceIdBytes = 0;
+            mounted = new Map();
+            declared.clear();
+            prospective = new WeakMap();
+            staticBytes = liveBytes = bindingCount = 0;
+            appId = appInstanceId = '';
         },
-        inspect(): Readonly<ViewOwnedToolsStats> {
-            return Object.freeze({ state: disposed ? 'disposed' : 'active', views: byInstanceId.size,
-                bindings: bindingCount, retainedBytes });
-        },
-        validateTypeToolBinding,
-        /** Internal Worker access after full binding qualification; never grants execution. */
-        getTypeToolContract(tool: ToolDescriptorV3, execution: ObservedToolExecutionV3): OrdinaryParameterContract | undefined {
-            if (disposed || execution.kind !== 'view-type') return undefined;
-            const registration = typeTools.get(tool.viewType)?.get(tool.name);
-            return registration?.activationId !== undefined && registration.activationId === execution.activationId
-                ? registration.contract : undefined;
-        },
-        invokeTypeTool(tool: ToolDescriptorV3, execution: ObservedToolExecutionV3, args: Readonly<Record<string, unknown>>): ViewToolInvocationTerminal | Promise<ViewToolInvocationTerminal> {
-            const live = validateTypeToolBinding(tool, execution);
-            if (!live.success) return { phase: 'not-entered', result: live };
-            const registration = typeTools.get(tool.viewType)!.get(tool.name)!;
-            // The complete parameter object belongs to the App; Runtime does not route on business fields.
-            // No yield occurs between the final activation check and trusted invoker entry.
-            return registration.invoke(args);
-        },
-        registerTypeTool(definition: AppTypeToolDefinition, options: AppTypeToolRegistrationOptions): () => void {
-            assertActive();
-            const copied = copyJson(definition, { maxDepth: 48, maxNodes: 10_000, maxApproxBytes: 128 * 1024 }) as unknown as AppTypeToolDefinition;
-            if (!copied || typeof copied !== 'object' || Array.isArray(copied) ||
-                Object.keys(copied).length !== 4 || typeof copied.viewType !== 'string' || !copied.viewType.trim() ||
-                typeof copied.name !== 'string' || !copied.name.trim() || typeof copied.description !== 'string' || !copied.description.trim() ||
-                !copied.inputSchema || typeof copied.inputSchema !== 'object' || Array.isArray(copied.inputSchema)) {
-                throw new ViewToolContractError('TOOL_INVALID', 'Invalid ViewType Tool definition');
-            }
-            const optionFields = captureOptions(options, ['safeOrdinaryParametersInvocationMode', 'createSafeOrdinaryParametersInvoker'], 'ViewType Tool registration');
-            if (optionFields.safeOrdinaryParametersInvocationMode !== ORDINARY_INVOKER_ABI_V4) {
-                throw new ViewToolContractError('TOOL_INVOKER_ABI_UNSUPPORTED',
-                    `Expected ${ORDINARY_INVOKER_ABI_V4}. Install matching Runtime and SDK packages and rebuild the App.`);
-            }
-            if (typeof optionFields.createSafeOrdinaryParametersInvoker !== 'function')
-                throw new ViewToolContractError('TOOL_INVALID', 'Invalid trusted ViewType Tool registration options');
-            const compiled = compileOrdinarySchema(copied.inputSchema);
-            if (!compiled.ok) {
-                const { code, message, path } = compiled.issue;
-                throw new ViewToolContractError(code === 'PARAMETER_DECLARATION_CAPACITY' ? 'TOOL_SCHEMA_CAPACITY' : code, message, path);
-            }
-            let inputSchema: JsonValue;
-            try {
-                inputSchema = ordinaryParameterProfile(compiled.contract);
-            } catch (error) {
-                if (error instanceof SnapshotDataError && error.code === 'TOOL_SCHEMA_CAPACITY') {
-                    throw new ViewToolContractError(error.code, error.message, error.path);
-                }
-                throw error;
-            }
-            const publicDefinition = Object.freeze({ viewType: copied.viewType, name: copied.name, description: copied.description,
-                inputSchema });
-            const declarationBytes = utf8Size(canonicalJson(publicDefinition as unknown as JsonValue));
-            const nextActivationBytes = (): number => {
-                if (matchingViewCount(copied.viewType) === 0) return 0;
-                if (activationSequence >= Number.MAX_SAFE_INTEGER) {
-                    throw new ViewToolContractError('TOOL_CAPACITY', 'Tool activation sequence exhausted');
-                }
-                return activationBytesFor(activationSequence + 1);
-            };
-            const ensureAvailable = (): void => {
-                assertActive();
-                if (typeTools.get(copied.viewType)?.has(copied.name)) {
-                    throw new ViewToolContractError('TOOL_DUPLICATE', 'ViewType Tool already registered: ' + copied.viewType + '.' + copied.name);
-                }
-                const activationBytes = nextActivationBytes();
-                if (bindingCount >= captured.maxBindings || declarationBytes + activationBytes > captured.maxRetainedBytes - retainedBytes) {
-                    throw new ViewToolContractError('TOOL_CAPACITY', 'Tool retention limit reached');
-                }
-            };
-            ensureAvailable();
-            const invoke = (optionFields.createSafeOrdinaryParametersInvoker as AppTypeToolRegistrationOptions['createSafeOrdinaryParametersInvoker'])(compiled.contract);
-            if (typeof invoke !== 'function') throw new ViewToolContractError('TOOL_INVALID', 'Trusted ViewType Tool factory did not return a callable');
-            // The invoker factory is App code and may synchronously reenter Runtime APIs.
-            // Recheck close, duplicate ownership and quotas before changing Registry state.
-            ensureAvailable();
-            const activeViewType = matchingViewCount(copied.viewType) > 0;
-            const activation = activeViewType ? nextActivation() : undefined;
-            const registration: TypeToolRegistration = {
-                token: {}, definition: publicDefinition, bytes: declarationBytes,
-                invoke: invoke as SafeOrdinaryInvoker, contract: compiled.contract,
-                activationBytes: activation?.bytes ?? 0,
-                ...(activation ? { activationId: activation.id } : {}),
-            };
-            const currentTypeTools = typeTools.get(copied.viewType) ?? new Map<string, TypeToolRegistration>();
-            currentTypeTools.set(copied.name, registration);
-            typeTools.set(copied.viewType, currentTypeTools);
-            bindingCount++;
-            retainedBytes += declarationBytes + (activation?.bytes ?? 0);
-            const registeredViewType = copied.viewType;
-            const registeredName = copied.name;
-            const registrationToken = registration.token;
-            let released = false;
-            return () => {
-                if (released) return;
-                released = true;
-                const current = typeTools.get(registeredViewType)?.get(registeredName);
-                if (current?.token === registrationToken) removeTool(registeredViewType, registeredName, current);
-            };
-        },
-        mount(viewId: string, viewType: string): ViewInstance {
-            assertActive();
-            nonEmpty(viewId, 'viewId');
-            if (viewId.includes('.')) throw new ViewToolContractError('VIEW_INVALID', 'View ID cannot contain a dot');
-            nonEmpty(viewType, 'viewType');
-            if (byViewId.has(viewId)) {
-                throw new ViewToolContractError('VIEW_DUPLICATE', 'View ID already mounted: ' + viewId);
-            }
-            if (byInstanceId.size >= captured.maxViews || viewId.length + viewType.length > captured.maxRetainedBytes - retainedBytes) {
-                throw new ViewToolContractError('VIEW_CAPACITY', 'View retention limit reached');
-            }
-            if (mountSequence >= Number.MAX_SAFE_INTEGER) {
-                throw new ViewToolContractError('VIEW_CAPACITY', 'View mount sequence exhausted');
-            }
-            const instance: ViewInstance = Object.freeze({
-                viewId,
-                viewType,
-                viewInstanceId: 'vi:v1:' + JSON.stringify([appInstanceId, mountSequence + 1]),
-            });
-            const bytes = viewBytes(instance);
-            if (bytes > captured.maxRetainedBytes - retainedBytes) throw new ViewToolContractError('VIEW_CAPACITY', 'View exceeds maxRetainedBytes');
-            const wasFirstOfType = matchingViewCount(viewType) === 0;
-            const registrations = typeTools.get(viewType);
-            const activationPlan = wasFirstOfType && registrations?.size ? planTypeActivation(viewType, bytes) : undefined;
-            mountSequence++;
-            retainedBytes += bytes;
-            byViewId.set(viewId, instance.viewInstanceId);
-            byInstanceId.set(instance.viewInstanceId, instance);
-            if (activationPlan) activateTypeTools(activationPlan);
-            return instance;
-        },
-
-        unmount(viewInstanceId: string): void {
-            removeView(viewInstanceId);
-        },
-
-        getView(viewId: string): ViewInstance | undefined {
-            const instanceId = byViewId.get(viewId);
-            return instanceId === undefined ? undefined : byInstanceId.get(instanceId);
-        },
-
-        /** Internal producer inventory; no private callable or live View object escapes. */
-        listViews(): readonly ViewInstance[] {
-            return Object.freeze([...byInstanceId.values()]
-                .sort((a, b) => a.viewId < b.viewId ? -1 : a.viewId > b.viewId ? 1 : 0));
-        },
-
-        /** All outputs are detached V3 metadata; neither private callable escapes. */
-        listTools(): readonly ToolDescriptorV3[] {
-            const typeToolDescriptors: ToolDescriptorV3[] = [];
-            for (const [viewType, registrations] of typeTools) {
-                if (matchingViewCount(viewType) === 0) continue;
-                for (const registration of registrations.values()) {
-                    if (!registration.activationId) continue;
-                    typeToolDescriptors.push(Object.freeze({
-                        id: toolId(viewType, registration.definition.name),
-                        name: registration.definition.name,
-                        viewType,
-                        description: registration.definition.description,
-                        inputSchema: registration.definition.inputSchema,
-                        execution: Object.freeze({ kind: 'view-type' as const, activationId: registration.activationId }),
-                    }));
-                }
-            }
-            return Object.freeze(typeToolDescriptors.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-        },
-
     });
-    return registry;
 }

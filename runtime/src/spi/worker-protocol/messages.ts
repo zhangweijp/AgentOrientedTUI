@@ -25,7 +25,7 @@ import type { ManagedPersistenceReport } from '../../worker-runtime/state-persis
 
 import type { RequestID, AppID, DesktopID } from './types.js';
 import type { AppLaunchConfig } from '../app/app-config.interface.js';
-import type { ObservedToolExecutionV3, SnapshotPrepareIssue, ToolDescriptorV3 } from '../../core/snapshot/types.js';
+import type { ViewToolReceiver, SnapshotPrepareIssue, ToolDescriptorV4 } from '../../core/snapshot/types.js';
 import type { SnapshotValueRefSource } from '../../core/tool/snapshot-value-arguments.js';
 import type { LLMUsageEvent } from '../core/llm-usage.js';
 
@@ -68,16 +68,16 @@ export type { OrdinaryParameterContract } from '../../core/tool/ordinary-paramet
 import type { ViewToolInvocationTerminal } from '../../core/tool/invocation-terminal.js';
 export type { ViewToolInvocationTerminal } from '../../core/tool/invocation-terminal.js';
 
-/** Qualified parameters retain ViewType execution and separate Snapshot Ref provenance. */
-export type ViewToolInvokeV5Message = Readonly<{
-    type: 'VIEW_TOOL_INVOKE_V5'; requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string;
-    tool: ToolDescriptorV3; argumentMode: typeof VIEW_TYPE_PARAMETERS_MODE;
-    execution: Extract<ObservedToolExecutionV3, { kind: 'view-type' }>;
+/** The qualified receiver and Ref provenance are distinct from business parameters. */
+export type ViewToolInvokeV6Message = Readonly<{
+    type: 'VIEW_TOOL_INVOKE_V6'; requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string;
+    tool: ToolDescriptorV4; argumentMode: typeof VIEW_TYPE_PARAMETERS_MODE;
+    receiver: ViewToolReceiver;
     rawArgs: Readonly<Record<string, unknown>>; effectiveArgs: Readonly<Record<string, unknown>>;
     refSources: readonly SnapshotValueRefSource[];
 }>;
-export type ViewToolInvokeV5Response = Readonly<{
-    type: 'VIEW_TOOL_INVOKE_V5_RESPONSE'; requestId: RequestID; appId: AppID; instanceId: string;
+export type ViewToolInvokeV6Response = Readonly<{
+    type: 'VIEW_TOOL_INVOKE_V6_RESPONSE'; requestId: RequestID; appId: AppID; instanceId: string;
     argumentMode: typeof VIEW_TYPE_PARAMETERS_MODE; success: true;
     terminal: ViewToolInvocationTerminal | Readonly<{ phase: 'finished-unknown' }>;
 }>;
@@ -87,7 +87,7 @@ export type ViewToolInvokeV5Response = Readonly<{
  */
 export type MainToWorkerMessage =
     | Readonly<{ type: 'FLUSH_PROJECTION'; requestId: RequestID }>
-    | ViewToolInvokeV5Message
+    | ViewToolInvokeV6Message
     | StateStorageResponse
     | InitMessage
     | AppLifecycleMessage
@@ -181,7 +181,7 @@ export interface SnapshotPrepareFailedPush {
  */
 export type WorkerToMainMessage =
     | StateStorageRequest
-    | ViewToolInvokeV5Response
+    | ViewToolInvokeV6Response
     | InitResponse
     | LifecycleResponse
     | ErrorResponse

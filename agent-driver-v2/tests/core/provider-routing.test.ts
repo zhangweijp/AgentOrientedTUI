@@ -105,6 +105,15 @@ it.each([
     expect(requests[1]?.tools ?? []).toEqual([]);
 });
 
+it('keeps adopted context tools on the request when OpenRouter rejects them', async () => {
+    const message = 'This model does not support tools';
+    const { client, beforeRequest, requests } = captureOpenRouterRequests(() =>
+        Response.json({ error: { message, code: 400 } }, { status: 400 }));
+    await expect(client.call(messages, routerTool, { beforeRequest, preserveTools: true, onTextDelta: vi.fn() }))
+        .rejects.toMatchObject({ statusCode: 400, message });
+    expect(requests).toEqual([expect.objectContaining({ model: routerModel, tools: [expect.anything()] })]);
+});
+
 it.each([
     [401, 'Invalid API key'],
     [403, 'This model does not support tools'],

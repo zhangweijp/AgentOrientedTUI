@@ -5,7 +5,7 @@ import {
 } from '../adapters/ordinary-invocation-v2.js';
 import type { OrdinaryParameterContract } from '../core/tool/ordinary-parameter-contract.js';
 import type { ToolResultData } from '../spi/core/tool-result.js';
-import type { ToolDescriptorV3, ObservedToolExecutionV3 } from '../core/snapshot/types.js';
+import type { ToolDescriptorV4, ViewToolReceiver } from '../core/snapshot/types.js';
 import type { ViewToolInvocationTerminal } from '../spi/worker-protocol/messages.js';
 import { checkRefViews } from '../core/tool/snapshot-value-arguments.js';
 
@@ -15,12 +15,12 @@ export async function invokeTypeParameters(
     appId: string;
     instanceId: string;
     negotiated: boolean;
-    validateBinding?: (tool: ToolDescriptorV3, execution: Extract<ObservedToolExecutionV3, { kind: 'view-type' }>) => ToolResultData;
-    getParameterContract?: (tool: ToolDescriptorV3, execution: Extract<ObservedToolExecutionV3, { kind: 'view-type' }>) => OrdinaryParameterContract | undefined;
+    validateBinding?: (tool: ToolDescriptorV4, receiver: ViewToolReceiver) => ToolResultData;
+    getParameterContract?: (tool: ToolDescriptorV4, receiver: ViewToolReceiver) => OrdinaryParameterContract | undefined;
     isRefViewLive?: (viewId: string, viewInstanceId: string) => boolean;
     invokeBinding?: (
-      tool: ToolDescriptorV3,
-      execution: Extract<ObservedToolExecutionV3, { kind: 'view-type' }>,
+      tool: ToolDescriptorV4,
+      receiver: ViewToolReceiver,
       args: Readonly<Record<string, unknown>>
     ) => ViewToolInvocationTerminal | Promise<ViewToolInvocationTerminal>;
   }>
@@ -43,8 +43,8 @@ export async function invokeTypeParameters(
     else if (!context.validateBinding || !context.getParameterContract || !context.invokeBinding)
       result = failure('TOOL_EXECUTION_UNAVAILABLE', 'Current App has no safe ordinary registry');
     else {
-      result = context.validateBinding(message.tool, message.execution);
-      if (result.success) result = validateTypeParameters(message, context.getParameterContract(message.tool, message.execution));
+      result = context.validateBinding(message.tool, message.receiver);
+      if (result.success) result = validateTypeParameters(message, context.getParameterContract(message.tool, message.receiver));
       if (result.success && message.refSources.length) {
         const issue = checkRefViews(message.refSources, message.rawArgs, context.isRefViewLive ?? (() => false));
         if (issue) result = { success: false, error: { code: issue.code, message: issue.message, context: { path: issue.path } } };
@@ -52,7 +52,7 @@ export async function invokeTypeParameters(
       if (result.success) {
         try {
           const terminal = typeParametersResponse(message,
-            await context.invokeBinding(message.tool, message.execution, message.effectiveArgs));
+            await context.invokeBinding(message.tool, message.receiver, message.effectiveArgs));
           if (terminal) return terminal;
         } catch { /* Execution ended with an unreportable outcome. */ }
         return typeParametersResponse(message, { phase: 'finished-unknown' });

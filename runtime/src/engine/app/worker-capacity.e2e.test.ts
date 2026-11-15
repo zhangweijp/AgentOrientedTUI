@@ -28,16 +28,14 @@ async function fact(name: string, value: object) {
 it('C1-08 separate Runtimes use the bundled Worker and each Runtime shares one capacity bound', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-runtimes-')), app = join(dir, 'app.mjs');
     await linkSDKPeers(dir);
-    await capture(app, `import {h} from 'preact';import Type from 'typebox';import {createTUIApp,defineViewTypeTool,useAppRuntimeContext,View,AppTools, defineToolSet} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let launch;
+    await capture(app, `import {h} from 'preact';import Type from 'typebox';import { createTUIApp, useAppRuntimeContext, View, defineViewType } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let launch;
 
 
-const fixtureTools0 = defineToolSet({
-Inspect: defineViewTypeTool({viewType:'Root',name:'inspect',description:'Inspect launch facts',inputSchema:Type.Object({}, {additionalProperties:false}),})
-});
-function Root(){launch=useAppRuntimeContext().launchConfig;return h(AppTools, { definition: fixtureTools0, bindings: {
-Inspect: { execute: async()=>{return {success:true,data:{launch:launch.C1_LAUNCH}};} }
-} }, h(View,{kind: 'instruction',id:'root',type:'Root'},'Worker capacity'));}
-export default createTUIApp({app_name:'c1',component:Root});`);
+
+const _FixtureRoot = defineViewType({ name:'Root', tools:{ inspect: { description:'Inspect launch facts', inputSchema:Type.Object({}, {additionalProperties:false}) } } });
+
+function Root(){launch=useAppRuntimeContext().launchConfig;return h('div', null, h(View,{kind: 'instruction',id:'root',type:_FixtureRoot, bindings:{ inspect: { execute: async()=>{return {success:true,data:{launch:launch.C1_LAUNCH}};} } }},'Worker capacity'));}
+export default createTUIApp({viewTypes:[_FixtureRoot], app_name:'c1',component:Root});`);
     const { createRuntime } = await import(url(join(repo, 'runtime/dist/index.js')));
     const workerFile = join(repo, 'runtime/dist/worker-runtime/index.js');
     const runtimes = [createRuntime({ worker: { timeoutMs: 2345, maxWorkers: 1 } }), createRuntime({ worker: { maxWorkers: 1 } })] as any[];
@@ -77,7 +75,7 @@ export default createTUIApp({app_name:'c1',component:Root});`);
 
 it('C1-20 a standalone Sandbox close permits a fresh Node child to end naturally', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-natural-')), app = join(dir, 'app.mjs'), driver = join(dir, 'driver.mjs');
-    await capture(app, `import {createTUIApp,usePersistentState} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};function Root(){usePersistentState('value',3);return null;}export default createTUIApp({app_name:'natural',component:Root});`);
+    await capture(app, `import { createTUIApp, usePersistentState, defineViewType } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};function Root(){usePersistentState('value',3);return null;}export default createTUIApp({viewTypes:[], app_name:'natural',component:Root});`);
     const output = join(dir, 'result.json');
     await capture(driver, `import {WorkerSandbox} from ${JSON.stringify(url(join(repo, 'runtime/dist/engine/app/worker-sandbox.js')))};
 import {defineRuntimeConfig} from ${JSON.stringify(url(join(repo, 'runtime/dist/spi/config/index.js')))};

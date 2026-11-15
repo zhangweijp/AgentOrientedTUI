@@ -36,7 +36,9 @@ export type { IRefRegistry } from './app/ref-exporter.interface.js';
 export type {
     AppStatePersistence,
     AppInstance,
+    AppFrameView,
     AppProjectionFrame,
+    PreparedProjection,
     RuntimeContext,
     StateBinding,
     StateBindingStatus,
@@ -74,10 +76,8 @@ export type { IRuntimeContext } from './runtime/context.interface.js';
 
 // SDK-facing Runtime ports. These are typed capabilities, not Worker IPC.
 export type { IProjectionPort, ProjectionToken } from './runtime/projection.interface.js';
-export type {
-    IViewOwnedToolPort,
-} from './runtime/view-owned-tools.interface.js';
-export type { IAppTypeToolPort, AppTypeToolDefinition, AppTypeToolRegistrationOptions, AppFrameTool, SafeOrdinaryInvoker } from './runtime/app-type-tools.interface.js';
+export type { MountedView } from './runtime/view-owned-tools.interface.js';
+export type { AppTypeToolDefinition, AppFrameBinding } from './runtime/app-type-tools.interface.js';
 export type { AppCleanupReport, AppLifecycleCallbacks, AppLifecyclePort } from './runtime/app-lifecycle.interface.js';
 
 export { captureAppMetadata } from './app/app-metadata.js';
@@ -85,4 +85,4 @@ export type { AppMetadata } from './app/app-metadata.js';
 export { VIEW_TYPE_TOOL_PROTOCOL } from './runtime/app-type-tools.interface.js';
 export { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION } from './runtime/app-lifecycle.interface.js';
 export { STATE_SESSION_PROTOCOL, STATE_SESSION_VERSION } from './runtime/state-persistence.interface.js';
-export { SNAPSHOT_CAPABILITY, PARAMETERS_V5_CAPABILITY } from './worker-protocol/types.js';
+export { SNAPSHOT_CAPABILITY, PARAMETERS_V6_CAPABILITY } from './worker-protocol/types.js';

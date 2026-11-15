@@ -15,7 +15,7 @@ function createMockFactory(name: string): TUIAppFactory {
     return {
         persistenceSupport: 'state-session-v1',
         appLifecycleSupport: 'app-lifecycle-v2',
-        toolAuthoringProtocol: 'view-type-tools-v4',
+        toolAuthoringProtocol: 'view-type-tools-v5',
         kernelConfig: {
             appName: name,
             description: `${name} App`,
@@ -35,7 +35,7 @@ describe('AppRegistry', () => {
         await fs.writeFile(path.join(appDir, 'dist/index.mjs'), 'throw new Error("REGISTRY_MUST_NOT_IMPORT_APP");');
         await fs.writeFile(path.join(appDir, 'aoapp.json'), JSON.stringify({ app_name: name, version: '1.0.0',
             description: `${name} App`, whatItIs: 'Static metadata', whenToUse: 'Unit fixture',
-            toolAuthoringProtocol: 'view-type-tools-v4', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
+            toolAuthoringProtocol: 'view-type-tools-v5', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
             entry: { main: './dist/index.mjs' }, ...patch }));
         return appDir;
     }

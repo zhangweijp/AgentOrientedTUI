@@ -1,17 +1,19 @@
 # 在 Worker 中运行普通 TypeScript 或 Preact App
 
-普通 TypeScript 使用 `@aotui/sdk/app` 的 `createApp`。Preact 使用 `@aotui/sdk` 的 `createTUIApp`、`View` 与 `AppTools`。两者可共享同一份 TypeBox ToolSet，分别维护自己的 App 实例。下面两版工作项 App 使用同一组操作和 Ref。
+同一个 ViewType 的工具定义只声明一次。每个页面实例提供自己的 handler，可以读取和更新该页的状态。下面两版工作项 App 共享定义并各自维护运行状态。
 
-- 复制 [共享 ToolSet、状态和 handler](examples/work-items.ts)。
+- 复制 [共享 ViewType 声明、状态和 handler](examples/work-items.ts)。
 - 复制 [普通 TypeScript 入口](examples/work-items-plain.ts)，或者复制 [Preact 入口](examples/work-items-preact.tsx)。
 
 在同一目录编译所选入口与共享模块，保留入口的默认导出。所需包为配套版本的 `@aotui/sdk`、`@aotui/runtime` 和 `typebox`。Preact 入口另需 `preact`。普通 TS 可使用 NodeNext 模块解析、`lib: ["ES2022"]`、`types: []` 和 `skipLibCheck: false`；Preact 示例启用 `jsx: "react-jsx"`、`jsxImportSource: "preact"` 和 DOM lib。两者的 Host 运行环境为 Node。
 
 ## 发布和执行
 
-普通 TS 在 `initialize` 中准备业务数据，然后调用同步 `publish({ views, bindings })`。每次传入完整 App 的当前 View 和绑定。省略的 View、Ref 会从投影移除。保留相同 id 和类型的 View 沿用实例身份。关闭后重开会得到新身份。声明了 ToolSet 时，每帧提供对应 handler，使用 `enabled: false` 撤下某个操作。多份同类型 View 共享该类型的 Tool。
+普通 TypeScript 从 `@aotui/sdk/app` 导入 `createApp`、`defineViewType` 和 `createView`。工厂声明 `viewTypes`，在 `initialize` 中为每个逻辑页面保留一个由 `createView(type, { id, kind, render })` 创建的 handle。`render` 捕获本次的 Markdown 正文、Ref 和局部绑定。`publish({ views })` 传入 App 当前打开的全部 handle，返回 `{ status: 'prepared', sourceEpoch }`。同一个 handle 持续提交时保留挂载身份。关闭后重新加入，或用同 id 的另一个 handle 替换，都产生新挂载。
 
-Preact 通过 `View`、`useDataRef`、`useArrayRef` 和 `AppTools` 参与实际提交。业务状态由组件管理，只有本次提交参与的 owner 会重新捕获。
+Preact 从 `@aotui/sdk` 导入 `createTUIApp`、`defineViewType` 和 `View`。工厂同样声明 `viewTypes`。页面用 `<View type={Page} id="detail" kind="state" bindings={...}>` 提供操作，用 `useDataRef` 或 `useArrayRef` 发布页面数据。SDK 在实际提交阶段捕获整帧。
+
+每个页面提供其 ViewType 中所有工具的 `execute`。可用性用该页的 `enabled: false` 控制。模型调用时传入必填的 `view_id`，SDK 的业务输入 Schema 与 handler 参数只包含业务字段。显式 Ref 参数可以来自同一观察中的另一页。
 
 两个 SDK 入口都要求 View id 非空，仅使用 ASCII 字母、数字或下划线，在 App 的当前挂载集合内唯一。示例的两个 Item 分别使用 `b` 和 `billing_export_2026_11`。View 元数据、Snapshot 和观察仍有各自的字节限额。直接使用纯 Core 构建 Producer 时，View id 可以使用更宽的字符集，须满足非空、无点及唯一性。
 
@@ -33,7 +35,7 @@ Tool handler 返回收据，业务状态通过下一次 View 发布呈现。普�
 {
   "app_name": "work_items",
   "version": "0.1.0",
-  "toolAuthoringProtocol": "view-type-tools-v4",
+  "toolAuthoringProtocol": "view-type-tools-v5",
   "persistenceSupport": "state-session-v1",
   "appLifecycleSupport": "app-lifecycle-v2",
   "entry": { "main": "./dist/work-items-plain.js" }
@@ -48,5 +50,5 @@ Tool handler 返回收据，业务状态通过下一次 View 发布呈现。普�
 
 ## 迁移
 
-现有 Preact App 仍使用 `createTUIApp({ component, ... })`。使用 SPI 的自定义 factory 从 `initializeComponent(container, context)` 迁移到 `initialize(context)`，返回带 `close()` 的实例。旧 `ComponentFactory`、`ComponentRenderer` 及 `kernelConfig.component` 退出，SDK 和 Runtime 需要配套重建。同版本且采用本批静态声明格式的 SDK 构建副本可以互用 Tool / ToolSet，注册的 handler 与 View 实例仍由各自 Worker 持有。
+现有 Preact App 仍使用 `createTUIApp({ component, ... })`。使用 SPI 的自定义 factory 从 `initializeComponent(container, context)` 迁移到 `initialize(context)`，返回带 `close()` 的实例。旧 `ComponentFactory`、`ComponentRenderer` 及 `kernelConfig.component` 退出，SDK 和 Runtime 需要配套重建。同版本 SDK 副本可以互用 ViewType descriptor。运行中的页面 handler 由各自 Worker 持有。旧 App 级绑定的迁移见[配套迁移](migration.md)。
 Preact App 可以用 `useLLMUsage` 读取所属 Desktop 的模型用量。需被动更新的 App 可设 `signalPolicy: 'never'`，使新投影进入下一次观察，同时抑制自动更新信号。

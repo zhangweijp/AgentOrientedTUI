@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
 
-/** A real SDK/Worker binding mutation attempted during V3 draft preparation. */
-describe('Semantic producer regression: a mutation during V3 preparation cannot publish a torn Draft', () => {
+/** A real SDK/Worker binding mutation attempted during V4 draft preparation. */
+describe('Semantic producer regression: a mutation during V4 preparation cannot publish a torn Draft', () => {
     it('refuses reentrant writes during preparation and recovers on a real Tool commit', async () => {
         const temporary = await mkdtemp(join(tmpdir(), 'aotui-v2-prepare-race-'));
         const root = resolve(process.cwd());
@@ -35,8 +35,7 @@ describe('Semantic producer regression: a mutation during V3 preparation cannot 
                 import Type from 'typebox';
                 import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
                 import { View } from './sdk/src/components/View.tsx';
-                import { AppTools } from './sdk/src/components/AppTools.tsx';
-                import { defineToolSet, defineViewTypeTool } from './sdk/src/tools/view-type-tool.ts';
+                import { defineViewType } from './sdk/src/tools/view-type-tool.ts';
 
                 function Detail() {
                     return h('section',{},[
@@ -44,12 +43,10 @@ describe('Semantic producer regression: a mutation during V3 preparation cannot 
                     ]);
                 }
 
-                const fixtureTools = defineToolSet({
-                    inspect: defineViewTypeTool({ viewType:'FileDetail', name:'inspect',
-                        description:'Read the current file metadata', inputSchema:Type.Object({},{additionalProperties:false}) }),
-                    late: defineViewTypeTool({ viewType:'FileDetail', name:'late_inspect',
-                        description:'Read after enabling', inputSchema:Type.Object({},{additionalProperties:false}) }),
-                });
+                const FileDetail = defineViewType({ name: 'FileDetail', tools: {
+                    inspect: { description:'Read the current file metadata', inputSchema:Type.Object({},{additionalProperties:false}) },
+                    late_inspect: { description:'Read after enabling', inputSchema:Type.Object({},{additionalProperties:false}) },
+                } });
                 let enable, attempt;
                 function App() {
                     const [enabled, setEnabled] = useState(false);
@@ -57,12 +54,12 @@ describe('Semantic producer regression: a mutation during V3 preparation cannot 
                     attempt = () => setRender(value => value + 1);
                     enable = () => setEnabled(true);
                     const execute = async () => ({success:true,data:{file:'App.tsx'}});
-                    return h(AppTools, { definition: fixtureTools, bindings: { inspect: { execute }, late: { execute, enabled } } },
-                        h(View,{kind:'state',id:'fd_0',type:'FileDetail'},h(Detail)));
+                    return h(View, {kind:'state',id:'fd_0',type:FileDetail,
+                        bindings: { inspect: { execute }, late_inspect: { execute, enabled } } }, h(Detail));
                 }
                 const factory = createTUIApp({
                     app_name:'m4_epoch_race',
-                    component:App,
+                    component:App, viewTypes:[FileDetail],
                 });
                 const initialize = factory.initialize.bind(factory);
                 factory.initialize = async ctx => {
@@ -73,23 +70,16 @@ describe('Semantic producer regression: a mutation during V3 preparation cannot 
                     let mutated = false;
                     view.getAttribute = ((name: string) => {
                         const value = getAttribute(name);
-                        if (!mutated && name === 'data-view-instance-id' && value) {
+                        if (!mutated && name === 'data-view-id' && value) {
                             mutated = true;
                             const before = ctx.projection.token();
                             let registered = false;
                             try {
-                                ctx.appTypeTools.registerTypeTool({
-                                    viewType:'FileDetail', name:'late_inspect', description:'Reentrant registration',
-                                    inputSchema:{ type:'object', properties:{}, required:[], additionalProperties:false },
-                                }, { safeOrdinaryParametersInvocationMode:'ordinary-invoker/v4',
-                                    createSafeOrdinaryParametersInvoker: () => async () => ({
-                                        phase:'entered-returned',result:{success:true},
-                                    }),
-                                });
+                                ctx.mountView('reentrant', 'FileDetail');
                                 registered = true;
                             } catch { /* swallowed deliberately; the batch must still fail */ }
                             writeFileSync(${JSON.stringify(raceTracePath)}, JSON.stringify({
-                                viewInstanceId:value, beforeEpoch:before.epoch,
+                                viewId:value, beforeEpoch:before.epoch,
                                 afterEpoch:ctx.projection.token().epoch, registered,
                             }));
                         }
@@ -129,7 +119,7 @@ describe('Semantic producer regression: a mutation during V3 preparation cannot 
             const degraded = (host as any).snapshotReceiver.core.store.readLatest('race_app');
             expect(degraded).toMatchObject({ status: 'degraded', lastGood: { id: first.snapshotId } });
             const trace = JSON.parse(await readFile(raceTracePath, 'utf8'));
-            expect(trace).toMatchObject({ viewInstanceId: expect.any(String), beforeEpoch: 1, afterEpoch: 1, registered: false });
+            expect(trace).toMatchObject({ viewId: 'fd_0', beforeEpoch: 1, afterEpoch: 1, registered: false });
             host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'repair' });
             await vi.waitFor(() => {
                 expect(host!.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 2, lastToolCount: 2 });
@@ -138,7 +128,7 @@ describe('Semantic producer regression: a mutation during V3 preparation cannot 
             expect(report.lastIssueCode).toBeUndefined();
             const lookup = (host as any).snapshotReceiver.core.store.getById(report.snapshotId);
             expect(lookup).toMatchObject({ status:'found', snapshot:{
-                schemaVersion:3, views:[{id:'fd_0', content:{value: expect.stringContaining('Stable FileDetail')}}],
+                schemaVersion:4, views:[{id:'fd_0', content:{value: expect.stringContaining('Stable FileDetail')}}],
             }});
             if (lookup.status === 'found') {
                 expect(lookup.snapshot.revision).toBe(2);

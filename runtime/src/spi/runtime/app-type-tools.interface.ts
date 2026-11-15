@@ -1,9 +1,8 @@
-import type { ORDINARY_INVOKER_ABI_V4 } from '../../core/tool/invocation-terminal.js';
-export const VIEW_TYPE_TOOL_PROTOCOL = 'view-type-tools-v4' as const;
-import type { OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
-export type { SafeOrdinaryInvoker } from '../../core/tool/invocation-terminal.js';
+import type { ToolResult } from '../core/tool-result.js';
 
-/** Public JSON contract for one App-owned ViewType Tool. */
+export const VIEW_TYPE_TOOL_PROTOCOL = 'view-type-tools-v5' as const;
+
+/** One shared business contract for an operation on a ViewType. */
 export interface AppTypeToolDefinition {
     readonly viewType: string;
     readonly name: string;
@@ -11,20 +10,9 @@ export interface AppTypeToolDefinition {
     readonly inputSchema: Readonly<Record<string, unknown>>;
 }
 
-/** Trusted factory. The Runtime compiles and owns the actual parameter contract. */
-export interface AppTypeToolRegistrationOptions {
-    readonly safeOrdinaryParametersInvocationMode: typeof ORDINARY_INVOKER_ABI_V4;
-    readonly createSafeOrdinaryParametersInvoker: (contract: OrdinaryParameterContract) => import('../../core/tool/invocation-terminal.js').SafeOrdinaryInvoker;
-}
-
-/** One stable SDK registration in a complete frame. */
-export interface AppFrameTool {
-    readonly definition: AppTypeToolDefinition;
-    readonly options: AppTypeToolRegistrationOptions;
-}
-
-/** App-level registration for the ordinary, type-scoped Tool execution path. */
-export interface IAppTypeToolPort {
-    readonly protocol: typeof VIEW_TYPE_TOOL_PROTOCOL;
-    registerTypeTool(definition: AppTypeToolDefinition, options: AppTypeToolRegistrationOptions): () => void;
+/** One candidate handler on one View. Functions stay in the App execution environment. */
+export interface AppFrameBinding {
+    readonly name: string;
+    readonly enabled: boolean;
+    readonly execute: (args: Readonly<Record<string, unknown>>) => ToolResult | Promise<ToolResult>;
 }

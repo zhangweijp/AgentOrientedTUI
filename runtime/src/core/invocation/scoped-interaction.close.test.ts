@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { compileOrdinarySchema, createSnapshotCore, createViewOwnedTools, createAppInteraction } from '../index.js';
-import type { AppSnapshotV3, CancellationSignal, ExecutionBinding, ExecutionFact, InputValidation, InvocationContext,
+import type { AppSnapshotV4, CancellationSignal, ExecutionBinding, ExecutionFact, InputValidation, InvocationContext,
     ReceiptMetadata, ReceiptQuery, AppInteractionPolicy } from '../index.js';
 
 function deferred<T = void>() {
@@ -14,22 +14,17 @@ function fixture(instanceId = 'run', namespace = 'close:run') {
     let time = 10;
     let clockMode = 'normal';
     const now = () => { if (clockMode === 'throw') throw Error('clock'); return clockMode === 'back' ? 9 : time; };
-    const core = createSnapshotCore({ now }), registry = createViewOwnedTools('app', instanceId), view = registry.mount('v', 'Detail');
+    const core = createSnapshotCore({ now }), registry = createViewOwnedTools('app', instanceId);
     core.lifecycle.startApp('app', instanceId);
-    const contract = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
-    if (!contract.ok) throw Error('Fixture ViewType contract');
-    const handler = async () => ({ success: true });
-    registry.registerTypeTool({ viewType: 'Detail', name: 'read', description: 'Read', inputSchema: contract.contract.schema }, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
-        createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: await handler() }),
-    });
-    const tool = registry.listTools()[0];
-    const committed = core.committer.accept({ schemaVersion: 3, appId: 'app', instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 10,
-        views: [{ id: 'v', viewInstanceId: view.viewInstanceId, type: 'Detail', name: 'Detail', kind: 'state', content: { format: 'markdown-v1', value: 'value' } }], refs: {},
+    registry.defineTools([{ viewType:'Detail',name:'read',description:'Read',inputSchema:{type:'object',properties:{},additionalProperties:false} }]);
+    const plan = registry.prepareFrame([{id:'v',type:'Detail',owner:{},bindings:[{name:'read',enabled:true,execute:()=>({success:true})}]}]);
+    plan.accept();
+    const [view] = plan.instances, [tool] = plan.tools;
+    const committed = core.committer.accept({ schemaVersion: 4, appId: 'app', instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 10,
+        views: [{ toolBindings: view!.toolBindings, id: 'v', viewInstanceId: view.viewInstanceId, type: 'Detail', name: 'Detail', kind: 'state', content: { format: 'markdown-v1', value: 'value' } }], refs: {},
         tools: { [tool.id]: tool } });
-    if (committed.status !== 'published' || committed.snapshot.schemaVersion !== 3) throw Error('Fixture source');
-    const grant = (source: AppSnapshotV3) => ({ views: source.views.map(v => ({ viewId: v.id, viewInstanceId: v.viewInstanceId })), refs: [],
-        toolBindings: Object.values(source.tools).map(t => ({ toolId: t.id, execution: t.execution })), content: [] });
+    if (committed.status !== 'published' || committed.snapshot.schemaVersion !== 4) throw Error('Fixture source');
+    const grant = (source: AppSnapshotV4) => ({refs:[],toolIds:Object.keys(source.tools)});
     const controls = {
         project: (context: Parameters<AppInteractionPolicy['project']>[0]): ReturnType<AppInteractionPolicy['project']> => grant(context.source),
         validate: (_source: Parameters<ExecutionBinding['validateInput']>[0], input: Parameters<ExecutionBinding['validateInput']>[1], _signal: CancellationSignal): Maybe<InputValidation> => ({ ok: true, value: input }),
@@ -40,7 +35,7 @@ function fixture(instanceId = 'run', namespace = 'close:run') {
     const calls = { handler: 0, authorize: 0, validate: 0, project: 0, read: 0 };
     const binding: ExecutionBinding = { identity: {},
         validateInput: (source, input, signal) => { calls.validate++; return controls.validate(source, input, signal); },
-        isLive: source => ({ ok: registry.validateTypeToolBinding(tool, source.execution).success }),
+        isLive: source => ({ ok: registry.validateTypeToolBinding(tool, source.receiver).success }),
         execute: context => { calls.handler++; return controls.execute(context); } };
     const input = { appId: 'app', instanceId, policy: {
         project: (context: Parameters<AppInteractionPolicy['project']>[0]) => { calls.project++; return controls.project(context); },
@@ -49,9 +44,9 @@ function fixture(instanceId = 'run', namespace = 'close:run') {
     }, execution: { resolve: () => binding } };
     const authority = createAppInteraction(core.store, { namespace, now, ...input });
     const client = authority;
-    async function observe(target = client) { const got = await target.observe({ viewIds: ['v'] }); if (got.status !== 'observed') throw Error(got.issue.code);
+    async function observe(target = client) { const got = await target.observe({ all: true }); if (got.status !== 'observed') throw Error(got.issue.code);
         expect(target.adoptObservation(got.observation.observationId)).toEqual({ status: 'adopted' });
-        return { invocationId: 'call', observationId: got.observation.observationId, bindingId: got.observation.bindings[0].bindingId, input: {} }; }
+        return { invocationId: 'call', observationId: got.observation.observationId, toolId: got.observation.tools[0].id, input:{view_id:'v'} }; }
     const completion = authority.whenClosed(); let completed = false; void completion.then(() => { completed = true; });
     async function pending() { await Promise.resolve(); expect(completed).toBe(false); expect(authority.whenClosed()).toBe(completion); }
     async function zero() { await completion; expect(completed).toBe(true);
@@ -76,9 +71,9 @@ it.each(['resolve', 'reject'] as const)('C02 actual project %s retains cancelled
     const finish = deferred<Awaited<ReturnType<AppInteractionPolicy['project']>>>();
     f.controls.project = context => { context.signal.addEventListener('abort', () => { expect(context.signal.aborted).toBe(true); }); entered.resolve();
         return finish.promise; };
-    const work = f.client.observe({ viewIds: ['v'] }); await entered.promise; f.authority.close(); await f.pending();
+    const work = f.client.observe({ all: true }); await entered.promise; f.authority.close(); await f.pending();
     expect(f.authority.inspect()).toMatchObject({ observations: { reservations: 1, cancelledReservations: 1 } });
-    if (outcome === 'reject') finish.reject(Error('project')); else finish.resolve({ views: [], refs: [], toolBindings: [], content: [] });
+    if (outcome === 'reject') finish.reject(Error('project')); else finish.resolve({ refs: [], toolIds: [] });
     expect((await work).status).toBe('rejected'); await f.zero();
 });
 
@@ -138,12 +133,12 @@ it.each(['rep', 'rpe', 'erp', 'epr', 'pre', 'per'])('C07 receipt permission + ex
     const read = deferred<boolean>(), execute = deferred<ExecutionFact>(), project = deferred<Awaited<ReturnType<AppInteractionPolicy['project']>>>();
     f.controls.read = () => { readEntered.resolve(); return read.promise; }; const reading = f.client.invoke(request); await readEntered.promise;
     f.controls.execute = () => { executeEntered.resolve(); return execute.promise; }; const executing = f.client.invoke({ ...request, invocationId: 'second' }); await executeEntered.promise;
-    f.controls.project = () => { projectEntered.resolve(); return project.promise; }; const projecting = f.client.observe({ viewIds: ['v'] }); await projectEntered.promise;
+    f.controls.project = () => { projectEntered.resolve(); return project.promise; }; const projecting = f.client.observe({ all: true }); await projectEntered.promise;
     f.authority.close(); await f.pending(); expect(f.authority.inspect()).toMatchObject({ activeReads: 2, activeInvocations: 1, observations: { cancelledReservations: 1 } });
     for (let n = 0; n < order.length; n++) {
         if (order[n] === 'r') { read.resolve(true); await reading; }
         if (order[n] === 'e') { execute.resolve(success()); await executing; }
-        if (order[n] === 'p') { project.resolve({ views: [], refs: [], toolBindings: [], content: [] }); await projecting; }
+        if (order[n] === 'p') { project.resolve({ refs: [], toolIds: [] }); await projecting; }
         if (n < 2) { await f.pending(); expect(f.authority.inspect().combinedBytes).toBeGreaterThan(0); }
     }
     await f.zero(); expect(f.calls.handler).toBe(2); expect(f.calls.read).toBe(2);
@@ -175,7 +170,7 @@ it('abort reentry keeps one completion and duplicate waiters share one execution
 it.each(['project', 'validate', 'authorize', 'execute', 'read'].flatMap(stage => ['throw', 'back'].map(clock => ({ stage, clock }))))('C09 $stage finally completes with clock $clock', async ({ stage, clock }) => {
     const f = fixture(), request = stage === 'project' ? undefined : await f.observe(), entered = deferred(), gate = deferred();
     let work: Promise<unknown>;
-    if (stage === 'project') { f.controls.project = async () => { entered.resolve(); await gate.promise; return { views: [], refs: [], toolBindings: [], content: [] }; }; work = f.client.observe({ viewIds: ['v'] }); }
+    if (stage === 'project') { f.controls.project = async () => { entered.resolve(); await gate.promise; return { refs: [], toolIds: [] }; }; work = f.client.observe({ all: true }); }
     else {
         if (stage === 'validate') f.controls.validate = async (_source, input) => { entered.resolve(); await gate.promise; return { ok: true, value: input }; };
         if (stage === 'authorize') f.controls.authorize = async () => { entered.resolve(); await gate.promise; return true; };

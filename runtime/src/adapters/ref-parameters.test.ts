@@ -2,7 +2,7 @@ import { validateCapturedTypeParameters as validateTypeParameters } from '../../
 import { describe, expect, it } from 'vitest';
 import { createSnapshotCore } from '../core/snapshot/store.js';
 import { refKey } from '../core/snapshot/snapshot-support.js';
-import type { JsonValue, PreparedAppSnapshotDraftV3 } from '../core/snapshot/types.js';
+import type { JsonValue, PreparedAppSnapshotDraftV4 } from '../core/snapshot/types.js';
 import { compileOrdinarySchema } from '../core/tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profile.js';
 import { prepareViewTypeParameters } from '../core/tool/snapshot-value-arguments.js';
@@ -29,24 +29,24 @@ function fixture(optional = false) {
     let sequence = 0;
     const publish = (values: typeof refs = refs) => {
         const seq = ++sequence;
-        const draft: PreparedAppSnapshotDraftV3 = { schemaVersion: 3, appId: 'a', instanceId: 'i',
+        const draft: PreparedAppSnapshotDraftV4 = { schemaVersion: 4, appId: 'a', instanceId: 'i',
             producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
-            views: [{ id: 'items', viewInstanceId: 'mount', type: 'Items', name: 'Items', kind: 'state',
+            views: [{ toolBindings: [{toolId,activationId:'active'}], id: 'items', viewInstanceId: 'mount', type: 'Items', name: 'Items', kind: 'state',
                 content: { format: 'markdown-v1', value: 'Choose published Items.' } }],
             refs: values, tools: { [toolId]: { id: toolId, name: 'choose', viewType: 'Items', description: 'Choose Items',
-                 inputSchema: ordinaryParameterProfile(c.contract),
-                execution: { kind: 'view-type', activationId: 'active' } } } };
+                 inputSchema: ordinaryParameterProfile(c.contract) } } };
         const result = core.committer.accept(draft);
-        if (result.status !== 'published' || result.snapshot.schemaVersion !== 3) throw Error(JSON.stringify(result));
+        if (result.status !== 'published' || result.snapshot.schemaVersion !== 4) throw Error(JSON.stringify(result));
         return result.snapshot;
     };
     const source = publish();
     const visible = Object.values(refs).map(r => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id }));
+    const receiver = {viewId:'items',viewInstanceId:'mount',activationId:'active'};
     const prepare = (args: unknown, snapshotId = source.id, granted = visible) => prepareViewTypeParameters(core.store,
-        { appId: 'a', instanceId: 'i' }, { snapshotId, toolId, execution: { kind: 'view-type', activationId: 'active' }, args }, granted);
+        { appId:'a',instanceId:'i',snapshotId,tool:source.tools[toolId]!,receiver }, c.contract, args as any, granted);
     const message = (prepared: Extract<ReturnType<typeof prepare>, { status: 'prepared' }>) => captureTypeParametersRequest({
-        type: 'VIEW_TOOL_INVOKE_V5', requestId: 'call', appId: 'a', instanceId: 'i', snapshotId: source.id,
-        tool: source.tools[toolId], execution: { kind: 'view-type', activationId: 'active' },
+        type: 'VIEW_TOOL_INVOKE_V6', requestId: 'call', appId: 'a', instanceId: 'i', snapshotId: source.id,
+        tool: source.tools[toolId], receiver,
         argumentMode: 'view-type-parameters-v1', rawArgs: prepared.rawArgs,
         effectiveArgs: prepared.effectiveArgs, refSources: prepared.refSources });
     return { core, contract: c.contract, refs, source, publish, prepare, message };
@@ -67,7 +67,7 @@ describe('shared Ref selections through Core and Worker parameter grammar', () =
             expect(Object.isFrozen((p.effectiveArgs.many as readonly JsonValue[])[0])).toBe(true);
             expect(validateTypeParameters(f.message(p))).toEqual({ success: true });
             expect(f.contract.hasRefs).toBe(true);
-        } finally { p.release(); f.core.lifecycle.dispose(); }
+        } finally { f.core.lifecycle.dispose(); }
         expect(f.core.store.inspect().activeLeases).toBe(0);
     });
     it('distinguishes omitted optional selection from an empty selection and never inserts defaults', () => {
@@ -75,7 +75,7 @@ describe('shared Ref selections through Core and Worker parameter grammar', () =
         for (const [raw, expected] of [[{}, {}], [{ many: [] }, { many: [] }]]) {
             const p = f.prepare(raw); expect(p.status).toBe('prepared'); if (p.status !== 'prepared') throw Error('prepare');
             expect(p.effectiveArgs).toEqual(expected); expect(p.refSources).toEqual([]);
-            expect(validateTypeParameters(f.message(p)).success).toBe(true); p.release();
+            expect(validateTypeParameters(f.message(p)).success).toBe(true);
         }
         f.core.lifecycle.dispose();
     });
@@ -117,6 +117,6 @@ describe('shared Ref selections through Core and Worker parameter grammar', () =
                     : kind === 'snapshot' ? { snapshotId: 'other' } : kind === 'extra' ? { index: 0 } : {}) });
             const changed = { ...m, refSources, ...(kind === 'ordinary' ? { effectiveArgs: { ...m.effectiveArgs, ordinary: 'changed' } } : {}) };
             expect(validateTypeParameters(captureTypeParametersRequest(changed)).success).toBe(false);
-        } finally { p.release(); f.core.lifecycle.dispose(); }
+        } finally { f.core.lifecycle.dispose(); }
     });
 });

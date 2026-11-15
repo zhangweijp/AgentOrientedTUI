@@ -62,10 +62,10 @@ beforeAll(async () => {
     ({ AppWorkerHost } = await import(pathToFileURL(join(runtimeDocs, '../dist/engine/app/worker-host.js')).href));
     const document = await readFile(join(runtimeDocs, 'runtime-app-interaction.md'), 'utf8');
     const body = document.match(/<!-- b2-app:start -->\n```js\n([\s\S]*?)\n```\n<!-- b2-app:end -->/)?.[1];if (!body) throw Error('App example markers');
-    const executableBody = body.replace("if (args.filePath !== '/open/note.txt')", `if (args.text === 'throw') throw new Error('PRIVATE_CONTROLLED_FAILURE');
+    const executableBody = body.replace("setText(args.text);", `if (args.text === 'throw') throw new Error('PRIVATE_CONTROLLED_FAILURE');
       if (args.text === 'business') return { success: false, error: { code: 'E_HANDLER_ERROR', message: 'Application declined the edit.' },
         data: { refreshed: false } };
-      if (args.filePath !== '/open/note.txt')`);
+      setText(args.text);`);
     if (executableBody === body) throw Error('Expected the documented ordinary Tool guard for the controlled failure fixture');
     app = join(directory, 'app.mjs');await capture(app, executableBody + '\n');
     const entry = join(directory, 'entry.mjs');await capture(entry, "export * from '@aotui/runtime';\n");runtimePackage = await import(pathToFileURL(entry).href);
@@ -86,32 +86,27 @@ async function install(runtime: any, desktop = 'd', id = 'a', toolsEnabled?: boo
 }
 function scope(runtime: any, desktop = 'd', id = 'a') {
     const controls = { project: (context: any): any => grant(context), authorize: (_context: any): any => true, read: (_meta: any, _signal: any): any => true };
-    function grant({ source, selection }: any) {
-        const views = source.views.filter((view: any) => selection.viewIds.includes(view.id));
+    function grant({ source }: any) {
         return {
-        views: views.map((view: any) => ({ viewId: view.id, viewInstanceId: view.viewInstanceId })),
-        refs: Object.values(source.refs).filter((r: any) => selection.viewIds.includes(r.ownerViewId)).map((r: any) => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })),
-        toolBindings: Object.values(source.tools).flatMap((tool: any) => 
-            views.some((view: any) => view.type === tool.viewType) ? [{ toolId: tool.id, execution: tool.execution }] : []),
-        content: views.map((view: any) => ({ view: { viewId: view.id, viewInstanceId: view.viewInstanceId }, decision: 'retain' as const })),
-    }; }
+            refs: Object.values(source.refs).map((ref: any) => ({ viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id })),
+            toolIds: Object.keys(source.tools),
+        };
+    }
     const policy = { project: (context: any) => controls.project(context), authorize: (context: any) => controls.authorize(context), canReadReceipt: (meta: any, signal: any) => controls.read(meta, signal) };
     const instanceId = runtime.getDesktop(desktop).getInstalledApps().find((app: any) => app.appId === id)?.appInstanceId;
     const result = runtime.getAppInteraction(desktop, id, instanceId, policy);expect(result.status).toBe('ready');if (result.status !== 'ready') throw Error(result.issue.code);
-    async function observe() { let observation: any;await vi.waitFor(async () => { const result = await resultClient.observe({ viewIds: ['detail'] });expect(result.status).toBe('observed');if (result.status === 'observed') observation = result.observation; }, { timeout: 6000 });expect(resultClient.adoptObservation(observation.observationId).status).toBe('adopted');return observation; }
+    async function observe() { let observation: any;await vi.waitFor(async () => { const result = await resultClient.observe({ all: true });expect(result.status).toBe('observed');if (result.status === 'observed') observation = result.observation; }, { timeout: 6000 });expect(resultClient.adoptObservation(observation.observationId).status).toBe('adopted');return observation; }
     const resultClient = result.interaction;return { client: resultClient, controls, policy, observe, instanceId };
 }
 function request(observation: any, name = 'ordinary', input: any = { text: 'change' }, invocationId = 'call') {
-    const tool = observation.tools.find((tool: any) => tool.name === name), binding = observation.bindings.find((candidate: any) => candidate.toolId === tool?.id &&
-        candidate.execution.kind === 'view-type');
-    if (!binding) throw Error('Missing tool binding ' + name);
-    const args = name === 'ordinary' ? { filePath: '/open/note.txt', ...input } : input;
-    return { invocationId, observationId: observation.observationId, bindingId: binding.bindingId, input: args };
+    const tool = observation.tools.find((tool: any) => tool.name === name);
+    if (!tool) throw Error('Missing Tool ' + name);
+    return { invocationId, observationId: observation.observationId, toolId: tool.id, input: { view_id: 'detail', ...input } };
 }
 async function waitForViewText(client: any, expected: string) {
     const deadline = Date.now() + 6000;let last: unknown;
     while (Date.now() < deadline) {
-        const result = await client.observe({ viewIds: ['detail'] });
+        const result = await client.observe({ all: true });
         if (result.status === 'observed') {
             const view = result.observation.views.find((entry: any) => entry.id === 'detail');
             client.releaseObservation(result.observation.observationId);
@@ -140,7 +135,7 @@ it('B2 C09 toolsEnabled true exposes ordinary and Ref tools through the same con
     const runtime = makeRuntime();try {
         await install(runtime, 'd', 'a', true);const s = scope(runtime), observation = await s.observe();
         for (const [name, input] of [['ordinary', { text: 'change' }], ['ref', { file: 'detail.file' }]] as const) {
-            expect(observation.bindings.some((binding: any) => binding.toolId === observation.tools.find((tool: any) => tool.name === name)?.id)).toBe(true);
+            expect(observation.tools.some((tool: any) => tool.name === name)).toBe(true);
             const first = await s.client.invoke(request(observation, name, input, name));
             expect(first.receipt.outcome.status).toBe('succeeded');
             const again = await s.client.invoke(request(observation, name, input, name + '-next'));
@@ -155,7 +150,7 @@ it('B2 C05 toolsEnabled false preserves Views but grants no executable bindings'
     const runtime = makeRuntime();try {
         await install(runtime, 'd', 'a', false);const s = scope(runtime), observation = await s.observe();
         expect(observation.views.some((view: any) => view.id === 'detail')).toBe(true);
-        expect(observation.bindings).toEqual([]);
+        expect(observation.tools).toEqual([]);
 
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);
@@ -205,28 +200,34 @@ it('packed SDK separates authorization, a returned E_HANDLER_ERROR and an actual
 it('checks the complete Tool profile at the packed SDK, Runtime and Snapshot boundaries', async () => {
     const entry = join(directory, 'b03-profile.mjs');
     await capture(entry, `import Type from 'typebox';
-import { createApp, defineToolSet, defineViewTypeTool } from '@aotui/sdk/app';
-import { VIEW_TYPE_PARAMETERS_MODE } from '@aotui/runtime/core';
+import { createApp, createView, defineViewType } from '@aotui/sdk/app';
+import { VIEW_TYPE_PARAMETERS_MODE, modelToolSchema } from '@aotui/runtime/core';
 
 const limit = 64 * 1024, marker = 'x-aotui-parameter-contract';
 const base = { type: 'object', properties: {}, required: [], additionalProperties: true, description: '' };
 const bytes = value => new TextEncoder().encode(JSON.stringify(value)).byteLength;
 const unit = '界😀\\n';
-const fill = limit - bytes({ ...base, [marker]: VIEW_TYPE_PARAMETERS_MODE });
+const fill = limit - bytes(modelToolSchema(base, 'Detail'));
 const unitBytes = bytes(unit) - 2;
 const description = unit.repeat(Math.floor(fill / unitBytes)) + 'x'.repeat(fill % unitBytes);
-const metadata = { viewType: 'Detail', name: 'wide', description: 'Exercise a Tool at its profile boundary' };
-export const define = delta => defineViewTypeTool({ ...metadata, inputSchema: Type.Object({}, { description: description + 'x'.repeat(delta) }) });
-const tools = defineToolSet({ wide: define(0) });
-export const oversizedProfile = { ...tools.wide.inputSchema, description: description + 'x', [marker]: VIEW_TYPE_PARAMETERS_MODE };
-export const profileBytes = bytes({ ...tools.wide.inputSchema, [marker]: VIEW_TYPE_PARAMETERS_MODE });
-export default createApp({ app_name: 'profile_capacity', tools, initialize({ publish }) {
-    publish({ views: [{ id: 'detail', type: 'Detail', kind: 'state', body: 'Profile ready' }],
-        bindings: { wide: { execute: () => ({ success: true }) } } });
+export const define = delta => defineViewType({ name: 'Detail', tools: { wide: {
+    description: 'Exercise a Tool at its model schema boundary',
+    inputSchema: Type.Object({}, { description: description + 'x'.repeat(delta) }),
+} } });
+const Detail = define(0);
+export const oversizedProfile = { ...base, description: 'x'.repeat(limit), [marker]: VIEW_TYPE_PARAMETERS_MODE };
+export const modelBytes = bytes(modelToolSchema(Detail.tools.wide.inputSchema, 'Detail'));
+export const profileBytes = bytes({ ...Detail.tools.wide.inputSchema, [marker]: VIEW_TYPE_PARAMETERS_MODE });
+export default createApp({ app_name: 'profile_capacity', viewTypes: [Detail], initialize({ publish }) {
+    const detail = createView(Detail, { id: 'detail', kind: 'state', render: () => ({
+        body: 'Profile ready', bindings: { wide: { execute: () => ({ success: true }) } },
+    }) });
+    publish({ views: [detail] });
 } });
 `);
     const fixture = await import(pathToFileURL(entry).href);
-    expect(fixture.profileBytes).toBe(64 * 1024);
+    expect(fixture.modelBytes).toBe(64 * 1024);
+    expect(fixture.profileBytes).toBeLessThan(fixture.modelBytes);
     expect(() => fixture.define(1)).toThrow(expect.objectContaining({ name: 'TypeBoxSchemaExportError', code: 'TOOL_SCHEMA_CAPACITY', path: '$' }));
     const coreEntry = join(directory, 'b03-profile-core.mjs');
     await capture(coreEntry, "export { compileOrdinaryProfile } from '@aotui/runtime/core';\n");
@@ -239,7 +240,7 @@ export default createApp({ app_name: 'profile_capacity', tools, initialize({ pub
         const s = scope(runtime), observation = await s.observe();
         const profile = observation.tools.find((tool: any) => tool.name === 'wide')?.inputSchema;
         expect(new TextEncoder().encode(JSON.stringify(profile)).byteLength).toBe(fixture.profileBytes);
-        expect(compileOrdinaryProfile(profile)?.schema).toEqual(fixture.define(0).inputSchema);
+        expect(compileOrdinaryProfile(profile)?.schema).toEqual(fixture.define(0).tools.wide.inputSchema);
         const result = await s.client.invoke(request(observation, 'wide', {}, 'at-limit'));
         expect(result).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'entered-returned', outcome: { status: 'succeeded' } } });
         facts.push({ case: 'B03-complete-profile', bytes: fixture.profileBytes, oversized: 'TOOL_SCHEMA_CAPACITY', result });
@@ -248,19 +249,19 @@ export default createApp({ app_name: 'profile_capacity', tools, initialize({ pub
     }
 }, 15000);
 
-it('rejects retired imports and an incompatible invoker ABI in a real Worker', async () => {
+it('rejects retired Core imports and an incompatible v4 SDK factory in a real Worker', async () => {
     const exportsEntry = join(directory, 'b01-exports.mjs');
     await capture(exportsEntry, "export * as core from '@aotui/runtime/core';\nexport * as spi from '@aotui/runtime/spi';\n");
     const { core, spi } = await import(pathToFileURL(exportsEntry).href);
-    expect(core.ORDINARY_INVOKER_ABI_V4).toBe('ordinary-invoker/v4');
+    expect(core).not.toHaveProperty('ORDINARY_INVOKER_ABI_V4');
     expect(core).not.toHaveProperty('ORDINARY_INVOKER_ABI_V3');
     expect(core).not.toHaveProperty('ORDINARY_INVOCATION_MODE');
-    expect(spi.PARAMETERS_V5_CAPABILITY).toBe('view-tool-parameters-invoke/v5');
+    expect(spi.PARAMETERS_V6_CAPABILITY).toBe('view-tool-parameters-invoke/v6');
     expect(spi).not.toHaveProperty('PARAMETERS_V4_CAPABILITY');
 
     const runtime = makeRuntime();
     try {
-        for (const variant of ['import', 'ordinary-v2', 'ordinary-invoker/v3']) {
+        for (const variant of ['import', 'view-type-tools-v4']) {
             const file = join(directory, `legacy-${variant.replace('/', '-')}.mjs`);
             const declaration = variant === 'import'
                 ? "import { ORDINARY_INVOCATION_MODE as abi } from '@aotui/runtime/core';"
@@ -269,26 +270,20 @@ it('rejects retired imports and an incompatible invoker ABI in a real Worker', a
 ${declaration}
 export default {
     kernelConfig: { appName: 'legacy_sdk' },
-    toolAuthoringProtocol: 'view-type-tools-v4', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
-    initialize({ appTypeTools }) {
-        appTypeTools.registerTypeTool({ viewType: 'Detail', name: 'old', description: 'Legacy Tool',
-            inputSchema: { type: 'object', properties: {}, additionalProperties: false } }, {
-            safeOrdinaryParametersInvocationMode: abi,
-            createSafeOrdinaryParametersInvoker: () => { throw Error('UNSUPPORTED_INVOKER_FACTORY_ENTERED'); },
-        });
-        return { close() {} };
+    toolAuthoringProtocol: abi, persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
+    initialize() {
+        throw Error('INCOMPATIBLE_FACTORY_ENTERED');
     }
 };\n`);
             const issue = variant === 'import'
                 ? { code: 'E_INIT_FAILED', cause: { message: expect.stringContaining('ORDINARY_INVOCATION_MODE') } }
-                : { code: 'E_OPEN_FAILED', cause: { code: 'TOOL_INVOKER_ABI_UNSUPPORTED',
-                    message: expect.stringContaining('Expected ordinary-invoker/v4. Install matching Runtime and SDK packages') } };
+                : { code: 'APP_AUTHORING_PROTOCOL_UNSUPPORTED', message: expect.stringContaining('view-type-tools-v5') };
             await expect(install(runtime, 'd', variant, undefined, {}, file)).rejects.toMatchObject({
                 code: 'INSTALL_FAILED', cause: { code: 'INSTALL_FAILED', cause: issue },
             });
             expect(runtime.getDesktop('d').getInstalledApps()).toEqual([]);
         }
-        facts.push({ case: 'rejects-retired-import-and-invoker-abi', variants: ['import', 'ordinary-v2', 'ordinary-invoker/v3'] });
+        facts.push({ case: 'rejects-retired-import-and-authoring-protocol', variants: ['import', 'view-type-tools-v4'] });
     } finally {
         expect(await runtime.beginShutdown().completion).toMatchObject({ ok: true, resourcesReleased: true });
     }
@@ -296,7 +291,7 @@ export default {
 
 it('rejects a missing, invalid or v4 ACK before installing an App', async () => {
     for (const variant of ['missing', 'invalid', 'v4']) {
-        const capabilities = variant === 'invalid' ? ['unknown-capability'] : ['app-snapshot/v3', 'view-tool-parameters-invoke/v4'];
+        const capabilities = variant === 'invalid' ? ['unknown-capability'] : ['app-snapshot/v4', 'view-tool-parameters-invoke/v4'];
         const runtime = makeRuntime(), script = join(directory, `ack-${variant}.mjs`);
         await capture(script, `import {parentPort} from 'node:worker_threads';
 let instanceId, closePending;
@@ -311,7 +306,7 @@ function respond(m) {
   parentPort.postMessage({type:init?'INIT_RESPONSE':'LIFECYCLE_RESPONSE',requestId:m.requestId,success:true,
     ...(init?{appInstanceId:m.appInstanceId,appLifecycle:{protocol:'app-lifecycle-v2',version:2,instanceId:m.appInstanceId},persistence${variant === 'missing' ? '' : ',acceptedCapabilities:' + JSON.stringify(capabilities)}}:{}),
     ...(!init&&persistence?{persistence}:{}),...(appCleanup?{appCleanup}:{})});
-  if(init) parentPort.postMessage({type:'SNAPSHOT_PREPARED',draft:{schemaVersion:3,appId:m.appId,instanceId:m.appInstanceId,producerSeq:1,sourceEpoch:1,capturedAt:Date.now(),
+  if(init) parentPort.postMessage({type:'SNAPSHOT_PREPARED',draft:{schemaVersion:4,appId:m.appId,instanceId:m.appInstanceId,producerSeq:1,sourceEpoch:1,capturedAt:Date.now(),
     views:[{id:'detail',viewInstanceId:'view-instance',type:'Detail',name:'Details',kind:'state',content:{format:'markdown-v1',value:'Available'} }],refs:{},
     tools:{[JSON.stringify([m.appId,'Detail','probe'])]:{id:JSON.stringify([m.appId,'Detail','probe']),name:'probe',viewType:'Detail',description:'Probe the current View',
       inputSchema:{type:'object',properties:{},required:[],additionalProperties:false,'x-aotui-parameter-contract':'view-type-parameters-v1'},execution:{kind:'view-type',activationId:'probe-activation'}}}}});
@@ -362,11 +357,11 @@ it.each((['runtime', 'desktop', 'app', 'delete'] as const).flatMap(parent => [fa
         s.controls.project = (context: any) => { calls++;entered.resolve();context.signal.addEventListener('abort', () => {
         expect(runtime.getAppInteraction('d', 'a', s.instanceId, s.policy).status).toBe('rejected');
         });return gate.promise; };
-        const observing = s.client.observe({ viewIds: ['detail'] });await entered.promise;const desktop = runtime.getDesktop('d');
+        const observing = s.client.observe({ all: true });await entered.promise;const desktop = runtime.getDesktop('d');
         closing = parent === 'runtime' ? runtime.beginShutdown() : parent === 'desktop' || parent === 'delete' ? runtime.beginDesktopShutdown('d', parent === 'delete' ? { intent: 'delete' } : undefined) : undefined;
         const appClosing = parent === 'app' ? desktop.closeApp('a') : undefined;
-        const previous = calls, sameStack = s.client.observe({ viewIds: ['detail'] });
-        expect(await s.client.invoke({ invocationId: 'late', observationId: 'old', bindingId: 'old', input: {} })).not.toHaveProperty('kind', 'receipt');
+        const previous = calls, sameStack = s.client.observe({ all: true });
+        expect(await s.client.invoke({ invocationId: 'late', observationId: 'old', toolId: 'old', input: {} })).not.toHaveProperty('kind', 'receipt');
         expect(await s.client.invoke({ ...request(observation), invocationId: 'late' })).toHaveProperty('code', 'APP_INTERACTION_UNAVAILABLE');
         expect(runtime.getAppInteraction('d', 'a', s.instanceId, s.policy).status).toBe('rejected');await sameStack;expect(calls).toBe(previous);
         let appDone = false;void appClosing?.then(() => { appDone = true; });
@@ -374,9 +369,9 @@ it.each((['runtime', 'desktop', 'app', 'delete'] as const).flatMap(parent => [fa
             const deadline = await closing.wait({ timeoutMs: 5 });expect(deadline).toMatchObject({ status: 'deadline', report: { resourcesReleased: false, hasFailures: false, interactions: { verified: true, retainedOperations: 1 } } });
             facts.push({ case: 'held-project-' + parent, pending: deadline.report });
         } else { for (let i = 0; i < 30; i++) await Promise.resolve();expect(appDone).toBe(false); }
-        if (reject) gate.reject(Error('held project'));else gate.resolve({ views: [], refs: [], toolBindings: [], content: [] });expect((await observing).status).toBe('rejected');await appClosing;
+        if (reject) gate.reject(Error('held project'));else gate.resolve({ refs: [], toolIds: [] });expect((await observing).status).toBe('rejected');await appClosing;
         if (closing) expect(await closing.completion).toMatchObject({ resourcesReleased: true, interactions: { verified: true, retainedOperations: 0, retainedBytes: 0 } });
-    } finally { gate.resolve({ views: [], refs: [], toolBindings: [], content: [] });await runtime.beginShutdown().completion; }
+    } finally { gate.resolve({ refs: [], toolIds: [] });await runtime.beginShutdown().completion; }
 }, 15000);
 
 it.each((['authorize', 'auto-read', 'duplicate-read'] as const).flatMap(stage => (['runtime', 'desktop', 'app'] as const).map(parent => [stage, parent] as const)))('B2 C18 actual SDK/Node %s remains owned through %s close until resolve/reject', async (stage, parent) => {
@@ -415,10 +410,10 @@ it('B2 C06/10–12/16 public pending/collapse/show/reopen/reinitialize keeps the
         const s = scope(runtime), first = await s.observe();await desktop.collapseApp('a');expect(runtime.getAppInteraction(id, 'a', s.instanceId).interaction).toBe(s.client);
         await desktop.showApp('a');
         expect((await s.client.invoke(request(first, 'ordinary', { text: 'change' }, 'shown'))).receipt.outcome.status).toBe('succeeded');
-        await desktop.closeApp('a');expect((await s.client.observe({ viewIds: ['detail'] })).status).toBe('rejected');await desktop.openApp('a');
+        await desktop.closeApp('a');expect((await s.client.observe({ all: true })).status).toBe('rejected');await desktop.openApp('a');
         const reopened = scope(runtime), next = await reopened.observe();expect(next.source.instanceId).not.toBe(first.source.instanceId);
         const reinitializing = runtime.reinitializeDesktopApps(id);expect(runtime.getAppInteraction(id, 'a', s.instanceId, s.policy).status).toBe('rejected');
-        expect((await reopened.client.observe({ viewIds: ['detail'] })).status).toBe('rejected');await reinitializing;
+        expect((await reopened.client.observe({ all: true })).status).toBe('rejected');await reinitializing;
         const fresh = scope(runtime), last = await fresh.observe();expect(last.source.instanceId).not.toBe(next.source.instanceId);
         expect((await fresh.client.invoke(request(last))).receipt.outcome.status).toBe('succeeded');
         facts.push({ case: 'instance-boundaries', instances: [first.source.instanceId, next.source.instanceId, last.source.instanceId], toolsEnabled: true });
@@ -456,12 +451,12 @@ const kernelConfig = {
 };
 export default {
     kernelConfig,
-    toolAuthoringProtocol: 'view-type-tools-v4',
+    toolAuthoringProtocol: 'view-type-tools-v5',
     persistenceSupport: 'state-session-v1',
     appLifecycleSupport: 'app-lifecycle-v2',
     initialize({ launchConfig, publishFrame }) {
         if (launchConfig?.projectPath !== ${JSON.stringify(projectPath)}) throw Error('Host config missing');
-        publishFrame(() => ({ views: [], tools: [] }));
+        publishFrame(() => ({ views: [] }));
         return { close() {} };
     },
 };
@@ -538,7 +533,7 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
         const firstInstance = desktop.getInstalledApps().find((entry: any) => entry.appId === 'a')?.appInstanceId;
         expect(typeof firstInstance).toBe('string');
         expect(JSON.stringify(first.messages)).not.toContain(firstInstance);
-        expect((await call(first, dynamicTool!, { filePath: '/open/note.txt', text: 'change' }, 'first-read'))?.outcomeStatus).toBe('succeeded');
+        expect((await call(first, dynamicTool!, { view_id: 'detail', text: 'change' }, 'first-read'))?.outcomeStatus).toBe('succeeded');
 
         expect((await call(first, 'system-collapse_app', { app_id: 'a' }, 'first-collapse'))?.outcomeStatus).toBe('succeeded');
         const collapsedFirst = await context();
@@ -547,7 +542,7 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
         expect(collapsedFirst.tools[dynamicTool!]).toBeUndefined();
         expect((await call(collapsedFirst, 'system-show_app', { app_id: 'a' }, 'first-show'))?.outcomeStatus).toBe('succeeded');
         expect((await call(first, 'system-close_app', { app_id: 'a' }, 'first-close'))?.outcomeStatus).toBe('succeeded');
-        expect((await call(first, dynamicTool!, { filePath: '/open/note.txt', text: 'change' }, 'closed-read'))?.error?.code).toBe('APP_INTERACTION_UNAVAILABLE');
+        expect((await call(first, dynamicTool!, { view_id: 'detail', text: 'change' }, 'closed-read'))?.error?.code).toBe('APP_INTERACTION_UNAVAILABLE');
 
         const closed = await context();
         expect(definitions(closed)).toEqual(base);
@@ -560,8 +555,8 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
         expect(successorInstance).toEqual(expect.any(String));
         expect(successorInstance).not.toBe(firstInstance);
         expect(JSON.stringify(successor.messages)).not.toContain(successorInstance);
-        expect((await call(successor, dynamicTool!, { filePath: '/open/note.txt', text: 'change' }, 'successor-read'))?.outcomeStatus).toBe('succeeded');
-        expect((await call(first, dynamicTool!, { filePath: '/open/note.txt', text: 'change' }, 'old-read-after-reopen'))?.error?.code).toBe('APP_INTERACTION_UNAVAILABLE');
+        expect((await call(successor, dynamicTool!, { view_id: 'detail', text: 'change' }, 'successor-read'))?.outcomeStatus).toBe('succeeded');
+        expect((await call(first, dynamicTool!, { view_id: 'detail', text: 'change' }, 'old-read-after-reopen'))?.error?.code).toBe('APP_INTERACTION_UNAVAILABLE');
 
         for (const [name, callId] of [['system-close_app', 'stale-close'], ['system-collapse_app', 'stale-collapse']] as const) {
             expect((await call(first, name, { app_id: 'a' }, callId))?.error?.code).toBe('APP_INSTANCE_CHANGED');
@@ -590,17 +585,17 @@ it('B2 C12/21 two Desktop/three App actual owners aggregate held callbacks witho
         await install(runtime, 'one', 'a');await install(runtime, 'one', 'b');await install(runtime, 'two', 'a');
         const scopes = [scope(runtime, 'one', 'a'), scope(runtime, 'one', 'b'), scope(runtime, 'two', 'a')], observations = await Promise.all(scopes.map(s => s.observe()));
         const foreign = await scopes[1].client.invoke(request(observations[0]));expect(foreign).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
-        const works = scopes.map((s, index) => { s.controls.project = () => { entered[index].resolve();return gates[index].promise; };return s.client.observe({ viewIds: ['detail'] }); });await Promise.all(entered.map(g => g.promise));
+        const works = scopes.map((s, index) => { s.controls.project = () => { entered[index].resolve();return gates[index].promise; };return s.client.observe({ all: true }); });await Promise.all(entered.map(g => g.promise));
         const one = runtime.getDesktop('one').beginClose(), two = runtime.getDesktop('two').beginClose();
         const closing = runtime.beginShutdown(), previous = closing.inspect();expect(previous.interactions).toMatchObject({ verified: true, retainedOperations: 3 });
         expect(one.inspect().interactions.retainedOperations).toBe(2);expect(two.inspect().interactions.retainedOperations).toBe(1);
         expect(previous.interactions.retainedBytes).toBe(one.inspect().interactions.retainedBytes + two.inspect().interactions.retainedBytes);
-        for (const [index, remaining] of [2, 1, 0].entries()) { gates[index].resolve({ views: [], refs: [], toolBindings: [], content: [] });await works[index];
+        for (const [index, remaining] of [2, 1, 0].entries()) { gates[index].resolve({ refs: [], toolIds: [] });await works[index];
             await vi.waitFor(() => expect(closing.inspect().interactions.retainedOperations).toBe(remaining));
             expect(closing.inspect().interactions.retainedBytes).toBe(one.inspect().interactions.retainedBytes + two.inspect().interactions.retainedBytes); }
         const report = await closing.completion;expect(report).toMatchObject({ resourcesReleased: true, interactions: { verified: true, retainedOperations: 0, retainedBytes: 0 } });
         expect(previous.interactions.retainedOperations).toBe(3);facts.push({ case: 'three-owners', previous, report });
-    } finally { for (const gate of gates) gate.resolve({ views: [], refs: [], toolBindings: [], content: [] });await runtime.beginShutdown().completion; }
+    } finally { for (const gate of gates) gate.resolve({ refs: [], toolIds: [] });await runtime.beginShutdown().completion; }
 }, 20000);
 
 it('B2 C07 app launch config cannot grant tools disabled by the trusted Host', async () => {
@@ -608,7 +603,7 @@ it('B2 C07 app launch config cannot grant tools disabled by the trusted Host', a
         await install(runtime, 'd', 'a', false, { config: { toolsEnabled: true } });
         const s = scope(runtime), observation = await s.observe();
         expect(observation.views.find((view: any) => view.id === 'detail')?.content.value).toContain('Completed actions: 0');
-        expect(observation.bindings).toEqual([]);
+        expect(observation.tools).toEqual([]);
 
     } finally { await runtime.beginShutdown().completion; }
 }, 15000);

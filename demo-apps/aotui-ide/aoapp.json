@@ -3,7 +3,7 @@
   "description": "AOTUI IDE app for agent-oriented code browsing, search, editing, and LSP-assisted analysis.",
   "whatItIs": "An IDE with file actions, per-App sessions and language servers, and scoped View-owned tools.",
   "whenToUse": "Explore authorized workspaces, read and change loaded files, search source, and inspect language information.",
-  "toolAuthoringProtocol": "view-type-tools-v4",
+  "toolAuthoringProtocol": "view-type-tools-v5",
   "persistenceSupport": "state-session-v1",
   "appLifecycleSupport": "app-lifecycle-v2",
   "version": "0.1.2",

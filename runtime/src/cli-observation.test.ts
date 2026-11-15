@@ -31,21 +31,24 @@ function fixture(project?: AppInteractionPolicy['project']) {
     const core = createSnapshotCore({ now: () => 0 });
     core.lifecycle.startApp('app', 'run');
     const tools = createViewOwnedTools('app', 'run');
-    const views = ['first', 'second'].map(id => tools.mount(id, 'Detail'));
-    tools.registerTypeTool({ viewType: 'Detail', name: 'edit', description: 'Edit', 
-        inputSchema: { type: 'object', properties: {}, additionalProperties: false } }, {
-        safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4',
-        createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: { success: true } }),
-    });
-    tools.registerTypeTool({ viewType: 'Detail', name: 'inspect', description: 'Inspect', 
-        inputSchema: { type: 'object', properties: { record: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } } }, required: ['record'], additionalProperties: false },
-    }, { safeOrdinaryParametersInvocationMode: 'ordinary-invoker/v4', createSafeOrdinaryParametersInvoker: () => async () => ({ phase: 'entered-returned', result: { success: true } }) });
-    const published = core.committer.accept({ schemaVersion: 3, appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
-        views: views.map(view => ({ id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: view.viewId,
+    tools.defineTools([
+        { viewType: 'Detail', name: 'edit', description: 'Edit',
+            inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+        { viewType: 'Detail', name: 'inspect', description: 'Inspect', inputSchema: { type: 'object', properties: {
+            record: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } },
+        }, required: ['record'], additionalProperties: false } },
+    ]);
+    const frame = tools.prepareFrame(['first', 'second'].map(id => ({
+        id, type: 'Detail', owner: {}, bindings: ['edit', 'inspect'].map(name => ({ name, enabled: true, execute: () => ({ success: true }) })),
+    })));
+    frame.accept();
+    const views = frame.instances;
+    const published = core.committer.accept({ schemaVersion: 4, appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+        views: views.map(view => ({ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: view.viewId,
             kind: 'state', content: { format: 'markdown-v1', value: 'Current content' } })),
         refs: Object.fromEntries(views.map(view => [refKey(view.viewId, view.viewInstanceId, 'data'), {
             id: 'data', ownerViewId: view.viewId, ownerViewInstanceId: view.viewInstanceId, refType: 'unknown', target: { kind: 'snapshot-value', payload: { value: 1 } },
-        }])), tools: Object.fromEntries(tools.listTools().map(tool => [tool.id, tool])) });
+        }])), tools: Object.fromEntries(frame.tools.map(tool => [tool.id, tool])) });
     expect(published.status).toBe('published');
     const client = createAppInteraction(core.store, { namespace: 'print', now: () => 0, appId: 'app', instanceId: 'run',
         policy: { project: project ?? projectCompleteViews, authorize: () => true, canReadReceipt: () => true },
@@ -89,14 +92,14 @@ describe('read-only CLI preview', () => {
 });
 
 describe('local IDE example observations', () => {
-    it('projects V3 type Tools once and all Ref owners using the current grant contract', async () => {
+    it('projects shared Tools once and all Ref owners using the current grant contract', async () => {
         const f = fixture();
         try {
             const result = await f.client.observe({ all: true });
             expect(result.status).toBe('observed');
             if (result.status !== 'observed') return;
             expect(result.observation).toMatchObject({ views: [{ content: { value: 'Current content' } }, { content: { value: 'Current content' } }] });
-            expect(result.observation.tools).toHaveLength(2); expect(result.observation.bindings).toHaveLength(2);
+            expect(result.observation.tools).toHaveLength(2);
             expect(result.observation.refs).toHaveLength(2);
             f.client.releaseObservation(result.observation.observationId); f.released();
         } finally { await f.close(); }

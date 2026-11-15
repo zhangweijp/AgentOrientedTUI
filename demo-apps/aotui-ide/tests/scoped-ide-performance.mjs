@@ -44,24 +44,23 @@ async function samples(round, name, action) {
 // complete large workspace is traversed with explicit four-View selections.
 // The measured duration covers every page, including full content and tools.
 async function observe(x) {
-    const selected = snapshot(x).views.filter(view => view.type !== 'Root'), seen = new Set(), pages = [];
-    for (let offset = 0; offset < selected.length; offset += 4) {
-        const views = selected.slice(offset, offset + 4), c = scope(x);
-        try {
-            const result = await c.observe({ viewIds: views.map(view => view.id) });
-            assert.equal(result.status, 'observed', JSON.stringify(result));
-            const observed = result.observation;
-            assert.deepEqual(observed.views.map(view => view.id), views.map(view => view.id));
-            for (const view of observed.views) {
-                assert.ok(!seen.has(view.id)); seen.add(view.id);
-                assert.deepEqual(view.content, views.find(source => source.id === view.id).content, 'Complete retained View content');
-            }
-            pages.push({ views: observed.views.length, tools: observed.tools.length, bindings: observed.bindings.length,
-                bytes: Buffer.byteLength(JSON.stringify(observed)), contentBytes: views.reduce((sum, view) => sum + Buffer.byteLength(view.content.value), 0) });
-        } finally { c.close(); }
-    }
-    assert.equal(seen.size, selected.length);
-    return { viewIds: [...seen], pages, contentBytes: pages.reduce((sum, page) => sum + page.contentBytes, 0) };
+    const snapshotViews = snapshot(x).views;
+    const client = scope(x);
+    const result = await client.observe({ all: true });
+    assert.equal(result.status, 'observed', JSON.stringify(result));
+    const observation = result.observation;
+    try {
+        assert.deepEqual(observation.views.map(view => view.id), snapshotViews.map(view => view.id));
+        for (const [index, view] of observation.views.entries()) {
+            assert.deepEqual(view.content, snapshotViews[index].content, 'Complete retained View content');
+        }
+        const contentBytes = observation.views.reduce((sum, view) => sum + Buffer.byteLength(view.content.value), 0);
+        return {
+            viewIds: observation.views.map(view => view.id), contentBytes,
+            pages: [{ views: observation.views.length, tools: observation.tools.length, contentBytes,
+                bytes: Buffer.byteLength(JSON.stringify(observation)) }],
+        };
+    } finally { client.releaseObservation(observation.observationId); }
 }
 function composition(x) { const s = snapshot(x); return { views: s.views.filter(view => view.type !== 'Root').length, instructionViews: s.views.filter(view => view.type === 'Root').length, tools: Object.keys(s.tools).length, refs: Object.keys(s.refs).length,
     contentBytes: s.views.reduce((sum, view) => sum + Buffer.byteLength(view.content.value), 0), refBytes: Buffer.byteLength(JSON.stringify(s.refs)) }; }
@@ -87,7 +86,7 @@ try {
             await invoke(app, 'multi_open_file', { filePaths: [files[0]] }); round.small = composition(app); assert.equal(round.small.views, 2);
             await samples(round, 'smallObserve', async () => { round.observations.small = await observe(app); });
             const writable = await fs.readFile(files[0], 'utf8');
-            await samples(round, 'smallCall', async () => invoke(app, 'write_file', { filePath: files[0], content: writable }, { view: fileView(app, files[0]).id, changes: false }));
+            await samples(round, 'smallCall', async () => invoke(app, 'write_file', { content: writable }, { view: fileView(app, files[0]).id, changes: false }));
             await samples(round, 'typicalOpen', index => invoke(app, 'multi_open_file', { filePaths: files.slice(0, 8) }, { changes: index === 0 })); round.typical = composition(app);
             await samples(round, 'typicalObserve', async () => { round.observations.typical = await observe(app); });
             await samples(round, 'search', () => invoke(app, 'search_files_by_content', { pattern: 'needle', include: 'file-[0-7].ts' }));
