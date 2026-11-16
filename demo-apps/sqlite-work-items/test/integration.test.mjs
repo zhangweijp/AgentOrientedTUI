@@ -330,7 +330,9 @@ for (const force of [false, true]) {
         { timeout: 10_000 }, async t => {
             const f = await fixture(t, force ? 1_500 : 5_000);
             const { pending, pid } = await f.startHeldRead(await f.observe());
-            assert.equal(outcome(await pending).status, 'unknown');
+            const timedOut = await pending;
+            assert.equal(timedOut.kind, 'unavailable');
+            assert.equal(timedOut.code, 'INVOCATION_WAIT_TIMEOUT');
             const close = f.runtime.beginShutdown();
             const waiting = await close.wait({ timeoutMs: 100 });
             assert.equal(waiting.status, 'deadline');
