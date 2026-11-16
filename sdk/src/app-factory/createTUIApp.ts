@@ -2,7 +2,7 @@ import type { AppInstance, RuntimeContext, TUIAppFactory } from '@aotui/runtime/
 import { createDOMAppRoot, dispatchDOMAppEvent, readDOMAppViews } from '@aotui/runtime/adapters/dom';
 import { h, render, type ComponentType } from 'preact';
 import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
-import { createRenderCommit, trackRenderCommits, whenRenderCommitted } from './render-commit.js';
+import { createRenderCommit, prepareRenderProjection, trackRenderCommits, whenRenderCommitted } from './render-commit.js';
 import { createAppFactory, type AppConfig } from './app-factory.js';
 import type { ViewType } from '../tools/view-type-tool.js';
 
@@ -42,9 +42,9 @@ export async function mountPreactApp(
 ): Promise<AppInstance> {
     trackRenderCommits();
     pendingUnmounts.get(container)?.();
-    type ViewInventory = NonNullable<import('preact').ContextType<typeof AppRuntimeContext>>['views'];
-    const views: ViewInventory = new WeakMap();
-    const appContextValue = {
+    type RenderContext = NonNullable<import('preact').ContextType<typeof AppRuntimeContext>>;
+    const views: RenderContext['views'] = new WeakMap();
+    const appContextValue: RenderContext = {
         appId: context.appId,
         desktopId: context.desktopId,
         launchConfig: context.launchConfig,
@@ -54,6 +54,7 @@ export async function mountPreactApp(
         viewTypes,
         views,
         mountView: context.mountView,
+        prepareProjection: (update, opening) => prepareRenderProjection(appContextValue, context.signal, update, opening),
     };
     const root = h(AppRuntimeContext.Provider, { value: appContextValue }, h(RootComponent, {}));
     const commitRender = createRenderCommit(context.projection, appContextValue);

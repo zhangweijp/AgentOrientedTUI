@@ -1,7 +1,7 @@
-import type { CancellationSignal } from '@aotui/runtime/core';
+import { SnapshotDataError, type CancellationSignal } from '@aotui/runtime/core';
 import { options, type VNode } from 'preact';
 import type { IProjectionPort } from '@aotui/runtime/spi';
-import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
+import { AppRuntimeContext, type PrepareProjection } from '../context/AppRuntimeContext.js';
 
 // Preact 10's distributed builds expose these options and fields under minified names.
 // __c runs layout effects through preact/hooks before Preact drains __h (class callbacks).
@@ -15,7 +15,16 @@ type CommitOptions = typeof options & {
     __e: (error: unknown, vnode: CommitVNode, oldVNode?: CommitVNode, info?: unknown) => void;
 };
 
-type RenderOwner = { projection: IProjectionPort; failed: Set<object> };
+type CommitResult = ReturnType<IProjectionPort['endCommit']>;
+type ProjectionIssue = NonNullable<IProjectionPort['failure']>;
+type ProjectionAttempt = {
+    readonly revert: (() => void) | undefined;
+    started: boolean;
+    result?: CommitResult;
+    refusal?: ProjectionIssue;
+    failure?: SnapshotDataError;
+};
+type RenderOwner = { projection: IProjectionPort; failed: Set<object>; attempt?: ProjectionAttempt };
 type RenderRequest = { owner: RenderOwner; started: boolean; finishError?: { error: unknown } };
 type RenderBatch = {
     root: CommitVNode;
@@ -54,6 +63,16 @@ function includes(batch: RenderBatch, vnode: CommitVNode): boolean {
     return false;
 }
 
+function projectionError(issue?: ProjectionIssue): SnapshotDataError {
+    return new SnapshotDataError(issue?.code ?? 'SNAPSHOT_INVALID', issue?.path ?? '$.views',
+        issue?.message ?? 'The render did not prepare a projection');
+}
+
+function failRestoration(owner: RenderOwner, error: unknown): CommitResult {
+    owner.projection.beginCommit();
+    return owner.projection.endCommit({ error });
+}
+
 function finish(batch: RenderBatch): void {
     active = batch.parent;
     const { owner, rendered, unmounting, failure } = batch;
@@ -61,9 +80,23 @@ function finish(batch: RenderBatch): void {
     for (const key of removed) owner.failed.delete(key);
     const blocked = [...owner.failed].some(key => !rendered.has(key));
     try {
-        if (owner.projection.endCommit(failure, blocked) === 'failed') {
+        const attempt = !batch.request && owner.attempt?.started ? owner.attempt : undefined;
+        const mode = attempt?.revert && (attempt.result === undefined ? 'opening' :
+            typeof attempt.result === 'object' ? 'restore' : undefined);
+        let result = owner.projection.endCommit(failure, blocked, mode);
+        if (attempt) {
+            attempt.result = result;
+            if (typeof result === 'object') {
+                attempt.refusal = result.issue;
+                // Join the rollback from the same Preact queue before the caller can observe completion.
+                try { attempt.revert!(); }
+                catch (error) { attempt.result = result = failRestoration(owner, error); }
+            }
+            if (result === 'failed' || result === 'blocked') attempt.failure ??= projectionError(owner.projection.failure);
+        }
+        if (result === 'failed') {
             for (const key of rendered) if (!removed.has(key)) owner.failed.add(key);
-        } else {
+        } else if (typeof result === 'string') {
             for (const key of rendered) owner.failed.delete(key);
         }
     } catch (error) {
@@ -214,4 +247,27 @@ export async function whenRenderCommitted(signal: CancellationSignal): Promise<v
         });
     }
     if (signal.aborted) throw closed();
+}
+
+export async function prepareRenderProjection(context: object, signal: CancellationSignal,
+    update: Parameters<PrepareProjection>[0], opening: Parameters<PrepareProjection>[1]): ReturnType<PrepareProjection> {
+    const owner = owners.get(context)!;
+    if (owner.attempt) throw Object.assign(new Error('A projection update is already in progress'), { code: 'PROJECTION_BUSY' });
+    const attempt: ProjectionAttempt = { revert: opening?.revert, started: false };
+    owner.attempt = attempt;
+    try {
+        trackRenderCommits();
+        await whenRenderCommitted(signal);
+        attempt.started = true;
+        update();
+        await whenRenderCommitted(signal);
+        if (attempt.failure) throw attempt.failure;
+        if (typeof attempt.result === 'object') {
+            failRestoration(owner, new SnapshotDataError('SNAPSHOT_INVALID', '$.views', 'The opening rollback did not commit a render'));
+            throw projectionError(owner.projection.failure);
+        }
+        if (attempt.refusal) throw projectionError(attempt.refusal);
+        if (attempt.result !== 'prepared') throw projectionError(owner.projection.failure);
+        return Object.freeze({ status: 'prepared', sourceEpoch: owner.projection.token().epoch });
+    } finally { delete owner.attempt; }
 }

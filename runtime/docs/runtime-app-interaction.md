@@ -169,13 +169,13 @@ Both timeout errors carry only a code and message. The terminal receipt's `compl
 
 采用新观察后，Host 发起新调用须使用新 Observation、其中的 Tool ID 和接收页面。Node Worker Host 为省略 `timeoutMs` 的调用和收据查询应用默认期限。 [Worker 与 App 资源归属](worker-lifecycle.md) [Semantic Host 集成](semantic-host-integration.zh-CN.md)
 
-## 托管普通 TypeScript 页面的容量准入
+## 托管页面的容量准入
 
-普通 TypeScript App 提交完整候选时，托管 Worker 在安装 View 和 Tool 绑定前按默认全量观察规格检查容量。计量使用与观察相同的 View、Ref 元数据、共享 Tool 和可接收页面列表，并为 Snapshot 与 Observation 的标识符和 revision 预留最大计数宽度。默认上限包括 256 个 View、512 个 Ref、256 个 Tool 和 704 KiB 观察 JSON，及现有 JSON 结构与元数据上限。
+托管 Worker 在安装 View 和 Tool 绑定前按默认全量观察规格检查普通 TypeScript 和 Preact 的完整候选。计量使用与观察相同的 View、Ref 元数据、共享 Tool 和可接收页面列表，并为 Snapshot 与 Observation 的标识符和 revision 预留最大计数宽度。默认上限包括 256 个 View、512 个 Ref、256 个 Tool 和 704 KiB 观察 JSON，及现有 JSON 结构与元数据上限。
 
-已有帧上可放弃的新页面打开可使用 `publish({ views }, { opening: true })`。这次打开因观察容量被拒绝时，Runtime 保留已提交身份、绑定、epoch 与原诊断。一般准备故障和发生业务变化后的发布拒绝通过原投影诊断报告。成功观察包含当前快照里的全量打开页面，`preview()` 反映同一已接受来源。 [SDK 作者指南](../../sdk/docs/app-authoring.md#普通-typescript-的打开准入)
+已有帧上可放弃的新页面打开可使用 `publish({ views }, { opening: true })`，或 Preact 的 `prepareProjection(update, { revert })`。可撤回的打开因观察容量被拒绝时，Runtime 保留已提交身份、绑定与 epoch。Preact 还会核对恢复渲染与原投影及挂载身份的一致性。一般准备故障和发生业务变化后的发布拒绝通过原投影诊断报告。成功观察包含当前快照里的全量打开页面，`preview()` 反映同一已接受来源。 [SDK 作者指南](../../sdk/docs/app-authoring.md#preact-的局部提交反馈)
 
-该准入使用默认单 App 内容规格。自定义 Host 策略、实时资源持有和组装后的模型请求仍在各自入口检查。Preact 的提交反馈属于另一条作者路径。
+该准入使用默认单 App 内容规格，由托管 Worker 装配。直接 Core Producer 可以按自己的消费规格安排候选检查。自定义 Host 策略、实时资源持有和组装后的模型请求仍在各自入口检查。
 
 ## 身份与元数据来源
 

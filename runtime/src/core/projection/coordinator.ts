@@ -2,8 +2,7 @@ import type { AppFrameRef } from '../../spi/app/app-instance.interface.js';
 import type { IRefBinding, RefValueCheck } from '../../spi/app/ref-exporter.interface.js';
 import type { IProjectionPort, ProjectionToken } from '../../spi/runtime/projection.interface.js';
 import type { CancellationSignal } from '../invocation/app-interaction-types.js';
-import { hostedObservationCapacityIssue } from '../invocation/observation-registry.js';
-import { copyJson, createJsonCopier, SnapshotDataError } from '../snapshot/json.js';
+import { canonicalJson, copyJson, createJsonCopier, SnapshotDataError } from '../snapshot/json.js';
 import { captureSnapshotPrepareIssue, DEFAULT_SNAPSHOT_LIMITS as limits, isSnapshotPrepareIssueCode, refKey } from '../snapshot/snapshot-support.js';
 import {
     SNAPSHOT_SCHEMA_VERSION,
@@ -15,6 +14,7 @@ import { validatePreparedV5Draft } from '../snapshot/v5-validator.js';
 
 export interface ProjectionSource {
     identity(): { readonly appId: string; readonly instanceId: string };
+    checkCapacity?(draft: PreparedAppSnapshotDraftV5): SnapshotIssue | undefined;
     /** Return the complete rendered frame at the successful commit boundary. */
     readFrame(): {
         readonly views: readonly ViewSnapshotV4[];
@@ -29,8 +29,8 @@ export type CompleteProjectionFrame = ReturnType<ProjectionSource['readFrame']> 
     readonly refs: readonly (RefOwner & AppFrameRef)[];
     readonly opening?: boolean;
 };
-type CommitStatus = ReturnType<IProjectionPort['endCommit']>;
-type RejectedOpening = Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
+type CommitResult = ReturnType<IProjectionPort['endCommit']>;
+type RenderMode = Parameters<IProjectionPort['endCommit']>[2];
 type RefEntry = RefOwner & { readonly id: string; readonly refType: string | undefined; captured?: JsonValue; published?: boolean };
 type RefCapture = { value: JsonValue } | { issue: SnapshotIssue };
 type Batch = {
@@ -105,9 +105,11 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
         return this.endCommit();
     }
 
-    endCommit(failure?: { readonly error: unknown }, blocked?: boolean): CommitStatus;
-    endCommit(failure: undefined, blocked: false, frame: CompleteProjectionFrame): CommitStatus | RejectedOpening;
-    endCommit(failure?: { readonly error: unknown }, blocked = false, frame?: CompleteProjectionFrame): CommitStatus | RejectedOpening {
+    endCommit(failure?: { readonly error: unknown }, blocked?: boolean, mode?: RenderMode): CommitResult;
+    endCommit(failure: undefined, blocked: false, frame: CompleteProjectionFrame): CommitResult;
+    endCommit(failure?: { readonly error: unknown }, blocked = false, input?: CompleteProjectionFrame | RenderMode): CommitResult {
+        const frame = typeof input === 'object' ? input : undefined;
+        const mode = typeof input === 'string' ? input : undefined;
         const batch = this.batch;
         if (!batch) throw new Error('Projection commit end without begin');
         batch.preparing = true;
@@ -163,25 +165,38 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
             if (batch.issue) return this.fail(batch, batch.issue);
             if (!checked.ok) return this.fail(batch, checked.issue);
 
-            const capacity = frame && hostedObservationCapacityIssue(checked.value.draft);
-            if (capacity) {
-                if (frame.opening && this.prepared) {
-                    const mounted = new Set(this.prepared.views.map(view => view.viewInstanceId));
-                    if (checked.value.draft.views.some(view => !mounted.has(view.viewInstanceId))) {
-                        return { status: 'rejected', issue: capacity };
-                    }
+            const { draft, canonicalContent } = checked.value;
+            const previous = this.prepared;
+            if (mode === 'restore') {
+                if (!previous || this.issue || previous.appId !== draft.appId || previous.instanceId !== draft.instanceId ||
+                    canonicalJson({ schemaVersion: previous.schemaVersion, views: previous.views,
+                        refs: previous.refs, tools: previous.tools } as unknown as JsonValue) !== canonicalContent) {
+                    return this.fail(batch, { code: 'SNAPSHOT_INVALID', path: '$.views',
+                        message: 'The render did not restore the accepted projection after refusing an opening' });
                 }
-                return this.fail(batch, capacity);
+            } else {
+                const capacity = this.source.checkCapacity?.(draft);
+                if (capacity) {
+                    if (capacity.code === 'OBSERVATION_CAPACITY' && previous && (frame?.opening || mode === 'opening')) {
+                        const mounted = new Set(previous.views.map(view => view.viewInstanceId));
+                        const candidate = new Set(draft.views.map(view => view.viewInstanceId));
+                        const addsView = [...candidate].some(id => !mounted.has(id));
+                        // A renderer cannot restore an owner already detached by this commit.
+                        const retainsRenderer = !this.issue && [...mounted].every(id => candidate.has(id));
+                        if (addsView && (frame || retainsRenderer)) return { status: 'rejected', issue: capacity };
+                    }
+                    return this.fail(batch, capacity);
+                }
+                accept?.();
+                this.prepared = draft;
+                this.epoch = draft.sourceEpoch;
+                this.issue = undefined;
             }
 
-            accept?.();
-            this.prepared = checked.value.draft;
-            this.epoch = this.prepared.sourceEpoch;
-            this.issue = undefined;
             if (frame) this.refs.clear();
             for (const entry of values.keys()) {
                 const key = refKey(entry.viewId, entry.viewInstanceId, entry.id);
-                const ref = this.prepared.refs[key]!;
+                const ref = this.prepared!.refs[key]!;
                 if (ref.target.kind === 'snapshot-value') {
                     entry.captured = ref.target.payload;
                     entry.published = true;
@@ -189,7 +204,7 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
                 }
             }
             this.failedRefs.clear();
-            return 'prepared';
+            return mode === 'restore' ? 'restored' : 'prepared';
         } catch (error) {
             return this.fail(batch, failureIssue(error));
         } finally {

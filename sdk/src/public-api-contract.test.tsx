@@ -71,16 +71,18 @@ describe('C04/C09 SDK root exports and app context', () => {
         }
     });
 
-    it('exposes app metadata/config and the same managed instance persistence port', async () => {
+    it('exposes metadata, persistence and local preparation without exposing the renderer ports', async () => {
         const report = { ok: true, entries: [] };
         const flush = vi.fn(async () => report);
         const bind = vi.fn();
         const captureValue = vi.fn();
+        const prepareProjection = vi.fn();
         const persistence = { protocol: 'state-session-v1', instanceId: 'public_api_run', captureValue, bind, flush };
         let publicContext: any;
         const fullContext = {
             appId: 'app', desktopId: 'desktop', launchConfig: { workspace: '/project' },
             persistence,
+            prepareProjection,
             appLifecycle: { protocol: 'app-lifecycle-v2', register() {} },
             refExporter: { registerRef() { return { update() {}, release() {} }; } },
             markDirty() {}, projection: { beginCommit() {}, endCommit() {} },
@@ -90,18 +92,41 @@ describe('C04/C09 SDK root exports and app context', () => {
         function CaptureContext() { publicContext = useAppRuntimeContext();return null; }
         renderToString(h(AppRuntimeContext.Provider, { value: fullContext as any }, h(CaptureContext, {})));
 
-        expect(Object.keys(publicContext).sort()).toEqual(['appId', 'desktopId', 'launchConfig', 'persistence']);
+        expect(Object.keys(publicContext).sort()).toEqual(['appId', 'desktopId', 'launchConfig', 'persistence', 'prepareProjection']);
         expect(publicContext.persistence).toBe(persistence);
         expect(Object.keys(publicContext.persistence).sort()).toEqual(['bind', 'captureValue', 'flush', 'instanceId', 'protocol']);
         expect(publicContext.persistence.bind).toBe(bind);
         expect(publicContext.persistence.captureValue).toBe(captureValue);
         expect(publicContext.persistence.flush).toBe(flush);
+        expect(publicContext.prepareProjection).toBe(prepareProjection);
         expect(publicContext).not.toHaveProperty('appLifecycle');
         expect(publicContext).not.toHaveProperty('refExporter');
         expect(publicContext).not.toHaveProperty('projection');
         expect(publicContext).not.toHaveProperty('viewTools');
         await expect(publicContext.persistence.flush()).resolves.toBe(report);
         expect(flush).toHaveBeenCalledOnce();
+    });
+
+    it('returns the actual subtree preparation and rejects a render that failed or did not commit', async () => {
+        let prepare!: (value: number) => Promise<unknown>;
+        function Body() {
+            const { prepareProjection } = useAppRuntimeContext();
+            const [value, setValue] = useState(0);
+            prepare = next => prepareProjection(() => setValue(next));
+            if (value < 0) throw Error('render failure');
+            return h('p', {}, String(value));
+        }
+        const x = await mount(Body);
+        const projection = x.kernel.getProjectionCoordinator();
+        const first = projection.token().epoch;
+        await expect(prepare(1)).resolves.toEqual({ status: 'prepared', sourceEpoch: first + 1 });
+        await expect(prepare(1)).rejects.toMatchObject({ code: 'SNAPSHOT_INVALID' });
+        expect(projection.failure).toBeUndefined();
+        await expect(prepare(-1)).rejects.toMatchObject({ code: 'SNAPSHOT_INVALID' });
+        expect(projection.failure?.code).toBe('SNAPSHOT_INVALID');
+        expect(projection.token().epoch).toBe(first + 1);
+        await expect(prepare(2)).resolves.toEqual({ status: 'prepared', sourceEpoch: first + 2 });
+        expect(projection.failure).toBeUndefined();
     });
 });
 

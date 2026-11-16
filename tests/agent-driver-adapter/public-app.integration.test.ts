@@ -28,7 +28,7 @@ beforeAll(async () => {
     for (const [owner, name] of [['sdk', 'typebox'], ['runtime', 'linkedom']]) {
         await symlink(join(repository, owner, 'node_modules', name), join(consumer, 'node_modules', name), 'dir');
     }
-    for (const file of ['work-items.ts', 'work-items-plain.ts', 'work-items-preact.tsx']) {
+    for (const file of ['work-items.ts', 'work-items-plain.ts', 'work-items-preact.tsx', 'file-app.tsx', 'file-tools.ts']) {
         await cp(join(repository, 'sdk/docs/examples', file), join(consumer, file));
     }
     await writeFile(join(consumer, 'package.json'), JSON.stringify({ type: 'module' }));
@@ -62,7 +62,7 @@ createView(ItemType, { id:'missing', kind:'state',
             compilerOptions: { target: 'ES2022', module: 'NodeNext', strict: true, exactOptionalPropertyTypes: true,
                 skipLibCheck: false, lib: plain ? ['ES2022'] : ['ES2022', 'DOM'], types: [],
                 outDir: 'dist', ...(!plain && { jsx: 'react-jsx', jsxImportSource: 'preact' }) },
-            files: ['work-items.ts', plain ? 'work-items-plain.ts' : 'work-items-preact.tsx', 'type-contract.ts'],
+            files: ['work-items.ts', ...(plain ? ['work-items-plain.ts'] : ['work-items-preact.tsx', 'file-app.tsx']), 'type-contract.ts'],
         }));
         await execute(process.execPath, [join(repository, 'sdk/node_modules/@typescript/native/bin/tsc'), '-p', config, '--pretty', 'false']);
     }
@@ -705,34 +705,47 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
     }
 }, 15_000);
 
-it('rejects opening a second 400 KiB View and keeps the first fully observable and callable', async () => {
-    const name = 'capacity_plain';
+it.each(adapters)('rejects opening a second 400 KiB View in %s and keeps the first fully observable and callable', async adapter => {
+    const name = 'capacity_' + adapter;
     const gate = join(consumer, name + '-open-b');
+    const lifecycle = join(consumer, name + '-lifecycle');
     const folder = await appFolder(name, `
-import { existsSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import Type from 'typebox';
 import { createApp, createView, defineViewType, ref, refParam } from '@aotui/sdk/app';
+${adapter === 'preact' ? `import { h } from 'preact';
+import { useLayoutEffect } from 'preact/hooks';
+import { createTUIApp, View, useAppRuntimeContext, useDataRef, useState } from '@aotui/sdk';` : ''}
 const Item = defineViewType({ name:'Item', tools: {
     inspect: { description:'Inspect published data',
         inputSchema:Type.Object({ value:refParam('Data', Type.Unknown()) }, {additionalProperties:false}) },
     grow: { description:'Open another page, optionally closing this one first',
         inputSchema:Type.Object({ closeFirst:Type.Boolean() }, {additionalProperties:false}) },
 } });
+const size = 400 * 1024;
+let value = 'x'.repeat(size);
+for (let index = 0; index < 40; index++) value = [value];
+const inspect = { execute({ value }) {
+    let depth = 0;
+    while (Array.isArray(value)) { value = value[0]; depth++; }
+    return { success: true, data: { size: value.length, depth } };
+} };
+const openingError = error => {
+    if (error.code !== 'OBSERVATION_CAPACITY') throw error;
+    return { success: false, error: { code: error.code, message: error.message, context: { path: error.path } } };
+};
+const waitForSwitch = async () => {
+    while (!existsSync(${JSON.stringify(gate)})) await new Promise(resolve => setTimeout(resolve, 5));
+};
+${adapter === 'plain' ? `
 export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Item], initialize({ publish }) {
-    const size = 400 * 1024;
-    let value = 'x'.repeat(size);
-    for (let index = 0; index < 40; index++) value = [value];
     let staging = false;
     const bindings = {
-        inspect: { execute({ value }) {
-            let depth = 0;
-            while (Array.isArray(value)) { value = value[0]; depth++; }
-            return { success: true, data: { size: value.length, depth } };
-        } },
+        inspect,
         grow: { async execute({ closeFirst }) {
             if (closeFirst) {
                 const closed = publish({ views: [] });
-                while (!existsSync(${JSON.stringify(gate)})) await new Promise(resolve => setTimeout(resolve, 5));
+                await waitForSwitch();
                 const opened = publish({ views: [second] }, { opening: true });
                 return { success: true, data: { closedEpoch: closed.sourceEpoch, openedEpoch: opened.sourceEpoch } };
             }
@@ -741,8 +754,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Item], 
                 publish({ views: [first, second] }, { opening: true });
                 return { success: true };
             } catch (error) {
-                if (error.code !== 'OBSERVATION_CAPACITY') throw error;
-                return { success: false, error: { code: error.code, message: error.message, context: { path: error.path } } };
+                return openingError(error);
             } finally { staging = false; }
         } },
     };
@@ -755,6 +767,39 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Item], 
     }) });
     publish({ views:[first] });
 }});
+` : `
+const trace = entry => appendFileSync(${JSON.stringify(lifecycle)}, entry + '\\n');
+function Details({ page, staging }) {
+    useLayoutEffect(() => {
+        trace('mount:' + page);
+        return () => trace('unmount:' + page);
+    }, [page]);
+    useDataRef('data', staging ? 'candidate only' : value, { refType: 'Data' });
+    return page.repeat(size);
+}
+function App() {
+    const [pages, setPages] = useState('a');
+    const { prepareProjection: prepare } = useAppRuntimeContext();
+    const grow = { async execute({ closeFirst }) {
+        if (closeFirst) {
+            const closed = await prepare(() => setPages(''));
+            await waitForSwitch();
+            const opened = await prepare(() => setPages('b'), { revert: () => setPages('') });
+            return { success: true, data: { closedEpoch: closed.sourceEpoch, openedEpoch: opened.sourceEpoch } };
+        }
+        try {
+            await prepare(() => setPages('ab'), { revert: () => setPages('a') });
+            return { success: true };
+        } catch (error) { return openingError(error); }
+    } };
+    return [...pages].map(page => h(View, { key: page, id: 'item_' + page, type: Item, kind: 'state', bindings: {
+        grow: { ...grow, enabled: page === 'a' },
+        inspect: page === 'b' ? { ...inspect, enabled: false } : pages === 'ab'
+            ? { execute: () => ({ success: true, data: { staged: true } }) } : inspect,
+    } }, h(Details, { page, staging: pages === 'ab' })));
+}
+export default createTUIApp({ app_name: ${JSON.stringify(name)}, component: App, viewTypes: [Item] });
+`}
 `);
     const open = vi.fn(async () => { throw Error('Non-persistent App accessed Host storage'); });
     const runtime = createRuntime({}, { storageBackend: { open } });
@@ -783,6 +828,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Item], 
             code: 'OBSERVATION_CAPACITY', message: expect.stringContaining('Close a View'), context: { path: '$.observation' },
         } } } } } });
         expect(preview).toMatchObject({ source: first.source, views: first.views });
+        if (adapter === 'preact') expect(await trace(lifecycle)).toEqual(['mount:a', 'mount:b', 'unmount:b']);
         expect(await client.invoke(request(first, 'inspect', { value: 'item_a.data' }, 'still-current'))).toMatchObject(originalHandler);
         if (next.status !== 'observed') throw Error(next.issue.code);
         expect(next.observation).toMatchObject({ source: first.source, views: first.views, refs: first.refs, tools: first.tools });

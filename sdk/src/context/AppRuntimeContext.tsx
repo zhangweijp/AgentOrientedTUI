@@ -11,7 +11,7 @@ import type { AppStatePersistence } from '@aotui/runtime/spi';
 import { createContext } from 'preact';
 import { useContext, useMemo } from 'preact/hooks';
 import type { ViewType } from '../tools/view-type-tool.js';
-import type { AppID, DesktopID, IRefExporter, AppFrameView, RuntimeContext, AppLaunchConfig } from '@aotui/runtime/spi';
+import type { AppID, DesktopID, IRefExporter, AppFrameView, RuntimeContext, AppLaunchConfig, PreparedProjection } from '@aotui/runtime/spi';
 
 // ═══════════════════════════════════════════════════════════════
 //  Types
@@ -22,6 +22,8 @@ import type { AppID, DesktopID, IRefExporter, AppFrameView, RuntimeContext, AppL
  * 
  * Preact adapter supplies this context to the App and its Views.
  */
+export type PrepareProjection = (update: () => void, opening?: { readonly revert: () => void }) => Promise<PreparedProjection>;
+
 interface AppRuntimeContextValue {
     persistence?: AppStatePersistence | undefined;
     appLifecycle?: AppLifecyclePort | undefined;
@@ -42,6 +44,7 @@ interface AppRuntimeContextValue {
     viewTypes: ReadonlyMap<string, ViewType>;
     views: WeakMap<Element, Pick<AppFrameView, 'id' | 'type' | 'owner' | 'bindings'>>;
     mountView: RuntimeContext['mountView'];
+    prepareProjection: PrepareProjection;
 }
 
 interface AppRuntimePublicContextValue {
@@ -49,6 +52,8 @@ interface AppRuntimePublicContextValue {
     readonly desktopId: DesktopID;
     readonly launchConfig?: AppLaunchConfig | undefined;
     readonly persistence?: AppStatePersistence;
+    /** Schedule a render and await its local projection. Supply a revert only for reversible View openings. */
+    readonly prepareProjection: PrepareProjection;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -87,8 +92,7 @@ export function useInternalAppRuntimeContext(): AppRuntimeContextValue {
 }
 
 /**
- * Read app metadata, launch configuration and the managed instance persistence
- * client port. SDK-owned registries and lifecycle ports are kept internal.
+ * Read App metadata, configuration, persistence and local projection preparation.
  */
 export function useAppRuntimeContext(): AppRuntimePublicContextValue {
     const context = useInternalAppRuntimeContext();
@@ -97,6 +101,7 @@ export function useAppRuntimeContext(): AppRuntimePublicContextValue {
         return Object.freeze({
             appId: context.appId,
             desktopId: context.desktopId,
+            prepareProjection: context.prepareProjection,
             ...(context.launchConfig === undefined ? {} : { launchConfig: context.launchConfig }),
             ...(persistence === undefined ? {} : { persistence }),
         });
