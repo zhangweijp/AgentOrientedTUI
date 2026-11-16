@@ -173,7 +173,7 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
             expect(assembly.receiver.getInteractionStats()).toMatchObject({ closed: true, combinedBytes: 0,
                 observations: { observations: 0, reservations: 0, totalBytes: 0 } });
             expect(inspectCore(assembly.receiver)).toMatchObject({
-                state: 'disposed', appRecords: 0, activeLeases: 0, currentBytes: 0,
+                state: 'disposed', activeLeases: 0, currentBytes: 0,
             });
             expect(assembly.registry.inspect()).toMatchObject({ state: 'disposed', views: 0, bindings: 0, retainedBytes: 0 });
         }

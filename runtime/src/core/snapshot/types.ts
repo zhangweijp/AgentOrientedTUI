@@ -180,6 +180,8 @@ export interface SnapshotLimits {
 }
 
 export interface SnapshotStoreOptions {
+    readonly appId: string;
+    readonly instanceId: string;
     readonly now?: () => number;
     /** Captured at Core creation. Omitted or undefined fields use their defaults.
      * Overrides are safe integers from zero to their default, inclusive.
@@ -190,20 +192,14 @@ export interface SnapshotStoreOptions {
     readonly historyTtlMs?: number;
     readonly leaseTtlMs?: number;
     readonly maxActiveLeases?: number;
-    readonly maxAppRecords?: number;
-    readonly maxInstanceIds?: number;
     readonly maxIdentityBytes?: number;
     readonly maxCurrentBytes?: number;
 }
 
 export interface SnapshotStoreStats {
     readonly state: 'active' | 'disposed';
-    readonly appRecords: number;
-    readonly issuedInstanceIds: number;
-    readonly identityBytes: number;
     readonly currentBytes: number;
     readonly diagnosticBytes: number;
-    readonly activeApps: number;
     readonly currentSnapshots: number;
     readonly historicalSnapshots: number;
     readonly historicalBytes: number;
@@ -236,8 +232,7 @@ export interface SnapshotCommitter {
 export interface SnapshotLifecycle {
     dispose(): void;
     /** Must be called by the trusted Runtime owner, never from producer payload. */
-    startApp(appId: string, instanceId: string): void;
-    stopApp(appId: string, instanceId: string): void;
+    stop(): void;
 }
 
 export interface SnapshotCore {

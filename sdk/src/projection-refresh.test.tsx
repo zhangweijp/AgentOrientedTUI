@@ -93,9 +93,8 @@ describe('SDK queued render commit completion', () => {
             ] });
             const kernel = new AppKernel({ ...factory.kernelConfig, factory });
             kernel.enableAppLifecycle();
-            const core = createSnapshotCore();
+            const core = createSnapshotCore({ appId: 'failure_batch', instanceId: 'run' });
             kernel.setAppExecutionInstanceId('run');
-            core.lifecycle.startApp('failure_batch', 'run');
             const projection = kernel.getProjectionCoordinator();
             const publish = () => projection.publishTo(core.committer);
             try {

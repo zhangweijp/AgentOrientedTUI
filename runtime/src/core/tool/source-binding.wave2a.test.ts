@@ -4,8 +4,7 @@ import { createSnapshotCore } from '../snapshot/store.js';
 describe('Wave 2A: current Store lease and historical-source contract', () => {
     function setup() {
         let time = 0;
-        const core = createSnapshotCore({ now: () => time, historyTtlMs: 20, leaseTtlMs: 100 });
-        core.lifecycle.startApp('app', 'instance');
+        const core = createSnapshotCore({ appId: 'app', instanceId: 'instance', now: () => time, historyTtlMs: 20, leaseTtlMs: 100 });
         const publish = (seq: number) => {
             const result = core.committer.accept({
                 schemaVersion: 5, appId: 'app', instanceId: 'instance', producerSeq: seq, sourceEpoch: seq, capturedAt: seq,

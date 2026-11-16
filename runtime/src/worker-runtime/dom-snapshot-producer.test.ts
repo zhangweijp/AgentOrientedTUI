@@ -67,8 +67,7 @@ describe('DOM producer preserves Ref payloads as snapshot data', () => {
             .toEqual({ kind: 'snapshot-value', payload: { id: 'other data' } });
         expect(draft.views[0]!.toolBindings).toEqual([{ toolId, activationId: 'active-1' }]);
 
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'logical-run');
+        const core = createSnapshotCore({ appId: draft.appId, instanceId: draft.instanceId });
         expect(core.committer.accept(draft).status).toBe('published');
     });
 

@@ -48,8 +48,7 @@ it('C18 runs actual Core, Registry and instance dispatch through the explicit en
     const frame = registry.prepareFrame([{ id: 'v', type: 'Detail', owner: {}, bindings: [{ name: 'read', enabled: true, execute }] }]);
     frame.accept();
     const tool = frame.tools[0]!, view = frame.instances[0]!;
-    const snapshots = core.createSnapshotCore({ now: () => 0 });
-    snapshots.lifecycle.startApp('app', 'instance');
+    const snapshots = core.createSnapshotCore({ appId: 'app', instanceId: 'instance', now: () => 0 });
     expect(snapshots.committer.accept({ schemaVersion: 5, appId: 'app', instanceId: 'instance', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
         views: [{ toolBindings: view.toolBindings, id: 'v', viewInstanceId: view.viewInstanceId, type: 'Detail', name: 'Detail', kind: 'state', content: { format: 'markdown-v1', value: 'state' } }],
         refs: {}, tools: { [tool.id]: tool } }).status).toBe('published');

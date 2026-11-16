@@ -71,8 +71,7 @@ class MemoryTaskApp {
 describe('M1 isolated in-memory App → Snapshot → Ref → Tool descriptor → business CAS → Snapshot', () => {
     it('preserves old observations across reorder while allowing a safe business-side write', () => {
         const app = new MemoryTaskApp();
-        const core = createSnapshotCore();
-        core.lifecycle.startApp(app.appId, app.instanceId);
+        const core = createSnapshotCore({ appId: app.appId, instanceId: app.instanceId });
         const original = core.committer.accept(app.draft());
         expect(original.status).toBe('published');
         if (original.status !== 'published') return;

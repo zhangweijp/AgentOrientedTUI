@@ -176,13 +176,10 @@ describe('R1-F01: real App interaction preserves compatible business errors', ()
 });
 
 describe('R1-F02: await settlement propagates revocation before another public call', () => {
-    const changes = ['stop-start', 'direct-start', 'close'] as const;
+    const changes = ['stop', 'close'] as const;
     function invalidate(f: ReturnType<typeof fixture>, client: InstanceInteraction, change: typeof changes[number]) {
         if (change === 'close') { client.close(); client.close(); }
-        else {
-            if (change === 'stop-start') f.core.lifecycle.stopApp('app', 'run');
-            f.core.lifecycle.startApp('app', 'new-unready-instance');
-        }
+        else f.core.lifecycle.stop();
     }
     const modes = ['resolve', 'reject', 'uncapturable'] as const;
     it.each(changes.flatMap(change => modes.map(mode => ({ change, mode }))))('project $mode propagates $change to a peer execute', async ({ change, mode }) => {
@@ -237,10 +234,10 @@ function receipt(value: Awaited<ReturnType<InstanceInteraction['invoke']>>) {
     expect(value.kind).toBe('receipt'); if (value.kind !== 'receipt') throw new Error('Expected receipt: ' + value.code); return value.receipt;
 }
 function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverrides; observationLimits?: ObservationRegistryLimitOverrides;
-    store?: SnapshotStoreOptions; payload?: JsonValue; refType?: string; schema?: JsonValue; namespace?: string } = {}) {
+    store?: Omit<SnapshotStoreOptions, 'appId' | 'instanceId'>; payload?: JsonValue; refType?: string; schema?: JsonValue; namespace?: string } = {}) {
     let time = 0, sequence = 0, clockThrows = false, clockMessageReads = 0;
     const now = () => { if (clockThrows) throw { get message() { clockMessageReads++; return 'secret-clock'; } }; return time; };
-    const core = createSnapshotCore({ now, ...options.store }); core.lifecycle.startApp('app', 'run');
+    const core = createSnapshotCore({ ...context, now, ...options.store });
     const tools = createViewOwnedTools('app', 'run');
     let pages = ['v0','v1'].map(id => ({id,type:'File',owner:{}}));
     let owners: ReturnType<ReturnType<typeof createViewOwnedTools>['prepareFrame']>['instances'];
@@ -690,11 +687,10 @@ describe('B2-T07/T08/T09: phases, current reading and deletable results', () => 
 });
 
 describe('B2-T01/T11 additional revocation and completion faults', () => {
-    it.each(['stop', 'restart'] as const)('revokes settled interactions on %s with no double refund or revival', async mode => {
+    it('revokes settled interactions on stop with no double refund or revival', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client);
         receipt(await client.invoke(f.request(observation)));
-        f.core.lifecycle.stopApp('app', 'run');
-        if (mode === 'restart') { f.core.lifecycle.startApp('app', 'run-2'); f.publish({ instanceId: 'run-2' }); }
+        f.core.lifecycle.stop();
         expect(code(await client.invoke(f.request(observation)))).toBe('APP_INTERACTION_UNAVAILABLE');
         expect(f.authority.inspect()).toMatchObject({ receiptEntries: 0, invocationBytes: 0, combinedBytes: 0 }); f.zero();
     });
@@ -894,28 +890,18 @@ describe('B2-T12: independent depth/node/approximate/canonical profiles', () => 
 
 });
 
-describe('B2-Q01: identity replacement before a new projection exists', () => {
+describe('B2-Q01: stopped and successor instance authority', () => {
     it('rejects stores without required identity capability at construction, preserving the legacy structural type', () => {
         const f = fixture(), { readAppIdentity: _, ...legacy } = f.store;
         expect(() => createAppInteraction(legacy as never, { ...f.input, namespace: 'missing', now: f.now })).toThrow('Invalid observation registry store'); f.zero();
     });
-    it.each(['stop-start', 'direct-start'] as const)('revokes an already settled interaction on %s even when the new instance is unready', async how => {
-        const f = fixture(), client = f.open(), observation = await f.observe(client);
-        receipt(await client.invoke(f.request(observation)));
-        if (how === 'stop-start') f.core.lifecycle.stopApp('app', 'run'); f.core.lifecycle.startApp('app', 'run-2');
-        expect(f.core.store.readLatest('app')).toEqual({ status: 'unready' });
-        expect(code(await client.invoke(f.request(observation)))).toBe('APP_INTERACTION_UNAVAILABLE');
-        expect((await client.observe({ all: true })).status).toBe('rejected');
-        expect(code(await client.invoke(f.request(observation, 'new')))).toBe('APP_INTERACTION_UNAVAILABLE');
-        expect(f.calls.handler).toBe(1); expect(f.authority.inspect()).toMatchObject({ receiptEntries: 0, combinedBytes: 0 }); f.zero();
-    });
-    it.each(['project', 'validate', 'authorize', 'execute', 'read'] as const)('cancels %s on replacement and retains its responsibility until actual settlement', async stage => {
+    it.each(['project', 'validate', 'authorize', 'execute', 'read'] as const)('cancels %s on stop and retains its responsibility until actual settlement', async stage => {
         const f = fixture();
         const client = f.open(), gate = deferred<unknown>(), started = deferred<void>(); let signal: CancellationSignal | undefined;
         if (stage === 'project') {
             f.controls.project = ctx => { signal = ctx.signal; started.resolve(); return gate.promise; };
             const pending = client.observe({ all: true }); await started.promise;
-            f.core.lifecycle.stopApp('app', 'run'); f.core.lifecycle.startApp('app', 'run-2');
+            f.core.lifecycle.stop();
             expect(f.authority.inspect()).toMatchObject({ observations: { reservations: 1, cancelledReservations: 1 } });
             expect(signal!.aborted).toBe(true); gate.resolve(f.grant()); expect((await pending).status).toBe('rejected'); f.zero(); return;
         }
@@ -925,7 +911,7 @@ describe('B2-Q01: identity replacement before a new projection exists', () => {
         if (stage === 'execute') f.controls.execute = ctx => { signal = ctx.signal; started.resolve(); return gate.promise; };
         if (stage === 'read') f.controls.read = (_, s) => { signal = s; started.resolve(); return gate.promise; };
         const pending = client.invoke(f.request(observation)); await started.promise;
-        f.core.lifecycle.stopApp('app', 'run'); f.core.lifecycle.startApp('app', 'run-2');
+        f.core.lifecycle.stop();
         expect(f.authority.inspect().observations.closed).toBe(true); expect(signal!.aborted).toBe(true);
         expect(f.authority.inspect().workBytes).toBeGreaterThan(0);
         expect((await client.observe({ all: true })).status).toBe('rejected');
@@ -933,30 +919,44 @@ describe('B2-Q01: identity replacement before a new projection exists', () => {
         expect(code(await pending)).toBe('APP_INTERACTION_UNAVAILABLE');
         expect(f.calls.handler).toBe(stage === 'validate' || stage === 'authorize' ? 0 : 1); f.zero();
     });
-    it('revalidates replacement after an already suspended reading policy returns true', async () => {
+    it('revalidates stop after an already suspended reading policy returns true', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client), gate = deferred<boolean>(), started = deferred<void>();
         receipt(await client.invoke(f.request(observation)));
         f.controls.read = () => { started.resolve(); return gate.promise; };
         const pending = client.invoke(f.request(observation)); await started.promise;
-        f.core.lifecycle.startApp('app', 'run-2'); gate.resolve(true);
+        f.core.lifecycle.stop(); gate.resolve(true);
         expect(code(await pending)).toBe('APP_INTERACTION_UNAVAILABLE'); expect(f.calls.handler).toBe(1); f.zero();
     });
-    it('allows a new unready instance, ignores stale old stop and works after the new instance publishes', async () => {
-        const f = fixture(), old = f.open(), first = await f.observe(old); receipt(await old.invoke(f.request(first)));
-        f.core.lifecycle.startApp('app', 'run-2'); expect(code(await old.invoke(f.request(first)))).toBe('APP_INTERACTION_UNAVAILABLE');
-        const replacement = createAppInteraction(f.store, { ...f.input, instanceId: 'run-2', namespace: 'replacement', now: f.now });
+    it('starts a same-name successor unready with its own observation and authority', async () => {
+        const f = fixture(), old = f.open(), first = await f.observe(old);
+        const originalRequest = f.request(first);
+        receipt(await old.invoke(originalRequest));
+        f.core.lifecycle.stop();
+        const successor = createSnapshotCore({ ...context, instanceId: 'run-2', now: f.now });
+        const replacement = createAppInteraction(successor.store, { ...f.input, instanceId: 'run-2', namespace: 'replacement', now: f.now });
         expect(code(await replacement.observe({ all: true }))).toBe('SNAPSHOT_UNREADY');
-        f.core.lifecycle.stopApp('app', 'run'); expect(f.core.store.readAppIdentity('app')).toEqual({ status: 'active', instanceId: 'run-2' });
+        expect(code(await old.invoke(originalRequest))).toBe('APP_INTERACTION_UNAVAILABLE');
+        f.core.lifecycle.stop();
+        expect(successor.store.readAppIdentity('app')).toEqual({ status: 'active', instanceId: 'run-2' });
         const next = createViewOwnedTools('app', 'run-2');
         next.defineTools([{ viewType:'File',name:'run',description:'Synthetic tool',inputSchema:{type:'object',properties:{}} }]);
         const plan = next.prepareFrame([{id:'v0',type:'File',owner:{},bindings:[{name:'run',enabled:true,execute:()=>({success:true})}]}]);
         const mounted = plan.instances[0]!, tool = plan.tools[0]!;
-        f.publish({ instanceId: 'run-2', views: [{ toolBindings: mounted.toolBindings, id: 'v0', viewInstanceId: mounted.viewInstanceId, type: 'File', name: 'new', kind: 'state', content: { format: 'markdown-v1', value: 'new' } }],
-            refs: {}, tools: { [tool.id]: tool } });
-        const observed = await replacement.observe({ all: true }); expect(observed.status).toBe('observed'); if (observed.status !== 'observed') return;
-        expect(replacement.adoptObservation(observed.observation.observationId)).toEqual({ status: 'adopted' });
-        expect(receipt(await replacement.invoke(f.request(observed.observation, 'new'))).source?.instanceId).toBe('run-2');
-        old.close(); replacement.close(); replacement.close(); f.zero();
+        expect(successor.committer.accept({
+            schemaVersion: 5, appId: 'app', instanceId: 'run-2', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+            views: [{ toolBindings: mounted.toolBindings, id: 'v0', viewInstanceId: mounted.viewInstanceId,
+                type: 'File', name: 'new', kind: 'state', content: { format: 'markdown-v1', value: 'new' } }],
+            refs: {}, tools: { [tool.id]: tool },
+        }).status).toBe('published');
+        const observation = await f.observe(replacement);
+        expect(code(await replacement.invoke(originalRequest))).toBe('OBSERVATION_UNAVAILABLE');
+        expect(receipt(await replacement.invoke(f.request(observation, 'new'))).source?.instanceId).toBe('run-2');
+        replacement.close();
+        await replacement.whenClosed();
+        successor.lifecycle.dispose();
+        next.dispose();
+        f.zero();
+        f.core.lifecycle.dispose();
     });
 });
 
@@ -966,7 +966,7 @@ it('refuses an interaction bound to a different or stopped App instance', async 
     const wrong = createAppInteraction(f.store, { ...f.input, instanceId: 'wrong-instance', namespace: 'wrong', now: f.now });
     expect(code(await wrong.observe({ all: true }))).toBe('APP_INTERACTION_UNAVAILABLE');
     wrong.close();
-    f.core.lifecycle.stopApp('app', 'run');
+    f.core.lifecycle.stop();
     expect(code(await f.authority.observe({ all: true }))).toBe('APP_INTERACTION_UNAVAILABLE');
     f.zero();
 });

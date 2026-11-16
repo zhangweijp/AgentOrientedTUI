@@ -23,12 +23,22 @@ try {
     await fs.writeFile(path.join(folder, 'core-example.ts'), example);
     }
     await fs.writeFile(path.join(folder, 'tool-types.ts'), `import type { RefTarget, ToolResult, ViewToolInvocationTerminal, ExecutionBinding, AppSnapshotV5, SnapshotRead } from '@aotui/runtime/core';
-import { SNAPSHOT_SCHEMA_VERSION, type OrdinaryCompileResult, type SnapshotStoreOptions, type SnapshotLimits } from '@aotui/runtime/core';
+import { createSnapshotCore, SNAPSHOT_SCHEMA_VERSION, type OrdinaryCompileResult, type SnapshotStoreOptions, type SnapshotLimits } from '@aotui/runtime/core';
 // @ts-expect-error The JSON copy budget reason is internal to Core.
 import { JsonCopyLimitError } from '@aotui/runtime/core';
-export const defaultLimits: SnapshotStoreOptions = { limits: undefined };
-export const partialLimits: SnapshotStoreOptions = { limits: { maxViews: 0, maxTools: undefined } };
-export const copyLimits = (limits: Partial<SnapshotLimits>): SnapshotStoreOptions => ({ limits });
+const identity = { appId: 'notes', instanceId: 'limits-check' };
+export const defaultLimits: SnapshotStoreOptions = { ...identity, limits: undefined };
+export const partialLimits: SnapshotStoreOptions = { ...identity, limits: { maxViews: 0, maxTools: undefined } };
+export const copyLimits = (limits: Partial<SnapshotLimits>): SnapshotStoreOptions => ({ ...identity, limits });
+export function snapshotLifecycle() {
+  // @ts-expect-error A Core must bind its App and instance at construction.
+  createSnapshotCore({ limits: {} });
+  const core = createSnapshotCore(defaultLimits);
+  // @ts-expect-error An existing Core cannot start a different instance.
+  core.lifecycle.startApp('notes', 'next');
+  core.lifecycle.stop();
+  core.lifecycle.dispose();
+}
 export function declarationCategory(result: OrdinaryCompileResult) {
   if (result.ok) return 'accepted';
   const code = result.issue.code;

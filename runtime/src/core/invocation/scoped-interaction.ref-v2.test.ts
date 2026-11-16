@@ -13,7 +13,7 @@ function parameters(extra = false) {
 import { createAppInteraction } from './app-interaction.js';
 function deferred() { let resolve!: () => void;const promise = new Promise<void>(yes => { resolve = yes; });return { promise, resolve }; }
 function fixture() {
-    const core = createSnapshotCore({ now: () => 0 });core.lifecycle.startApp('app', 'run');const id = JSON.stringify(['app', 'File', 'read']);let seq = 0;
+    const core = createSnapshotCore({ appId: 'app', instanceId: 'run', now: () => 0 });const id = JSON.stringify(['app', 'File', 'read']);let seq = 0;
     let contract = parameters();if (!contract.ok) throw Error('fixture');
     let schema = ordinaryParameterProfile(contract.contract);
     const calls = { validate: 0, policy: 0, execute: 0 }, seen: any[] = [];

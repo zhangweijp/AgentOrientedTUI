@@ -41,7 +41,7 @@ Tool execution is enabled by default. The trusted Host can install with `toolsEn
 
 Preact Apps register their static `defineViewType` descriptors with `createTUIApp({ app_name, component, viewTypes })` and attach local handlers through `View.bindings`. A call uses `view_id` to select the receiving View. Root lists names with `ToolCatalog`. Complete definitions belong in Context Tools. The factory advertises managed `app-lifecycle-v2` support by default. Apps that own resources register callbacks with `useAppLifecycle({ stop?, close? })`.
 
-Each Snapshot Core captures its optional limits at creation. Overrides can only lower the default limits. The default Tool schema limit is 64 KiB of canonical JSON UTF-8 for the complete normalized profile, including its internal marker. [Pure Core configuration and migration](docs/core-public-entry.md#snapshot-limits)
+Each Snapshot Core binds one App run through `createSnapshotCore({ appId, instanceId })` and captures optional limits at creation. Overrides can only lower the default limits. The default Tool schema limit is 64 KiB of canonical JSON UTF-8 for the complete normalized profile, including its internal marker. [Pure Core configuration and migration](docs/core-public-entry.md#snapshot-limits)
 
 The Core tracks one real operation per App instance. Use `readReceipt({ observationId, invocationId })` to read the original or late result under the instance policy. Both IDs come from the original invocation. A receipt records success, business failure, rejection before handler entry, or an unknown outcome. Read the App's error and recovery data alongside its current View before making another change. The caller's wait can end while the operation is still running.
 

@@ -18,7 +18,7 @@ function fixture(optional = false) {
         ordinary: { type: 'string' },
     }, required: optional ? [] : ['many'], additionalProperties: false });
     if (!c.ok) throw Error(JSON.stringify(c.issue));
-    const core = createSnapshotCore(); core.lifecycle.startApp('a', 'i');
+    const core = createSnapshotCore({ appId: 'a', instanceId: 'i' });
     const toolId = JSON.stringify(['a', 'Items', 'choose']);
     const own = (id: string, value: JsonValue) => ({ id, ownerViewId: 'items', ownerViewInstanceId: 'mount',
         refType: 'Item', target: { kind: 'snapshot-value' as const, payload: value } });

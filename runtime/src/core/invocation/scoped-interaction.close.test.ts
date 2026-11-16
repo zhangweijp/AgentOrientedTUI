@@ -14,8 +14,7 @@ function fixture(instanceId = 'run', namespace = 'close:run') {
     let time = 10;
     let clockMode = 'normal';
     const now = () => { if (clockMode === 'throw') throw Error('clock'); return clockMode === 'back' ? 9 : time; };
-    const core = createSnapshotCore({ now }), registry = createViewOwnedTools('app', instanceId);
-    core.lifecycle.startApp('app', instanceId);
+    const core = createSnapshotCore({ appId: 'app', instanceId, now }), registry = createViewOwnedTools('app', instanceId);
     registry.defineTools([{ viewType:'Detail',name:'read',description:'Read',inputSchema:{type:'object',properties:{},additionalProperties:false} }]);
     const plan = registry.prepareFrame([{id:'v',type:'Detail',owner:{},bindings:[{name:'read',enabled:true,execute:()=>({success:true})}]}]);
     plan.accept();

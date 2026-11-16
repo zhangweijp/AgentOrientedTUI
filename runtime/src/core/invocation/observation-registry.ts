@@ -247,7 +247,7 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
     function isCurrent(): boolean {
         if (state.closing) return false;
         const identity = store.readAppIdentity(state.appId);
-        return identity.status !== 'stopped' && (identity.status !== 'active' || identity.instanceId === state.instanceId);
+        return identity.status === 'active' && identity.instanceId === state.instanceId;
     }
     function requireActive(): void {
         if (state.closing) fail('APP_INTERACTION_UNAVAILABLE');

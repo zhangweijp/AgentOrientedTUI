@@ -8,10 +8,12 @@ B02 起，直接使用 `InstanceInteraction` 的 Core 集成者用 `inspect()` �
 
 V5 Snapshot 的 `ToolDescriptorV5` 要求布尔字段 `nameSharedAcrossViewTypes`。`createViewOwnedTools().defineTools()` 从完整注册声明计算该值。直接构造草稿的 Producer 也按 App 的完整声明计算，同类型多个实例共用一份定义。
 
+每次 App 运行都通过 `createSnapshotCore({ appId, instanceId })` 创建一个 Core，构造时绑定身份并进入 `unready`。运行结束时调用 `lifecycle.stop()` 停止新发布与观察，等在途调用和授权回调结算后再调用 `lifecycle.dispose()`。同名 App 再次启动时，由 Host 分配新的 `instanceId` 并创建新的 Core。 [生命周期与保留额度](core-lifetime-and-bounds.md)
+
 <a id="snapshot-limits"></a>
 ## Snapshot 限额
 
-B03 的 `createSnapshotCore({ limits })` 在构造时固定有效配置。`limits` 可省略或设为 `undefined`。提供时须是 `options` 自有可枚举的数据属性，值为普通对象或 null-prototype 对象。对象只接受下表的自有可枚举数据字段。省略或设为 `undefined` 的字段采用默认值。每个覆盖值是从 0 到默认值的安全整数，形状错误抛 `TypeError`，值超出范围或类型错误抛 `RangeError`。限额确定后，调用方可继续修改自己的对象。
+`createSnapshotCore({ appId, instanceId, limits })` 在构造时固定有效配置。`limits` 可省略或设为 `undefined`。提供时须是 `options` 自有可枚举的数据属性，值为普通对象或 null-prototype 对象。对象只接受下表的自有可枚举数据字段。省略或设为 `undefined` 的字段采用默认值。每个覆盖值是从 0 到默认值的安全整数，形状错误抛 `TypeError`，值超出范围或类型错误抛 `RangeError`。限额确定后，调用方可继续修改自己的对象。
 
 | 字段 | 默认值及硬上限 | 计量对象 |
 | --- | ---: | --- |
@@ -50,11 +52,11 @@ function check(value: unknown, message: string): asserts value {
 }
 
 const appId = 'notes', instanceId = 'tutorial-run-1';
-const snapshots = createSnapshotCore({ now: () => 0 });
+const snapshots = createSnapshotCore({ appId, instanceId, now: () => 0 });
 const previewLimits = { maxViews: 0 };
-const preview = createSnapshotCore({ limits: previewLimits });
+const previewInstanceId = 'tutorial-preview-1';
+const preview = createSnapshotCore({ appId, instanceId: previewInstanceId, limits: previewLimits });
 previewLimits.maxViews = 1;
-snapshots.lifecycle.startApp(appId, instanceId);
 const registry = createViewOwnedTools(appId, instanceId);
 const attachment = registry.prepareMount('detail', 'Note');
 const { view, owner } = attachment;
@@ -133,10 +135,9 @@ function publish(text: string) {
 publish('old');
 const sample = snapshots.store.readLatest(appId);
 check(sample.status === 'ready', 'Expected a published Note');
-preview.lifecycle.startApp(appId, instanceId);
 try {
   const { views, refs, tools } = sample.snapshot;
-  const result = preview.committer.accept({ schemaVersion: SNAPSHOT_SCHEMA_VERSION, appId, instanceId,
+  const result = preview.committer.accept({ schemaVersion: SNAPSHOT_SCHEMA_VERSION, appId, instanceId: previewInstanceId,
     producerSeq: 1, sourceEpoch: 1, capturedAt: 0, views, refs, tools });
   check(result.status === 'rejected' && result.issue.path === '$.views', 'The Core retained maxViews: 0');
 } finally { preview.lifecycle.dispose(); }
@@ -196,6 +197,7 @@ try {
   check(stale.kind === 'receipt' && stale.receipt.outcome.status === 'rejected' && handlerEntries === 3, 'Old activation cannot enter or redirect');
 
   beforeClosed = authorizations;
+  snapshots.lifecycle.stop();
   authority.close(); await authority.whenClosed();
   check((await client.invoke(request(fresh, 'read', 'closed', { note: 'detail.selected', suffix: '!' }))).kind === 'refused', 'Closed Client rejects');
   check(authorizations === beforeClosed && handlerEntries === 3, 'Closed authority does not authorize or enter handlers');
@@ -203,6 +205,7 @@ try {
     authority.inspect().combinedBytes === 0 && snapshots.store.inspect().activeLeases === 0,
     'Observation slots, logical bytes and leases released');
 } finally {
+  snapshots.lifecycle.stop();
   authority.close(); await authority.whenClosed();
   attachment.release(); projection.close(); registry.dispose(); snapshots.lifecycle.dispose();
 }

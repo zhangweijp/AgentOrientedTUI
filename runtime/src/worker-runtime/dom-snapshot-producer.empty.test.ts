@@ -24,8 +24,7 @@ function fixture(ids: string[] = []) {
 const identity = () => ({ appId: 'app', instanceId: 'run' });
 
 it('C04 explicit empty owned inventories produce a legal V5 snapshot with no tools', () => {
-    const f = fixture(), core = createSnapshotCore();
-    core.lifecycle.startApp('app', 'run');
+    const f = fixture(), core = createSnapshotCore(identity());
     const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.views(), tools: [] }) });
     expect(projection.commit(() => {})).toBe('prepared');
     expect(projection.publishTo(core.committer)).toMatchObject({ status: 'published', snapshot: { views: [], refs: {}, tools: {} } });
@@ -38,8 +37,7 @@ it('retains an empty-body View beside its healthy sibling and publishes the comp
     const fragments = f.fragments.map(fragment => ({
         ...fragment, markup: fragment.viewId === 'empty' ? '' : 'HEALTHY_BODY',
     }));
-    const core = createSnapshotCore();
-    core.lifecycle.startApp('app', 'run');
+    const core = createSnapshotCore(identity());
     const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.views(fragments), tools: [] }) });
     expect(projection.commit(() => {})).toBe('prepared');
     expect(projection.publishTo(core.committer).status).toBe('published');
