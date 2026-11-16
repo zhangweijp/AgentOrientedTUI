@@ -1,4 +1,4 @@
-import { arrayRef, createApp, createView, formatRef, ref } from '@aotui/sdk/app';
+import { arrayRef, createApp, createView, formatRef, ref, type ToolResult } from '@aotui/sdk/app';
 import { ItemType, WorkspaceType, initialState, itemValue, label, otherViewId, selectedViewId, workViewTypes, workspaceText, type State, type WorkItemOptions } from './work-items.js';
 
 export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
@@ -8,13 +8,13 @@ export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
         initialize({ publish, signal, registerCleanup }) {
             let state = initialState();
             registerCleanup({ stop: () => options.onStop?.(), close: () => options.onClose?.() });
-            const change = (update: (value: State) => State) => {
+            const change = (update: (value: State) => State): ToolResult | void => {
                 if (signal.aborted) return;
                 state = update(state);
                 try { publishState(); }
                 catch (error) {
-                    if (!options.onPublicationError) throw error;
-                    options.onPublicationError(error);
+                    options.onPublicationError?.(error);
+                    return { success: true, data: { message: 'Change applied. View refresh failed.' } };
                 }
             };
             const workspace = createView(WorkspaceType, {

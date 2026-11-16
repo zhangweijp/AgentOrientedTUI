@@ -57,7 +57,7 @@ export interface ObservationGrant {
 }
 export type ObservationIssueCode = SnapshotIssueCode | 'APP_INTERACTION_UNAVAILABLE' |
     'RESERVATION_UNAVAILABLE' | 'OBSERVATION_INVALID' | 'OBSERVATION_PROJECTION_INVALID' |
-    'OBSERVATION_UNAVAILABLE' | 'OBSERVATION_NOT_ADOPTED' | 'OBSERVATION_CAPACITY' | 'OBSERVATION_INTERNAL_ERROR';
+    'OBSERVATION_UNAVAILABLE' | 'OBSERVATION_NOT_ADOPTED' | 'OBSERVATION_INTERNAL_ERROR';
 export interface ObservationIssue { readonly code: ObservationIssueCode; readonly message: string; readonly path?: string }
 export interface ObservationRejected { readonly status: 'rejected'; readonly issue: ObservationIssue }
 export interface ObservationRegistryStats {

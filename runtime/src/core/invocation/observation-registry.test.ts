@@ -7,7 +7,8 @@ import type { AppSnapshotV5, JsonValue, PreparedAppSnapshotDraftV5, SnapshotStor
 import { createViewOwnedTools } from '../tool/view-owned-tools.js';
 import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
-import { createObservationOperations, type ObservationState, DEFAULT_OBSERVATION_REGISTRY_LIMITS as HARD } from './observation-registry.js';
+import { createObservationOperations, hostedObservationCapacityIssue, hostedObservationNamespace,
+    type ObservationState, DEFAULT_OBSERVATION_REGISTRY_LIMITS as HARD } from './observation-registry.js';
 import type { Observation, ObservationGrant, ObservationRegistryLimitOverrides } from './observation-types.js';
 
 
@@ -563,6 +564,35 @@ describe('B1 independently bounded JSON and total budgets', () => {
         const f = fixture({ views: 2, refs: 0, content: 'x'.repeat(524286) }), p = f.begin();
         expect(code(f.registry.complete(p.reservation, f.grant(f.source, ['v0', 'v1'])))).toBe('OBSERVATION_CAPACITY');
         expect(code(f.registry.begin({viewIds:['v0']}))).toBe('OBSERVATION_INVALID');
+        zero(f);
+    });
+    it('measures hosted capacity with the encoded source IDs and full receiver metadata at the counter bound', () => {
+        const instanceId = 'run"界';
+        const f = fixture({ content: '', ready: false, instanceId, namespace: hostedObservationNamespace(instanceId) });
+        const initial = f.draft();
+        const views = [initial.views[0]!, { ...initial.views[1]!, toolBindings: [] }];
+        const draft = { ...initial, views };
+        const published = f.core.committer.accept(draft);
+        if (published.status !== 'published') throw Error('Expected a published reference frame');
+        const observation = f.observe(f.grant(published.snapshot));
+        expect(observation.tools[0]?.eligibleViewIds).toEqual(['v0']);
+        const revision = Number.MAX_SAFE_INTEGER;
+        const envelope = {
+            ...observation,
+            observationId: observation.observationId.replace(/:\d+$/, ':' + revision),
+            source: { ...observation.source, revision,
+                snapshotId: observation.source.snapshotId.replace(/,\d+\]$/, ',' + revision + ']') },
+        };
+        const room = Math.min(HARD.observation.maxCanonicalBytes - bytes(envelope),
+            HARD.observation.maxApproxBytes - threshold(envelope, 'maxApproxBytes'));
+        const firstLength = Math.floor(room / 2);
+        const fill = (extra: number) => ({ ...draft, views: views.map((view, index) => ({
+            ...view, content: { ...view.content, value: 'x'.repeat(index === 0 ? firstLength : room - firstLength + extra) },
+        })) });
+        expect(hostedObservationCapacityIssue(fill(0))).toBeUndefined();
+        expect(hostedObservationCapacityIssue(fill(1))).toMatchObject({ code: 'OBSERVATION_CAPACITY', path: '$.observation' });
+        expect(f.core.store.inspect().activeLeases).toBe(1);
+        expect(f.registry.inspect()).toMatchObject({ observations: 1, reservations: 0 });
         zero(f);
     });
     it('observes a near-limit View and rejects oversized metadata at its publication path', () => {

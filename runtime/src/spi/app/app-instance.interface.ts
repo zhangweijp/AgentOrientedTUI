@@ -44,7 +44,7 @@ export interface RuntimeContext {
     /** Install the renderer's full-frame reader before its first commit. */
     setViewReader(read: () => readonly AppFrameView[]): void;
     /** Prepare one complete frame locally. Host acceptance happens separately. */
-    publishFrame(build: () => AppProjectionFrame): PreparedProjection;
+    publishFrame(build: () => AppProjectionFrame, options?: { readonly opening: true }): PreparedProjection;
 }
 
 export interface AppInstance {

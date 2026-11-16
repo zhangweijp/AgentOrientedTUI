@@ -241,10 +241,16 @@ export default factory;
             ['oversized', { code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$.views[0].content.value', message: 'Serialized byte budget exceeded' }],
         ] as const) {
             const lastGood = current;
-            success(await call('update', { operation }));
+            const updated = await call('update', { operation });
+            success(updated);
             await waitFor(traceFile, 'repair-pending:' + operation);
             expect(await frame(client)).toEqual({ status: 'rejected', issue });
-            if (adapter === 'plain') expect(await trace(traceFile)).toContain(issue.code + ':' + issue.path);
+            if (adapter === 'plain') {
+                expect(await trace(traceFile)).toContain(issue.code + ':' + issue.path);
+                expect(updated).toMatchObject({ receipt: { outcome: { value: { data: {
+                    message: 'Change applied. View refresh failed.',
+                } } } } });
+            }
             const degraded = await source.getContext();
             try {
                 const text = degraded.messages.map(message => String(message.content)).join('\n');
@@ -572,6 +578,7 @@ export default workItemsApp(${JSON.stringify(sibling)});
 
 it('keeps committed plain View and Tool identities across rejected complete frames', async () => {
     const name = 'atomic_plain', log = join(consumer, name + '.trace');
+    const savedFile = join(consumer, name + '.saved');
     const folder = await appFolder(name, `
 import { appendFileSync, existsSync } from 'node:fs';
 import Type from 'typebox';
@@ -579,14 +586,15 @@ import { createApp, createView, defineViewType, ref, refParam } from '@aotui/sdk
 const trace = value => appendFileSync(${JSON.stringify(log)}, value + '\\n');
 const schema = Type.String();
 const Workspace = defineViewType({ name:'Workspace', tools:{
-    change:{description:'Publish a frame', inputSchema:Type.Object({ operation:Type.Enum(['oversized', 'ref', 'close', 'open']) })},
+    change:{description:'Publish a frame', inputSchema:Type.Object({ operation:Type.Enum(['oversized', 'ref', 'close', 'open', 'save']) })},
 } });
 const Item = defineViewType({ name:'Item', tools:{
     inspect:{description:'Inspect selected item', inputSchema:Type.Object({selected:refParam('Text', schema)})},
 } });
 export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspace, Item], initialize({ publish }) {
+    let savedText = 'Item';
     const inspect = { execute({ selected }) { trace('entered:' + selected); return { success:true }; } };
-    const item = createView(Item, { id:'item_a', kind:'state', render:() => ({ body:'Item',
+    const item = createView(Item, { id:'item_a', kind:'state', render:() => ({ body:savedText,
         refs:[ref('selected', 'committed', { refType:'Text', schema })], bindings:{inspect},
     }) });
     const workspace = createView(Workspace, { id:'workspace', kind:'state', render:() => ({
@@ -595,8 +603,13 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
                 publish({ views: operation === 'close' ? [workspace] : [workspace, item] });
                 return { success:true };
             }
+            if (operation === 'save') {
+                const text = 'Saved business text';
+                appendFileSync(${JSON.stringify(savedFile)}, text + '\\n');
+                savedText = text;
+            }
             const candidate = createView(Item, {id:'spill',kind:'state',render:() => ({
-                body: operation === 'oversized' ? 'x'.repeat(513 * 1024) : 'Replacement',
+                body: operation === 'ref' ? 'Replacement' : 'x'.repeat(513 * 1024),
                 refs: operation === 'ref' ? [ref('selected', 2, { refType:'Text', schema })] : [],
                 bindings: {inspect:{...inspect,enabled:false}},
             })});
@@ -612,6 +625,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
                 publish({ views:[workspace, item] });
             };
             void repair();
+            if (operation === 'save') return { success:true, data: { message:'File saved. View refresh failed.' } };
             return { success:true };
         } } },
     }) });
@@ -660,38 +674,85 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
         const reopened = await observe(client);
         expect(viewIdentity(reopened)).not.toBe(viewIdentity(before));
         expect(reopened.tools.some(tool => tool.name === 'inspect')).toBe(true);
+
+        const save = request(reopened, 'change', { operation: 'save' }, 'save-once');
+        const result = await client.invoke(save);
+        expect(result).toMatchObject({ kind: 'receipt', receipt: { executionPhase: 'entered-returned',
+            outcome: { status: 'succeeded', value: { success: true, data: { message: 'File saved. View refresh failed.' } } } } });
+        expect(await readFile(savedFile, 'utf8')).toBe('Saved business text\n');
+        const diagnostic = { status: 'rejected', issue: {
+            code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$.views[1].content.value',
+        } };
+        expect(await frame(client)).toMatchObject(diagnostic);
+        expect(await client.preview()).toMatchObject(diagnostic);
+
+        await writeFile(log + '-save', '');
+        await expect.poll(async () => {
+            const result = await frame(client);
+            if (result.status === 'observed') client.releaseObservation(result.observation.observationId);
+            return result.status;
+        }).toBe('observed');
+        const repaired = await observe(client);
+        expect(body(repaired, 'item_a')).toBe('Saved business text');
+        expect(viewIdentity(repaired)).toBe(viewIdentity(reopened));
+        expect(await client.readReceipt({ observationId: save.observationId, invocationId: save.invocationId })).toEqual(result);
+        expect(await readFile(savedFile, 'utf8')).toBe('Saved business text\n');
     } finally {
         await writeFile(log + '-oversized', '');
         await writeFile(log + '-ref', '');
+        await writeFile(log + '-save', '');
         expect(await runtime.beginShutdown().completion).toMatchObject({ ok: true, resourcesReleased: true });
     }
 }, 15_000);
 
-it('observes a 300 KiB View and carries one deep, large Ref to the real Worker without opening storage', async () => {
+it('rejects opening a second 400 KiB View and keeps the first fully observable and callable', async () => {
     const name = 'capacity_plain';
+    const gate = join(consumer, name + '-open-b');
     const folder = await appFolder(name, `
+import { existsSync } from 'node:fs';
 import Type from 'typebox';
 import { createApp, createView, defineViewType, ref, refParam } from '@aotui/sdk/app';
 const Item = defineViewType({ name:'Item', tools: {
     inspect: { description:'Inspect published data',
         inputSchema:Type.Object({ value:refParam('Data', Type.Unknown()) }, {additionalProperties:false}) },
-    grow: { description:'Show another page', inputSchema:Type.Object({}, {additionalProperties:false}) },
+    grow: { description:'Open another page, optionally closing this one first',
+        inputSchema:Type.Object({ closeFirst:Type.Boolean() }, {additionalProperties:false}) },
 } });
 export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Item], initialize({ publish }) {
     const size = 400 * 1024;
     let value = 'x'.repeat(size);
     for (let index = 0; index < 40; index++) value = [value];
+    let staging = false;
     const bindings = {
         inspect: { execute({ value }) {
             let depth = 0;
             while (Array.isArray(value)) { value = value[0]; depth++; }
             return { success: true, data: { size: value.length, depth } };
         } },
-        grow: { execute() { publish({ views: [first, second] }); return { success: true }; } },
+        grow: { async execute({ closeFirst }) {
+            if (closeFirst) {
+                const closed = publish({ views: [] });
+                while (!existsSync(${JSON.stringify(gate)})) await new Promise(resolve => setTimeout(resolve, 5));
+                const opened = publish({ views: [second] }, { opening: true });
+                return { success: true, data: { closedEpoch: closed.sourceEpoch, openedEpoch: opened.sourceEpoch } };
+            }
+            staging = true;
+            try {
+                publish({ views: [first, second] }, { opening: true });
+                return { success: true };
+            } catch (error) {
+                if (error.code !== 'OBSERVATION_CAPACITY') throw error;
+                return { success: false, error: { code: error.code, message: error.message, context: { path: error.path } } };
+            } finally { staging = false; }
+        } },
     };
-    const first = createView(Item, { id:'item_a', kind:'state', render:() => ({ body:'a'.repeat(300 * 1024),
-        refs:[ref('data', value, {refType:'Data'})], bindings }) });
-    const second = createView(Item, { id:'item_b', kind:'state', render:() => ({ body:'b'.repeat(480 * 1024), bindings }) });
+    const first = createView(Item, { id:'item_a', kind:'state', render:() => ({ body:'a'.repeat(size),
+        refs:[ref('data', value, {refType:'Data'})],
+        bindings: staging ? { ...bindings, inspect: { execute: () => ({ success: true, data: { staged: true } }) } } : bindings,
+    }) });
+    const second = createView(Item, { id:'item_b', kind:'state', render:() => ({ body:'b'.repeat(size),
+        bindings:{ ...bindings, inspect:{ ...bindings.inspect, enabled:false }, grow:{ ...bindings.grow, enabled:false } },
+    }) });
     publish({ views:[first] });
 }});
 `);
@@ -706,17 +767,44 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Item], 
         if (!installed || installed.status !== 'installed') throw Error(JSON.stringify(installed));
         const client = interaction(runtime, desktopId, installed.appId);
         const first = await observe(client);
-        expect(String(body(first, 'item_a')).length).toBe(300 * 1024);
-        expect(await client.invoke(request(first, 'inspect', { value: 'item_a.data' }, 'large-ref'))).toMatchObject({
+        expect(body(first, 'item_a')).toHaveLength(400 * 1024);
+        const originalHandler = {
             kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { size: 400 * 1024, depth: 40 } } } },
+        };
+        expect(await client.invoke(request(first, 'inspect', { value: 'item_a.data' }, 'large-ref'))).toMatchObject(originalHandler);
+        const attempt = await client.invoke(request(first, 'grow', { closeFirst: false }, 'grow'));
+        const preview = await client.preview(), next = await frame(client);
+        expect({
+            outcome: attempt.kind === 'receipt' ? attempt.receipt.outcome.status : attempt.code,
+            preview: preview.status === 'previewed' ? preview.views.map(view => view.id) : preview.issue.code,
+            observation: next.status === 'observed' ? next.observation.views.map(view => view.id) : next.issue.code,
+        }).toEqual({ outcome: 'failed', preview: ['item_a'], observation: ['item_a'] });
+        expect(attempt).toMatchObject({ receipt: { outcome: { details: { result: { error: {
+            code: 'OBSERVATION_CAPACITY', message: expect.stringContaining('Close a View'), context: { path: '$.observation' },
+        } } } } } });
+        expect(preview).toMatchObject({ source: first.source, views: first.views });
+        expect(await client.invoke(request(first, 'inspect', { value: 'item_a.data' }, 'still-current'))).toMatchObject(originalHandler);
+        if (next.status !== 'observed') throw Error(next.issue.code);
+        expect(next.observation).toMatchObject({ source: first.source, views: first.views, refs: first.refs, tools: first.tools });
+        expect(client.adoptObservation(next.observation.observationId)).toEqual({ status: 'adopted' });
+        expect(await client.invoke(request(next.observation, 'inspect', { value: 'item_a.data' }, 'new-observation'))).toMatchObject(originalHandler);
+
+        const switching = client.invoke(request(next.observation, 'grow', { closeFirst: true }, 'close-then-open'));
+        await expect.poll(async () => {
+            const closed = await client.preview();
+            return closed.status === 'previewed' ? closed.views.map(view => view.id) : closed.issue.code;
+        }, { timeout: 5_000 }).toEqual([]);
+        expect((await observe(client)).views).toEqual([]);
+        await writeFile(gate, '');
+        expect(await switching).toMatchObject({
+            receipt: { outcome: { status: 'succeeded', value: { data: { closedEpoch: 2, openedEpoch: 3 } } } },
         });
-        expect(await client.invoke(request(first, 'grow', {}, 'grow'))).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
-        expect(await frame(client)).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_CAPACITY', path: '$.observation' } });
-        expect(await client.preview()).toMatchObject({ status: 'previewed', views: [expect.objectContaining({ id: 'item_a' }), expect.objectContaining({ id: 'item_b' })] });
-        expect(await client.invoke(request(first, 'inspect', { value: 'item_a.data' }, 'still-current'))).toMatchObject({
-            kind: 'receipt', receipt: { outcome: { status: 'succeeded' } },
-        });
+        const second = await observe(client);
+        expect(second.source.instanceId).toBe(first.source.instanceId);
+        expect(second.views.map(view => view.id)).toEqual(['item_b']);
+        expect(body(second, 'item_b')).toHaveLength(400 * 1024);
     } finally {
+        await writeFile(gate, '');
         expect(await runtime.beginShutdown().completion).toMatchObject({ ok: true, resourcesReleased: true });
         expect(open).not.toHaveBeenCalled();
     }

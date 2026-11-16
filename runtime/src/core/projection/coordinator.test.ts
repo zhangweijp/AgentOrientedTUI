@@ -21,6 +21,31 @@ function fixture(views = [view(), view(bb)]) {
 }
 
 describe('shared projection commit boundary', () => {
+    it('reports real failures and preserves their diagnostic when a staged opening exceeds capacity', () => {
+        const { c, core, publish } = fixture();
+        const accept = vi.fn();
+        const complete = (views: readonly ViewSnapshotV4[], opening = false) => {
+            c.beginCommit();
+            return c.endCommit(undefined, false, { views, tools: [], refs: [], accept, opening });
+        };
+        expect(complete([view()])).toBe('prepared');
+        expect(publish().status).toBe('published');
+        const large = [view(aa, 'a'.repeat(400 * 1024)), view(bb, 'b'.repeat(400 * 1024))];
+
+        expect(complete(large)).toBe('failed');
+        expect(publish()).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_CAPACITY' } });
+        expect(complete([view(aa, 'a'.repeat(513 * 1024))], true)).toBe('failed');
+        const diagnostic = c.failure;
+        expect(diagnostic).toMatchObject({ code: 'SNAPSHOT_SERIALIZATION_ERROR' });
+        expect(publish()).toMatchObject({ status: 'rejected', issue: diagnostic });
+        expect(complete(large, true)).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_CAPACITY' } });
+        expect(c.failure).toBe(diagnostic);
+        expect(publish()).toMatchObject({ status: 'rejected', issue: diagnostic });
+        expect(c.token().epoch).toBe(1);
+        expect(accept).toHaveBeenCalledTimes(1);
+        expect(core.store.readLatest('app')).toMatchObject({ status: 'degraded', lastGood: { views: [view()] } });
+    });
+
     it('keeps first null and non-null → null transitions, including falsy replacements', () => {
         const { c, publish, core } = fixture();
         const owner = { ...aa };

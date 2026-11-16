@@ -1,4 +1,8 @@
-import { SNAPSHOT_PREPARE_ISSUE_CODES, type SnapshotLimits, type SnapshotPrepareIssue, type SnapshotStoreOptions } from './types.js';
+import { SNAPSHOT_SCHEMA_VERSION, SNAPSHOT_PREPARE_ISSUE_CODES, type SnapshotLimits, type SnapshotPrepareIssue, type SnapshotStoreOptions } from './types.js';
+
+export function snapshotId(appId: string, instanceId: string, revision: number): string {
+    return 'aotui-app-snapshot:v' + SNAPSHOT_SCHEMA_VERSION + ':' + JSON.stringify([appId, instanceId, revision]);
+}
 
 export const MAX_VIEW_TOOL_BINDINGS = 10_000;
 

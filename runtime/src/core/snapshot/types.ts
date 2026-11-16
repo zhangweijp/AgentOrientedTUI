@@ -84,7 +84,7 @@ export type SnapshotHealth = 'unready' | 'ready' | 'degraded' | 'stopped';
 
 export const SNAPSHOT_PREPARE_ISSUE_CODES = Object.freeze([
     'SNAPSHOT_INVALID', 'SNAPSHOT_SERIALIZATION_ERROR', 'TOOL_BINDING_INVALID',
-    'TOOL_SCHEMA_INVALID', 'TOOL_SCHEMA_UNSUPPORTED', 'TOOL_SCHEMA_CAPACITY',
+    'TOOL_SCHEMA_INVALID', 'TOOL_SCHEMA_UNSUPPORTED', 'TOOL_SCHEMA_CAPACITY', 'OBSERVATION_CAPACITY',
 ] as const);
 type SnapshotPrepareIssueCode = typeof SNAPSHOT_PREPARE_ISSUE_CODES[number];
 

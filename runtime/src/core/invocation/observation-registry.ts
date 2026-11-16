@@ -1,11 +1,11 @@
 import { SNAPSHOT_SCHEMA_VERSION } from '../snapshot/types.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
-import type { AppIdentityReader, AppSnapshotV5, SnapshotLease, SnapshotStore } from '../snapshot/types.js';
+import type { AppIdentityReader, AppSnapshotV5, PreparedAppSnapshotDraftV5, SnapshotLease, SnapshotPrepareIssue, SnapshotStore } from '../snapshot/types.js';
 import { sameToolDefinition, viewToolReceiver } from '../tool/source-binding.js';
-import type { AppPreviewResult, AppInteractionPolicy } from './app-interaction-types.js';
-import { DEFAULT_SNAPSHOT_LIMITS as snapshotLimits, OBSERVATION_METADATA_BYTES } from '../snapshot/snapshot-support.js';
+import type { AppPreviewResult } from './app-interaction-types.js';
+import { DEFAULT_SNAPSHOT_LIMITS as snapshotLimits, OBSERVATION_METADATA_BYTES, snapshotId } from '../snapshot/snapshot-support.js';
 import type {
-    Observation, ObservationGrant, ObservationIssue, ObservedView,
+    Observation, ObservationGrant, ObservationIssue, ObservationSource, ObservedView,
     ObservationIssueCode, ObservationJsonLimits, ObservationRegistryLimits,
     ObservationRegistryOptions, ObservationRegistryStats, ObservationRejected,
     RefIdentity, ReservationHandle,
@@ -24,15 +24,19 @@ export const DEFAULT_OBSERVATION_REGISTRY_LIMITS: ObservationRegistryLimits = Ob
     maxMetadataBytes: 8 * MiB, maxTotalBytes: 64 * MiB,
 });
 
+type ObservationFrame = Pick<AppSnapshotV5, 'views' | 'refs' | 'tools'>;
+export const hostedObservationNamespace = (instanceId: string): string => 'host:' + instanceId;
+const observationId = (namespace: string, sequence: number): string => namespace + ':observation:' + sequence;
+
 /** The default Host grants the full set of executable data and Tools. */
-export const projectCompleteViews: AppInteractionPolicy['project'] = ({ source }) => ({
+export const projectCompleteViews = ({ source }: { source: Pick<ObservationFrame, 'refs' | 'tools'> }): ObservationGrant => ({
     refs: Object.values(source.refs).map(ref => ({
         viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id,
     })),
     toolIds: Object.keys(source.tools),
 });
 
-function observedViews(source: AppSnapshotV5): readonly ObservedView[] {
+function observedViews(source: Pick<ObservationFrame, 'views'>): readonly ObservedView[] {
     return source.views.map(({ id, viewInstanceId, type, name, kind, content }) =>
         Object.freeze({ id, viewInstanceId, type, name, kind, content }));
 }
@@ -80,6 +84,81 @@ function bounded<T>(input: unknown, limits: ObservationJsonLimits, code: Observa
         return { value: value as T, bytes };
     } catch { return fail(code, path); }
 }
+function checkViewCount(frame: Pick<ObservationFrame, 'views'>, limits: ObservationRegistryLimits): void {
+    if (frame.views.length > limits.maxViews) fail('OBSERVATION_CAPACITY', '$.views');
+}
+
+function projectObservation(frame: ObservationFrame, source: ObservationSource, id: string,
+    grant: ObservationGrant, limits: ObservationRegistryLimits) {
+    const invalid = 'OBSERVATION_PROJECTION_INVALID';
+    object(grant, ['refs', 'toolIds'], invalid);
+    if (!Array.isArray(grant.refs) || !Array.isArray(grant.toolIds)) fail(invalid);
+    if (grant.refs.length > limits.maxRefs) fail('OBSERVATION_CAPACITY', '$.refs');
+    if (grant.toolIds.length > limits.maxTools) fail('OBSERVATION_CAPACITY', '$.tools');
+    const sourceRefs = Object.values(frame.refs);
+    const originalRefs = new Set(sourceRefs.map(ref => refKey({
+        viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id,
+    })));
+    const refs = new Set<string>();
+    for (const ref of grant.refs) {
+        object(ref, ['viewId', 'viewInstanceId', 'refId'], invalid);
+        if (!text(ref.viewId) || !text(ref.viewInstanceId) || !text(ref.refId)) fail(invalid);
+        const key = refKey(ref);
+        if (!originalRefs.has(key) || refs.has(key)) fail(invalid);
+        refs.add(key);
+    }
+    const toolIds = new Set<string>();
+    for (const toolId of grant.toolIds) {
+        if (!text(toolId) || !Object.hasOwn(frame.tools, toolId) || toolIds.has(toolId)) fail(invalid);
+        toolIds.add(toolId);
+    }
+
+    const counts = new Map<string, number>();
+    const eligible = new Map<string, string[]>();
+    for (const { id, type, toolBindings } of frame.views) {
+        counts.set(type, (counts.get(type) ?? 0) + 1);
+        for (const binding of toolBindings) {
+            if (!toolIds.has(binding.toolId)) continue;
+            const candidates = eligible.get(binding.toolId) ?? [];
+            candidates.push(id);
+            eligible.set(binding.toolId, candidates);
+        }
+    }
+    const tools = Object.values(frame.tools).flatMap(tool => {
+        const candidates = eligible.get(tool.id);
+        return !candidates ? [] : [candidates.length === counts.get(tool.viewType)
+            ? tool : { ...tool, eligibleViewIds: candidates }];
+    });
+    const projectedRefs = sourceRefs.flatMap(ref => {
+        const identity = { viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id };
+        return refs.has(refKey(identity)) ? [{ ...identity, refType: ref.refType, kind: ref.target.kind }] : [];
+    });
+    const output = bounded<Observation>({ observationId: id, source, expiresAt: null,
+        views: observedViews(frame), refs: projectedRefs, tools }, limits.observation, 'OBSERVATION_CAPACITY', '$.observation');
+    const metadata = bounded<ObservationGrant>({ refs: grant.refs, toolIds: tools.map(tool => tool.id) },
+        limits.metadata, 'OBSERVATION_CAPACITY', '$.observation');
+    return { observation: output.value, metadata: metadata.value, publicBytes: output.bytes, metadataBytes: metadata.bytes };
+}
+
+/** Measure the default managed Worker's full projection before accepting a frame. */
+export function hostedObservationCapacityIssue(draft: PreparedAppSnapshotDraftV5): SnapshotPrepareIssue | undefined {
+    const limits = DEFAULT_OBSERVATION_REGISTRY_LIMITS;
+    const revision = Number.MAX_SAFE_INTEGER;
+    const { appId, instanceId } = draft;
+    // Use the Host's exact encodings at their largest counter widths.
+    const id = observationId(hostedObservationNamespace(instanceId), Number.MAX_SAFE_INTEGER);
+    const source = { appId, instanceId, snapshotId: snapshotId(appId, instanceId, revision), revision };
+    try {
+        checkViewCount(draft, limits);
+        const grant = bounded<ObservationGrant>(projectCompleteViews({ source: draft }), limits.metadata,
+            'OBSERVATION_CAPACITY', '$.observation').value;
+        projectObservation(draft, source, id, grant, limits);
+    } catch (error) {
+        if (!(error instanceof RegistryFailure) || error.code !== 'OBSERVATION_CAPACITY') throw error;
+        return { ...issue(error), code: error.code };
+    }
+}
+
 function configuration(input: unknown, allowed: readonly string[]): Record<string, unknown> {
     if (!input || typeof input !== 'object' || Array.isArray(input) ||
         ![Object.prototype, null].includes(Object.getPrototypeOf(input))) throw new TypeError('Invalid observation registry configuration');
@@ -143,9 +222,9 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
     let sequence = 0;
     let sourceBytes = 0, observationBytes = 0, metadataBytes = 0;
     const sources = new Map<string, { readonly source: AppSnapshotV5; readonly bytes: number; references: number }>();
-    const id = (kind: string): string => {
+    const nextObservationId = (): string => {
         if (sequence === Number.MAX_SAFE_INTEGER) fail('OBSERVATION_CAPACITY');
-        const value = namespace + ':' + kind + ':' + ++sequence;
+        const value = observationId(namespace, ++sequence);
         if (utf8Size(value) > 256) fail('OBSERVATION_CAPACITY');
         return value;
     };
@@ -206,57 +285,6 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
             observationBytes, metadataBytes, totalBytes: sourceBytes + observationBytes + metadataBytes,
             ...(error === undefined ? {} : { issue: issue(error) }) });
     }
-    function project(value: Reservation, input: unknown) {
-        const invalid = 'OBSERVATION_PROJECTION_INVALID';
-        const grant = bounded<ObservationGrant>(input, limits.metadata, invalid).value;
-        object(grant, ['refs', 'toolIds'], invalid);
-        if (!Array.isArray(grant.refs) || !Array.isArray(grant.toolIds)) fail(invalid);
-        if (grant.refs.length > limits.maxRefs || grant.toolIds.length > limits.maxTools) fail('OBSERVATION_CAPACITY');
-        const sourceRefs = Object.values(value.source.refs);
-        const originalRefs = new Set(sourceRefs.map(ref => refKey({
-            viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id,
-        })));
-        const refs = new Set<string>();
-        for (const ref of grant.refs) {
-            object(ref, ['viewId', 'viewInstanceId', 'refId'], invalid);
-            if (!text(ref.viewId) || !text(ref.viewInstanceId) || !text(ref.refId)) fail(invalid);
-            const key = refKey(ref);
-            if (!originalRefs.has(key) || refs.has(key)) fail(invalid);
-            refs.add(key);
-        }
-        const toolIds = new Set<string>();
-        for (const toolId of grant.toolIds) {
-            if (!text(toolId) || !Object.hasOwn(value.source.tools, toolId) || toolIds.has(toolId)) fail(invalid);
-            toolIds.add(toolId);
-        }
-
-        const counts = new Map<string, number>();
-        const eligible = new Map<string, string[]>();
-        for (const { id, type, toolBindings } of value.source.views) {
-            counts.set(type, (counts.get(type) ?? 0) + 1);
-            for (const binding of toolBindings) {
-                if (!toolIds.has(binding.toolId)) continue;
-                const candidates = eligible.get(binding.toolId) ?? [];
-                candidates.push(id);
-                eligible.set(binding.toolId, candidates);
-            }
-        }
-        const tools = Object.values(value.source.tools).flatMap(tool => {
-            const candidates = eligible.get(tool.id);
-            return !candidates ? [] : [candidates.length === counts.get(tool.viewType)
-                ? tool : { ...tool, eligibleViewIds: candidates }];
-        });
-        const projectedRefs = sourceRefs.flatMap(ref => {
-            const identity = { viewId: ref.ownerViewId, viewInstanceId: ref.ownerViewInstanceId, refId: ref.id };
-            return refs.has(refKey(identity)) ? [{ ...identity, refType: ref.refType, kind: ref.target.kind }] : [];
-        });
-        const source = { appId: value.source.appId, instanceId: value.source.instanceId, snapshotId: value.source.id, revision: value.source.revision };
-        const output = bounded<Observation>({ observationId: value.observationId, source, expiresAt: null,
-            views: observedViews(value.source), refs: projectedRefs, tools }, limits.observation, 'OBSERVATION_CAPACITY', '$.observation');
-        const metadata = bounded<ObservationGrant>({ refs: grant.refs, toolIds: tools.map(tool => tool.id) },
-            limits.metadata, 'OBSERVATION_CAPACITY', '$.observation');
-        return { observation: output.value, metadata: metadata.value, publicBytes: output.bytes, metadataBytes: metadata.bytes };
-    }
     return Object.freeze({
         limits,
         isCurrent, releaseAll, stats,
@@ -269,7 +297,7 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
                 if (state.reservations.size || state.observations.size > (state.adoptedObservationId ? 1 : 0))
                     fail('OBSERVATION_CAPACITY');
                 const source = ready();
-                if (source.views.length > limits.maxViews) fail('OBSERVATION_CAPACITY', '$.views');
+                checkViewCount(source, limits);
                 const acquired = store.acquire(source.id, { lifetime: 'owner' });
                 if (acquired.status === 'rejected') fail(acquired.issue.code);
                 lease = acquired.lease;
@@ -278,7 +306,7 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
                 capacity(sourceBytes + (existing ? 0 : bytes), observationBytes + limits.observation.maxCanonicalBytes,
                     metadataBytes + limits.metadata.maxCanonicalBytes);
                 const token = Object.freeze({ reservation: true as const });
-                const value = { source, lease, observationId: id('observation'), cancelled: false };
+                const value = { source, lease, observationId: nextObservationId(), cancelled: false };
                 if (existing) existing.references++;
                 else { sources.set(source.id, { source, bytes, references: 1 }); sourceBytes += bytes; }
                 state.reservations.set(token, value);
@@ -295,7 +323,10 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
                 refresh();
                 if (!value || state.closing || value.cancelled) fail('RESERVATION_UNAVAILABLE');
                 reacquire(value.source);
-                const projected = project(value, input);
+                const grant = bounded<ObservationGrant>(input, limits.metadata, 'OBSERVATION_PROJECTION_INVALID').value;
+                const { appId, instanceId, id: snapshotId, revision } = value.source;
+                const projected = projectObservation(value.source, { appId, instanceId, snapshotId, revision },
+                    value.observationId, grant, limits);
                 capacity(sourceBytes, observationBytes - limits.observation.maxCanonicalBytes + projected.publicBytes,
                     metadataBytes - limits.metadata.maxCanonicalBytes + projected.metadataBytes);
                 state.observations.set(value.observationId, { ...projected, source: value.source, lease: value.lease });
