@@ -23,6 +23,13 @@ export interface SemanticAOTUIDrivenSourceOptions {
 
 const key = (value: string) => value.trim().toLowerCase();
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+const desktopToolNames = {
+    open: 'system-open_app',
+    close: 'system-close_app',
+    collapse: 'system-collapse_app',
+    show: 'system-show_app',
+} as const;
+const reservedDesktopToolNames = new Set<string>(Object.values(desktopToolNames));
 const unavailable = (toolName: string, toolCallId: string, code: string, message: string, outcomeStatus: 'rejected' | 'unknown' = 'rejected'): ToolResult =>
     ({ toolName, toolCallId, outcomeStatus, error: { code, message } });
 
@@ -228,6 +235,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
             for (const app of apps) {
                 const appId = String(app.appId);
                 if (!active.has(appId)) continue;
+                const appName = app.name || appId;
                 let interaction: AppInteraction | undefined;
                 let observation: Observation | undefined;
                 try {
@@ -250,14 +258,19 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                     for (const view of observation.views) {
                         const content = view.content.value;
                         const refs = observation.refs.filter(ref => ref.viewId === view.id && ref.viewInstanceId === view.viewInstanceId);
-                        const markup = buildViewMessageMarkup({ appId, appName: app.name || appId,
+                        const markup = buildViewMessageMarkup({ appId, appName,
                             viewId: view.id, viewType: view.type, kind: view.kind, viewName: view.name, markup: content,
                             suffix: refs.length ? '\n\nAvailable references: ' + refs.map(ref => `${ref.refId} (${ref.refType})`).join(', ') : '' });
                         localMessages.push({ role: 'user', region: view.kind === 'instruction' ? 'static' : 'dynamic',
                             timestamp: timestamp(localPresentations, JSON.stringify([app.appId, view.viewInstanceId]), markup), content: markup });
                     }
                     for (const tool of observation.tools) {
-                        const name = buildPublicToolName(app.name || appId, tool.viewType, tool.name);
+                        if (typeof tool.nameSharedAcrossViewTypes !== 'boolean') {
+                            throw new AppProjectionError('AOTUI_TOOL_NAME_METADATA_REQUIRED',
+                                'The Runtime did not supply the registered Tool name information. Use matching Runtime and Adapter builds.');
+                        }
+                        const qualify = tool.nameSharedAcrossViewTypes || reservedDesktopToolNames.has(`${appName}-${tool.name}`);
+                        const name = qualify ? buildPublicToolName(appName, tool.viewType, tool.name) : buildPublicToolName(appName, tool.name);
                         if (localRoutes.has(name)) throw new AppProjectionError('AOTUI_TOOL_NAME_COLLISION',
                             `Public Tool alias ${JSON.stringify(name)} is declared more than once by this App. Rename its ViewType or Tool.`);
                         if (!object(tool.inputSchema)) throw new AppProjectionError('AOTUI_TOOL_SCHEMA_INVALID',
@@ -271,7 +284,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                             'This App Tool schema is not supported by the Agent Driver. Simplify its JSON Schema and refresh the context.');
                         }
                         localRoutes.set(name, { app, client: interaction, observationId: observation.observationId, toolId: tool.id });
-                        localTools.set(name, { description: `${tool.description}\nApplication: ${app.name || appId}; View type: ${tool.viewType}.`,
+                        localTools.set(name, { description: `${tool.description}\nApplication: ${appName}; View type: ${tool.viewType}.`,
                             inputSchema });
                     }
                     const captured: CapturedObservation = { client: interaction, observation, released: false };
@@ -377,7 +390,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
 
     private controls(apps: readonly AppDiscoveryInfo[], tools: Record<string, Tool>): Map<string, (input: unknown, callId: string) => Promise<ToolResult>> {
         const handlers = new Map<string, (input: unknown, callId: string) => Promise<ToolResult>>();
-        const actions: Array<{ action: string; statuses: readonly AppDiscoveryInfo['status'][]; description: string;
+        const actions: Array<{ action: keyof typeof desktopToolNames; statuses: readonly AppDiscoveryInfo['status'][]; description: string;
             instanceBound: boolean; invalidTargetMessage?: string; execute: (id: AppID, expectedInstanceId?: string) => Promise<void> }> = [
             { action: 'open', statuses: ['pending', 'closed'],
                 description: 'Start a pending or closed application using its App ID from the current Desktop application list.',
@@ -399,7 +412,7 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
             const available = apps.filter(app => statuses.includes(app.status) && (!instanceBound ||
                 (typeof app.appInstanceId === 'string' && app.appInstanceId.length > 0)));
             if (!alwaysVisible && !available.length) continue;
-            const name = `system-${action}_app`;
+            const name = desktopToolNames[action];
             const capturedApps = new Map(available.map(app => [String(app.appId), app]));
             tools[name] = { description, inputSchema: jsonSchema({ type: 'object', properties: {
                 app_id: alwaysVisible ? { type: 'string' } : { type: 'string', enum: [...capturedApps.keys()] },

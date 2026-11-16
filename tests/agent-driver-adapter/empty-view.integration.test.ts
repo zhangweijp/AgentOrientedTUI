@@ -154,7 +154,7 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
 
             let current = await observe();
             expect(Object.keys(current.tools)).toEqual(expect.arrayContaining([
-                'empty_app-EmptyType-ping', 'empty_app-EmptyType-set_body',
+                'empty_app-ping', 'empty_app-set_body',
             ]));
             expect(current.messages.filter(message => String(message.content).startsWith('<view '))).toHaveLength(4);
             expect(viewMessage(current, 'healthy_view')).toContain('HEALTHY_SIBLING_BODY');
@@ -165,13 +165,13 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
             expect(initialViews.find((view: any) => view.id === 'healthy_view')?.content.value).toContain('HEALTHY_SIBLING_BODY');
             expect(initialViews.filter((view: any) => view.id !== 'healthy_view').map((view: any) => view.content.value)).toEqual(['', '', '']);
 
-            await result('empty_app-EmptyType-ping', { view_id: 'no_children' }, 'empty-ping');
+            await result('empty_app-ping', { view_id: 'no_children' }, 'empty-ping');
             const initialRevision = latestSnapshot(host).revision;
             for (const [index, body] of ['EMPTY_VIEW_BODY_ONE', '', 'EMPTY_VIEW_BODY_TWO'].entries()) {
                 current = await observe();
-                expect(current.tools['empty_app-EmptyType-ping']).toBeDefined();
-                expect(current.tools['empty_app-EmptyType-set_body']).toBeDefined();
-                await result('empty_app-EmptyType-set_body', { view_id: 'no_children', body }, `set-body-${index}`);
+                expect(current.tools['empty_app-ping']).toBeDefined();
+                expect(current.tools['empty_app-set_body']).toBeDefined();
+                await result('empty_app-set_body', { view_id: 'no_children', body }, `set-body-${index}`);
                 await vi.waitFor(() => {
                     const snapshot = latestSnapshot(host!);
                     expect(snapshot.revision).toBeGreaterThan(initialRevision + index);
@@ -179,7 +179,7 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
                         .toBe(body ? `\n${body}\n` : '');
                 }, { timeout: 4_000 });
                 current = await observe();
-                expect(current.tools['empty_app-EmptyType-ping']).toBeDefined();
+                expect(current.tools['empty_app-ping']).toBeDefined();
                 expect(viewBodyFromMessage(viewMessage(current, 'no_children'))).toBe(body ? `\n${body}\n` : '');
                 expect(viewMessage(current, 'healthy_view')).toContain('HEALTHY_SIBLING_BODY');
                 await current.release?.();

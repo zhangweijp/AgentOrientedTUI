@@ -161,7 +161,7 @@ describe('current Host preview subscription', () => {
                 expect(screen.getByText('Committed two')).toBeInTheDocument();
                 expect(screen.queryByText('Initial topic_a')).toBeNull();
                 expect(f.sessions.get('topic_a').state).toBe('paused');
-                expect((await context.executeTool!('preview_app-Workspace-inspect', { view_id: 'work' }, 'agent-still-qualified'))?.outcomeStatus).toBe('succeeded');
+                expect((await context.executeTool!('preview_app-inspect', { view_id: 'work' }, 'agent-still-qualified'))?.outcomeStatus).toBe('succeeded');
                 expect(app.entries()).toBe(1);
                 // The GUI initiates no second request; notifications drive independent reads.
                 expect(queries.mock.calls.length).toBeGreaterThan(initialQueries);

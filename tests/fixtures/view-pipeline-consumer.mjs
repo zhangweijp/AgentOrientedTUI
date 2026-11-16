@@ -36,7 +36,7 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
       return context;
     }
     async function call(context, type, tool, input) {
-      const result = await context.executeTool(`pipeline-${type}-${tool}`, { view_id: type === 'Guide' ? 'guide' : 'file_a', ...input }, `pipeline-${facts.calls.length}`);
+      const result = await context.executeTool(`pipeline-${tool}`, { view_id: type === 'Guide' ? 'guide' : 'file_a', ...input }, `pipeline-${facts.calls.length}`);
       facts.calls.push({ type, tool, input, result });
       return result;
     }
@@ -110,10 +110,10 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
     assert.equal((await call(current, 'Guide', 'close', {})).outcomeStatus, 'succeeded');
     current = await observe();
     assert.equal(message(current, 'file_a'), undefined);
-    assert.equal(current.tools['pipeline-FileDetail-inspect'], undefined);
+    assert.equal(current.tools['pipeline-inspect'], undefined);
     assert.equal((await call(current, 'Guide', 'open', {})).outcomeStatus, 'succeeded');
     current = await observe();
-    assert.ok(current.tools['pipeline-FileDetail-inspect']);
+    assert.ok(current.tools['pipeline-inspect']);
     assert.equal((await call(initial, 'FileDetail', 'inspect', { file: 'file_a.current' })).outcomeStatus, 'rejected');
     assert.equal((await call(current, 'FileDetail', 'inspect', { file: 'file_a.current' })).result.matches, true);
     facts.messages = { initial: initialFile, guide, updated: message(current, 'file_a') };

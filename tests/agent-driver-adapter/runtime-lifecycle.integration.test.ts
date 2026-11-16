@@ -529,7 +529,7 @@ it('Semantic lifecycle controls stay bound to the App instance observed by each 
         expect(definitions(first)).toEqual(base);
         expect((await call(first, 'system-open_app', { app_id: 'a' }, 'already-open'))?.error?.code).toBe('INVALID_APP_TARGET');
         expect(first.tools['system-show_app']).toBeUndefined();
-        const dynamicTool = Object.keys(first.tools).find(name => name === 'interaction_example-Detail-ordinary');
+        const dynamicTool = Object.keys(first.tools).find(name => name === 'interaction_example-ordinary');
         expect(dynamicTool).toBeDefined();
         const firstInstance = desktop.getInstalledApps().find((entry: any) => entry.appId === 'a')?.appInstanceId;
         expect(typeof firstInstance).toBe('string');

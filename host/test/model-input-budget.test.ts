@@ -12,7 +12,7 @@ function app(name: string) {
     const adopt = vi.fn(), release = vi.fn();
     const source: ContextDrivenSource = { name, onUpdate: () => () => {}, getContext: async () => ({
         messages: [{ role: 'user', content: '<view>' + '中文和代码 const a = 1; '.repeat(75) + '</view>', timestamp: 1 }],
-        tools: { [name + '-Item-update']: { description: 'Update ' + name,
+        tools: { [name + '-update']: { description: 'Update ' + name,
             inputSchema: jsonSchema({ type: 'object', properties: { choice: { type: 'string', enum: ['选择 A', '选择 B'] } },
                 required: ['choice'], additionalProperties: false }) } },
         adopt, release,
@@ -70,7 +70,7 @@ describe('Host model input budget', () => {
             expect(JSON.stringify(request.prompt)).toContain('history input');
             expect(JSON.stringify(request.prompt)).toContain('history result');
             expect(request.tools).toEqual(expect.arrayContaining(['first', 'second'].map(name => expect.objectContaining({
-                name: name + '-Item-update', inputSchema: expect.objectContaining({
+                name: name + '-update', inputSchema: expect.objectContaining({
                     properties: { choice: { type: 'string', enum: ['选择 A', '选择 B'] } },
                 }),
             }))));
@@ -184,7 +184,7 @@ it('preserves DeepSeek reasoning through successive tool calls and the next user
         tool_calls?: { id: string }[]; tool_call_id?: string };
     const requests: { messages: WireMessage[]; thinking?: { type: string } }[] = [];
     const modelId = 'deepseek-flash';
-    const toolName = 'work-Item-update';
+    const toolName = 'work-update';
     vi.stubGlobal('fetch', async (url: string, options: RequestInit) => {
         expect(url).toBe('https://api.deepseek.com/chat/completions');
         const request = JSON.parse(String(options.body));

@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { AppRegistry, createAppId, createDesktopId, createRuntime } from '@aotui/runtime';
-import type { JsonValue, Observation, AppInteraction } from '@aotui/runtime/core';
+import type { JsonValue, Observation, AppInteraction, AppInteractionPolicy } from '@aotui/runtime/core';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 
 const execute = promisify(execFile);
@@ -74,10 +74,10 @@ createView(ItemType, { id:'missing', kind:'state',
 
 afterAll(async () => { if (consumer) await rm(consumer, { recursive: true, force: true }); });
 
-function interaction(runtime: ReturnType<typeof createRuntime>, desktopId: ReturnType<typeof createDesktopId>, appId: string) {
+function interaction(runtime: ReturnType<typeof createRuntime>, desktopId: ReturnType<typeof createDesktopId>, appId: string, policy?: AppInteractionPolicy) {
     const app = runtime.getDesktop(desktopId).getInstalledApps().find(item => item.appId === appId);
     if (!app?.appInstanceId) throw Error('Missing installed App instance ' + appId);
-    const access = runtime.getAppInteraction(desktopId, appId, app.appInstanceId);
+    const access = runtime.getAppInteraction(desktopId, appId, app.appInstanceId, policy);
     if (access.status !== 'ready') throw Error(JSON.stringify(access.issue));
     return access.interaction;
 }
@@ -205,7 +205,7 @@ export default factory;
         const model = await source.getContext();
         try {
             await model.adopt();
-            const inspectName = name + '-Item-inspect';
+            const inspectName = name + '-inspect';
             const modelSchema = (model.tools[inspectName]!.inputSchema as { jsonSchema: unknown }).jsonSchema;
             expect(modelSchema).toMatchObject({ properties: {
                 selected: { type: 'string', minLength: 1, description: expect.stringContaining('view_id.ref_id') },
@@ -217,7 +217,7 @@ export default factory;
             expect(modelSchema).not.toHaveProperty('x-aotui-parameter-contract');
             expect(modelSchema).not.toHaveProperty('properties.selected.x-aotui-ref-value');
             expect(modelSchema).not.toHaveProperty('properties.elements.items.x-aotui-ref-kind');
-            expect(await model.executeTool(name + '-Workspace-update', { view_id: 'workspace', operation: 'reset', options: { mode: 'keep', numbers: [1, '2'] } }, 'model-error'))
+            expect(await model.executeTool(name + '-update', { view_id: 'workspace', operation: 'reset', options: { mode: 'keep', numbers: [1, '2'] } }, 'model-error'))
                 .toMatchObject({ outcomeStatus: 'rejected', error: { code: 'TOOL_INVALID_ARGS', message: expect.stringContaining('$.options.numbers[1]') } });
         } finally { await model.release(); }
 
@@ -249,7 +249,7 @@ export default factory;
             try {
                 const text = degraded.messages.map(message => String(message.content)).join('\n');
                 expect(text).toContain(`Semantic status: ${issue.code}: ${issue.message} (at ${issue.path})`);
-                expect(degraded.tools[name + '-Item-inspect']).toBeUndefined();
+                expect(degraded.tools[name + '-inspect']).toBeUndefined();
             } finally { await degraded.release?.(); }
             await writeFile(gate('repair') + '-' + operation, '');
             await expect.poll(async () => {
@@ -550,8 +550,8 @@ export default workItemsApp(${JSON.stringify(sibling)});
             expect(text).not.toContain('Rejected diagnostic candidate');
             expect(text).not.toContain('Committed diagnostic workspace');
             expect(text).toContain('Inspections: 0');
-            expect(degraded.tools[name + '-Workspace-change']).toBeUndefined();
-            expect(degraded.tools[sibling + '-Item-inspect']).toBeDefined();
+            expect(degraded.tools[name + '-change']).toBeUndefined();
+            expect(degraded.tools[sibling + '-inspect']).toBeDefined();
         } finally { await degraded.release(); }
 
         await writeFile(gate, '');
@@ -904,7 +904,7 @@ export default createApp({ app_name:'page_receivers', viewTypes, initialize({pub
         expect(prompt).toContain('Counter.add');
         expect(prompt).not.toContain('toolBindings');
         expect(model.tools).toEqual(expect.arrayContaining([
-            expect.objectContaining({name:name + '-Counter-add',inputSchema:expect.objectContaining({
+            expect.objectContaining({name:name + '-add',inputSchema:expect.objectContaining({
                 required:['view_id'], properties:expect.objectContaining({
                     view_id:expect.objectContaining({type:'string',enum:['b']}),
                     delta:expect.objectContaining({description:expect.stringContaining('view_id.ref_id')}),
@@ -917,5 +917,127 @@ export default createApp({ app_name:'page_receivers', viewTypes, initialize({pub
     } finally {
         driver?.stop(); driver?.dispose(); mock?.mockRestore(); source?.dispose();
         expect(await runtime.beginShutdown().completion).toMatchObject({ok:true,resourcesReleased:true,workers:{report:{total:0}}});
+    }
+}, 15_000);
+
+it('keeps aliases from all registered ViewTypes through real Worker observations and Source calls', async () => {
+    const name = 'alias_selection';
+    const folder = await appFolder(name, `
+import Type from 'typebox';
+import { createApp, createView, defineViewType } from '@aotui/sdk/app';
+const closed = { additionalProperties: false };
+const NumberType = defineViewType({ name: 'Numbers', tools: {
+    set: { description: 'Set one number', inputSchema: Type.Object({ amount: Type.Integer() }, closed) },
+    increment: { description: 'Increase one number' },
+} });
+const TextType = defineViewType({ name: 'Text', tools: {
+    set: { description: 'Set the text', inputSchema: Type.Object({ label: Type.String() }, closed) },
+} });
+const RootType = defineViewType({ name: 'Root', tools: {
+    set_mode: { description: 'Change the text page state', inputSchema: Type.Object({ mode: Type.Enum(['open', 'disabled', 'closed']) }, closed) },
+} });
+export default createApp({ app_name: 'alias_selection', viewTypes: [RootType, NumberType, TextType], initialize({ publish }) {
+    let mode = 'closed', label = 'Original';
+    const finish = view => {
+        publish({ views: mode === 'closed' ? [root, a, another] : [root, a, another, text] });
+        return { success: true, data: { view } };
+    };
+    const numberView = (id, value) => createView(NumberType, { id, kind: 'state', render: () => ({
+        body: 'Number: ' + value,
+        bindings: {
+            set: { execute({ amount }) { value = amount; return finish(id); } },
+            increment: { execute() { value++; return finish(id); } },
+        },
+    }) });
+    const a = numberView('a', 0), another = numberView('another', 10);
+    const text = createView(TextType, { id: 'text', kind: 'state', render: () => ({
+        body: 'Text: ' + label,
+        bindings: { set: { enabled: mode === 'open', execute(input) { label = input.label; return finish('text'); } } },
+    }) });
+    const root = createView(RootType, { id: 'root', kind: 'instruction', render: () => ({
+        body: 'Change the text page state.',
+        bindings: { set_mode: { execute(input) { mode = input.mode; return finish('root'); } } },
+    }) });
+    finish('root');
+} });
+`);
+    const runtime = createRuntime({});
+    const registry = new AppRegistry();
+    let source: SemanticAOTUIDrivenSource | undefined;
+    let current: Awaited<ReturnType<SemanticAOTUIDrivenSource['getContext']>> | undefined;
+    let grantText = true;
+    const policy: AppInteractionPolicy = {
+        project: ({ source }) => ({ refs: [], toolIds: Object.values(source.tools)
+            .filter(tool => grantText || tool.viewType !== 'Text').map(tool => tool.id) }),
+        authorize: () => true, canReadReceipt: () => true,
+    };
+    const setNumber = name + '-Numbers-set', setText = name + '-Text-set';
+    const increment = name + '-increment';
+    try {
+        const id = await runtime.createDesktop(createDesktopId(name)), desktop = runtime.getDesktop(id);
+        await registry.registerTransient('local:' + folder);
+        const [installed] = await registry.installAll(desktop);
+        if (installed?.status !== 'installed') throw Error(JSON.stringify(installed));
+        const client = interaction(runtime, id, installed.appId, policy);
+        const initial = await frame(client);
+        if (initial.status !== 'observed') throw Error(JSON.stringify(initial.issue));
+        expect(initial.observation.views.map(view => view.id)).toEqual(['root', 'a', 'another']);
+        expect(initial.observation.tools.filter(tool => tool.name === 'set')).toMatchObject([
+            { id: JSON.stringify([installed.appId, 'Numbers', 'set']), nameSharedAcrossViewTypes: true },
+        ]);
+        expect(initial.observation.tools.find(tool => tool.name === 'increment')?.nameSharedAcrossViewTypes).toBe(false);
+        client.releaseObservation(initial.observation.observationId);
+
+        source = new SemanticAOTUIDrivenSource(desktop, runtime, { includeInstruction: false, policy: () => policy });
+        const refresh = async (names: string[]) => {
+            await current?.release?.();
+            current = await source!.getContext();
+            await current.adopt!();
+            expect(Object.keys(current.tools).filter(alias => alias.endsWith('-set')).sort(),
+                current.messages.map(message => message.content).join('\n')).toEqual(names);
+            return current;
+        };
+        const viewText = (id: string) => current!.messages.find(message => String(message.content).startsWith('<view id="' + id + '"'))?.content;
+        const call = (tool: string, input: object, callId: string) => current!.executeTool!(tool, input, callId);
+        const succeeded = (view: string) => ({ outcomeStatus: 'succeeded', result: { view } });
+
+        const first = await refresh([setNumber]);
+        expect(Object.keys(first.tools).filter(alias => alias.endsWith('-increment'))).toEqual([increment]);
+        expect(first.tools[setNumber]?.inputSchema).toMatchObject({ jsonSchema: { required: ['view_id', 'amount'] } });
+        expect(await call(increment, { view_id: 'a' }, 'increment-a')).toMatchObject(succeeded('a'));
+        expect(await call(increment, { view_id: 'another' }, 'increment-another')).toMatchObject(succeeded('another'));
+        await refresh([setNumber]);
+        expect(viewText('a')).toContain('Number: 1\n');
+        expect(viewText('another')).toContain('Number: 11\n');
+        expect(await call(name + '-set_mode', { view_id: 'root', mode: 'open' }, 'open-text')).toMatchObject(succeeded('root'));
+
+        const both = await refresh([setNumber, setText]);
+        expect(both.tools[setText]?.inputSchema).toMatchObject({ jsonSchema: { required: ['view_id', 'label'] } });
+        expect(JSON.stringify(both.tools)).not.toContain('nameSharedAcrossViewTypes');
+        expect(await call(setNumber, { view_id: 'text', amount: 7 }, 'wrong-view')).toMatchObject({
+            outcomeStatus: 'rejected', error: { code: 'TOOL_UNAVAILABLE' },
+        });
+        expect(await call(setNumber, { view_id: 'a', amount: 7 }, 'set-number')).toMatchObject(succeeded('a'));
+        expect(await call(setText, { view_id: 'text', label: 'Changed' }, 'set-text')).toMatchObject(succeeded('text'));
+        await refresh([setNumber, setText]);
+        expect(viewText('a')).toContain('Number: 7\n');
+        expect(viewText('another')).toContain('Number: 11\n');
+        expect(viewText('text')).toContain('Text: Changed');
+
+        grantText = false;
+        await refresh([setNumber]);
+        expect(viewText('text')).toContain('Text: Changed');
+        grantText = true;
+        await refresh([setNumber, setText]);
+        expect(await call(name + '-set_mode', { view_id: 'root', mode: 'disabled' }, 'disable-text')).toMatchObject(succeeded('root'));
+        await refresh([setNumber]);
+        expect(viewText('text')).toContain('Text: Changed');
+        expect(await call(name + '-set_mode', { view_id: 'root', mode: 'closed' }, 'close-text')).toMatchObject(succeeded('root'));
+        await refresh([setNumber]);
+        expect(viewText('text')).toBeUndefined();
+        expect(await call(setNumber, { view_id: 'a', amount: 8 }, 'after-close')).toMatchObject(succeeded('a'));
+    } finally {
+        await current?.release?.(); source?.dispose();
+        expect(await runtime.beginShutdown().completion).toMatchObject({ ok: true, resourcesReleased: true });
     }
 }, 15_000);
