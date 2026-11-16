@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -233,9 +234,12 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         const request = s.request(originalView, 'blocked', { file: REF_A, mode: 'barrier' });
         const pending = s.client.invoke(request, 150);
         const handler = await wait(x, m => m.type === 'TEST_HANDLER_ENTERED');
-        const original = receipt(await pending), wire = x.refs()[0];
+        const wire = x.refs()[0];
         expect(handler.calls).toBe(1);
-        expect(original).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown' } });
+        expect(await pending).toEqual({
+            kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT',
+            message: expect.stringMatching(/readReceipt.*observationId.*invocationId/),
+        });
         expect((x.host as any).pendingRequests.has(wire.requestId)).toBe(true);
         expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: true, core: { activeInvocations: 1 } });
         const store = (x.host as any).snapshotReceiver.core.store;
@@ -259,16 +263,23 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
 
         const query = { observationId: request.observationId, invocationId: request.invocationId };
         const replay = s.client.readReceipt(query);
-        const shorterReplay = receipt(await s.client.readReceipt(query, 25));
-        expect(shorterReplay.outcome.status).toBe('unknown');
+        for (const result of await Promise.all([s.client.readReceipt(query, 25), s.client.invoke(request, 25)])) {
+            expect(result).toEqual({
+                kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT',
+                message: expect.stringMatching(/readReceipt.*observationId.*invocationId/),
+            });
+        }
+        expect(x.host.getInteractionReport()?.core.receiptContents).toBe(0);
         expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: true, core: { activeInvocations: 1 } });
         const late = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE' && m.requestId === wire.requestId && m.instanceId === wire.instanceId);
+        const releasedAt = Math.floor(performance.timeOrigin + performance.now());
         x.worker.postMessage({ type: 'TEST_COMMAND', command: 'release-handler', viewId: 'aa' });
         const terminal = await late;
         expect(terminal.terminal.phase).toBe('entered-returned');
         const settled = receipt(await replay);
         expect(settled).toMatchObject({ outcome: { status: 'succeeded' }, source: { snapshotId: originalView.source.snapshotId } });
-        expect(original.outcome.status).toBe('unknown');
+        expect(settled.completedAt).toBeGreaterThanOrEqual(releasedAt);
+        expect(settled.expiresAt).toBeGreaterThan(settled.completedAt);
         x.worker.emit('message', terminal);
         expect(receipt(await s.client.invoke(request))).toEqual(settled);
         expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: false, core: { activeInvocations: 0, sourceBytes: 0 } });
@@ -287,16 +298,35 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         const entered = deferred(), gate = deferred<boolean>();
         let signal: AbortSignal | undefined;
         s.controls.authorize = context => { signal = context.signal; entered.resolve(undefined); return gate.promise; };
+        const readPermission = vi.fn(() => false);
+        s.controls.read = readPermission;
         const request = s.request(view, 'before-dispatch');
         const pending = s.client.invoke(request, 100);
         await entered.promise;
-        expect(receipt(await pending)).toMatchObject({ executionPhase: 'not-dispatched',
+        const query = { observationId: request.observationId, invocationId: request.invocationId };
+        let releasedAt: number;
+        try {
+            expect(await pending).toEqual({
+                kind: 'unavailable', code: 'INVOCATION_DEADLINE_EXCEEDED',
+                message: expect.stringContaining('before dispatch'),
+            });
+            expect(signal?.aborted).toBe(true);
+            expect(x.refs()).toHaveLength(0);
+            expect(x.host.getInteractionReport()?.core).toMatchObject({ activeInvocations: 1, receiptContents: 0 });
+            expect(await s.client.readReceipt(query, 25)).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT' });
+            expect(readPermission).not.toHaveBeenCalled();
+        } finally {
+            releasedAt = Math.floor(performance.timeOrigin + performance.now());
+            gate.resolve(true);
+        }
+        expect(await s.client.readReceipt(query)).toMatchObject({ kind: 'unavailable', code: 'RECEIPT_PERMISSION_DENIED' });
+        readPermission.mockReturnValue(true);
+        const terminal = receipt(await s.client.readReceipt(query));
+        expect(terminal).toMatchObject({ executionPhase: 'not-dispatched',
             outcome: { status: 'rejected', code: 'INVOCATION_DEADLINE_EXCEEDED' } });
-        expect(signal?.aborted).toBe(true);
-        expect(x.refs()).toHaveLength(0);
-        gate.resolve(true);
-        expect(receipt(await s.client.invoke(request))).toMatchObject({ executionPhase: 'not-dispatched',
-            outcome: { status: 'rejected', code: 'INVOCATION_DEADLINE_EXCEEDED' } });
+        expect(terminal.completedAt).toBeGreaterThanOrEqual(releasedAt);
+        expect(terminal.expiresAt).toBeGreaterThan(terminal.completedAt);
+        expect(receipt(await s.client.invoke(request))).toEqual(terminal);
         expect(x.refs()).toHaveLength(0);
         expect((await counts(x)).handlerEntries).toBe(0);
 
@@ -305,8 +335,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         const x = await start(), s = scope(x), o = await s.observe();
         const pending = s.client.invoke(s.request(o, 'pending-release', { file: REF_A, mode: 'barrier' }), 100);
         await wait(x, m => m.type === 'TEST_HANDLER_ENTERED');
-        const first = receipt(await pending);
-        expect(first.outcome.status).toBe('unknown');
+        expect(await pending).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT' });
 
         const terminating = deferred<void>(), allowExit = deferred<void>();
         const nativeTerminate = x.worker.terminate.bind(x.worker);
@@ -330,7 +359,6 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
             expect(await x.host.waitForResourceRelease()).toMatchObject({ worker: 'exited', resourcesReleased: true,
                 appCleanup: { report: { state: 'stopped' } } });
             expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: false, core: { activeInvocations: 0, sourceBytes: 0 } });
-            expect(first.outcome.status).toBe('unknown');
             expect(x.refs()).toHaveLength(1);
         } finally { allowExit.resolve();terminate.mockRestore(); }
     });
@@ -361,9 +389,11 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
     it.each(['non-json', 'invalid-result', 'oversize'])('reports completed %s output with unknown business result', async mode => {
         const x = await start(), s = scope(x), o = await s.observe();
         const request = s.request(o, mode, { file: REF_A, mode }), r = receipt(await s.client.invoke(request));
-        expect(r).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown' } });
+        expect(r).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown', code: 'ACTION_OUTCOME_UNKNOWN' } });
+        expect(r.expiresAt).toBeGreaterThan(r.completedAt);
         const terminal = x.messages.find(m => m.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE' && m.requestId === x.refs()[0].requestId);
         expect(terminal?.terminal).toEqual({ phase: 'finished-unknown' });
+        expect(receipt(await s.client.readReceipt({ observationId: request.observationId, invocationId: request.invocationId }))).toEqual(r);
         expect(receipt(await s.client.invoke(request))).toEqual(r);
         expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: false, core: { activeInvocations: 0, sourceBytes: 0 } });
         expect((await counts(x)).calls).toBe(1);

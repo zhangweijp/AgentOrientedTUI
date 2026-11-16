@@ -32,7 +32,9 @@ function fail(code: string, message?: string, path?: string): never { throw new 
 const problem = (error: unknown): Issue => error instanceof InteractionFailure
     ? Object.freeze({ code: error.code, message: error.message, ...(error.path === undefined ? {} : { path: error.path }) })
     : Object.freeze({ code: 'OBSERVATION_INTERNAL_ERROR', message: MESSAGE });
-const unavailable = (code: string): ReceiptAccess => Object.freeze({ kind: 'unavailable', code, message: MESSAGE });
+const unavailable = (code: string, message = MESSAGE): ReceiptAccess => Object.freeze({ kind: 'unavailable', code, message });
+const waitDeadline = new InteractionFailure('INVOCATION_WAIT_TIMEOUT',
+    'Waiting for the invocation receipt timed out. Use readReceipt with the original observationId and invocationId.');
 function dataProperties(raw: unknown, required: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw) || ![Object.prototype, null].includes(Object.getPrototypeOf(raw))) throw 0;
     const descriptors = Object.getOwnPropertyDescriptors(raw), keys = Reflect.ownKeys(descriptors);
@@ -353,15 +355,15 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         }
     }
 
-    function hasContent(state: State, entry: Entry): void {
+    function checkReceiptAccess(state: State, entry: Entry, deadline?: number): void {
         if (state.closing || closed) fail('APP_INTERACTION_UNAVAILABLE');
         if (entry.unavailable) fail('RESULT_UNAVAILABLE');
         active(state);
+        if (deadline !== undefined && lastNow >= deadline) throw waitDeadline;
         if (entry.expired) fail('RESULT_EXPIRED');
         if (!entry.receipt) fail('RESULT_UNAVAILABLE');
     }
     async function permitted(state: State, entry: Entry, controller: AbortController, check: () => void): Promise<void> {
-        check();
         let allowed: unknown;
         try { allowed = await state.policy!.canReadReceipt(entry.metadata, controller.signal); }
         catch { check(); return fail('RECEIPT_READ_FAILED'); }
@@ -374,18 +376,18 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         const controller = new AbortController(); state.controllers.add(controller); state.reads++;
         return controller;
     }
-    function wait(entry: Entry, deadline?: number, admission?: AbortController): Promise<ExecutionMapping | undefined> {
-        if (!entry.running) return Promise.resolve(undefined);
+    function waitForTerminal(entry: Entry, deadline?: number, admission?: AbortController): Promise<boolean> {
+        if (!entry.running) return Promise.resolve(true);
         const delay = deadline === undefined ? undefined : Math.max(0, deadline - clock());
         return new Promise(resolve => {
-            const done = () => { clearTimeout(timer); entry.waiters.delete(done); resolve(undefined); };
-            const timer = delay === undefined ? undefined : setTimeout(() => {
+            const done = () => { clearTimeout(timer); entry.waiters.delete(done); resolve(true); };
+            const timedOut = () => {
                 entry.waiters.delete(done);
                 if (admission) expireAdmission(entry, admission);
-                resolve(entry.admissionExpired
-                    ? { executionPhase: 'not-dispatched', outcome: { status: 'rejected', ...deadlineIssue } }
-                    : { executionPhase: 'unknown', outcome: unknownOutcome() });
-            }, delay);
+                resolve(false);
+            };
+            if (delay === 0) { timedOut(); return; }
+            const timer = delay === undefined ? undefined : setTimeout(timedOut, delay);
             entry.waiters.add(done);
         });
     }
@@ -393,21 +395,27 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         let permission: Promise<void> | undefined;
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
-            const timeout = await wait(entry, deadline, admission);
-            const check = timeout ? () => active(state) : () => hasContent(state, entry);
-            const receipt = timeout ? makeReceipt(entry, timeout, clock()).value : undefined;
-            const remaining = deadline === undefined ? undefined : Math.max(0, deadline - clock());
-            permission = permitted(state, entry, controller, check);
-            if (remaining === undefined) await permission;
-            else await Promise.race([permission, new Promise<never>((_, reject) => {
-                timer = setTimeout(() => {
-                    reject(new InteractionFailure(deadlineIssue.code));
-                    controller.abort();
-                }, remaining);
-            })]);
+            const settled = await waitForTerminal(entry, deadline, admission);
+            const expiredAdmission = admission && entry.admissionExpired;
+            if (expiredAdmission || !settled) {
+                active(state);
+                if (expiredAdmission) return unavailable(deadlineIssue.code, deadlineIssue.message);
+                throw waitDeadline;
+            }
+            const check = () => checkReceiptAccess(state, entry, deadline);
             check();
-            return Object.freeze({ kind: 'receipt', receipt: receipt ?? entry.receipt! });
-        } catch (error) { return unavailable(problem(error).code); }
+            const timeout = deadline === undefined ? undefined : new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(waitDeadline), deadline - lastNow);
+            });
+            permission = permitted(state, entry, controller, check);
+            await (timeout ? Promise.race([permission, timeout]) : permission);
+            check();
+            return Object.freeze({ kind: 'receipt', receipt: entry.receipt! });
+        } catch (error) {
+            if (error === waitDeadline) controller.abort();
+            const { code, message } = problem(error);
+            return unavailable(code, message);
+        }
         finally {
             clearTimeout(timer);
             const release = () => {

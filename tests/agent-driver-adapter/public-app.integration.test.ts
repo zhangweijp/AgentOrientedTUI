@@ -290,12 +290,12 @@ export default factory;
         const held = request(current, 'update', { operation: 'wait' }, 'held');
         const waiting = client.invoke(held, 1_000);
         await waitFor(traceFile, 'handler-entered');
-        const receipt = await waiting;
-        expect(receipt).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'unknown' } } });
-        expect(await client.invoke(held, 100)).toMatchObject({
-            kind: 'receipt', receipt: { invocationId: held.invocationId, observationId: held.observationId,
-                toolId: held.toolId, executionPhase: 'unknown', outcome: { status: 'unknown' } },
-        });
+        const timedOut = {
+            kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT',
+            message: expect.stringMatching(/readReceipt.*observationId.*invocationId/),
+        };
+        expect(await waiting).toEqual(timedOut);
+        expect(await client.invoke(held, 100)).toEqual(timedOut);
         expect(await call('count', { selected: selectedRef })).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
         expect((await trace(traceFile)).filter(line => line === 'handler-entered')).toHaveLength(1);
         const prior = current;
@@ -306,7 +306,8 @@ export default factory;
         expect(await client.invoke(request(prior, 'count', { selected: selectedRef }, 'old-unseen'))).toMatchObject({
             kind: 'refused', code: 'OBSERVATION_UNAVAILABLE',
         });
-        expect(terminal).toMatchObject({ receipt: { invocationId: held.invocationId, executionPhase: 'entered-returned' } });
+        expect(terminal).toMatchObject({ receipt: { invocationId: held.invocationId, observationId: held.observationId,
+            toolId: held.toolId, executionPhase: 'entered-returned' } });
         current = await observe(client);
         expect(body(current)).toContain('Prepared');
         await desktop.closeApp(appId!);

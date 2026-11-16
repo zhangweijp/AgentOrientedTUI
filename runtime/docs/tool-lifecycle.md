@@ -8,7 +8,7 @@ Ordinary parameters retain their business meaning. `refParam` declares top-level
 
 The App uses internal IDs from resolved Ref values and rechecks existence, parent, state, permissions and file conflicts as applicable. Meaningful paths and text remain ordinary parameters. When one file View closes, Runtime rejects calls to that receiver while other eligible Views can still receive the shared Tool. Releasing an Observation and revoking a receiver's activation are distinct actions.
 
-A normal, valid failure receipt is reported as failed. The receipt can carry App-specific recovery facts. A handler that throws or returns an invalid result finishes with an unknown outcome. A waiting deadline can also yield an interim unknown outcome while dispatched work remains active. Use the existing receipt and current View to recover. Return concise Tool data and publish current business data in Views.
+A valid failure receipt is reported as failed and can carry App-specific recovery facts. A handler that throws or returns an invalid result can finish with `ACTION_OUTCOME_UNKNOWN` in its terminal receipt. At a waiting deadline, `INVOCATION_WAIT_TIMEOUT` directs the Host to query the original invocation. Dispatched work continues to settlement. Use the receipt and the current View to recover. Return concise Tool data and publish current business data in Views. [Invocation and receipt deadlines](runtime-app-interaction.md)
 
 ## App lifecycle
 

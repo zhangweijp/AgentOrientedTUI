@@ -23,7 +23,10 @@ it('a receipt query deadline tracks the actual permission callback until it ends
         await entered.promise;
         const signal = f.seen.readSignal;
         await vi.advanceTimersByTimeAsync(100);
-        expect(await first).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_DEADLINE_EXCEEDED' });
+        expect(await first).toEqual({
+            kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT',
+            message: expect.stringMatching(/readReceipt.*observationId.*invocationId/),
+        });
         expect(signal?.aborted).toBe(true);
         expect(f.authority.inspect()).toMatchObject({ activeInvocations: 0, activeReads: 1 });
         f.controls.read = () => true;
@@ -33,6 +36,119 @@ it('a receipt query deadline tracks the actual permission callback until it ends
         client.close();
         gate.resolve(false);
         f.authority.close();
+        await f.authority.whenClosed();
+        vi.useRealTimers();
+    }
+    f.zero();
+});
+
+it.each([9, 10])('only the initial admission deadline governs authorization ending at %i ms', async completedAt => {
+    vi.useFakeTimers();
+    const f = fixture({ limits: { receiptTtlMs: 20 } }), client = f.open();
+    const entered = deferred<void>(), gate = deferred<boolean>();
+    f.controls.authorize = () => { entered.resolve(); return gate.promise; };
+    try {
+        const request = f.request(await f.observe(client)), query = receiptQuery(request);
+        const initial = client.invoke(request, 10);
+        await entered.promise;
+        const duplicate = client.invoke(request, 5), reading = client.readReceipt(query, 5);
+        f.setTime(5);
+        await vi.advanceTimersByTimeAsync(5);
+        for (const response of await Promise.all([duplicate, reading])) {
+            expect(response).toEqual({
+                kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT',
+                message: expect.stringMatching(/readReceipt.*observationId.*invocationId/),
+            });
+        }
+        expect(f.seen.authorize?.signal.aborted).toBe(false);
+        expect(f.calls).toMatchObject({ authorize: 1, handler: 0, read: 0 });
+
+        // Resolve authorization before its wall timer fires, at either side of the logical cutoff.
+        f.setTime(completedAt);
+        gate.resolve(true);
+        const first = await initial;
+        if (completedAt === 10) {
+            expect(first).toEqual({
+                kind: 'unavailable', code: 'INVOCATION_DEADLINE_EXCEEDED',
+                message: expect.stringContaining('before dispatch'),
+            });
+            expect(f.seen.authorize?.signal.aborted).toBe(true);
+            expect(f.calls).toMatchObject({ handler: 0, read: 0 });
+        } else {
+            expect(receipt(first).outcome.status).toBe('succeeded');
+            expect(f.calls.handler).toBe(1);
+        }
+        const final = receipt(await client.readReceipt(query));
+        expect(final).toMatchObject({ completedAt, expiresAt: completedAt + 20 });
+        if (completedAt === 10) {
+            expect(final).toMatchObject({
+                executionPhase: 'not-dispatched', outcome: { status: 'rejected', code: 'INVOCATION_DEADLINE_EXCEEDED' },
+            });
+        } else expect(final).toEqual(receipt(first));
+    } finally {
+        client.close();
+        gate.resolve(false);
+        await f.authority.whenClosed();
+        vi.useRealTimers();
+    }
+    f.zero();
+});
+
+it('checks the receipt permission deadline even when its callback settles before the timer', async () => {
+    vi.useFakeTimers();
+    const f = fixture(), client = f.open();
+    const entered = deferred<void>(), gate = deferred<boolean>();
+    try {
+        const request = f.request(await f.observe(client));
+        const final = receipt(await client.invoke(request));
+        f.controls.read = () => { entered.resolve(); return gate.promise; };
+        const reading = client.readReceipt(receiptQuery(request), 10);
+        await entered.promise;
+        f.setTime(10);
+        gate.resolve(true);
+        expect(await reading).toEqual({
+            kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT',
+            message: expect.stringMatching(/readReceipt.*observationId.*invocationId/),
+        });
+        expect(f.authority.inspect().activeReads).toBe(0);
+        expect(receipt(await client.readReceipt(receiptQuery(request)))).toEqual(final);
+    } finally {
+        client.close();
+        gate.resolve(false);
+        await f.authority.whenClosed();
+        vi.useRealTimers();
+    }
+    f.zero();
+});
+
+it('records a late unknown outcome only when execution reaches its terminal state', async () => {
+    vi.useFakeTimers();
+    const f = fixture({ limits: { receiptTtlMs: 20 } }), client = f.open();
+    const entered = deferred<void>(), gate = deferred<ExecutionFact>();
+    f.controls.execute = () => { entered.resolve(); return gate.promise; };
+    try {
+        const request = f.request(await f.observe(client));
+        const pending = client.invoke(request, 10);
+        await entered.promise;
+        f.setTime(10);
+        await vi.advanceTimersByTimeAsync(10);
+        expect(await pending).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT' });
+        expect(f.seen.execute?.signal.aborted).toBe(false);
+        expect(f.authority.inspect()).toMatchObject({ activeInvocations: 1, receiptContents: 0 });
+        expect(f.calls.read).toBe(0);
+
+        f.setTime(16);
+        gate.resolve({ kind: 'unknown' });
+        const final = receipt(await client.readReceipt(receiptQuery(request)));
+        expect(final).toMatchObject({
+            executionPhase: 'unknown', outcome: { status: 'unknown', code: 'ACTION_OUTCOME_UNKNOWN' },
+            completedAt: 16, expiresAt: 36,
+        });
+        expect(receipt(await client.invoke(request))).toEqual(final);
+        expect(f.calls.handler).toBe(1);
+    } finally {
+        client.close();
+        gate.resolve({ kind: 'unknown' });
         await f.authority.whenClosed();
         vi.useRealTimers();
     }

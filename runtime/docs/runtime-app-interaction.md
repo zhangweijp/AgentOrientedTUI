@@ -154,13 +154,20 @@ An Observation always contains the complete committed set of open Views. The Hos
 
 Both example calls use one Observation: the Ref remains its original frozen value after the edit. The current View contains the updated business text. Receipts do not repeat either text. Observe prepares one candidate alongside the current observation. Adoption revokes the previous calling eligibility and releases its source. Use preview() for read-only rendering without reserving a candidate.
 
-A valid normal handler return maps to succeeded or failed according to its `success` field. The receipt retains the application's error and data. A real throw or an invalid result can end execution with an unknown result. Call IDs are deduplicated for the adopted observation and its retained history. The standard Source provides the tool result for the current turn. Use the current View and the App's recovery data for writes with an unknown result.
+A valid handler return maps to succeeded or failed according to its `success` field. The receipt retains the application's error and data. An execution that finishes after a throw or invalid result can produce a terminal receipt with `status: 'unknown'` and `ACTION_OUTCOME_UNKNOWN`. Use the current View and the App's recovery data when write effects are uncertain.
 
-The B02 Runtime adds the two-field `readReceipt({ observationId, invocationId }, timeoutMs?)` for a trusted Host to read a settled or late receipt. Use the IDs from the original invocation. Each read uses the original instance policy, and an old full invocation request returns `INVOCATION_INVALID`. Use the matched package artifacts to identify the build. [Semantic Host integration](semantic-host-integration.zh-CN.md) and [Runtime shutdown](runtime-shutdown.md)
+Hosts can query a terminal receipt with `readReceipt({ observationId, invocationId }, timeoutMs?)` using the two IDs from the original invocation. Each read uses the original instance's receipt policy, including after adoption of a new Observation. An identical invocation request joins the original record while it is retained. A reused invocation ID with different input or a different Observation is rejected.
+
+| Deadline condition | Result |
+| --- | --- |
+| The initial invocation's deadline prevents dispatch | `kind: 'unavailable'` with `INVOCATION_DEADLINE_EXCEEDED`. Once admission work settles, the original receipt records a `not-dispatched` rejection. |
+| Waiting for a terminal result or receipt authorization reaches its deadline | `kind: 'unavailable'` with `INVOCATION_WAIT_TIMEOUT`. Query the original IDs to recover the result. |
+
+Both timeout errors carry only a code and message. The terminal receipt's `completedAt` records actual settlement, and its retention period starts there. A deadline on `readReceipt` or an identical request applies to that wait. Runtime keeps dispatched work and the original input source until execution settles. [Runtime shutdown](runtime-shutdown.md)
 
 模块初始化或首次渲染失败时，宿主可检查本地 cause 链；见 [INIT / OPEN 诊断说明](initialization-diagnostics.md)。这些开发诊断不会自动进入 ToolResult 或 View。
 
-Host 可以用 `client.invoke(request, timeoutMs)` 为一次等待指定期限。已派发调用在等待截止时可返回 unknown，原执行在 Worker 内继续受 Runtime 跟踪。采用新观察后发起新调用须使用新的 Observation、其中的 Tool ID 和接收页面。关闭及存储释放合同见 [Worker 与 App 资源归属](worker-lifecycle.md)。
+采用新观察后，Host 发起新调用须使用新 Observation、其中的 Tool ID 和接收页面。Node Worker Host 为省略 `timeoutMs` 的调用和收据查询应用默认期限。 [Worker 与 App 资源归属](worker-lifecycle.md) [Semantic Host 集成](semantic-host-integration.zh-CN.md)
 
 ## 身份与元数据来源
 
