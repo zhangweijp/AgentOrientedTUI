@@ -7,31 +7,46 @@ import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel
 import { createTUIApp } from './app-factory/createTUIApp.js';
 import { View } from './components/View.js';
 import { useDataRef } from './hooks/useRef.js';
-import { defineViewType, refParam } from './tools/view-type-tool.js';
+import { defineViewType, refParam, type ArgsOf } from './tools/view-type-tool.js';
 
-const Counter = defineViewType({ name:'Counter', tools:{
-    increment: { description:'Increment the counter', inputSchema:Type.Object({
+const increment = { description:'Increment the counter', inputSchema:Type.Object({
         amount:Type.Optional(Type.Integer()),
         observed:Type.Optional(refParam('Count', Type.Object({value:Type.Integer()}))),
-    }, {additionalProperties:false}) },
-} });
+    }, {additionalProperties:false}) };
+const ExplicitCounter = defineViewType({ name:'Counter', tools:{ increment } });
+type CounterContext = {
+    id: string;
+    generation: number;
+    enabled: boolean;
+    setCount: (update: (value: number) => number) => void;
+};
 
-it('commits Preact body, Ref and per-instance bindings as one frame', async () => {
+it.each(['explicit', 'context'] as const)('commits Preact body, Ref and %s bindings as one frame', async mode => {
     const entered = vi.fn();
+    function execute(args: ArgsOf<typeof ExplicitCounter.tools.increment>, { id, generation, setCount }: CounterContext) {
+        entered(id,generation,args,Object.isFrozen(args),Object.isFrozen(args.observed));
+        setCount(value => value + (args.observed?.value ?? args.amount ?? 1));
+        return {success:true as const};
+    }
+    const ContextCounter = defineViewType<CounterContext>()({ name:'Counter', tools:{
+        increment: {
+            ...increment,
+            execute: ({ input, context }) => execute(input, context),
+            enabled: context => context.enabled,
+        },
+    } });
     let advance!: (phase: number) => void;
     function CounterPage({id, generation, enabled, broken}: {
         id:string; generation:number; enabled:boolean; broken:boolean;
     }) {
         const [count,setCount] = useState(id === 'a' ? 0 : 10);
-        return <View id={id} kind="state" type={Counter} bindings={{
-            increment:{ enabled, execute(args) {
-                entered(id,generation,args,Object.isFrozen(args),Object.isFrozen(args.observed));
-                setCount(value => value + (args.observed?.value ?? args.amount ?? 1));
-                return {success:true};
-            }},
-        }}>
-            <Content count={count} broken={broken} />
-        </View>;
+        const context = { id, generation, enabled, setCount };
+        const content = <Content count={count} broken={broken} />;
+        return mode === 'context'
+            ? <View id={id} kind="state" type={ContextCounter} context={context}>{content}</View>
+            : <View id={id} kind="state" type={ExplicitCounter} bindings={{
+                increment: { enabled, execute: args => execute(args, context) },
+            }}>{content}</View>;
     }
     function Content({count, broken}: {count:number;broken:boolean}) {
         const mark = useDataRef('count',{value:count},{refType:'Count'});
@@ -53,7 +68,8 @@ it('commits Preact body, Ref and per-instance bindings as one frame', async () =
             {phase === 2 && <Boundary><Fault /></Boundary>}
         </>;
     }
-    const factory = createTUIApp({ app_name:'counter',viewTypes:[Counter],component:App });
+    const counter = mode === 'context' ? ContextCounter : ExplicitCounter;
+    const factory = createTUIApp({ app_name:'counter',viewTypes:[counter],component:App });
     const kernel = new AppKernel({...factory.kernelConfig,factory});
     kernel.enableAppLifecycle();
     const projection = kernel.getProjectionCoordinator();

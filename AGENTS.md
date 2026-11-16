@@ -38,7 +38,7 @@
 ### 2.3 View 与可用行为共同构成充血模型
 
 - View 不只是数据文本，也承载当前工作对象及其适用操作。
-- 面向 Agent 的 Tool 定义按 App + ViewType 共享。2026-11-15 第四轮项目所有者进一步明确作者目标：每个 View 实例拥有自己的状态与局部操作，toolcall 明确 view_id 选择实例；共享定义不要求共享一个执行闭包。当前 App 级单 handler 与此目标的差距及候选迁移由 C04 记录；具体 API 和代码改造尚未实施，业务有效性仍由 App 校验。
+- 面向 Agent 的 Tool 定义按 App + ViewType 共享。2026-11-15 第四轮项目所有者明确每个 View 实例拥有自己的状态与局部操作，Agent 用 `view_id` 选择实例。2026-11-16 合并版已实现页面实例绑定。业务有效性由 App 校验，作者接口与验收状态见 [View Type SDK 专题](docs/sdk-runtime-design/view-type-sdk/README.md)。
 - 2026-11-16 项目所有者确认新版页面实例 Tool 的 `view_id` 由框架自动加入模型 Schema，始终必填。作者只声明业务参数。Runtime 消费该字段并校验接收者，handler 接收业务参数。跨页 Ref 与调用合同见 [View Type SDK 已确认目标](docs/sdk-runtime-design/view-type-sdk/01-goals-and-invariants.md#confirmed-contract)。
 - App 业务 Tool 会随着 Agent 打开 View、进入某个对象上下文或发生状态转换而逐渐暴露。
 - 例如，尚未打开任何文件时，不暴露针对已打开文件的编辑能力；文件打开后，其 FileDetailView 才提供相应编辑操作。
@@ -508,8 +508,10 @@ IDE 启动配置已通过本地工程验收，[16](docs/sdk-runtime-design/16-re
 
 唯一专题入口是 [View Type SDK](docs/sdk-runtime-design/view-type-sdk/README.md)，包含 01 目标、02 SDK、03 Runtime、04 Root/上下文、05 可行性、06 影响/迁移、07 决定/验证。父 C04 只保留议题路由与沿革，旧完整讨论明确归档；不要在多个目录继续维护平行技术方案。
 
-本轮给出推荐候选：静态 ViewType descriptor、页面实例 bindings、纯 TS 稳定 handle、原观察实例路由；保留 Root 静态名称目录、XML + Markdown User Messages 与动态原生 Tools。用户目标已明确，但具体 API、发布接受后置条件、enabled 代际、协议版本与迁移安排未全部冻结。新代码示例不是当前 SDK 导出。
+专题建档时推荐静态 ViewType descriptor、页面实例 bindings、纯 TS 稳定 handle 和原观察实例路由。Root 名称目录、XML + Markdown User Messages 与动态原生 Tools 的呈现分工成为本轮设计基准。
 
 建立专题时的交付是研究、源码核对和设计文档。后续现行基线复测、已确认调用合同及候选实现状态分别登记在 [专题决定与验证](docs/sdk-runtime-design/view-type-sdk/07-decisions-and-validation.md)。2026-11-16 升级前完成文档一致性复核，实际状态以专题为准。
 
 2026-11-16 已实现上述页面实例绑定：SDK 使用 `defineViewType` 与页面 `bindings`，Runtime 按已采用的观察校验显式 `view_id` 和独立的 Ref 来源。共享定义、页面打开和关闭、旧观察失效与一组原生 Tools 贯通 Preact、普通 TypeScript、Worker 和标准 Source。公开使用与迁移以 [SDK 作者指南](sdk/docs/app-authoring.md) 和 [Runtime 集成合同](runtime/docs/runtime-app-interaction.md) 为准。
+
+2026-11-16 项目所有者确认启动作者接口优化。SDK 主路径把工具定义和实现写在一处，页面提供实例 `context`。本轮用 IDE 文件详情页验收，另完善空业务 Schema 和 Root 自动目录。实施范围、接口和验证状态以 [专题决定](docs/sdk-runtime-design/view-type-sdk/07-decisions-and-validation.md#authoring-refinement-20261116) 为准。作者技能中的显式 `bindings` 示例适用于该入口，默认写法从随 SDK 交付的 [作者指南](sdk/docs/app-authoring.md) 获取。

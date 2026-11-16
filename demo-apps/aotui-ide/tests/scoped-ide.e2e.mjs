@@ -48,6 +48,7 @@ try {
         assert.equal(snapshot(a).views.filter(view => view.type === 'FileDetail').length, 0);
         assert.ok(!toolNames(a).includes('batch_edit'), 'batch_edit is unavailable while no file is loaded');
         for (const name of fileMutations) assert.ok(!toolNames(a).includes(name), name + ' is absent before a file is opened');
+        assert.match(viewText(a, 'root'), /FileDetail:[^\n]*edit_file/, 'Root lists registered FileDetail tools before any file opens');
         await invoke(a, 'multi_open_file', { filePaths: [file] });
         assert.ok(toolNames(a).includes('batch_edit'), 'batch_edit becomes available after a file is loaded');
         const onlyA = snapshot(a).views.filter(view => view.type === 'FileDetail');
@@ -92,6 +93,22 @@ try {
         await invoke(a, 'remove_folder_from_workspace', { folderPath: root });
         assert.match(viewText(a, 'workspace'), new RegExp(other));
         await invoke(a, 'add_folder_to_workspace', { folderPath: root });
+        await invoke(a, 'multi_open_file', { filePaths: [file, second] });
+        const firstView = fileView(a, file).id, secondView = fileView(a, second).id;
+        const firstText = viewText(a, firstView);
+        const edited = await invoke(a, 'edit_file', { oldString: 'sibling = 7', newString: 'sibling = 8' }, { view: secondView });
+        assert.equal(edited.value.data.view_id, secondView);
+        assert.equal(await fs.readFile(second, 'utf8'), 'export const sibling = 8;\n');
+        assert.equal(await fs.readFile(file, 'utf8'), source);
+        await eventually(() => viewText(a, secondView).includes('export const sibling = 8;'), 'edit published in second file View');
+        assert.doesNotMatch(viewText(a, secondView), /export const sibling = 7;/);
+        assert.equal(viewText(a, firstView), firstText);
+        await invoke(a, 'edit_file', { oldString: 'sibling = 8', newString: 'sibling = 7' }, { view: secondView });
+        await invoke(a, 'close_file_detail', {}, { view: firstView });
+        assert.equal(toolNames(a).filter(name => name === 'edit_file').length, 1);
+        await invoke(a, 'close_file_detail', {}, { view: secondView });
+        assert.ok(!toolNames(a).includes('edit_file'), 'edit_file is withdrawn after the last FileDetail closes');
+        assert.match(viewText(a, 'root'), /FileDetail:[^\n]*edit_file/);
         await invoke(a, 'multi_open_file', { filePaths: [file, second] });
     });
     await runCase('real TypeScript seven queries, current document changes, readonly diagnostic slice', async () => {

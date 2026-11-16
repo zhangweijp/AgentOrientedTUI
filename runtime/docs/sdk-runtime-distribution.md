@@ -51,3 +51,5 @@ App 作者可从 `@aotui/sdk` 包内 `docs/runtime-compatibility.md` 开始。Ho
 Worker 握手对退役或未知能力返回 `WORKER_CAPABILITY_UNSUPPORTED`，对不合法的能力列表返回 `WORKER_CAPABILITY_INVALID`。Core 直连与 Worker 使用同一 ViewType 参数合同，验证已采用观察中的页面接收者和显式 Ref 来源。交付清单记录了配套 tar 的哈希和每个包在独立消费者中的实际解析路径。
 
 这些检查发生在各自入口。旧工厂、缺少必要 offer／ACK、未知能力或不匹配的调用身份不能靠“包版本看起来相近”通过。Worker INIT／OPEN 的失败仍按原阶段和诊断合同报告，不将不同错误统一改写成一个兼容错误。
+
+App 工厂的 `toolAuthoringProtocol` 供 Runtime 验证工厂和执行合同。跨 SDK 模块导入 ViewType descriptor 时，按实际发布的 SDK 构建配套。共享 descriptor 的 App 与其依赖应解析到配套 SDK。包内 `docs/runtime-compatibility.md` 记录作者接口的安装约定。

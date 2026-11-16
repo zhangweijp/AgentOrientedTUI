@@ -1,6 +1,6 @@
 # 安装 SDK 与 Runtime
 
-普通 TypeScript App 使用 `@aotui/sdk/app` 和 TypeBox。Preact App 另外安装 Preact，从 `@aotui/sdk` 根入口使用 `createTUIApp` 与 `View.bindings`。两个入口都导出同一合同的托管工厂，并复用 Runtime 的参数与调用验证。[App 作者指南](app-authoring.md)
+普通 TypeScript App 使用 `@aotui/sdk/app` 和 TypeBox。Preact App 另外安装 Preact，从 `@aotui/sdk` 根入口使用 `createTUIApp` 与 `View`。两个入口共用 `defineViewType`，并复用 Runtime 的参数与调用验证。[App 作者指南](app-authoring.md)
 
 ## 安装本地交付包
 
@@ -28,6 +28,8 @@
 ```
 
 首次运行 `pnpm install`。保留相对路径、tar 和 lock 后，可用 `pnpm install --frozen-lockfile` 重装。本批使用 Node 24。Preact 作者可添加 `preact@10.29.1`。使用标准 Source 的 Host 另装匹配的 Adapter 和 Driver，按 Driver 包内 `STRICT_TYPES.md` 配置补丁。
+
+在 App 和共享 ViewType 的依赖之间使用同一个 SDK 构建。项目同时保存本地测试包时，以交付清单中的 tar 和哈希识别实际构建。App 工厂的 `view-type-tools-v5` 标记描述 SDK 向 Runtime 提交的运行合同。
 
 当前四包版本、公开协议与本地交付入口由 `@aotui/runtime` 包内 `docs/sdk-runtime-distribution.md#current-delivery` 维护。完整 Host 安装和调用示例见同包 `docs/semantic-host-integration.zh-CN.md#source-host-example`。
 

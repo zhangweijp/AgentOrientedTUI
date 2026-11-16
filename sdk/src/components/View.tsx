@@ -14,7 +14,7 @@ export type ViewProps<Definition extends ViewType = ViewType> = {
   readonly children?: ComponentChildren;
 } & ViewBindingProps<NoInfer<Definition>>;
 
-export function View<const Definition extends ViewType>({ id, type, kind, name, bindings, children }: ViewProps<Definition>): JSX.Element {
+export function View<const Definition extends ViewType>({ id, type, kind, name, bindings, context, children }: ViewProps<Definition>): JSX.Element {
   if (typeof id !== 'string' || !VIEW_ID_PATTERN.test(id))
     throw new Error('[AOTUI SDK] View IDs must use only ASCII letters, digits or underscores');
   if (kind !== 'instruction' && kind !== 'state')
@@ -30,7 +30,7 @@ export function View<const Definition extends ViewType>({ id, type, kind, name, 
   if (!app) throw new Error('[AOTUI SDK] View requires a managed App');
   const definition = requireViewType(app.viewTypes, type);
 
-  const next = captureViewBindings(definition, bindings, id);
+  const next = captureViewBindings(definition, bindings, id, context);
   const slot = useMemo(() => {
     let attached: { node: HTMLDivElement; mount: MountedView } | undefined;
     return {

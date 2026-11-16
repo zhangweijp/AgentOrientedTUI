@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import { createTUIApp, useAppLifecycle, useArrayRef, useDataRef, View } from '@aotui/sdk';
 import type { JsonValue } from '@aotui/sdk/app';
-import { itemBindings, workspaceBindings, ItemType, WorkspaceType, initialState, itemValue, label, otherViewId, selectedViewId, workViewTypes, workspaceText, type WorkItemOptions } from './work-items.js';
+import { ItemType, WorkspaceType, initialState, itemValue, label, otherViewId, selectedViewId, workViewTypes, workspaceText, type WorkItemOptions } from './work-items.js';
 
 function Item({ value, items }: { readonly value: JsonValue; readonly items?: readonly JsonValue[] }) {
     const selected = useDataRef('selected', value, { refType: 'Data', schema: itemValue });
@@ -24,9 +24,9 @@ export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
         const [state, setState] = useState(initialState);
         useAppLifecycle({ stop: () => options.onStop?.(), close: () => options.onClose?.() });
         return <>
-            <View id="workspace" type={WorkspaceType} bindings={workspaceBindings(setState, options)} kind="state"><p>{workspaceText(state)}</p></View>
-            <View id={otherViewId} type={ItemType} bindings={itemBindings(setState)} kind="state"><Item value={false} /></View>
-            {state.open && <View id={selectedViewId} type={ItemType} bindings={itemBindings(setState)} kind="state"><Item value={state.value} items={state.items} /></View>}
+            <View id="workspace" type={WorkspaceType} context={{ change: setState, options }} kind="state"><p>{workspaceText(state)}</p></View>
+            <View id={otherViewId} type={ItemType} context={{ change: setState }} kind="state"><Item value={false} /></View>
+            {state.open && <View id={selectedViewId} type={ItemType} context={{ change: setState }} kind="state"><Item value={state.value} items={state.items} /></View>}
         </>;
     }
     return createTUIApp({ app_name, component: WorkItems, viewTypes: workViewTypes });
