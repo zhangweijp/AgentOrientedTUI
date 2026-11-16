@@ -1,5 +1,5 @@
 import { arrayRef, createApp, createView, formatRef, ref } from '@aotui/sdk/app';
-import { itemBindings, workspaceBindings, ItemType, WorkspaceType, initialState, itemValue, label, otherViewId, selectedViewId, workViewTypes, workspaceText, type State, type WorkItemOptions } from './work-items.js';
+import { ItemType, WorkspaceType, initialState, itemValue, label, otherViewId, selectedViewId, workViewTypes, workspaceText, type State, type WorkItemOptions } from './work-items.js';
 
 export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
     return createApp({
@@ -18,13 +18,13 @@ export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
                 }
             };
             const workspace = createView(WorkspaceType, {
-                id: 'workspace', kind: 'state', render: () => ({ body: workspaceText(state), bindings: workspaceBindings(change, options) }),
+                id: 'workspace', kind: 'state', render: () => ({ body: workspaceText(state), context: { change, options } }),
             });
             const other = createView(ItemType, {
                 id: otherViewId, kind: 'state', render: () => ({
                     body: formatRef('Other item', 'selected', 'Data'),
                     refs: [ref('selected', false, { refType: 'Data', schema: itemValue })],
-                    bindings: itemBindings(change),
+                    context: { change },
                 }),
             });
             const selected = createView(ItemType, {
@@ -32,7 +32,7 @@ export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
                     body: [formatRef(label, 'selected', 'Data'), formatRef('All items', 'items', 'Data[]'),
                         ...state.items.map((_, index) => formatRef(`Item ${index + 1}`, `items[${index}]`, 'Data'))].join('\n'),
                     refs: [ref('selected', state.value, { refType: 'Data', schema: itemValue }), arrayRef('items', state.items, { itemType: 'Data' })],
-                    bindings: itemBindings(change),
+                    context: { change },
                 }),
             });
             function publishState() {

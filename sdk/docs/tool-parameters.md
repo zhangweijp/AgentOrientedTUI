@@ -4,7 +4,9 @@
 
 ## 支持的本地 schema
 
-完整 Tool 参数必须是 `Type.Object(...)`。普通字段和解引用后的值可为 null、布尔、字符串、有限数、数组或普通 JSON 对象。数组项可以使用普通对象或联合类型。值捕获拒绝 undefined、数组空洞、循环、访问器和自定义对象原型。
+显式提供的 `inputSchema` 必须是 `Type.Object(...)`。省略整个 `inputSchema` 等价于 `Type.Object({}, { additionalProperties: false })`。此时模型只传 `view_id`，handler 的业务 `input` 为空对象，额外参数会被拒绝。显式传入 `inputSchema: undefined` 会触发声明错误。
+
+普通字段和解引用后的值可为 null、布尔、字符串、有限数、数组或普通 JSON 对象。数组项可以使用普通对象或联合类型。值捕获拒绝 undefined、数组空洞、循环、访问器和自定义对象原型。
 
 | 位置 | 支持的关键词 |
 | --- | --- |

@@ -37,8 +37,8 @@ export default createTUIApp({ app_name: 'example', component: App, viewTypes: [R
 
 ## 开发时记住的合同
 
-- 用 TypeBox 和 `defineViewType({ name, tools })` 声明共享工具。Preact 的 `View.bindings` 和普通 TS 的 `createView().render` 各自提供页面的 handler 与可用性。
-- 完整说明与 Schema 由请求的 `Tools` 提供。Root 用 `ToolCatalog viewTypes={viewTypes}` 从同一声明列出工具名。
+- 用 `defineViewType<Context>()` 一次声明工具名、可选的 TypeBox `inputSchema`、`execute({ input, context })` 和可选的 `enabled(context)`。Preact 的 `View` 和普通 TypeScript 的 `render` 各自提供页面的 `context`。已有元数据形式的声明继续用显式 `bindings`。
+- 完整说明与 Schema 由请求的 `Tools` 提供。Root 用 `<ToolCatalog />` 从 App 登记的 ViewType 列出工具名。
 - Tool 按 App + ViewType 共享。调用中的 `view_id` 选择本轮观察中的页面实例。禁用或关闭页面会撤销这个实例的执行资格。
 - 文件路径、编辑内容、标题等保留普通参数。已发布对象用 Ref 选择：页面中 `Note:notes[0]` 位于 View `detail`，调用写 `detail.notes[0]`，不带展示类型前缀、不抄业务 ID。对象、整列表、元素、多个/可选字段和多选均使用同一个 refParam。
 - 参数递归只读，不自动 coercion/default/trim。App 检查对象是否仍存在、归属、状态与权限，并自行执行业务变更。Tool 收据与当前业务数据分别通过结果和 View 呈现；unknown 写入不自动重试。

@@ -8,6 +8,8 @@
 
 文件详情页自己持有正文和编辑操作。SDK 根据类型声明生成共享工具定义，Runtime 根据模型传入的 `view_id` 执行该页的 handler。显式 Ref 参数根据原 Observation 解析，可以独立选择数据来源。
 
+下面的示例使用 SDK 的显式 `bindings` 入口，便于看见每页提交的执行绑定。SDK 作者主路径和可运行示例随 `@aotui/sdk` 交付，详见该包 `docs/app-authoring.md`。Runtime 接收的是统一的页面绑定和业务 Schema。
+
 <!-- b2-app:start -->
 ```js
 import { h } from 'preact';
