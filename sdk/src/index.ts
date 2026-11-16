@@ -8,7 +8,7 @@
  * ```tsx
  * import { h } from 'preact';
  * import { createTUIApp, defineViewType, View } from '@aotui/sdk';
- * const Guide = defineViewType({ name: 'Guide', tools: {} });
+ * const Guide = defineViewType({ name: 'Guide' });
  * function Root() {
  *   return <View kind="instruction" id="root" type={Guide}><h1>Example</h1></View>;
  * }
@@ -42,8 +42,6 @@ export type {
   ArgsOf,
   DeepReadonly,
   JsonSchemaObject,
-  ToolBinding,
-  ViewBindings,
   ViewType,
   ContextualViewType,
   ToolCatalogEntry,

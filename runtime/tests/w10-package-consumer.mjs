@@ -142,46 +142,53 @@ export function readFromHost(client: AppInteraction, request: AppInvocation): Pr
   const hostQuery: ReceiptQuery = query;
   return client.readReceipt(hostQuery);
 }
-import { createTUIApp, defineViewType, View, useDataRef, refParam, type ArgsOf, type ViewBindings, useAppLifecycle, type AppLifecycleCallbacks } from '@aotui/sdk';
+import { createTUIApp, defineViewType, View, useDataRef, refParam, type ArgsOf, useAppLifecycle, type AppLifecycleCallbacks } from '@aotui/sdk';
+// @ts-expect-error Removed per-page bindings are not an SDK author API.
+import type { ViewBindings } from '@aotui/sdk';
 ${refOnly ? '' : ideTypeImports}
 import type { TUIAppFactory } from '@aotui/runtime/spi';
 // @ts-expect-error Removed entity-only Hook is not a public API.
 import { experimental_useVersionedEntityTool } from '@aotui/sdk';
 import type { AppLifecyclePort, AppCleanupReport } from '@aotui/runtime/spi';
-const Counter = defineViewType({ name: 'Counter', tools: {
- increment: { description: 'Increment counter', inputSchema: Type.Object({ amount: Type.Number() }, { additionalProperties: false }) },
- inspect_record: { description: 'Inspect the displayed record.', inputSchema: Type.Object({
-  record: refParam('Record', Type.Object({ id: Type.String() }, { additionalProperties: false })),
- }, { additionalProperties: false }) },
+const Counter = defineViewType<object>()({ name: 'Counter', tools: {
+ increment: {
+  description: 'Increment counter', inputSchema: Type.Object({ amount: Type.Number() }, { additionalProperties: false }),
+  async execute({ input }) {
+   input.amount.toFixed();
+   // @ts-expect-error Numeric inference remains precise.
+   input.amount.toUpperCase();
+   if (input.amount < 0) return { success: false, error: { code: 'NEGATIVE', message: 'Application rejects a negative amount' } };
+   return { success: true, data: { amount: input.amount } };
+  },
+ },
+ inspect_record: {
+  description: 'Inspect the displayed record.',
+  inputSchema: Type.Object({ record: refParam('Record', Type.Object({ id: Type.String() }, { additionalProperties: false })) },
+   { additionalProperties: false }),
+  execute({ input }) {
+   const id: string = input.record.id;
+   // @ts-expect-error Ref input is an object, not the model's name string.
+   input.record.toUpperCase();
+   // @ts-expect-error Resolved Ref object is recursively immutable.
+   input.record.id = 'changed';
+   // @ts-expect-error The whole handler parameter is immutable.
+   input.record = { id: 'changed' };
+   // @ts-expect-error The model receiver is not a business input.
+   input.view_id;
+   void id; return { success: true };
+  },
+ },
 } });
+export type CounterRefArgs = ArgsOf<typeof Counter.tools.inspect_record>;
 function Detail() { return 'Counter'; }
 function RefDetail() {
  const current = useDataRef('current_record', { id: 'record-1' }, { refType: 'Record' });
  return h('p', {}, current('Current record'));
 }
-const inspectBinding: ViewBindings<typeof Counter>['inspect_record'] = { execute(args: ArgsOf<typeof Counter.tools.inspect_record>) {
- const id: string = args.record.id;
- // @ts-expect-error Ref input is an object, not the model's name string.
- args.record.toUpperCase();
- // @ts-expect-error Resolved Ref object is recursively immutable.
- args.record.id = 'changed';
- // @ts-expect-error The whole handler parameter is immutable.
- args.record = { id: 'changed' };
- void id; return { success: true };
-} };
 const owner: AppLifecycleCallbacks = { stop() {}, async close() {} };
 function Root() {
  useAppLifecycle(owner);
- return h(View<typeof Counter>, { kind: 'state', id: 'counter', type: Counter, bindings: {
-  inspect_record: inspectBinding,
-  increment: { async execute(args) {
-   args.amount.toFixed();
-   // @ts-expect-error Numeric inference remains precise.
-   args.amount.toUpperCase();
-   if (args.amount < 0) return { success: false, error: { code: 'NEGATIVE', message: 'Application rejects a negative amount' } };
-   return { success: true, data: { amount: args.amount } };
-  } },
- } }, h(Detail, {}));
+ return h(View<typeof Counter>, { kind: 'state', id: 'counter', type: Counter, context: {} }, h(Detail, {}));
 }
 ${refOnly ? '' : ideTypeAssertions}
 const managedFactory = createTUIApp({ app_name: 'package_types', component: Root, viewTypes: [Counter] });
@@ -236,12 +243,29 @@ const filePath = '/open/a.txt';
 // This test-only witness is outside Tool Result and the App projection.
 const witnessFile = ${JSON.stringify(witnessPath)};
 const witness = data => appendFileSync(witnessFile, JSON.stringify(data) + '\\n');
-const Guide = defineViewType({ name: 'Root', tools: {} });
-const File = defineViewType({ name: 'FileDetail', tools: {
- edit_file: { description: 'Replace the contents of an opened file.', inputSchema: Type.Object({ filePath: Type.String(), content: Type.String() }, { additionalProperties: false }) },
- inspect_snapshot: { description: 'Inspect a complete File Ref.', inputSchema: Type.Object({
-   record: refParam('File', Type.Object({ filePath: Type.String(), content: Type.String() }, { additionalProperties: false })),
- }, { additionalProperties: false }) },
+const Guide = defineViewType({ name: 'Root' });
+const File = defineViewType()({ name: 'FileDetail', tools: {
+ edit_file: {
+  description: 'Replace the contents of an opened file.',
+  inputSchema: Type.Object({ filePath: Type.String(), content: Type.String() }, { additionalProperties: false }),
+  execute({ input: args, context: { content, setContent } }) {
+   witness({ stage: 'handler-entry', name: 'edit_file' });
+   if (args.filePath !== filePath) { witness({ stage: 'app-guard', name: 'edit_file', stateBefore: content, stateAfter: content });
+    return { success: false, error: { code: 'FILE_NOT_OPEN', message: 'The selected file is not open.' } }; }
+   setContent(args.content); witness({ stage: 'business', name: 'edit_file', previous: content, requested: args.content });
+   return { success: true, data: { message: 'Editor state updated.' } };
+  },
+ },
+ inspect_snapshot: {
+  description: 'Inspect a complete File Ref.',
+  inputSchema: Type.Object({ record: refParam('File', Type.Object({ filePath: Type.String(), content: Type.String() }, { additionalProperties: false })) },
+   { additionalProperties: false }),
+  execute({ input: args }) {
+   witness({ stage: 'handler-entry', name: 'inspect_snapshot' });
+   witness({ stage: 'ref-payload', name: 'inspect_snapshot', payload: args.record, frozen: Object.isFrozen(args.record) });
+   return { success: true, data: { message: 'Snapshot inspected.' } };
+  },
+ },
 } });
 function FileDetail({ content }) {
  const current = useDataRef('current_file', { filePath, content }, { refType: 'File' });
@@ -250,20 +274,7 @@ function FileDetail({ content }) {
 function App() {
  const [content, setContent] = useState('OLD_PACKAGE_VIEW_VALUE');
  return h('main', {}, [h(View, { kind: 'instruction', id: 'root', type: Guide }, h('p', {}, 'Package consumer tool test.')),
-  h(View, { kind: 'state', id: 'file_a', type: File, bindings: {
-  edit_file: { execute: args => {
-   witness({ stage: 'handler-entry', name: 'edit_file' });
-   if (args.filePath !== filePath) { witness({ stage: 'app-guard', name: 'edit_file', stateBefore: content, stateAfter: content });
-    return { success: false, error: { code: 'FILE_NOT_OPEN', message: 'The selected file is not open.' } }; }
-   setContent(args.content); witness({ stage: 'business', name: 'edit_file', previous: content, requested: args.content });
-   return { success: true, data: { message: 'Editor state updated.' } };
-  } },
-  inspect_snapshot: { execute: args => {
-   witness({ stage: 'handler-entry', name: 'inspect_snapshot' });
-   witness({ stage: 'ref-payload', name: 'inspect_snapshot', payload: args.record, frozen: Object.isFrozen(args.record) });
-   return { success: true, data: { message: 'Snapshot inspected.' } };
-  } },
- } }, h(FileDetail, { content }))]);
+  h(View, { kind: 'state', id: 'file_a', type: File, context: { content, setContent } }, h(FileDetail, { content }))]);
 }
 export default createTUIApp({ app_name: 'package_type_tool_consumer', component: App, viewTypes: [Guide, File] });
 `);

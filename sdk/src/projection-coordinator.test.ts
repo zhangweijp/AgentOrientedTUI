@@ -20,7 +20,7 @@ const refsOf = (kernel: AppKernel) => Object.fromEntries(
     kernel.getViewRefs().map(ref => [`${ref.viewId}:${ref.refId}`, ref.value]),
 );
 
-const EmptyWorkspace=defineViewType({name:'Workspace',tools:{}});
+const EmptyWorkspace=defineViewType({name:'Workspace'});
 function toolsOf(kernel:AppKernel) {
     const projection=kernel.getProjectionCoordinator();
     if (!projection.token().ready) return [];
@@ -57,10 +57,10 @@ describe('M3 SDK semantic projection commit', () => {
                 h('p', { key: 'list' }, listLabel('List')),
             ]);
         }
-        const Workspace=defineViewType({name:'Workspace',tools:{complete:{description:'Complete the current task.',inputSchema:Type.Object({})}}});
+        const Workspace=defineViewType<object>()({name:'Workspace',tools:{complete:{description:'Complete the current task.',inputSchema:Type.Object({}),execute:()=>({success:true})}}});
 
         function App() {
-            return h(View,{kind:'state',id:'workspace',type:Workspace,bindings:{complete:{execute:()=>({success:true})}}},h(Content,{}));
+            return h(View,{kind:'state',id:'workspace',type:Workspace,context:{}},h(Content,{}));
         }
         const x = setup(App,[Workspace]);
         try {
@@ -97,11 +97,11 @@ describe('M3 SDK semantic projection commit', () => {
             const right = useDataRef('right', { id });
             return h('section', {}, [h('p', { key: 'left' }, left('Stable')), h('p', { key: 'right' }, right('Stable'))]);
         }
-        const Workspace=defineViewType({name:'Workspace',tools:{inspect:{description:'Inspect the Workspace.',inputSchema:Type.Object({})}}});
+        const Workspace=defineViewType<{enabled:boolean}>()({name:'Workspace',tools:{inspect:{description:'Inspect the Workspace.',inputSchema:Type.Object({}),enabled:ct=>ct.enabled,execute:()=>({success:true})}}});
 
         function App() {
             const [state, setState] = useState({ id: 'A', enabled: true }); update = setState;
-            return h(View,{kind:'state',id:'workspace',type:Workspace,bindings:{inspect:{enabled:state.enabled,execute:()=>({success:true})}}},
+            return h(View,{kind:'state',id:'workspace',type:Workspace,context:{enabled:state.enabled}},
                 h(Content,{id:state.id}));
         }
         const x = setup(App,[Workspace]);
@@ -315,13 +315,13 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
                 data.length ? h('p', { key: 'first' }, item(0, 'Stable')) : null,
             ]);
         }
-        const Workspace=defineViewType({name:'Workspace',tools:{inspect:{description:'Inspect the current Workspace.',inputSchema:Type.Object({})}}});
+        const Workspace=defineViewType<{enabled:boolean}>()({name:'Workspace',tools:{inspect:{description:'Inspect the current Workspace.',inputSchema:Type.Object({}),enabled:ct=>ct.enabled,execute:()=>({success:true})}}});
 
         function App() {
             const [state, set] = useState<State>(expected);
             mutate = next => { expected = next; set(next); };
             return state.show
-                ? h(View,{kind:'state',id:'workspace',type:Workspace,bindings:{inspect:{enabled:state.enabled,execute:()=>({success:true})}}},
+                ? h(View,{kind:'state',id:'workspace',type:Workspace,context:{enabled:state.enabled}},
                     h('section',{},h(Details,{data:state.data})))
                 : null;
         }

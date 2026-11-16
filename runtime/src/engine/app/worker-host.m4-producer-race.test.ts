@@ -43,9 +43,14 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
                     ]);
                 }
 
-                const FileDetail = defineViewType({ name: 'FileDetail', tools: {
-                    inspect: { description:'Read the current file metadata', inputSchema:Type.Object({},{additionalProperties:false}) },
-                    late_inspect: { description:'Read after enabling', inputSchema:Type.Object({},{additionalProperties:false}) },
+                const inputSchema = Type.Object({}, { additionalProperties: false });
+                const execute = async () => ({ success: true, data: { file: 'App.tsx' } });
+                const FileDetail = defineViewType()({ name: 'FileDetail', tools: {
+                    inspect: { description: 'Read the current file metadata', inputSchema, execute },
+                    late_inspect: {
+                        description: 'Read after enabling', inputSchema, execute,
+                        enabled: context => context.enabled,
+                    },
                 } });
                 let enable, attempt;
                 function App() {
@@ -53,9 +58,7 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
                     const [, setRender] = useState(0);
                     attempt = () => setRender(value => value + 1);
                     enable = () => setEnabled(true);
-                    const execute = async () => ({success:true,data:{file:'App.tsx'}});
-                    return h(View, {kind:'state',id:'fd_0',type:FileDetail,
-                        bindings: { inspect: { execute }, late_inspect: { execute, enabled } } }, h(Detail));
+                    return h(View, { kind: 'state', id: 'fd_0', type: FileDetail, context: { enabled } }, h(Detail));
                 }
                 const factory = createTUIApp({
                     app_name:'m4_epoch_race',

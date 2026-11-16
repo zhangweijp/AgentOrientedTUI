@@ -19,13 +19,18 @@ it.each(['sync', 'async'] as const)('C2-18/20 actual SDK %s unmount failure is f
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c2-unmount-')), app = join(dir, 'app.mjs');
     await linkPreactPeer(dir);
     await capture(app, `import {h} from 'preact';import Type from 'typebox';import { createTUIApp, usePersistentState, View, defineViewType } from ${JSON.stringify(url(join(repo,'sdk/dist/index.js')))};
-let set;
-
-
-const _FixtureRoot = defineViewType({ name:'Root', tools:{ save: { description:'Save a value', inputSchema:Type.Object({value:Type.Number()}, {additionalProperties:false}) } } });
-
-function Root(){[,set]=usePersistentState('value',0);return h('div', null, h(View,{kind: 'instruction',id:'root',type:_FixtureRoot, bindings:{ save: { execute: async args=>{set(args.value);return {success:true};} } }},'Managed state'));}
-const factory=createTUIApp({viewTypes:[_FixtureRoot], app_name:'close',component:Root});
+const RootType = defineViewType()({ name: 'Root', tools: {
+    save: {
+        description: 'Save a value',
+        inputSchema: Type.Object({ value: Type.Number() }, { additionalProperties: false }),
+        async execute({ input, context }) { context.set(input.value); return { success: true }; },
+    },
+} });
+function Root() {
+    const [, set] = usePersistentState('value', 0);
+    return h('div', null, h(View, { kind: 'instruction', id: 'root', type: RootType, context: { set } }, 'Managed state'));
+}
+const factory=createTUIApp({viewTypes:[RootType], app_name:'close',component:Root});
 const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,${mode === 'async' ? 'async ' : ''}close(){renderer.close();${mode === 'async' ? 'await Promise.resolve();' : ''}throw Error('private renderer detail');}};};export default factory;`);
     const sandbox = new WorkerSandbox({ appId: 'app', desktopId: 'd', appModulePath: url(app),
         workerScriptPath: join(repo,'runtime/dist/worker-runtime/index.js'), runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 3000, maxWorkers: 1 } }), config: { AOTUI_DATA_DIR: join(dir,'data'), AOTUI_APP_KEY: 'close' } });

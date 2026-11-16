@@ -11,7 +11,7 @@ import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel
 
 const closing: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of closing.splice(0)) await close();vi.restoreAllMocks();vi.unstubAllGlobals(); });
-const Detail = defineViewType({name:'Detail',tools:{}});
+const Detail = defineViewType({name:'Detail'});
 async function mount(Body: () => any, options: { outside?: boolean } = {}) {
     const factory = createTUIApp({ app_name: 'public_api', viewTypes:[Detail], component: () => options.outside ? h(Body, {}) : h(View, {kind: 'state', id: 'detail', type: Detail }, h(Body, {})) });
     const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);kernel.setId('app' as any);kernel.setAppExecutionInstanceId('public_api_run');

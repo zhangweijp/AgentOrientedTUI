@@ -62,10 +62,10 @@ beforeAll(async () => {
     ({ AppWorkerHost } = await import(pathToFileURL(join(runtimeDocs, '../dist/engine/app/worker-host.js')).href));
     const document = await readFile(join(runtimeDocs, 'runtime-app-interaction.md'), 'utf8');
     const body = document.match(/<!-- b2-app:start -->\n```js\n([\s\S]*?)\n```\n<!-- b2-app:end -->/)?.[1];if (!body) throw Error('App example markers');
-    const executableBody = body.replace("setText(args.text);", `if (args.text === 'throw') throw new Error('PRIVATE_CONTROLLED_FAILURE');
-      if (args.text === 'business') return { success: false, error: { code: 'E_HANDLER_ERROR', message: 'Application declined the edit.' },
+    const executableBody = body.replace("setText(input.text);", `if (input.text === 'throw') throw new Error('PRIVATE_CONTROLLED_FAILURE');
+      if (input.text === 'business') return { success: false, error: { code: 'E_HANDLER_ERROR', message: 'Application declined the edit.' },
         data: { refreshed: false } };
-      setText(args.text);`);
+      setText(input.text);`);
     if (executableBody === body) throw Error('Expected the documented ordinary Tool guard for the controlled failure fixture');
     app = join(directory, 'app.mjs');await capture(app, executableBody + '\n');
     const entry = join(directory, 'entry.mjs');await capture(entry, "export * from '@aotui/runtime';\n");runtimePackage = await import(pathToFileURL(entry).href);
@@ -210,9 +210,10 @@ const unit = '界😀\\n';
 const fill = limit - bytes(modelToolSchema(base, 'Detail'));
 const unitBytes = bytes(unit) - 2;
 const description = unit.repeat(Math.floor(fill / unitBytes)) + 'x'.repeat(fill % unitBytes);
-export const define = delta => defineViewType({ name: 'Detail', tools: { wide: {
+export const define = delta => defineViewType()({ name: 'Detail', tools: { wide: {
     description: 'Exercise a Tool at its model schema boundary',
     inputSchema: Type.Object({}, { description: description + 'x'.repeat(delta) }),
+    execute: () => ({ success: true }),
 } } });
 const Detail = define(0);
 export const oversizedProfile = { ...base, description: 'x'.repeat(limit), [marker]: VIEW_TYPE_PARAMETERS_MODE };
@@ -220,7 +221,7 @@ export const modelBytes = bytes(modelToolSchema(Detail.tools.wide.inputSchema, '
 export const profileBytes = bytes({ ...Detail.tools.wide.inputSchema, [marker]: VIEW_TYPE_PARAMETERS_MODE });
 export default createApp({ app_name: 'profile_capacity', viewTypes: [Detail], initialize({ publish }) {
     const detail = createView(Detail, { id: 'detail', kind: 'state', render: () => ({
-        body: 'Profile ready', bindings: { wide: { execute: () => ({ success: true }) } },
+        body: 'Profile ready', context: {},
     }) });
     publish({ views: [detail] });
 } });

@@ -9,7 +9,7 @@ import { useDataRef } from './hooks/useRef.js';
 import { defineViewType, type ViewType } from './tools/view-type-tool.js';
 import Type from 'typebox';
 
-const descriptors=Object.fromEntries(['child','parent','ready','recovered'].map(name=>[name,defineViewType({name,tools:{}})]));
+const descriptors=Object.fromEntries(['child','parent','ready','recovered'].map(name=>[name,defineViewType({name})]));
 function toolsOf(kernel:AppKernel) {
     const projection=kernel.getProjectionCoordinator();
     if (!projection.token().ready) return [];
@@ -166,8 +166,7 @@ describe('View nesting boundary', () => {
 
     it('allows ordinary component nesting and independently declared sibling Views through dynamic close and reopen', async () => {
         let setLeftOpen!: (open: boolean) => void;
-        const Card=defineViewType({name:'Card',tools:{inspect_card:{description:'Inspect the current Card.',inputSchema:Type.Object({})}}});
-        const bindings={inspect_card:{execute:()=>({success:true as const})}};
+        const Card=defineViewType<object>()({name:'Card',tools:{inspect_card:{description:'Inspect the current Card.',inputSchema:Type.Object({}),execute:()=>({success:true})}}});
         function Content({ owner }: { owner: string }) {
             const value = useDataRef(`${owner}_record`, { owner });
             return h('section', {}, h('p', {}, value(owner)));
@@ -181,9 +180,9 @@ describe('View nesting boundary', () => {
             setLeftOpen = updateLeft;
             return h('main',{},[
                 h('p', {}, 'Application content'),
-                leftOpen ? h(View, {kind: 'state', id: 'left', key: 'left', type: Card, bindings },
+                leftOpen ? h(View, {kind: 'state', id: 'left', key: 'left', type: Card, context: {} },
                     h(OrdinaryWrapper, {}, [h(Content, { owner: 'left' })])) : null,
-                h(View, {kind: 'state', id: 'right', key: 'right', type: Card, bindings },
+                h(View, {kind: 'state', id: 'right', key: 'right', type: Card, context: {} },
                     h(OrdinaryWrapper, {}, [h(Content, { owner: 'right' })])),
             ]);
         }

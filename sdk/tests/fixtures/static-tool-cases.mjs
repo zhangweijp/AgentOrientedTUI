@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 
 export function staticCases(api, Type) {
   const inputSchema = Type.Object({ path: Type.String() });
-  const declaration = () => ({ description: 'Inspect a working object.', inputSchema });
-  const make = (name = 'File', names = ['read']) => api.defineViewType({
+  const execute = () => ({ success: true });
+  const declaration = () => ({ description: 'Inspect a working object.', inputSchema, execute });
+  const define = api.defineViewType();
+  const make = (name = 'File', names = ['read']) => define({
     name, tools: Object.fromEntries(names.map(tool => [tool, declaration()])),
   });
   const code = expected => error => error?.code === expected;
@@ -16,8 +18,8 @@ export function staticCases(api, Type) {
   return [
     ['captures detached, normalized and deeply frozen static metadata', () => {
       const schema = Type.Object({ zeta: Type.String(), alpha: Type.Array(Type.String()) });
-      const input = { description: 'Original.', inputSchema: schema };
-      const descriptor = api.defineViewType({ name: 'File', tools: { read: input } });
+      const input = { description: 'Original.', inputSchema: schema, execute };
+      const descriptor = define({ name: 'File', tools: { read: input } });
       const definition = descriptor.tools.read;
       assert.deepEqual(Object.keys(definition).sort(), ['description', 'inputSchema']);
       assert.equal(definition.inputSchema.additionalProperties, true);
@@ -31,15 +33,15 @@ export function staticCases(api, Type) {
       assert.equal(Object.isFrozen(schema), false);
     }],
     ['rejects retired fields and invalid metadata before construction', () => {
-      for (const extra of [{ execute() {} }, { execute: undefined }, { enabled: true }, { owner: {} }, { isMutating: true }]) {
-        assert.throws(() => api.defineViewType({ name: 'File', tools: { read: { ...declaration(), ...extra } } }),
+      for (const extra of [{ execute: undefined }, { enabled: true }, { owner: {} }, { isMutating: true }]) {
+        assert.throws(() => define({ name: 'File', tools: { read: { ...declaration(), ...extra } } }),
           code('TOOL_DEFINITION_INVALID'));
       }
       for (const invalid of [
         { name: '', tools: { read: declaration() } },
         { name: 'File', tools: { '': declaration() } },
         { name: 'File', tools: { read: { ...declaration(), description: ' ' } } },
-      ]) assert.throws(() => api.defineViewType(invalid), code('TOOL_DEFINITION_INVALID'));
+      ]) assert.throws(() => define(invalid), code('TOOL_DEFINITION_INVALID'));
     }],
     ['does not execute Tool, schema or collection accessors', () => {
       let reads = 0;
@@ -48,15 +50,15 @@ export function staticCases(api, Type) {
       const schema = Type.Object({ path: Type.String() });
       Object.defineProperty(schema.properties.path, 'description', getter);
       const tools = Object.defineProperty({}, 'read', getter);
-      assert.throws(() => api.defineViewType({ name: 'File', tools: { read: input } }), code('TOOL_DEFINITION_INVALID'));
-      assert.throws(() => api.defineViewType({ name: 'File', tools: { read: { ...declaration(), inputSchema: schema } } }), code('TOOL_SCHEMA_INVALID'));
-      assert.throws(() => api.defineViewType({ name: 'File', tools }), code('TOOL_DEFINITION_INVALID'));
+      assert.throws(() => define({ name: 'File', tools: { read: input } }), code('TOOL_DEFINITION_INVALID'));
+      assert.throws(() => define({ name: 'File', tools: { read: { ...declaration(), inputSchema: schema } } }), code('TOOL_SCHEMA_INVALID'));
+      assert.throws(() => define({ name: 'File', tools }), code('TOOL_DEFINITION_INVALID'));
       assert.equal(reads, 0);
     }],
     ['captures Tool metadata with ordinary string property keys', () => {
       const tools = Object.assign(Object.create(null), { constructor: declaration() });
       tools.__proto__ = { ...declaration(), description: 'Prototype-shaped name' };
-      const descriptor = api.defineViewType({ name: 'File', tools });
+      const descriptor = define({ name: 'File', tools });
       delete tools.__proto__;
       tools.constructor.description = 'Changed';
       assert.equal(descriptor.tools.constructor.description, 'Inspect a working object.');
@@ -86,8 +88,8 @@ export function staticCases(api, Type) {
       frozen(first);
     }],
     ['supports empty types and the business parameter pattern, and rejects unsupported schema', () => {
-      assert.deepEqual(api.getToolCatalog([make('Empty', [])]), []);
-      const search = inputSchema => api.defineViewType({ name: 'Search', tools: { search: { ...declaration(), inputSchema } } });
+      assert.deepEqual(api.getToolCatalog([api.defineViewType({ name: 'Empty' })]), []);
+      const search = inputSchema => define({ name: 'Search', tools: { search: { ...declaration(), inputSchema } } });
       assert.throws(() => search(Type.Object({ path: Type.String({ format: 'email' }) })), code('TOOL_SCHEMA_UNSUPPORTED'));
       assert.equal(search(Type.Object({ pattern: Type.String() })).tools.search.inputSchema.properties.pattern.type, 'string');
     }],

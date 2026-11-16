@@ -29,14 +29,12 @@ async function fixture(extra: object = {}) {
     await capture(app, `import {h} from 'preact';import Type from 'typebox';import {createTUIApp,defineViewType,usePersistentState,View} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let setter;
 
 
-const RootType = defineViewType({ name: 'Root', tools: {
-  set: { description:'Set persisted value', inputSchema:Type.Object({value:Type.Number()}, {additionalProperties:false}) },
+const RootType = defineViewType()({ name: 'Root', tools: {
+  set: { description:'Set persisted value', inputSchema:Type.Object({value:Type.Number()}, {additionalProperties:false}) , execute: ({ input, context }) => context.set(input) },
 } });
 function Root(){
   [,setter] = usePersistentState('value',0);
-  return h(View, {kind:'instruction',id:'root',type:RootType,bindings:{
-    set: {execute: async args=>{setter(args.value);return {success:true};}},
-  }}, 'Managed state');
+  return h(View, {kind:'instruction',id:'root',type:RootType,context: { set: async args=>{setter(args.value);return {success:true};} }}, 'Managed state');
 }
 export default createTUIApp({app_name:'c1',component:Root,viewTypes:[RootType]});`);
     const host = new AppWorkerHost({ appId: 'app' as any, desktopId: 'd' as any, appModulePath: url(app), timeout: 2000,

@@ -19,31 +19,34 @@ async function fixture(persistent = true) {
     const body = `import { h } from 'preact';import Type from 'typebox';import { createTUIApp, usePersistentState, useAppRuntimeContext, View, defineViewType } from ${JSON.stringify(url(path.join(repo, 'sdk/dist/index.js')))};
 let setter, port, value; const generations = new Map();
 const noArgs = Type.Object({}, {additionalProperties:false});
-
-
-
-
-const RootType = defineViewType({ name: 'Root', tools: {
-  set: { description: 'Set persisted value', inputSchema: Type.Object({value:Type.Number()}, {additionalProperties:false}) },
-  old: { description: 'Check a previous setter', inputSchema: noArgs },
-  flush: { description: 'Flush persisted state', inputSchema: noArgs },
-  inspect: { description: 'Inspect persisted state', inputSchema: noArgs },
+const RootType = defineViewType()({ name: 'Root', tools: {
+  set: {
+    description: 'Set persisted value', inputSchema: Type.Object({ value: Type.Number() }, { additionalProperties: false }),
+    async execute({ input }) { setter(input.value); return { success: true }; },
+  },
+  old: {
+    description: 'Check a previous setter', inputSchema: noArgs,
+    async execute() {
+      const first = [...generations.values()][0];
+      try { first(() => { throw Error('old updater ran'); }); }
+      catch (error) { return {success:true,data:{code:error.code}}; }
+      return {success:true,data:{code:'BAD'}};
+    },
+  },
+  flush: {
+    description: 'Flush persisted state', inputSchema: noArgs,
+    execute: async () => ({ success: true, data: await port.flush() }),
+  },
+  inspect: {
+    description: 'Inspect persisted state', inputSchema: noArgs,
+    execute: async () => ({ success: true, data: { value } }),
+  },
 } });
 function Root() {
   ${persistent ? `const tuple = usePersistentState('state', 0); [value, setter] = tuple;
   port = useAppRuntimeContext().persistence;
   if (port && !generations.has(port.instanceId)) generations.set(port.instanceId, setter);` : ''}
-  return h(View, {kind: 'instruction', id: 'root', type: RootType, bindings: {
-    set: { execute: async args => { setter(args.value); return {success:true}; } },
-    old: { execute: async () => {
-      const first = [...generations.values()][0];
-      try { first(() => { throw Error('old updater ran'); }); }
-      catch (error) { return {success:true,data:{code:error.code}}; }
-      return {success:true,data:{code:'BAD'}};
-    } },
-    flush: { execute: async () => ({success:true,data:await port.flush()}) },
-    inspect: { execute: async () => ({success:true,data:{value}}) },
-  } }, 'Persistent state');
+  return h(View, { kind: 'instruction', id: 'root', type: RootType, context: {} }, 'Persistent state');
 }
 export default createTUIApp({viewTypes:[RootType],  app_name: 'test', component: Root });
 `;

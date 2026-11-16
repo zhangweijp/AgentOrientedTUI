@@ -33,16 +33,41 @@ function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, f
         import Type from 'typebox';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
         import { createTUIApp, View, useDataRef, defineViewType } from '@aotui/sdk';
-const _FixtureWorkspace = defineViewType({ name:'Workspace', tools:{ refresh: { description:'Refresh the current view', inputSchema:Type.Object({ query: Type.String() }, { additionalProperties: false }) },
-extra: { description:'Additional view action', inputSchema:Type.Object({ selector: Type.String() }, { additionalProperties: false }) },
-fault_after_commit: { description:'Commit the fixture business change', inputSchema:Type.Object({reason: Type.String()}, {additionalProperties:false}) },
-stats: { description:'Read fixture business calls', inputSchema:Type.Object({query: Type.String()}, {additionalProperties:false}) } } });
-
 
         Date.now = () => 1700000000000;
         let businessCalls = 0;
+        const WorkspaceType = defineViewType()({ name: 'Workspace', tools: {
+            refresh: {
+                description: 'Refresh the current view',
+                inputSchema: Type.Object({ query: Type.String() }, { additionalProperties: false }),
+                enabled: ({ state }) => state.toolEnabled,
+                execute: async () => ({ success: true, data: { calls: ++businessCalls } }),
+            },
+            extra: {
+                description: 'Additional view action',
+                inputSchema: Type.Object({ selector: Type.String() }, { additionalProperties: false }),
+                enabled: ({ state }) => state.extraToolEnabled,
+                execute: async () => ({ success: true }),
+            },
+            fault_after_commit: {
+                description: 'Commit the fixture business change',
+                inputSchema: Type.Object({ reason: Type.String() }, { additionalProperties: false }),
+                enabled: () => ${faultTools},
+                async execute({ context: { setState } }) {
+                    businessCalls++;
+                    setState(current => ({ ...current, invalidRef: true }));
+                    return { success: true, data: { calls: businessCalls } };
+                },
+            },
+            stats: {
+                description: 'Read fixture business calls',
+                inputSchema: Type.Object({ query: Type.String() }, { additionalProperties: false }),
+                enabled: () => ${faultTools},
+                execute: async () => ({ success: true, data: { calls: businessCalls } }),
+            },
+        } });
 
-        function Workspace({ state, setState }) {
+        function Workspace({ state }) {
             const selection = useMemo(() => state.invalidRef
                 ? { value: () => 'not cloneable' }
                 : { value: state.refValue }, [state.invalidRef, state.refValue]);
@@ -50,10 +75,7 @@ stats: { description:'Read fixture business calls', inputSchema:Type.Object({que
             useLayoutEffect(() => { if (state.invalidLayout) throw new Error('Layout did not finish'); });
             return h('section', {}, h('p', {}, state.text + ' ' + ref('Selection')));
         }
-
-
-
-function Root() {
+        function Root() {
             const [state, setState] = useState({
                 open: ${initiallyOpen}, text: 'initial', refValue: 'seed',
                 toolEnabled: true, extraToolEnabled: false, invalidRef: false, invalidLayout: false,
@@ -81,17 +103,12 @@ function Root() {
                 return () => parentPort.off('message', onCommand);
             }, []);
             return h('div', null, state.open
-                ? h(View, {kind: 'state', id: 'workspace', type: _FixtureWorkspace, bindings:{ refresh: { execute: async () => {
-                    businessCalls++;
-                    return { success: true, data: { calls: businessCalls } };
-                }, enabled: state.toolEnabled },
-extra: { execute: async () => ({ success: true }), enabled: state.extraToolEnabled },
-fault_after_commit: {enabled: ${faultTools}, execute: async () => {businessCalls++; setState(current => ({...current, invalidRef: true})); return {success:true, data:{calls:businessCalls}};}},
-stats: {enabled: ${faultTools}, execute: async () => ({success:true, data:{calls:businessCalls}})} }, name: 'Workspace' }, h(Workspace, { state, setState }))
+                ? h(View, { kind: 'state', id: 'workspace', type: WorkspaceType, context: { state, setState }, name: 'Workspace' },
+                    h(Workspace, { state }))
                 : null);
         }
 
-        export default createTUIApp({viewTypes:[_FixtureWorkspace],  app_name: 'publication_fixture', component: Root, ${policy} });
+        export default createTUIApp({ viewTypes: [WorkspaceType], app_name: 'publication_fixture', component: Root, ${policy} });
     `;
 }
 

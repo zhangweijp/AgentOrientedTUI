@@ -18,7 +18,7 @@ SDK 在 View 内注册局部名，展示保留类型提示；Tool 输入使用 *
 
 ## 一份 Tool 声明，几种参数形状
 
-完整定义、绑定和发布见 [ref-app.tsx](examples/ref-app.tsx)。`defineViewType` 声明普通参数和 Ref 参数，页面通过 `View.bindings` 提供执行函数。调用传入接收页面的 `view_id` 和显式 Ref 地址，例如 `{ "view_id": "detail", "note": "detail.notes[0]" }`。接收页面和 Ref 的来源页面可以不同。
+完整声明和发布见 [ref-app.tsx](examples/ref-app.tsx)。在 `defineViewType<Context>()` 中声明普通参数、Ref 参数和 `execute({ input, context })`，有工具的页面通过 `View.context` 提供自己的业务上下文。调用传入接收页面的 `view_id` 和显式 Ref 地址，例如 `{ "view_id": "detail", "note": "detail.notes[0]" }`。接收页面和 Ref 的来源页面可以不同。
 
 | 参数 Schema | 模型输入 | handler 接收 |
 | --- | --- | --- |

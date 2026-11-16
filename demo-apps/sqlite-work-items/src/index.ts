@@ -1,5 +1,5 @@
 import { arrayRef, createApp, createView, defineViewType, formatRef, getToolCatalog, ref, refParam,
-    type PublishedRef, type ToolResult, type ViewBindings } from '@aotui/sdk/app';
+    type PublishedRef, type ToolResult } from '@aotui/sdk/app';
 import Type from 'typebox';
 import { Check } from 'typebox/value';
 import { openSqlite, type SqliteIssue } from './sqlite.js';
@@ -19,24 +19,35 @@ const writeCounts = Type.Array(Type.Object({
     total: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 }, { additionalProperties: false }), { minItems: 1, maxItems: 1 });
 type Item = Type.Static<typeof row>;
+type ItemSelector = Readonly<Type.Static<typeof selector>>;
+type ItemStatus = Type.Static<typeof status>;
+type WorkListContext = { available: boolean; openItem: (id: number) => Promise<ToolResult>; refresh: () => Promise<ToolResult> };
+type WorkDetailContext = { available: boolean; id: number; setStatus: (id: number, item: ItemSelector, status: ItemStatus) => Promise<ToolResult>;
+    closeItem: () => Promise<ToolResult> };
 
-export const WorkInstructionsType = defineViewType({ name: 'WorkInstructions', tools: {} });
+export const WorkInstructionsType = defineViewType({ name: 'WorkInstructions' });
 
-export const WorkListType = defineViewType({ name: 'WorkList', tools: {
+export const WorkListType = defineViewType<WorkListContext>()({ name: 'WorkList', tools: {
         open_item: { description: 'Open a work item from the current list.',
             inputSchema: Type.Object({ item: refParam('WorkItem', selector) }, { additionalProperties: false }),
+            enabled: ({ available }) => available,
+            execute: ({ input, context }) => context.openItem(input.item.id),
         },
         refresh: { description: 'Read the latest list and selected item from SQLite.',
             inputSchema: Type.Object({}, { additionalProperties: false }),
+            execute: ({ context }) => context.refresh(),
         },
 } });
 
-export const WorkDetailType = defineViewType({ name: 'WorkDetail', tools: {
+export const WorkDetailType = defineViewType<WorkDetailContext>()({ name: 'WorkDetail', tools: {
         set_status: { description: 'Set the status of the currently selected work item.',
             inputSchema: Type.Object({ item: refParam('WorkItem', selector), status }, { additionalProperties: false }),
+            enabled: ({ available }) => available,
+            execute: ({ input, context }) => context.setStatus(context.id, input.item, input.status),
         },
         close_item: { description: 'Close the selected work item.',
             inputSchema: Type.Object({}, { additionalProperties: false }),
+            execute: ({ context }) => context.closeItem(),
         },
 } });
 
@@ -79,57 +90,53 @@ export default createApp({
         });
         const list = createView(WorkListType, {
             id: 'items', kind: 'state', name: 'Work items',
-            render: () => ({ ...listContent, bindings: {
-                open_item: { enabled: available, async execute({ item }) {
-                    selectedId = item.id;
-                    return refreshReceipt();
-                } },
-                refresh: { execute: refreshReceipt },
-            } }),
+            render: () => ({ ...listContent, context: { available, openItem, refresh: refreshReceipt } }),
         });
 
-        function detailBindings(id: number): ViewBindings<typeof WorkDetailType> {
-            return {
-                set_status: { enabled: available, async execute({ item, status: nextStatus }) {
-                    if (item.id !== id || id !== selectedId) return failure({
-                        code: 'WORK_ITEM_NOT_SELECTED', message: 'Use the item Ref from the current detail View.',
-                    });
-                    if (item.revision === maxRevision) return failure({
-                        code: 'REVISION_EXHAUSTED', message: 'This work item has reached its revision limit.',
-                    });
-                    // The Tool contract checks the selected safe integers and the fixed status enum.
-                    const result = await sqlite.query('rw', `UPDATE work_items SET status = '${nextStatus}', revision = revision + 1
+        async function openItem(id: number): Promise<ToolResult> {
+            selectedId = id;
+            return refreshReceipt();
+        }
+
+        async function closeItem(): Promise<ToolResult> {
+            selectedId = undefined;
+            return refreshReceipt();
+        }
+
+        async function setStatus(id: number, item: ItemSelector, nextStatus: ItemStatus): Promise<ToolResult> {
+            if (item.id !== id || id !== selectedId) return failure({
+                code: 'WORK_ITEM_NOT_SELECTED', message: 'Use the item Ref from the current detail View.',
+            });
+            if (item.revision === maxRevision) return failure({
+                code: 'REVISION_EXHAUSTED', message: 'This work item has reached its revision limit.',
+            });
+            // The Tool contract checks the selected safe integers and the fixed status enum.
+            const result = await sqlite.query('rw', `UPDATE work_items SET status = '${nextStatus}', revision = revision + 1
 WHERE id = ${item.id} AND revision = ${item.revision};
 SELECT changes() AS direct, total_changes() AS total;`);
-                    if ('issue' in result) return result.started ? unknownWrite(result.issue) : failure(result.issue);
-                    if (!Check(writeCounts, result.rows) || result.rows[0].total < result.rows[0].direct) {
-                        return unknownWrite({ code: 'SQLITE_INVALID_OUTPUT', message: 'SQLite did not confirm the selected write.' });
-                    }
-                    const [{ direct, total }] = result.rows;
-                    if (direct === 0) {
-                        if (total === 0) return failure({
-                            code: 'VERSION_CONFLICT', message: 'The conditional update did not apply. Refresh and select the latest Ref.',
-                        });
-                        const issue = { code: 'SQLITE_WRITE_PARTIAL', message: 'SQLite recorded row changes while skipping the direct status update.' };
-                        unavailable(issue);
-                        return failure({ ...issue, message: `${issue.message} Use refresh to check SQLite.` });
-                    }
-                    const refreshIssue = await refresh();
-                    return { success: true, data: refreshIssue
-                        ? { written: true, refreshed: false, refreshIssue }
-                        : { written: true, refreshed: true } };
-                } },
-                close_item: { async execute() {
-                    selectedId = undefined;
-                    return refreshReceipt();
-                } },
-            };
+            if ('issue' in result) return result.started ? unknownWrite(result.issue) : failure(result.issue);
+            if (!Check(writeCounts, result.rows) || result.rows[0].total < result.rows[0].direct) {
+                return unknownWrite({ code: 'SQLITE_INVALID_OUTPUT', message: 'SQLite did not confirm the selected write.' });
+            }
+            const [{ direct, total }] = result.rows;
+            if (direct === 0) {
+                if (total === 0) return failure({
+                    code: 'VERSION_CONFLICT', message: 'The conditional update did not apply. Refresh and select the latest Ref.',
+                });
+                const issue = { code: 'SQLITE_WRITE_PARTIAL', message: 'SQLite recorded row changes while skipping the direct status update.' };
+                unavailable(issue);
+                return failure({ ...issue, message: `${issue.message} Use refresh to check SQLite.` });
+            }
+            const refreshIssue = await refresh();
+            return { success: true, data: refreshIssue
+                ? { written: true, refreshed: false, refreshIssue }
+                : { written: true, refreshed: true } };
         }
 
         function createDetail(id: number) {
             return createView(WorkDetailType, {
                 id: 'detail', kind: 'state', name: 'Work item detail',
-                render: () => ({ ...detailContent, bindings: detailBindings(id) }),
+                render: () => ({ ...detailContent, context: { available, id, setStatus, closeItem } }),
             });
         }
         let detail: { id: number; view: ReturnType<typeof createDetail> } | undefined;

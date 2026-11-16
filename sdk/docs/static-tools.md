@@ -1,6 +1,6 @@
 # 静态 ViewType 与工具目录
 
-`defineViewType` 由 `@aotui/sdk/app` 和 Preact 根入口共享。静态元数据在声明时就可用于工具目录。工具的业务执行由所属页面提交的绑定提供。
+`defineViewType` 由 `@aotui/sdk/app` 和 Preact 根入口共享。静态元数据在声明时就可用于工具目录。工具执行时收到接收页已提交的 `context`。
 
 ```ts
 import Type from 'typebox';
@@ -28,4 +28,4 @@ export const catalog = getToolCatalog([FileDetail]);
 
 目录用于文档、Root 说明与类型检查。托管 Preact App 内的 `<ToolCatalog />` 从工厂注册的 `viewTypes` 列出名称，在该类型暂时没有打开的页面时也会列出。也可以传 `<ToolCatalog viewTypes={selection} />` 指定列表，在托管 App 外使用时必须传该列表。运行时的原生工具可用性由当前页面的绑定决定。
 
-已经在页面写了显式 bindings 的 App 可以继续用 `defineViewType({ name, tools })` 提供纯元数据。两种声明都可以为无业务参数的工具省略 `inputSchema`。[Preact 页面操作](app-tools.md)
+无业务参数的工具可以省略 `inputSchema`。没有工具的页面类型用 `defineViewType({ name })`。 [Preact 页面操作](app-tools.md)

@@ -33,18 +33,29 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
 
 
 
-const _FixtureFileDetail = defineViewType({ name:'FileDetail', tools:{ fail: { description:'Fails as business result', inputSchema:Type.Object({}, {additionalProperties:false}) },
-ok: { description:'Successful Tool', inputSchema:Type.Object({}, {additionalProperties:false}) },
-invalid: { description:'Reject invalid Tool arguments', inputSchema:Type.Object({target:Type.String()}, {additionalProperties:false}) } } });
+                const noArgs = Type.Object({}, { additionalProperties: false });
+                const FileDetail = defineViewType()({ name: 'FileDetail', tools: {
+                    fail: {
+                        description: 'Fails as business result', inputSchema: noArgs,
+                        execute: async () => ({ success: false, error: {
+                            code: 'BUSINESS_FAILED', message: 'The requested file is locked',
+                        } }),
+                    },
+                    ok: {
+                        description: 'Successful Tool', inputSchema: noArgs,
+                        execute: async () => ({ success: true, data: { message: 'completed' } }),
+                    },
+                    invalid: {
+                        description: 'Reject invalid Tool arguments',
+                        inputSchema: Type.Object({ target: Type.String() }, { additionalProperties: false }),
+                        execute: async () => ({ success: true, data: { unreachable: true } }),
+                    },
+                } });
 
-function App() {
-                    return h('div', null, h(View,{kind: 'instruction',id:'root',type:_FixtureFileDetail, bindings:{ fail: { execute: async () => ({ success:false, error:{
-                        code:'BUSINESS_FAILED', message:'The requested file is locked',
-                    }}) },
-ok: { execute: async () => ({success:true,data:{message:'completed'}}) },
-invalid: { execute: async () => ({success:true,data:{unreachable:true}}) } }},'Tool receipts'));
+                function App() {
+                    return h('div', null, h(View, { kind: 'instruction', id: 'root', type: FileDetail, context: {} }, 'Tool receipts'));
                 }
-                export default createTUIApp({viewTypes:[_FixtureFileDetail], app_name:'test_result',component:App});
+                export default createTUIApp({viewTypes:[FileDetail], app_name:'test_result',component:App});
             `;
             await build({
                 stdin: {

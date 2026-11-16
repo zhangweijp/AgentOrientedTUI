@@ -19,9 +19,19 @@ function appSource(): string {
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
         import Type from 'typebox';
         import { createTUIApp, View, useDataRef, defineViewType } from '@aotui/sdk';
-const _FixtureParent = defineViewType({ name:'Parent', tools:{ parent_action: { description:'Run the parent action', inputSchema:Type.Object({}, {additionalProperties:false}) } } });
-const _FixtureSibling = defineViewType({ name:'Sibling', tools:{ sibling_action: { description:'Run the sibling action', inputSchema:Type.Object({}, {additionalProperties:false}) } } });
-
+        const inputSchema = Type.Object({}, { additionalProperties: false });
+        const ParentType = defineViewType()({ name: 'Parent', tools: {
+            parent_action: {
+                description: 'Run the parent action', inputSchema,
+                execute: async () => ({ success: true, data: { owner: 'parent' } }),
+            },
+        } });
+        const SiblingType = defineViewType()({ name: 'Sibling', tools: {
+            sibling_action: {
+                description: 'Run the sibling action', inputSchema,
+                execute: async () => ({ success: true, data: { owner: 'sibling' } }),
+            },
+        } });
 
         function Parent({ state }) {
             const ref = useDataRef('parent_ref', useMemo(() => ({ owner: 'parent' }), []));
@@ -42,10 +52,7 @@ const _FixtureSibling = defineViewType({ name:'Sibling', tools:{ sibling_action:
                 h('p', {}, ref('SIBLING_REF_MARKER')),
             ]);
         }
-
-
-
-function Root() {
+        function Root() {
             const [state, setState] = useState({
                 parentText: 'PARENT_INITIAL_MARKER', injectRawView: false, siblingOpen: true,
             });
@@ -67,12 +74,12 @@ function Root() {
                 return () => parentPort.off('message', onCommand);
             }, []);
             return h('div', null, h('main', {}, [
-                h(View, {kind: 'state', id: 'parent', type: _FixtureParent, bindings:{ parent_action: { execute: async () => ({ success: true, data: { owner: 'parent' } }) } } }, h(Parent, { state })),
-                state.siblingOpen ? h(View, {kind: 'state', id: 'sibling', type: _FixtureSibling, bindings:{ sibling_action: { execute: async () => ({ success: true, data: { owner: 'sibling' } }) } } }, h(Sibling)) : null,
+                h(View, { kind: 'state', id: 'parent', type: ParentType, context: {} }, h(Parent, { state })),
+                state.siblingOpen ? h(View, { kind: 'state', id: 'sibling', type: SiblingType, context: {} }, h(Sibling)) : null,
             ]));
         }
 
-        export default createTUIApp({viewTypes:[_FixtureParent,_FixtureSibling],  app_name: 'nested_view_rejection', component: Root });
+        export default createTUIApp({ viewTypes: [ParentType, SiblingType], app_name: 'nested_view_rejection', component: Root });
     `;
 }
 

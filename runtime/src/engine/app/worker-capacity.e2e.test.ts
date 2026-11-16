@@ -28,14 +28,18 @@ async function fact(name: string, value: object) {
 it('C1-08 separate Runtimes use the bundled Worker and each Runtime shares one capacity bound', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-runtimes-')), app = join(dir, 'app.mjs');
     await linkSDKPeers(dir);
-    await capture(app, `import {h} from 'preact';import Type from 'typebox';import { createTUIApp, useAppRuntimeContext, View, defineViewType } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let launch;
-
-
-
-const _FixtureRoot = defineViewType({ name:'Root', tools:{ inspect: { description:'Inspect launch facts', inputSchema:Type.Object({}, {additionalProperties:false}) } } });
-
-function Root(){launch=useAppRuntimeContext().launchConfig;return h('div', null, h(View,{kind: 'instruction',id:'root',type:_FixtureRoot, bindings:{ inspect: { execute: async()=>{return {success:true,data:{launch:launch.C1_LAUNCH}};} } }},'Worker capacity'));}
-export default createTUIApp({viewTypes:[_FixtureRoot], app_name:'c1',component:Root});`);
+    await capture(app, `import {h} from 'preact';import Type from 'typebox';import { createTUIApp, useAppRuntimeContext, View, defineViewType } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};
+const RootType = defineViewType()({ name: 'Root', tools: {
+    inspect: {
+        description: 'Inspect launch facts', inputSchema: Type.Object({}, { additionalProperties: false }),
+        execute: async ({ context }) => ({ success: true, data: { launch: context.launch.C1_LAUNCH } }),
+    },
+} });
+function Root() {
+    const launch = useAppRuntimeContext().launchConfig;
+    return h('div', null, h(View, { kind: 'instruction', id: 'root', type: RootType, context: { launch } }, 'Worker capacity'));
+}
+export default createTUIApp({viewTypes:[RootType], app_name:'c1',component:Root});`);
     const { createRuntime } = await import(url(join(repo, 'runtime/dist/index.js')));
     const workerFile = join(repo, 'runtime/dist/worker-runtime/index.js');
     const runtimes = [createRuntime({ worker: { timeoutMs: 2345, maxWorkers: 1 } }), createRuntime({ worker: { maxWorkers: 1 } })] as any[];

@@ -514,7 +514,7 @@ IDE 启动配置已通过本地工程验收，[16](docs/sdk-runtime-design/16-re
 
 2026-11-16 已实现上述页面实例绑定：SDK 使用 `defineViewType` 与页面 `bindings`，Runtime 按已采用的观察校验显式 `view_id` 和独立的 Ref 来源。共享定义、页面打开和关闭、旧观察失效与一组原生 Tools 贯通 Preact、普通 TypeScript、Worker 和标准 Source。公开使用与迁移以 [SDK 作者指南](sdk/docs/app-authoring.md) 和 [Runtime 集成合同](runtime/docs/runtime-app-interaction.md) 为准。
 
-2026-11-16 项目所有者确认启动作者接口优化。SDK 主路径把工具定义和实现写在一处，页面提供实例 `context`。本轮用 IDE 文件详情页验收，另完善空业务 Schema 和 Root 自动目录。实施范围、接口和验证状态以 [专题决定](docs/sdk-runtime-design/view-type-sdk/07-decisions-and-validation.md#authoring-refinement-20261116) 为准。作者技能中的显式 `bindings` 示例适用于该入口，默认写法从随 SDK 交付的 [作者指南](sdk/docs/app-authoring.md) 获取。
+2026-11-16 项目所有者确认启动作者接口优化。SDK 主路径把工具定义和实现写在一处，页面提供实例 `context`。本轮用 IDE 文件详情页验收，另完善空业务 Schema 和 Root 自动目录。实施范围、接口和验证状态以 [专题决定](docs/sdk-runtime-design/view-type-sdk/07-decisions-and-validation.md#authoring-refinement-20261116) 为准。作者技能和随 SDK 交付的 [作者指南](sdk/docs/app-authoring.md) 都用页面 `context`。
 
 ## 二十三、2026-11-16 反馈：继续发布前删减
 

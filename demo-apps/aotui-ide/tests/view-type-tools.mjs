@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict';
 import { createApp, createView } from '@aotui/sdk/app';
-import { workspaceBindings, workspaceCreateBindings, WorkspaceType, FileDetailType, SearchResultType } from '../dist/tui/ide-tool-contracts.js';
+import { WorkspaceType, FileDetailType, SearchResultType, WorkspaceCreateType } from '../dist/tui/ide-tool-contracts.js';
 
-async function prepareFileTools(owner, path, viewId, diagnostics = true) {
+async function prepareTools(type, viewId, context) {
   let bindings;
   const factory = createApp({
     app_name: 'ide_tool_fixture',
-    viewTypes: [FileDetailType],
+    viewTypes: [type],
     initialize({ publish }) {
-      const context = { owner, file: { observed: { path }, viewId }, diagnostics };
-      publish({ views: [createView(FileDetailType, { id: viewId, kind: 'state', render: () => ({ body: '', context }) })] });
+      publish({ views: [createView(type, { id: viewId, kind: 'state', render: () => ({ body: '', context }) })] });
     },
   });
   await factory.initialize({
@@ -24,6 +23,9 @@ async function prepareFileTools(owner, path, viewId, diagnostics = true) {
   });
   return Object.fromEntries(bindings.map(binding => [binding.name, binding]));
 }
+
+const prepareFileTools = (owner, path, viewId, diagnostics = true) =>
+  prepareTools(FileDetailType, viewId, { owner, file: { observed: { path }, viewId }, diagnostics });
 
 async function main() {
   let createResult = { success: true, data: { filePath: '/work/new.txt' } };
@@ -67,7 +69,7 @@ async function main() {
   for (const definition of [WorkspaceType, FileDetailType, SearchResultType]) {
     assert.ok(Object.keys(definition.tools).length > 0);
   }
-  const bindings = workspaceBindings(owner);
+  const bindings = await prepareTools(WorkspaceType, 'workspace', owner);
   const opened = await prepareFileTools(owner, '/work/open.ts', 'fd_actual_17');
   const rename = await prepareFileTools(owner, '/work/rename.ts', 'fd_actual_23', false);
   assert.equal(opened.read_loaded_diagnostics.enabled, true);
@@ -121,7 +123,7 @@ async function main() {
   assert.ok(unsyncedResult.data.warnings.includes('Disk effect completed; view synchronization did not complete'),
     "the receipt preserves the application's honest synchronization warning");
 
-  const createFile = workspaceCreateBindings(owner, '/work').create_file_if_absent;
+  const createFile = (await prepareTools(WorkspaceCreateType, 'create_0', { owner, path: '/work' })).create_file_if_absent;
   const created = await createFile.execute({ relativePath: 'new.txt', content: 'body' });
   assert.deepEqual(createCalls, [['/work', 'new.txt', 'body']]);
   assert.deepEqual(created, {

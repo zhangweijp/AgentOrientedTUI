@@ -8,7 +8,7 @@ import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel
 import { createTUIApp, View, useDataRef, refParam, defineViewType } from './index.js';
 import { refParam as plainRefParam } from './app.js';
 
-const Detail=defineViewType({name:'Detail',tools:{}});
+const Detail=defineViewType({name:'Detail'});
 function setup(Content: () => any) {
  const factory = createTUIApp({ app_name: 'typed_refs', viewTypes:[Detail], component: () => h(View, {kind: 'state',id:'detail',type:Detail},h(Content, {})) });
  const kernel = new AppKernel({...factory.kernelConfig,factory} as any);
@@ -18,7 +18,13 @@ function setup(Content: () => any) {
  async close(){await kernel.onClose();}};
 }
 const schema=Type.Object({id:Type.String(),title:Type.String()},{additionalProperties:false});
-const define=(parameter:any)=>defineViewType({name:'Detail',tools:{edit:{description:'Edit selected Plan',inputSchema:Type.Object({plan:parameter,title:Type.String()},{additionalProperties:false})}}}).tools.edit;
+const define = (parameter: Type.TSchema) => defineViewType<object>()({ name: 'Detail', tools: {
+    edit: {
+        description: 'Edit selected Plan',
+        inputSchema: Type.Object({ plan: parameter, title: Type.String() }, { additionalProperties: false }),
+        execute: () => ({ success: true }),
+    },
+} }).tools.edit;
 
 describe('typed single-object Ref',()=>{
  it('shares refParam implementation across public entries and preserves the business Schema witness',()=>{
@@ -107,7 +113,7 @@ describe('typed single-object Ref',()=>{
  it('captures arrays of Ref names and preserves exact resolved value witnesses',()=>{
    const input=Type.Object({plans:Type.Array(refParam('Plan',schema),{maxItems:3}),
      optional:Type.Optional(refParam('Plan',schema))},{additionalProperties:false});
-   const tool=defineViewType({name:'Plan',tools:{choose:{description:'Choose Plans',inputSchema:input}}}).tools.choose;
+   const tool=defineViewType<object>()({name:'Plan',tools:{choose:{description:'Choose Plans',inputSchema:input,execute:()=>({success:true})}}}).tools.choose;
    const compiled=compileOrdinarySchema(tool.inputSchema);
    expect(compiled.ok).toBe(true);if(!compiled.ok)throw Error('contract');
    expect(compiled.contract.validateModelInput({plans:['detail.a','detail.b']}).ok).toBe(true);

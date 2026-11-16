@@ -343,13 +343,14 @@ import assert from 'node:assert/strict';
 import Type from 'typebox';
 import * as one from '@aotui/sdk/app';
 import * as two from '@aotui/sdk-copy/app';
-const view = one.defineViewType({ name:'View', tools:{ sample:{ description:'Sample',
-    inputSchema:Type.Object({ n: Type.Integer() }) } } });
+const view = one.defineViewType()({ name:'View', tools:{ sample:{ description:'Sample',
+    inputSchema:Type.Object({ n: Type.Integer() }), execute: () => ({ success:true }) } } });
 assert.deepEqual(two.getToolCatalog([view]), one.getToolCatalog([view]));
 const witness = Object.getOwnPropertySymbols(view)[0];
 const fake = { ...view, tools:{ sample:{ description:'Fake',
     inputSchema:{ type:'object', properties:{ v:{ type:'string', format:'unknown' } } } } } };
-Object.defineProperty(fake, witness, Object.getOwnPropertyDescriptor(view, witness));
+for (const symbol of Object.getOwnPropertySymbols(view))
+    Object.defineProperty(fake, symbol, Object.getOwnPropertyDescriptor(view, symbol));
 assert.throws(() => two.getToolCatalog([fake]), { code:'TOOL_SCHEMA_UNSUPPORTED', path:'$.properties.v.format' });
 const legacy = { ...view };
 Object.defineProperty(legacy, witness, { value:'other-version' });
@@ -443,13 +444,14 @@ it('keeps a real declaration error code and path across manifest loading and iso
     const name = 'bad_schema', folder = await appFolder(name, `
 import Type from 'typebox';
 import { createApp, defineViewType } from '@aotui/sdk/app';
-defineViewType({ name: 'Workspace', tools: { bad: { description: 'Invalid declaration',
-    inputSchema: Type.Object({ nested: Type.Object({ entry: Type.String({ format: 'email' }) }) }) } } });
+defineViewType()({ name: 'Workspace', tools: { bad: { description: 'Invalid declaration',
+    inputSchema: Type.Object({ nested: Type.Object({ entry: Type.String({ format: 'email' }) }) }),
+    execute: () => ({ success: true }) } } });
 export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[], initialize({ publish }) { publish({ views: [] }); } });
 `);
     const healthy = await appFolder('healthy_schema', `
 import { createApp, createView, defineViewType } from '@aotui/sdk/app';
-const Workspace = defineViewType({ name:'Workspace', tools:{} });
+const Workspace = defineViewType({ name:'Workspace' });
 export default createApp({ app_name: 'healthy_schema', viewTypes:[Workspace], initialize({ publish }) {
     publish({ views: [createView(Workspace, { id:'workspace', kind:'state', render:() => ({body:'Healthy'}) })] });
 } });
@@ -479,8 +481,8 @@ export default createApp({ app_name: 'healthy_schema', viewTypes:[Workspace], in
 }, 15_000);
 
 it.each([
-    { fault: 'bindings', errorName: 'TypeError', issue: {
-        code: 'TOOL_BINDING_INVALID', path: 'View workspace.bindings', message: 'View workspace.bindings must bind exactly change, inspect',
+    { fault: 'context', errorName: 'TypeError', issue: {
+        code: 'TOOL_BINDING_INVALID', path: 'View workspace.context', message: 'Supply the instance context object for this ViewType',
     } },
     { fault: 'schema', errorName: 'TypeBoxSchemaExportError', issue: {
         code: 'TOOL_SCHEMA_UNSUPPORTED', path: '$.properties.value.format', message: 'Declaration uses unsupported ordinary parameter vocabulary.',
@@ -493,17 +495,20 @@ import { appendFileSync, existsSync } from 'node:fs';
 import Type from 'typebox';
 import { createApp, createView, defineViewType, ref } from '@aotui/sdk/app';
 const tool = {description:'Test publication', inputSchema:Type.Object({})};
-const Workspace = defineViewType({ name:'Workspace', tools:{ change:tool, inspect:tool } });
+const Workspace = defineViewType()({ name:'Workspace', tools:{
+    change: { ...tool, execute: ({ context }) => context.change() },
+    inspect: { ...tool, execute: () => ({ success:true }) },
+} });
 export default createApp({ app_name:${JSON.stringify(name)}, viewTypes:[Workspace], initialize({ publish, signal }) {
     let content = { body:'Committed diagnostic workspace',
         refs:[ref('selected', 'last good', { schema:Type.String() })] };
-    const bindings = { inspect: { execute: () => ({ success:true }) }, change: { execute() {
+    function change() {
         const candidate = { ...content, body:'Rejected diagnostic candidate' };
         if (${JSON.stringify(fault)} === 'schema') candidate.refs = [ref('selected', { value:'item' }, {
             schema:Type.Object({ value:Type.String({ format:'uuid' }) }),
         })];
         const rejected = createView(Workspace, { id:'workspace', kind:'state', render:() => ({
-            ...candidate, bindings:${fault === 'bindings' ? '{ change:bindings.change }' : 'bindings'},
+            ...candidate, context:${fault === 'context' ? 'undefined' : '{ change }'},
         }) });
         try {
             publish({ views:[rejected] });
@@ -516,8 +521,8 @@ export default createApp({ app_name:${JSON.stringify(name)}, viewTypes:[Workspac
             return { success:true };
         }
         throw Error('Invalid frame committed');
-    } } };
-    const workspace = createView(Workspace, { id:'workspace', kind:'state', render:() => ({...content,bindings}) });
+    }
+    const workspace = createView(Workspace, { id:'workspace', kind:'state', render:() => ({ ...content, context: { change } }) });
     publish({ views:[workspace] });
 } });
 `);
@@ -585,20 +590,28 @@ import Type from 'typebox';
 import { createApp, createView, defineViewType, ref, refParam } from '@aotui/sdk/app';
 const trace = value => appendFileSync(${JSON.stringify(log)}, value + '\\n');
 const schema = Type.String();
-const Workspace = defineViewType({ name:'Workspace', tools:{
-    change:{description:'Publish a frame', inputSchema:Type.Object({ operation:Type.Enum(['oversized', 'ref', 'close', 'open', 'save']) })},
+const Workspace = defineViewType()({ name:'Workspace', tools:{
+    change: {
+        description:'Publish a frame', inputSchema:Type.Object({ operation:Type.Enum(['oversized', 'ref', 'close', 'open', 'save']) }),
+        execute: ({ input, context }) => context.change(input.operation),
+    },
 } });
-const Item = defineViewType({ name:'Item', tools:{
-    inspect:{description:'Inspect selected item', inputSchema:Type.Object({selected:refParam('Text', schema)})},
+const Item = defineViewType()({ name:'Item', tools:{
+    inspect: {
+        description:'Inspect selected item', inputSchema:Type.Object({selected:refParam('Text', schema)}),
+        enabled: ({ canInspect }) => canInspect,
+        execute({ input }) { trace('entered:' + input.selected); return { success:true }; },
+    },
 } });
 export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspace, Item], initialize({ publish }) {
     let savedText = 'Item';
-    const inspect = { execute({ selected }) { trace('entered:' + selected); return { success:true }; } };
     const item = createView(Item, { id:'item_a', kind:'state', render:() => ({ body:savedText,
-        refs:[ref('selected', 'committed', { refType:'Text', schema })], bindings:{inspect},
+        refs:[ref('selected', 'committed', { refType:'Text', schema })], context:{ canInspect:true },
     }) });
     const workspace = createView(Workspace, { id:'workspace', kind:'state', render:() => ({
-        body:'Workspace', bindings:{ change: { execute({ operation }) {
+        body:'Workspace', context:{ change },
+    }) });
+    function change(operation) {
             if (operation === 'close' || operation === 'open') {
                 publish({ views: operation === 'close' ? [workspace] : [workspace, item] });
                 return { success:true };
@@ -611,7 +624,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
             const candidate = createView(Item, {id:'spill',kind:'state',render:() => ({
                 body: operation === 'ref' ? 'Replacement' : 'x'.repeat(513 * 1024),
                 refs: operation === 'ref' ? [ref('selected', 2, { refType:'Text', schema })] : [],
-                bindings: {inspect:{...inspect,enabled:false}},
+                context: { canInspect:false },
             })});
             try {
                 publish({ views:[workspace, candidate] });
@@ -627,8 +640,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
             void repair();
             if (operation === 'save') return { success:true, data: { message:'File saved. View refresh failed.' } };
             return { success:true };
-        } } },
-    }) });
+    }
     publish({ views:[workspace, item] });
 } });
 `);
@@ -716,20 +728,28 @@ import { createApp, createView, defineViewType, ref, refParam } from '@aotui/sdk
 ${adapter === 'preact' ? `import { h } from 'preact';
 import { useLayoutEffect } from 'preact/hooks';
 import { createTUIApp, View, useAppRuntimeContext, useDataRef, useState } from '@aotui/sdk';` : ''}
-const Item = defineViewType({ name:'Item', tools: {
-    inspect: { description:'Inspect published data',
-        inputSchema:Type.Object({ value:refParam('Data', Type.Unknown()) }, {additionalProperties:false}) },
-    grow: { description:'Open another page, optionally closing this one first',
-        inputSchema:Type.Object({ closeFirst:Type.Boolean(), asynchronous:Type.Optional(Type.Enum(['update', 'revert'])) }, {additionalProperties:false}) },
+const Item = defineViewType()({ name:'Item', tools: {
+    inspect: {
+        description:'Inspect published data',
+        inputSchema:Type.Object({ value:refParam('Data', Type.Unknown()) }, {additionalProperties:false}),
+        enabled: ({ canInspect }) => canInspect,
+        execute({ input: { value }, context: { staging } }) {
+            if (staging) return { success: true, data: { staged: true } };
+            let depth = 0;
+            while (Array.isArray(value)) { value = value[0]; depth++; }
+            return { success: true, data: { size: value.length, depth } };
+        },
+    },
+    grow: {
+        description:'Open another page, optionally closing this one first',
+        inputSchema:Type.Object({ closeFirst:Type.Boolean(), asynchronous:Type.Optional(Type.Enum(['update', 'revert'])) }, {additionalProperties:false}),
+        enabled: ({ canGrow }) => canGrow,
+        execute: ({ input, context }) => context.grow(input),
+    },
 } });
 const size = 400 * 1024;
 let value = 'x'.repeat(size);
 for (let index = 0; index < 40; index++) value = [value];
-const inspect = { execute({ value }) {
-    let depth = 0;
-    while (Array.isArray(value)) { value = value[0]; depth++; }
-    return { success: true, data: { size: value.length, depth } };
-} };
 const openingError = error => {
     if (error.code !== 'OBSERVATION_CAPACITY') throw error;
     return { success: false, error: { code: error.code, message: error.message, context: { path: error.path } } };
@@ -740,30 +760,27 @@ const waitForSwitch = async () => {
 ${adapter === 'plain' ? `
 export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Item], initialize({ publish }) {
     let staging = false;
-    const bindings = {
-        inspect,
-        grow: { async execute({ closeFirst }) {
-            if (closeFirst) {
-                const closed = publish({ views: [] });
-                await waitForSwitch();
-                const opened = publish({ views: [second] }, { opening: true });
-                return { success: true, data: { closedEpoch: closed.sourceEpoch, openedEpoch: opened.sourceEpoch } };
-            }
-            staging = true;
-            try {
-                publish({ views: [first, second] }, { opening: true });
-                return { success: true };
-            } catch (error) {
-                return openingError(error);
-            } finally { staging = false; }
-        } },
-    };
+    async function grow({ closeFirst }) {
+        if (closeFirst) {
+            const closed = publish({ views: [] });
+            await waitForSwitch();
+            const opened = publish({ views: [second] }, { opening: true });
+            return { success: true, data: { closedEpoch: closed.sourceEpoch, openedEpoch: opened.sourceEpoch } };
+        }
+        staging = true;
+        try {
+            publish({ views: [first, second] }, { opening: true });
+            return { success: true };
+        } catch (error) {
+            return openingError(error);
+        } finally { staging = false; }
+    }
     const first = createView(Item, { id:'item_a', kind:'state', render:() => ({ body:'a'.repeat(size),
         refs:[ref('data', value, {refType:'Data'})],
-        bindings: staging ? { ...bindings, inspect: { execute: () => ({ success: true, data: { staged: true } }) } } : bindings,
+        context: { staging, grow, canInspect:true, canGrow:true },
     }) });
     const second = createView(Item, { id:'item_b', kind:'state', render:() => ({ body:'b'.repeat(size),
-        bindings:{ ...bindings, inspect:{ ...bindings.inspect, enabled:false }, grow:{ ...bindings.grow, enabled:false } },
+        context: { staging:false, grow, canInspect:false, canGrow:false },
     }) });
     publish({ views:[first] });
 }});
@@ -782,22 +799,20 @@ function A({ controls, grow }) {
     const [state, setState] = useState('open');
     controls.setA = setState;
     if (state === 'closed') return null;
-    return h(View, { id: 'item_a', type: Item, kind: 'state', bindings: {
-        grow,
-        inspect: state === 'candidate' ? { execute: () => ({ success: true, data: { staged: true } }) } : inspect,
-    } }, h(Details, { page: 'a', staging: state === 'candidate' }));
+    const staging = state === 'candidate';
+    return h(View, { id: 'item_a', type: Item, kind: 'state', context: { staging, grow, canInspect:true, canGrow:true } },
+        h(Details, { page: 'a', staging }));
 }
 function B({ controls, grow }) {
     const [opened, setOpened] = useState(false);
     controls.setB = setOpened;
-    return opened ? h(View, { id: 'item_b', type: Item, kind: 'state', bindings: {
-        grow, inspect: { ...inspect, enabled: false },
-    } }, h(Details, { page: 'b', staging: false })) : null;
+    return opened ? h(View, { id: 'item_b', type: Item, kind: 'state', context: { staging:false, grow, canInspect:false, canGrow:true } },
+        h(Details, { page: 'b', staging: false })) : null;
 }
 function App() {
     const [controls] = useState(() => ({}));
     const { prepareProjection: prepare } = useAppRuntimeContext();
-    const grow = { async execute({ closeFirst, asynchronous }) {
+    async function grow({ closeFirst, asynchronous }) {
         if (asynchronous) {
             const rejected = () => Promise.reject(new Error('Fixture callback rejection'));
             try {
@@ -818,7 +833,7 @@ function App() {
             });
             return { success: true };
         } catch (error) { return openingError(error); }
-    } };
+    }
     return [h(A, { key: 'a', controls, grow }), h(B, { key: 'b', controls, grow })];
 }
 export default createTUIApp({ app_name: ${JSON.stringify(name)}, component: App, viewTypes: [Item] });
@@ -938,17 +953,25 @@ it('routes one shared Tool to the observed instance and sends its real eligible 
     const folder = await appFolder(name, `
 import Type from 'typebox';
 import { createApp, createView, defineViewType, ref, refParam, getToolCatalog } from '@aotui/sdk/app';
-const Counter = defineViewType({ name:'Counter', tools:{
-    add: { description:'Add to this counter', inputSchema:Type.Object({
-        delta:Type.Optional(refParam('Count', Type.Integer())),
-    }, {additionalProperties:false}) },
+const Counter = defineViewType()({ name:'Counter', tools:{
+    add: {
+        description:'Add to this counter',
+        inputSchema:Type.Object({ delta:Type.Optional(refParam('Count', Type.Integer())) }, {additionalProperties:false}),
+        enabled: ({ allowsAdd }) => allowsAdd,
+        execute({ input, context }) {
+            if (Object.hasOwn(input,'view_id')) throw Error('Router field reached the handler');
+            return context.add(input.delta ?? 1);
+        },
+    },
 } });
-const Root = defineViewType({ name:'Root', tools:{
-    change: { description:'Change page membership or eligibility', inputSchema:Type.Object({
-        mode:Type.Enum(['disable','enable','replace','close','reopen']),
-    }, {additionalProperties:false}) },
+const Root = defineViewType()({ name:'Root', tools:{
+    change: {
+        description:'Change page membership or eligibility',
+        inputSchema:Type.Object({ mode:Type.Enum(['disable','enable','replace','close','reopen']) }, {additionalProperties:false}),
+        execute: ({ input, context }) => context.change(input.mode),
+    },
 } });
-const Empty = defineViewType({name:'Empty',tools:{}});
+const Empty = defineViewType({name:'Empty'});
 const viewTypes = [Root, Counter, Empty];
 export default createApp({ app_name:'page_receivers', viewTypes, initialize({publish}) {
     let enabled = true, open = true;
@@ -957,12 +980,14 @@ export default createApp({ app_name:'page_receivers', viewTypes, initialize({pub
         return createView(Counter, { id, kind:'state', name:'Counter <' + id + '>', render:() => ({
             body:'Count: ' + count + ' & current',
             refs:[ref('count',count,{refType:'Count'})],
-            bindings:{add:{enabled:id === 'b' || enabled,execute(args) {
-                if (Object.hasOwn(args,'view_id')) throw Error('Router field reached the handler');
-                count += args.delta ?? 1;
-                const {status, sourceEpoch} = commit();
-                return {success:true,data:{status,sourceEpoch}};
-            }}},
+            context: {
+                allowsAdd: id === 'b' || enabled,
+                add(delta) {
+                    count += delta;
+                    const {status, sourceEpoch} = commit();
+                    return {success:true,data:{status,sourceEpoch}};
+                },
+            },
         })});
     };
     let a = make('a', 2);
@@ -970,16 +995,17 @@ export default createApp({ app_name:'page_receivers', viewTypes, initialize({pub
     const empty = createView(Empty, {id:'empty',kind:'state',render:() => ({body:''})});
     const root = createView(Root,{id:'root',kind:'instruction',render:() => ({
         body:getToolCatalog(viewTypes).map(t => t.viewType + '.' + t.name).join('\\n'),
-        bindings:{change:{ execute({mode}) {
-            if (mode === 'disable') enabled = false;
-            if (mode === 'enable') enabled = true;
-            if (mode === 'replace') a = make('a', 100);
-            if (mode === 'close') open = false;
-            if (mode === 'reopen') open = true;
-            const {status,sourceEpoch} = commit();
-            return {success:true,data:{status,sourceEpoch}};
-        }}},
+        context:{ change },
     })});
+    function change(mode) {
+        if (mode === 'disable') enabled = false;
+        if (mode === 'enable') enabled = true;
+        if (mode === 'replace') a = make('a', 100);
+        if (mode === 'close') open = false;
+        if (mode === 'reopen') open = true;
+        const {status,sourceEpoch} = commit();
+        return {success:true,data:{status,sourceEpoch}};
+    }
     function commit() { return publish({ views: open ? [root,a,b,empty] : [root,b,empty] }); }
     commit();
 }});
@@ -1098,15 +1124,28 @@ it('keeps aliases from all registered ViewTypes through real Worker observations
 import Type from 'typebox';
 import { createApp, createView, defineViewType } from '@aotui/sdk/app';
 const closed = { additionalProperties: false };
-const NumberType = defineViewType({ name: 'Numbers', tools: {
-    set: { description: 'Set one number', inputSchema: Type.Object({ amount: Type.Integer() }, closed) },
-    increment: { description: 'Increase one number' },
+const NumberType = defineViewType()({ name: 'Numbers', tools: {
+    set: {
+        description: 'Set one number', inputSchema: Type.Object({ amount: Type.Integer() }, closed),
+        execute({ input, context }) { context.value = input.amount; return context.finish(context.id); },
+    },
+    increment: {
+        description: 'Increase one number',
+        execute({ context }) { context.value++; return context.finish(context.id); },
+    },
 } });
-const TextType = defineViewType({ name: 'Text', tools: {
-    set: { description: 'Set the text', inputSchema: Type.Object({ label: Type.String() }, closed) },
+const TextType = defineViewType()({ name: 'Text', tools: {
+    set: {
+        description: 'Set the text', inputSchema: Type.Object({ label: Type.String() }, closed),
+        enabled: ({ canSet }) => canSet,
+        execute: ({ input, context }) => context.setLabel(input.label),
+    },
 } });
-const RootType = defineViewType({ name: 'Root', tools: {
-    set_mode: { description: 'Change the text page state', inputSchema: Type.Object({ mode: Type.Enum(['open', 'disabled', 'closed']) }, closed) },
+const RootType = defineViewType()({ name: 'Root', tools: {
+    set_mode: {
+        description: 'Change the text page state', inputSchema: Type.Object({ mode: Type.Enum(['open', 'disabled', 'closed']) }, closed),
+        execute: ({ input, context }) => context.setMode(input.mode),
+    },
 } });
 export default createApp({ app_name: 'alias_selection', viewTypes: [RootType, NumberType, TextType], initialize({ publish }) {
     let mode = 'closed', label = 'Original';
@@ -1114,21 +1153,18 @@ export default createApp({ app_name: 'alias_selection', viewTypes: [RootType, Nu
         publish({ views: mode === 'closed' ? [root, a, another] : [root, a, another, text] });
         return { success: true, data: { view } };
     };
-    const numberView = (id, value) => createView(NumberType, { id, kind: 'state', render: () => ({
-        body: 'Number: ' + value,
-        bindings: {
-            set: { execute({ amount }) { value = amount; return finish(id); } },
-            increment: { execute() { value++; return finish(id); } },
-        },
-    }) });
+    const numberView = (id, value) => {
+        const context = { id, value, finish };
+        return createView(NumberType, { id, kind: 'state', render: () => ({ body: 'Number: ' + context.value, context }) });
+    };
     const a = numberView('a', 0), another = numberView('another', 10);
     const text = createView(TextType, { id: 'text', kind: 'state', render: () => ({
         body: 'Text: ' + label,
-        bindings: { set: { enabled: mode === 'open', execute(input) { label = input.label; return finish('text'); } } },
+        context: { canSet: mode === 'open', setLabel(next) { label = next; return finish('text'); } },
     }) });
     const root = createView(RootType, { id: 'root', kind: 'instruction', render: () => ({
         body: 'Change the text page state.',
-        bindings: { set_mode: { execute(input) { mode = input.mode; return finish('root'); } } },
+        context: { setMode(next) { mode = next; return finish('root'); } },
     }) });
     finish('root');
 } });

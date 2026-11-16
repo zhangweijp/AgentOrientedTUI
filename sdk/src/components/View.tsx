@@ -4,7 +4,7 @@ import { useContext, useLayoutEffect, useMemo } from 'preact/hooks';
 import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
 import { ViewRuntimeContext } from '../contexts/view-runtime-context.js';
 import { VIEW_ID_PATTERN } from '../app-factory/app-factory.js';
-import { captureViewBindings, requireViewType, type ViewBindingProps, type ViewType } from '../tools/view-type-tool.js';
+import { captureViewBindings, requireViewType, type ViewContextProps, type ViewType } from '../tools/view-type-tool.js';
 
 export type ViewProps<Definition extends ViewType = ViewType> = {
   readonly id: string;
@@ -12,9 +12,9 @@ export type ViewProps<Definition extends ViewType = ViewType> = {
   readonly kind: 'instruction' | 'state';
   readonly name?: string;
   readonly children?: ComponentChildren;
-} & ViewBindingProps<NoInfer<Definition>>;
+} & ViewContextProps<NoInfer<Definition>>;
 
-export function View<const Definition extends ViewType>({ id, type, kind, name, bindings, context, children }: ViewProps<Definition>): JSX.Element {
+export function View<const Definition extends ViewType>({ id, type, kind, name, context, children }: ViewProps<Definition>): JSX.Element {
   if (typeof id !== 'string' || !VIEW_ID_PATTERN.test(id))
     throw new Error('[AOTUI SDK] View IDs must use only ASCII letters, digits or underscores');
   if (kind !== 'instruction' && kind !== 'state')
@@ -30,7 +30,7 @@ export function View<const Definition extends ViewType>({ id, type, kind, name, 
   if (!app) throw new Error('[AOTUI SDK] View requires a managed App');
   const definition = requireViewType(app.viewTypes, type);
 
-  const next = captureViewBindings(definition, bindings, id, context);
+  const next = captureViewBindings(definition, id, context);
   const slot = useMemo(() => {
     let attached: { node: HTMLDivElement; mount: MountedView } | undefined;
     return {

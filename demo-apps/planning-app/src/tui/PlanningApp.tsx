@@ -5,7 +5,7 @@ import { PlanListView } from './PlanListView.js';
 import { PlanDetailView } from './PlanDetailView.js';
 import { planningService } from '../core/planning-service.js';
 import type { AppContext } from '@aotui/sdk';
-import { RootType, PlanListType, PlanDetailType, planningViewTypes, createPlanDetailBindings, createPlanListBindings } from './planning-tools.js';
+import { RootType, PlanListType, PlanDetailType, planningViewTypes } from './planning-tools.js';
 
 const isPlanCompleted = (plan: Plan) => {
     if (plan.phases.length === 0) {
@@ -330,7 +330,7 @@ function PlanningApp() {
         return true;
     };
 
-    const planListBindings = createPlanListBindings({
+    const planListContext = {
         plans,
         activePlan,
         createPlan,
@@ -338,9 +338,9 @@ function PlanningApp() {
         deletePlan,
         openPlan,
         closePlan,
-    });
+    };
 
-    const planDetailBindings = createPlanDetailBindings({
+    const planDetailContext = {
         activePlan,
         addPhase,
         deletePhase,
@@ -349,11 +349,6 @@ function PlanningApp() {
         updateTask,
         deleteTask,
         completeTask,
-    });
-
-    const listBindings = {
-        ...planListBindings,
-        close_plan: { ...planListBindings.close_plan, enabled: Boolean(activePlan) },
     };
 
     const planListName = activePlan ? 'Plan List (Active Plan Open)' : 'Plan List';
@@ -365,12 +360,12 @@ function PlanningApp() {
                 <RootView />
             </View>
 
-            <View kind="state" id="plan_list" type={PlanListType} bindings={listBindings} name={planListName}>
+            <View kind="state" id="plan_list" type={PlanListType} context={planListContext} name={planListName}>
                 <PlanListView plans={plans} activePlan={activePlan} />
             </View>
 
             {activePlan ? (
-                <View kind="state" id="plan_detail" type={PlanDetailType} bindings={planDetailBindings} name={planDetailName}>
+                <View kind="state" id="plan_detail" type={PlanDetailType} context={planDetailContext} name={planDetailName}>
                     <PlanDetailView plan={activePlan} />
                 </View>
             ) : null}

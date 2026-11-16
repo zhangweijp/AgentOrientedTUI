@@ -10,8 +10,8 @@ import { useDataRef } from './hooks/useRef.js';
 import { ViewRuntimeContext } from './contexts/view-runtime-context.js';
 
 import {defineViewType} from './tools/view-type-tool.js';
-const RecordType=defineViewType({name:'Record',tools:{}});
-const WorkspaceType=defineViewType({name:'Workspace',tools:{}});
+const RecordType=defineViewType({name:'Record'});
+const WorkspaceType=defineViewType({name:'Workspace'});
 function setup(component: () => any) {
   const factory = createTUIApp({ app_name: 'ref_ownership', viewTypes:[RecordType,WorkspaceType], component });
   const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);

@@ -18,7 +18,6 @@ type ToolDeclaration = {
     readonly inputSchema?: ObjectSchema;
 };
 type ToolDeclarations = Readonly<Record<string, ToolDeclaration>>;
-type StaticToolDeclarations = Readonly<Record<string, ToolDeclaration & { readonly execute?: never; readonly enabled?: never }>>;
 // An omitted schema leaves an unknown entry during inference without widening the other tools.
 type ToolSchemas = Readonly<Record<string, unknown>>;
 type ContextInvocation<Input, Context> = { readonly input: Input; readonly context: Context };
@@ -59,19 +58,9 @@ export type DeepReadonly<Value> = Value extends readonly unknown[]
 export type ArgsOf<Definition> = Definition extends ToolDefinition<infer Schema>
     ? DeepReadonly<Type.Static<Schema>> : never;
 
-export interface ToolBinding<Definition> {
-    readonly execute: (args: ArgsOf<Definition>) => ToolResult | Promise<ToolResult>;
-    readonly enabled?: boolean;
-}
-
-export type ViewBindings<Definition extends ViewType> = {
-    readonly [Key in keyof Definition['tools']]: ToolBinding<Definition['tools'][Key]>;
-};
-export type ViewBindingProps<Definition extends ViewType> = Definition extends { readonly [contextType]: infer Context }
-    ? { readonly context: Context; readonly bindings?: never }
-    : { readonly context?: never } & (keyof Definition['tools'] extends never
-        ? { readonly bindings?: Readonly<Record<string, never>> }
-        : { readonly bindings: ViewBindings<Definition> });
+export type ViewContextProps<Definition extends ViewType> = Definition extends { readonly [contextType]: infer Context }
+    ? { readonly context: Context }
+    : { readonly context?: never };
 
 export interface ToolCatalogEntry {
     readonly viewType: string;
@@ -84,6 +73,7 @@ const viewTypeWitness = Symbol.for('@aotui/sdk/view-type');
 const contextToolsWitness = Symbol.for('@aotui/sdk/view-type/context-tools');
 const descriptorSymbols = [viewTypeWitness, contextToolsWitness];
 const definedTypes = new WeakMap<object, ViewType>();
+const emptyTypeFields = new Set(['name']);
 const typeFields = new Set(['name', 'tools']);
 const toolFields = new Set(['description', 'inputSchema']);
 const bindingFields = new Set(['execute', 'enabled']);
@@ -126,18 +116,17 @@ export function refParam<Schema extends Type.TSchema>(refType: string, valueSche
 export function defineViewType<Context extends object>(): <const Schemas extends ToolSchemas>(
     declaration: { readonly name: string; readonly tools: ContextToolDeclarations<Context, Schemas> },
 ) => ContextualViewType<ContextToolMetadata<Schemas>, Context>;
-/** Declare shared metadata for Views that provide their own executable bindings. */
-export function defineViewType<const Tools extends StaticToolDeclarations>(
-    declaration: { readonly name: string; readonly tools: Tools },
-): ViewType<Tools>;
+/** Declare a ViewType without tools. */
+export function defineViewType(declaration: { readonly name: string; readonly tools?: never }): ViewType<{}>;
 export function defineViewType(declaration?: unknown): unknown {
-    return arguments.length === 0 ? (input: unknown) => captureType(input, 'context') : captureType(declaration, 'static');
+    return arguments.length === 0 ? (input: unknown) => captureType(input, 'context') : captureType(declaration, 'empty');
 }
 
-function captureType(declaration: unknown, source: 'static' | 'context' | 'descriptor'): ViewType {
+function captureType(declaration: unknown, source: 'empty' | 'context' | 'descriptor'): ViewType {
     const code = 'TOOL_DEFINITION_INVALID';
     const fromTypeBox = source !== 'descriptor';
-    const fields = dataProperties(declaration, 'ViewType', code, typeFields, fromTypeBox ? undefined : descriptorSymbols);
+    const fields = dataProperties(declaration, 'ViewType', code,
+        source === 'empty' ? emptyTypeFields : typeFields, fromTypeBox ? undefined : descriptorSymbols);
     const name = fields.get('name');
     if (typeof name !== 'string' || !name.trim()) fail(code, 'ViewType.name must be a non-empty string');
     const contextStamp = fromTypeBox ? undefined : Object.getOwnPropertyDescriptor(declaration, contextToolsWitness);
@@ -146,9 +135,10 @@ function captureType(declaration: unknown, source: 'static' | 'context' | 'descr
     const imported = contextStamp && dataProperties(contextStamp.value, name + ' context tools', code);
     const contextTools: Record<string, ContextTool> | undefined = source === 'context' || imported ? Object.create(null) : undefined;
     const tools = Object.create(null);
-    const declared = dataProperties(fields.get('tools'), 'ViewType.tools', code);
-    if (imported && imported.size !== declared.size) fail(code, name + ' has mismatched context tools');
-    for (const [key, input] of declared) {
+    const declared = source === 'empty' ? undefined : dataProperties(fields.get('tools'), 'ViewType.tools', code);
+    if (source === 'descriptor' && (imported?.size ?? 0) !== declared!.size)
+        fail(code, name + ' has mismatched context tools');
+    for (const [key, input] of declared ?? []) {
         const label = name + '.' + key;
         const tool = dataProperties(input, label, code, source === 'context' ? contextToolFields : toolFields);
         const description = tool.get('description');
@@ -235,35 +225,18 @@ function compare(a: string, b: string): number {
     return a < b ? -1 : a > b ? 1 : 0;
 }
 
-export function captureViewBindings(type: ViewType, input: unknown, id: string, context?: unknown): readonly AppFrameBinding[] {
+export function captureViewBindings(type: ViewType, id: string, context?: unknown): readonly AppFrameBinding[] {
     const code = 'TOOL_BINDING_INVALID';
-    const label = 'View ' + id + '.bindings';
     const contextTools: Record<string, ContextTool> | undefined = Object.getOwnPropertyDescriptor(type, contextToolsWitness)?.value;
-    if (contextTools) {
-        const contextPath = 'View ' + id + '.context';
-        if (input !== undefined) fail(code, 'Supply context for this ViewType without bindings', label);
-        if ((typeof context !== 'object' || context === null) && typeof context !== 'function')
-            fail(code, 'Supply the instance context object for this ViewType', contextPath);
-        return Object.entries(contextTools).map(([name, { execute, enabled }]) => {
-            const available = enabled === undefined ? true : enabled(context);
-            if (typeof available !== 'boolean') {
-                const path = 'View ' + id + '.' + name + '.enabled';
-                fail(code, path + ' must return a boolean', path);
-            }
-            return Object.freeze({ name, enabled: available, execute: (args: Parameters<AppFrameBinding['execute']>[0]) => execute(args, context) });
-        });
-    }
-    if (context !== undefined) fail(code, 'This ViewType uses explicit bindings', 'View ' + id + '.context');
-    const names = Object.keys(type.tools);
-    const fields = dataProperties(input === undefined && names.length === 0 ? {} : input, label, code);
-    if (fields.size !== names.length || names.some(name => !fields.has(name)))
-        fail(code, label + ' must bind exactly ' + (names.join(', ') || 'no operations'), label);
-    return names.map(name => {
-        const definition = dataProperties(fields.get(name), label + '.' + name, code, bindingFields);
-        const execute = definition.get('execute');
-        const enabled = definition.has('enabled') ? definition.get('enabled') : true;
-        if (typeof execute !== 'function' || typeof enabled !== 'boolean')
-            fail(code, label + '.' + name + ' requires execute and optional boolean enabled', label);
-        return Object.freeze({ name, execute: execute as AppFrameBinding['execute'], enabled });
+    if (!contextTools) return [];
+    if ((typeof context !== 'object' || context === null) && typeof context !== 'function')
+        fail(code, 'Supply the instance context object for this ViewType', 'View ' + id + '.context');
+    return Object.entries(contextTools).map(([name, { execute, enabled }]) => {
+        const available = enabled === undefined ? true : enabled(context);
+        if (typeof available !== 'boolean') {
+            const path = 'View ' + id + '.' + name + '.enabled';
+            fail(code, path + ' must return a boolean', path);
+        }
+        return Object.freeze({ name, enabled: available, execute: (args: Parameters<AppFrameBinding['execute']>[0]) => execute(args, context) });
     });
 }

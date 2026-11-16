@@ -5,11 +5,7 @@ import { RootView } from './RootView.js';
 import { TerminalConsoleView } from './TerminalConsoleView.js';
 import { TerminalView } from './TerminalView.js';
 import {
-    createCloseTerminalBinding,
-    createLoadMoreOutputBinding,
     RootType, TerminalType, TerminalConsoleType, terminalViewTypes,
-    createNewTerminalBinding,
-    createSendCommandBinding,
 } from './TerminalTools.js';
 import type { TerminalSession, CommandRecord, CommandStatus } from '../types.js';
 import {
@@ -214,15 +210,11 @@ function TerminalRoot() {
             <View kind="instruction" id="root" type={RootType} name="Root">
                 <RootView />
             </View>
-            <View kind="state" id="term_console" type={TerminalConsoleType} bindings={{ new_terminal_and_send_command: createNewTerminalBinding(sendCommandNewTerminal) }} name="TerminalConsole">
+            <View kind="state" id="term_console" type={TerminalConsoleType} context={{ onSendCommandNewTerminal: sendCommandNewTerminal }} name="TerminalConsole">
                 <TerminalConsoleView projectPath={projectPath} terminals={terminals} />
             </View>
             {terminals.map((terminal: TerminalSession) => (
-                <View kind="state" key={terminal.id} id={terminal.id} type={TerminalType} bindings={{
-                    send_command_to_exist_terminal: createSendCommandBinding(terminal, sendCommand),
-                    load_more_output: createLoadMoreOutputBinding(terminal.id, setOutputTail),
-                    close_terminal: createCloseTerminalBinding(terminal.id, closeTerminal),
-                }} name={`Terminal ${terminal.id}`}>
+                <View kind="state" key={terminal.id} id={terminal.id} type={TerminalType} context={{ terminal, onSendCommand: sendCommand, onLoadMoreOutput: setOutputTail, onCloseTerminal: closeTerminal }} name={`Terminal ${terminal.id}`}>
                     <TerminalView terminal={terminal} />
                 </View>
             ))}
