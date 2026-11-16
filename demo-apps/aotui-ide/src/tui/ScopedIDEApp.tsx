@@ -50,7 +50,7 @@ export function ScopedIDEApp() {
     const [, render] = useState(0);
     const owner = useMemo(() => {
         requireIDE(context.persistence, 'IDE_PERSISTENCE_UNAVAILABLE');
-        return new IDESession(context.persistence, resolveIDEOptions(context), () => render(value => value + 1));
+        return new IDESession(context.persistence, resolveIDEOptions(context), () => render(value => value + 1), context.prepareProjection);
     }, []);
 
     useAppLifecycle({ stop: () => owner.stop(), close: () => owner.close() });

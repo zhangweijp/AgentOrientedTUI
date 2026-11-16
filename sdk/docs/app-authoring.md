@@ -37,7 +37,13 @@ Tool 声明使用 TypeBox。普通字段和解析后的 Ref 允许有限 JSON �
 
 Tool handler 返回收据，业务数据通过 View 呈现。一般发布故障保留最近有效快照和诊断，并暂停新调用直到 App 提交有效帧。已经完成的业务写入应保留成功收据。普通 TypeScript 示例先更新 App 状态，再单独捕获 `publish` 的异常，返回简短的同步失败提示。修复呈现后，从 App 当前持有的业务状态重新调用发布即可。 [普通 TypeScript 示例](examples/work-items-plain.ts)
 
-`PreparedProjection` 确认同步的本地准备。Host 的 flush 确认当前来源被 Runtime 接收。宿主再采用与本轮 Messages 和 Tools 对应的 Observation。
+### Preact 的局部提交反馈
+
+`useAppRuntimeContext().prepareProjection(update)` 将这轮调度中的组件提交收集起来，等调度队列完成后统一准备完整候选。它返回局部 `PreparedProjection`，或以发布错误拒绝。写入已完成时，App 可捕获投影错误并在成功收据中说明同步情况。相同状态无需再次准备投影。
+
+可放弃的新增页可调用 `prepareProjection(update, { revert })`。现有页面应保持挂载，两个回调都要同步安排状态更新。异步函数或返回 Promise／thenable 的回调会被拒绝。新增页因 `OBSERVATION_CAPACITY` 被拒绝时，SDK 调用 `revert` 并在恢复队列完成后验证原快照、挂载与执行绑定确实恢复。实际重挂和无效渲染沿投影故障路径报告。导航持久化应在局部准备成功后执行。 [Preact 文件示例](examples/file-app.tsx)
+
+`PreparedProjection` 确认本地准备成功。Host 的 flush 确认当前来源被 Runtime 接收。宿主再采用与本轮 Messages 和 Tools 对应的 Observation。
 
 使用 `registerCleanup({ stop, close })` 或 Preact 的 `useAppLifecycle` 登记 App 自有资源。异步准备结束后检查 `signal.aborted`。关闭时已经开始的初始化与资源登记由 Runtime 收尾。
 

@@ -25,6 +25,7 @@ import { AOTUIError } from '../../spi/core/errors.js';
 import type { ViewToolInvocationTerminal } from '../../spi/worker-protocol/index.js';
 
 import { SemanticProjectionCoordinator, type CompleteProjectionFrame } from '../../core/projection/coordinator.js';
+import { hostedObservationCapacityIssue } from '../../core/invocation/observation-registry.js';
 import { createViewOwnedTools } from '../../core/tool/view-owned-tools.js';
 import type { OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
 import type { ToolInvocationDescriptor, ViewToolReceiver } from '../../core/snapshot/types.js';
@@ -49,6 +50,7 @@ export class AppKernel implements IRefExporter {
     private readonly projection = new SemanticProjectionCoordinator({
         identity: () => ({ appId: this.id, instanceId: this.appExecutionInstanceId }),
         readFrame: () => this.readViews ? this.prepareFrame(this.readViews()) : { views: [], tools: [] },
+        checkCapacity: hostedObservationCapacityIssue,
     });
     private appExecutionInstanceId: string = randomUUID();
     private viewOwnedTools?: ReturnType<typeof createViewOwnedTools>;

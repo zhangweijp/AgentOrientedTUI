@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SemanticProjectionCoordinator } from './coordinator.js';
+import { hostedObservationCapacityIssue } from '../invocation/observation-registry.js';
 import { createSnapshotCore } from '../snapshot/store.js';
 import type { ViewSnapshotV4 } from '../snapshot/types.js';
 
@@ -10,11 +11,11 @@ const view = (owner = aa, value = 'body'): ViewSnapshotV4 => ({
     kind: 'state', content: { format: 'markdown-v1', value },
 });
 
-function fixture(views = [view(), view(bb)]) {
+function fixture(views = [view(), view(bb)], checkCapacity?: typeof hostedObservationCapacityIssue) {
     const frame = { views };
     const identity = () => ({ appId: 'app', instanceId: 'run' });
     const readFrame = vi.fn(() => ({ views: frame.views, tools: [] }));
-    const c = new SemanticProjectionCoordinator({ identity, readFrame });
+    const c = new SemanticProjectionCoordinator({ identity, readFrame, ...(checkCapacity ? { checkCapacity } : {}) });
     const core = createSnapshotCore();
     core.lifecycle.startApp('app', 'run');
     return { c, frame, readFrame, core, publish: () => c.publishTo(core.committer) };
@@ -22,7 +23,7 @@ function fixture(views = [view(), view(bb)]) {
 
 describe('shared projection commit boundary', () => {
     it('reports real failures and preserves their diagnostic when a staged opening exceeds capacity', () => {
-        const { c, core, publish } = fixture();
+        const { c, core, publish } = fixture(undefined, hostedObservationCapacityIssue);
         const accept = vi.fn();
         const complete = (views: readonly ViewSnapshotV4[], opening = false) => {
             c.beginCommit();
@@ -44,6 +45,38 @@ describe('shared projection commit boundary', () => {
         expect(c.token().epoch).toBe(1);
         expect(accept).toHaveBeenCalledTimes(1);
         expect(core.store.readLatest('app')).toMatchObject({ status: 'degraded', lastGood: { views: [view()] } });
+    });
+
+    it('keeps observation admission in the managed assembly', () => {
+        const views = [view(aa, 'a'.repeat(400 * 1024)), view(bb, 'b'.repeat(400 * 1024))];
+        const direct = fixture(views), hosted = fixture(views, hostedObservationCapacityIssue);
+        expect(direct.c.commit(() => {})).toBe('prepared');
+        expect(direct.publish().status).toBe('published');
+        expect(hosted.c.commit(() => {})).toBe('failed');
+        expect(hosted.publish()).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_CAPACITY' } });
+    });
+
+    it.each(['remount', 'different rollback'] as const)('reports a real renderer failure on %s', failure => {
+        const before = view(aa, 'a'.repeat(400 * 1024));
+        const { c, frame, core, publish } = fixture([before], hostedObservationCapacityIssue);
+        expect(c.commit(() => {})).toBe('prepared');
+        expect(publish().status).toBe('published');
+        c.beginCommit();
+        const first = failure === 'remount' ? { ...before, viewInstanceId: 'a2' } : before;
+        frame.views = [first, view(bb, 'b'.repeat(400 * 1024))];
+        const result = c.endCommit(undefined, false, 'opening');
+        let code = 'OBSERVATION_CAPACITY';
+        if (failure === 'remount') expect(result).toBe('failed');
+        else {
+            expect(result).toMatchObject({ status: 'rejected', issue: { code } });
+            c.beginCommit();
+            frame.views = [view(aa, 'a different rollback')];
+            expect(c.endCommit(undefined, false, 'restore')).toBe('failed');
+            code = 'SNAPSHOT_INVALID';
+        }
+        expect(publish()).toMatchObject({ status: 'rejected', issue: { code } });
+        expect(c.token().epoch).toBe(1);
+        expect(core.store.readLatest('app')).toMatchObject({ status: 'degraded', lastGood: { views: [before] } });
     });
 
     it('keeps first null and non-null → null transitions, including falsy replacements', () => {
