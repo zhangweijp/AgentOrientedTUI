@@ -15,9 +15,8 @@ const bytes = value => Buffer.byteLength(JSON.stringify(value));
 const elapsed = start => Number((performance.now() - start).toFixed(3));
 
 async function runCase(viewCount) {
-    const snapshotCore = core.createSnapshotCore();
+    const snapshotCore = core.createSnapshotCore({ appId, instanceId });
     const registry = core.createViewOwnedTools(appId, instanceId);
-    snapshotCore.lifecycle.startApp(appId, instanceId);
     let client;
     let handlerEntries = 0;
     try {

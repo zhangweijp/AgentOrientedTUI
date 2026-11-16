@@ -2,34 +2,34 @@
 
 本合同适用于一个 Snapshot Core、一个持有 View 与 App/ViewType Tool 注册的 Registry 及其实际 owner。它约束受管理集合和指定逻辑字节，不代表整个进程的 RSS 恒定，也不限制调用者或业务 handler 自己持有的对象。Producer/Host 通过 `@aotui/runtime/core` 使用正式低层合同；可消费的入口与完整装配示例见 [Core 公共入口](core-public-entry.md)。
 
-## Snapshot 额度
+## 单次 App 运行的 Snapshot Core
 
-`createSnapshotCore(options)` 按值捕获下表四项保留额度。缺省即硬上限，每项可设置为 0 至该上限的安全整数。0 表示不允许该类新保留。单次 Draft 的九项 `options.limits` 在创建时独立捕获，history 和 lease 使用各自的配置。 [单次 Draft 限额](core-public-entry.md#snapshot-limits)
+`createSnapshotCore({ appId, instanceId, ...options })` 捕获非空的身份字符串和可选额度。构造后，`readAppIdentity(appId)` 返回活动身份，`readLatest(appId)` 在第一次有效发布前返回 `unready`。读取其他 App 时分别返回 `absent` 和 `unready`。观察与调用只接受绑定到该活动实例的交互。
+
+下表配置缺省即硬上限，每项可设置为 0 至该上限的安全整数。单次 Draft 的九项 `options.limits` 在创建时独立捕获，history 和 lease 使用各自的配置。 [单次 Draft 限额](core-public-entry.md#snapshot-limits)
 
 | 字段 | 缺省及硬上限 | 单位 |
 | --- | ---: | --- |
-| maxAppRecords | 1,024 | App Map 条目，包含 stopped |
-| maxInstanceIds | 65,536 | 本 Core 已发行的不同 instanceId，包含已停止的身份 |
-| maxIdentityBytes | 8 MiB | 每个不同 appId 的 UTF-8 字节一次，加每个已发行 instanceId 的 UTF-8 字节一次 |
-| maxCurrentBytes | 32 MiB | 所有当前 SnapshotEntry 的完整已接受 Draft canonical JSON 字节 |
+| maxIdentityBytes | 8 MiB | 此次运行的 appId 与 instanceId 的 UTF-8 字节总和 |
+| maxCurrentBytes | 32 MiB | 当前快照对应的完整已接受 Draft canonical JSON 字节 |
 
-身份额度在撤销旧 current 或消费新身份之前预检。失败抛带 `code='SNAPSHOT_CAPACITY'` 的 Error，旧来源保持；相同活动身份即使满额仍幂等。停止 App 或历史 TTL 到期均不删除已发行身份。这样才能防止旧请求因身份重用而重新获得权限。
+构造时的身份总字节超限会抛出 `SNAPSHOT_CAPACITY`。同名 App 再次运行时，可信 Host 分配新的 instanceId，并创建新的 Core。
 
 current 预算失败沿用原 commit 次序：消费本次 producerSeq、进入 degraded、保留旧 revision/lastGood 和旧 Ref 内容。相同语义的 unchanged 沿用原 entry 的字节费用，即使新尝试的序号更长。当前快照不会被暗中驱逐，活 lease 也不会被额度强制取消。
 
-当前被新快照替换、stop 或换身份时，仅仍有合法 lease 的旧快照进入 history；没有 holder 的旧快照立即删除；最后一个 lease 显式释放后立即退出，时限 lease 在原有读／检查清理中识别过期后退出，不再额外等待历史 TTL。history TTL 不再承诺保留无人持有的完整 Ref payload。新 current／degraded lastGood、已采用观察、观察准备或在途调用仍需要的数据按各自 owner 保留。
+当前快照被替换或实例停止时，仍有合法 lease 的旧快照进入 history。没有持有人的旧快照立即删除。最后一个 lease 显式释放后立即清理，时限 lease 在原有读／检查清理中识别过期后退出。新 current、degraded 的 lastGood、已采用观察、观察准备或在途调用所需的数据按各自持有人保留。
 
-stop 或换身份会把当前费用移入 history。活 lease 可能让历史暂时超出 history 额度，但迁移本身不增加总字节；新的发布同时满足 current 与原 history 预算。默认 current+history 逻辑预算为 64 MiB，此数值不能套用于任意自定义 history/单 Draft 配置。
+`lifecycle.stop()` 撤销新发布和观察，并把仍有持有人的当前快照移入 history。停止时保留的历史可以暂时超出 history 额度，直到持有人释放。运行时新的发布必须同时满足单份 Draft、current 与发布后 history 的额度。
 
-Core 输出和保存的 Issue 中，message/path 各不超过 512 UTF-8 字节；过长使用完整 Unicode 码点组成的前缀和“…”表示，后缀也计费。短诊断保持原样。trusted prepare-failure 被无效 JS 调用传入非字符串或超过 64 字节的 code 时，归一为 SNAPSHOT_INVALID。diagnosticBytes 是当前各 App.issue 的 code/message/path 字节之和；成功、unchanged、stop 清除相应费用。
+Core 输出和保存的 Issue 中，message/path 各不超过 512 UTF-8 字节。过长使用完整 Unicode 码点组成的前缀和“…”表示，后缀也计费。短诊断保持原样。trusted prepare-failure 被无效 JS 调用传入非字符串或超过 64 字节的 code 时，归一为 SNAPSHOT_INVALID。diagnosticBytes 是当前诊断的 code/message/path 字节之和。成功、unchanged、stop 清除相应费用。
 
-`store.inspect()` 返回独立冻结值：原 activeApps/currentSnapshots/historicalSnapshots/historicalBytes/activeLeases，以及 state、appRecords、issuedInstanceIds、identityBytes、currentBytes、diagnosticBytes。诊断、身份和快照是分别计量的保留数据。
+`store.inspect()` 返回独立冻结值，包含 state、currentSnapshots、currentBytes、historicalSnapshots、historicalBytes、activeLeases 和 diagnosticBytes。
 
 ## 永久 dispose 与 lease
 
-只有可信 owner 的 `lifecycle.dispose()` 有销毁权，只读 store 没有该方法。它同步且幂等，永久清空 apps、已发行身份、entries 和 lease Maps。dispose 后：
+可信 owner 在在途责任结算后调用 `lifecycle.dispose()`。它同步且幂等，永久清除绑定身份、快照、诊断和 lease。dispose 后的行为如下。
 
-- startApp 在读取输入之前抛 SNAPSHOT_CORE_CLOSED；accept/reportPrepareFailure 不读取输入，返回 APP_STOPPED。
+- accept/reportPrepareFailure 直接返回 APP_STOPPED。
 - readLatest 返回 stopped，readAppIdentity 返回 absent；旧 Snapshot/Ref/Tool 查找返回 SNAPSHOT_EXPIRED。
 - inspect 为 disposed，所有数字为 0；dispose、关闭后的 inspect/stop/旧 lease.release 不读取 clock，即使 clock 已失败也能清理。
 

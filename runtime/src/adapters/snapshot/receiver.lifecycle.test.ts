@@ -67,7 +67,7 @@ it('uses one integer monotonic default clock for snapshots and interactions when
         vi.restoreAllMocks();
     }
     expect(f.r.getInteractionStats()).toMatchObject({ closed: true, combinedBytes: 0 });
-    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', appRecords: 0, activeLeases: 0, currentBytes: 0 });
+    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', activeLeases: 0, currentBytes: 0 });
 });
 
 it('recovers observation and invocation after a rejected injected clock rollback without replacing the App', async () => {
@@ -85,7 +85,7 @@ it('recovers observation and invocation after a rejected injected clock rollback
         expect(f.counts()).toEqual({ handlers: 1, completed: 1 });
     } finally { await f.r.close(); }
     expect(f.r.getInteractionStats()).toMatchObject({ closed: true, combinedBytes: 0 });
-    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', appRecords: 0, activeLeases: 0, currentBytes: 0 });
+    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', activeLeases: 0, currentBytes: 0 });
 });
 
 it('A16 closes authority before disposing Core and retains stopped state and resource facts', async () => {
@@ -93,7 +93,7 @@ it('A16 closes authority before disposing Core and retains stopped state and res
     const original = f.r.closeInteractions.bind(f.r); let checked = 0;
     vi.spyOn(f.r, 'closeInteractions').mockImplementation(async () => { expect(f.core.store.inspect().state).toBe(checked++ ? 'disposed' : 'active'); await original(); expect(f.r.getInteractionStats()?.closed).toBe(true); });
     await f.r.close(); await f.r.close();
-    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', appRecords: 0, activeLeases: 0, currentBytes: 0 });
+    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', activeLeases: 0, currentBytes: 0 });
     expect(f.r.report()).toMatchObject({ health: 'stopped', published: 1 });
     const poison: any = new Proxy({}, { get() { throw Error('read'); } }); f.r.acceptPrepared(poison); f.r.acceptPrepareFailure(poison);
     expect(f.r.report()).toMatchObject({ health: 'stopped', published: 1 });
@@ -101,14 +101,19 @@ it('A16 closes authority before disposing Core and retains stopped state and res
 });
 it.each(['authorize', 'execute'] as const)('A16 keeps actual %s work tracked after close and never admits a late handler', async stage => {
     const f = fixture('i', stage), request = await f.observe(), pending = f.client.invoke(request); await f.entered.promise;
+    const snapshotId = f.r.report().snapshotId!;
     expect(f.r.getInteractionStats()?.activeInvocations).toBe(1);
     const closing = f.r.close();
-    expect(f.core.store.inspect().state).toBe('active');
+    expect(f.core.store.inspect()).toMatchObject({ state: 'active', currentSnapshots: 0, historicalSnapshots: 1, activeLeases: 1 });
+    expect(f.core.store.getById(snapshotId)).toMatchObject({ status: 'found', snapshot: { id: snapshotId } });
+    expect(f.core.store.readLatest('a')).toEqual({ status: 'stopped' });
     expect(f.r.getInteractionStats()).toMatchObject({ closed: true, activeInvocations: 1 });
+    expect(await f.client.observe({ all: true })).toMatchObject({ status: 'rejected', issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });
     expect(f.counts()).toEqual({ handlers: stage === 'execute' ? 1 : 0, completed: 0 });
     await f.client.invoke({ ...request, invocationId: 'late' }); expect(f.counts().handlers).toBe(stage === 'execute' ? 1 : 0);
     f.gate.resolve(); await pending; await closing;
-    expect(f.core.store.inspect().state).toBe('disposed');
+    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', historicalSnapshots: 0, activeLeases: 0 });
+    expect(f.core.store.getById(snapshotId)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
     expect(f.counts()).toEqual({ handlers: stage === 'execute' ? 1 : 0, completed: stage === 'execute' ? 1 : 0 });
     expect(f.r.getInteractionStats()).toMatchObject({ closed: true, activeInvocations: 0, combinedBytes: 0 });
 });

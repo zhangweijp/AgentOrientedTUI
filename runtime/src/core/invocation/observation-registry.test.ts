@@ -65,12 +65,11 @@ it('derives the receiver from the source without exposing activation fields', ()
     zero(f);
 });
 function fixture(options: { views?: number; refs?: number; tools?: number; content?: string;
-    payload?: JsonValue; store?: SnapshotStoreOptions; limits?: ObservationRegistryLimitOverrides; ready?: boolean; namespace?: string; instanceId?: string } = {}) {
+    payload?: JsonValue; store?: Omit<SnapshotStoreOptions, 'appId' | 'instanceId'>; limits?: ObservationRegistryLimitOverrides; ready?: boolean; namespace?: string; instanceId?: string } = {}) {
     let time = 0, sequence = 0;
     const now = () => time;
     const identity = { ...context, instanceId: options.instanceId ?? context.instanceId };
-    const core = createSnapshotCore({ now, ...options.store });
-    core.lifecycle.startApp(identity.appId, identity.instanceId);
+    const core = createSnapshotCore({ ...identity, now, ...options.store });
     const tools = createViewOwnedTools(identity.appId, identity.instanceId);
     const handler = vi.fn(async () => ({success:true as const}));
     let pages = Array.from({length:options.views ?? 2}, (_, i) => ({id:'v'+i,type:'File',owner:{}}));
@@ -368,12 +367,15 @@ describe('B1 original source, lifecycle and deadlines', () => {
         expect(code(f.registry.resolveTool(key(observation)))).toBe(mode === 'degraded' ? 'SNAPSHOT_UNREADY'
             : mode === 'last-view-remove' || mode === 'all-views-remount' ? 'VIEW_INSTANCE_REVOKED' : 'TOOL_SOURCE_STALE'); zero(f);
     });
-    it.each(['stop', 'restart'] as const)('revokes observations on %s without rebinding the instance', mode => {
+    it('revokes observations on stop and retains cancelled preparation until settlement', () => {
         const f = fixture(), observation = f.observe(), preparation = f.begin();
-        f.core.lifecycle.stopApp('app', 'run');
-        if (mode === 'restart') { f.core.lifecycle.startApp('app', 'run-2'); f.publish({ instanceId: 'run-2' }); }
+        const reserved = f.registry.inspect();
+        f.core.lifecycle.stop();
         expect(f.registry.resolveTool(key(observation)).status).toBe('rejected');
-        expect(f.registry.inspect()).toMatchObject({ observations: 0, reservations: 1, cancelledReservations: 1 });
+        const stopped = f.registry.inspect();
+        expect(stopped).toMatchObject({ observations: 0, reservations: 1, cancelledReservations: 1 });
+        expect(stopped.sourceBytes).toBe(reserved.sourceBytes);
+        expect(stopped.totalBytes).toBeGreaterThan(0);
         expect(code(f.registry.complete(preparation.reservation, f.grant()))).toBe('RESERVATION_UNAVAILABLE'); zero(f);
     });
 });
@@ -671,21 +673,19 @@ describe('B2-Q01 lifecycle identity capability', () => {
         const f = fixture(); const { readAppIdentity: _, ...legacy } = f.core.store;
         expect(() => createObservationRegistry(legacy as never, { namespace: 'legacy', now: f.now })).toThrow('Invalid observation registry store'); zero(f);
     });
-    it('allows a pre-start owner and invalidates it on replacement before a new projection', () => {
-        const core = createSnapshotCore({ now: () => 0 }), registry = createObservationRegistry(core.store,
-            { namespace: 'prestart', now: () => 0 }, { appId: 'app', instanceId: 'first' });
+    it('distinguishes the bound unready instance from foreign and stopped instances', () => {
+        const core = createSnapshotCore({ appId: 'app', instanceId: 'first', now: () => 0 });
+        const registry = createObservationRegistry(core.store, { namespace: 'first', now: () => 0 },
+            { appId: 'app', instanceId: 'first' });
+        const foreign = createObservationRegistry(core.store, { namespace: 'foreign', now: () => 0 },
+            { appId: 'other', instanceId: 'first' });
         expect(registry.active()).toBe(true);
-        expect(code(registry.begin({ all:true }))).toBe('SNAPSHOT_UNREADY');
-        core.lifecycle.startApp('app', 'first'); expect(registry.active()).toBe(true);
-        core.lifecycle.stopApp('app', 'first'); core.lifecycle.startApp('app', 'second');
-        expect(core.store.readLatest('app')).toEqual({ status: 'unready' });
+        expect(code(registry.begin({ all: true }))).toBe('SNAPSHOT_UNREADY');
+        expect(foreign.active()).toBe(false);
+        expect(code(foreign.begin({ all: true }))).toBe('APP_INTERACTION_UNAVAILABLE');
+        core.lifecycle.stop();
         expect(registry.active()).toBe(false);
-        registry.close(); expect(registry.inspect().totalBytes).toBe(0);
-    });
-    it('keeps cancelled preparation fees through a direct instance replacement until settlement', () => {
-        const f = fixture(), preparation = f.begin(), before = f.registry.inspect();
-        f.core.lifecycle.startApp('app', 'new-unready');
-        expect(f.registry.inspect()).toMatchObject({ reservations: 1, cancelledReservations: 1, totalBytes: before.totalBytes });
-        expect(code(f.registry.complete(preparation.reservation, f.grant()))).toBe('RESERVATION_UNAVAILABLE'); zero(f);
+        expect(code(registry.begin({ all: true }))).toBe('APP_INTERACTION_UNAVAILABLE');
+        expect(registry.close()).toMatchObject({ totalBytes: 0 });
     });
 });

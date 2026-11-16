@@ -13,7 +13,7 @@ function parameters(extra = false) {
 import { prepareViewTypeParameters } from './snapshot-value-arguments.js';
 const c = parameters();if (!c.ok) throw Error('fixture');
 function fixture() {
-    const core = createSnapshotCore();core.lifecycle.startApp('app', 'run');const id = JSON.stringify(['app', 'File', 'read']);let seq = 0;
+    const core = createSnapshotCore({ appId: 'app', instanceId: 'run' });const id = JSON.stringify(['app', 'File', 'read']);let seq = 0;
     const publish = (label: string) => core.committer.accept({ schemaVersion: 5 as const, appId: 'app', instanceId: 'run', producerSeq: ++seq, sourceEpoch: seq, capturedAt: seq,
         views: [{ toolBindings: [{ toolId: id, activationId: 'active-1' }], id: 'aa', viewInstanceId: 'mount', type: 'File', name: 'File', kind: 'state' as const, content: { format: 'markdown-v1' as const, value: 'File' } }],
         refs: { [refKey('aa', 'mount', 'id')]: { id: 'id', ownerViewId: 'aa', ownerViewInstanceId: 'mount', refType: 'unknown', target: { kind: 'snapshot-value' as const, payload: { label } } } },

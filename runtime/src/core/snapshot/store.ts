@@ -1,7 +1,7 @@
 import { SNAPSHOT_SCHEMA_VERSION } from './types.js';
 import type {
     AppSnapshotV5, CommitResult, LeaseResult, PreparedSnapshotFailure, RefLookup, RefSelector, SnapshotCore,
-    SnapshotIssue, SnapshotIssueCode, SnapshotLease, SnapshotLookup, SnapshotRead,
+    SnapshotHealth, SnapshotIssue, SnapshotIssueCode, SnapshotLease, SnapshotLookup, SnapshotRead,
     SnapshotStoreOptions, SnapshotStoreStats, ToolLookup, ToolSelector, AppIdentityRead,
 } from './types.js';
 import { utf8Size } from './json.js';
@@ -15,16 +15,6 @@ interface SnapshotEntry {
     readonly leases: Map<object, number | null>;
     retiredAt?: number;
 }
-interface ActiveApp {
-    readonly instanceId: string;
-    revision: number;
-    seenProducerSeq: number;
-    seenSourceEpoch: number;
-    status: 'unready' | 'ready' | 'degraded' | 'stopped';
-    current?: SnapshotEntry;
-    issue?: SnapshotIssue;
-}
-type CommitState = { ok: true; evictions: SnapshotEntry[] } | { ok: false };
 const DEFAULT_HISTORY_ENTRIES = 64;
 const DEFAULT_HISTORY_BYTES = 32 * 1024 * 1024;
 const DEFAULT_HISTORY_TTL = 10 * 60_000;
@@ -74,15 +64,17 @@ function nonEmpty(value: string, label: string): void {
     if (typeof value !== 'string' || !value.trim()) throw new TypeError(label + ' must be non-empty');
 }
 /**
- * Constructs a capability-separated Snapshot Core.
- * Only committer.accept can publish; store is read-only except acquiring/releasing leases;
- * lifecycle.startApp/stopApp is reserved for a trusted runtime controller.
+ * A Snapshot Core belongs to one App run. The trusted owner binds its identity
+ * at construction and controls stop/dispose. Only the committer can publish.
  *
  * Synchronous Core commit is intentional: no await can interleave the final pointer swap.
  * Does NOT prove that a Producer's input represented an atomic SDK render; M3 owns that.
  */
-export function createSnapshotCore(options: SnapshotStoreOptions = {}): SnapshotCore {
+export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore {
     const limits = captureSnapshotLimits(options);
+    const { appId, instanceId } = options;
+    nonEmpty(appId, 'appId');
+    nonEmpty(instanceId, 'instanceId');
     const now = options.now ?? Date.now;
     const maxHistoryEntries = options.maxHistoryEntries ?? DEFAULT_HISTORY_ENTRIES;
     const maxHistoryBytes = options.maxHistoryBytes ?? DEFAULT_HISTORY_BYTES;
@@ -95,23 +87,23 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
     positiveInteger(historyTtlMs, 'historyTtlMs', true);
     positiveInteger(leaseTtlMs, 'leaseTtlMs');
 
+    const ceilings = { maxIdentityBytes: 8 * 1024 * 1024, maxCurrentBytes: 32 * 1024 * 1024 };
     const retention = {
-        maxAppRecords: options.maxAppRecords === undefined ? 1024 : options.maxAppRecords,
-        maxInstanceIds: options.maxInstanceIds === undefined ? 65536 : options.maxInstanceIds,
-        maxIdentityBytes: options.maxIdentityBytes === undefined ? 8 * 1024 * 1024 : options.maxIdentityBytes,
-        maxCurrentBytes: options.maxCurrentBytes === undefined ? 32 * 1024 * 1024 : options.maxCurrentBytes,
+        maxIdentityBytes: options.maxIdentityBytes === undefined ? ceilings.maxIdentityBytes : options.maxIdentityBytes,
+        maxCurrentBytes: options.maxCurrentBytes === undefined ? ceilings.maxCurrentBytes : options.maxCurrentBytes,
     };
-    const ceilings = { maxAppRecords: 1024, maxInstanceIds: 65536,
-        maxIdentityBytes: 8 * 1024 * 1024, maxCurrentBytes: 32 * 1024 * 1024 };
     for (const key of Object.keys(retention) as Array<keyof typeof retention>) {
         positiveInteger(retention[key], key, true);
         if (retention[key] > ceilings[key]) throw new RangeError(key + ' exceeds hard limit');
     }
-    let disposed = false;
-    let identityBytes = 0;
-    let currentBytes = 0;
-    const apps = new Map<string, ActiveApp>();
-    const usedInstanceIds = new Set<string>();
+    if (appId.length + instanceId.length > retention.maxIdentityBytes ||
+        utf8Size(appId) + utf8Size(instanceId) > retention.maxIdentityBytes) capacity('maxIdentityBytes');
+    let identity: Readonly<{ appId: string; instanceId: string }> | undefined = { appId, instanceId };
+    let status: SnapshotHealth = 'unready';
+    let current: SnapshotEntry | undefined;
+    let lastIssue: SnapshotIssue | undefined;
+    let seenProducerSeq = 0;
+    let seenSourceEpoch = 0;
     const entries = new Map<string, SnapshotEntry>();
 
     function clock(): number {
@@ -132,217 +124,155 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
             }
         }
     }
-    function historyEntries(): SnapshotEntry[] {
-        return [...entries.values()].filter(entry => entry.retiredAt !== undefined);
-    }
-    function budgetTransition(previous: SnapshotEntry | undefined, time: number): CommitState {
+    function historyFitsAfterCommit(time: number): boolean {
         trimExpired(time);
-        const candidates = historyEntries();
-        if (previous && previous.retiredAt === undefined) candidates.push(previous);
-        const toRemove: SnapshotEntry[] = [];
-        let count = candidates.length;
-        let bytes = candidates.reduce((sum, entry) => sum + entry.bytes, 0);
-        const removable = candidates
-            .filter(entry => entry.leases.size === 0)
-            .sort((a, b) => (a.retiredAt ?? time) - (b.retiredAt ?? time));
-        for (const entry of removable) {
-            if (count <= maxHistoryEntries && bytes <= maxHistoryBytes) break;
-            toRemove.push(entry);
-            count--;
-            bytes -= entry.bytes;
+        let count = 0, bytes = 0;
+        // Only held entries, including the outgoing current snapshot, survive the swap.
+        for (const entry of entries.values()) {
+            if (entry.leases.size === 0) continue;
+            count++;
+            bytes += entry.bytes;
         }
-        if (count > maxHistoryEntries || bytes > maxHistoryBytes) return { ok: false };
-        return { ok: true, evictions: toRemove };
+        return count <= maxHistoryEntries && bytes <= maxHistoryBytes;
     }
     function retire(entry: SnapshotEntry, time: number): void {
         entry.canonical = undefined;
         entry.retiredAt = time;
-        trimExpired(time);
+        if (entry.leases.size === 0) entries.delete(entry.snapshot.id);
     }
     function clearExpiredAndLookup(id: string): SnapshotEntry | undefined {
-        if (disposed) return undefined;
+        if (!identity) return undefined;
         trimExpired();
         return entries.get(id);
     }
     function rejected(code: SnapshotIssueCode, message: string, context: Parameters<typeof issue>[2] = {}): CommitResult {
         return Object.freeze({ status: 'rejected', issue: issue(code, message, context) });
     }
-    function markDegraded(app: ActiveApp, appId: string, problem: SnapshotIssue): void {
-        app.status = 'degraded';
-        app.issue = issue(problem.code, problem.message, {
-            appId, instanceId: app.instanceId, ...(problem.path !== undefined ? { path: problem.path } : {}),
+    function markDegraded(source: NonNullable<typeof identity>, problem: SnapshotIssue): SnapshotIssue {
+        status = 'degraded';
+        lastIssue = issue(problem.code, problem.message, {
+            ...source, ...(problem.path !== undefined ? { path: problem.path } : {}),
         });
+        return lastIssue;
     }
 
     const lifecycle = Object.freeze({
-        startApp(appId: string, instanceId: string): void {
-            if (disposed) throw Object.assign(new Error('Snapshot Core is closed'), { code: 'SNAPSHOT_CORE_CLOSED' });
-            nonEmpty(appId, 'appId');
-            nonEmpty(instanceId, 'instanceId');
-            if (usedInstanceIds.has(instanceId)) {
-                const existing = apps.get(appId);
-                if (existing?.instanceId === instanceId && existing.status !== 'stopped') return;
-                throw new Error('APP_INSTANCE_MISMATCH: instance ID must be unique across restarts');
-            }
-            const prior = apps.get(appId);
-            if (!prior && apps.size >= retention.maxAppRecords) capacity('maxAppRecords');
-            if (usedInstanceIds.size >= retention.maxInstanceIds) capacity('maxInstanceIds');
-            const remaining = retention.maxIdentityBytes - identityBytes;
-            if (instanceId.length + (prior ? 0 : appId.length) > remaining) capacity('maxIdentityBytes');
-            const addedBytes = utf8Size(instanceId) + (prior ? 0 : utf8Size(appId));
-            if (addedBytes > remaining) capacity('maxIdentityBytes');
-            const time = clock();
-            if (prior?.current) {
-                currentBytes -= prior.current.bytes;
-                retire(prior.current, time);
-                // Lifecycle changes may have to invalidate an app while leases are
-                // still live. Preserve pinned snapshots; block future commits if over budget.
-                const trim = budgetTransition(undefined, time);
-                if (trim.ok) trim.evictions.forEach(entry => entries.delete(entry.snapshot.id));
-                else for (const entry of historyEntries()) {
-                    if (entry.leases.size === 0) entries.delete(entry.snapshot.id);
-                }
-            }
-            identityBytes += addedBytes;
-            usedInstanceIds.add(instanceId);
-            apps.set(appId, {
-                instanceId, revision: 0, seenProducerSeq: 0, seenSourceEpoch: 0,
-                status: 'unready',
-            });
-        },
-        stopApp(appId: string, instanceId: string): void {
-            if (disposed) return;
-            const app = apps.get(appId);
-            if (!app || app.instanceId !== instanceId || app.status === 'stopped') return;
+        stop(): void {
+            if (!identity || status === 'stopped') return;
+            status = 'stopped';
+            lastIssue = undefined;
+            const previous = current;
+            current = undefined;
             let time: number | undefined;
-            try { time = clock(); } catch { /* Revocation and explicit lease release do not require time. */ }
-            if (app.current) {
-                currentBytes -= app.current.bytes;
-                if (time === undefined) {
-                    app.current.canonical = undefined;
-                    app.current.retiredAt = app.current.snapshot.createdAt;
-                } else retire(app.current, time);
-                app.current = undefined;
-            }
-            app.status = 'stopped';
-            app.issue = undefined;
-            const trim = time === undefined ? undefined : budgetTransition(undefined, time);
-            if (trim?.ok) trim.evictions.forEach(entry => entries.delete(entry.snapshot.id));
-            else for (const entry of historyEntries()) {
-                if (entry.leases.size === 0) entries.delete(entry.snapshot.id);
-            }
+            try { time = clock(); trimExpired(time); }
+            catch { /* Revocation and explicit lease release do not require time. */ }
+            if (previous) retire(previous, time ?? previous.snapshot.createdAt);
         },
         dispose(): void {
-            if (disposed) return;
-            disposed = true;
+            if (!identity) return;
+            identity = undefined;
+            current = undefined;
+            lastIssue = undefined;
             for (const entry of entries.values()) entry.leases.clear();
-            apps.clear();
-            usedInstanceIds.clear();
             entries.clear();
-            identityBytes = 0;
-            currentBytes = 0;
         },
     });
 
     const committer = Object.freeze({
         reportPrepareFailure(failure: PreparedSnapshotFailure): CommitResult {
-            if (disposed) return rejected('APP_STOPPED', 'Snapshot Core is closed');
-            const app = apps.get(failure.appId);
-            if (!app || app.instanceId !== failure.instanceId) {
+            const source = identity;
+            if (!source) return rejected('APP_STOPPED', 'Snapshot Core is closed');
+            if (source.appId !== failure.appId || source.instanceId !== failure.instanceId) {
                 return rejected('APP_INSTANCE_MISMATCH', 'Producer failure source is not an active App instance',
                     { appId: failure.appId, instanceId: failure.instanceId });
             }
-            if (app.status === 'stopped') {
+            if (status === 'stopped') {
                 return rejected('APP_STOPPED', 'App instance stopped', { appId: failure.appId });
             }
-            if (!Number.isSafeInteger(failure.producerSeq) || failure.producerSeq <= app.seenProducerSeq ||
-                !Number.isSafeInteger(failure.sourceEpoch) || failure.sourceEpoch < app.seenSourceEpoch) {
+            if (!Number.isSafeInteger(failure.producerSeq) || failure.producerSeq <= seenProducerSeq ||
+                !Number.isSafeInteger(failure.sourceEpoch) || failure.sourceEpoch < seenSourceEpoch) {
                 return rejected('SNAPSHOT_SEQUENCE_STALE', 'Invalid/stale failure notification', { appId: failure.appId });
             }
-            app.seenProducerSeq = failure.producerSeq;
-            app.seenSourceEpoch = failure.sourceEpoch;
-            markDegraded(app, failure.appId, failure.issue);
-            return Object.freeze({ status: 'rejected', issue: app.issue! });
+            seenProducerSeq = failure.producerSeq;
+            seenSourceEpoch = failure.sourceEpoch;
+            return Object.freeze({ status: 'rejected', issue: markDegraded(source, failure.issue) });
         },
         accept(input: unknown): CommitResult {
-            if (disposed) return rejected('APP_STOPPED', 'Snapshot Core is closed');
+            const source = identity;
+            if (!source) return rejected('APP_STOPPED', 'Snapshot Core is closed');
             const time = clock();
-            const checked = validatePreparedV5Draft(input, limits, (appId, instanceId) => {
-                const app = apps.get(appId);
-                return app?.instanceId === instanceId ? app.current?.snapshot.tools : undefined;
-            });
+            const checked = validatePreparedV5Draft(input, limits, (appId, instanceId) =>
+                appId === source.appId && instanceId === source.instanceId ? current?.snapshot.tools : undefined);
+            if (!identity) return rejected('APP_STOPPED', 'Snapshot Core is closed');
             if (!checked.ok) {
                 const envelope = checked.envelope;
-                if (envelope) {
-                    const app = apps.get(envelope.appId);
-                    if (app?.instanceId === envelope.instanceId &&
-                        app.status !== 'stopped' && envelope.producerSeq > app.seenProducerSeq) {
-                        app.seenProducerSeq = envelope.producerSeq;
-                        app.seenSourceEpoch = Math.max(app.seenSourceEpoch, envelope.sourceEpoch);
-                        markDegraded(app, envelope.appId, checked.issue);
-                    }
+                if (envelope?.appId === source.appId && envelope.instanceId === source.instanceId &&
+                    status !== 'stopped' && envelope.producerSeq > seenProducerSeq) {
+                    seenProducerSeq = envelope.producerSeq;
+                    seenSourceEpoch = Math.max(seenSourceEpoch, envelope.sourceEpoch);
+                    markDegraded(source, checked.issue);
                 }
                 return Object.freeze({ status: 'rejected', issue: issue(checked.issue.code, checked.issue.message, checked.issue) });
             }
             const data = checked.value;
             const draft = data.draft;
-            const app = apps.get(draft.appId);
-            if (!app) return rejected('APP_NOT_REGISTERED', 'App has not been registered', { appId: draft.appId });
-            if (app.instanceId !== draft.instanceId) {
+            if (source.appId !== draft.appId) {
+                return rejected('APP_NOT_REGISTERED', 'Draft belongs to a different App', { appId: draft.appId });
+            }
+            if (source.instanceId !== draft.instanceId) {
                 return rejected('APP_INSTANCE_MISMATCH', 'Draft belongs to a different App instance', {
                     appId: draft.appId, instanceId: draft.instanceId,
                 });
             }
-            if (app.status === 'stopped') {
+            if (status === 'stopped') {
                 return rejected('APP_STOPPED', 'App instance has stopped', {
                     appId: draft.appId, instanceId: draft.instanceId,
                 });
             }
-            if (draft.producerSeq <= app.seenProducerSeq) {
+            if (draft.producerSeq <= seenProducerSeq) {
                 return rejected('SNAPSHOT_SEQUENCE_STALE', 'Producer sequence did not advance', { appId: draft.appId });
             }
-            if (draft.sourceEpoch < app.seenSourceEpoch) {
-                app.seenProducerSeq = draft.producerSeq;
+            if (draft.sourceEpoch < seenSourceEpoch) {
+                seenProducerSeq = draft.producerSeq;
                 const problem = issue('SNAPSHOT_SOURCE_CONFLICT', 'Producer source epoch regressed', { appId: draft.appId });
-                markDegraded(app, draft.appId, problem);
+                markDegraded(source, problem);
                 return Object.freeze({ status: 'rejected', issue: problem });
             }
-            app.seenProducerSeq = draft.producerSeq;
-            const equal = app.current?.canonical === data.canonicalContent;
-            if ((equal || !app.current) && app.status === 'degraded' && draft.sourceEpoch === app.seenSourceEpoch) {
+            seenProducerSeq = draft.producerSeq;
+            const equal = current?.canonical === data.canonicalContent;
+            if ((equal || !current) && lastIssue && draft.sourceEpoch === seenSourceEpoch) {
                 // Transport can replay a previously prepared frame. Only a new source
                 // commit proves recovery from a failure at this epoch.
-                return Object.freeze({ status: 'rejected', issue: app.issue! });
+                return Object.freeze({ status: 'rejected', issue: lastIssue });
             }
-            if (equal) {
-                app.seenSourceEpoch = draft.sourceEpoch;
-                app.status = 'ready';
-                app.issue = undefined;
-                return Object.freeze({ status: 'unchanged', snapshot: app.current!.snapshot });
+            if (current && equal) {
+                seenSourceEpoch = draft.sourceEpoch;
+                status = 'ready';
+                lastIssue = undefined;
+                return Object.freeze({ status: 'unchanged', snapshot: current.snapshot });
             }
-            if (app.current && draft.sourceEpoch === app.seenSourceEpoch) {
+            if (current && draft.sourceEpoch === seenSourceEpoch) {
                 const problem = issue('SNAPSHOT_SOURCE_EPOCH_CONFLICT',
                     'Semantic data changed without advancing the source epoch', { appId: draft.appId });
-                markDegraded(app, draft.appId, problem);
+                markDegraded(source, problem);
                 return Object.freeze({ status: 'rejected', issue: problem });
             }
-            if (app.revision >= Number.MAX_SAFE_INTEGER) {
+            const revision = (current?.snapshot.revision ?? 0) + 1;
+            if (!Number.isSafeInteger(revision)) {
                 const problem = issue('SNAPSHOT_CAPACITY', 'Committed revision counter exhausted', { appId: draft.appId });
-                markDegraded(app, draft.appId, problem);
+                markDegraded(source, problem);
                 return Object.freeze({ status: 'rejected', issue: problem });
             }
-            if (currentBytes - (app.current?.bytes ?? 0) + data.bytes > retention.maxCurrentBytes) {
+            if (data.bytes > retention.maxCurrentBytes) {
                 const problem = issue('SNAPSHOT_CAPACITY', 'Current snapshot budget exceeded: maxCurrentBytes', { appId: draft.appId });
-                markDegraded(app, draft.appId, problem);
+                markDegraded(source, problem);
                 return Object.freeze({ status: 'rejected', issue: problem });
             }
-            const budget = budgetTransition(app.current, time);
-            if (!budget.ok) {
+            if (!historyFitsAfterCommit(time)) {
                 const problem = issue('SNAPSHOT_CAPACITY', 'Retained lease budget prevents a safe commit', { appId: draft.appId });
-                markDegraded(app, draft.appId, problem);
+                markDegraded(source, problem);
                 return Object.freeze({ status: 'rejected', issue: problem });
             }
-            const revision = app.revision + 1;
             const snapshot = Object.freeze({
                 schemaVersion: SNAPSHOT_SCHEMA_VERSION,
                 id: snapshotId(draft.appId, draft.instanceId, revision),
@@ -360,41 +290,36 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
                 leases: new Map(),
             };
             // The following mutation block has no await and publishes one pointer.
-            budget.evictions.forEach(entry => entries.delete(entry.snapshot.id));
-            if (app.current && entries.has(app.current.snapshot.id)) retire(app.current, time);
+            if (current) retire(current, time);
             entries.set(snapshot.id, record);
-            currentBytes += record.bytes - (app.current?.bytes ?? 0);
-            app.current = record;
-            app.revision = revision;
-            app.seenSourceEpoch = draft.sourceEpoch;
-            app.issue = undefined;
-            app.status = 'ready';
+            current = record;
+            seenSourceEpoch = draft.sourceEpoch;
+            lastIssue = undefined;
+            status = 'ready';
             return Object.freeze({ status: 'published', snapshot });
         },
     });
 
     const store = Object.freeze({
         readAppIdentity(appId: string): AppIdentityRead {
-            const app = apps.get(appId);
-            if (!app) return Object.freeze({ status: 'absent' });
-            return Object.freeze({ status: app.status === 'stopped' ? 'stopped' : 'active', instanceId: app.instanceId });
+            if (!identity || identity.appId !== appId) return Object.freeze({ status: 'absent' });
+            return Object.freeze({ status: status === 'stopped' ? 'stopped' : 'active', instanceId: identity.instanceId });
         },
         readLatest(appId: string): SnapshotRead {
-            if (disposed) return Object.freeze({ status: 'stopped' });
+            if (!identity) return Object.freeze({ status: 'stopped' });
+            if (identity.appId !== appId) return Object.freeze({ status: 'unready' });
             trimExpired();
-            const app = apps.get(appId);
-            if (!app) return Object.freeze({ status: 'unready' });
-            if (app.status === 'ready' && app.current) {
-                return Object.freeze({ status: 'ready', snapshot: app.current.snapshot });
+            if (status === 'ready' && current) {
+                return Object.freeze({ status: 'ready', snapshot: current.snapshot });
             }
-            if (app.status === 'degraded') {
+            if (status === 'degraded') {
                 return Object.freeze({
                     status: 'degraded',
-                    ...(app.current ? { lastGood: app.current.snapshot } : {}),
-                    issue: app.issue ?? issue('SNAPSHOT_INVALID', 'Unknown projection failure', { appId }),
+                    ...(current ? { lastGood: current.snapshot } : {}),
+                    issue: lastIssue ?? issue('SNAPSHOT_INVALID', 'Unknown projection failure', { appId }),
                 });
             }
-            return Object.freeze({ status: app.status === 'stopped' ? 'stopped' as const : 'unready' as const });
+            return Object.freeze({ status: status === 'stopped' ? 'stopped' as const : 'unready' as const });
         },
         getById(id: string): SnapshotLookup {
             const entry = clearExpiredAndLookup(id);
@@ -439,7 +364,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
             return Object.freeze({ status: 'acquired', lease });
         },
         resolveRef(selector: RefSelector): RefLookup {
-            if (disposed) return Object.freeze({ status: 'rejected', issue: issue('SNAPSHOT_EXPIRED', 'Snapshot Core is closed') });
+            if (!identity) return Object.freeze({ status: 'rejected', issue: issue('SNAPSHOT_EXPIRED', 'Snapshot Core is closed') });
             const lookup = store.getById(selector.snapshotId);
             if (lookup.status === 'rejected') return lookup;
             const snapshot = lookup.snapshot;
@@ -463,7 +388,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
             return Object.freeze({ status: 'resolved', ref, target: ref.target });
         },
         getTool(selector: ToolSelector): ToolLookup {
-            if (disposed) return Object.freeze({ status: 'rejected', issue: issue('SNAPSHOT_EXPIRED', 'Snapshot Core is closed') });
+            if (!identity) return Object.freeze({ status: 'rejected', issue: issue('SNAPSHOT_EXPIRED', 'Snapshot Core is closed') });
             const lookup = store.getById(selector.snapshotId);
             if (lookup.status === 'rejected') return lookup;
             const snapshot = lookup.snapshot;
@@ -478,18 +403,14 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
                 'Tool unavailable in source snapshot', { snapshotId: selector.snapshotId }) });
         },
         inspect(): SnapshotStoreStats {
-            if (!disposed) trimExpired();
+            if (identity) trimExpired();
             const snapshots = [...entries.values()];
             const histories = snapshots.filter(entry => entry.retiredAt !== undefined);
             return Object.freeze({
-                state: disposed ? 'disposed' : 'active',
-                appRecords: apps.size,
-                issuedInstanceIds: usedInstanceIds.size,
-                identityBytes, currentBytes,
-                diagnosticBytes: [...apps.values()].reduce((sum, app) => sum + (app.issue
-                    ? utf8Size(app.issue.code) + utf8Size(app.issue.message) + utf8Size(app.issue.path ?? '') : 0), 0),
-                activeApps: [...apps.values()].filter(app => app.status !== 'stopped').length,
-                currentSnapshots: snapshots.length - histories.length,
+                state: identity ? 'active' : 'disposed',
+                currentBytes: current?.bytes ?? 0,
+                diagnosticBytes: lastIssue ? utf8Size(lastIssue.code) + utf8Size(lastIssue.message) + utf8Size(lastIssue.path ?? '') : 0,
+                currentSnapshots: current ? 1 : 0,
                 historicalSnapshots: histories.length,
                 historicalBytes: histories.reduce((sum, entry) => sum + entry.bytes, 0),
                 activeLeases: snapshots.reduce((sum, entry) => sum + entry.leases.size, 0),

@@ -19,7 +19,7 @@ const schema = (refType = 'unknown', parameter = 'file'): JsonValue => {
 function fixture(options: {
     payload?: JsonValue; inputSchema?: JsonValue; refType?: string; refId?: string;
     viewId?: string; viewInstanceId?: string; activationId?: string;
-    storeOptions?: SnapshotStoreOptions;
+    storeOptions?: Omit<SnapshotStoreOptions, 'appId' | 'instanceId'>;
 } = {}) {
     const context = { appId: 'app', instanceId: 'run' };
     const viewId = options.viewId ?? 'fd_A';
@@ -28,8 +28,7 @@ function fixture(options: {
     const activationId = options.activationId ?? 'activation-1';
     const toolId = JSON.stringify(['app', 'FileDetail', 'inspect']);
     const payload = Object.hasOwn(options, 'payload') ? options.payload! : { label: 'A' };
-    const core = createSnapshotCore(options.storeOptions);
-    core.lifecycle.startApp(context.appId, context.instanceId);
+    const core = createSnapshotCore({ ...context, ...options.storeOptions });
     let sequence = 0;
     function refs(value: JsonValue = payload) {
         return {

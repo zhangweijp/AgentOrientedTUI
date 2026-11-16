@@ -30,7 +30,7 @@ function deferred() {
     return { promise, resolve, reject };
 }
 function assembly(topicId: string, instanceId: string) {
-    const core = createSnapshotCore(); core.lifecycle.startApp('preview_app', instanceId);
+    const core = createSnapshotCore({ appId: 'preview_app', instanceId });
     const registry = createViewOwnedTools('preview_app', instanceId);
     const inputSchema = { type: 'object', properties: {}, additionalProperties: false };
     let entries = 0;

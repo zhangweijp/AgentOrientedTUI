@@ -132,8 +132,7 @@ describe('V5 complete metadata boundary', () => {
     });
 
     it('preserves unchanged identity, degraded lastGood, and recovery revision', () => {
-        const core = createSnapshotCore({ now: () => 7 });
-        core.lifecycle.startApp('app', 'instance');
+        const core = createSnapshotCore({ appId: 'app', instanceId: 'instance', now: () => 7 });
         try {
             const first = core.committer.accept(fixture());
             if (first.status !== 'published') throw new Error('Expected publication');

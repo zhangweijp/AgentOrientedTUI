@@ -57,8 +57,7 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
     assert.equal((await call(current, 'FileDetail', 'inspect', { file: 'file_a.current' })).result.matches, true);
 
     // A plain TypeScript Producer publishes the same metadata and body through the public Core.
-    const core = createSnapshotCore();
-    core.lifecycle.startApp('pipeline', 'plain-run');
+    const core = createSnapshotCore({ appId: 'pipeline', instanceId: 'plain-run' });
     const registry = createViewOwnedTools('pipeline', 'plain-run');
     const frame = registry.prepareFrame([
       { id: 'guide', type: 'Guide', owner: {}, bindings: [] },

@@ -96,10 +96,9 @@ describe('ViewType parameter profile', () => {
         content: { format: 'markdown-v1', value: String(seq) } }], refs: {},
       tools: { [toolId]: { id: toolId, name: 'read', viewType: 'Note', nameSharedAcrossViewTypes: false, description: 'Read', inputSchema } },
     });
-    const core = createSnapshotCore();
-    const restricted = createSnapshotCore({ limits: { maxToolSchemaBytes: limit - 1 } });
-    core.lifecycle.startApp('app', 'run');
-    restricted.lifecycle.startApp('app', 'run');
+    const identity = { appId: 'app', instanceId: 'run' };
+    const core = createSnapshotCore(identity);
+    const restricted = createSnapshotCore({ ...identity, limits: { maxToolSchemaBytes: limit - 1 } });
     try {
       const first = core.committer.accept(draft(profile, 1));
       if (first.status !== 'published') throw new Error('Expected publication');

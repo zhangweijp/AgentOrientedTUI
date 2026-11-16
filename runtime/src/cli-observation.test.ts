@@ -28,8 +28,7 @@ function exampleViews(client: AppInteraction, emit: (value: unknown) => void): (
 }
 
 function fixture(project?: AppInteractionPolicy['project']) {
-    const core = createSnapshotCore({ now: () => 0 });
-    core.lifecycle.startApp('app', 'run');
+    const core = createSnapshotCore({ appId: 'app', instanceId: 'run', now: () => 0 });
     const tools = createViewOwnedTools('app', 'run');
     tools.defineTools([
         { viewType: 'Detail', name: 'edit', description: 'Edit',

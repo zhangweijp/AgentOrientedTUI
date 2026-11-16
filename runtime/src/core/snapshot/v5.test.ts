@@ -70,7 +70,7 @@ describe('Semantic Snapshot V5', () => {
     });
 
     it('commits only V5 snapshots and retrieves type-level Tools without an instance target', () => {
-        const core = createSnapshotCore(); core.lifecycle.startApp(appId, instanceId);
+        const core = createSnapshotCore({ appId, instanceId });
         const result = core.committer.accept(draft());
         if (result.status === 'rejected') throw new Error(JSON.stringify(result.issue));
         expect(result.status).toBe('published');
@@ -86,7 +86,7 @@ describe('Semantic Snapshot V5', () => {
     });
 
     it('versions a type Tool activation change even when View content and schema stay the same', () => {
-        const core = createSnapshotCore(); core.lifecycle.startApp(appId, instanceId);
+        const core = createSnapshotCore({ appId, instanceId });
         const first = core.committer.accept(draft());
         expect(first.status).toBe('published');
         if (first.status !== 'published') return;

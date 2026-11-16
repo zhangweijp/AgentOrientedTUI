@@ -7,6 +7,7 @@ import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
 import type { PreparedAppSnapshotDraftV5, SnapshotCore, SnapshotStoreOptions } from './types.js';
 
+const identity = { appId: 'task_app', instanceId: 'instance_a' };
 const KEY = refKey('workspace', 'mount_1', 'tasks[0]');
 const TOOL = JSON.stringify(['task_app', 'Workspace', 'complete_task']);
 const taskSchema = (() => {
@@ -23,8 +24,7 @@ function draft(
 ): PreparedAppSnapshotDraftV5 {
     return {
         schemaVersion: 5,
-        appId: 'task_app',
-        instanceId: 'instance_a',
+        ...identity,
         producerSeq: seq,
         sourceEpoch: epoch,
         capturedAt: 1_000 + seq,
@@ -78,9 +78,8 @@ function sourceRef(core: SnapshotCore, snapId: string) {
 describe('Snapshot Store limits', () => {
     it('uses its original limits after the caller mutates, replaces or deletes them', () => {
         const limits = { maxViews: 1 };
-        const options: { limits?: typeof limits } = { limits };
+        const options: typeof identity & { limits?: typeof limits } = { ...identity, limits };
         const core = createSnapshotCore(options);
-        core.lifecycle.startApp('task_app', 'instance_a');
         try {
             const first = published(core, draft());
             const views = [...draft().views, { ...draft().views[0]!, id: 'second', viewInstanceId: 'mount_2', toolBindings: [] }];
@@ -103,13 +102,11 @@ describe('Snapshot Store limits', () => {
     it('uses defaults for omitted and undefined values and accepts null-prototype limits and zero', () => {
         for (const options of [{}, { limits: undefined }, { limits: { maxViews: undefined } },
             Object.assign(Object.create(null), { limits: Object.assign(Object.create(null), DEFAULT_SNAPSHOT_LIMITS) })]) {
-            const core = createSnapshotCore(options);
-            core.lifecycle.startApp('task_app', 'instance_a');
+            const core = createSnapshotCore(Object.assign(options, identity));
             try { expect(published(core, draft()).revision).toBe(1); }
             finally { core.lifecycle.dispose(); }
         }
-        const core = createSnapshotCore({ limits: { maxViews: 0 } });
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore({ ...identity, limits: { maxViews: 0 } });
         try {
             expect(core.committer.accept(draft())).toMatchObject({ status: 'rejected', issue: { path: '$.views' } });
             expect(published(core, draft(2, 2, 'task-a', { views: [], refs: {}, tools: {} })).views).toEqual([]);
@@ -121,7 +118,7 @@ describe('Snapshot Store limits', () => {
         const accessor = { get limits() { reads++; return { maxViews: 1 }; } };
         for (const options of [accessor, Object.create(accessor), Object.create({ limits: undefined }),
             Object.defineProperty({}, 'limits', { value: undefined })]) {
-            expect(() => createSnapshotCore(options)).toThrow(expect.objectContaining({ name: 'TypeError', message: expect.stringContaining('limits') }));
+            expect(() => createSnapshotCore(Object.assign(options, identity))).toThrow(expect.objectContaining({ name: 'TypeError', message: expect.stringContaining('limits') }));
         }
         expect(reads).toBe(0);
     });
@@ -137,7 +134,7 @@ describe('Snapshot Store limits', () => {
             [accessor, 'limits.maxViews'], [Object.defineProperty({}, 'maxViews', { value: undefined }), 'limits.maxViews'],
         ];
         for (const [limits, field] of invalid) {
-            expect(() => createSnapshotCore({ limits } as SnapshotStoreOptions))
+            expect(() => createSnapshotCore({ ...identity, limits } as SnapshotStoreOptions))
                 .toThrow(expect.objectContaining({ name: 'TypeError', message: expect.stringContaining(field) }));
         }
         expect(reads).toBe(0);
@@ -145,61 +142,48 @@ describe('Snapshot Store limits', () => {
 
     it('enforces each default ceiling and accepts zero for every field', () => {
         for (const [field, max] of Object.entries(DEFAULT_SNAPSHOT_LIMITS)) {
-            createSnapshotCore({ limits: { [field]: 0 } }).lifecycle.dispose();
-            expect(() => createSnapshotCore({ limits: { [field]: max + 1 } }))
+            createSnapshotCore({ ...identity, limits: { [field]: 0 } }).lifecycle.dispose();
+            expect(() => createSnapshotCore({ ...identity, limits: { [field]: max + 1 } }))
                 .toThrow(expect.objectContaining({ name: 'RangeError', message: expect.stringContaining(`limits.${field}`) }));
         }
         for (const maxViews of [NaN, Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '1', null, false]) {
-            expect(() => createSnapshotCore({ limits: { maxViews } } as SnapshotStoreOptions))
+            expect(() => createSnapshotCore({ ...identity, limits: { maxViews } } as SnapshotStoreOptions))
                 .toThrow(expect.objectContaining({ name: 'RangeError', message: expect.stringContaining('limits.maxViews') }));
         }
     });
 });
 
 describe('B2-Q01 independent application lifecycle identity', () => {
-    it('reports absent/unready/ready/degraded/stopped/new-unready without changing SnapshotRead shapes', () => {
-        const core = createSnapshotCore({ now: () => 0 });
-        expect(core.store.readAppIdentity('task_app')).toEqual({ status: 'absent' });
-        expect(core.store.readLatest('task_app')).toEqual({ status: 'unready' });
-        core.lifecycle.startApp('task_app', 'instance_a');
+    it('binds the identity from construction and reports projection health independently', () => {
+        const core = createSnapshotCore({ ...identity, now: () => 0 });
+        expect(core.store.readAppIdentity('other_app')).toEqual({ status: 'absent' });
+        expect(core.store.readLatest('other_app')).toEqual({ status: 'unready' });
         const first = core.store.readAppIdentity('task_app');
-        expect(first).toEqual({ status: 'active', instanceId: 'instance_a' }); expect(Object.isFrozen(first)).toBe(true);
+        expect(first).toEqual({ status: 'active', instanceId: 'instance_a' });
+        expect(Object.isFrozen(first)).toBe(true);
         expect(core.store.readLatest('task_app')).toEqual({ status: 'unready' });
         const source = published(core, draft());
-        expect(core.store.readAppIdentity('task_app')).toEqual(first);
         expect(core.store.readLatest('task_app')).toEqual({ status: 'ready', snapshot: source });
+        expect(core.store.readLatest('other_app')).toEqual({ status: 'unready' });
         expect(core.committer.accept(draft(2, 2, 'invalid', { refs: { malformed: null } })).status).toBe('rejected');
         const degraded = core.store.readLatest('task_app');
         expect(Object.keys(degraded).sort()).toEqual(['issue', 'lastGood', 'status']);
         expect(core.store.readAppIdentity('task_app')).toEqual(first);
-        core.lifecycle.stopApp('task_app', 'instance_a');
-        const stopped = core.store.readAppIdentity('task_app'); expect(stopped).toEqual({ status: 'stopped', instanceId: 'instance_a' });
+        core.lifecycle.stop();
+        expect(core.store.readAppIdentity('task_app')).toEqual({ status: 'stopped', instanceId: 'instance_a' });
         expect(core.store.readLatest('task_app')).toEqual({ status: 'stopped' });
-        core.lifecycle.startApp('task_app', 'instance_b');
-        expect(core.store.readLatest('task_app')).toEqual({ status: 'unready' });
-        expect(core.store.readAppIdentity('task_app')).toEqual({ status: 'active', instanceId: 'instance_b' });
-        expect(first).toEqual({ status: 'active', instanceId: 'instance_a' }); expect(stopped).toEqual({ status: 'stopped', instanceId: 'instance_a' });
-        core.lifecycle.stopApp('task_app', 'instance_a'); // stale stop cannot stop the new instance
-        expect(core.store.readAppIdentity('task_app')).toEqual({ status: 'active', instanceId: 'instance_b' });
+        expect(first).toEqual({ status: 'active', instanceId: 'instance_a' });
     });
     it('reads only the existing identity record, without clocks, leases, revision or history changes', () => {
         let calls = 0, broken = false;
-        const core = createSnapshotCore({ now: () => { calls++; if (broken) throw new Error('clock-secret'); return 0; } });
-        core.lifecycle.startApp('task_app', 'instance_a'); const source = published(core, draft());
+        const core = createSnapshotCore({ ...identity, now: () => { calls++; if (broken) throw new Error('clock-secret'); return 0; } });
+     const source = published(core, draft());
         const lease = core.store.acquire(source.id); expect(lease.status).toBe('acquired');
         const before = core.store.inspect(), beforeCalls = calls; broken = true;
         expect(core.store.readAppIdentity('task_app')).toEqual({ status: 'active', instanceId: 'instance_a' });
         expect(core.store.readAppIdentity('unknown')).toEqual({ status: 'absent' }); expect(calls).toBe(beforeCalls);
         broken = false; expect(core.store.inspect()).toEqual(before); expect(ready(core)).toBe(source);
         if (lease.status === 'acquired') lease.lease.release();
-    });
-    it('reports direct replacement before publication and preserves the original instance non-reuse rule', () => {
-        const core = createSnapshotCore({ now: () => 0 }); core.lifecycle.startApp('task_app', 'instance_a');
-        core.lifecycle.startApp('task_app', 'instance_b');
-        expect(core.store.readAppIdentity('task_app')).toEqual({ status: 'active', instanceId: 'instance_b' });
-        expect(core.store.readLatest('task_app')).toEqual({ status: 'unready' });
-        expect(() => core.lifecycle.startApp('task_app', 'instance_a')).toThrow();
-        expect(core.store.readAppIdentity('task_app')).toEqual({ status: 'active', instanceId: 'instance_b' });
     });
 });
 
@@ -289,9 +273,8 @@ describe('M1 pure Core — schema & safe value contract', () => {
 
 describe('M1 Core — versioned commit, failure & strict origin', () => {
     it('publishes revision 1 and reuses the same snapshot ID when semantic data has not changed', () => {
-        const core = createSnapshotCore();
+        const core = createSnapshotCore(identity);
         expect(core.store.readLatest('task_app').status).toBe('unready');
-        core.lifecycle.startApp('task_app', 'instance_a');
         const first = published(core, draft(1, 1));
         const second = core.committer.accept(draft(2, 2));
         expect(second.status).toBe('unchanged');
@@ -305,8 +288,7 @@ describe('M1 Core — versioned commit, failure & strict origin', () => {
     });
 
     it('cannot mutate a committed value via source aliases, nested values, or a returned snapshot', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const input = draft();
         const committed = published(core, input);
         (input.refs[KEY].target as any).payload.id = 'hijacked';
@@ -321,8 +303,7 @@ describe('M1 Core — versioned commit, failure & strict origin', () => {
     });
 
     it('advances revision for Ref-only and Tool-only changes even if displayed View is identical', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const first = published(core, draft());
         const held = core.store.acquire(first.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
         const second = published(core, draft(2, 2, 'task-b'));
@@ -341,8 +322,7 @@ describe('M1 Core — versioned commit, failure & strict origin', () => {
     });
 
     it('rejects changed semantic content with unchanged sourceEpoch, keeping lastGood degraded', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const first = published(core, draft());
         const rejected = core.committer.accept(draft(2, 1, 'task-b'));
         expect(rejected.status).toBe('rejected');
@@ -355,8 +335,7 @@ describe('M1 Core — versioned commit, failure & strict origin', () => {
     });
 
     it('does not advance revision or replace lastGood after invalid draft, and consumes the new seq', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const first = published(core, draft());
         const invalid = { ...draft(2, 2), refs: { [KEY]: { ...draft().refs[KEY], ownerViewId: 'does-not-exist' } } };
         const error = core.committer.accept(invalid);
@@ -369,24 +348,18 @@ describe('M1 Core — versioned commit, failure & strict origin', () => {
         expect(published(core, draft(3, 4, 'task-b')).revision).toBe(2);
     });
 
-    it('rejects unregistered, stale, mismatched and stopped app sources', () => {
-        const core = createSnapshotCore();
-        let result = core.committer.accept(draft());
-        expect(result.status).toBe('rejected');
-        if (result.status === 'rejected') expect(result.issue.code).toBe('APP_NOT_REGISTERED');
-        core.lifecycle.startApp('task_app', 'instance_a');
+    it('rejects foreign App, stale, wrong-instance and stopped sources', () => {
+        const core = createSnapshotCore(identity);
+        const foreign = draft(100, 100, 'foreign', { appId: 'other_app', views: [], refs: {}, tools: {} });
+        expect(core.committer.accept(foreign)).toMatchObject({ status: 'rejected', issue: { code: 'APP_NOT_REGISTERED' } });
         const first = published(core, draft());
-        result = core.committer.accept(draft());
-        expect(result.status).toBe('rejected');
-        if (result.status === 'rejected') expect(result.issue.code).toBe('SNAPSHOT_SEQUENCE_STALE');
-        result = core.committer.accept({ ...draft(2), instanceId: 'impostor' });
-        expect(result.status).toBe('rejected');
-        if (result.status === 'rejected') expect(result.issue.code).toBe('APP_INSTANCE_MISMATCH');
+        expect(core.committer.accept(draft())).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_SEQUENCE_STALE' } });
+        expect(core.committer.accept(draft(2, 2, 'impostor', { instanceId: 'impostor' })))
+            .toMatchObject({ status: 'rejected', issue: { code: 'APP_INSTANCE_MISMATCH' } });
         expect(ready(core).id).toBe(first.id);
-        core.lifecycle.stopApp('task_app', 'instance_a');
+        core.lifecycle.stop();
         expect(core.store.readLatest('task_app').status).toBe('stopped');
-        result = core.committer.accept(draft(3));
-        expect(result.status).toBe('rejected');
+        expect(core.committer.accept(draft(3))).toMatchObject({ status: 'rejected', issue: { code: 'APP_STOPPED' } });
     });
 });
 
@@ -400,8 +373,7 @@ function readyOrLastGood(core: SnapshotCore) {
 
 describe('M1 Core — Ref identity, source scope and View generation', () => {
     it('keeps a historical index-based Ref bound to its original object after reordering', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const first = published(core, draft(1, 1, 'entity-a'));
         const held = core.store.acquire(first.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
         const later = published(core, draft(2, 2, 'entity-b'));
@@ -418,8 +390,7 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
     });
 
     it('resolves two same-named Ref IDs only by exact View identity, never suffix search', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const first = draft(1, 1);
         const secondKey = refKey('detail', 'mount_2', 'tasks[0]');
         const changed = draft(1, 1, 'entity-a', {
@@ -455,8 +426,7 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
     });
 
     it('treats View close/reopen with same ID as a new generation', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const old = published(core, draft());
         const newKey = refKey('workspace', 'mount_2', 'tasks[0]');
         const source = draft(2, 2, 'entity-b');
@@ -477,8 +447,7 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
     });
 
     it('retains the exact historical payload, including its business version', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const target = { kind: 'snapshot-value' as const, payload: { id: 'same-id', version: 'old-v1' } };
         const newerTarget = { ...target, payload: { ...target.payload, version: 'new-v2' } };
         const old = published(core, draft(1, 1, 'unused', {
@@ -506,8 +475,7 @@ function sourceRefWithGeneration(core: SnapshotCore, snapshotId: string, viewIns
 
 describe('M1 Core — retention, leases, restart and capacity', () => {
     it('protects leased historical snapshots and rejects a commit when all retention is pinned', () => {
-        const core = createSnapshotCore({ maxHistoryEntries: 0, maxHistoryBytes: 0 });
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore({ ...identity, maxHistoryEntries: 0, maxHistoryBytes: 0 });
         const first = published(core, draft());
         const held = core.store.acquire(first.id);
         expect(held.status).toBe('acquired');
@@ -530,10 +498,9 @@ describe('M1 Core — retention, leases, restart and capacity', () => {
     it('expires historical snapshots deterministically with an injected clock', () => {
         let time = 10_000;
         const options: SnapshotStoreOptions = {
-            now: () => time, historyTtlMs: 50, leaseTtlMs: 20,
+            ...identity, now: () => time, historyTtlMs: 50, leaseTtlMs: 20,
         };
         const core = createSnapshotCore(options);
-        core.lifecycle.startApp('task_app', 'instance_a');
         const first = published(core, draft());
         const held = core.store.acquire(first.id, 10);
         expect(held.status).toBe('acquired');
@@ -550,32 +517,44 @@ describe('M1 Core — retention, leases, restart and capacity', () => {
         expect(ready(core).revision).toBe(2);
     });
 
-    it('preserves a leased old app instance for diagnostics but never reuses its identity', () => {
-        const core = createSnapshotCore({ maxHistoryEntries: 1 });
-        core.lifecycle.startApp('task_app', 'instance_a');
-        const old = published(core, draft());
-        const lease = core.store.acquire(old.id);
-        core.lifecycle.stopApp('task_app', 'instance_a');
-        expect(core.store.readLatest('task_app').status).toBe('stopped');
-        expect(() => core.lifecycle.startApp('task_app', 'instance_a')).toThrow(/instance ID/);
-        core.lifecycle.startApp('task_app', 'instance_b');
-        expect(core.store.readLatest('task_app').status).toBe('unready');
-        const newSource = { ...draft(), instanceId: 'instance_b' };
-        const fresh = published(core, newSource);
-        expect(fresh.revision).toBe(1);
-        expect(fresh.instanceId).toBe('instance_b');
+    it('keeps the old run’s held Ref separate from a same-name new run', () => {
+        const original = createSnapshotCore({ ...identity, maxHistoryEntries: 1 });
+        const old = published(original, draft());
+        const held = original.store.acquire(old.id, { lifetime: 'owner' });
+        if (held.status !== 'acquired') throw Error('Expected old snapshot holder');
+        original.lifecycle.stop();
+        expect(original.store.readLatest('task_app')).toEqual({ status: 'stopped' });
+        expect(sourceRef(original, old.id)).toMatchObject({ status: 'resolved', target: { payload: { id: 'task-a' } } });
+
+        const replacement = createSnapshotCore({ ...identity, instanceId: 'instance_b' });
+        expect(replacement.store.readLatest('task_app')).toEqual({ status: 'unready' });
+        const fresh = published(replacement, draft(1, 1, 'fresh', { instanceId: 'instance_b' }));
+        expect(fresh).toMatchObject({ revision: 1, instanceId: 'instance_b' });
         expect(fresh.id).not.toBe(old.id);
-        expect(core.store.getById(old.id).status).toBe('found');
-        expect(core.store.resolveRef({
+        expect(replacement.store.getById(old.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
+        expect(original.store.resolveRef({
             snapshotId: old.id, appId: 'task_app', instanceId: 'instance_b',
             viewId: 'workspace', viewInstanceId: 'mount_1', refId: 'tasks[0]',
-        }).status).toBe('rejected');
-        if (lease.status === 'acquired') lease.lease.release();
+        })).toMatchObject({ status: 'rejected', issue: { code: 'APP_INSTANCE_MISMATCH' } });
+
+        expect(replacement.committer.accept(draft(100))).toMatchObject({ status: 'rejected', issue: { code: 'APP_INSTANCE_MISMATCH' } });
+        expect(replacement.committer.accept(draft(101, 101, 'malformed', { refs: { invalid: null } })))
+            .toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_INVALID' } });
+        expect(replacement.committer.reportPrepareFailure({
+            appId: 'task_app', instanceId: 'instance_a', producerSeq: 102, sourceEpoch: 102,
+            issue: { code: 'SNAPSHOT_INVALID', message: 'Old source failed late', path: '$.views' },
+        })).toMatchObject({ status: 'rejected', issue: { code: 'APP_INSTANCE_MISMATCH' } });
+        expect(ready(replacement)).toBe(fresh);
+        expect(published(replacement, draft(2, 2, 'changed', { instanceId: 'instance_b' })).revision).toBe(2);
+
+        held.lease.release();
+        expect(original.store.getById(old.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
+        original.lifecycle.dispose();
+        expect(ready(replacement).revision).toBe(2);
     });
 
     it('rejects out-of-order producer epoch and duplicate sequences without changing current pointer', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const first = published(core, draft(1, 5));
         const regressed = core.committer.accept(draft(2, 4, 'entity-b'));
         expect(regressed.status).toBe('rejected');
@@ -587,8 +566,7 @@ describe('M1 Core — retention, leases, restart and capacity', () => {
     });
 
     it('releases unleased versions immediately while retaining the current snapshot', () => {
-        const core = createSnapshotCore({ maxHistoryEntries: 1, maxHistoryBytes: 2_000_000 });
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore({ ...identity, maxHistoryEntries: 1, maxHistoryBytes: 2_000_000 });
         const a = published(core, draft(1, 1, 'a'));
         const b = published(core, draft(2, 2, 'b'));
         const c = published(core, draft(3, 3, 'c'));
@@ -601,8 +579,7 @@ describe('M1 Core — retention, leases, restart and capacity', () => {
 
 describe('M1 Core — in-memory behavior under repeated independent commits', () => {
     it('does not silently rebind historical refs in a deterministic 50-step state sequence', () => {
-        const core = createSnapshotCore({ maxHistoryEntries: 64 });
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore({ ...identity, maxHistoryEntries: 64 });
         const snapshots = []; const holders: Array<() => void> = [];
         for (let n = 1; n <= 50; n++) {
             const snapshot = published(core, draft(n, n, 'entity-' + n)); snapshots.push(snapshot);
@@ -620,8 +597,7 @@ describe('M1 Core — in-memory behavior under repeated independent commits', ()
     });
 
     it('does not import DOM or Worker primitives into the Core contract', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const state = published(core, draft());
         expect(state.views).toHaveLength(1);
         expect(state.views[0].content.format).toBe('markdown-v1');
@@ -633,8 +609,7 @@ describe('M1 Core — in-memory behavior under repeated independent commits', ()
 
 describe('M1 Core — adversarial resource and publication invariants', () => {
     it('caps concurrent Snapshot leases and supports idempotent lease release', () => {
-        const core = createSnapshotCore({ maxActiveLeases: 1 });
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore({ ...identity, maxActiveLeases: 1 });
         const first = published(core, draft());
         const acquired = core.store.acquire(first.id);
         expect(acquired.status).toBe('acquired');
@@ -653,8 +628,7 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
     });
 
     it('does not let a degraded App masquerade as ready after rejected schema or invalid source', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         published(core, draft());
         const invalid = core.committer.accept({
             ...draft(2, 2), tools: { [TOOL]: { ...draft().tools[TOOL], retiredField: true } },
@@ -676,8 +650,7 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
     });
 
     it('tracks Tool schema changes even when View content is unchanged', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const first = published(core, draft());
         const changedSchema = (() => {
             const compiled = compileOrdinarySchema({ type: 'object', properties: { id: { type: 'string', description: 'Task identifier' } }, additionalProperties: false });
@@ -695,8 +668,7 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
     });
 
     it('can recover from a full pinned history without altering a retained historical Ref', () => {
-        const core = createSnapshotCore({ maxHistoryEntries: 1 });
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore({ ...identity, maxHistoryEntries: 1 });
         const first = published(core, draft(1, 1, 'a'));
         const lease = core.store.acquire(first.id);
         expect(lease.status).toBe('acquired');
@@ -717,8 +689,7 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
     });
 
     it('does not promote an unknown or missing Ref string to a valid Ref', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const current = published(core, draft());
         const missing = core.store.resolveRef({
             snapshotId: current.id, appId: 'task_app', instanceId: 'instance_a',
@@ -732,8 +703,7 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
 
 describe('M1 Core — nonpublishable Producer input and explicit prepare failure', () => {
     it('stays degraded when lastGood is replayed and recovers unchanged at a new source epoch', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const first = published(core, draft(1, 1));
         const failure = core.committer.reportPrepareFailure({ appId: 'task_app', instanceId: 'instance_a',
             producerSeq: 2, sourceEpoch: 1, issue: { code: 'SNAPSHOT_INVALID', message: 'Failed commit' } });
@@ -748,8 +718,7 @@ describe('M1 Core — nonpublishable Producer input and explicit prepare failure
     });
 
     it('degrades lastGood when nested Ref serialization fails before full envelope clone', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const first = published(core, draft(1, 1));
         const cyclic: any = { id: 'invalid' };
         cyclic.self = cyclic;
@@ -769,8 +738,7 @@ describe('M1 Core — nonpublishable Producer input and explicit prepare failure
     });
 
     it('accepts a trusted Producer PREPARE_FAILED report, with no invented successful Snapshot', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const reported = core.committer.reportPrepareFailure({
             appId: 'task_app',
             instanceId: 'instance_a',
@@ -851,8 +819,7 @@ describe('M1 Core — edge-case schema and retention gates', () => {
     });
 
     it('refuses invalid lease duration and fails closed on exhausted active lease capacity', () => {
-        const core = createSnapshotCore({ leaseTtlMs: 5, maxActiveLeases: 1 });
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore({ ...identity, leaseTtlMs: 5, maxActiveLeases: 1 });
         const s = published(core, draft());
         const bad = core.store.acquire(s.id, 10);
         expect(bad.status).toBe('rejected');
@@ -867,20 +834,22 @@ describe('M1 Core — edge-case schema and retention gates', () => {
         expect(core.store.inspect().activeLeases).toBe(0);
     });
 
-    it('refuses app-instance token reuse even after other App instance starts', () => {
-        const core = createSnapshotCore();
-        expect(() => core.lifecycle.startApp('', 'x')).toThrow(/appId/);
-        core.lifecycle.startApp('task_app', 'instance_a');
-        core.lifecycle.startApp('task_app', 'instance_a'); // idempotent active registration
-        core.lifecycle.startApp('task_app', 'instance_b');
-        expect(() => core.lifecycle.startApp('task_app', 'instance_a')).toThrow(/instance ID/);
-        core.lifecycle.stopApp('task_app', 'instance_b');
-        expect(core.store.readLatest('task_app').status).toBe('stopped');
+    it('requires a valid, fixed App and instance identity at construction', () => {
+        for (const key of ['appId', 'instanceId'] as const) {
+            for (const value of [undefined, '', '  ', 42]) {
+                expect(() => createSnapshotCore({ ...identity, [key]: value } as SnapshotStoreOptions)).toThrow(new RegExp(key));
+            }
+        }
+        const options = { ...identity };
+        const core = createSnapshotCore(options);
+        options.appId = 'other_app';
+        options.instanceId = 'different';
+        expect(core.store.readAppIdentity('task_app')).toEqual({ status: 'active', instanceId: 'instance_a' });
+        expect(core.store.readAppIdentity('other_app')).toEqual({ status: 'absent' });
     });
 
     it('does not overwrite a healthy App when a Producer failure reports another instance', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const s = published(core, draft());
         const report = core.committer.reportPrepareFailure({
             appId: 'task_app', instanceId: 'another-instance', producerSeq: 5, sourceEpoch: 5,
@@ -915,8 +884,7 @@ describe('M1 Core — defensive JSON boundary edge cases', () => {
     });
 
     it('does not allow Tool descriptor lookup to cross source App identity', () => {
-        const core = createSnapshotCore();
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore(identity);
         const snap = published(core, draft());
         const result = core.store.getTool({
             snapshotId: snap.id, appId: 'task_app', instanceId: 'wrong-instance', toolId: TOOL,
@@ -927,8 +895,7 @@ describe('M1 Core — defensive JSON boundary edge cases', () => {
 
     it('retains owner leases across time within capacity and releases historical data when the final owner settles', () => {
         let now = 0;
-        const core = createSnapshotCore({ now: () => now, historyTtlMs: 10, leaseTtlMs: 10, maxActiveLeases: 2 });
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore({ ...identity, now: () => now, historyTtlMs: 10, leaseTtlMs: 10, maxActiveLeases: 2 });
         const old = published(core, draft()), owner = core.store.acquire(old.id, { lifetime: 'owner' });
         expect(owner.status).toBe('acquired'); if (owner.status !== 'acquired') return;
         expect(owner.lease.expiresAt).toBeNull();
@@ -944,8 +911,7 @@ describe('M1 Core — defensive JSON boundary edge cases', () => {
         expect(core.store.getById(old.id).status).toBe('rejected');
     });
     it('keeps pinned owner history bounded and releases all owner leases on dispose', () => {
-        const core = createSnapshotCore({ now: () => 0, maxHistoryEntries: 1 });
-        core.lifecycle.startApp('task_app', 'instance_a');
+        const core = createSnapshotCore({ ...identity, now: () => 0, maxHistoryEntries: 1 });
         const first = published(core, draft());
         const firstOwner = core.store.acquire(first.id, { lifetime: 'owner' });
         expect(firstOwner.status).toBe('acquired');
@@ -962,9 +928,8 @@ describe('M1 Core — defensive JSON boundary edge cases', () => {
     it('never grants a new historical lease after retention TTL despite an existing valid timed pin', () => {
         let now = 1_000;
         const core = createSnapshotCore({
-            now: () => now, historyTtlMs: 0, leaseTtlMs: 100,
+            ...identity, now: () => now, historyTtlMs: 0, leaseTtlMs: 100,
         });
-        core.lifecycle.startApp('task_app', 'instance_a');
         const old = published(core, draft());
         const lease = core.store.acquire(old.id, 100);
         expect(lease.status).toBe('acquired');

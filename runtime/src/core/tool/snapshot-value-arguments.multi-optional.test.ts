@@ -27,9 +27,8 @@ function fixture(fields: Record<string, any> = { a: ref(), b: ref() }, required 
         required, additionalProperties: false };
     const compiled = compileOrdinarySchema(schema);
     if (!compiled.ok) throw Error(JSON.stringify(compiled.issue));
-    const core = createSnapshotCore(), registry = createViewOwnedTools('app', 'run');
+    const core = createSnapshotCore({ appId: 'app', instanceId: 'run' }), registry = createViewOwnedTools('app', 'run');
     cleanup.push(() => { registry.dispose(); core.lifecycle.dispose(); });
-    core.lifecycle.startApp('app','run');
     const entries: any[] = [], dispatches: any[] = [];
     registry.defineTools([{viewType:'NoteView',name:'inspect',description:'Inspect refs',inputSchema:schema}]);
     const plan=registry.prepareFrame([{id:'aa',type:'NoteView',owner:{},bindings:[{name:'inspect',enabled:true,execute:args=>{

@@ -48,8 +48,7 @@ export class SemanticSnapshotReceiver {
     private completion?: Promise<void>;
 
     constructor(readonly appId: string, readonly instanceId: string, private readonly now: () => number = monotonicNow) {
-        this.core = createSnapshotCore({ now });
-        this.core.lifecycle.startApp(appId, instanceId);
+        this.core = createSnapshotCore({ appId, instanceId, now });
     }
 
     interaction(policy: AppInteractionPolicy, execution: ExecutionResolver): InstanceInteraction {
@@ -110,7 +109,7 @@ export class SemanticSnapshotReceiver {
     close(): Promise<void> {
         if (this.completion) return this.completion;
         this.stopped = true;
-        this.core.lifecycle.stopApp(this.appId, this.instanceId);
+        this.core.lifecycle.stop();
         this.completion = (this.interactions?.whenClosed() ?? Promise.resolve()).then(() => this.core.lifecycle.dispose());
         void this.closeInteractions();
         return this.completion;

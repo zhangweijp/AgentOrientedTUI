@@ -42,10 +42,8 @@ function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): Pr
         } },
     };
 }
-function start(options: Parameters<typeof createSnapshotCore>[0] = {}) {
-    const core = createSnapshotCore(options);
-    core.lifecycle.startApp(appId, instanceId);
-    return core;
+function start(options: Omit<Parameters<typeof createSnapshotCore>[0], 'appId' | 'instanceId'> = {}) {
+    return createSnapshotCore({ appId, instanceId, ...options });
 }
 function publish(core: SnapshotCore, input = draft()) {
     const result = core.committer.accept(input);
@@ -176,7 +174,7 @@ describe('Wave 2B: exact historical Ref lookup', () => {
     it('stopping an App removes its current Snapshot while pinned Ref data is retained', () => {
         const core = start(); const source = publish(core);
         const held = core.store.acquire(source.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
-        core.lifecycle.stopApp(appId, instanceId);
+        core.lifecycle.stop();
         expect(core.store.resolveRef(selector(source.id)).status).toBe('resolved');
         expect(core.store.readLatest(appId)).toMatchObject({ status: 'stopped' });
         held.lease.release(); expect(core.store.inspect().activeLeases).toBe(0);

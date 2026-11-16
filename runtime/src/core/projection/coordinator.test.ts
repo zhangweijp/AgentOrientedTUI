@@ -16,8 +16,7 @@ function fixture(views = [view(), view(bb)], checkCapacity?: typeof hostedObserv
     const identity = () => ({ appId: 'app', instanceId: 'run' });
     const readFrame = vi.fn(() => ({ views: frame.views, tools: [] }));
     const c = new SemanticProjectionCoordinator({ identity, readFrame, ...(checkCapacity ? { checkCapacity } : {}) });
-    const core = createSnapshotCore();
-    core.lifecycle.startApp('app', 'run');
+    const core = createSnapshotCore(identity());
     return { c, frame, readFrame, core, publish: () => c.publishTo(core.committer) };
 }
 
