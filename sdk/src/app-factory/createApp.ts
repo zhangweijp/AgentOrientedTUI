@@ -12,8 +12,8 @@ export interface ViewHandle { readonly [viewHandle]: true }
 export interface AppAuthorContext extends
     Pick<RuntimeContext, 'appId' | 'desktopId' | 'launchConfig' | 'persistence' | 'signal'> {
     registerCleanup(callbacks: AppLifecycleCallbacks): void;
-    /** Prepare this complete App projection synchronously. Errors are thrown locally. */
-    publish(frame: { readonly views: readonly ViewHandle[] }): PreparedProjection;
+    /** Prepare a complete frame. Use opening only for navigation that can leave the current frame intact. */
+    publish(frame: { readonly views: readonly ViewHandle[] }, options?: Parameters<RuntimeContext['publishFrame']>[1]): PreparedProjection;
 }
 
 export type CreateAppConfig = AppConfig & {
@@ -55,7 +55,7 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
         const { appId, desktopId, persistence, launchConfig, signal, appLifecycle, refExporter } = context;
         const capture = refExporter.captureRef.bind(refExporter);
         const app = {};
-        const publish: AppAuthorContext['publish'] = frame => context.publishFrame(() => {
+        const publish: AppAuthorContext['publish'] = (frame, options) => context.publishFrame(() => {
             if (signal.aborted) throw Object.assign(new Error('App projection is closed'), { code: 'PROJECTION_CLOSED' });
             const views: AppProjectionFrame['views'][number][] = [];
             const viewIds = new Set<string>();
@@ -90,7 +90,7 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
                 });
             }
             return { views };
-        });
+        }, options);
 
         await initialize({
             appId, desktopId, signal,

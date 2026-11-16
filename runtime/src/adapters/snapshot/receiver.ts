@@ -1,7 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import { createSnapshotCore } from '../../core/snapshot/store.js';
 import { createAppInteraction } from '../../core/invocation/app-interaction.js';
-import { previewCommittedApp } from '../../core/invocation/observation-registry.js';
+import { hostedObservationNamespace, previewCommittedApp } from '../../core/invocation/observation-registry.js';
 import type { ExecutionResolver, InstanceInteraction, AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
 import type { CommitResult, PreparedSnapshotFailure, SnapshotHealth, SnapshotIssueCode } from '../../core/snapshot/types.js';
 
@@ -55,7 +55,7 @@ export class SemanticSnapshotReceiver {
     interaction(policy: AppInteractionPolicy, execution: ExecutionResolver): InstanceInteraction {
         if (this.interactionsClosed || this.stopped) throw new Error('App interaction is unavailable');
         return this.interactions ??= createAppInteraction(this.core.store, {
-            appId: this.appId, instanceId: this.instanceId, namespace: `host:${this.instanceId}`, now: this.now, policy, execution,
+            appId: this.appId, instanceId: this.instanceId, namespace: hostedObservationNamespace(this.instanceId), now: this.now, policy, execution,
         });
     }
 

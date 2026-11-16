@@ -278,7 +278,7 @@ export class AppKernel implements IRefExporter {
                     },
                 };
             },
-            publishFrame: build => {
+            publishFrame: (build, options) => {
                 this.assertActive();
                 this.projection.beginCommit();
                 let candidate: CompleteProjectionFrame;
@@ -292,13 +292,14 @@ export class AppKernel implements IRefExporter {
                         const { viewInstanceId } = prepared.views[index]!;
                         for (const ref of view.refs) refs.push({ ...ref, viewId: view.id, viewInstanceId });
                     }
-                    candidate = { ...prepared, refs };
+                    candidate = { ...prepared, refs, opening: options?.opening === true };
                 } catch (error) {
                     this.projection.endCommit({ error });
                     throw error;
                 }
-                if (this.projection.endCommit(undefined, false, candidate) !== 'prepared') {
-                    const failure = this.projection.failure!;
+                const result = this.projection.endCommit(undefined, false, candidate);
+                if (result !== 'prepared') {
+                    const failure = typeof result === 'object' ? result.issue : this.projection.failure!;
                     throw new SnapshotDataError(failure.code, failure.path ?? '$', failure.message);
                 }
                 return Object.freeze({ status: 'prepared', sourceEpoch: this.projection.token().epoch });

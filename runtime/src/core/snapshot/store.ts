@@ -5,7 +5,7 @@ import type {
     SnapshotStoreOptions, SnapshotStoreStats, ToolLookup, ToolSelector, AppIdentityRead,
 } from './types.js';
 import { utf8Size } from './json.js';
-import { captureSnapshotLimits, refKey } from './snapshot-support.js';
+import { captureSnapshotLimits, refKey, snapshotId } from './snapshot-support.js';
 import { validatePreparedV5Draft } from './v5-validator.js';
 
 interface SnapshotEntry {
@@ -73,10 +73,6 @@ function positiveInteger(value: number, label: string, allowZero = false): void 
 function nonEmpty(value: string, label: string): void {
     if (typeof value !== 'string' || !value.trim()) throw new TypeError(label + ' must be non-empty');
 }
-function snapshotId(appId: string, instanceId: string, revision: number): string {
-    return 'aotui-app-snapshot:v' + SNAPSHOT_SCHEMA_VERSION + ':' + JSON.stringify([appId, instanceId, revision]);
-}
-
 /**
  * Constructs a capability-separated Snapshot Core.
  * Only committer.accept can publish; store is read-only except acquiring/releasing leases;

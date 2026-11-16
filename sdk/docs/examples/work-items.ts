@@ -1,5 +1,5 @@
 import Type from 'typebox';
-import { defineViewType, refParam, type JsonValue } from '@aotui/sdk/app';
+import { defineViewType, refParam, type JsonValue, type ToolResult } from '@aotui/sdk/app';
 
 const jsonList = Type.Array(Type.Unknown(), { maxItems: 8 });
 export const itemValue = Type.Union([
@@ -8,7 +8,7 @@ export const itemValue = Type.Union([
 ]);
 const operation = Type.Enum(['null', 'reset', 'reverse', 'empty', 'close', 'open', 'invalid', 'oversized', 'wait']);
 
-type ItemContext = { change(update: (state: State) => State): void };
+type ItemContext = { change(update: (state: State) => State): ToolResult | void };
 
 export const WorkspaceType = defineViewType<ItemContext & { options: WorkItemOptions }>()({
     name: 'Workspace',
@@ -25,7 +25,7 @@ export const WorkspaceType = defineViewType<ItemContext & { options: WorkItemOpt
             }, { additionalProperties: false }),
             async execute({ input: { operation }, context: { change, options } }) {
                 if (operation === 'wait') await options.prepare?.();
-                change(state => {
+                const receipt = change(state => {
                     switch (operation) {
                         case 'null': return { ...state, value: null };
                         case 'reset': return { ...state, value: 0, items: initialItems };
@@ -42,7 +42,7 @@ export const WorkspaceType = defineViewType<ItemContext & { options: WorkItemOpt
                     void options.recover?.(operation).then(() => change(state => operation === 'invalid'
                         ? { ...state, value: 0 } : { ...state, oversized: undefined }));
                 }
-                return { success: true };
+                return receipt ?? { success: true };
             },
         },
     },
@@ -62,10 +62,10 @@ export const ItemType = defineViewType<ItemContext>()({
                 }, { default: { 'x-aotui-parameter-contract': 'business' }, additionalProperties: false })),
             }, { additionalProperties: false }),
             execute({ input, context: { change } }) {
-                change(state => ({ ...state, inspections: state.inspections + 1,
+                return change(state => ({ ...state, inspections: state.inspections + 1,
                     note: JSON.stringify({ selected: input.selected, elements: input.elements, text: input.text,
-                        readonly: Object.isFrozen(input) && (input.elements === undefined || Object.isFrozen(input.elements)) }) }));
-                return { success: true };
+                        readonly: Object.isFrozen(input) && (input.elements === undefined || Object.isFrozen(input.elements)) }) }))
+                    ?? { success: true };
             },
         },
         count: {

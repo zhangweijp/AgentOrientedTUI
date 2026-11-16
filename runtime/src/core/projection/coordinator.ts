@@ -2,6 +2,7 @@ import type { AppFrameRef } from '../../spi/app/app-instance.interface.js';
 import type { IRefBinding, RefValueCheck } from '../../spi/app/ref-exporter.interface.js';
 import type { IProjectionPort, ProjectionToken } from '../../spi/runtime/projection.interface.js';
 import type { CancellationSignal } from '../invocation/app-interaction-types.js';
+import { hostedObservationCapacityIssue } from '../invocation/observation-registry.js';
 import { copyJson, createJsonCopier, SnapshotDataError } from '../snapshot/json.js';
 import { captureSnapshotPrepareIssue, DEFAULT_SNAPSHOT_LIMITS as limits, isSnapshotPrepareIssueCode, refKey } from '../snapshot/snapshot-support.js';
 import {
@@ -26,7 +27,10 @@ type RefOwner = { readonly viewId: string; readonly viewInstanceId: string };
 /** Complete data producer candidate with prospective identities from the View registry. */
 export type CompleteProjectionFrame = ReturnType<ProjectionSource['readFrame']> & {
     readonly refs: readonly (RefOwner & AppFrameRef)[];
+    readonly opening?: boolean;
 };
+type CommitStatus = ReturnType<IProjectionPort['endCommit']>;
+type RejectedOpening = Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
 type RefEntry = RefOwner & { readonly id: string; readonly refType: string | undefined; captured?: JsonValue; published?: boolean };
 type RefCapture = { value: JsonValue } | { issue: SnapshotIssue };
 type Batch = {
@@ -101,7 +105,9 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
         return this.endCommit();
     }
 
-    endCommit(failure?: { readonly error: unknown }, blocked = false, frame?: CompleteProjectionFrame): 'prepared' | 'blocked' | 'failed' {
+    endCommit(failure?: { readonly error: unknown }, blocked?: boolean): CommitStatus;
+    endCommit(failure: undefined, blocked: false, frame: CompleteProjectionFrame): CommitStatus | RejectedOpening;
+    endCommit(failure?: { readonly error: unknown }, blocked = false, frame?: CompleteProjectionFrame): CommitStatus | RejectedOpening {
         const batch = this.batch;
         if (!batch) throw new Error('Projection commit end without begin');
         batch.preparing = true;
@@ -156,6 +162,17 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
             }, limits, () => this.prepared?.tools);
             if (batch.issue) return this.fail(batch, batch.issue);
             if (!checked.ok) return this.fail(batch, checked.issue);
+
+            const capacity = frame && hostedObservationCapacityIssue(checked.value.draft);
+            if (capacity) {
+                if (frame.opening && this.prepared) {
+                    const mounted = new Set(this.prepared.views.map(view => view.viewInstanceId));
+                    if (checked.value.draft.views.some(view => !mounted.has(view.viewInstanceId))) {
+                        return { status: 'rejected', issue: capacity };
+                    }
+                }
+                return this.fail(batch, capacity);
+            }
 
             accept?.();
             this.prepared = checked.value.draft;
