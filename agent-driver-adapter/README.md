@@ -45,6 +45,11 @@ binding, authorization, parameter validation and framework resources. Apps own
 business state and permissions. The adapter preserves complete Driver Tool and
 message contracts; it does not execute business handlers through a second path.
 
+The Driver sees `INVOCATION_DEADLINE_EXCEEDED` as `rejected` when the original
+deadline prevented dispatch. `INVOCATION_WAIT_TIMEOUT` uses `unknown` and keeps
+its original error code and recovery message. A terminal receipt with uncertain
+effects retains `ACTION_OUTCOME_UNKNOWN`.
+
 ## Migrating the public import
 
 Move `SemanticAOTUIDrivenSource` and `SemanticAOTUIDrivenSourceOptions` imports

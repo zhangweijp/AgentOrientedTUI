@@ -36,7 +36,7 @@ const unavailable = (toolName: string, toolCallId: string, code: string, message
 /** Keep Core receipts internal while returning Tool result data and actionable errors to the Driver. */
 function semanticToolResult(toolName: string, toolCallId: string, result: InvokeResult): ToolResult {
     if (result.kind !== 'receipt') return unavailable(toolName, toolCallId, result.code, result.message,
-        result.kind === 'refused' ? 'rejected' : 'unknown');
+        result.kind === 'refused' || result.code === 'INVOCATION_DEADLINE_EXCEEDED' ? 'rejected' : 'unknown');
     const outcome = result.receipt.outcome;
     const base = { toolName, toolCallId, outcomeStatus: outcome.status };
     if (outcome.status === 'succeeded') {

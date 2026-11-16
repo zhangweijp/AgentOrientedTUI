@@ -448,7 +448,7 @@ describe('semantic receipt mapping', () => {
     const outcomes: InvocationOutcome[] = [
         { status: 'succeeded', value: null }, { status: 'rejected', code: 'NO', message: 'rejected' },
         { status: 'failed', code: 'FAILED', message: 'failed' },
-        { status: 'unknown', code: 'UNKNOWN', message: 'uncertain' },
+        { status: 'unknown', code: 'ACTION_OUTCOME_UNKNOWN', message: 'The final business outcome could not be established' },
     ];
     it.each(outcomes)('keeps $status internal without leaking a receipt', async outcome => {
         const value = receipt({ invocationId: 'call', observationId: 'obs', toolId: 'tool', input: {} }, outcome);
@@ -457,12 +457,19 @@ describe('semantic receipt mapping', () => {
         expect(JSON.stringify(result)).not.toContain('observationId');
         expect(JSON.stringify(result)).not.toContain('receipt');
         expect(Boolean(result.error)).toBe(['rejected', 'failed', 'unknown'].includes(outcome.status));
-        if (outcome.status === 'unknown') expect(result.error?.code).toBe('UNKNOWN');
+        if (outcome.status === 'unknown') expect(result.error?.code).toBe('ACTION_OUTCOME_UNKNOWN');
         if (outcome.status === 'failed') expect(result.error).toEqual({ code: 'FAILED', message: 'failed' });
     });
     it('distinguishes a known refusal from an unavailable execution result', async () => {
         expect((await executeMappedResult({ kind: 'refused', code: 'FULL', message: 'full' })).outcomeStatus).toBe('rejected');
         expect((await executeMappedResult({ kind: 'unavailable', code: 'GONE', message: 'gone' })).outcomeStatus).toBe('unknown');
+    });
+    it.each([
+        { code: 'INVOCATION_DEADLINE_EXCEEDED', message: 'Invocation deadline elapsed before dispatch', status: 'rejected' },
+        { code: 'INVOCATION_WAIT_TIMEOUT', message: 'Use readReceipt with the original observationId and invocationId.', status: 'unknown' },
+    ])('preserves $code and maps its dispatch certainty', async ({ code, message, status }) => {
+        const result = await executeMappedResult({ kind: 'unavailable', code, message });
+        expect(result).toEqual({ toolName: expect.any(String), toolCallId: 'call', outcomeStatus: status, error: { code, message } });
     });
 });
 

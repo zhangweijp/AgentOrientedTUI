@@ -52,7 +52,7 @@ export interface InvocationReceipt {
   readonly observationId:string;
   readonly toolId:string;
   readonly source:ObservationSource|null;
-  /** When this receipt was produced. A deadline receipt can precede execution completion. */
+  /** When the invocation reached its terminal outcome. */
   readonly completedAt:number;
   readonly expiresAt:number;
   readonly executionPhase:'not-dispatched'|ExecutionPhase|'unknown';
@@ -95,9 +95,9 @@ export interface AppInteraction {
   preview():Promise<AppPreviewResult>;
   /** Adopt the prepared observation and release the previous observation. */
   adoptObservation(observationId:string):Readonly<{status:'adopted'}>|Readonly<{status:'rejected';issue:Issue}>;
-  /** A waiting deadline bounds this invocation's wait without ending dispatched work. */
+  /** A deadline bounds this wait and the initial invocation's admission. Dispatched work continues to settlement. */
   invoke(request:unknown, timeoutMs?:number):Promise<InvokeResult>;
-  /** Authorize and read a matching original invocation, without admitting execution. */
+  /** Authorize and read the original invocation's terminal receipt. The deadline only bounds this read. */
   readReceipt(query: ReceiptQuery, timeoutMs?:number):Promise<ReceiptAccess>;
   releaseObservation(observationId:string):void;
 }

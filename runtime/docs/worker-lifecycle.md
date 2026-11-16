@@ -29,6 +29,8 @@ Desktop 目录报告 `pending`、`running`、`collapsed` 或 `closed`。折叠�
 4. 超过 `worker.timeoutMs` 的宽限期后，Host 请求终止并记录 `APP_CLOSE_DEADLINE_EXCEEDED`。自然 `exit` 或原生 `terminate()` 成功完成提供同一个真实退出事实。终止请求或 Worker 单独报错时仍保留线程名额和必要关联。
 5. Host 等待已经接纳的存储访问、adapter release 以及 Core 交互清理。后台持久化 I/O 可以在 Worker 退出后继续，原 Host 仍负责其收尾。
 
+调用方收到 `INVOCATION_WAIT_TIMEOUT` 后，已派发的 Tool 仍保有执行记录和来源，直到收到匹配的终结消息或确认 Worker 退出。收据读取授权超时后，Runtime 继续追踪已启动的授权回调，直到它实际结束。 [调用与收据期限](runtime-app-interaction.md)
+
 内部 `AppWorkerHost.close()` 等到线程实际退出。内部 `waitForResourceRelease()` 等到 Host 的资源释放尝试结束。Public Runtime 的关闭 handle 汇总 App、Worker 和存储结果。独立调用方可以通过 `wait({ timeoutMs })` 截止等待。详情见 [Runtime 关闭与结果报告](runtime-shutdown.md)。
 
 `app-lifecycle-v2` 以 `state` / `issues` 报告 App 清理。应用的 `stop` 和 `close` 可选，卸载仍保留已经注册的 cleanup。强制退出时缺失或未完成的回调会体现在报告中。App 创建的子进程、远端任务及外部业务效果由应用或实际 adapter 处理。见 [ViewType Tool 与应用清理](tool-lifecycle.md)。

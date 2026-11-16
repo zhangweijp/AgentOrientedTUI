@@ -292,7 +292,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
       return originalEmit(event, ...args);
     };
     await control(x, 'release', { id: x.entries()[0].id });
-    expect(receipt(await running).outcome.status).toBe('unknown');
+    expect(await running).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT' });
     expect(x.posts()).toHaveLength(1);
     expect(x.entries()).toHaveLength(1);
     expect(x.host.getInteractionReport().workerToolPending).toBe(true);

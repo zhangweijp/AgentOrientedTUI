@@ -237,7 +237,9 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V5 wire', (
         x.host.timeout = FAULT_HOST_TIMEOUT_MS;
         x.transform((m: any) => m.type !== 'VIEW_TOOL_INVOKE_V6_RESPONSE' ? m : kind === 'drop' ? null : kind === 'type' ? { ...m, type: 'VIEW_TOOL_INVOKE_REF_V1_RESPONSE' } : kind === 'mode' ? { ...m, argumentMode: 'snapshot-value-v1' } : kind === 'instance' ? { ...m, instanceId: 'other' } : kind === 'request' ? { ...m, requestId: 'other' }
             : { ...m, terminal: { phase: 'entered-returned', result: { success: true, data: 'x'.repeat(9 * 1024 * 1024) } } });
-        const s = scope(x), o = await s.observe(), result = receipt(await s.invoke(s.request(o)));expect(result.outcome.status).toBe('unknown');expect(x.host.getInteractionReport().workerToolPending).toBe(true);expect(x.entries()).toHaveLength(1);
+        const s = scope(x), o = await s.observe();
+        expect(await s.invoke(s.request(o))).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT' });
+        expect(x.host.getInteractionReport().workerToolPending).toBe(true);expect(x.entries()).toHaveLength(1);
         const count = x.posts().length;await s.invoke(s.request(o));expect(x.posts()).toHaveLength(count);x.host.terminate();expect((await x.host.waitForResourceRelease()).worker).toBe('exited');
     });
     it('R17 a Worker exit while the handler is held is unknown with no automatic retry', async () => {
@@ -249,7 +251,8 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref with V5 wire', (
         const s = scope(x), o = await s.observe();x.transform((m: any) => /^VIEW_TOOL_INVOKE_.*_RESPONSE$/.test(m.type) ? null : m);
         const args = name === 'inspect' ? { file: REF_A, choice: 'ok' } : name === 'capacity' ? { file: BIG_A } : { view_id: 'aa' };
         const request = s.request(o, name, args, 'aa');
-        expect(receipt(await s.invoke(request)).outcome.status).toBe('unknown');expect(x.entries()).toHaveLength(1);expect(x.host.getInteractionReport().workerToolPending).toBe(true);const count = x.posts().length;
+        expect(await s.invoke(request)).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT' });
+        expect(x.entries()).toHaveLength(1);expect(x.host.getInteractionReport().workerToolPending).toBe(true);const count = x.posts().length;
         for (const [next, nextArgs] of [['inspect', { file: REF_A, choice: 'ok' }], ['capacity', { file: BIG_A }], ['plain', { view_id: 'aa' }]] as const)
             await s.invoke(s.request(o, next, nextArgs, 'aa'));
         expect(x.posts()).toHaveLength(count);expect(x.entries()).toHaveLength(1);x.host.terminate();expect((await x.host.waitForResourceRelease()).worker).toBe('exited');
