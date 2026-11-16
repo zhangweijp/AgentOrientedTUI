@@ -11,7 +11,8 @@
 - Host 用 `toolsEnabled: false` 开启只读观察。省略或传入 `true` 启用 Tool。安装入口会在创建资源前拒绝未知字段，并使用 Runtime 随包的 Worker。用 `beginDesktopShutdown(id).wait(...)` 取得关闭结果。
 - Preact App 用 `useLLMUsage` 获取模型用量。每条事件包含时间、Provider、模型 ID 和三个 Token 计数，历史由 App 决定如何保存。JSON 类型使用 `@aotui/sdk/app` 的 `JsonValue`。
 - Host 从 `runtime.getDesktop(id).getInstalledApps()` 读取 `AppDiscoveryInfo` 目录。替换 `serialize()` 并在宿主选择要保存的字段。冷重启可传入 `reason`。
-- Worker 协商 `app-snapshot/v4` 和 `view-tool-parameters-invoke/v6`。手写 factory 使用 `view-type-tools-v5`，并通过 `RuntimeContext.defineTools` 注册静态定义。
+- Worker 协商 `app-snapshot/v5` 和 `view-tool-parameters-invoke/v6`。手写 factory 使用 `view-type-tools-v5`，并通过 `RuntimeContext.defineTools` 注册静态定义。
+- 标准 Source 默认向模型提供 `appName-toolName`。跨 ViewType 同名或短名命中 Desktop 保留别名时使用三段名。按旧全名查找工具的 Host 消费者改用本轮 Tools 中的名字。
 - App 工厂的规范名称使用 `kernelConfig.appName`，由 SDK 的 `app_name` 生成。删掉对工厂 `displayName` 和 `kernelConfig.name` 的读取。Host 通过 `installDynamicWorkerApp` 的 `options.config` 或 `AppRegistry.installAll` 的 `options.dynamicConfig` 提供启动配置。App 从 `context.launchConfig` 读取。
 - 托管 Preact App 内用 `<ToolCatalog />` 读取已注册类型。需要显式指定目录时传 `viewTypes`。目录数据的类型用 `readonly ToolCatalogEntry[]` 或 `ReturnType<typeof getToolCatalog>`，组件参数用 `ToolCatalogProps`。
 

@@ -118,7 +118,7 @@ At `t1`, the runtime can add the file view as a User Message.
 </view>
 ```
 
-The View presents the current file state. The native `Tools` list separately provides available operations such as `system_ide-FileDetail-edit_file` and their parameter schemas.
+The View presents the current file state. The native `Tools` list separately provides available operations such as `system_ide-edit_file` and their parameter schemas.
 
 That also means it does not have to expose a whole-file snapshot every time. Depending on the task, a file-facing view can be line-addressable, slice-based, diff-aware, or oriented around partial edits rather than full-file replacement.
 
@@ -204,11 +204,11 @@ Without references, an agent may know what exists in the application while still
 
 ### 3. Tool
 
-The agent uses `messaging-ContactList-open_chat` from the current `Tools` list and passes the selected contact.
+The agent uses `messaging-open_chat` from the current `Tools` list and passes the selected contact.
 
 ```json
 {
-  "tool": "messaging-ContactList-open_chat",
+  "tool": "messaging-open_chat",
   "arguments": {
     "view_id": "contacts",
     "contact": "contacts.contacts[2]"
@@ -234,7 +234,7 @@ The `Tools` list now offers the send tool. The agent passes the ChatDetail XML I
 
 ```json
 {
-  "tool": "messaging-ChatDetail-send_message",
+  "tool": "messaging-send_message",
   "arguments": {
     "view_id": "chat_jy",
     "message": "Hi"

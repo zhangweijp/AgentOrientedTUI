@@ -41,4 +41,4 @@ SDK 在 `defineViewType` 处预检每个 Tool 的完整参数合同。默认上�
 
 ## Native Host 工具名称
 
-Source 生成模型 Tools 时校验 `appName-ViewType-toolName`。每段仅使用 ASCII 字母、数字与下划线，整名最长 64 字符。View id 不参与别名构成，调用沿已捕获的 Context 绑定路由。
+App 内唯一的操作默认使用 `appName-toolName`。多个 ViewType 注册同名操作时，该组都用 `appName-ViewType-toolName`。短名命中 Desktop 保留名时也加入 ViewType。实际拼接的每段使用 ASCII 字母、数字和下划线，整名最长 64 字符。调用从本轮 Tools 选择名称，通过 `view_id` 选择接收页。

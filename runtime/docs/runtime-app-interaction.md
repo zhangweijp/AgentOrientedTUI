@@ -69,7 +69,7 @@ Tool execution is enabled by default. Install with the trusted Host option `tool
 
 Construct the Runtime with `createRuntime()`. The returned `IKernel` includes App interaction and shutdown reporting. Use `getDesktop()` for the `IDesktop` contract. These interfaces replace imports of the concrete `Kernel`, `IDesktopManager`, and the separate access and shutdown reporting interfaces.
 
-The Worker handshake requires `app-snapshot/v4`. When execution is enabled, the Host also requests `view-tool-parameters-invoke/v6`. Incompatible factories or required capabilities fail at load time. The `VIEW_TOOL_INVOKE_V6` request carries the receiving View ID, mount identity, and activation separately from business arguments. The Worker checks the current receiver before entering its handler.
+The Worker handshake requires `app-snapshot/v5`. Each published Tool records whether another registered ViewType in the App declares that name. The standard Source uses that fact for its public aliases. When execution is enabled, the Host also requests `view-tool-parameters-invoke/v6`. Incompatible factories or required capabilities fail at load time. The `VIEW_TOOL_INVOKE_V6` request carries the execution descriptor, receiving View ID, mount identity, and activation separately from business arguments. The Worker checks the current receiver before entering its handler.
 
 Both the complete normalized Tool profile and the model schema, including the derived receiver and any eligibility enum, are checked against the inclusive 64 KiB canonical JSON UTF-8 limit. A custom Snapshot Core can set a lower limit. SDK author diagnostics include a Schema path and distinguish invalid, unsupported and over-capacity declarations. [Core limits and declaration diagnostics](core-public-entry.md#snapshot-limits)
 
@@ -174,7 +174,7 @@ Host 可以用 `client.invoke(request, timeoutMs)` 为一次等待指定期限�
 | View id/type/name | 作者；id 在 App 的当前挂载集合内唯一 | id 是逻辑页面，type 激活共享工具，name 是呈现标签。SDK 的 id 使用非空 ASCII 字母、数字或下划线；纯 Core 的 id 遵循非空、无点、唯一性与容量规则。 |
 | View instanceId | Runtime；每次挂载新建 | 同 id 重挂不恢复旧 Ref 资格；Core 的 owner 与实例来源检查使用它 |
 | Tool name 与内部 id | 作者声明 name，Runtime/Core 生成 `[appId, viewType, name]` 的结构化标识 | 同类型共享一份定义。运行绑定由各打开的页面提供，内部身份独立于外部工具名 |
-| 原生 Tool 别名 | Source 按三个字段确定生成 | ASCII 字母/数字/下划线，连字符只作分隔，总长至多64；这是原生入口约束，不是 Core 结构化名字的限制。失败只隔离对应 App，无覆盖、截断或自动别名 |
+| 原生 Tool 别名 | Source 默认生成 `appName-toolName`。跨 ViewType 同名或短名命中 Desktop 保留别名时加入 `ViewType` | 实际名称段使用 ASCII 字母、数字和下划线，连字符作分隔。总长至多 64 字符，名称诊断作用于对应 App。见 [Source 命名规则](semantic-host-integration.zh-CN.md#native-tool-aliases) |
 | Ref 局部名与调用地址 | 作者；同一个 View 内唯一 | 展示保持类型提示；调用为 view_id.local_ref。只有所绑定 Observation 的来源和 View instance 可解析，局部名可在其他 View 复用 |
 | Snapshot id/revision | Core；绑定 App 执行实例的已提交版本 | 当前状态只显示最新有效版本；不是业务对象 ID，也不能作为无需再观察的永久资格 |
 | Observation id | App instance | 一次准备出的来源集合；显式采用新观察撤销本实例的旧资格并释放旧观察专属数据 |
@@ -183,7 +183,7 @@ Host 可以用 `client.invoke(request, timeoutMs)` 为一次等待指定期限�
 
 SDK 从作者声明的 `app_name` 生成 `kernelConfig.appName`。生成器用它写入 `aoapp.json`，Worker 校验工厂与安装时登记的名称一致。AppKernel 使用 Runtime 分配的 App ID。Host 可用 `AOTUI_APP_KEY` 显式指定持久化命名空间。
 
-工厂标记为 `view-type-tools-v5`，快照为 V4，工具 IPC 为 V6。生命周期和持久化继续使用 `app-lifecycle-v2` 与 `state-session-v1`。SDK、Runtime 与 Source 应使用同一批兼容版本。
+工厂标记为 `view-type-tools-v5`，快照为 V5，工具 IPC 为 V6。生命周期和持久化使用 `app-lifecycle-v2` 与 `state-session-v1`。SDK、Runtime 与 Source 使用同一批配套构建。
 
 ## 2026-11-09 减法迁移
 

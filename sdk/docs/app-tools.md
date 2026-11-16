@@ -51,6 +51,6 @@ function App() {
 export default createTUIApp({ app_name: 'counters', component: App, viewTypes });
 ```
 
-两页共享一份 `counters-Counter-add` 和一份 `counters-Counter-reset`。模型调用 `add` 并传 `{ "view_id": "counter_b", "by": 1 }`，handler 收到业务参数 `{ by: 1 }` 和 B 的 `setCount`，下一次成功观察显示 A 为 0、B 为 11。调用 `reset` 时只需传接收页的 `view_id`。
+两页共享一份 `counters-add` 和一份 `counters-reset`。模型调用 `add` 并传 `{ "view_id": "counter_b", "by": 1 }`，handler 收到业务参数 `{ by: 1 }` 和 B 的 `setCount`，下一次成功观察显示 A 为 0、B 为 11。调用 `reset` 时只需传接收页的 `view_id`。
 
 工具可以在同一声明提供 `enabled(context): boolean`。SDK 在准备页面时读取该页的启用状态。已有 App 也可用元数据形式 `defineViewType({ name, tools })` 和显式 `View.bindings`。每种声明要求对应的页面属性。 [作者指南](app-authoring.md)
