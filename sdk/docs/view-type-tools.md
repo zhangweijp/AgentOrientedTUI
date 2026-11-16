@@ -2,7 +2,7 @@
 
 用 `defineViewType<Context>()({ name, tools })` 定义页面类型。工具键就是公开工具名。说明、可选的 TypeBox 业务 Schema、`execute({ input, context })` 和可选的 `enabled(context)` 都写在同一项。App 工厂在 `viewTypes` 中登记类型。
 
-Preact 页通过 `View.context` 提交自己的上下文。普通 TypeScript 在 `createView` 的 `render` 返回 `context`。SDK 用该上下文准备每项工具的执行绑定，`enabled` 默认允许，判定结果随正文与 Ref 一起提交。已有元数据形式的 ViewType 继续用 `View.bindings` 或 `render` 返回的 `bindings`，其中 `enabled: false` 表示当前页暂停该操作。
+Preact 页通过 `View.context` 提交自己的上下文。普通 TypeScript 在 `createView` 的 `render` 返回 `context`。SDK 用该上下文准备每项工具的执行绑定，`enabled` 默认允许，判定结果随正文与 Ref 一起提交。没有工具的类型直接用 `defineViewType({ name })`。
 
 模型每次 Tool Call 提供 `view_id` 选择执行页面。共享工具只有一份 Schema。部分同类型页面能接收操作时，模型 Schema 会列出当前候选页。显式 Ref 使用 `view_id.ref_id` 作为地址，可以指向同一观察中的另一页。应用检查业务对象和状态是否仍然有效。
 

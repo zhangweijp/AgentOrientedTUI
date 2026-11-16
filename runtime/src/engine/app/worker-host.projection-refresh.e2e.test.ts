@@ -31,11 +31,35 @@ beforeAll(async () => {
         import { useState, useLayoutEffect, useMemo } from 'preact/hooks';
         import Type from 'typebox';
         import { createTUIApp, View, useDataRef, refParam, defineViewType } from '@aotui/sdk';
-const _FixtureWorkspace = defineViewType({ name:'Workspace', tools:{ change: { description:'Change the fixture', inputSchema:Type.Object({value:Type.Number(),invalid:Type.Optional(Type.Boolean())},{additionalProperties:false}) },
-stats: { description:'Read operation count', inputSchema:Type.Object({}) } } });
-const _FixtureFile = defineViewType({ name:'File', tools:{ edit: { description:'Edit the current file', inputSchema:Type.Object({}) },
-read: { description:'Read observed data', inputSchema:Type.Object({record:refParam('Record',Type.Object({value:Type.Number()}))}) } } });
-const _FixtureOther = defineViewType({ name:'Other', tools:{  } });
+        const WorkspaceType = defineViewType()({ name: 'Workspace', tools: {
+            change: {
+                description: 'Change the fixture',
+                inputSchema: Type.Object({ value: Type.Number(), invalid: Type.Optional(Type.Boolean()) },
+                    { additionalProperties: false }),
+                execute({ input, context }) {
+                    calls++;
+                    context.set({ value: input.value, invalid: input.invalid ?? false });
+                    return { success: true, data: { calls } };
+                },
+            },
+            stats: {
+                description: 'Read operation count', inputSchema: Type.Object({}),
+                execute: () => ({ success: true, data: { calls } }),
+            },
+        } });
+        const FileType = defineViewType()({ name: 'File', tools: {
+            edit: {
+                description: 'Edit the current file', inputSchema: Type.Object({}),
+                enabled: ({ value }) => value > 0,
+                execute: () => ({ success: true }),
+            },
+            read: {
+                description: 'Read observed data',
+                inputSchema: Type.Object({ record: refParam('Record', Type.Object({ value: Type.Number() })) }),
+                execute: ({ input }) => ({ success: true, data: { value: input.record.value } }),
+            },
+        } });
+        const OtherType = defineViewType({ name: 'Other' });
 
         const queued = []; options.debounceRendering = cb => queued.push(cb);
         let calls = 0;
@@ -49,7 +73,7 @@ const _FixtureOther = defineViewType({ name:'Other', tools:{  } });
         }
         function Other() {
             const [value, tick] = useState(0); redrawOther = () => tick(n => n + 1);
-            return h(View, {kind:'state',id:'other',type:_FixtureOther}, h('p', {}, 'other:'+value));
+            return h(View, {kind:'state',id:'other',type:OtherType}, h('p', {}, 'other:'+value));
         }
         function App() {
             const [state,set]=useState({value:0,invalid:false});
@@ -65,13 +89,14 @@ const _FixtureOther = defineViewType({ name:'Other', tools:{  } });
                 parentPort.on('message', onCommand);
                 return ()=>parentPort.off('message', onCommand);
             },[]);
-            return h('div',null,[h(View,{kind: 'state',id:'workspace',type:_FixtureWorkspace, bindings:{ change: {execute:args=>{calls++;set({value:args.value,invalid:args.invalid??false});return {success:true,data:{calls}};}},
-stats: {execute:()=>({success:true,data:{calls}})} },key:'root'},h('p',{},'workspace:'+state.value)),
-                state.value>0?h(View,{kind: 'state',id:'file',type:_FixtureFile, bindings:{ edit: {enabled:state.value>0,execute:()=>({success:true})},
-read: {execute:({record})=>({success:true,data:{value:record.value}})} },key:'file'},h(File,{state})):null,
-                h(Other,{key:'other'})]);
+            return h('div', null, [
+                h(View, { kind: 'state', id: 'workspace', type: WorkspaceType, context: { set }, key: 'root' },
+                    h('p', {}, 'workspace:' + state.value)),
+                state.value > 0 ? h(View, { kind: 'state', id: 'file', type: FileType, context: state, key: 'file' }, h(File, { state })) : null,
+                h(Other, { key: 'other' }),
+            ]);
         }
-        export default createTUIApp({viewTypes:[_FixtureWorkspace,_FixtureFile,_FixtureOther], app_name:'refresh_fixture',component:App,signalPolicy:'never'});
+        export default createTUIApp({viewTypes:[WorkspaceType,FileType,OtherType], app_name:'refresh_fixture',component:App,signalPolicy:'never'});
     ` }, outfile: appPath, platform: 'node', format: 'esm', bundle: true, packages: 'external',
         alias: { '@aotui/sdk': resolve(runtime, '../sdk/src/index.ts') }, logLevel: 'silent' });
 });

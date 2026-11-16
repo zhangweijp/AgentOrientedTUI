@@ -1,20 +1,29 @@
 import Type from 'typebox';
-import { defineViewType } from '@aotui/sdk/app';
+import { defineViewType, type ToolResult } from '@aotui/sdk/app';
 
-export const RootType = defineViewType({ name: 'Root', tools: {} });
+export const RootType = defineViewType({ name: 'Root' });
 
-export const WorkspaceType = defineViewType({ name: 'Workspace', tools: {
+type WorkspaceContext = {
+    hasOpenFiles: boolean;
+    openFile(path: string): Promise<ToolResult>;
+    closeFile(path: string): ToolResult;
+};
+export const WorkspaceType = defineViewType<WorkspaceContext>()({ name: 'Workspace', tools: {
         open_file: { description: 'Open a demo file and read its FileDetail View.',
             inputSchema: Type.Object({ filePath: Type.String() }, { additionalProperties: false }),
+            execute: ({ input, context }) => context.openFile(input.filePath),
         },
         close_file: { description: 'Close an opened demo file.',
             inputSchema: Type.Object({ filePath: Type.String() }, { additionalProperties: false }),
+            enabled: ({ hasOpenFiles }) => hasOpenFiles,
+            execute: ({ input, context }) => context.closeFile(input.filePath),
         },
 } });
 
-export const FileDetailType = defineViewType({ name: 'FileDetail', tools: {
+export const FileDetailType = defineViewType<{ edit(content: string): Promise<ToolResult> }>()({ name: 'FileDetail', tools: {
         edit_file: { description: 'Edit an opened demo file and read its updated View.',
             inputSchema: Type.Object({ content: Type.String() }, { additionalProperties: false }),
+            execute: ({ input, context }) => context.edit(input.content),
         },
 } });
 

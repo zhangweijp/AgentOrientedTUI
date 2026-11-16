@@ -8,7 +8,7 @@
 
 文件详情页自己持有正文和编辑操作。SDK 根据类型声明生成共享工具定义，Runtime 根据模型传入的 `view_id` 执行该页的 handler。显式 Ref 参数根据原 Observation 解析，可以独立选择数据来源。
 
-下面的示例使用 SDK 的显式 `bindings` 入口，便于看见每页提交的执行绑定。SDK 作者主路径和可运行示例随 `@aotui/sdk` 交付，详见该包 `docs/app-authoring.md`。Runtime 接收的是统一的页面绑定和业务 Schema。
+SDK 作者在 ViewType 声明操作，每页提交自己的 `context`。SDK 据此生成 Runtime 接收的页面绑定。两种作者入口和可运行示例随 `@aotui/sdk` 的 `docs/app-authoring.md` 交付。
 
 <!-- b2-app:start -->
 ```js
@@ -18,12 +18,26 @@ import Type from 'typebox';
 import { ToolCatalog, createTUIApp, defineViewType, refParam, View, useDataRef } from '@aotui/sdk';
 
 const FileSchema = Type.Object({ filePath: Type.String(), text: Type.String() }, { additionalProperties: false });
-const Guide = defineViewType({ name: 'Root', tools: {} });
-const FileDetail = defineViewType({ name: 'Detail', tools: {
-  ordinary: { description: 'Apply text to the selected file. Read the updated Detail.',
-    inputSchema: Type.Object({ text: Type.String() }, { additionalProperties: false }) },
-  ref: { description: 'Inspect the displayed File Ref.',
-    inputSchema: Type.Object({ file: refParam('File', FileSchema) }, { additionalProperties: false }) },
+const Guide = defineViewType({ name: 'Root' });
+const FileDetail = defineViewType()({ name: 'Detail', tools: {
+  ordinary: {
+    description: 'Apply text to the selected file. Read the updated Detail.',
+    inputSchema: Type.Object({ text: Type.String() }, { additionalProperties: false }),
+    async execute({ input, context: { setText, setCount } }) {
+      setText(input.text);
+      setCount(current => current + 1);
+      return { success: true, data: { message: 'Change completed.' } };
+    },
+  },
+  ref: {
+    description: 'Inspect the displayed File Ref.',
+    inputSchema: Type.Object({ file: refParam('File', FileSchema) }, { additionalProperties: false }),
+    async execute({ input, context }) {
+      if (input.file.filePath !== context.filePath) return { success: false,
+        error: { code: 'REF_WRONG_FILE', message: 'Select the displayed file.' } };
+      return { success: true, data: { currentValueAvailable: true } };
+    },
+  },
 } });
 const viewTypes = [Guide, FileDetail];
 
@@ -34,17 +48,8 @@ function FileBody({ count, text, filePath }) {
 }
 function Detail({ id, filePath }) {
   const [count, setCount] = useState(0), [text, setText] = useState('original');
-  return h(View, { kind: 'state', id, type: FileDetail, bindings: {
-    ordinary: { execute: async args => {
-      setText(args.text); setCount(current => current + 1);
-      return { success: true, data: { message: 'Change completed.' } };
-    } },
-    ref: { execute: async args => {
-      if (args.file.filePath !== filePath) return { success: false,
-        error: { code: 'REF_WRONG_FILE', message: 'Select the displayed file.' } };
-      return { success: true, data: { currentValueAvailable: true } };
-    } },
-  } }, h(FileBody, { count, text, filePath }));
+  return h(View, { kind: 'state', id, type: FileDetail, context: { filePath, setText, setCount } },
+    h(FileBody, { count, text, filePath }));
 }
 function Root() {
   return h('main', {}, [

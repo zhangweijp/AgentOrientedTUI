@@ -4,15 +4,27 @@ import Type from 'typebox';
 import { View, createTUIApp, defineViewType, refParam, useDataRef } from '@aotui/sdk';
 
 const File = Type.Object({ id: Type.String(), text: Type.String() }, { additionalProperties: false });
-const FileDetail = defineViewType({ name: 'FileDetail', tools: {
-  update: { description: 'Update the displayed text.',
-    inputSchema: Type.Object({ text: Type.String() }, { additionalProperties: false }) },
-  inspect: { description: 'Inspect a displayed File Ref.',
-    inputSchema: Type.Object({ file: refParam('File', File) }, { additionalProperties: false }) },
+const FileDetail = defineViewType()({ name: 'FileDetail', tools: {
+  update: {
+    description: 'Update the displayed text.',
+    inputSchema: Type.Object({ text: Type.String() }, { additionalProperties: false }),
+    execute({ input, context }) { context.setText(input.text); return { success: true }; },
+  },
+  inspect: {
+    description: 'Inspect a displayed File Ref.',
+    inputSchema: Type.Object({ file: refParam('File', File) }, { additionalProperties: false }),
+    execute: ({ input, context }) => ({ success: true, data: { matches: input.file.text === context.text } }),
+  },
 } });
-const Guide = defineViewType({ name: 'Guide', tools: {
-  close: { description: 'Close the file.', inputSchema: Type.Object({}) },
-  open: { description: 'Open the file.', inputSchema: Type.Object({}) },
+const Guide = defineViewType()({ name: 'Guide', tools: {
+  close: {
+    description: 'Close the file.', inputSchema: Type.Object({}),
+    execute({ context }) { context.setOpen(false); return { success: true }; },
+  },
+  open: {
+    description: 'Open the file.', inputSchema: Type.Object({}),
+    execute({ context }) { context.setOpen(true); return { success: true }; },
+  },
 } });
 
 export const initialText = '    first line  \r\n```\r\n<view id="literal">&lt;original&gt;</view>\r\n</application>\r\nlast line  \r\n';
@@ -30,14 +42,9 @@ function App() {
   const [text, setText] = useState(initialText);
   const [open, setOpen] = useState(true);
   return h('main', {}, [
-    h(View, { id: 'guide', type: Guide, kind: 'instruction', bindings: {
-      close: { execute: () => { setOpen(false); return { success: true }; } },
-      open: { execute: () => { setOpen(true); return { success: true }; } },
-    } }, h('p', {}, 'Read the current file.')),
-    open ? h(View, { id: 'file_a', type: FileDetail, kind: 'state', name: displayName, bindings: {
-      update: { execute: ({ text: value }) => { setText(value); return { success: true }; } },
-      inspect: { execute: ({ file }) => ({ success: true, data: { matches: file.text === text } }) },
-    } }, h(FileBody, { text })) : null,
+    h(View, { id: 'guide', type: Guide, kind: 'instruction', context: { setOpen } }, h('p', {}, 'Read the current file.')),
+    open ? h(View, { id: 'file_a', type: FileDetail, kind: 'state', name: displayName, context: { text, setText } },
+      h(FileBody, { text })) : null,
   ]);
 }
 

@@ -23,11 +23,24 @@ function enter(name, view, args, revision, refName = 'file') {
 // Private protocol fixture: returned arguments are controlled witnesses, not a public App data pattern.
 const labelFor = view => view === 'aa' ? 'alpha' : 'beta';
 const valueSchema = () => Type.Object({}, { additionalProperties: true });
+const specialNames = ['', '__proto__', 'constructor', 'x-aotui-ref', 'x-aotui-parameter-contract', 'line\nname'];
 function makeTools() {
     const ref = kind => SDK.refParam(kind, valueSchema());
-    const declare = (_name, fields, additionalProperties = false) => ({
+    const declare = (name, fields, additionalProperties = false) => ({
         description: 'Inspect an explicitly granted original value for the protocol fixture.',
-        inputSchema: Type.Object(fields, { additionalProperties }) });
+        inputSchema: Type.Object(fields, { additionalProperties }),
+        enabled: ({ state }) => state.enabled,
+        execute({ input: args, context: { id, state } }) {
+            parentPort.postMessage({ type: 'REF_HANDLER_ENTRY', name, receiver:id });
+            const param = name.startsWith('special_') ? specialNames[Number(name.slice(8))] : 'file';
+            const view = name === 'plain' ? id : args[param].view;
+            if (view !== 'aa' && view !== 'bb' || view === 'aa' && !state.show || view === 'bb' && !state.showSecond) {
+                parentPort.postMessage({ type: 'REF_APP_GUARD', name, view });
+                return { success: false, error: { code: 'VIEW_NOT_OPEN', message: 'The selected fixture object is not open.' } };
+            }
+            return enter(name, view, args, state.revision, param);
+        },
+    });
     const definitions = {
         inspect: declare('inspect', { file: ref('Data'), choice: Type.String({ enum: ['7', 'ok'] }),
             text: Type.Optional(Type.String({ maxLength: 1 })),
@@ -39,12 +52,12 @@ function makeTools() {
         typed: declare('typed', { file: ref('File') }),
         plain: declare('plain', {}),
     };
-    for (const [index, param] of ['', '__proto__', 'constructor', 'x-aotui-ref', 'x-aotui-parameter-contract', 'line\nname'].entries())
+    for (const [index, param] of specialNames.entries())
         definitions['special_' + index] = declare('special_' + index, Object.fromEntries([[param, ref('Data')]]));
-    return SDK.defineViewType({name:"File",tools:definitions});
+    return SDK.defineViewType()({name:"File",tools:definitions});
 }
 const File = makeTools();
-const Guide = SDK.defineViewType({name:"Root",tools:{}});
+const Guide = SDK.defineViewType({name:"Root"});
 function NewTools({ view, state }) {
     const label = labelFor(view);
     const file = SDK.useDataRef(label, { label: state.text, view, literal }, { refType: 'Data' });
@@ -69,20 +82,8 @@ function Root() {
         parentPort.on('message', receive);return () => parentPort.off('message', receive);
     }, []);
     useLayoutEffect(() => { parentPort.postMessage({ type: 'REF_V2_COMMITTED', state, tag: state.tag }); }, [state]);
-    const specialNames = ['', '__proto__', 'constructor', 'x-aotui-ref', 'x-aotui-parameter-contract', 'line\nname'];
-    const bindings = id => Object.fromEntries(Object.keys(File.tools).map(name => [name, { enabled: state.enabled,
-        execute: args => {
-            parentPort.postMessage({ type: 'REF_HANDLER_ENTRY', name, receiver:id });
-            const param = name.startsWith('special_') ? specialNames[Number(name.slice(8))] : 'file';
-            const view = name === 'plain' ? id : args[param].view;
-            if (view !== 'aa' && view !== 'bb' || view === 'aa' && !state.show || view === 'bb' && !state.showSecond) {
-                parentPort.postMessage({ type: 'REF_APP_GUARD', name, view });
-                return { success: false, error: { code: 'VIEW_NOT_OPEN', message: 'The selected fixture object is not open.' } };
-            }
-            return enter(name, view, args, state.revision, param);
-        } }]));
     const key = JSON.stringify([state.rule,state.defaultValue,state.refType]);
-    const view = id => h(SDK.View,{kind:'state',key:id+key,id,type:File,bindings:bindings(id)},h(NewTools,{view:id,state}));
+    const view = id => h(SDK.View, { kind: 'state', key: id + key, id, type: File, context: { id, state } }, h(NewTools, { view: id, state }));
     return h('main',{},[
         h(SDK.View, {kind: 'instruction', key: 'root', id: 'root', type: Guide }, [h('h1', {}, 'Reference Inspector Application Instruction'),
             h('h2', {}, 'What Reference Inspector is'), h('p', {}, 'Inspect displayed values from their original file views.'),

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createPlanDetailBindings, createPlanListBindings } from '../src/tui/planning-tools.js';
+import { captureViewBindings } from '../../../sdk/src/tools/view-type-tool.js';
+import { PlanDetailType, PlanListType } from '../src/tui/planning-tools.js';
 import type { Plan } from '../src/types.js';
 
 const plan = (id: string, phaseId: string, taskId: string): Plan => ({
@@ -13,6 +14,9 @@ const plan = (id: string, phaseId: string, taskId: string): Plan => ({
     }],
 });
 
+const pageTools = (type: typeof PlanListType | typeof PlanDetailType, context: object) =>
+    Object.fromEntries(captureViewBindings(type, 'plan', context).map(tool => [tool.name, tool]));
+
 describe('planning app type-level tool handlers', () => {
     it('rejects stale PlanDetail calls after the active plan changes', async () => {
         const activePlan = plan('plan-b', 'phase-b', 'task-b');
@@ -20,7 +24,7 @@ describe('planning app type-level tool handlers', () => {
         const addPhase = vi.fn(async () => 'phase-new');
         const deletePhase = vi.fn(async () => true);
         const completeTask = vi.fn(async () => true);
-        const tools = createPlanDetailBindings({
+        const tools = pageTools(PlanDetailType, {
             activePlan,
             addPhase,
             deletePhase,
@@ -48,7 +52,7 @@ describe('planning app type-level tool handlers', () => {
         const otherPlan = plan('plan-a', 'phase-a', 'task-a');
         const addTask = vi.fn(async () => 'task-new');
         const deleteTask = vi.fn(async () => true);
-        const tools = createPlanDetailBindings({
+        const tools = pageTools(PlanDetailType, {
             activePlan,
             addPhase: vi.fn(async () => 'phase-new'),
             deletePhase: vi.fn(async () => true),
@@ -76,7 +80,7 @@ describe('planning app type-level tool handlers', () => {
         const currentPlan = plan('current', 'phase', 'task');
         const hiddenCompletedPlan = plan('completed-plan', 'completed-phase', 'completed-task');
         hiddenCompletedPlan.phases[0]!.status = 'completed';
-        const tools = createPlanListBindings({
+        const tools = pageTools(PlanListType, {
             plans: [currentPlan, hiddenCompletedPlan],
             activePlan: null,
             createPlan: vi.fn(async () => 'new'),
@@ -100,7 +104,7 @@ describe('planning app type-level tool handlers', () => {
     it('rejects a resolved child object after the active Plan has been closed', async () => {
         const previousPlan = plan('previous', 'phase', 'task');
         const addTask = vi.fn(async () => 'new-task');
-        const tools = createPlanDetailBindings({
+        const tools = pageTools(PlanDetailType, {
             activePlan: null,
             addPhase: vi.fn(async () => 'new-phase'),
             deletePhase: vi.fn(async () => true),
@@ -117,7 +121,7 @@ describe('planning app type-level tool handlers', () => {
 
     it('creates a plan with optional initial tasks', async () => {
         const createPlan = vi.fn(async () => 'new-plan');
-        const tools = createPlanListBindings({
+        const tools = pageTools(PlanListType, {
             plans: [],
             activePlan: null,
             createPlan,

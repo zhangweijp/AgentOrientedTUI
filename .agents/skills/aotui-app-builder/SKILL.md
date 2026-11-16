@@ -1,17 +1,17 @@
 ---
 name: aotui-app-builder
-description: Use when designing or implementing an AOTUI application with @aotui/sdk, especially Root instructions, shared ViewType declarations and per-View tool handlers, typed Ref/ArrayRef selection, and progressive disclosure.
+description: Use when designing or implementing an AOTUI application with @aotui/sdk, especially Root instructions, shared ViewType tools and page context, typed Ref/ArrayRef selection, and progressive disclosure.
 ---
 
 # AOTUI App Builder
 
 Build applications for Agent use. Views present current state. Tools return concise receipts. Start with the matching package's [App author guide](../../../sdk/docs/app-authoring.md), [Ref guide](../../../sdk/docs/readonly-ref-v2.md), and [API status](../../../sdk/docs/api-status.md). Use the [matching package guide](../../../sdk/docs/runtime-compatibility.md) for build and runtime setup.
 
-## Declare the type and bind each page
+## Declare the type and provide page context
 
-Use `defineViewType({ name, tools })` for one shared set of business schemas and descriptions. List the descriptors in the App factory's `viewTypes`. Preact pages provide `View.bindings`. Plain TypeScript pages use a stable `createView(type, { id, kind, render })` handle. The render result supplies body, refs, and bindings. Call `publish({ views })` with all open handles.
+Use `defineViewType<Context>()({ name, tools })` to declare each tool's description, optional business Schema, and `execute({ input, context })` in one place. Use `defineViewType({ name })` for a type without tools. List the descriptors in the App factory's `viewTypes`.
 
-Each page supplies a complete set of handlers and uses `enabled: false` for an unavailable operation. Native Tool calls require the receiving page's XML `view_id`. The business Schema and the handler arguments contain just the business fields.
+Each page with tools supplies its own `context`. It can contain page state, setters, or App services. Preact passes it to `View.context`. In plain TypeScript, keep a stable `createView(type, { id, kind, render })` handle and return body, refs, and context from `render`. Call `publish({ views })` with all open handles. Use the optional synchronous `enabled(context)` to decide availability for each page. Native Tool calls require the receiving page's XML `view_id`. The handler's `input` contains the business fields.
 
 Use `<ToolCatalog viewTypes={viewTypes} />` in Root to list the shared names. The model request carries available operations and their schemas. Run the [plain TypeScript](../../../sdk/docs/examples/work-items-plain.ts) or [Preact](../../../sdk/docs/examples/work-items-preact.tsx) example through the matching SDK and Runtime.
 
@@ -21,7 +21,7 @@ Keep author metadata in `createApp` or `createTUIApp` once. Build the factory, t
 
 ToolResult is discriminated by success. A successful short receipt has success:true and optional JSON object data, without error/effects. A failure requires a plain JSON error record containing code and message, with optional JSON context and short recovery data. Record known recovery details in the receipt. Do not return Error instances, stack/cause, functions or undefined. An unknown outcome is not permission to replay a business command. The current View remains the source of business data, separate from the receipt.
 
-For the standard native Tool adapter choose ASCII letters, digits and underscores for Tool/ViewType names and keep the composed app-name/type/tool alias within 64 characters; the framework creates that alias. Do not parse it to route calls. Internal structured identities and Ref addresses retain their own contracts.
+For the standard native Tool adapter choose ASCII letters, digits and underscores for Tool/ViewType names. The adapter normally publishes `appName-toolName` and qualifies it with the ViewType when an App declares the same tool name in multiple types or the short alias is reserved by Desktop. Keep the resulting alias within 64 characters. The current Tools array supplies callable names.
 
 ## Select published objects through Ref
 
@@ -34,7 +34,9 @@ import Type from 'typebox';
 import { defineViewType, refParam } from '@aotui/sdk/app';
 
 const Note = Type.Object({ id: Type.String(), title: Type.String() });
-export const Notes = defineViewType({ name: 'Notes', tools: {
+type Note = Type.Static<typeof Note>;
+type NotesContext = { inspect(selected: readonly Note[], whole?: readonly Note[], message?: string): void };
+export const Notes = defineViewType<NotesContext>()({ name: 'Notes', tools: {
   inspect: {
     description: 'Inspect selected Notes; read Notes View.',
     inputSchema: Type.Object({
@@ -42,11 +44,15 @@ export const Notes = defineViewType({ name: 'Notes', tools: {
       whole: Type.Optional(refParam('Note', Type.Array(Note))),
       message: Type.Optional(Type.String()),
     }, { additionalProperties: false }),
+    execute({ input, context }) {
+      context.inspect(input.selected, input.whole, input.message);
+      return { success: true };
+    },
   },
 } });
 // In View id=notes_view; model: { view_id: 'notes_view', selected: ['notes_view.notes[1]', 'notes_view.notes[0]'], whole: 'notes_view.notes' }
-// Binding handler: selected is an ordered readonly array of Note objects;
-// whole is the original readonly list if supplied, and absent otherwise.
+// selected is an ordered readonly array of Note objects.
+// whole is the original readonly list when supplied.
 ```
 
 - `refParam(type, ObjectSchema)` selects one object, including a natural ArrayRef element.
@@ -75,7 +81,7 @@ Keep the Schema, handler, rendered references and recovery guidance in agreement
 
 ## Submission, observation and checks
 
-In plain TypeScript, each `publish` supplies all current Views, their Refs and Tool bindings. Omitted Views and Refs leave the projection on a successful commit. A failed frame retains prior identities and pauses new dispatch until a valid frame is accepted. In Preact, `View.bindings` and Ref hooks participate in the actual render commit. A Tool receipt describes the operation. The next successful observation establishes current View visibility.
+In plain TypeScript, each `publish` supplies all current Views. Their render results provide Refs and page context. Omitted Views and Refs leave the projection on a successful commit. A failed frame retains prior identities and pauses new dispatch until a valid frame is accepted. In Preact, `View.context` and Ref hooks participate in the actual render commit. A Tool receipt describes the operation. The next successful observation establishes current View visibility.
 
 Trusted Host consumers prepare an Observation, explicitly adopt it, then invoke with its Observation ID, Tool ID, and receiving View ID. Adoption of a new Observation revokes the previous calling eligibility; publication and diagnostic preview alone do not adopt. The Runtime owns observing, invoking, and resolving Refs for each App instance.
 

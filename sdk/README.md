@@ -21,7 +21,7 @@
 ```tsx
 import { createTUIApp, defineViewType, View } from '@aotui/sdk';
 
-const Root = defineViewType({ name: 'Root', tools: {} });
+const Root = defineViewType({ name: 'Root' });
 
 function App() {
   return <View id="root" type={Root} kind="instruction">

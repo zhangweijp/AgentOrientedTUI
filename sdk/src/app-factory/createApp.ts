@@ -2,7 +2,7 @@ import { MARKDOWN_VIEW_FORMAT, SnapshotDataError } from '@aotui/runtime/core';
 import {
     type AppLifecycleCallbacks, type AppProjectionFrame, type PreparedProjection, type RuntimeContext, type TUIAppFactory,
 } from '@aotui/runtime/spi';
-import { captureViewBindings, requireViewType, type ViewBindingProps, type ViewType } from '../tools/view-type-tool.js';
+import { captureViewBindings, requireViewType, type ViewContextProps, type ViewType } from '../tools/view-type-tool.js';
 import { createAppFactory, VIEW_ID_PATTERN, type AppConfig } from './app-factory.js';
 import { captureRefEntries, type PublishedRef } from './refs.js';
 
@@ -29,14 +29,14 @@ type ViewRender = { readonly body: string; readonly refs?: readonly PublishedRef
 const handles = new WeakMap<object, {
     readonly type: ViewType;
     readonly metadata: ViewMetadata;
-    readonly render: () => ViewRender & { readonly bindings?: unknown; readonly context?: unknown };
+    readonly render: () => ViewRender & { readonly context?: unknown };
     app?: object;
 }>();
 
 /** Create a stable author handle. Its first publication binds it to the App. */
 export function createView<const Definition extends ViewType>(
     type: Definition,
-    options: ViewMetadata & { render: () => ViewRender & ViewBindingProps<NoInfer<Definition>> },
+    options: ViewMetadata & { render: () => ViewRender & ViewContextProps<NoInfer<Definition>> },
 ): ViewHandle {
     const { id, name, kind, render } = options;
     const handle = Object.freeze({}) as ViewHandle;
@@ -70,7 +70,7 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
                     invalid('$.views', 'View IDs must be unique and use only ASCII letters, digits or underscores');
                 viewIds.add(id);
                 const path = 'View ' + id;
-                const { body, refs = [], bindings, context } = render();
+                const { body, refs = [], context } = render();
                 if (kind !== 'instruction' && kind !== 'state' || typeof name !== 'string' || !name.trim() || typeof body !== 'string')
                     invalid(path, 'Expected View kind, name and Markdown body');
 
@@ -86,7 +86,7 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
                 }
                 views.push({
                     id, type: type.name, name, kind, owner: handle, content: { format: MARKDOWN_VIEW_FORMAT, value: body }, refs: captured,
-                    bindings: captureViewBindings(type, bindings, id, context),
+                    bindings: captureViewBindings(type, id, context),
                 });
             }
             return { views };

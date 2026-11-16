@@ -13,13 +13,17 @@ parentPort.on('message', message => {
 });
 
 const ref = kind => refParam(kind, Type.Object({}, { additionalProperties: true }));
-const declaration = fields => ({ description: 'Private original-Ref contract check',
-     inputSchema: Type.Object(fields, { additionalProperties: false }) });
-const FileType = defineViewType({ name:'File', tools: {
-    read: declaration({ file: ref('Data'), value: Type.Optional(Type.String()),
+const declaration = (name, fields) => ({
+    description: 'Private original-Ref contract check',
+    inputSchema: Type.Object(fields, { additionalProperties: false }),
+    enabled: context => context.toolEnabled,
+    execute: ({ input, context }) => context.execute(context.receiver, name, input),
+});
+const FileType = defineViewType()({ name:'File', tools: {
+    read: declaration('read', { file: ref('Data'), value: Type.Optional(Type.String()),
         choice: Type.Optional(Type.String({ enum: ['allowed'] })), text: Type.Optional(Type.String({ minLength: 1 })), mode: Type.Optional(Type.String()) }),
-    typed: declaration({ file: ref('File') }),
-    diagnostics: declaration(Object.fromEntries([['file', ref('Data')],
+    typed: declaration('typed', { file: ref('File') }),
+    diagnostics: declaration('diagnostics', Object.fromEntries([['file', ref('Data')],
         ...Array.from({ length: 20 }, (_, i) => ['界😀'.repeat(80) + i, Type.Number()])])),
 } });
 const labelFor = owner => owner === 'aa' ? 'alpha' : 'beta';
@@ -69,10 +73,10 @@ function Root() {
             return new Promise(resolve => { releaseHandler = () => resolve({ success: true, data: { calls } }); }); }
         return { success: true, data: { owner, args, calls, revision: current.revision } };
     }
-    const bindings = receiver => Object.fromEntries(Object.keys(FileType.tools).map(name => [name, { execute: args => execute(receiver, name, args), enabled: state.toolEnabled }]));
+    const context = receiver => ({ receiver, execute, toolEnabled: state.toolEnabled });
     return h('main', {}, [
-        h(View, {kind: 'state', id: 'aa', type: FileType, key: 'aa', bindings: bindings('aa') }, h(Content, { owner: 'aa', state: state.aa })),
-        h(View, {kind: 'state', id: 'bb', type: FileType, key: 'bb', bindings: bindings('bb') }, h(Content, { owner: 'bb', state: state.bb })),
+        h(View, {kind: 'state', id: 'aa', type: FileType, key: 'aa', context: context('aa') }, h(Content, { owner: 'aa', state: state.aa })),
+        h(View, {kind: 'state', id: 'bb', type: FileType, key: 'bb', context: context('bb') }, h(Content, { owner: 'bb', state: state.bb })),
     ]);
 }
 export default createTUIApp({ app_name: 'ref_sdk_fixture', component: Root, viewTypes:[FileType] });

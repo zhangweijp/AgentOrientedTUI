@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createOpenResultBinding } from '../src/tui/BrowserTools.js';
+import { captureViewBindings } from '../../../sdk/src/tools/view-type-tool.js';
+import { ResultListType } from '../src/tui/BrowserTools.js';
 import { ResultListView } from '../src/tui/ResultListView.js';
 import type { SearchResultItem } from '../src/types.js';
 
@@ -11,6 +12,11 @@ const result = (url: string): SearchResultItem => ({
     rank: 1,
 });
 
+function openResultTool(results: SearchResultItem[], onOpenResult: (url: string) => Promise<string>) {
+    return captureViewBindings(ResultListType, 'results', { results, onOpenResult, onClearResults() {} })
+        .find(tool => tool.name === 'open_result')!;
+}
+
 describe('open_result app handler', () => {
     it('shows the URL value the Agent must pass to open_result', () => {
         const url = 'https://example.test/current';
@@ -19,7 +25,7 @@ describe('open_result app handler', () => {
 
     it('opens the selected result URL from the current result list', async () => {
         const onOpenResult = vi.fn(async (url: string) => `page:${url}`);
-        const tool = createOpenResultBinding([result('https://example.test/a'), result('https://example.test/b')], onOpenResult);
+        const tool = openResultTool([result('https://example.test/a'), result('https://example.test/b')], onOpenResult);
 
         const receipt = await tool.execute({ url: 'https://example.test/b' });
 
@@ -30,7 +36,7 @@ describe('open_result app handler', () => {
 
     it('rejects a URL that is no longer part of the current results', async () => {
         const onOpenResult = vi.fn(async (url: string) => `page:${url}`);
-        const tool = createOpenResultBinding([result('https://example.test/current')], onOpenResult);
+        const tool = openResultTool([result('https://example.test/current')], onOpenResult);
 
         const receipt = await tool.execute({ url: 'https://example.test/old' });
 

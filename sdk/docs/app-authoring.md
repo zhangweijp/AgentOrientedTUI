@@ -17,7 +17,7 @@ Preact 从 `@aotui/sdk` 导入 `createTUIApp`、`defineViewType` 和 `View`。�
 
 SDK 用当前候选的页面上下文构建绑定，在准备该页时调用可选的同步 `enabled(context)`。返回 `false` 会在成功提交后撤销该页对应操作的资格。上下文是 App 持有的对象或函数引用，可以携带 setter 或服务。需要随提交换一组上下文字段时，传入新的对象。该引用随页面绑定留在执行端，业务参数与 Ref 继续使用原来的 JSON 边界。Root 可以用 `<ToolCatalog />` 列出 App 登记的 ViewType 工具名。普通 TypeScript 可以调用 `getToolCatalog(viewTypes)` 取静态目录。
 
-既有 App 也可以继续以 `defineViewType({ name, tools })` 声明元数据，在 `View.bindings` 或 `render().bindings` 提供该页全部 `execute(input)`，用 `enabled: false` 控制可用性。带执行声明的 descriptor 要求 `context`，元数据形式的 descriptor 使用显式 bindings。模型调用时用必填的 `view_id` 选择接收页。handler 收到的 `input` 包含深只读的业务字段和已解析的 Ref。显式 Ref 可以来自同一观察中的另一页。
+没有工具的页面用 `defineViewType({ name })` 声明，发布时只提供自己的正文和 Ref。工具调用的 `view_id` 由模型选择，Runtime 校验后调用该页的 handler。handler 收到的 `input` 包含深只读的业务字段和已解析的 Ref。显式 Ref 可以来自同一观察中的另一页。
 
 两个 SDK 入口都要求 View id 非空，仅使用 ASCII 字母、数字或下划线，在 App 的当前挂载集合内唯一。示例的两个 Item 分别使用 `b` 和 `billing_export_2026_11`。View 元数据、Snapshot 和观察仍有各自的字节限额。直接使用纯 Core 构建 Producer 时，View id 可以使用更宽的字符集，须满足非空、无点及唯一性。
 
@@ -70,5 +70,5 @@ Tool handler 返回收据，业务数据通过 View 呈现。一般发布故障�
 
 ## 迁移
 
-现有 Preact App 仍使用 `createTUIApp({ component, ... })`。使用 SPI 的自定义 factory 从 `initializeComponent(container, context)` 迁移到 `initialize(context)`，返回带 `close()` 的实例。旧 `ComponentFactory`、`ComponentRenderer` 及 `kernelConfig.component` 退出，SDK 和 Runtime 需要配套重建。同一 SDK 构建的不同模块副本可以互用 ViewType descriptor。运行中的页面 handler 由各自 Worker 持有。旧 App 级绑定的迁移见[配套迁移](migration.md)。
+现有 Preact App 仍使用 `createTUIApp({ component, ... })`。使用 SPI 的自定义 factory 从 `initializeComponent(container, context)` 迁移到 `initialize(context)`，返回带 `close()` 的实例。旧 `ComponentFactory`、`ComponentRenderer` 及 `kernelConfig.component` 退出，SDK 和 Runtime 需要配套重建。同一 SDK 构建的不同模块副本可以互用 ViewType descriptor。运行中的页面 handler 由各自 Worker 持有。旧工具声明和页面属性的迁移见[配套迁移](migration.md)。
 Preact App 可以用 `useLLMUsage` 读取所属 Desktop 的模型用量。需被动更新的 App 可设 `signalPolicy: 'never'`，使新投影进入下一次观察，同时抑制自动更新信号。

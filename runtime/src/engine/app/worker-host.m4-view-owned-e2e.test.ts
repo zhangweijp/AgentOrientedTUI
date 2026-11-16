@@ -33,25 +33,28 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
                 import { View } from './sdk/src/components/View.tsx';
 
                 import { defineViewType } from './sdk/src/tools/view-type-tool.ts';
-const _FixtureFileDetail = defineViewType({ name:'FileDetail', tools:{ inspect: { description:'Inspect the selected file', inputSchema:Type.Object({filePath:Type.String()}, {additionalProperties:false}) } } });
-
+                const FileDetail = defineViewType()({ name: 'FileDetail', tools: {
+                    inspect: {
+                        description: 'Inspect the selected file',
+                        inputSchema: Type.Object({ filePath: Type.String() }, { additionalProperties: false }),
+                        execute: async ({ input }) => ({ success: true, data: { file: input.filePath } }),
+                    },
+                } });
 
                 function Detail({ label }) {
                     return h('section', {}, [
                         h('p', {key:'info'}, label),
                     ]);
                 }
-
-
-function App() {
+                function App() {
                     return h('div', null, h('main', {}, [
-                        h(View, {kind: 'state',id:'fd_0',type:_FixtureFileDetail, bindings:{ inspect: { execute: async args => ({ success: true, data: { file: args.filePath } }) } },key:'a'},
+                        h(View, { kind: 'state', id: 'fd_0', type: FileDetail, context: {}, key: 'a' },
                             h(Detail, {label:'App.tsx'})),
-                        h(View, {kind: 'state',id:'fd_1',type:_FixtureFileDetail, bindings:{ inspect: { execute: async args => ({ success: true, data: { file: args.filePath } }) } },key:'b'},
+                        h(View, { kind: 'state', id: 'fd_1', type: FileDetail, context: {}, key: 'b' },
                             h(Detail, {label:'package.json'}))
                     ]));
                 }
-                export default createTUIApp({viewTypes:[_FixtureFileDetail], app_name:'m4_fixture',component:App});
+                export default createTUIApp({viewTypes:[FileDetail], app_name:'m4_fixture',component:App});
             `;
             await build({
                 stdin: {

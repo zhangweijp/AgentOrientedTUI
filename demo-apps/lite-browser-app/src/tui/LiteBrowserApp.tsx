@@ -8,11 +8,6 @@ import { RootView } from './RootView.js';
 import { SearchView } from './SearchView.js';
 import {
     RootType, SearchType, ResultListType, PageType, browserViewTypes,
-    createClearResultsBinding,
-    createClosePageBinding,
-    createFetchUrlBinding,
-    createOpenResultBinding,
-    createSearchWebBinding,
 } from './BrowserTools.js';
 
 function LiteBrowserRoot() {
@@ -85,20 +80,20 @@ function LiteBrowserRoot() {
 
     return (
         <>
-            <View kind="instruction" id="root" type={RootType} bindings={{ fetch_url: createFetchUrlBinding(handleFetch) }} name="Root">
+            <View kind="instruction" id="root" type={RootType} context={{ onFetch: handleFetch }} name="Root">
                 <RootView />
             </View>
-            <View kind="state" id="search" type={SearchType} bindings={{ search_web: createSearchWebBinding(handleSearch) }} name="Search">
+            <View kind="state" id="search" type={SearchType} context={{ onSearch: handleSearch }} name="Search">
                 <SearchView state={searchState} />
             </View>
             {hasResults ? (
                 <View kind="state" key={searchState.updatedAt} id="results" type={ResultListType}
-                    bindings={{ open_result: createOpenResultBinding(searchState.results, handleOpenResult), clear_results: createClearResultsBinding(handleClearResults) }} name="Result List">
+                    context={{ results: searchState.results, onOpenResult: handleOpenResult, onClearResults: handleClearResults }} name="Result List">
                     <ResultListView results={searchState.results} />
                 </View>
             ) : null}
             {hasPage ? (
-                <View kind="state" key={pageState.document?.url ?? 'error'} id="page" type={PageType} bindings={{ close_page: createClosePageBinding(handleClosePage) }} name="Page">
+                <View kind="state" key={pageState.document?.url ?? 'error'} id="page" type={PageType} context={{ onClosePage: handleClosePage }} name="Page">
                     <PageView state={pageState} />
                 </View>
             ) : null}

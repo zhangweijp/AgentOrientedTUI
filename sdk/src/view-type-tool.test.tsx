@@ -5,12 +5,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { ToolCatalog } from './components/ToolCatalog.js';
 import { captureViewBindings, defineViewType, getToolCatalog, refParam } from './tools/view-type-tool.js';
 
+const execute = () => ({ success: true as const });
 const noArgs = Type.Object({}, { additionalProperties: false });
 
 describe('shared ViewType definitions', () => {
     it('detaches deeply frozen business metadata and derives one model receiver', () => {
         const schema = Type.Object({ item: refParam('Item', Type.Object({ name: Type.String() })) });
-        const descriptor = defineViewType({ name:'Reader', tools:{ inspect:{ description:'Inspect a row', inputSchema:schema } } });
+        const descriptor = defineViewType<object>()({ name:'Reader', tools:{ inspect:{ description:'Inspect a row', inputSchema:schema, execute } } });
         schema.properties.item.minLength = 9;
         const tool = descriptor.tools.inspect;
         expect(Object.isFrozen(tool.inputSchema.properties)).toBe(true);
@@ -28,10 +29,10 @@ describe('shared ViewType definitions', () => {
     });
 
     it('rejects duplicate types, reserved parameters, accessors and unsupported TypeBox fields', () => {
-        const descriptor = defineViewType({ name:'Page',tools:{} });
-        expect(() => getToolCatalog([descriptor, defineViewType({ name:'Page',tools:{} })]))
+        const descriptor = defineViewType({ name:'Page' });
+        expect(() => getToolCatalog([descriptor, defineViewType({ name:'Page' })]))
             .toThrow(expect.objectContaining({ code:'VIEW_TYPE_DUPLICATE' }));
-        const invalid = (inputSchema: any) => defineViewType({ name:'Page',tools:{ change:{description:'Change',inputSchema} } });
+        const invalid = (inputSchema: any) => defineViewType<object>()({ name:'Page',tools:{ change:{description:'Change',inputSchema,execute} } });
         expect(() => invalid(Type.Object({view_id:Type.String()}))).toThrow(expect.objectContaining({
             code:'TOOL_SCHEMA_INVALID', path:'$.properties.view_id',
         }));
@@ -39,29 +40,14 @@ describe('shared ViewType definitions', () => {
             code:'TOOL_SCHEMA_UNSUPPORTED',path:'$.properties.value.format',
         }));
         const get = vi.fn(() => noArgs);
-        expect(() => defineViewType({ name:'Page',tools:{ change:Object.defineProperty({description:'Change'},'inputSchema',
+        expect(() => defineViewType<object>()({ name:'Page',tools:{ change:Object.defineProperty({description:'Change',execute},'inputSchema',
             {enumerable:true,get}) as any } })).toThrow(expect.objectContaining({code:'TOOL_DEFINITION_INVALID'}));
         expect(get).not.toHaveBeenCalled();
     });
 
-    it('requires exactly the declared bindings and captures the executable without reading getters', () => {
-        const Page = defineViewType({ name:'Page',tools:{ change:{ description:'Change',inputSchema:noArgs } } });
-        const execute = vi.fn(() => ({success:true as const}));
-        const author = { change:{execute} };
-        const next = captureViewBindings(Page, author, 'a');
-        author.change.execute = vi.fn(() => ({success:true as const}));
-        expect(next).toEqual([{name:'change',enabled:true,execute}]);
-        const get = vi.fn();
-        for (const bindings of [undefined, {}, {...author,other:{execute}}, {change:{execute,enabled:undefined}},
-            {change:Object.defineProperty({},'execute',{enumerable:true,get})}]) {
-            expect(() => captureViewBindings(Page, bindings, 'a')).toThrow(expect.objectContaining({code:'TOOL_BINDING_INVALID'}));
-        }
-        expect(get).not.toHaveBeenCalled();
-    });
-
     it('renders only static names even when no instance of the type is mounted', () => {
-        const Empty = defineViewType({ name:'Empty',tools:{} });
-        const Page = defineViewType({ name:'Page',tools:{ open:{ description:'Open a thing', inputSchema:noArgs } } });
+        const Empty = defineViewType({ name:'Empty' });
+        const Page = defineViewType<object>()({ name:'Page',tools:{ open:{ description:'Open a thing', inputSchema:noArgs, execute } } });
         const markup = renderToString(h(ToolCatalog,{viewTypes:[Empty,Page]}));
         expect(markup).toContain('Page: open');
         expect(markup).not.toMatch(/Open a thing|view_id|Empty/);
@@ -70,28 +56,22 @@ describe('shared ViewType definitions', () => {
         }));
     });
 
-    it('normalizes omitted schemas for both authoring entries and rejects explicit invalid schemas', () => {
-        const close = { description: 'Close the page' };
-        const execute = () => ({ success: true as const });
+    it('normalizes an omitted Schema and rejects explicitly invalid schemas', () => {
+        const close = { description: 'Close the page', execute };
         const declare = defineViewType<object>();
-        const Explicit = defineViewType({ name: 'Explicit', tools: { close } });
-        const Contextual = declare({ name: 'Contextual', tools: { close: { ...close, execute } } });
-        const empty = defineViewType({ name: 'Explicit', tools: { close: { ...close, inputSchema: noArgs } } });
-        for (const descriptor of [Explicit, Contextual]) {
-            expect(descriptor.tools.close.inputSchema).toEqual(empty.tools.close.inputSchema);
-            expect(getToolCatalog([descriptor])[0]?.inputSchema).toMatchObject({
-                type: 'object',
-                properties: { view_id: { type: 'string' } },
-                required: ['view_id'],
-                additionalProperties: false,
-            });
-            expect(Object.keys(getToolCatalog([descriptor])[0]!.inputSchema.properties!)).toEqual(['view_id']);
-        }
+        const page = declare({ name: 'Page', tools: { close } });
+        const empty = declare({ name: 'Page', tools: { close: { ...close, inputSchema: noArgs } } });
+        expect(page.tools.close.inputSchema).toEqual(empty.tools.close.inputSchema);
+        expect(getToolCatalog([page])[0]?.inputSchema).toMatchObject({
+            type: 'object',
+            properties: { view_id: { type: 'string' } },
+            required: ['view_id'],
+            additionalProperties: false,
+        });
+        expect(Object.keys(getToolCatalog([page])[0]!.inputSchema.properties!)).toEqual(['view_id']);
         for (const inputSchema of [undefined, null, Type.String(), Type.Object({ view_id: Type.String() })]) {
-            const invalid = { ...close, inputSchema } as unknown as { description: string; inputSchema: typeof noArgs };
-            expect(() => defineViewType({ name: 'Explicit', tools: { close: invalid } }))
-                .toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_INVALID' }));
-            expect(() => declare({ name: 'Contextual', tools: { close: { ...invalid, execute } } }))
+            const invalid = { ...close, inputSchema } as typeof close & { inputSchema: typeof noArgs };
+            expect(() => declare({ name: 'Page', tools: { close: invalid } }))
                 .toThrow(expect.objectContaining({ code: 'TOOL_SCHEMA_INVALID' }));
         }
     });
@@ -123,8 +103,8 @@ describe('shared ViewType definitions', () => {
         const first: PageContext = { ready: true, change: vi.fn() };
         const second: PageContext = { ready: false, change: vi.fn() };
         first.self = first;
-        const [available] = other.captureViewBindings(type, undefined, 'first', first);
-        const [unavailable] = other.captureViewBindings(type, undefined, 'second', second);
+        const [available] = other.captureViewBindings(type, 'first', first);
+        const [unavailable] = other.captureViewBindings(type, 'second', second);
         expect(available?.enabled).toBe(true);
         expect(unavailable?.enabled).toBe(false);
         expect(enabled.mock.calls).toEqual([[first], [second]]);
@@ -145,17 +125,16 @@ describe('shared ViewType definitions', () => {
                 return { success: true };
             } },
         } });
-        const [binding] = captureViewBindings(Page, undefined, 'page', change);
+        const [binding] = captureViewBindings(Page, 'page', change);
         await binding!.execute({});
         expect(change).toHaveBeenCalledOnce();
     });
 
-    it('rejects invalid context declarations and mixed or missing page inputs', () => {
+    it('rejects invalid declarations and missing page contexts', () => {
         const execute = () => ({ success: true as const });
         const change = { description: 'Change', inputSchema: noArgs, execute };
         const declare = defineViewType<object>();
         const ContextPage = declare({ name: 'Page', tools: { change } });
-        const StaticPage = defineViewType({ name: 'Page', tools: { change: { description: 'Change', inputSchema: noArgs } } });
         const getter = vi.fn();
         for (const input of [
             { ...change, execute: undefined },
@@ -166,20 +145,19 @@ describe('shared ViewType definitions', () => {
                 .toThrow(expect.objectContaining({ code: 'TOOL_DEFINITION_INVALID' }));
         }
         expect(getter).not.toHaveBeenCalled();
+        expect(() => defineViewType({ name: 'Legacy', tools: { change: { description: 'Change' } } } as never))
+            .toThrow(expect.objectContaining({ code: 'TOOL_DEFINITION_INVALID' }));
+        expect(captureViewBindings(defineViewType({ name: 'Empty' }), 'empty')).toEqual([]);
 
         for (const context of [undefined, null, 'page']) {
-            expect(() => captureViewBindings(ContextPage, undefined, 'page', context)).toThrow(expect.objectContaining({
+            expect(() => captureViewBindings(ContextPage, 'page', context)).toThrow(expect.objectContaining({
                 code: 'TOOL_BINDING_INVALID', path: 'View page.context',
             }));
         }
-        expect(() => captureViewBindings(ContextPage, { change: { execute } }, 'page', {}))
-            .toThrow(expect.objectContaining({ code: 'TOOL_BINDING_INVALID', path: 'View page.bindings' }));
-        expect(() => captureViewBindings(StaticPage, { change: { execute } }, 'page', {}))
-            .toThrow(expect.objectContaining({ code: 'TOOL_BINDING_INVALID', path: 'View page.context' }));
         const InvalidEnable = declare({ name: 'Page', tools: {
             change: { ...change, enabled: () => 1 as unknown as boolean },
         } });
-        expect(() => captureViewBindings(InvalidEnable, undefined, 'page', {}))
+        expect(() => captureViewBindings(InvalidEnable, 'page', {}))
             .toThrow(expect.objectContaining({ code: 'TOOL_BINDING_INVALID', path: 'View page.change.enabled' }));
     });
 });

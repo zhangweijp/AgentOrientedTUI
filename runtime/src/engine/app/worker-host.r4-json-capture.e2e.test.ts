@@ -19,8 +19,12 @@ function appSource(): string {
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
         import Type from 'typebox';
         import { createTUIApp, View, useDataRef, defineViewType } from '@aotui/sdk';
-const _FixtureDetail = defineViewType({ name:'Detail', tools:{ stats: { description:'Read the getter counter', inputSchema:Type.Object({}, {additionalProperties:false}) } } });
-
+        const DetailType = defineViewType()({ name: 'Detail', tools: {
+            stats: {
+                description: 'Read the getter counter', inputSchema: Type.Object({}, { additionalProperties: false }),
+                execute: async () => ({ success: true, data: { getterCalls } }),
+            },
+        } });
 
         let getterCalls = 0;
         const getterData = {};
@@ -39,10 +43,7 @@ const _FixtureDetail = defineViewType({ name:'Detail', tools:{ stats: { descript
                 h('p', {}, [state.mode, ref('payload')]),
             ]);
         }
-
-
-
-function Root() {
+        function Root() {
             const [state, setState] = useState({ mode: 'valid' });
             useLayoutEffect(() => {
                 const onCommand = message => {
@@ -55,10 +56,10 @@ function Root() {
                 parentPort.on('message', onCommand);
                 return () => parentPort.off('message', onCommand);
             }, []);
-            return h('div', null, h(View, {kind: 'state', id: 'detail', type: _FixtureDetail, bindings:{ stats: { execute: async () => ({ success: true, data: { getterCalls } }) } } }, h(Detail, { state })));
+            return h('div', null, h(View, { kind: 'state', id: 'detail', type: DetailType, context: {} }, h(Detail, { state })));
         }
 
-        export default createTUIApp({viewTypes:[_FixtureDetail],  app_name: 'strict_json_capture', component: Root });
+        export default createTUIApp({viewTypes:[DetailType],  app_name: 'strict_json_capture', component: Root });
     `;
 }
 

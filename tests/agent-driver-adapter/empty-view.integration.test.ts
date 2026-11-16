@@ -16,43 +16,41 @@ function appSource(): string {
         import { useState } from 'preact/hooks';
         import Type from 'typebox';
         import { createTUIApp, View, defineViewType } from '@aotui/sdk';
-const _FixtureEmptyType = defineViewType({ name:'EmptyType', tools:{ ping: { description:'Ping the empty View type.', inputSchema:Type.Object({}, {additionalProperties:false}) },
-set_body: { description:'Update one View body.', inputSchema:Type.Object({ body: Type.String() }, {additionalProperties:false}) } } });
-const _FixtureHealthyType = defineViewType({ name:'HealthyType', tools:{  } });
+        const EmptyType = defineViewType()({ name: 'EmptyType', tools: {
+            ping: {
+                description: 'Ping the empty View type.', inputSchema: Type.Object({}, { additionalProperties: false }),
+                execute: async () => ({ success: true, data: { pong: true } }),
+            },
+            set_body: {
+                description: 'Update one View body.',
+                inputSchema: Type.Object({ body: Type.String() }, { additionalProperties: false }),
+                async execute({ input, context: { id, setBodies } }) {
+                    setBodies(current => ({ ...current, [id]: input.body }));
+                    return { success: true };
+                },
+            },
+        } });
+        const HealthyType = defineViewType({ name: 'HealthyType' });
 
-
-
-
-function Root() {
+        function Root() {
             const [bodies, setBodies] = useState({
                 no_children: null,
                 whitespace: '  \\n  ',
                 hidden: null,
             });
 
+            const page = (id, child) => h(View, { kind: 'state', id, type: EmptyType, context: { id, setBodies } }, child);
             return h('div', null, h('main', {}, [
-                h(View, {kind: 'state', id: 'healthy_view', type: _FixtureHealthyType }, h('p', {}, 'HEALTHY_SIBLING_BODY')),
-                h(View, {kind: 'state', id: 'no_children', type: _FixtureEmptyType, bindings:{ ping: { execute: async () => ({ success: true, data: { pong: true } }) },
-set_body: { execute: async ({ body }) => {
-                    setBodies(current => ({ ...current, no_children: body }));
-                    return { success: true };
-                } } } }, bodies.no_children === null ? null : h('p', {}, bodies.no_children)),
-                h(View, {kind: 'state', id: 'whitespace', type: _FixtureEmptyType, bindings:{ ping: { execute: async () => ({ success: true, data: { pong: true } }) },
-set_body: { execute: async ({ body }) => {
-                    setBodies(current => ({ ...current, whitespace: body }));
-                    return { success: true };
-                } } } }, bodies.whitespace === null ? null : h('span', {}, bodies.whitespace)),
-                h(View, {kind: 'state', id: 'hidden', type: _FixtureEmptyType, bindings:{ ping: { execute: async () => ({ success: true, data: { pong: true } }) },
-set_body: { execute: async ({ body }) => {
-                    setBodies(current => ({ ...current, hidden: body }));
-                    return { success: true };
-                } } } }, bodies.hidden === null
+                h(View, { kind: 'state', id: 'healthy_view', type: HealthyType }, h('p', {}, 'HEALTHY_SIBLING_BODY')),
+                page('no_children', bodies.no_children === null ? null : h('p', {}, bodies.no_children)),
+                page('whitespace', bodies.whitespace === null ? null : h('span', {}, bodies.whitespace)),
+                page('hidden', bodies.hidden === null
                     ? h('span', { 'data-state': 'hidden' }, 'HIDDEN_BODY')
                     : h('p', {}, bodies.hidden)),
             ]));
         }
 
-        export default createTUIApp({viewTypes:[_FixtureEmptyType,_FixtureHealthyType],  app_name: 'empty_app', component: Root });
+        export default createTUIApp({ viewTypes: [EmptyType, HealthyType], app_name: 'empty_app', component: Root });
     `;
 }
 

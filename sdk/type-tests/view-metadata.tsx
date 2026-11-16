@@ -1,6 +1,6 @@
 import { View, defineViewType } from '../src/index.js';
 
-const Empty = defineViewType({ name:'Empty',tools:{} });
+const Empty = defineViewType({ name:'Empty' });
 export const instruction = <View id="guide" type={Empty} kind="instruction" />;
 export const state = <View id="file_a" type={Empty} kind="state" />;
 // @ts-expect-error ViewType is required independently of instance ID.

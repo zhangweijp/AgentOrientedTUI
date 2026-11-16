@@ -37,7 +37,7 @@ it('forwards the exact usage event to the Worker SDK hook', async () => {
                     import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
                     import { View } from './sdk/src/components/View.tsx';
                     import { useLLMUsage } from './sdk/src/hooks/useLLMUsage.ts';
-const _FixtureRoot = defineViewType({ name:'Root', tools:{  } });
+const _FixtureRoot = defineViewType({ name:'Root' });
 
 import { defineViewType } from './sdk/src/tools/view-type-tool.ts';
 

@@ -1,6 +1,6 @@
 import { View, ToolCatalog, useAppRuntimeContext, useEffect, useMemo, useState, useAppLifecycle } from '@aotui/sdk';
 import { IDESession, type IDEFile } from '../core/ide-session.js';
-import { RootType, WorkspaceType, FileDetailType, SearchResultType, searchBindings, workspaceBindings } from './ide-tool-contracts.js';
+import { RootType, WorkspaceType, FileDetailType, SearchResultType } from './ide-tool-contracts.js';
 import { WorkspaceCreateView } from './WorkspaceCreateView.js';
 import { requireIDE } from '../core/ide-errors.js';
 import { resolveIDEOptions } from '../core/app-options.js';
@@ -97,11 +97,11 @@ export function ScopedIDEApp() {
             {!owner.ready && <p>{owner.error ? 'Initialization failed: ' + owner.error : 'Restoring the IDE session…'}</p>}
             {owner.warnings.length > 0 && <ul>{owner.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>}
         </View>
-        <View kind="state" id="workspace" type={WorkspaceType} bindings={workspaceBindings(owner)} name="Workspace"><Workspace owner={owner} /></View>
+        <View kind="state" id="workspace" type={WorkspaceType} context={owner} name="Workspace"><Workspace owner={owner} /></View>
         {[...owner.files.values()].map(file => <View kind="state" key={file.viewId} id={file.viewId} type={FileDetailType}
             context={{ owner, file, diagnostics: config.enableDiagnosticsRead !== false }} name={'File: ' + file.observed.path}>
             <FileDetail file={file} /></View>)}
-        {owner.search && <View kind="state" key={owner.search.incarnation} id="search" type={SearchResultType} bindings={searchBindings(owner, owner.search.incarnation)} name="Search Results"><Search owner={owner} /></View>}
+        {owner.search && <View kind="state" key={owner.search.incarnation} id="search" type={SearchResultType} context={{ owner, incarnation: owner.search.incarnation }} name="Search Results"><Search owner={owner} /></View>}
         {config.enableWorkspaceCreate === true && owner.ready && owner.roots.map((root, index) => <WorkspaceCreateView key={root.path + ':' + root.identity}
             owner={owner} viewId={'create_' + index} workspacePath={root.path} />)}
     </>;

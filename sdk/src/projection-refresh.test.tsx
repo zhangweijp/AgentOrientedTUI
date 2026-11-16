@@ -11,7 +11,7 @@ import { defineViewType } from './tools/view-type-tool.js';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 import { createSnapshotCore } from '../../runtime/src/core/index.js';
 
-const File = defineViewType({name:'File',tools:{}});
+const File = defineViewType({name:'File'});
 const previous = options.debounceRendering;
 afterEach(() => { options.debounceRendering = previous; });
 
@@ -19,7 +19,7 @@ async function fixture(insideAct = false) {
     const queue: Array<() => void> = [];
     options.debounceRendering = callback => { queue.push(callback); };
     let update!: (value: number) => void;
-    const Editable=defineViewType({name:'File',tools:{edit:{description:'Edit',inputSchema:Type.Object({})}}});
+    const Editable=defineViewType<{value:number}>()({name:'File',tools:{edit:{description:'Edit',inputSchema:Type.Object({}),enabled:({value})=>value>0,execute:()=>({success:true})}}});
     function Content({ value }: { value: number }) {
         const data = useMemo(() => ({ value }), [value]);
         const ref = useDataRef('selected', data);
@@ -27,7 +27,7 @@ async function fixture(insideAct = false) {
     }
     function App() {
         const [value, set] = useState(0); update = set;
-        return h(View,{kind:'state',id:'file',type:Editable,bindings:{edit:{enabled:value>0,execute:()=>({success:true})}}},h(Content,{value}));
+        return h(View,{kind:'state',id:'file',type:Editable,context:{value}},h(Content,{value}));
     }
     const factory = createTUIApp({ viewTypes:[Editable], app_name: 'refresh_app', component: App });
     const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);

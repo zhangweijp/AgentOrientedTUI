@@ -30,8 +30,6 @@ import {
   type StateValue,
   type TUIAppConfig,
   type ViewType,
-  type ToolBinding,
-  type ViewBindings,
   type ViewID,
   type ViewProps,
 } from '../src/index.js';
@@ -124,7 +122,7 @@ type PublicTypes = [
   StateBindingStatus, StateFlushReport, StateIssue,
   StateValue,
   typeof defineViewType, typeof refParam, typeof View,
-  ViewType, ToolBinding<typeof readRecord>, ViewBindings<typeof Reader>,
+  ViewType,
   ViewID, ViewProps,
 ];
 declare const publicTypes: PublicTypes;
@@ -166,7 +164,7 @@ const cleanup: AppLifecycleCallbacks = { stop() {}, close() {} };
 useAppLifecycle(cleanup);
 useAppLifecycle({});
 
-const Reader = defineViewType({name:'RecordDetail',tools:{
-  read_record:{description:'Read a record.',inputSchema:Type.Object({status:Type.Enum(['ready','pending']),limit:Type.Optional(Type.Number())})},
+const Reader = defineViewType<object>()({name:'RecordDetail',tools:{
+  read_record:{description:'Read a record.',execute:()=>({success:true}),inputSchema:Type.Object({status:Type.Enum(['ready','pending']),limit:Type.Optional(Type.Number())})},
 }});
 const readRecord = Reader.tools.read_record;

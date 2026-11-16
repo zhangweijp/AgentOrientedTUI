@@ -42,7 +42,12 @@ describe('Semantic real Worker / SDK projection round trip', () => {
                 import { useArrayRef } from './sdk/src/hooks/useArrayRef.ts';
 
                 import { defineViewType } from './sdk/src/tools/view-type-tool.ts';
-const _FixtureWorkspace = defineViewType({ name:'Workspace', tools:{ complete: { description:'Complete selected task', inputSchema:Type.Object({}, {additionalProperties:false}) } } });
+                const WorkspaceType = defineViewType()({ name: 'Workspace', tools: {
+                    complete: {
+                        description: 'Complete selected task', inputSchema: Type.Object({}, { additionalProperties: false }),
+                        execute: async () => ({ success: true }),
+                    },
+                } });
 
                 function Content() {
                     const appId = useAppRuntimeContext().appId;
@@ -66,12 +71,10 @@ const _FixtureWorkspace = defineViewType({ name:'Workspace', tools:{ complete: {
                         h('p', {key:'app-id'}, 'App=' + appId),
                     ]);
                 }
-
-
-function Root() {
-                    return h('div', null, h(View, {kind: 'state',id:'workspace',type:_FixtureWorkspace, bindings:{ complete: { execute: async () => ({ success: true }) } }}, h(Content)));
+                function Root() {
+                    return h('div', null, h(View, { kind: 'state', id: 'workspace', type: WorkspaceType, context: {} }, h(Content)));
                 }
-                export default createTUIApp({viewTypes:[_FixtureWorkspace], app_name:'m3_integration',component:Root});
+                export default createTUIApp({viewTypes:[WorkspaceType], app_name:'m3_integration',component:Root});
             `;
             await build({
                 stdin: {

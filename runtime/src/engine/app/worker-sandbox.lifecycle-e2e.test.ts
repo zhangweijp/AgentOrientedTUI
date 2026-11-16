@@ -34,20 +34,16 @@ let setter,value,port;globalThis.__p1Probe=(globalThis.__p1Probe??0)+1;let inspe
 
 
 
-const RootType = defineViewType({ name: 'Root', tools: {
-  set: { description:'Set persisted value', inputSchema: Type.Object({value:Type.Number()}, {additionalProperties:false}) },
-  flush: { description:'Flush persisted state', inputSchema: noArgs },
-  inspect: { description:'Inspect persisted state', inputSchema: noArgs },
+const RootType = defineViewType()({ name: 'Root', tools: {
+  set: { description:'Set persisted value', inputSchema: Type.Object({value:Type.Number()}, {additionalProperties:false}) , execute: ({ input, context }) => context.set(input) },
+  flush: { description:'Flush persisted state', inputSchema: noArgs , execute: ({ input, context }) => context.flush(input) },
+  inspect: { description:'Inspect persisted state', inputSchema: noArgs , execute: ({ input, context }) => context.inspect(input) },
 } });
 function Root() {
   ${scenario === 'initial-failure' ? "usePersistentState('value',0);" : ''}
   [value,setter] = usePersistentState('value',0);
   port = useAppRuntimeContext().persistence;
-  return h(View, {kind:'instruction', id:'root', type:RootType, bindings:{
-    set: {execute: async args=>{setter(args.value);return {success:true};}},
-    flush: {execute: async()=>({success:true,data:await port.flush()})},
-    inspect: {execute: async()=>({success:true,data:{value,inspections:++inspections,realm:globalThis.__p1Probe}})},
-  }}, 'Persistent state');
+  return h(View, {kind:'instruction', id:'root', type:RootType, context: { set: async args=>{setter(args.value);return {success:true};}, flush: async()=>({success:true,data:await port.flush()}), inspect: async()=>({success:true,data:{value,inspections:++inspections,realm:globalThis.__p1Probe}}) }}, 'Persistent state');
 }
 const factory=createTUIApp({app_name:'c1',component:Root,viewTypes:[RootType]});
 ${scenario === 'unmount-failure' ? "const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,close(){renderer.close();throw Error('private unmount failure');}};};" : ''}

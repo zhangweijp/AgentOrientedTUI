@@ -43,8 +43,14 @@ function declareTools() {
   const contracts = [['find', 'Find current symbols.', findSchema],
     ['flags', 'Count flags.', flagsSchema], ['open', 'Preserve open input.', openSchema],
     ['zero', 'Read current state without extra parameters.', zeroSchema]];
-  return ['File','OtherFile'].map(name => SDK.defineViewType({name,
-    tools:Object.fromEntries(contracts.map(([name,description,inputSchema]) => [name,{description,inputSchema}])) }));
+  return ['File','OtherFile'].map(name => SDK.defineViewType()({
+    name,
+    tools: Object.fromEntries(contracts.map(([tool, description, inputSchema]) => [tool, {
+      description, inputSchema,
+      enabled: ({ state }) => state.enabled,
+      execute: ({ input, context: { id, state } }) => enter(tool, id, input, state.revision),
+    }])),
+  }));
 }
 const [File,OtherFile] = declareTools();
 function Detail({ state, viewId }) {
@@ -66,12 +72,8 @@ function Root() {
   }, []);
   useLayoutEffect(() => { parentPort.postMessage({ type: 'TEST_COMMITTED', state, tag: state.tag }); }, [state]);
 
-  const view = (id,type) => {
-    const bindings = Object.fromEntries(Object.keys(type.tools).map(name => [name,{
-      enabled:state.enabled,execute:args=>enter(name,id,args,state.revision),
-    }]));
-    return h(SDK.View,{kind:'state',key:id+':'+state.rule,id,type,bindings},h(Boundary,{},h(Detail,{state,viewId:id})));
-  };
+  const view = (id, type) => h(SDK.View, { kind: 'state', key: id + ':' + state.rule, id, type, context: { id, state } },
+    h(Boundary, {}, h(Detail, { state, viewId: id })));
   return h('main',{},[state.show ? view('aa',File) : null,view('bb',OtherFile)]);
 }
 export default SDK.createTUIApp({ app_name: 'ordinary_v3_fixture', component: Root, viewTypes:[File,OtherFile] });

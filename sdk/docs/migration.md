@@ -3,7 +3,8 @@
 用 Runtime 8、SDK 0.9 及配套 Adapter、Driver 重新构建应用并生成 `aoapp.json`。作者和 Host 的完整示例见 [App 作者指南](app-authoring.md)。
 
 - 把 `defineToolSet` 和 `defineViewTypeTool` 改成按页面类型的 `defineViewType<Context>()({ name, tools })`，在同一项中声明 `execute({ input, context })`、业务 Schema 和可选的 `enabled(context)`。无业务参数时可省略 `inputSchema`。在工厂登记 `viewTypes`。
-- Preact 在 `View.context` 提供页面实例上下文。普通 TypeScript 为打开页面使用稳定的 `createView` handle，在 `render` 返回 `context`，并提交 `publish({ views })`。已有 `defineViewType({ name, tools })` 的 App 可以继续通过显式 `bindings` 提供各页的 `execute(input)`。
+- 将元数据形式的 `defineViewType({ name, tools })` 和旧页面 `bindings` 合并到上面的声明。把 handler 使用的页面业务对象、setter 或状态移到 `context`，把布尔 `enabled` 改为从该上下文读取的函数。没有工具的类型改用 `defineViewType({ name })`。
+- Preact 在 `View.context` 提供页面实例上下文。普通 TypeScript 为打开页面使用稳定的 `createView` handle，在 `render` 返回 `context`，并提交 `publish({ views })`。
 - Host 调用 `observe({ all: true })`，采用后用 Observation ID、Tool ID 和 `input.view_id` 调用。把本来只用来选当前页面的业务 ID 从 Schema 和调用说明中移除。显式 Ref 继续用 `view_id.ref_id`。
 
 - Core 注册使用 `compileOrdinarySchema` 和现行 ViewType JSON Schema。`ExecutionBinding` 提供身份、校验、存活检查和执行函数。校验可以拒绝输入，成功必须返回等值参数。

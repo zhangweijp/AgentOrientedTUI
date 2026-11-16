@@ -4,8 +4,8 @@ import { RootView } from './RootView.js';
 import { MonitorView } from './MonitorView.js';
 import type { TokenMonitorSettings } from '../types.js';
 
-const RootType = defineViewType({ name: 'Root', tools: {} });
-const MonitorType = defineViewType({ name: 'TokenMonitor', tools: {} });
+const RootType = defineViewType({ name: 'Root' });
+const MonitorType = defineViewType({ name: 'TokenMonitor' });
 
 function TokenMonitorRoot() {
     const [settings, setSettings] = useState<TokenMonitorSettings>({

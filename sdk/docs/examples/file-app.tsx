@@ -1,5 +1,5 @@
 import {
-  ToolCatalog, View, createTUIApp, useAppRuntimeContext, useState, type ViewBindings,
+  ToolCatalog, View, createTUIApp, useAppRuntimeContext, useState, type ToolResult,
 } from '@aotui/sdk';
 import { FileDetailType, fileViewTypes, RootType, WorkspaceType } from './file-tools.js';
 
@@ -13,17 +13,16 @@ const available = new Map<string, FileState>([
 function FileDetail({ filePath, file }: { filePath: string; file: FileState }) {
   const { prepareProjection } = useAppRuntimeContext();
   const [content, setContent] = useState(file.content);
-  return <View kind="state" id={file.viewId} type={FileDetailType} name={filePath} bindings={{
-    edit_file: { async execute({ content: next }) {
-      file.content = next;
-      try {
-        if (content !== next) await prepareProjection(() => setContent(file.content));
-      } catch {
-        return { success: true, data: { message: 'Edit applied. View refresh failed.' } };
-      }
-      return { success: true, data: { message: 'Read the updated FileDetail View.' } };
-    } },
-  }}>
+  async function edit(next: string): Promise<ToolResult> {
+    file.content = next;
+    try {
+      if (content !== next) await prepareProjection(() => setContent(file.content));
+    } catch {
+      return { success: true, data: { message: 'Edit applied. View refresh failed.' } };
+    }
+    return { success: true, data: { message: 'Read the updated FileDetail View.' } };
+  }
+  return <View kind="state" id={file.viewId} type={FileDetailType} name={filePath} context={{ edit }}>
     <p>filePath: {filePath}</p><pre>{content}</pre>
   </View>;
 }
@@ -31,28 +30,26 @@ function FileDetail({ filePath, file }: { filePath: string; file: FileState }) {
 function AppRoot() {
   const { prepareProjection } = useAppRuntimeContext();
   const [opened, setOpened] = useState<Record<string, FileState>>({});
-  const bindings: ViewBindings<typeof WorkspaceType> = {
-    open_file: { async execute({ filePath }) {
-      const file = available.get(filePath);
-      if (!file) return { success: false, error: { code: 'FILE_NOT_FOUND', message: 'Choose a.txt or b.txt.' } };
-      if (Object.hasOwn(opened, filePath)) return { success: true, data: { message: 'Read the open FileDetail View.' } };
-      try {
-        await prepareProjection(() => setOpened({ ...opened, [filePath]: { ...file } }), {
-          revert: () => setOpened(opened),
-        });
-      } catch (error) {
-        return error instanceof Error && 'code' in error && error.code === 'OBSERVATION_CAPACITY'
-          ? { success: false, error: { code: error.code, message: error.message } }
-          : { success: false, error: { code: 'VIEW_PREPARATION_FAILED', message: 'The FileDetail View could not be prepared.' } };
-      }
-      return { success: true, data: { message: 'Read the opened FileDetail View.' } };
-    } },
-    close_file: { enabled: Object.keys(opened).length > 0, execute: ({ filePath }) => {
-      if (!Object.hasOwn(opened, filePath)) return { success: false, error: { code: 'FILE_NOT_OPEN', message: 'This file is not open.' } };
-      setOpened(current => Object.fromEntries(Object.entries(current).filter(([path]) => path !== filePath)));
-      return { success: true, data: { message: 'File closed.' } };
-    } },
-  };
+  async function openFile(filePath: string): Promise<ToolResult> {
+    const file = available.get(filePath);
+    if (!file) return { success: false, error: { code: 'FILE_NOT_FOUND', message: 'Choose a.txt or b.txt.' } };
+    if (Object.hasOwn(opened, filePath)) return { success: true, data: { message: 'Read the open FileDetail View.' } };
+    try {
+      await prepareProjection(() => setOpened({ ...opened, [filePath]: { ...file } }), {
+        revert: () => setOpened(opened),
+      });
+    } catch (error) {
+      return error instanceof Error && 'code' in error && error.code === 'OBSERVATION_CAPACITY'
+        ? { success: false, error: { code: error.code, message: error.message } }
+        : { success: false, error: { code: 'VIEW_PREPARATION_FAILED', message: 'The FileDetail View could not be prepared.' } };
+    }
+    return { success: true, data: { message: 'Read the opened FileDetail View.' } };
+  }
+  function closeFile(filePath: string): ToolResult {
+    if (!Object.hasOwn(opened, filePath)) return { success: false, error: { code: 'FILE_NOT_OPEN', message: 'This file is not open.' } };
+    setOpened(current => Object.fromEntries(Object.entries(current).filter(([path]) => path !== filePath)));
+    return { success: true, data: { message: 'File closed.' } };
+  }
   return <>
     <View kind="instruction" id="root" type={RootType} name="Demo instructions">
       <h1>File Demo Application Instruction</h1>
@@ -60,7 +57,7 @@ function AppRoot() {
       <p>Pass view_id=workspace to open_file or close_file with a filePath. To edit a file, pass its FileDetail XML id to edit_file and read the updated page.</p>
       <ToolCatalog viewTypes={fileViewTypes} />
     </View>
-    <View kind="state" id="workspace" type={WorkspaceType} bindings={bindings} name="Workspace">
+    <View kind="state" id="workspace" type={WorkspaceType} context={{ hasOpenFiles: Object.keys(opened).length > 0, openFile, closeFile }} name="Workspace">
       <p>Available demo paths: a.txt, b.txt. FileDetail Views show opened files.</p>
     </View>
     {Object.entries(opened).map(([filePath, file]) => <FileDetail key={filePath} filePath={filePath} file={file} />)}

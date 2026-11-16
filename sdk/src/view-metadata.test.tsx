@@ -6,8 +6,8 @@ import { extractViewFragments } from '../../runtime/src/worker-runtime/view-frag
 import { createApp, createView } from './app-factory/createApp.js';
 import { createTUIApp } from './app-factory/createTUIApp.js';
 import { View } from './components/View.js';
-const _FixtureGuide = defineViewType({ name:'Guide', tools:{  } });
-const _FixtureFileDetail = defineViewType({ name:'FileDetail', tools:{  } });
+const _FixtureGuide = defineViewType({ name:'Guide' });
+const _FixtureFileDetail = defineViewType({ name:'FileDetail' });
 
 import { defineViewType } from './tools/view-type-tool.js';
 

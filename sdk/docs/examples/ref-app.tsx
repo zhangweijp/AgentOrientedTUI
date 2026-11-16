@@ -1,29 +1,40 @@
 import Type from 'typebox';
 import {
   ToolCatalog, View, createTUIApp, defineViewType,
-  refParam, useArrayRef, useDataRef, useState,
+  refParam, type ToolResult, useArrayRef, useDataRef, useState,
 } from '@aotui/sdk';
 
 const NoteSchema = Type.Object({ id: Type.String(), title: Type.String(), text: Type.String() },
   { additionalProperties: false });
-export const RootType = defineViewType({ name: 'Root', tools: {} });
+export const RootType = defineViewType({ name: 'Root' });
 
-export const WorkspaceType = defineViewType({ name: 'Workspace', tools: {
+export const WorkspaceType = defineViewType<{ opened: boolean; setOpened(value: boolean): void }>()({ name: 'Workspace', tools: {
         open_notes: { description: 'Open the Notes page.',
             inputSchema: Type.Object({}, { additionalProperties: false }),
+            execute({ context }) {
+                context.setOpened(true);
+                return { success: true, data: { message: 'Read Notes.' } };
+            },
         },
         close_notes: { description: 'Close the Notes page.',
             inputSchema: Type.Object({}, { additionalProperties: false }),
+            enabled: ({ opened }) => opened,
+            execute({ context }) {
+                context.setOpened(false);
+                return { success: true, data: { message: 'Notes closed.' } };
+            },
         },
 } });
 
-export const NoteDetailType = defineViewType({ name: 'NoteDetail', tools: {
+export const NoteDetailType = defineViewType<{ inspect(notes: readonly Readonly<Type.Static<typeof NoteSchema>>[]): ToolResult }>()({ name: 'NoteDetail', tools: {
         inspect_note: { description: 'Inspect a Note Ref; read the result in Note Detail.',
             inputSchema: Type.Object({ note: refParam('Note', NoteSchema) }, { additionalProperties: false }),
+            execute: ({ input, context }) => context.inspect([input.note]),
         },
         inspect_notes: { description: 'Inspect one complete Note list Ref; read Note Detail.',
             inputSchema: Type.Object({ notes: refParam('Note', Type.Array(NoteSchema, { maxItems: 50 })) },
       { additionalProperties: false }),
+            execute: ({ input, context }) => context.inspect(input.notes),
         },
         inspect_selection: { description: 'Inspect ordered Note Refs, optionally with a primary Note and whole list; read Note Detail.',
             inputSchema: Type.Object({
@@ -31,6 +42,8 @@ export const NoteDetailType = defineViewType({ name: 'NoteDetail', tools: {
       primary: Type.Optional(refParam('Note', NoteSchema)),
       whole: Type.Optional(refParam('Note', Type.Array(NoteSchema, { maxItems: 50 }))),
     }, { additionalProperties: false }),
+            execute: ({ input: { selected, primary, whole }, context }) =>
+                context.inspect([...selected, ...(primary ? [primary] : []), ...(whole ?? [])]),
         },
 } });
 
@@ -70,18 +83,10 @@ function App() {
         Do not copy internal IDs. Read the Inspection section after a receipt. Close Notes when finished.</p>
       <ToolCatalog viewTypes={noteViewTypes} />
     </View>
-    <View kind="state" id="workspace" type={WorkspaceType} name="Notes workspace" bindings={{
-      open_notes: { execute: () => { setOpened(true); return { success: true, data: { message: 'Read Notes.' } }; } },
-      close_notes: { enabled: opened, execute: () => { setOpened(false); return { success: true, data: { message: 'Notes closed.' } }; } },
-    }}>
+    <View kind="state" id="workspace" type={WorkspaceType} name="Notes workspace" context={{ opened, setOpened }}>
       <p>Notes are an in-memory example. Open the page to inspect them.</p>
     </View>
-    {opened && <View kind="state" id="detail" type={NoteDetailType} name="Notes" bindings={{
-      inspect_note: { execute: ({ note }) => inspect([note]) },
-      inspect_notes: { execute: ({ notes: selected }) => inspect(selected) },
-      inspect_selection: { execute: ({ selected, primary, whole }) =>
-        inspect([...selected, ...(primary ? [primary] : []), ...(whole ?? [])]) },
-    }}>
+    {opened && <View kind="state" id="detail" type={NoteDetailType} name="Notes" context={{ inspect }}>
       <Detail inspection={inspection} />
     </View>}
   </>;

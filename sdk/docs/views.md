@@ -5,8 +5,8 @@
 ```tsx
 import { defineViewType, View } from '@aotui/sdk';
 
-export const Guide = defineViewType({ name: 'Guide', tools: {} });
-export const FileDetail = defineViewType({ name: 'FileDetail', tools: {} });
+export const Guide = defineViewType({ name: 'Guide' });
+export const FileDetail = defineViewType({ name: 'FileDetail' });
 
 export function Pages() {
   const fileText = '    first line  \n<view id="literal">file text</view>\n```\n';

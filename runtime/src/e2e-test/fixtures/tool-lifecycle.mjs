@@ -21,8 +21,25 @@ function Counter({ owner, id, generation, enabled }) {
 }
 
 
-const CounterType = defineViewType({ name:'Counter', tools: {
-    increment: { description:'Increment the selected Counter.', inputSchema:incrementInput },
+const CounterType = defineViewType()({ name:'Counter', tools: {
+    increment: {
+        description:'Increment the selected Counter.', inputSchema:incrementInput,
+        enabled: ({ id, view }) => id === 'counter2' || view.enabled,
+        async execute({ input: args, context: { id, owner, view, refresh } }) {
+            owner.entries++; parentPort.postMessage({ type: 'TEST_ENTERED', entries: owner.entries });
+            if (args.hold) await new Promise(resolve => { owner.handlerRelease = resolve; });
+            // The application decides whether a suspended task may commit.
+            if (!owner.live) return { success: false, error: { code: 'APP_STOPPED', message: 'App is stopping' } };
+            if (args.failure === 'declined') return { success: false, error: { code: 'EXPECTED', message: 'Counter was not updated' } };
+            if (id === 'counter') { owner.value += args.amount; owner.save(owner.value); }
+            else owner.secondaryValue += args.amount;
+            refresh(x => x + 1);
+            if (args.failure === 'after-update') return { success: false, error: { code: 'EXPECTED', message: 'Counter was updated' }, data: { counterUpdated: true } };
+            if (args.failure === 'throw') throw Error('PRIVATE_COUNTER_EXCEPTION');
+            return { success: true, data: { value: id === 'counter' ? owner.value : owner.secondaryValue,
+                view_id: id, generation: view.generation, entries: owner.entries } };
+        },
+    },
 } });
 function Root() {
     const context = useAppRuntimeContext();
@@ -57,26 +74,11 @@ function Root() {
         };
         parentPort.on('message', owner.listener);
     }, []);
-    const bindings = id => ({
-        increment: { execute: async args => {
-            owner.entries++; parentPort.postMessage({ type: 'TEST_ENTERED', entries: owner.entries });
-            if (args.hold) await new Promise(resolve => { owner.handlerRelease = resolve; });
-            // The application decides whether a suspended task may commit.
-            if (!owner.live) return { success: false, error: { code: 'APP_STOPPED', message: 'App is stopping' } };
-            if (args.failure === 'declined') return { success: false, error: { code: 'EXPECTED', message: 'Counter was not updated' } };
-            if (id === 'counter') { owner.value += args.amount; owner.save(owner.value); }
-            else owner.secondaryValue += args.amount;
-            refresh(x => x + 1);
-            if (args.failure === 'after-update') return { success: false, error: { code: 'EXPECTED', message: 'Counter was updated' }, data: { counterUpdated: true } };
-            if (args.failure === 'throw') throw Error('PRIVATE_COUNTER_EXCEPTION');
-            return { success: true, data: { value: id === 'counter' ? owner.value : owner.secondaryValue,
-                view_id: id, generation: view.generation, entries: owner.entries } };
-        }, enabled: id === 'counter2' || view.enabled }
-    });
+    const pageContext = id => ({ id, owner, view, refresh });
     return h('main', {}, [
-        h(View, {kind: 'state', id: 'counter', type: CounterType, key: view.generation + ':' + view.binding, bindings:bindings('counter') },
+        h(View, {kind: 'state', id: 'counter', type: CounterType, key: view.generation + ':' + view.binding, context:pageContext('counter') },
             h(Counter, { owner, id: 'counter', generation: view.generation, enabled: view.enabled })),
-        h(View, {kind: 'state', id: 'counter2', type: CounterType, bindings:bindings('counter2') },
+        h(View, {kind: 'state', id: 'counter2', type: CounterType, context:pageContext('counter2') },
             h(Counter, { owner, id: 'counter2', generation: 1, enabled: view.enabled })),
     ]);
 }
