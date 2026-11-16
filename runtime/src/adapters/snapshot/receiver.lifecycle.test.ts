@@ -15,7 +15,7 @@ function fixture(instance = 'i', stage?: 'authorize' | 'execute', now?: () => nu
         bindings: [{ name: 'read', enabled: true, execute: () => ({ success: true }) }] }]);
     frame.accept();
     const view = frame.instances[0]!, tool = frame.tools[0]!;
-    r.acceptPrepared({ schemaVersion: 4, appId: 'a', instanceId: instance, producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+    r.acceptPrepared({ schemaVersion: 5, appId: 'a', instanceId: instance, producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
         views: [{ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: 'View',
             kind: 'state', content: { format: 'markdown-v1', value: 'value' } }],
         refs: {}, tools: { [tool.id]: tool } });

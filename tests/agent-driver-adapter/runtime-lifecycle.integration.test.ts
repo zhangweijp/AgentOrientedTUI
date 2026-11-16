@@ -256,6 +256,7 @@ it('rejects retired Core imports and an incompatible v4 SDK factory in a real Wo
     expect(core).not.toHaveProperty('ORDINARY_INVOKER_ABI_V4');
     expect(core).not.toHaveProperty('ORDINARY_INVOKER_ABI_V3');
     expect(core).not.toHaveProperty('ORDINARY_INVOCATION_MODE');
+    expect(spi.SNAPSHOT_CAPABILITY).toBe('app-snapshot/v5');
     expect(spi.PARAMETERS_V6_CAPABILITY).toBe('view-tool-parameters-invoke/v6');
     expect(spi).not.toHaveProperty('PARAMETERS_V4_CAPABILITY');
 
@@ -291,7 +292,7 @@ export default {
 
 it('rejects a missing, invalid or v4 ACK before installing an App', async () => {
     for (const variant of ['missing', 'invalid', 'v4']) {
-        const capabilities = variant === 'invalid' ? ['unknown-capability'] : ['app-snapshot/v4', 'view-tool-parameters-invoke/v4'];
+        const capabilities = variant === 'invalid' ? ['unknown-capability'] : ['app-snapshot/v5', 'view-tool-parameters-invoke/v4'];
         const runtime = makeRuntime(), script = join(directory, `ack-${variant}.mjs`);
         await capture(script, `import {parentPort} from 'node:worker_threads';
 let instanceId, closePending;
@@ -306,9 +307,9 @@ function respond(m) {
   parentPort.postMessage({type:init?'INIT_RESPONSE':'LIFECYCLE_RESPONSE',requestId:m.requestId,success:true,
     ...(init?{appInstanceId:m.appInstanceId,appLifecycle:{protocol:'app-lifecycle-v2',version:2,instanceId:m.appInstanceId},persistence${variant === 'missing' ? '' : ',acceptedCapabilities:' + JSON.stringify(capabilities)}}:{}),
     ...(!init&&persistence?{persistence}:{}),...(appCleanup?{appCleanup}:{})});
-  if(init) parentPort.postMessage({type:'SNAPSHOT_PREPARED',draft:{schemaVersion:4,appId:m.appId,instanceId:m.appInstanceId,producerSeq:1,sourceEpoch:1,capturedAt:Date.now(),
+  if(init) parentPort.postMessage({type:'SNAPSHOT_PREPARED',draft:{schemaVersion:5,appId:m.appId,instanceId:m.appInstanceId,producerSeq:1,sourceEpoch:1,capturedAt:Date.now(),
     views:[{id:'detail',viewInstanceId:'view-instance',type:'Detail',name:'Details',kind:'state',content:{format:'markdown-v1',value:'Available'} }],refs:{},
-    tools:{[JSON.stringify([m.appId,'Detail','probe'])]:{id:JSON.stringify([m.appId,'Detail','probe']),name:'probe',viewType:'Detail',description:'Probe the current View',
+    tools:{[JSON.stringify([m.appId,'Detail','probe'])]:{id:JSON.stringify([m.appId,'Detail','probe']),name:'probe',viewType:'Detail',nameSharedAcrossViewTypes:false,description:'Probe the current View',
       inputSchema:{type:'object',properties:{},required:[],additionalProperties:false,'x-aotui-parameter-contract':'view-type-parameters-v1'},execution:{kind:'view-type',activationId:'probe-activation'}}}}});
 }
 parentPort.on('message',m=>{

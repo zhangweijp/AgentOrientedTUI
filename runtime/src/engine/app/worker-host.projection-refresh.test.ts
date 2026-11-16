@@ -6,13 +6,13 @@ import { join } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
 import { SemanticSnapshotReceiver } from '../../adapters/snapshot/receiver.js';
 import { SemanticProjectionCoordinator } from '../../core/projection/coordinator.js';
-import type { ToolDescriptorV4 } from '../../core/snapshot/types.js';
+import type { ToolDescriptorV5 } from '../../core/snapshot/types.js';
 import { compileOrdinarySchema } from '../../core/tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../../core/tool/ordinary-parameter-profile.js';
 
 const policy = { project: () => ({ refs: [], toolIds: [] }), authorize: () => true, canReadReceipt: () => true };
 function draft(instanceId: string, seq: number, value = 'current') {
-    return { schemaVersion: 4, appId: 'app', instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
+    return { schemaVersion: 5, appId: 'app', instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
         views: [{ toolBindings: [], id: 'file', viewInstanceId: 'file-instance', type: 'File', name: 'File', kind: 'state',
             content: { format: 'markdown-v1', value } }], refs: {}, tools: {} };
 }
@@ -61,8 +61,8 @@ describe('refresh before the existing Scope observation', () => {
             readFrame: () => ({
                 views: [{ toolBindings: [{ toolId, activationId: 'active-' + value }], id: target.viewId, viewInstanceId: target.viewInstanceId, type: 'File', name: 'File', kind: 'state',
                     content: { format: 'markdown-v1', value: 'body:' + value } }],
-                tools: [{ id: toolId, name: 'edit', viewType: 'File', description: 'Edit',
-                    inputSchema: profile } satisfies ToolDescriptorV4],
+                tools: [{ id: toolId, name: 'edit', viewType: 'File', nameSharedAcrossViewTypes: false, description: 'Edit',
+                    inputSchema: profile } satisfies ToolDescriptorV5],
             }),
         });
         const publish = () => {

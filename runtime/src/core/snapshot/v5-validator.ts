@@ -1,18 +1,18 @@
 import { MARKDOWN_VIEW_FORMAT } from './types.js';
 import { SNAPSHOT_SCHEMA_VERSION } from './types.js';
-/** Validate the sole supported V4 snapshot contract before it reaches storage. */
+/** Validate the sole supported V5 snapshot contract before it reaches storage. */
 import { canonicalJson, copyJson, diagnosticDigest, SnapshotDataError, utf8Size } from './json.js';
 import { DEFAULT_SNAPSHOT_LIMITS, MAX_VIEW_TOOL_BINDINGS, REF_VALUE_LIMITS, VIEW_METADATA_BYTES, refKey } from './snapshot-support.js';
 import { compileCapturedOrdinaryProfile } from '../tool/ordinary-parameter-profile.js';
 import type { SnapshotDraftEnvelope } from './types.js';
 import type {
-    JsonValue, PreparedAppSnapshotDraftV4, SnapshotIssue, SnapshotLimits, ToolDescriptorV4,
+    JsonValue, PreparedAppSnapshotDraftV5, SnapshotIssue, SnapshotLimits, ToolDescriptorV5,
 } from './types.js';
 
 type Plain = Readonly<Record<string, JsonValue>>;
-type V4Result =
+type V5Result =
     | Readonly<{ ok: true; value: Readonly<{
-        draft: PreparedAppSnapshotDraftV4;
+        draft: PreparedAppSnapshotDraftV5;
         canonicalContent: string;
         contentDigest: string;
         bytes: number;
@@ -78,7 +78,7 @@ function envelopeFromOwnDescriptors(input: unknown): SnapshotDraftEnvelope | und
         return undefined;
     }
 }
-function rejected(error: unknown, envelope?: SnapshotDraftEnvelope): V4Result {
+function rejected(error: unknown, envelope?: SnapshotDraftEnvelope): V5Result {
     const issue: SnapshotIssue = error instanceof SnapshotDataError
         ? Object.freeze({ code: error.code, path: error.path, message: error.message })
         : Object.freeze({
@@ -90,11 +90,11 @@ function rejected(error: unknown, envelope?: SnapshotDraftEnvelope): V4Result {
 }
 
 /** Validate cross-View identities and type activation references, never any Handler. */
-export function validatePreparedV4Draft(
+export function validatePreparedV5Draft(
     input: unknown,
     limits: SnapshotLimits = DEFAULT_SNAPSHOT_LIMITS,
-    previousTools?: (appId: string, instanceId: string) => Readonly<Record<string, ToolDescriptorV4>> | undefined,
-): V4Result {
+    previousTools?: (appId: string, instanceId: string) => Readonly<Record<string, ToolDescriptorV5>> | undefined,
+): V5Result {
     const envelope = envelopeFromOwnDescriptors(input);
     let copied: JsonValue;
     try {
@@ -109,7 +109,7 @@ export function validatePreparedV4Draft(
         const root = obj(copied, '$');
         exact(root, ['schemaVersion', 'appId', 'instanceId', 'producerSeq', 'sourceEpoch',
             'capturedAt', 'views', 'refs', 'tools'], '$');
-        if (root.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) fail('$.schemaVersion', 'Expected Snapshot V4');
+        if (root.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) fail('$.schemaVersion', 'Expected Snapshot V5');
         const appId = str(root.appId, '$.appId');
         const instanceId = str(root.instanceId, '$.instanceId');
         const previous = previousTools?.(appId, instanceId);
@@ -190,16 +190,23 @@ export function validatePreparedV4Draft(
                 activeTools.add(id);
             }
         }
+        const sharedNames = new Map<string, boolean>();
         for (const [key, value] of Object.entries(tools)) {
             const path = '$.tools[' + JSON.stringify(key) + ']';
             const tool = obj(value, path);
-            exact(tool, ['id', 'name', 'viewType', 'description', 'inputSchema'], path);
+            exact(tool, ['id', 'name', 'viewType', 'nameSharedAcrossViewTypes', 'description', 'inputSchema'], path);
             const id = str(tool.id, path + '.id');
             const name = str(tool.name, path + '.name');
             const viewType = str(tool.viewType, path + '.viewType');
             if (id !== key || id !== JSON.stringify([appId, viewType, name])) {
                 fail(path + '.id', 'Tool ID must be the canonical App + ViewType + name');
             }
+            const sharedName = tool.nameSharedAcrossViewTypes;
+            if (typeof sharedName !== 'boolean') fail(path + '.nameSharedAcrossViewTypes', 'Expected boolean');
+            const previousShared = sharedNames.get(name);
+            if (previousShared !== undefined && (!previousShared || !sharedName))
+                fail(path + '.nameSharedAcrossViewTypes', 'Tools with the same name across ViewTypes must both mark it shared');
+            sharedNames.set(name, sharedName);
             str(tool.description, path + '.description');
             const schema = obj(tool.inputSchema, path + '.inputSchema');
             if (schema.type !== 'object') fail(path + '.inputSchema.type', 'Tool inputs must have an object JSON schema');
@@ -218,7 +225,7 @@ export function validatePreparedV4Draft(
         return Object.freeze({
             ok: true,
             value: Object.freeze({
-                draft: copied as unknown as PreparedAppSnapshotDraftV4,
+                draft: copied as unknown as PreparedAppSnapshotDraftV5,
                 canonicalContent,
                 contentDigest: diagnosticDigest(canonicalContent),
                 bytes,

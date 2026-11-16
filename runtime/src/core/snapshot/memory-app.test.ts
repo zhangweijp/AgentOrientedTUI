@@ -49,7 +49,7 @@ class MemoryTaskApp {
             labels.push('[' + task.title + '](' + refId + ')');
         }
         return {
-            schemaVersion: 4, appId: this.appId, instanceId: this.instanceId,
+            schemaVersion: 5, appId: this.appId, instanceId: this.instanceId,
             producerSeq: ++this.producerSeq, sourceEpoch: this.sourceEpoch, capturedAt: this.producerSeq,
             views: [{
                 toolBindings: [{ toolId, activationId: 'active-complete' }], id: 'task_list', viewInstanceId: 'mount_1', type: 'TaskList',
@@ -60,7 +60,7 @@ class MemoryTaskApp {
             tools: {
                 [toolId]: {
                     id: toolId, name: 'complete_task', viewType: 'TaskList',
-                    description: 'Complete a task only after business CAS verification',
+                    nameSharedAcrossViewTypes: false, description: 'Complete a task only after business CAS verification',
                     inputSchema: ordinaryParameterProfile(taskToolSchema.contract),
                 },
             },

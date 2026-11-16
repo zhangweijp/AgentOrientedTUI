@@ -1,15 +1,15 @@
 import { SNAPSHOT_SCHEMA_VERSION } from './types.js';
 import type {
-    AppSnapshotV4, CommitResult, LeaseResult, PreparedSnapshotFailure, RefLookup, RefSelector, SnapshotCore,
+    AppSnapshotV5, CommitResult, LeaseResult, PreparedSnapshotFailure, RefLookup, RefSelector, SnapshotCore,
     SnapshotIssue, SnapshotIssueCode, SnapshotLease, SnapshotLookup, SnapshotRead,
     SnapshotStoreOptions, SnapshotStoreStats, ToolLookup, ToolSelector, AppIdentityRead,
 } from './types.js';
 import { utf8Size } from './json.js';
 import { captureSnapshotLimits, refKey } from './snapshot-support.js';
-import { validatePreparedV4Draft } from './v4-validator.js';
+import { validatePreparedV5Draft } from './v5-validator.js';
 
 interface SnapshotEntry {
-    readonly snapshot: AppSnapshotV4;
+    readonly snapshot: AppSnapshotV5;
     canonical: string | undefined;
     readonly bytes: number;
     readonly leases: Map<object, number | null>;
@@ -271,7 +271,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
         accept(input: unknown): CommitResult {
             if (disposed) return rejected('APP_STOPPED', 'Snapshot Core is closed');
             const time = clock();
-            const checked = validatePreparedV4Draft(input, limits, (appId, instanceId) => {
+            const checked = validatePreparedV5Draft(input, limits, (appId, instanceId) => {
                 const app = apps.get(appId);
                 return app?.instanceId === instanceId ? app.current?.snapshot.tools : undefined;
             });
@@ -358,7 +358,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions = {}): Snapshot
                 refs: data.draft.refs,
                 tools: data.draft.tools,
                 contentDigest: data.contentDigest,
-            }) as AppSnapshotV4;
+            }) as AppSnapshotV5;
             const record: SnapshotEntry = {
                 snapshot, canonical: data.canonicalContent, bytes: data.bytes,
                 leases: new Map(),

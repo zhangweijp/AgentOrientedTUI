@@ -48,7 +48,7 @@ describe('bounded Worker message capture', () => {
             expect(captureViewToolCapabilities(capabilities)).toEqual({ ok: true, capabilities });
         }
         expect(captureViewToolCapabilities(undefined)).toEqual({ ok: true, capabilities: [] });
-        for (const capability of ['view-tool-ordinary-invoke/v2', 'view-tool-ref-invoke/v2', 'view-tool-ref-invoke/v3', 'view-tool-parameters-invoke/v4', 'future/v9']) {
+        for (const capability of ['app-snapshot/v4', 'view-tool-ordinary-invoke/v2', 'view-tool-ref-invoke/v2', 'view-tool-ref-invoke/v3', 'view-tool-parameters-invoke/v4', 'future/v9']) {
             expect(captureViewToolCapabilities([capability])).toEqual({ ok: false, code: 'WORKER_CAPABILITY_UNSUPPORTED' });
         }
     });

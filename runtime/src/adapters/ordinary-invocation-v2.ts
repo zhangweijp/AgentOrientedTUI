@@ -3,7 +3,7 @@ import { canonicalJson } from '../core/snapshot/json.js';
 import { RAW_TOOL_ARGUMENT_LIMITS, RESOLVED_TOOL_ARGUMENT_LIMITS, RESOLVED_TOOL_ENVELOPE_LIMITS, TOOL_REQUEST_LIMITS } from '../core/snapshot/snapshot-support.js';
 import { selectedRefParameters } from '../core/tool/versioned-ref-declarations.js';
 import { captureInvocationJson, captureTypeParametersTerminal,
-  exact, invocationReceiver, invocationObject, invocationToolDescriptorV4, text } from './worker-message-capture.js';
+  exact, invocationReceiver, invocationObject, invocationToolDescriptor, text } from './worker-message-capture.js';
 import type { ViewToolInvokeV6Message, ViewToolInvokeV6Response } from '../spi/worker-protocol/messages.js';
 import type { JsonValue } from '../core/snapshot/types.js';
 import type { ToolResultData } from '../spi/core/tool-result.js';
@@ -13,7 +13,7 @@ export function captureTypeParametersRequest(input: unknown): ViewToolInvokeV6Me
   if (!invocationObject(value) || !exact(value, ['type', 'requestId', 'appId', 'instanceId', 'snapshotId', 'tool',
       'argumentMode', 'receiver', 'rawArgs', 'effectiveArgs', 'refSources']) || value.type !== 'VIEW_TOOL_INVOKE_V6' ||
       value.argumentMode !== VIEW_TYPE_PARAMETERS_MODE || !['requestId', 'appId', 'instanceId', 'snapshotId'].every(k => text(value[k])) ||
-      !invocationToolDescriptorV4(value.tool) || !invocationReceiver(value.receiver) ||
+      !invocationToolDescriptor(value.tool) || !invocationReceiver(value.receiver) ||
       !invocationObject(value.rawArgs) || !invocationObject(value.effectiveArgs) || !Array.isArray(value.refSources)) throw new Error('Invalid parameter request');
   captureInvocationJson(value.rawArgs, RAW_TOOL_ARGUMENT_LIMITS);
   captureInvocationJson(value.effectiveArgs, RESOLVED_TOOL_ARGUMENT_LIMITS);

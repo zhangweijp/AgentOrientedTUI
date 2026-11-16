@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { canonicalJson, copyJson, utf8Size } from './json.js';
 import { createSnapshotCore } from './store.js';
 import { refKey } from './snapshot-support.js';
-import { validatePreparedV4Draft } from './v4-validator.js';
-import type { JsonValue, PreparedAppSnapshotDraftV4, SnapshotCore } from './types.js';
+import { validatePreparedV5Draft } from './v5-validator.js';
+import type { JsonValue, PreparedAppSnapshotDraftV5, SnapshotCore } from './types.js';
 import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
 
@@ -18,9 +18,9 @@ const argsLimits = { maxDepth: 24, maxNodes: 10_000, maxApproxBytes: 128 * 1024 
 const refParameters = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: true });
 if (!refParameters.ok) throw new Error('Invalid Ref fixture');
 
-function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): PreparedAppSnapshotDraftV4 {
+function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): PreparedAppSnapshotDraftV5 {
     return {
-        schemaVersion: 4, appId, instanceId,
+        schemaVersion: 5, appId, instanceId,
         producerSeq: sequence, sourceEpoch: sequence, capturedAt: sequence,
         views: [['fd_A', a], ['fd_B', mountB]].map(([id, viewInstanceId]) => ({
             toolBindings: [{ toolId, activationId: 'active-' + viewInstanceId }], id, viewInstanceId, type: 'FileDetail', name: id, kind: 'state',
@@ -37,7 +37,7 @@ function draft(sequence = 1, valueA: JsonValue = { value: 'A' }, a = mountA): Pr
             },
         },
         tools: { [toolId]: {
-            id: toolId, name: 'inspect', viewType: 'FileDetail', description: 'Inspect',
+            id: toolId, name: 'inspect', viewType: 'FileDetail', nameSharedAcrossViewTypes: false, description: 'Inspect',
             inputSchema: ordinaryParameterProfile(refParameters.contract),
         } },
     };
@@ -50,7 +50,7 @@ function start(options: Parameters<typeof createSnapshotCore>[0] = {}) {
 function publish(core: SnapshotCore, input = draft()) {
     const result = core.committer.accept(input);
     expect(result.status).toBe('published');
-    if (result.status !== 'published' || result.snapshot.schemaVersion !== 4) throw new Error('Expected a committed snapshot');
+    if (result.status !== 'published' || result.snapshot.schemaVersion !== 5) throw new Error('Expected a committed snapshot');
     return result.snapshot;
 }
 function selector(snapshotId: string, viewId = 'fd_A', viewInstanceId = mountA, refId = 'file') {
@@ -152,10 +152,10 @@ describe('Wave 2B: exact historical Ref lookup', () => {
             { ...input.refs[key], target: { kind: 'resource', payload: {} } },
             { ...input.refs[key], target: { kind: 'entity', entityType: 'File', entityId: 'old' } },
             { ...input.refs[key], extraAuthority: true },
-        ]) expect(validatePreparedV4Draft({ ...input, refs: { ...input.refs, [key]: ref } })).toMatchObject({
+        ]) expect(validatePreparedV5Draft({ ...input, refs: { ...input.refs, [key]: ref } })).toMatchObject({
             ok: false, issue: { code: 'SNAPSHOT_INVALID' },
         });
-        expect(validatePreparedV4Draft({ ...input, tools: {
+        expect(validatePreparedV5Draft({ ...input, tools: {
             [toolId]: { ...input.tools[toolId], refParams: { file: 'File' } },
         } })).toMatchObject({ ok: false, issue: { code: 'SNAPSHOT_INVALID' } });
     });
@@ -206,7 +206,7 @@ describe('Wave 2B: current JSON budgets at prospective expansion boundaries (no 
         let value: JsonValue = 'leaf';
         for (let n = 0; n < 24; n++) value = { child: value };
         expect(() => copyJson(value, argsLimits)).not.toThrow();
-        expect(validatePreparedV4Draft(draft(1, value)).ok).toBe(true);
+        expect(validatePreparedV5Draft(draft(1, value)).ok).toBe(true);
         expect(() => copyJson({ file: value }, argsLimits)).toThrow('Depth budget');
     });
 

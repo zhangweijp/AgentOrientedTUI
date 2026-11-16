@@ -131,7 +131,7 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
       });
       legacyWorker.postMessage({ type: 'INIT', requestId: 'legacy-host-init', appId: 'app', desktopId: 'd',
         appModulePath: 'file:///this-module-must-not-be-imported.mjs', appInstanceId: 'legacy-host-instance',
-        requestedCapabilities: ['app-snapshot/v4', capability] });
+        requestedCapabilities: ['app-snapshot/v5', capability] });
       await expect(responsePromise).resolves.toMatchObject({ type: 'ERROR_RESPONSE', requestId: 'legacy-host-init',
         success: false, error: { code: 'WORKER_CAPABILITY_UNSUPPORTED' } });
     } finally {
@@ -233,11 +233,12 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
       expect(x.messages.find((m: any) => m.requestId === queued[0].requestId && m.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE').terminal.phase).toBe('not-entered');
     } finally { x.host.terminate(); await pending.catch(() => undefined); }
   });
-  it('R16 direct invalid V5 requests remain not-entered without trusting Host validation', async () => {
-    const x = await start(), tool = Object.values(x.snapshot().tools).find((t: any) => t.name === 'find' && t.viewType === 'File') as any;
+  it('R16 direct invalid V6 requests remain not-entered without trusting Host validation', async () => {
+    const x = await start(), snapshot = x.snapshot();
+    const { nameSharedAcrossViewTypes: _sharedName, ...tool } = Object.values(snapshot.tools).find((t: any) => t.name === 'find' && t.viewType === 'File') as any;
     const from = x.messages.length;
     x.physical({ type: 'VIEW_TOOL_INVOKE_V6', requestId: 'direct-invalid', appId: 'app', instanceId: x.host.appInstanceId,
-      snapshotId: x.snapshot().id, tool, receiver: receiver(x.snapshot(),tool), argumentMode: 'view-type-parameters-v1', rawArgs: { ...good, e: 1 }, effectiveArgs: { ...good, e: 1 }, refSources: [] });
+      snapshotId: snapshot.id, tool, receiver: receiver(snapshot,tool), argumentMode: 'view-type-parameters-v1', rawArgs: { ...good, e: 1 }, effectiveArgs: { ...good, e: 1 }, refSources: [] });
     const response = await wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE' && m.requestId === 'direct-invalid', from);
     expect(response.terminal).toMatchObject({ phase: 'not-entered', result: { error: { code: 'E_INVALID_ARGS' } } });
     expect(x.entries()).toHaveLength(0); expect(JSON.stringify(response)).not.toContain('PRIVATE');
@@ -314,10 +315,11 @@ describe('R11–R24 real public SDK / emitted Host / Node Worker', () => {
     expect(o.views).toHaveLength(2);
     expect(o.tools).toEqual([]);
     expect(x.host.getInteractionReport().toolsEnabled).toBe(false);
-    const snapshot = x.snapshot(), tool = Object.values(snapshot.tools).find((tool: any) => tool.name === 'find' && tool.viewType === 'File') as any;
+    const snapshot = x.snapshot();
+    const { nameSharedAcrossViewTypes: _sharedName, ...tool } = Object.values(snapshot.tools).find((t: any) => t.name === 'find' && t.viewType === 'File') as any;
     const requestId = 'read-only-probe', from = x.messages.length;
     x.physical({ type: 'VIEW_TOOL_INVOKE_V6', requestId, appId: 'app', instanceId: x.host.appInstanceId,
-      snapshotId: snapshot.id, tool, receiver: receiver(x.snapshot(),tool), argumentMode: 'view-type-parameters-v1',
+      snapshotId: snapshot.id, tool, receiver: receiver(snapshot,tool), argumentMode: 'view-type-parameters-v1',
       rawArgs: good, effectiveArgs: good, refSources: [] });
     expect(await wait(x, message => message.requestId === requestId, from)).toMatchObject({
       type: 'VIEW_TOOL_INVOKE_V6_RESPONSE', terminal: { phase: 'not-entered', result: {

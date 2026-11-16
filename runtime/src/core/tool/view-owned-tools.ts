@@ -2,7 +2,7 @@ import type { AppFrameBinding, AppTypeToolDefinition } from '../../spi/runtime/a
 import type { ToolResultData } from '../../spi/core/tool-result.js';
 import { canonicalJson, copyJson, SnapshotDataError, utf8Size } from '../snapshot/json.js';
 import { DEFAULT_SNAPSHOT_LIMITS, MAX_VIEW_TOOL_BINDINGS } from '../snapshot/snapshot-support.js';
-import type { JsonValue, ToolDescriptorV4, ViewToolBinding, ViewToolReceiver } from '../snapshot/types.js';
+import type { JsonValue, ToolDescriptorV5, ToolInvocationDescriptor, ViewToolBinding, ViewToolReceiver } from '../snapshot/types.js';
 import { compileOrdinarySchema, modelToolSchema, type OrdinaryParameterContract } from './ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
 import type { ViewToolInvocationTerminal } from './invocation-terminal.js';
@@ -26,7 +26,7 @@ export interface ViewOwnedToolsStats {
     readonly retainedBytes: number;
 }
 
-type Tool = { readonly descriptor: ToolDescriptorV4; readonly contract: OrdinaryParameterContract };
+type Tool = { readonly descriptor: ToolDescriptorV5; readonly contract: OrdinaryParameterContract };
 type Binding = ViewToolBinding & Pick<AppFrameBinding, 'execute'>;
 type Mounted = {
     readonly owner: object;
@@ -98,7 +98,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         return Object.freeze({ viewId: id, viewType: type, viewInstanceId: 'vi:v1:' + JSON.stringify([appInstanceId, ++mountSequence]) });
     }
 
-    function current(tool: ToolDescriptorV4, receiver: ViewToolReceiver) {
+    function current(tool: ToolInvocationDescriptor, receiver: ViewToolReceiver) {
         const view = mounted.get(receiver.viewId);
         if (view?.view.viewInstanceId !== receiver.viewInstanceId || view.view.viewType !== tool.viewType)
             return { error: rejected('VIEW_INSTANCE_REVOKED', 'The receiving View was closed or replaced. Observe the current Views.') };
@@ -118,6 +118,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             if (!Array.isArray(definitions) || definitions.length > DEFAULT_SNAPSHOT_LIMITS.maxTools)
                 fail('TOOL_CAPACITY', 'App Tool definition limit exceeded');
             const types = new Map<string, Map<string, Tool>>();
+            const firstByName = new Map<string, { nameSharedAcrossViewTypes: boolean }>();
             let bytes = staticBytes;
             for (const input of definitions) {
                 const definition = copyJson(input, { maxDepth: 48, maxNodes: 10_000, maxApproxBytes: 128 * 1024 }) as unknown as AppTypeToolDefinition;
@@ -135,7 +136,14 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                 }
                 const inputSchema = ordinaryParameterProfile(compiled.contract);
                 modelToolSchema(inputSchema, viewType);
-                const descriptor = Object.freeze({ id: JSON.stringify([appId, viewType, name]), viewType, name, description, inputSchema });
+                const first = firstByName.get(name);
+                const descriptor = { id: JSON.stringify([appId, viewType, name]), viewType, name, description, inputSchema,
+                    nameSharedAcrossViewTypes: first !== undefined };
+                if (!first) firstByName.set(name, descriptor);
+                else if (!first.nameSharedAcrossViewTypes) {
+                    first.nameSharedAcrossViewTypes = true;
+                    bytes -= 1; // JSON true is one byte shorter than false.
+                }
                 bytes += utf8Size(canonicalJson(descriptor));
                 if (bytes > maxRetainedBytes) fail('TOOL_CAPACITY', 'App Tool definitions exceed retention limit');
                 type.set(name, { descriptor, contract: compiled.contract });
@@ -143,6 +151,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             }
             assertActive();
             if (defined || mounted.size) fail('TOOL_DUPLICATE', 'App Tool definitions must precede View publication');
+            for (const type of types.values()) for (const { descriptor } of type.values()) Object.freeze(descriptor);
             declared = types;
             staticBytes = bytes;
             defined = true;
@@ -164,7 +173,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             const previous = mounted;
             const next = new Map<string, Mounted>();
             const owners = new Set<object>();
-            const tools = new Map<string, ToolDescriptorV4>();
+            const tools = new Map<string, ToolDescriptorV5>();
             let bytes = 0;
             let count = 0;
             let entries = 0;
@@ -227,13 +236,13 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         inspect(): ViewOwnedToolsStats {
             return { state: disposed ? 'disposed' : 'active', views: mounted.size, bindings: bindingCount, retainedBytes: staticBytes + liveBytes };
         },
-        validateTypeToolBinding(tool: ToolDescriptorV4, receiver: ViewToolReceiver): ToolResultData {
+        validateTypeToolBinding(tool: ToolInvocationDescriptor, receiver: ViewToolReceiver): ToolResultData {
             return current(tool, receiver).error ?? { success: true };
         },
-        getTypeToolContract(tool: ToolDescriptorV4, receiver: ViewToolReceiver): OrdinaryParameterContract | undefined {
+        getTypeToolContract(tool: ToolInvocationDescriptor, receiver: ViewToolReceiver): OrdinaryParameterContract | undefined {
             return current(tool, receiver).contract;
         },
-        async invokeTypeTool(tool: ToolDescriptorV4, receiver: ViewToolReceiver,
+        async invokeTypeTool(tool: ToolInvocationDescriptor, receiver: ViewToolReceiver,
             args: Readonly<Record<string, unknown>>): Promise<ViewToolInvocationTerminal> {
             const initial = current(tool, receiver);
             if (initial.error) return { phase: 'not-entered', result: initial.error };

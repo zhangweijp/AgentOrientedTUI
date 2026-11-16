@@ -60,7 +60,7 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
             type: item.viewType, name: viewName, kind: 'state' as const,
             content: { format: 'markdown-v1' as const, value: nextBody } }));
         const tools = Object.fromEntries(frame.tools.map(tool => [tool.id, tool]));
-        const accepted = receiver.acceptPrepared({ schemaVersion: 4, appId, instanceId, producerSeq: sequence,
+        const accepted = receiver.acceptPrepared({ schemaVersion: 5, appId, instanceId, producerSeq: sequence,
             sourceEpoch: sequence, capturedAt: sequence, views, refs: {}, tools });
         if (accepted.status !== 'published' && accepted.status !== 'unchanged') {
             throw new Error(`The real Snapshot Receiver rejected ${appId}: ${accepted.issue.code}`);
@@ -109,7 +109,7 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
     const contexts: Awaited<ReturnType<typeof source.getContext>>[] = [];
 
     try {
-        // Core V4 accepts this identity. The stricter native alias rule belongs
+        // Core V5 accepts this identity. The stricter native alias rule belongs
         // to Semantic Source, which must isolate only this App at projection time.
         expect(bad.receiver.report()).toMatchObject({ health: 'ready', published: 1 });
         expect(bad.registry.listViews()[0]?.viewType).toBe('A-B');

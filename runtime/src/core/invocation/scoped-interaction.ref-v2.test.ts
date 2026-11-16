@@ -19,10 +19,10 @@ function fixture() {
     const calls = { validate: 0, policy: 0, execute: 0 }, seen: any[] = [];
     const controls = { authorize: (_ctx: any): any => true };
     function publish(label = 'A', mounted = true) {
-        const s = ++seq;const r = core.committer.accept({ schemaVersion: 4, appId: 'app', instanceId: 'run', producerSeq: s, sourceEpoch: s, capturedAt: s,
+        const s = ++seq;const r = core.committer.accept({ schemaVersion: 5, appId: 'app', instanceId: 'run', producerSeq: s, sourceEpoch: s, capturedAt: s,
             views: mounted ? [{ toolBindings: [{ toolId: id, activationId: label === 'rule' ? 'rule-2' : 'active-1' }], id: 'aa', viewInstanceId: 'mount', type: 'File', name: 'File', kind: 'state', content: { format: 'markdown-v1', value: label } }] : [],
             refs: mounted ? { [refKey('aa', 'mount', 'id')]: { id: 'id', ownerViewId: 'aa', ownerViewInstanceId: 'mount', refType: 'unknown', target: { kind: 'snapshot-value', payload: { label } } } } : {},
-            tools: mounted ? { [id]: { id, name: 'read', viewType: 'File', description: 'Read', inputSchema: schema } } : {} });
+            tools: mounted ? { [id]: { id, name: 'read', viewType: 'File', nameSharedAcrossViewTypes: false, description: 'Read', inputSchema: schema } } : {} });
         expect(r.status).toBe('published');if (r.status !== 'published') throw Error('publication');return r.snapshot;
     }
     const original = publish();

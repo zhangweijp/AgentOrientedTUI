@@ -6,18 +6,18 @@ import { copyJson, createJsonCopier, SnapshotDataError } from '../snapshot/json.
 import { captureSnapshotPrepareIssue, DEFAULT_SNAPSHOT_LIMITS as limits, isSnapshotPrepareIssueCode, refKey } from '../snapshot/snapshot-support.js';
 import {
     SNAPSHOT_SCHEMA_VERSION,
-    type JsonValue, type PreparedAppSnapshotDraftV4, type PreparedSnapshotFailure,
+    type JsonValue, type PreparedAppSnapshotDraftV5, type PreparedSnapshotFailure,
     type RefDescriptorV2, type SnapshotCommitter, type SnapshotIssue,
-    type ToolDescriptorV4, type ViewSnapshotV4,
+    type ToolDescriptorV5, type ViewSnapshotV4,
 } from '../snapshot/types.js';
-import { validatePreparedV4Draft } from '../snapshot/v4-validator.js';
+import { validatePreparedV5Draft } from '../snapshot/v5-validator.js';
 
 export interface ProjectionSource {
     identity(): { readonly appId: string; readonly instanceId: string };
     /** Return the complete rendered frame at the successful commit boundary. */
     readFrame(): {
         readonly views: readonly ViewSnapshotV4[];
-        readonly tools: readonly ToolDescriptorV4[];
+        readonly tools: readonly ToolDescriptorV5[];
         readonly accept?: () => void;
     };
 }
@@ -36,7 +36,7 @@ type Batch = {
     preparing: boolean;
     issue?: SnapshotIssue;
 };
-type Publication = { draft: PreparedAppSnapshotDraftV4 } | { failure: PreparedSnapshotFailure };
+type Publication = { draft: PreparedAppSnapshotDraftV5 } | { failure: PreparedSnapshotFailure };
 const copyLimits = { ...limits, maxApproxBytes: limits.maxSnapshotBytes * 2 };
 class CapturedRef {} // An expired token cannot be mistaken for plain JSON.
 const asyncFunction = Object.getPrototypeOf(async function () {});
@@ -65,7 +65,7 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
     private epoch = 0;
     private producerSeq = 0;
     private batch?: Batch;
-    private prepared?: PreparedAppSnapshotDraftV4;
+    private prepared?: PreparedAppSnapshotDraftV5;
     private issue?: SnapshotIssue;
     private closed = false;
     private readonly refs = new Map<string, RefEntry>();
@@ -144,12 +144,12 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
                     refType: entry.refType ?? 'unknown', target: { kind: 'snapshot-value', payload },
                 };
             }
-            const definitions: Record<string, ToolDescriptorV4> = Object.create(null);
+            const definitions: Record<string, ToolDescriptorV5> = Object.create(null);
             for (const tool of tools) {
                 if (Object.hasOwn(definitions, tool.id)) throw new Error('Duplicate Tool definition');
                 definitions[tool.id] = tool;
             }
-            const checked = validatePreparedV4Draft({
+            const checked = validatePreparedV5Draft({
                 schemaVersion: SNAPSHOT_SCHEMA_VERSION, ...this.source.identity(),
                 sourceEpoch: this.epoch + 1, producerSeq: this.producerSeq + 1, capturedAt: Date.now(),
                 views, refs, tools: definitions,

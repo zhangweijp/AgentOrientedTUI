@@ -1,6 +1,6 @@
 import { SNAPSHOT_SCHEMA_VERSION } from '../snapshot/types.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
-import type { AppIdentityReader, AppSnapshotV4, SnapshotLease, SnapshotStore } from '../snapshot/types.js';
+import type { AppIdentityReader, AppSnapshotV5, SnapshotLease, SnapshotStore } from '../snapshot/types.js';
 import { sameToolDefinition, viewToolReceiver } from '../tool/source-binding.js';
 import type { AppPreviewResult, AppInteractionPolicy } from './app-interaction-types.js';
 import { DEFAULT_SNAPSHOT_LIMITS as snapshotLimits, OBSERVATION_METADATA_BYTES } from '../snapshot/snapshot-support.js';
@@ -32,7 +32,7 @@ export const projectCompleteViews: AppInteractionPolicy['project'] = ({ source }
     toolIds: Object.keys(source.tools),
 });
 
-function observedViews(source: AppSnapshotV4): readonly ObservedView[] {
+function observedViews(source: AppSnapshotV5): readonly ObservedView[] {
     return source.views.map(({ id, viewInstanceId, type, name, kind, content }) =>
         Object.freeze({ id, viewInstanceId, type, name, kind, content }));
 }
@@ -89,7 +89,7 @@ function configuration(input: unknown, allowed: readonly string[]): Record<strin
     return Object.fromEntries(Object.entries(descriptors).map(([key, value]) => [key, value.value]));
 }
 
-interface Hold { readonly source: AppSnapshotV4; readonly lease: SnapshotLease }
+interface Hold { readonly source: AppSnapshotV5; readonly lease: SnapshotLease }
 export interface Reservation extends Hold {
     readonly observationId: string;
     cancelled: boolean;
@@ -142,7 +142,7 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
     } catch { throw new TypeError('Invalid observation registry configuration'); }
     let sequence = 0;
     let sourceBytes = 0, observationBytes = 0, metadataBytes = 0;
-    const sources = new Map<string, { readonly source: AppSnapshotV4; readonly bytes: number; references: number }>();
+    const sources = new Map<string, { readonly source: AppSnapshotV5; readonly bytes: number; references: number }>();
     const id = (kind: string): string => {
         if (sequence === Number.MAX_SAFE_INTEGER) fail('OBSERVATION_CAPACITY');
         const value = namespace + ':' + kind + ':' + ++sequence;
@@ -173,14 +173,14 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
     function requireActive(): void {
         if (state.closing) fail('APP_INTERACTION_UNAVAILABLE');
     }
-    function ready(): AppSnapshotV4 {
+    function ready(): AppSnapshotV5 {
         const latest = store.readLatest(state.appId);
         if (latest.status !== 'ready') fail(latest.status === 'stopped' ? 'APP_STOPPED' : 'SNAPSHOT_UNREADY');
         if (latest.snapshot.instanceId !== state.instanceId) fail('APP_INSTANCE_MISMATCH');
         if (latest.snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) fail('SNAPSHOT_INVALID');
         return latest.snapshot;
     }
-    function reacquire(source: AppSnapshotV4): void {
+    function reacquire(source: AppSnapshotV5): void {
         ready();
         const result = store.acquire(source.id);
         if (result.status === 'rejected') fail(result.issue.code);

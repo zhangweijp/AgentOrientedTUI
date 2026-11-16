@@ -61,7 +61,7 @@ function assembly(topicId: string, instanceId: string) {
     };
     function publish(body: string, notify = true) {
         businessValue = body;
-        const accepted = core.committer.accept({ schemaVersion: 4, appId: 'preview_app', instanceId,
+        const accepted = core.committer.accept({ schemaVersion: 5, appId: 'preview_app', instanceId,
             producerSeq: ++sequence, sourceEpoch: sequence, capturedAt: Date.now(),
             views: [{ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: 'Workspace', kind: 'state', name: 'Current work',
                 content: { format: 'markdown-v1', value: body } }], refs: {},

@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
 
-/** A real SDK/Worker binding mutation attempted during V4 draft preparation. */
-describe('Semantic producer regression: a mutation during V4 preparation cannot publish a torn Draft', () => {
+/** A real SDK/Worker binding mutation attempted during V5 draft preparation. */
+describe('Semantic producer regression: a mutation during V5 preparation cannot publish a torn Draft', () => {
     it('refuses reentrant writes during preparation and recovers on a real Tool commit', async () => {
         const temporary = await mkdtemp(join(tmpdir(), 'aotui-v2-prepare-race-'));
         const root = resolve(process.cwd());
@@ -128,7 +128,7 @@ describe('Semantic producer regression: a mutation during V4 preparation cannot 
             expect(report.lastIssueCode).toBeUndefined();
             const lookup = (host as any).snapshotReceiver.core.store.getById(report.snapshotId);
             expect(lookup).toMatchObject({ status:'found', snapshot:{
-                schemaVersion:4, views:[{id:'fd_0', content:{value: expect.stringContaining('Stable FileDetail')}}],
+                schemaVersion:5, views:[{id:'fd_0', content:{value: expect.stringContaining('Stable FileDetail')}}],
             }});
             if (lookup.status === 'found') {
                 expect(lookup.snapshot.revision).toBe(2);

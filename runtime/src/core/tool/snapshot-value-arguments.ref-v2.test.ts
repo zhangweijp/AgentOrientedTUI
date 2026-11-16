@@ -14,10 +14,10 @@ import { prepareViewTypeParameters } from './snapshot-value-arguments.js';
 const c = parameters();if (!c.ok) throw Error('fixture');
 function fixture() {
     const core = createSnapshotCore();core.lifecycle.startApp('app', 'run');const id = JSON.stringify(['app', 'File', 'read']);let seq = 0;
-    const publish = (label: string) => core.committer.accept({ schemaVersion: 4 as const, appId: 'app', instanceId: 'run', producerSeq: ++seq, sourceEpoch: seq, capturedAt: seq,
+    const publish = (label: string) => core.committer.accept({ schemaVersion: 5 as const, appId: 'app', instanceId: 'run', producerSeq: ++seq, sourceEpoch: seq, capturedAt: seq,
         views: [{ toolBindings: [{ toolId: id, activationId: 'active-1' }], id: 'aa', viewInstanceId: 'mount', type: 'File', name: 'File', kind: 'state' as const, content: { format: 'markdown-v1' as const, value: 'File' } }],
         refs: { [refKey('aa', 'mount', 'id')]: { id: 'id', ownerViewId: 'aa', ownerViewInstanceId: 'mount', refType: 'unknown', target: { kind: 'snapshot-value' as const, payload: { label } } } },
-        tools: { [id]: { id, name: 'read', viewType: 'File', description: 'Read', inputSchema: ordinaryParameterProfile(c.contract) } } });
+        tools: { [id]: { id, name: 'read', viewType: 'File', nameSharedAcrossViewTypes: false, description: 'Read', inputSchema: ordinaryParameterProfile(c.contract) } } });
     const source = publish('A');if (source.status !== 'published') throw Error('fixture');return { core, publish, source: { appId: 'app', instanceId: 'run', snapshotId: source.snapshot.id,
         tool: source.snapshot.tools[id]!, receiver: { viewId: 'aa', viewInstanceId: 'mount', activationId: 'active-1' } } };
 }

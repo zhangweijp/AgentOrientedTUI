@@ -27,7 +27,7 @@ import type { ViewToolInvocationTerminal } from '../../spi/worker-protocol/index
 import { SemanticProjectionCoordinator, type CompleteProjectionFrame } from '../../core/projection/coordinator.js';
 import { createViewOwnedTools } from '../../core/tool/view-owned-tools.js';
 import type { OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
-import type { ToolDescriptorV4, ViewToolReceiver } from '../../core/snapshot/types.js';
+import type { ToolInvocationDescriptor, ViewToolReceiver } from '../../core/snapshot/types.js';
 import { createAppLifecycle } from '../app-lifecycle.js';
 import type { AppStatePersistence } from '../../spi/runtime/state-persistence.interface.js';
 import { SnapshotDataError } from '../../core/snapshot/json.js';
@@ -104,7 +104,7 @@ export class AppKernel implements IRefExporter {
      * Stage 6 preflight: checks LIVE Runtime-owned Tool binding without invoking
      * a Handler. A trusted Host must still independently authorize any I/O.
      */
-    validateBoundTypeTool(source: ToolDescriptorV4, receiver: ViewToolReceiver): ToolResultData {
+    validateBoundTypeTool(source: ToolInvocationDescriptor, receiver: ViewToolReceiver): ToolResultData {
         if (this.closing) return this.closedToolResult();
         if (this.projection.failed) return this.failedProjectionResult();
         if (!this.viewOwnedTools) return { success: false, error: {
@@ -113,11 +113,11 @@ export class AppKernel implements IRefExporter {
         return this.viewOwnedTools.validateTypeToolBinding(source, receiver);
     }
 
-    getBoundTypeToolContract(source: ToolDescriptorV4, receiver: ViewToolReceiver): OrdinaryParameterContract | undefined {
+    getBoundTypeToolContract(source: ToolInvocationDescriptor, receiver: ViewToolReceiver): OrdinaryParameterContract | undefined {
         return this.closing ? undefined : this.viewOwnedTools?.getTypeToolContract(source, receiver);
     }
 
-    invokeBoundTypeTool(source: ToolDescriptorV4, receiver: ViewToolReceiver,
+    invokeBoundTypeTool(source: ToolInvocationDescriptor, receiver: ViewToolReceiver,
         args: Readonly<Record<string, unknown>>): ViewToolInvocationTerminal | Promise<ViewToolInvocationTerminal> {
         if (this.closing) return { phase: 'not-entered', result: this.closedToolResult() };
         if (this.projection.failed) return { phase: 'not-entered', result: this.failedProjectionResult() };

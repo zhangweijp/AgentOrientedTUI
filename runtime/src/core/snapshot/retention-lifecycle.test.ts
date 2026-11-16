@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createSnapshotCore } from './store.js';
 import { refKey } from './snapshot-support.js';
-import { validatePreparedV4Draft } from './v4-validator.js';
+import { validatePreparedV5Draft } from './v5-validator.js';
 import { canonicalJson, utf8Size } from './json.js';
 import type { JsonValue, SnapshotStoreOptions } from './types.js';
 
 function draft(appId = 'a', instanceId = 'i', seq = 1, value = 'old') {
-    return { schemaVersion: 4 as const, appId, instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 0,
+    return { schemaVersion: 5 as const, appId, instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 0,
         views: [{ toolBindings: [], id: 'v', viewInstanceId: 'g', type: 'Detail', name: value, kind: 'state' as const,
             content: { format: 'markdown-v1' as const, value } }],
         refs: { [refKey('v', 'g', 'r')]: { id: 'r', ownerViewId: 'v', ownerViewInstanceId: 'g', refType: 'Value',
@@ -156,7 +156,7 @@ describe('W09-A Snapshot finite retention', () => {
         expect(utf8Size(r.issue.path ?? '')).toBeLessThanOrEqual(512); expect(utf8Size(r.issue.message)).toBeLessThanOrEqual(512);
         expect(c.store.inspect().diagnosticBytes).toBeGreaterThan(0);
         expect(c.committer.accept(draft('a', 'i', 3)).status).toBe('unchanged'); expect(c.store.inspect().diagnosticBytes).toBe(0);
-        expect(validatePreparedV4Draft(draft()).ok).toBe(true);
+        expect(validatePreparedV5Draft(draft()).ok).toBe(true);
     });
     it.each([false, true])('A08/A09 permanent disposal works with failing clock=%s without reading hostile input', broken => {
         let badClock = false, reads = 0;

@@ -1,4 +1,4 @@
-import type { SnapshotIssueCode, ToolDescriptorV4, ViewSnapshotV4 } from '../snapshot/types.js';
+import type { SnapshotIssueCode, ToolDescriptorV5, ViewSnapshotV4 } from '../snapshot/types.js';
 
 export interface ObservationJsonLimits {
     readonly maxDepth: number;
@@ -38,7 +38,7 @@ export interface ObservationSource {
 }
 export interface ObservationSelection { readonly all: true }
 export type ObservedView = Readonly<Omit<ViewSnapshotV4, 'toolBindings'>>;
-export interface ObservedTool extends ToolDescriptorV4 {
+export interface ObservedTool extends ToolDescriptorV5 {
     /** Omitted when every observed View of this type can receive the Tool. */
     readonly eligibleViewIds?: readonly string[];
 }

@@ -5,7 +5,7 @@ import {
 } from '../adapters/ordinary-invocation-v2.js';
 import type { OrdinaryParameterContract } from '../core/tool/ordinary-parameter-contract.js';
 import type { ToolResultData } from '../spi/core/tool-result.js';
-import type { ToolDescriptorV4, ViewToolReceiver } from '../core/snapshot/types.js';
+import type { ToolInvocationDescriptor, ViewToolReceiver } from '../core/snapshot/types.js';
 import type { ViewToolInvocationTerminal } from '../spi/worker-protocol/messages.js';
 import { checkRefViews } from '../core/tool/snapshot-value-arguments.js';
 
@@ -15,11 +15,11 @@ export async function invokeTypeParameters(
     appId: string;
     instanceId: string;
     negotiated: boolean;
-    validateBinding?: (tool: ToolDescriptorV4, receiver: ViewToolReceiver) => ToolResultData;
-    getParameterContract?: (tool: ToolDescriptorV4, receiver: ViewToolReceiver) => OrdinaryParameterContract | undefined;
+    validateBinding?: (tool: ToolInvocationDescriptor, receiver: ViewToolReceiver) => ToolResultData;
+    getParameterContract?: (tool: ToolInvocationDescriptor, receiver: ViewToolReceiver) => OrdinaryParameterContract | undefined;
     isRefViewLive?: (viewId: string, viewInstanceId: string) => boolean;
     invokeBinding?: (
-      tool: ToolDescriptorV4,
+      tool: ToolInvocationDescriptor,
       receiver: ViewToolReceiver,
       args: Readonly<Record<string, unknown>>
     ) => ViewToolInvocationTerminal | Promise<ViewToolInvocationTerminal>;

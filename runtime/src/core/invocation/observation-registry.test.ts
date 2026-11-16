@@ -3,7 +3,7 @@ import { createSnapshotCore } from '../snapshot/store.js';
 import { createAppInteraction } from './app-interaction.js';
 import { refKey } from '../snapshot/snapshot-support.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
-import type { AppSnapshotV4, JsonValue, PreparedAppSnapshotDraftV4, SnapshotStoreOptions, ToolDescriptorV4 } from '../snapshot/types.js';
+import type { AppSnapshotV5, JsonValue, PreparedAppSnapshotDraftV5, SnapshotStoreOptions, ToolDescriptorV5 } from '../snapshot/types.js';
 import { createViewOwnedTools } from '../tool/view-owned-tools.js';
 import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
@@ -90,10 +90,10 @@ function fixture(options: { views?: number; refs?: number; tools?: number; conte
     }
     function rebindTool(viewIndex = 0, toolIndex = 0) { prepare(viewIndex,toolIndex); }
     function remountAllViews() { pages = pages.map(page => ({...page,owner:{}})); }
-    function draft(patch: Partial<PreparedAppSnapshotDraftV4> = {}): PreparedAppSnapshotDraftV4 {
+    function draft(patch: Partial<PreparedAppSnapshotDraftV5> = {}): PreparedAppSnapshotDraftV5 {
         const available = prepare();
         const seq = ++sequence;
-        return { schemaVersion: 4, ...identity, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
+        return { schemaVersion: 5, ...identity, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
             views: owners.map(v => ({ toolBindings: v.toolBindings, id: v.viewId, viewInstanceId: v.viewInstanceId, type: 'File', name: v.viewId, kind: 'state',
                 content: { format: 'markdown-v1', value: options.content ?? 'content-secret-' + v.viewId } })),
             refs: Object.fromEntries(owners.flatMap(v => Array.from({ length: options.refs ?? 2 }, (_, i) => [refKey(v.viewId, v.viewInstanceId, 'r' + i), {
@@ -102,10 +102,10 @@ function fixture(options: { views?: number; refs?: number; tools?: number; conte
             }]))),
             tools: Object.fromEntries(available.map(t => [t.id, t])), ...patch };
     }
-    function publish(patch: Partial<PreparedAppSnapshotDraftV4> = {}): AppSnapshotV4 {
+    function publish(patch: Partial<PreparedAppSnapshotDraftV5> = {}): AppSnapshotV5 {
         const result = core.committer.accept(draft(patch));
         expect(result.status).toBe('published');
-        if (result.status !== 'published' || result.snapshot.schemaVersion !== 4) throw new Error('Expected V3 fixture');
+        if (result.status !== 'published' || result.snapshot.schemaVersion !== 5) throw new Error('Expected a published Snapshot V5 fixture');
         return result.snapshot;
     }
     const source = options.ready === false ? undefined : publish();

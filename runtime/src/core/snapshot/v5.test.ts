@@ -3,7 +3,7 @@ import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js'
 import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
 import { createSnapshotCore } from './store.js';
 import { refKey } from './snapshot-support.js';
-import { validatePreparedV4Draft } from './v4-validator.js';
+import { validatePreparedV5Draft } from './v5-validator.js';
 
 const appId = 'editor', instanceId = 'run-1', viewId = 'file-a', viewInstanceId = 'mount-1';
 const viewType = 'FileDetail';
@@ -12,27 +12,27 @@ const refId = JSON.stringify([appId, viewType, 'read_ref']);
 const target = { viewId, viewInstanceId, bindingVersion: 4 };
 const ordinary = compileOrdinarySchema({ type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'], additionalProperties: false });
 const snapshotValue = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }, required: ['file'], additionalProperties: false });
-if (!ordinary.ok || !snapshotValue.ok) throw new Error('V4 fixtures must compile');
+if (!ordinary.ok || !snapshotValue.ok) throw new Error('Snapshot fixtures must compile');
 
 function draft() {
     return {
-        schemaVersion: 4 as const, appId, instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
+        schemaVersion: 5 as const, appId, instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
         views: [{ toolBindings:[{toolId:typeId,activationId:"activation-1"},{toolId:refId,activationId:"activation-2"}], id: viewId, viewInstanceId, type: viewType, name: 'file-a', kind: 'state' as const,
             content: { format: 'markdown-v1' as const, value: '# Current file' } }],
         refs: { [refKey(viewId, viewInstanceId, 'file')]: { id: 'file', ownerViewId: viewId,
             ownerViewInstanceId: viewInstanceId, refType: 'File', target: { kind: 'snapshot-value' as const, payload: { path: 'a.txt' } } } },
         tools: {
-            [typeId]: { id: typeId, name: 'edit_file', viewType, description: 'Edit an opened FileView',
+            [typeId]: { id: typeId, name: 'edit_file', viewType, nameSharedAcrossViewTypes: false, description: 'Edit an opened FileView',
                 inputSchema: ordinaryParameterProfile(ordinary.contract) },
-            [refId]: { id: refId, name: 'read_ref', viewType, description: 'Read a captured Ref',
+            [refId]: { id: refId, name: 'read_ref', viewType, nameSharedAcrossViewTypes: false, description: 'Read a captured Ref',
                 inputSchema: ordinaryParameterProfile(snapshotValue.contract) },
         },
     };
 }
 
-describe('Semantic Snapshot V4', () => {
+describe('Semantic Snapshot V5', () => {
     it('accepts a type Tool with activation identity and a Ref parameter with its real View payload owner', () => {
-        const result = validatePreparedV4Draft(draft());
+        const result = validatePreparedV5Draft(draft());
         expect(result.ok).toBe(true);
         if (!result.ok) return;
         expect(result.value.draft.views[0]!.toolBindings).toHaveLength(2);
@@ -43,21 +43,21 @@ describe('Semantic Snapshot V4', () => {
     it('rejects a type Tool while its ViewType is absent and rejects arbitrary ordinary target injection', () => {
         const absent = draft(); absent.views = [];
         delete absent.tools[refId]; absent.refs = {};
-        expect(validatePreparedV4Draft(absent)).toMatchObject({ ok: false, issue: { path: expect.stringContaining('tools') } });
+        expect(validatePreparedV5Draft(absent)).toMatchObject({ ok: false, issue: { path: expect.stringContaining('tools') } });
 
         const forged = draft() as any;
         forged.tools[typeId].execution = { kind: 'view-instance', targets: [target] };
-        expect(validatePreparedV4Draft(forged)).toMatchObject({ ok: false, issue: { path: expect.stringContaining('execution') } });
+        expect(validatePreparedV5Draft(forged)).toMatchObject({ ok: false, issue: { path: expect.stringContaining('execution') } });
     });
 
     it('rejects stale instance ownership and duplicate activation IDs', () => {
         const stale = draft();
         stale.refs[refKey(viewId, viewInstanceId, 'file')]!.ownerViewInstanceId = 'closed-mount';
-        expect(validatePreparedV4Draft(stale)).toMatchObject({ ok: false, issue: { path: expect.stringContaining('refs') } });
+        expect(validatePreparedV5Draft(stale)).toMatchObject({ ok: false, issue: { path: expect.stringContaining('refs') } });
 
         const duplicate = draft();
         duplicate.views[0]!.toolBindings[1]!.activationId = 'activation-1';
-        expect(validatePreparedV4Draft(duplicate)).toMatchObject({ ok: false, issue: { path: expect.stringContaining('toolBindings') } });
+        expect(validatePreparedV5Draft(duplicate)).toMatchObject({ ok: false, issue: { path: expect.stringContaining('toolBindings') } });
     });
 
     it.each([
@@ -65,20 +65,21 @@ describe('Semantic Snapshot V4', () => {
         [{ format: 'markdown-v1', value: { text: 'invalid' } }, 'value'],
     ])('rejects retired or invalid View content %j', (content, field) => {
         const input = draft();
-        expect(validatePreparedV4Draft({ ...input, views: [{ ...input.views[0], content }] }))
+        expect(validatePreparedV5Draft({ ...input, views: [{ ...input.views[0], content }] }))
             .toMatchObject({ ok: false, issue: { code: 'SNAPSHOT_INVALID', path: `$.views[0].content.${field}` } });
     });
 
-    it('commits only V4 snapshots and retrieves type-level Tools without an instance target', () => {
+    it('commits only V5 snapshots and retrieves type-level Tools without an instance target', () => {
         const core = createSnapshotCore(); core.lifecycle.startApp(appId, instanceId);
         const result = core.committer.accept(draft());
         if (result.status === 'rejected') throw new Error(JSON.stringify(result.issue));
         expect(result.status).toBe('published');
         if (result.status !== 'published') return;
-        expect(result.snapshot.schemaVersion).toBe(4);
-        expect(result.snapshot.id).toContain('aotui-app-snapshot:v4:');
+        expect(result.snapshot.schemaVersion).toBe(5);
+        expect(result.snapshot.id).toContain('aotui-app-snapshot:v5:');
         expect(core.store.getTool({ snapshotId: result.snapshot.id, appId, instanceId, toolId: typeId }))
             .toMatchObject({ status: 'found', tool: { id: typeId, viewType } });
+        expect(core.committer.accept({ ...draft(), schemaVersion: 4 })).toMatchObject({ status: 'rejected', issue: { path: '$.schemaVersion' } });
         expect(core.committer.accept({ ...draft(), schemaVersion: 2 })).toMatchObject({ status: 'rejected', issue: { path: '$.schemaVersion' } });
         expect(core.committer.accept({ ...draft(), schemaVersion: 1 })).toMatchObject({ status: 'rejected', issue: { path: '$.schemaVersion' } });
         core.lifecycle.dispose();
@@ -117,13 +118,35 @@ describe('Semantic Snapshot V4', () => {
         const value = draft() as any;
         value.tools[refId].execution = { kind: 'view-instance', targets: [{ ...target }] };
         mutate(value.tools[refId]);
-        expect(validatePreparedV4Draft(value).ok).toBe(false);
+        expect(validatePreparedV5Draft(value).ok).toBe(false);
     });
 
     it('rejects noncanonical Tool IDs and unknown Tool fields before publication', () => {
         const wrongId = draft(); wrongId.tools[typeId]!.id = JSON.stringify(['other-app', 'FileDetail', 'edit_file']);
-        expect(validatePreparedV4Draft(wrongId).ok).toBe(false);
+        expect(validatePreparedV5Draft(wrongId).ok).toBe(false);
         const unknown = draft() as any; unknown.tools[typeId].target = { filePath: 'a.txt' };
-        expect(validatePreparedV4Draft(unknown).ok).toBe(false);
+        expect(validatePreparedV5Draft(unknown).ok).toBe(false);
+    });
+
+    it('requires explicit boolean name metadata even when only one ViewType is present', () => {
+        const { nameSharedAcrossViewTypes, ...oldTool } = draft().tools[typeId]!;
+        for (const tool of [oldTool, { ...oldTool, nameSharedAcrossViewTypes: 'false' }]) {
+            const input = draft();
+            expect(validatePreparedV5Draft({ ...input, tools: { ...input.tools, [typeId]: tool } }))
+                .toMatchObject({ ok: false, issue: { path: `$.tools[${JSON.stringify(typeId)}].nameSharedAcrossViewTypes` } });
+        }
+        const input = draft();
+        input.tools[typeId]!.nameSharedAcrossViewTypes = true;
+        expect(validatePreparedV5Draft(input).ok).toBe(true);
+    });
+
+    it('rejects conflicting name metadata for two active ViewTypes declaring the same tool name', () => {
+        const input = draft(), secondId = JSON.stringify([appId, 'Result', 'edit_file']);
+        input.views.push({ ...input.views[0]!, id: 'result', viewInstanceId: 'result-mount', type: 'Result',
+            toolBindings: [{ toolId: secondId, activationId: 'result-edit' }] });
+        input.tools[secondId] = { ...input.tools[typeId]!, id: secondId, viewType: 'Result', nameSharedAcrossViewTypes: true };
+        expect(validatePreparedV5Draft(input)).toMatchObject({ ok: false, issue: { path: expect.stringContaining('nameSharedAcrossViewTypes') } });
+        input.tools[typeId]!.nameSharedAcrossViewTypes = true;
+        expect(validatePreparedV5Draft(input).ok).toBe(true);
     });
 });

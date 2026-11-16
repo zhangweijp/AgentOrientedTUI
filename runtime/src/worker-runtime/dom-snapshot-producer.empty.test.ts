@@ -23,7 +23,7 @@ function fixture(ids: string[] = []) {
 }
 const identity = () => ({ appId: 'app', instanceId: 'run' });
 
-it('C04 explicit empty owned inventories produce a legal V4 snapshot with no tools', () => {
+it('C04 explicit empty owned inventories produce a legal V5 snapshot with no tools', () => {
     const f = fixture(), core = createSnapshotCore();
     core.lifecycle.startApp('app', 'run');
     const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.views(), tools: [] }) });
@@ -93,7 +93,7 @@ it('C06 duplicate DOM, unattached nodes, wrong types, Ref owner and Tool target 
     if (!schema.ok) throw new Error('Invalid fixture schema');
     const tools = new SemanticProjectionCoordinator({ identity, readFrame: () => ({
         views: f.views(), tools: [{ id: JSON.stringify(['app', 'Missing', 'read']), name: 'read', viewType: 'Missing',
-            description: 'Read', inputSchema: ordinaryParameterProfile(schema.contract) }],
+            nameSharedAcrossViewTypes: false, description: 'Read', inputSchema: ordinaryParameterProfile(schema.contract) }],
     }) });
     expect(tools.commit(() => {})).toBe('failed');
     expect(tools.nextPublication()).toMatchObject({ failure: { issue: { message: expect.stringMatching(/enabled View binding/) } } });

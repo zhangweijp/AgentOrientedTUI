@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
 import { refKey } from '../snapshot/snapshot-support.js';
 import { canonicalJson, utf8Size } from '../snapshot/json.js';
-import type { AppSnapshotV4, JsonValue, PreparedAppSnapshotDraftV4, SnapshotStoreOptions } from '../snapshot/types.js';
+import type { AppSnapshotV5, JsonValue, PreparedAppSnapshotDraftV5, SnapshotStoreOptions } from '../snapshot/types.js';
 import { compileOrdinaryProfile } from './ordinary-parameter-profile.js';
 import { prepareViewTypeParameters } from './snapshot-value-arguments.js';
 import { compileOrdinarySchema } from './ordinary-parameter-contract.js';
@@ -44,23 +44,23 @@ function fixture(options: {
             },
         };
     }
-    function attempt(patch: Partial<PreparedAppSnapshotDraftV4> = {}) {
+    function attempt(patch: Partial<PreparedAppSnapshotDraftV5> = {}) {
         const seq = ++sequence;
         return core.committer.accept({
-            schemaVersion: 4, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
+            schemaVersion: 5, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
             views: [
                 { toolBindings: [{toolId,activationId}], id: viewId, viewInstanceId, type: 'FileDetail', name: 'A', kind: 'state', content: { format: 'markdown-v1', value: 'A' } },
                 { toolBindings: [], id: 'fd_B', viewInstanceId: 'mount_B', type: 'FileDetail', name: 'B', kind: 'state', content: { format: 'markdown-v1', value: 'B' } },
             ], refs: refs(), tools: { [toolId]: {
-                id: toolId, name: 'inspect', viewType: 'FileDetail', description: 'Inspect original state',
+                id: toolId, name: 'inspect', viewType: 'FileDetail', nameSharedAcrossViewTypes: false, description: 'Inspect original state',
                 inputSchema: options.inputSchema ?? schema(options.refType),
             } }, ...patch,
         });
     }
-    function publish(patch: Partial<PreparedAppSnapshotDraftV4> = {}): AppSnapshotV4 {
+    function publish(patch: Partial<PreparedAppSnapshotDraftV5> = {}): AppSnapshotV5 {
         const result = attempt(patch);
         expect(result.status).toBe('published');
-        if (result.status !== 'published' || result.snapshot.schemaVersion !== 4) throw new Error('Expected V3 publication');
+        if (result.status !== 'published' || result.snapshot.schemaVersion !== 5) throw new Error('Expected a published Snapshot V5');
         return result.snapshot;
     }
     const source = publish();
