@@ -4,11 +4,11 @@
 
 | 能力 | 当前合同 |
 | --- | --- |
-| `createApp`, `createView`, `ref`, `arrayRef`, `formatRef` | `@aotui/sdk/app` 提供托管工厂和 Ref 辅助函数。通过 `render` 提供正文、Ref 和页面上下文，通过 `publish` 提交完整页面集合 |
+| `createApp`, `createView`, `ref`, `arrayRef`, `formatRef` | `@aotui/sdk/app` 提供托管工厂和 Ref 辅助函数。通过 `render` 提供正文、Ref 和页面上下文，通过 `publish` 提交完整页面集合。formatter 从同一个发布描述派生标记 |
 | `createTUIApp`, `View` | Preact 托管工厂和页面组件。每页通过 `View.context` 提供自己的执行上下文 |
 | `defineViewType`, `getToolCatalog` | `defineViewType<Context>()` 统一声明工具说明、可选 TypeBox `inputSchema`、`execute({ input, context })` 及可选 `enabled(context)`。无工具类型用 `defineViewType({ name })`。目录只投影元数据 |
 | `ToolCatalog` | `<ToolCatalog />` 按 App 登记的 ViewType 列出名称。也可用 `viewTypes` 指定列表。原生 Tools 提供本轮可调用的工具 |
-| `useDataRef`, `useArrayRef` | Preact 在 View 内发布 JSON 值，支持可选 TypeBox 源 schema，并保留 owner 与旧 cleanup 隔离 |
+| `useDataRef`, `useArrayRef` | Preact 在 View 内发布 JSON 值并返回 formatter。四个 Ref 发布入口都从可选 TypeBox 源 schema 推导值类型，并在捕获时校验 |
 | `useLLMUsage` | Preact 订阅 Desktop 投递的时间、Provider、模型 ID 与用量。App 自己维护业务历史 |
 | `refParam` | 支持顶层 JSON 值 Ref、可选字段和 `Type.Array(refParam(...))` 多选。Runtime 从原观察解析、检查来源和目标 schema，向 handler 提供深只读值 |
 | `registerCleanup` / `useAppLifecycle`, `persistence` / `usePersistentState` | 普通 TS / Preact 的应用资源登记和实例持久化入口 |

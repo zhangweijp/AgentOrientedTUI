@@ -62,8 +62,8 @@ const instructions = [
 
 function failure(error: SqliteIssue): ToolResult { return { success: false, error }; }
 
-function itemLine(item: Item, localRef: string): string {
-    return `${formatRef(item.title, localRef, 'WorkItem')} · ${item.status} · revision ${item.revision}`;
+function itemLine(item: Item, marker: string): string {
+    return `${marker} · ${item.status} · revision ${item.revision}`;
 }
 
 function literalBlock(text: string): string {
@@ -176,15 +176,18 @@ CASE WHEN id = ${selectedId ?? 'NULL'} THEN body ELSE NULL END AS body FROM work
                 code: 'WORK_ITEM_LIMIT', message: `The demo supports at most ${maxItems} work items.` });
             const selected = items.find(item => item.id === selectedId);
             const missing = selectedId !== undefined && !selected;
+            const listRef = arrayRef('items', items.map(({ id, revision }) => ({ id, revision })),
+                { itemType: 'WorkItem', schema: selectors });
             listContent = {
-                body: items.map((item, index) => `- ${itemLine(item, `items[${index}]`)}`).join('\n') || 'No work items.',
-                refs: [arrayRef('items', items.map(({ id, revision }) => ({ id, revision })), { itemType: 'WorkItem', schema: selectors })],
+                body: items.map((item, index) => '- ' + itemLine(item, formatRef(item.title, listRef, index))).join('\n') || 'No work items.',
+                refs: [listRef],
             };
             if (selected) {
                 if (selected.body === null) return unavailable({ code: 'SQLITE_INVALID_OUTPUT', message: 'SQLite omitted the selected body.' });
+                const current = ref('current', { id: selected.id, revision: selected.revision }, { refType: 'WorkItem', schema: selector });
                 detailContent = {
-                    body: `${itemLine(selected, 'current')}\n\n${literalBlock(selected.body)}`,
-                    refs: [ref('current', { id: selected.id, revision: selected.revision }, { refType: 'WorkItem', schema: selector })],
+                    body: `${itemLine(selected, formatRef(selected.title, current))}\n\n${literalBlock(selected.body)}`,
+                    refs: [current],
                 };
             }
             available = true;

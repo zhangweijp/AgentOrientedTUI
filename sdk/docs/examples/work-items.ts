@@ -1,11 +1,14 @@
 import Type from 'typebox';
-import { defineViewType, refParam, type JsonValue, type ToolResult } from '@aotui/sdk/app';
+import { defineViewType, refParam, type DeepReadonly, type ToolResult } from '@aotui/sdk/app';
 
 const jsonList = Type.Array(Type.Unknown(), { maxItems: 8 });
-export const itemValue = Type.Union([
+const itemValue = Type.Union([
     Type.String(), Type.Integer(), Type.Boolean(), Type.Null(), jsonList,
     Type.Object({ nested: jsonList }, { additionalProperties: false }),
 ]);
+export const itemRefOptions = { refType: 'Data', schema: itemValue };
+export const listRefOptions = { itemType: 'Data', schema: Type.Array(itemValue) };
+type ItemValue = DeepReadonly<Type.Static<typeof itemValue>>;
 const operation = Type.Enum(['null', 'reset', 'reverse', 'empty', 'close', 'open', 'invalid', 'oversized', 'wait']);
 
 type ItemContext = { change(update: (state: State) => State): ToolResult | void };
@@ -33,7 +36,8 @@ export const WorkspaceType = defineViewType<ItemContext & { options: WorkItemOpt
                         case 'empty': return { ...state, items: [] };
                         case 'close': return { ...state, open: false };
                         case 'open': return { ...state, open: true };
-                        case 'invalid': return { ...state, value: { invalid: true } };
+                        // Exercise publication failure for data from an untyped source.
+                        case 'invalid': return { ...state, value: JSON.parse('{"invalid":true}') };
                         case 'oversized': return { ...state, oversized: true };
                         case 'wait': return { ...state, value: 2, note: 'Prepared' };
                     }
@@ -85,8 +89,8 @@ const initialItems = [0, false, '', null, { nested: [1, [false]] }] as const;
 
 export interface State {
     readonly open: boolean;
-    readonly value: JsonValue;
-    readonly items: readonly JsonValue[];
+    readonly value: ItemValue;
+    readonly items: readonly ItemValue[];
     readonly inspections: number;
     readonly note: string;
     readonly oversized?: true | undefined;

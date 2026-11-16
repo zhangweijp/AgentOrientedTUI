@@ -78,8 +78,7 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
                 const captured: AppProjectionFrame['views'][number]['refs'][number][] = [];
                 for (const item of refs) {
                     for (const [refId, token] of captureRefEntries(capture, item)) {
-                        if (typeof refId !== 'string' || !refId.trim() || refId.includes('.') || refIds.has(refId))
-                            invalid(path + '.refs', 'Ref IDs must be unique, non-empty and contain no dot');
+                        if (refIds.has(refId)) invalid(path + '.refs', 'Ref IDs must be unique within this View');
                         refIds.add(refId);
                         captured.push({ id: refId, token, refType: item.refType });
                     }

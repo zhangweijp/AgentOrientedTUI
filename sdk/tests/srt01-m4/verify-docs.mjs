@@ -270,21 +270,33 @@ try {
    }
   }
   try {
-   for (const [index, [id, expected]] of [[otherViewId, false], [selectedViewId, null]].entries()) {
+   const first = await observe();
+   const selectedView = first.views.find(view => view.id === selectedViewId);
+   for (const marker of ['(Data:selected)', '(Data[]:items)', '(Data:items[0])']) {
+    assert.ok(selectedView.content.value.includes(marker), marker);
+   }
+   const selections = [
+    [otherViewId, otherViewId + '.selected', false],
+    [selectedViewId, selectedViewId + '.selected', null],
+    [otherViewId, selectedViewId + '.items[0]', 0],
+    [otherViewId, selectedViewId + '.items', [0, false, '', null, { nested: [1, [false]] }]],
+   ];
+   for (const [index, [id, selected, expected]] of selections.entries()) {
     const current = observation ?? await observe();
     assert.deepEqual(current.views.filter(view => view.type === 'Item').map(view => view.id), [otherViewId, selectedViewId]);
     const tools = current.tools.filter(tool => tool.name === 'inspect');
     assert.equal(tools.length, 1);
     const result = await client.invoke({ observationId: current.observationId, toolId: tools[0].id,
-     invocationId: 'docs-work-' + index, input: { view_id: id, selected: id + '.selected' } });
+     invocationId: 'docs-work-' + index, input: { view_id: id, selected } });
     assert.equal(result.receipt?.outcome.status, 'succeeded', JSON.stringify(result));
     const updated = await observe();
     const original = await client.readReceipt({ observationId: current.observationId, invocationId: 'docs-work-' + index });
     assert.deepEqual(original, result);
-    assert.match(updated.views.find(view => view.id === 'workspace')?.content?.value ?? '',
-      expected === false ? /"selected":false/ : /"selected":null/);
+    const workspace = updated.views.find(view => view.id === 'workspace').content.value;
+    assert.deepEqual(JSON.parse(workspace.trim().split('\n').at(-1)).selected, expected);
    }
-   facts.workItemsExamples.push({ author, views: [otherViewId, selectedViewId], selectedValues: [false, null] });
+   facts.workItemsExamples.push({ author, views: [otherViewId, selectedViewId],
+    selectedValues: selections.map(([, , value]) => value) });
   } finally {
    if (observation) client.releaseObservation(observation.observationId);
    await desktopHandle.closeApp(appId);

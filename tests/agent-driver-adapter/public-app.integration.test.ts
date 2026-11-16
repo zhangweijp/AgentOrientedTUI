@@ -592,7 +592,7 @@ const trace = value => appendFileSync(${JSON.stringify(log)}, value + '\\n');
 const schema = Type.String();
 const Workspace = defineViewType()({ name:'Workspace', tools:{
     change: {
-        description:'Publish a frame', inputSchema:Type.Object({ operation:Type.Enum(['oversized', 'ref', 'close', 'open', 'save']) }),
+        description:'Publish a frame', inputSchema:Type.Object({ operation:Type.Enum(['oversized', 'ref', 'marker', 'close', 'open', 'save']) }),
         execute: ({ input, context }) => context.change(input.operation),
     },
 } });
@@ -622,8 +622,9 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
                 savedText = text;
             }
             const candidate = createView(Item, {id:'spill',kind:'state',render:() => ({
-                body: operation === 'ref' ? 'Replacement' : 'x'.repeat(513 * 1024),
-                refs: operation === 'ref' ? [ref('selected', 2, { refType:'Text', schema })] : [],
+                body: operation === 'ref' || operation === 'marker' ? 'Replacement' : 'x'.repeat(513 * 1024),
+                refs: operation === 'marker' ? [ref('selected)', 'ambiguous')] :
+                    operation === 'ref' ? [ref('selected', 2, { refType:'Text', schema })] : [],
                 context: { canInspect:false },
             })});
             try {
@@ -659,6 +660,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
         for (const [operation, code, path] of [
             ['oversized', 'SNAPSHOT_SERIALIZATION_ERROR', '$.views[1].content.value'],
             ['ref', 'SNAPSHOT_INVALID', 'Ref spill.selected $'],
+            ['marker', 'SNAPSHOT_INVALID', 'Ref selected)'],
         ] as const) {
             expect(await client.invoke(request(before, 'change', { operation }, operation))).toMatchObject(entered);
             expect(await trace(log)).toContain(code + ':' + path);
@@ -676,7 +678,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
             }).toBe('observed');
             expect(await inspect(operation + '-repaired')).toMatchObject(entered);
         }
-        expect((await trace(log)).filter(line => line.startsWith('entered:'))).toEqual(['entered:committed', 'entered:committed']);
+        expect((await trace(log)).filter(line => line.startsWith('entered:'))).toEqual(Array(3).fill('entered:committed'));
 
         expect(await client.invoke(request(before, 'change', { operation: 'close' }, 'close'))).toMatchObject(entered);
         const closed = await observe(client);
@@ -712,6 +714,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
     } finally {
         await writeFile(log + '-oversized', '');
         await writeFile(log + '-ref', '');
+        await writeFile(log + '-marker', '');
         await writeFile(log + '-save', '');
         expect(await runtime.beginShutdown().completion).toMatchObject({ ok: true, resourcesReleased: true });
     }

@@ -16,6 +16,14 @@ SDK 在 View 内注册局部名，展示保留类型提示；Tool 输入使用 *
 
 例如 `[First note](Note:notes[0])` 位于 `id="detail"` 的 View 中，调用 `inspect_note` 时传 `{ "note": "detail.notes[0]" }`。地址使用来源 View 的 XML `id`。同一 App 运行实例的原 Observation 中，可见且符合参数合同的 Ref 可以来自不同 View。同名 Ref 通过来源 View 的 `id` 区分，Runtime 依据元数据核对类型。
 
+## 发布与展示
+
+在普通 TypeScript 中，将用于发布的描述直接交给 formatter。例如 `const selected = ref('current', note, { refType: 'Note', schema: NoteSchema })`，在正文使用 `formatRef('Current note', selected)`，在 `refs` 使用 `[selected]`。对于 `arrayRef(...)`，用 `formatRef('All notes', list)` 展示整体，用 `formatRef('First note', list, 0)` 展示当前存在的项。空数组可展示整体。Preact 仍直接调用 `useDataRef` 返回的 formatter，或使用 `useArrayRef` 返回的列表和元素 formatter。 [普通 TypeScript](examples/work-items-plain.ts) · [Preact](examples/work-items-preact.tsx)
+
+四个发布入口都可从 `options.schema` 推导发布值，数组入口的 schema 描述完整数组。可以把带 schema 的普通 options 对象传给多个调用，接受只读数组及只读字段。JSON 边界和运行时 schema 检查也覆盖 JavaScript 和外部数据。`refParam` 的目标 schema 单独验证实际选择值。
+
+Ref ID 和显式类型都要使用能够按字面显示的非空名称。空白、控制字符、`(`、`)`、`:`、反斜线、`<`、`>` 以及形如 `&amp;` 或 `&#41;` 的字符引用会在 SDK 的展示或发布边界报错。Ref ID 还禁止点号，每个 View 内唯一。`items[0]` 一类数组项照常生成。业务字段、路径和 label 使用各自现有的规则。
+
 ## 一份 Tool 声明，几种参数形状
 
 完整声明和发布见 [ref-app.tsx](examples/ref-app.tsx)。在 `defineViewType<Context>()` 中声明普通参数、Ref 参数和 `execute({ input, context })`，有工具的页面通过 `View.context` 提供自己的业务上下文。调用传入接收页面的 `view_id` 和显式 Ref 地址，例如 `{ "view_id": "detail", "note": "detail.notes[0]" }`。接收页面和 Ref 的来源页面可以不同。

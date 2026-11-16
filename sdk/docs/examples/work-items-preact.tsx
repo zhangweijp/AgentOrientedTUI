@@ -1,18 +1,18 @@
 import { useState } from 'preact/hooks';
 import { createTUIApp, useAppLifecycle, useArrayRef, useDataRef, View } from '@aotui/sdk';
-import type { JsonValue } from '@aotui/sdk/app';
-import { ItemType, WorkspaceType, initialState, itemValue, label, otherViewId, selectedViewId, workViewTypes, workspaceText, type WorkItemOptions } from './work-items.js';
+import { ItemType, WorkspaceType, initialState, itemRefOptions, label, listRefOptions, otherViewId, selectedViewId,
+    workViewTypes, workspaceText, type State, type WorkItemOptions } from './work-items.js';
 
-function Item({ value, items }: { readonly value: JsonValue; readonly items?: readonly JsonValue[] }) {
-    const selected = useDataRef('selected', value, { refType: 'Data', schema: itemValue });
+function Item({ value, items }: { readonly value: State['value']; readonly items?: State['items'] }) {
+    const selected = useDataRef('selected', value, itemRefOptions);
     return <div>
         <p>{selected(items === undefined ? 'Other item' : label)}</p>
         {items === undefined ? null : <Items values={items} />}
     </div>;
 }
 
-function Items({ values }: { readonly values: readonly JsonValue[] }) {
-    const [list, element] = useArrayRef('items', values, { itemType: 'Data' });
+function Items({ values }: { readonly values: State['items'] }) {
+    const [list, element] = useArrayRef('items', values, listRefOptions);
     return <>
         <p>{list('All items')}</p>
         {values.map((_, index) => <p key={index}>{element(index, `Item ${index + 1}`)}</p>)}
