@@ -2,7 +2,7 @@ import { validateCapturedTypeParameters as validateTypeParameters } from '../../
 import { describe, expect, it } from 'vitest';
 import { createSnapshotCore } from '../core/snapshot/store.js';
 import { refKey } from '../core/snapshot/snapshot-support.js';
-import type { JsonValue, PreparedAppSnapshotDraftV4 } from '../core/snapshot/types.js';
+import type { JsonValue, PreparedAppSnapshotDraftV5 } from '../core/snapshot/types.js';
 import { compileOrdinarySchema } from '../core/tool/ordinary-parameter-contract.js';
 import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profile.js';
 import { prepareViewTypeParameters } from '../core/tool/snapshot-value-arguments.js';
@@ -29,24 +29,25 @@ function fixture(optional = false) {
     let sequence = 0;
     const publish = (values: typeof refs = refs) => {
         const seq = ++sequence;
-        const draft: PreparedAppSnapshotDraftV4 = { schemaVersion: 4, appId: 'a', instanceId: 'i',
+        const draft: PreparedAppSnapshotDraftV5 = { schemaVersion: 5, appId: 'a', instanceId: 'i',
             producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
             views: [{ toolBindings: [{toolId,activationId:'active'}], id: 'items', viewInstanceId: 'mount', type: 'Items', name: 'Items', kind: 'state',
                 content: { format: 'markdown-v1', value: 'Choose published Items.' } }],
-            refs: values, tools: { [toolId]: { id: toolId, name: 'choose', viewType: 'Items', description: 'Choose Items',
+            refs: values, tools: { [toolId]: { id: toolId, name: 'choose', viewType: 'Items', nameSharedAcrossViewTypes: false, description: 'Choose Items',
                  inputSchema: ordinaryParameterProfile(c.contract) } } };
         const result = core.committer.accept(draft);
-        if (result.status !== 'published' || result.snapshot.schemaVersion !== 4) throw Error(JSON.stringify(result));
+        if (result.status !== 'published' || result.snapshot.schemaVersion !== 5) throw Error(JSON.stringify(result));
         return result.snapshot;
     };
     const source = publish();
+    const { nameSharedAcrossViewTypes: _sharedName, ...tool } = source.tools[toolId]!;
     const visible = Object.values(refs).map(r => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id }));
     const receiver = {viewId:'items',viewInstanceId:'mount',activationId:'active'};
     const prepare = (args: unknown, snapshotId = source.id, granted = visible) => prepareViewTypeParameters(core.store,
         { appId:'a',instanceId:'i',snapshotId,tool:source.tools[toolId]!,receiver }, c.contract, args as any, granted);
     const message = (prepared: Extract<ReturnType<typeof prepare>, { status: 'prepared' }>) => captureTypeParametersRequest({
         type: 'VIEW_TOOL_INVOKE_V6', requestId: 'call', appId: 'a', instanceId: 'i', snapshotId: source.id,
-        tool: source.tools[toolId], receiver,
+        tool, receiver,
         argumentMode: 'view-type-parameters-v1', rawArgs: prepared.rawArgs,
         effectiveArgs: prepared.effectiveArgs, refSources: prepared.refSources });
     return { core, contract: c.contract, refs, source, publish, prepare, message };

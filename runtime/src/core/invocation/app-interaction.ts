@@ -1,7 +1,7 @@
 import { SNAPSHOT_SCHEMA_VERSION } from '../snapshot/types.js';
 import { canonicalJson, utf8Size } from '../snapshot/json.js';
 import { RAW_TOOL_ARGUMENT_LIMITS, RESOLVED_TOOL_ENVELOPE_LIMITS } from '../snapshot/snapshot-support.js';
-import type { AppIdentityReader, AppSnapshotV4, JsonValue, SnapshotStore } from '../snapshot/types.js';
+import type { AppIdentityReader, AppSnapshotV5, JsonValue, SnapshotStore } from '../snapshot/types.js';
 import { compileOrdinaryProfile } from '../tool/ordinary-parameter-profile.js';
 import { checkRefViews, prepareViewTypeParameters } from '../tool/snapshot-value-arguments.js';
 import { createObservationOperations, previewCommittedApp, type ObservationState } from './observation-registry.js';
@@ -132,7 +132,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
     const state: State = { appId: config.appId as string, instanceId: config.instanceId as string,
         policy, resolve: resolver, observations: new Map(), reservations: new Map(),
         entries: new Map(), controllers: new Set(), closing: false, invocations: 0, reads: 0, projects: 0 };
-    const sources = new Map<string, { readonly source: AppSnapshotV4; readonly bytes: number; count: number }>();
+    const sources = new Map<string, { readonly source: AppSnapshotV5; readonly bytes: number; count: number }>();
     const fees: Fees = { source: 0, fingerprint: 0, metadata: 0, work: 0, result: 0 };
     let closed = false;
     let expiry: ReturnType<typeof setTimeout> | undefined;
@@ -218,7 +218,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         const measured = capture<ReceiptMetadata>({ ...entry.metadata, ...patch }, limits.metadata, 'INVOCATION_CAPACITY');
         entry.metadata = measured.value; // Actual metadata bytes replace the reservation only at settlement.
     }
-    function hold(source: AppSnapshotV4, release: () => void): () => void {
+    function hold(source: AppSnapshotV5, release: () => void): () => void {
         const existing = sources.get(source.id);
         const bytes = existing?.bytes ?? capture<unknown>(source, sourceProfile, 'INVOCATION_CAPACITY').bytes;
         charge({ source: existing ? 0 : bytes });

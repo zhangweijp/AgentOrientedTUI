@@ -112,7 +112,7 @@ cat file.txt
 </view>
 ```
 
-该视图呈现当前文件状态。原生 `Tools` 另行提供当前可用的 `system_ide-FileDetail-edit_file` 等工具及其参数 Schema。
+该视图呈现当前文件状态。原生 `Tools` 另行提供当前可用的 `system_ide-edit_file` 等工具及其参数 Schema。
 
 这也意味着，它不需要每次都暴露整份文件快照。按任务不同，一个文件视图可以按行寻址、按片段暴露、带 diff 语义，也可以天然支持 partial edits，而不是默认整文件替换。
 
@@ -196,11 +196,11 @@ cat file.txt
 
 ### 3. Tool
 
-Agent 根据本轮 `Tools` 里 `wechat-ContactList-open_chat` 的参数说明，选择联系人并打开对话。
+Agent 根据本轮 `Tools` 里 `wechat-open_chat` 的参数说明，选择联系人并打开对话。
 
 ```json
 {
-  "tool": "wechat-ContactList-open_chat",
+  "tool": "wechat-open_chat",
   "arguments": {
     "view_id": "contacts",
     "contact": "contacts.contacts[2]"
@@ -226,7 +226,7 @@ Runtime 从调用绑定的观察中解析联系人 Ref，App 打开对应会话�
 
 ```json
 {
-  "tool": "wechat-ChatDetail-send_message",
+  "tool": "wechat-send_message",
   "arguments": {
     "view_id": "chat_jy",
     "message": "你好！"

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { compileOrdinarySchema, createSnapshotCore, createViewOwnedTools, createAppInteraction } from '../index.js';
-import type { AppSnapshotV4, CancellationSignal, ExecutionBinding, ExecutionFact, InputValidation, InvocationContext,
+import type { AppSnapshotV5, CancellationSignal, ExecutionBinding, ExecutionFact, InputValidation, InvocationContext,
     ReceiptMetadata, ReceiptQuery, AppInteractionPolicy } from '../index.js';
 
 function deferred<T = void>() {
@@ -20,11 +20,11 @@ function fixture(instanceId = 'run', namespace = 'close:run') {
     const plan = registry.prepareFrame([{id:'v',type:'Detail',owner:{},bindings:[{name:'read',enabled:true,execute:()=>({success:true})}]}]);
     plan.accept();
     const [view] = plan.instances, [tool] = plan.tools;
-    const committed = core.committer.accept({ schemaVersion: 4, appId: 'app', instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 10,
+    const committed = core.committer.accept({ schemaVersion: 5, appId: 'app', instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 10,
         views: [{ toolBindings: view!.toolBindings, id: 'v', viewInstanceId: view.viewInstanceId, type: 'Detail', name: 'Detail', kind: 'state', content: { format: 'markdown-v1', value: 'value' } }], refs: {},
         tools: { [tool.id]: tool } });
-    if (committed.status !== 'published' || committed.snapshot.schemaVersion !== 4) throw Error('Fixture source');
-    const grant = (source: AppSnapshotV4) => ({refs:[],toolIds:Object.keys(source.tools)});
+    if (committed.status !== 'published' || committed.snapshot.schemaVersion !== 5) throw Error('Fixture source');
+    const grant = (source: AppSnapshotV5) => ({refs:[],toolIds:Object.keys(source.tools)});
     const controls = {
         project: (context: Parameters<AppInteractionPolicy['project']>[0]): ReturnType<AppInteractionPolicy['project']> => grant(context.source),
         validate: (_source: Parameters<ExecutionBinding['validateInput']>[0], input: Parameters<ExecutionBinding['validateInput']>[1], _signal: CancellationSignal): Maybe<InputValidation> => ({ ok: true, value: input }),

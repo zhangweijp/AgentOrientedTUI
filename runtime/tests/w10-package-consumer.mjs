@@ -22,7 +22,7 @@ try {
     const example = coreDoc.match(/<!-- b1-example:start -->\n```ts\n([\s\S]*?)\n```\n<!-- b1-example:end -->/)?.[1]; assert.ok(example);
     await fs.writeFile(path.join(folder, 'core-example.ts'), example);
     }
-    await fs.writeFile(path.join(folder, 'tool-types.ts'), `import type { RefTarget, ToolResult, ViewToolInvocationTerminal, ExecutionBinding, AppSnapshotV4, SnapshotRead } from '@aotui/runtime/core';
+    await fs.writeFile(path.join(folder, 'tool-types.ts'), `import type { RefTarget, ToolResult, ViewToolInvocationTerminal, ExecutionBinding, AppSnapshotV5, SnapshotRead } from '@aotui/runtime/core';
 import { SNAPSHOT_SCHEMA_VERSION, type OrdinaryCompileResult, type SnapshotStoreOptions, type SnapshotLimits } from '@aotui/runtime/core';
 // @ts-expect-error The JSON copy budget reason is internal to Core.
 import { JsonCopyLimitError } from '@aotui/runtime/core';
@@ -44,9 +44,11 @@ export function declarationCategory(result: OrdinaryCompileResult) {
 import { ORDINARY_INVOCATION_MODE } from '@aotui/runtime/core';
 // @ts-expect-error The former invoker ABI is retired.
 import type { SafeOrdinaryInvoker } from '@aotui/runtime/core';
-// @ts-expect-error V4 is the sole public AppSnapshot DTO.
+// @ts-expect-error V5 is the sole public AppSnapshot DTO.
+import type { AppSnapshotV4 } from '@aotui/runtime/core';
+// @ts-expect-error The V2 DTO is also retired.
 import type { AppSnapshotV2 } from '@aotui/runtime/core';
-// @ts-expect-error AppSnapshotV4 is the only public AppSnapshot type name.
+// @ts-expect-error AppSnapshotV5 is the only public AppSnapshot type name.
 import type { AppSnapshot } from '@aotui/runtime/core';
 // @ts-expect-error Validation envelope details are not part of the Core package API.
 import type { SnapshotDraftEnvelope } from '@aotui/runtime/core';
@@ -82,7 +84,7 @@ const ref: RefTarget = { kind: 'snapshot-value', payload: { id: 'one', version: 
 ref.payload = {};
 // @ts-expect-error Business identity belongs inside the captured payload.
 const oldRef: RefTarget = { kind: 'entity', entityId: 'one' };
-const schemaVersion: 4 = SNAPSHOT_SCHEMA_VERSION;
+const schemaVersion: 5 = SNAPSHOT_SCHEMA_VERSION;
 const result: ToolResult = { success: false, error: { code: 'PARTIAL', message: 'Application reports partial work' } };
 // @ts-expect-error The former Tool failure classification is retired.
 const oldResult: ToolResult = { ...result, effects: 'none' };
@@ -92,7 +94,7 @@ const oldTerminal: ViewToolInvocationTerminal = { ...terminal, failureEffects: '
 const execute: ExecutionBinding['execute'] = ({ source }) => source.receiver.viewId
   ? { kind: 'tool-result', ...terminal }
   : { kind: 'unknown' };
-const readySnapshot = (read: SnapshotRead): AppSnapshotV4 | undefined => read.status === 'ready' ? read.snapshot : undefined;
+const readySnapshot = (read: SnapshotRead): AppSnapshotV5 | undefined => read.status === 'ready' ? read.snapshot : undefined;
 void [ref, oldRef, schemaVersion, result, oldResult, oldTerminal, execute, readySnapshot];
 `);
     const compiler = { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, exactOptionalPropertyTypes: true, skipLibCheck: false,

@@ -4,7 +4,7 @@
 Install it in the host that uses both packages. Runtime and SDK consumers using
 another Agent system do not need this adapter or this Driver.
 
-Adapter `0.4.0` requires Runtime `7.0.0` and Driver `0.3.1` as exact peers. Use the matching local artifacts recorded by the delivery manifest. The full package graph and installation instructions are in `@aotui/runtime` under `docs/sdk-runtime-distribution.md#current-delivery`.
+Adapter `0.5.0` requires Runtime `8.0.0` and Driver `0.3.2` as exact peers. Use the matching local artifacts recorded by the delivery manifest. This Source consumes the registered name information from Snapshot V5. The package graph and installation instructions are in `@aotui/runtime` under `docs/sdk-runtime-distribution.md#current-delivery`.
 
 ```ts
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
@@ -35,7 +35,9 @@ in this Source; getContext and background publication only prepare data. Manual
 consumers must explicitly adopt too. An unadopted Context refuses tool calls. For diagnostic rendering, use Runtime
 `getAppInteraction(...).interaction.preview()` after checking the ready result.
 
-An enabled Apps Source always advertises `system-open_app` and `system-close_app` with a required string `app_id`. Choose an App ID from the current Context's Desktop list. Open accepts `pending` or `closed` apps. Close requires a live instance in `running`, `collapsed`, or `paused` state and uses the instance captured by the Context. An ineligible target is rejected. Disabling the whole Apps Source removes these tools. Desktop previews show installation state for inspection. Context tools and their targets are scoped to the conversation.
+An enabled Apps Source always advertises `system-open_app` and `system-close_app` with a required string `app_id`. Choose an App ID from the current Context's Desktop list. Open accepts `pending` or `closed` apps. Close requires a live instance in `running` or `collapsed` state and uses the instance captured by the Context. An ineligible target is rejected. Disabling the whole Apps Source removes these tools. Desktop previews show installation state for inspection. Context tools and their targets are scoped to the conversation.
+
+App Tools use `appName-toolName` by default. When multiple registered ViewTypes in one App declare the same tool name, each uses `appName-ViewType-toolName`. An App Tool also uses the qualified form if its short name matches a reserved Desktop control, including a control currently absent from the Context. The full rules are in `@aotui/runtime` under `docs/semantic-host-integration.zh-CN.md#native-tool-aliases`.
 
 The Source converts Runtime observations and operation receipts into Driver
 messages, tool declarations and results. Runtime owns Ref resolution, source

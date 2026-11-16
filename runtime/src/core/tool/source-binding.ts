@@ -1,7 +1,7 @@
 import { canonicalJson } from '../snapshot/json.js';
-import type { ToolDescriptorV4, ViewSnapshotV4, ViewToolReceiver } from '../snapshot/types.js';
+import type { ToolInvocationDescriptor, ViewSnapshotV4, ViewToolReceiver } from '../snapshot/types.js';
 
-export function sameToolDefinition(a: ToolDescriptorV4, b: ToolDescriptorV4): boolean {
+export function sameToolDefinition(a: ToolInvocationDescriptor, b: ToolInvocationDescriptor): boolean {
     return a === b || a.id === b.id && a.name === b.name && a.viewType === b.viewType &&
         a.description === b.description && canonicalJson(a.inputSchema) === canonicalJson(b.inputSchema);
 }

@@ -345,7 +345,8 @@ export class AppWorkerHost {
         const existing = this.interactionBindings.get(source);
         if (existing) return existing;
         if (!this.hasOrdinaryParametersCapability()) return null;
-        const parameters = compileOrdinaryProfile(source.tool.inputSchema);
+        const { nameSharedAcrossViewTypes: _sharedName, ...tool } = source.tool;
+        const parameters = compileOrdinaryProfile(tool.inputSchema);
         if (!parameters) return null;
         const worker = this.worker!, version = this.lifecycleContextVersion;
         const binding: ExecutionBinding = Object.freeze({ identity: Object.freeze({}),
@@ -357,7 +358,7 @@ export class AppWorkerHost {
                 this.lifecycleContextVersion === version && this.hasOrdinaryParametersCapability() }),
             execute: (context: InvocationContext) => this.dispatchTool({ type: 'VIEW_TOOL_INVOKE_V6', requestId: generateRequestId(),
                 appId: source.appId as AppID, instanceId: source.instanceId, snapshotId: source.snapshotId,
-                tool: source.tool, argumentMode: PARAMETERS_MODE, receiver: source.receiver, rawArgs: context.rawInput,
+                tool, argumentMode: PARAMETERS_MODE, receiver: source.receiver, rawArgs: context.rawInput,
                 effectiveArgs: context.effectiveInput, refSources: context.refSources,
             }, { worker, version, signal: context.signal }),
         });

@@ -1,9 +1,11 @@
 import { expect, expectTypeOf, it } from 'vitest';
 import * as core from './index.js';
 import * as memory from '../adapters/storage/memory-state-storage.js';
-// @ts-expect-error AppSnapshotV4 is the only public AppSnapshot name.
+// @ts-expect-error AppSnapshotV5 is the only public AppSnapshot name.
 import type { AppSnapshot } from './index.js';
-// @ts-expect-error V4 is the only supported committed snapshot contract.
+// @ts-expect-error V5 is the only supported committed snapshot contract.
+import type { AppSnapshotV4 } from './index.js';
+// @ts-expect-error The V2 DTOs are also retired.
 import type { AppSnapshotV2, ToolDescriptorV2, PreparedAppSnapshotDraftV2 } from './index.js';
 // @ts-expect-error Failure envelope details are internal to snapshot validation.
 import type { SnapshotDraftEnvelope } from './index.js';
@@ -48,7 +50,7 @@ it('C18 runs actual Core, Registry and instance dispatch through the explicit en
     const tool = frame.tools[0]!, view = frame.instances[0]!;
     const snapshots = core.createSnapshotCore({ now: () => 0 });
     snapshots.lifecycle.startApp('app', 'instance');
-    expect(snapshots.committer.accept({ schemaVersion: 4, appId: 'app', instanceId: 'instance', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+    expect(snapshots.committer.accept({ schemaVersion: 5, appId: 'app', instanceId: 'instance', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
         views: [{ toolBindings: view.toolBindings, id: 'v', viewInstanceId: view.viewInstanceId, type: 'Detail', name: 'Detail', kind: 'state', content: { format: 'markdown-v1', value: 'state' } }],
         refs: {}, tools: { [tool.id]: tool } }).status).toBe('published');
     const binding: core.ExecutionBinding = { identity: {}, validateInput: (_source, input) => ({ ok: true, value: input }),

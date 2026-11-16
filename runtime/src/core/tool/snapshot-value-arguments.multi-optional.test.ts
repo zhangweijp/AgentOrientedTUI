@@ -43,7 +43,7 @@ function fixture(fields: Record<string, any> = { a: ref(), b: ref() }, required 
     const visible = Object.keys(values).map(id => ({ refId: id, viewId: view.viewId, viewInstanceId: view.viewInstanceId }));
     function publish(next = values) {
         const n = ++seq;
-        const result = core.committer.accept({ schemaVersion: 4, appId: 'app', instanceId: 'run', producerSeq: n, sourceEpoch: n, capturedAt: n,
+        const result = core.committer.accept({ schemaVersion: 5, appId: 'app', instanceId: 'run', producerSeq: n, sourceEpoch: n, capturedAt: n,
             views: [{ toolBindings: view.toolBindings, id: view.viewId, type: view.viewType, viewInstanceId: view.viewInstanceId, name: 'Notes', kind: 'state', content: { format: 'markdown-v1', value: 'Current notes ' + n } }],
             refs: Object.fromEntries(Object.entries(next).map(([id, payload]) => [refKey(view.viewId, view.viewInstanceId, id), {
                 id, ownerViewId: view.viewId, ownerViewInstanceId: view.viewInstanceId,
@@ -296,8 +296,9 @@ describe('multi/optional: complete arguments and envelope retain cumulative limi
 
 function message(f: ReturnType<typeof fixture>, raw: any) {
     const p = f.prepared(raw);
+    const { nameSharedAcrossViewTypes: _sharedName, ...tool } = f.tool;
     return JSON.parse(JSON.stringify({ type: 'VIEW_TOOL_INVOKE_V6', requestId: 'test', appId: 'app', instanceId: 'run',
-        argumentMode: 'view-type-parameters-v1', snapshotId: f.original.id, tool: f.tool, receiver: f.receiver,
+        argumentMode: 'view-type-parameters-v1', snapshotId: f.original.id, tool, receiver: f.receiver,
         rawArgs: p.rawArgs, effectiveArgs: p.effectiveArgs, refSources: p.refSources }));
 }
 describe('multi/optional: V6 checks actual present slots and transport consistency', () => {

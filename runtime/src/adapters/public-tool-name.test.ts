@@ -3,6 +3,7 @@ import { buildPublicToolName } from './public-tool-name.js';
 
 describe('native public Tool names', () => {
     it('joins valid component names with an unambiguous separator', () => {
+        expect(buildPublicToolName('system_ide', 'edit_file')).toBe('system_ide-edit_file');
         expect(buildPublicToolName('system_ide', 'FileDetail', 'edit_file'))
             .toBe('system_ide-FileDetail-edit_file');
         expect(buildPublicToolName('demo', 'A_B', 'C'))
@@ -30,6 +31,12 @@ describe('native public Tool names', () => {
 
     it('rejects a complete native name over 64 characters', () => {
         expect(() => buildPublicToolName('a', 'b', 'x'.repeat(61)))
+            .toThrow('AOTUI_TOOL_NAME_INVALID: the combined native Tool name has 65 characters');
+    });
+
+    it('measures a short name using its two emitted parts', () => {
+        expect(buildPublicToolName('a', 'x'.repeat(62))).toHaveLength(64);
+        expect(() => buildPublicToolName('a', 'x'.repeat(63)))
             .toThrow('AOTUI_TOOL_NAME_INVALID: the combined native Tool name has 65 characters');
     });
 });

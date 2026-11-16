@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
 import { refKey } from '../snapshot/snapshot-support.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
-import type { AppSnapshotV4, JsonValue, PreparedAppSnapshotDraftV4, SnapshotStoreOptions, ToolDescriptorV4 } from '../snapshot/types.js';
+import type { AppSnapshotV5, JsonValue, PreparedAppSnapshotDraftV5, SnapshotStoreOptions, ToolDescriptorV5 } from '../snapshot/types.js';
 import { createViewOwnedTools } from '../tool/view-owned-tools.js';
 import { createAppInteraction, DEFAULT_INTERACTION_LIMITS as HARD } from './app-interaction.js';
 import type { CancellationSignal, ExecutionBinding, ExecutionFact, InteractionLimitOverrides, InvocationContext, ReceiptMetadata, ReceiptQuery, InstanceInteraction, AppInvocation } from './app-interaction-types.js';
@@ -152,14 +152,14 @@ function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverride
             target: { kind: 'snapshot-value' as const, payload: value },
         }])));
     }
-    function publish(patch: Partial<PreparedAppSnapshotDraftV4> = {}): AppSnapshotV4 {
+    function publish(patch: Partial<PreparedAppSnapshotDraftV5> = {}): AppSnapshotV5 {
         const available = prepare();
-        const seq = ++sequence, result = core.committer.accept({ schemaVersion: 4, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
+        const seq = ++sequence, result = core.committer.accept({ schemaVersion: 5, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
             views: owners.map(v => ({ toolBindings: v.toolBindings, id: v.viewId, viewInstanceId: v.viewInstanceId, type: 'File', name: v.viewId, kind: 'state',
                 content: { format: 'markdown-v1', value: 'content-secret-' + v.viewId } })), refs: refs(),
             tools: Object.fromEntries(available.map(t => [t.id, t])), ...patch });
         expect(['published', 'unchanged']).toContain(result.status);
-        if (result.status === 'rejected' || result.snapshot.schemaVersion !== 4) throw new Error('Expected V3 fixture'); return result.snapshot;
+        if (result.status === 'rejected' || result.snapshot.schemaVersion !== 5) throw new Error('Expected a published Snapshot V5 fixture'); return result.snapshot;
     }
     const source = publish();
     const calls = { project: 0, validate: 0, authorize: 0, handler: 0, read: 0, live: 0, resolve: 0, resolveRef: 0 };
@@ -585,7 +585,7 @@ describe('B2-T01/T11 additional revocation and completion faults', () => {
     it('keeps settled reading separate from temporary degraded source availability', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client);
         receipt(await client.invoke(f.request(observation)));
-        expect(f.core.committer.accept({ schemaVersion: 4, ...context, producerSeq: 20, sourceEpoch: 20, capturedAt: 0,
+        expect(f.core.committer.accept({ schemaVersion: 5, ...context, producerSeq: 20, sourceEpoch: 20, capturedAt: 0,
             views: f.source.views, refs: { malformed: null }, tools: f.source.tools }).status).toBe('rejected');
         expect(f.core.store.readLatest('app').status).toBe('degraded');
         receipt(await client.invoke(f.request(observation))); expect((await client.observe({ all: true })).status).toBe('rejected'); f.zero();

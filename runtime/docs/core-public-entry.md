@@ -1,10 +1,12 @@
 # 从正式包入口使用纯 Core
 
-`@aotui/runtime/core` 提供 V4 Snapshot、App/ViewType Tool、App 实例交互与 Observation、参数合同与 StateSession；`@aotui/runtime/adapters/memory-state-storage` 提供内存存储。Core 不加载 DOM、Worker、Node 或模型 SDK。业务规则和外部副作用仍由 App/Host 负责。
+`@aotui/runtime/core` 提供 V5 Snapshot、App/ViewType Tool、App 实例交互与 Observation、参数合同与 StateSession；`@aotui/runtime/adapters/memory-state-storage` 提供内存存储。Core 不加载 DOM、Worker、Node 或模型 SDK。业务规则和外部副作用仍由 App/Host 负责。
 
 本例面向自建 Host／Producer 的低层装配者，只使用 Runtime 的纯 Core 与内存存储入口。普通 App 作者可从 `@aotui/sdk` 包内 `docs/app-authoring.md` 开始。Agent Driver 用户通过独立 `@aotui/agent-driver-adapter` 接入。安装时使用同次交付记录的版本与 tar。[本地交付说明](sdk-runtime-distribution.md#current-delivery)
 
 B02 起，直接使用 `InstanceInteraction` 的 Core 集成者用 `inspect()` 替代 `sweepExpired()`。`inspect()` 仍会处理到期记录，自动回收仍由实例维护。
+
+V5 Snapshot 的 `ToolDescriptorV5` 要求布尔字段 `nameSharedAcrossViewTypes`。`createViewOwnedTools().defineTools()` 从完整注册声明计算该值。直接构造草稿的 Producer 也按 App 的完整声明计算，同类型多个实例共用一份定义。
 
 <a id="snapshot-limits"></a>
 ## Snapshot 限额

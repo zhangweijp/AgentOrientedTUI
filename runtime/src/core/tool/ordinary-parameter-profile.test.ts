@@ -91,10 +91,10 @@ describe('ViewType parameter profile', () => {
 
     const toolId = JSON.stringify(['app', 'Note', 'read']);
     const draft = (inputSchema: JsonValue, seq: number) => ({
-      schemaVersion: 4, appId: 'app', instanceId: 'run', producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
+      schemaVersion: 5, appId: 'app', instanceId: 'run', producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
       views: [{ toolBindings: [{ toolId, activationId: 'active' }], id: 'note', viewInstanceId: 'mount', type: 'Note', name: 'Note', kind: 'state',
         content: { format: 'markdown-v1', value: String(seq) } }], refs: {},
-      tools: { [toolId]: { id: toolId, name: 'read', viewType: 'Note', description: 'Read', inputSchema } },
+      tools: { [toolId]: { id: toolId, name: 'read', viewType: 'Note', nameSharedAcrossViewTypes: false, description: 'Read', inputSchema } },
     });
     const core = createSnapshotCore();
     const restricted = createSnapshotCore({ limits: { maxToolSchemaBytes: limit - 1 } });

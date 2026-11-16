@@ -7,9 +7,9 @@ describe('R01 qualified Ref Snapshot admission', () => {
     it.each(['valid', 'unknown-marker', 'malformed-profile', 'mutating'])('checks %s before publication', kind => {
         const core = createSnapshotCore();core.lifecycle.startApp('app', 'run');const id = JSON.stringify(['app', 'File', 'read']);
         const schema: any = JSON.parse(JSON.stringify(ordinaryParameterProfile(c.contract)));if (kind === 'unknown-marker') schema['x-aotui-parameter-contract'] = 'UNKNOWN';if (kind === 'malformed-profile') delete schema.additionalProperties;
-        const result = core.committer.accept({ schemaVersion: 4, appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
+        const result = core.committer.accept({ schemaVersion: 5, appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 1,
             views: [{ toolBindings: [{ toolId: id, activationId: 'active-1' }], id: 'aa', viewInstanceId: 'mount', type: 'File', name: 'File', kind: 'state', content: { format: 'markdown-v1', value: 'File' } }], refs: {},
-            tools: { [id]: { id, name: 'read', viewType: 'File', description: 'Read', inputSchema: schema } } });
+            tools: { [id]: { id, name: 'read', viewType: 'File', nameSharedAcrossViewTypes: false, description: 'Read', inputSchema: schema } } });
         expect(result.status).toBe(kind === 'valid' || kind === 'mutating' ? 'published' : 'rejected');
     });
 });

@@ -17,7 +17,7 @@ function setup() {
     return plan;
   };
   const plan = mount();
-  const tool = plan.tools[0]!;
+  const { nameSharedAcrossViewTypes: _sharedName, ...tool } = plan.tools[0]!;
   const receiver = viewToolReceiver({ id: 'aa', toolBindings: plan.instances[0]!.toolBindings,
     viewInstanceId: plan.instances[0]!.viewInstanceId } as any, tool.id)!;
   const message = { type: 'VIEW_TOOL_INVOKE_V6', requestId: 'r', appId: 'app', instanceId: 'run', snapshotId: 's',
@@ -37,7 +37,7 @@ describe('ordinary parameters over the V6 View receiver message', () => {
     expect(await pending).toMatchObject({ type: 'VIEW_TOOL_INVOKE_V6_RESPONSE', argumentMode: 'view-type-parameters-v1',
       terminal: { phase: 'entered-returned', result: { data: { value: '1' } } } });
   });
-  it.each(['enum', 'extra', 'null', 'instance', 'capability', 'stale', 'marker', 'wrong-activation', 'wrong-receiver'])('blocks %s before entry', async kind => {
+  it.each(['enum', 'extra', 'null', 'instance', 'capability', 'stale', 'marker', 'snapshot-metadata', 'wrong-activation', 'wrong-receiver'])('blocks %s before entry', async kind => {
     const x = setup(), m: any = JSON.parse(JSON.stringify(x.message)), c = { ...x.context };
     if (kind === 'enum') m.rawArgs.e = 1;
     if (kind === 'extra') m.rawArgs.extra = true;
@@ -46,6 +46,7 @@ describe('ordinary parameters over the V6 View receiver message', () => {
     if (kind === 'capability') c.negotiated = false;
     if (kind === 'stale') x.rebind();
     if (kind === 'marker') m.tool.inputSchema['x-aotui-parameter-contract'] = 'future';
+    if (kind === 'snapshot-metadata') m.tool.nameSharedAcrossViewTypes = false;
     if (kind === 'wrong-activation') m.receiver.activationId = 'stale';
     if (kind === 'wrong-receiver') m.receiver.viewInstanceId = 'other';
     expect(await invokeTypeParameters(m, c)).toMatchObject({ terminal: { phase: 'not-entered' } });

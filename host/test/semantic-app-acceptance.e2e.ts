@@ -81,10 +81,10 @@ manager.on('message', ({ type, message }) => {
 });
 const open = 'system-open_app', close = 'system-close_app';
 const ideName = 'system_ide', planningName = 'planning_app';
-const workspace = ideName + '-Workspace-multi_open_file';
-const hover = ideName + '-FileDetail-lsp_hover';
-const create = planningName + '-PlanList-create_plan';
-const addPhase = planningName + '-PlanDetail-add_phase';
+const workspace = ideName + '-multi_open_file';
+const hover = ideName + '-lsp_hover';
+const create = planningName + '-create_plan';
+const addPhase = planningName + '-add_phase';
 let callId = 0;
 
 function schema(tools: Record<string, Tool>, name: string) {
@@ -334,12 +334,12 @@ try {
         assert.equal((await invoke(current, addPhase, { plan, title: 'Added phase', tasks: [{ title: 'Added task' }] })).outcomeStatus, 'succeeded');
     });
     await context(async current => {
-        const reply = await invoke(current, planningName + '-PlanDetail-complete_phase', { phase: 'plan_detail.current_phase' });
+        const reply = await invoke(current, planningName + '-complete_phase', { phase: 'plan_detail.current_phase' });
         assert.equal(reply.outcomeStatus, 'succeeded');
     }, current => view(current, planningName, 'plan_detail').includes('Added phase'));
     await context(async current => {
         assert.match(view(current, planningName, 'plan_detail'), /\[Added task\]\(Task:pending_tasks\[0\]\)/);
-        const reply = await invoke(current, planningName + '-PlanDetail-complete_task', { task: 'plan_detail.pending_tasks[0]' });
+        const reply = await invoke(current, planningName + '-complete_task', { task: 'plan_detail.pending_tasks[0]' });
         assert.equal(reply.outcomeStatus, 'succeeded');
     }, current => view(current, planningName, 'plan_detail').includes('[Added phase](Phase:current_phase)'));
     planningFacts.refCalls = ['Plan', 'Phase', 'Task'];

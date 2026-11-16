@@ -43,7 +43,7 @@ function fixture(project?: AppInteractionPolicy['project']) {
     })));
     frame.accept();
     const views = frame.instances;
-    const published = core.committer.accept({ schemaVersion: 4, appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+    const published = core.committer.accept({ schemaVersion: 5, appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
         views: views.map(view => ({ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: view.viewId,
             kind: 'state', content: { format: 'markdown-v1', value: 'Current content' } })),
         refs: Object.fromEntries(views.map(view => [refKey(view.viewId, view.viewInstanceId, 'data'), {

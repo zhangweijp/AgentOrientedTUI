@@ -32,7 +32,7 @@ function make(options: any = {}) {
 }
 const modes = [{ name: 'read-only capability set', toolsEnabled: false }, { name: 'qualified parameters', toolsEnabled: true }];
 function draft(host: AppWorkerHost, producerSeq = 1) {
-    return { schemaVersion: 4, appId: host.appId, instanceId: host.appInstanceId, producerSeq, sourceEpoch: producerSeq,
+    return { schemaVersion: 5, appId: host.appId, instanceId: host.appInstanceId, producerSeq, sourceEpoch: producerSeq,
         capturedAt: producerSeq, views: [{ toolBindings: [], id: 'vv', viewInstanceId: 'vi', type: 'File', name: 'File', kind: 'state',
             content: { format: 'markdown-v1', value: 'generation ' + producerSeq } }], refs: {}, tools: {} };
 }

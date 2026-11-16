@@ -131,7 +131,7 @@ try {
     assert.ok(!Object.keys(initial.tools).some(key => key.includes('edit_file')), 'No file edit tool before a FileDetail exists');
     assert.ok(Object.keys(initial.tools).some(key => key.includes('new_terminal_and_send_command')));
     assert.ok(!Object.keys(initial.tools).some(key => key.includes('send_command_to_exist_terminal')));
-    for (const name of ['system_ide-Workspace-multi_open_file', 'terminal-TerminalConsole-new_terminal_and_send_command', 'system-open_app', 'system-close_app'])
+    for (const name of ['system_ide-multi_open_file', 'terminal-new_terminal_and_send_command', 'system-open_app', 'system-close_app'])
         assert.ok(initial.tools[name], `Public name: ${name}`);
     for (const message of initial.messages.filter((message: any) => String(message.content).startsWith('<view '))) {
         assert.equal(String(message.content).match(/<view\b/g)?.length, 1, 'One View envelope');
@@ -148,8 +148,8 @@ try {
     assert.equal(ideInstruction.match(/^## Tools by ViewType$/gm)?.length, 1);
     assert.ok(ideInstruction.includes('- edit_file') && ideInstruction.includes('- batch_edit') && ideInstruction.includes('- close_search_view'),
         'The static catalog includes tools whose Views or enabling state do not exist yet');
-    assert.ok(!initial.tools['system_ide-Workspace-batch_edit']);
-    assert.ok(!initial.tools['system_ide-SearchResult-close_search_view']);
+    assert.ok(!initial.tools['system_ide-batch_edit']);
+    assert.ok(!initial.tools['system_ide-close_search_view']);
     const terminalInstruction = instruction(initial, 'terminal');
     assert.equal(terminalInstruction.match(/^## Tools by ViewType$/gm)?.length, 1);
     assert.ok(terminalInstruction.includes('- send_command_to_exist_terminal'));
@@ -184,13 +184,13 @@ try {
     applySourceControlsToSources(fixed, { aotuiSource: source });
     const restored = await observe();
     assert.ok(restored.messages.some((message: any) => String(message.content).includes('id="workspace"')));
-    assert.ok(restored.tools['system_ide-Workspace-multi_open_file']);
-    assert.ok(restored.tools['terminal-TerminalConsole-new_terminal_and_send_command']);
+    assert.ok(restored.tools['system_ide-multi_open_file']);
+    assert.ok(restored.tools['terminal-new_terminal_and_send_command']);
     assert.ok(content(restored).includes('lite_browser'), 'Pending Browser remains discoverable');
     release(restored);
     source.setAppEnabled('terminal', false);
     const explicitlyDisabled = await observe();
-    assert.ok(explicitlyDisabled.tools['system_ide-Workspace-multi_open_file']);
+    assert.ok(explicitlyDisabled.tools['system_ide-multi_open_file']);
     assert.ok(!Object.keys(explicitlyDisabled.tools).some(name => name.startsWith('terminal-')));
     assert.ok(!content(explicitlyDisabled).includes('app_name="terminal"'));
     release(explicitlyDisabled);
@@ -233,10 +233,10 @@ try {
 
     await call('multi_open_file', { filePaths: [otherFile] });
     const twoFiles = await observe();
-    assert.ok(twoFiles.tools['system_ide-FileDetail-edit_file']);
+    assert.ok(twoFiles.tools['system_ide-edit_file']);
     assert.equal(instruction(twoFiles, 'system_ide'), ideInstruction, 'Multiple instances share one static catalog');
     assert.equal(Object.keys(twoFiles.tools).filter(name => name.endsWith('-edit_file')).length, 1);
-    assert.deepEqual(twoFiles.tools['system_ide-FileDetail-edit_file'].inputSchema.jsonSchema, edited.tools['system_ide-FileDetail-edit_file'].inputSchema.jsonSchema, 'Opening another file does not change the Tool schema');
+    assert.deepEqual(twoFiles.tools['system_ide-edit_file'].inputSchema.jsonSchema, edited.tools['system_ide-edit_file'].inputSchema.jsonSchema, 'Opening another file does not change the Tool schema');
     await invoke(twoFiles, 'edit_file', { oldString: 'other = 100', newString: 'bad' }, 'rejected');
     const otherView = twoFiles.messages.find((message: any) => String(message.content).includes('export const other = 100;'));
     const otherViewId = /^<view id="([^"]+)"/.exec(String(otherView?.content))?.[1];

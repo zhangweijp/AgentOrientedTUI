@@ -21,6 +21,8 @@
 
 安装时使用同一次本地交付的 tar，并以其清单核对 SHA-256。版本号用于选择包，Worker 与 App 通过各自协议确认是否能协作。可用范围以本地验证记录为准。
 
+本次原生工具命名使用 V5 Snapshot 提供的静态同名信息。升级时使用同一次构建的 Runtime（含随包 Worker）和 Adapter。旧 Snapshot 版本在握手或发布时拒绝。Adapter 对缺少同名信息的观察报告 `AOTUI_TOOL_NAME_METADATA_REQUIRED`。 [原生工具别名](semantic-host-integration.zh-CN.md#native-tool-aliases)
+
 在仓库根目录指定一个新的绝对路径运行交付入口。使用 `--store-dir` 可指定已有 pnpm store，缓存齐全时可加 `--offline`。
 
 ```sh
@@ -40,7 +42,7 @@ App 作者可从 `@aotui/sdk` 包内 `docs/runtime-compatibility.md` 开始。Ho
 | 合同 | 当前身份与生产／消费位置 | 支持与拒绝边界 |
 | --- | --- | --- |
 | 托管 App 工厂 | SDK 的 `createApp` 与 `createTUIApp` 提供 `toolAuthoringProtocol: 'view-type-tools-v5'`，Runtime 的 `hasViewTypeToolAuthoringProtocol` 校验 | Registry 从生成的 aoapp.json 读取该标记。Worker 的模块 default 必须是托管对象工厂。`isTUIAppFactory` 先检查形状、持久化及生命周期声明，再检查工具标记。缺失、旧值或 accessor 工具标记产生 `APP_AUTHORING_PROTOCOL_UNSUPPORTED`。 |
-| 当前状态 Snapshot | Core 的 `PreparedAppSnapshotDraftV4`／`AppSnapshotV4` 使用 `schemaVersion: 4`；DOM Producer 或普通 TS Producer 提交，Core `v4-validator` 接收 | 正文为 `markdown-v1` 字符串，Ref 使用 `snapshot-value` JSON payload。Runtime 自己生成并请求 `app-snapshot/v4`，Worker 在导入 App 前要求该能力，Host 在 OPEN 前要求 ACK；缺失为 `WORKER_SNAPSHOT_UNSUPPORTED`，未知版本能力为 `WORKER_CAPABILITY_UNSUPPORTED`。其他实际 schemaVersion 仍由数据边界拒绝为 `SNAPSHOT_INVALID`；握手不代替身份、序列、Ref owner、Tool activation 及预算检查。 |
+| 当前状态 Snapshot | Core 的 `PreparedAppSnapshotDraftV5`／`AppSnapshotV5` 使用 `schemaVersion: 5`。每个 Tool 描述携带从 App 完整注册声明得到的 `nameSharedAcrossViewTypes` | 正文为 `markdown-v1`，Ref 使用 `snapshot-value`。Runtime 请求 `app-snapshot/v5`。Worker 导入 App 前检查该能力，Host 在 OPEN 前验证 ACK。缺失为 `WORKER_SNAPSHOT_UNSUPPORTED`，未知版本能力为 `WORKER_CAPABILITY_UNSUPPORTED`。错误版本或缺失必填字段的快照报 `SNAPSHOT_INVALID`。 |
 | Host 交互选择 | 可信安装选项 `toolsEnabled?: boolean` | 省略或设为 `true` 启用 Tool 协商。`false` 只协商 Snapshot。安装前拒绝未知选项（`CONFIG_INVALID`）和不合法的 `toolsEnabled` 字段（`TOOLS_ENABLED_INVALID`）。 |
 | Worker Tool IPC | `PARAMETERS_V6_CAPABILITY = 'view-tool-parameters-invoke/v6'`。`VIEW_TOOL_INVOKE_V6`／`VIEW_TOOL_INVOKE_V6_RESPONSE` 的 `argumentMode` 为 `view-type-parameters-v1` | 启用工具时 Host INIT 请求此能力，Worker 明确返回 acceptedCapabilities；Host 要求全部请求的能力被确认，缺少调用能力为 `WORKER_CAPABILITY_UNAVAILABLE`。双方仍独立校验完整调用消息、success 判别的 JSON 结果、身份与预算；不尝试旧 RPC。 |
 | 参数与 Ref profile | Core `compileOrdinarySchema` 处理裸声明，`ordinaryParameterProfile`／`compileOrdinaryProfile` 处理带 `view-type-parameters-v1` 标记的 profile | 普通字段与 Ref 目标共享有限 JSON 值域，显式 Ref 从 Observation 解析。支持的关键词和位置见 `@aotui/sdk` 包内 `docs/tool-parameters.md`。 |

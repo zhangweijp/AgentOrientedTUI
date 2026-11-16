@@ -60,7 +60,7 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
             type: item.viewType, name: viewName, kind: 'state' as const,
             content: { format: 'markdown-v1' as const, value: nextBody } }));
         const tools = Object.fromEntries(frame.tools.map(tool => [tool.id, tool]));
-        const accepted = receiver.acceptPrepared({ schemaVersion: 4, appId, instanceId, producerSeq: sequence,
+        const accepted = receiver.acceptPrepared({ schemaVersion: 5, appId, instanceId, producerSeq: sequence,
             sourceEpoch: sequence, capturedAt: sequence, views, refs: {}, tools });
         if (accepted.status !== 'published' && accepted.status !== 'unchanged') {
             throw new Error(`The real Snapshot Receiver rejected ${appId}: ${accepted.issue.code}`);
@@ -109,7 +109,7 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
     const contexts: Awaited<ReturnType<typeof source.getContext>>[] = [];
 
     try {
-        // Core V4 accepts this identity. The stricter native alias rule belongs
+        // Core V5 accepts this identity. The stricter native alias rule belongs
         // to Semantic Source, which must isolate only this App at projection time.
         expect(bad.receiver.report()).toMatchObject({ health: 'ready', published: 1 });
         expect(bad.registry.listViews()[0]?.viewType).toBe('A-B');
@@ -119,8 +119,8 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         contexts.push(first);
         await first.adopt!();
         expect(first.tools['bad_app-A-B-run']).toBeUndefined();
-        expect(first.tools['shared_app-Workspace-run']).toBeDefined();
-        expect(first.tools['healthy_app-Workspace-run']).toBeDefined();
+        expect(first.tools['shared_app-run']).toBeDefined();
+        expect(first.tools['healthy_app-run']).toBeDefined();
         const firstText = JSON.stringify(first.messages);
         expect(firstText).not.toContain('BAD_APP_BODY');
         expect(firstText).not.toContain('COLLISION_B_BODY');
@@ -132,9 +132,9 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         expect(firstText).toContain('AOTUI_TOOL_NAME_INVALID: viewType');
         expect(firstText).toContain('AOTUI_TOOL_NAME_COLLISION');
 
-        expect(await first.executeTool!('shared_app-Workspace-run', { view_id: 'workspace', value: 'winner' }, 'collision-winner'))
+        expect(await first.executeTool!('shared_app-run', { view_id: 'workspace', value: 'winner' }, 'collision-winner'))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { appId: 'collision_a', value: 'winner' } });
-        expect(await first.executeTool!('healthy_app-Workspace-run', { view_id: 'workspace', value: 'usable' }, 'healthy-call'))
+        expect(await first.executeTool!('healthy_app-run', { view_id: 'workspace', value: 'usable' }, 'healthy-call'))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { appId: 'healthy_app', value: 'usable' } });
         expect(collidingA.invoked).toEqual(['winner']);
         expect(collidingB.invoked).toEqual([]);

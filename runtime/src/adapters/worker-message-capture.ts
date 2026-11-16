@@ -64,7 +64,7 @@ export function invocationReceiver(value: JsonValue | undefined): boolean {
         text(value.viewId) && !value.viewId.includes('.') && text(value.viewInstanceId) && text(value.activationId);
 }
 
-export function invocationToolDescriptorV4(value: JsonValue | undefined): boolean {
+export function invocationToolDescriptor(value: JsonValue | undefined): boolean {
     return invocationObject(value) && exact(value, ['id', 'name', 'viewType', 'description', 'inputSchema']) &&
         ['id', 'name', 'viewType', 'description'].every(key => text(value[key])) &&
         invocationObject(value.inputSchema) && value.inputSchema.type === 'object';

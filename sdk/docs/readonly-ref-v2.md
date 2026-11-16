@@ -52,7 +52,7 @@ Runtime 保留 Ref owner、View 实例、类型、原 Snapshot、来源、调用
 
 ## 数据捕获与失败
 
-Worker 发出 Snapshot 前有界捕获严格 JSON，不冻结或修改 App 拥有的原对象。getter、隐藏字段、Symbol、循环和类实例会被拒绝；当前默认捕获限额为 48 层、100,000 个节点、约 8 MiB 的近似输入字节，Host 仍独立校验完整 V4 Snapshot、归属及规范化字节预算。
+Worker 发出 Snapshot 前有界捕获严格 JSON，不冻结或修改 App 拥有的原对象。getter、隐藏字段、Symbol、循环和类实例会被拒绝；当前默认捕获限额为 48 层、100,000 个节点、约 8 MiB 的近似输入字节，Host 仍独立校验完整 V5 Snapshot、归属及规范化字节预算。
 
 App 为 Ref 提供源 `schema` 时，发布会校验该声明。非法、不支持和超限分别报告 `TOOL_SCHEMA_INVALID`、`TOOL_SCHEMA_UNSUPPORTED` 和 `TOOL_SCHEMA_CAPACITY`。Tool 目标 Schema 则在定义时编译，在 Ref 解引用后用来校验所选值。 [参数合同](tool-parameters.md#声明容量和诊断)
 

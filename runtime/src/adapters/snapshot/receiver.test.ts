@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SemanticSnapshotReceiver } from './receiver.js';
 
 function draft(seq: number, text = 'current') {
-    return { schemaVersion: 4, appId: 'app', instanceId: 'instance',
+    return { schemaVersion: 5, appId: 'app', instanceId: 'instance',
         producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
         views: [{ toolBindings: [], id: 'file', viewInstanceId: 'file-instance', type: 'File', name: 'File', kind: 'state',
             content: { format: 'markdown-v1', value: text } }], refs: {}, tools: {} };

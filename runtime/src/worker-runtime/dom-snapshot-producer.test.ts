@@ -35,7 +35,7 @@ describe('DOM producer preserves Ref payloads as snapshot data', () => {
                         ...view, viewInstanceId: owner.viewInstanceId, toolBindings: [{ toolId, activationId: 'active-1' }],
                     })),
                 tools: [{ id: toolId, viewType: 'Workspace', name: 'replace_file',
-                    description: 'Replace file with a version guard', inputSchema: ordinaryParameterProfile(compiled.contract) }],
+                    nameSharedAcrossViewTypes: false, description: 'Replace file with a version guard', inputSchema: ordinaryParameterProfile(compiled.contract) }],
             }),
         });
         const prepare = () => {

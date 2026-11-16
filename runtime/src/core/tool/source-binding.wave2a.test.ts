@@ -8,7 +8,7 @@ describe('Wave 2A: current Store lease and historical-source contract', () => {
         core.lifecycle.startApp('app', 'instance');
         const publish = (seq: number) => {
             const result = core.committer.accept({
-                schemaVersion: 4, appId: 'app', instanceId: 'instance', producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
+                schemaVersion: 5, appId: 'app', instanceId: 'instance', producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
                 views: [{ toolBindings: [], id: 'detail', viewInstanceId: 'mount', type: 'Detail', name: 'Detail', kind: 'state', content: { format: 'markdown-v1', value: String(seq) } }],
                 refs: {}, tools: {},
             });

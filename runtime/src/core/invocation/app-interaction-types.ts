@@ -1,5 +1,5 @@
 /** Core owns these contracts. The Runtime root also exposes the Host-facing types. */
-import type { AppSnapshotV4, JsonValue, ViewToolReceiver, ToolDescriptorV4 } from '../snapshot/types.js';
+import type { AppSnapshotV5, JsonValue, ViewToolReceiver, ToolDescriptorV5 } from '../snapshot/types.js';
 import type { Observation, ObservedView, ObservationGrant, ObservationSource, ObservationRegistryStats, ObservationJsonLimits } from './observation-types.js';
 import type { SnapshotValueRefSource } from '../tool/snapshot-value-arguments.js';
 export type { AppIdentityRead, AppIdentityReader } from '../snapshot/types.js';
@@ -36,7 +36,7 @@ export interface InvocationSource {
   readonly appId:string;
   readonly instanceId:string;
   readonly snapshotId:string;
-  readonly tool:ToolDescriptorV4;
+  readonly tool:ToolDescriptorV5;
   readonly receiver:ViewToolReceiver;
 }
 export interface ReceiptMetadata {
@@ -86,7 +86,7 @@ export interface ExecutionResolver {
   resolve(source:InvocationSource):ExecutionBinding|null;
 }
 export interface AppInteractionPolicy {
-  project(context:Readonly<{source:AppSnapshotV4; signal:CancellationSignal}>):ObservationGrant|Promise<ObservationGrant>;
+  project(context:Readonly<{source:AppSnapshotV5; signal:CancellationSignal}>):ObservationGrant|Promise<ObservationGrant>;
   authorize(context:InvocationContext):boolean|Promise<boolean>;
   canReadReceipt(metadata:ReceiptMetadata, signal:CancellationSignal):boolean|Promise<boolean>;
 }

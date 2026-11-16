@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { withExecutableTools } from './semantic-capability-policy.js';
 import type { ObservationGrant } from '../core/invocation/observation-types.js';
-import type { AppSnapshotV4 } from '../core/snapshot/types.js';
+import type { AppSnapshotV5 } from '../core/snapshot/types.js';
 import type { AppInteractionPolicy } from '../core/invocation/app-interaction-types.js';
 
 function fixture() {
-    const source: AppSnapshotV4 = {
-        schemaVersion: 4, id: 'snapshot', appId: 'app', instanceId: 'run', revision: 1, createdAt: 1, contentDigest: 'digest',
+    const source: AppSnapshotV5 = {
+        schemaVersion: 5, id: 'snapshot', appId: 'app', instanceId: 'run', revision: 1, createdAt: 1, contentDigest: 'digest',
         views: [], refs: {}, tools: {
-            read: { id: 'read', name: 'read', viewType: 'Detail', description: 'Read',
+            read: { id: 'read', name: 'read', viewType: 'Detail', nameSharedAcrossViewTypes: false, description: 'Read',
                 inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } },
         },
     };

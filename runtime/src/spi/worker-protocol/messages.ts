@@ -25,7 +25,7 @@ import type { ManagedPersistenceReport } from '../../worker-runtime/state-persis
 
 import type { RequestID, AppID, DesktopID } from './types.js';
 import type { AppLaunchConfig } from '../app/app-config.interface.js';
-import type { ViewToolReceiver, SnapshotPrepareIssue, ToolDescriptorV4 } from '../../core/snapshot/types.js';
+import type { ViewToolReceiver, SnapshotPrepareIssue, ToolInvocationDescriptor } from '../../core/snapshot/types.js';
 import type { SnapshotValueRefSource } from '../../core/tool/snapshot-value-arguments.js';
 import type { LLMUsageEvent } from '../core/llm-usage.js';
 
@@ -71,7 +71,7 @@ export type { ViewToolInvocationTerminal } from '../../core/tool/invocation-term
 /** The qualified receiver and Ref provenance are distinct from business parameters. */
 export type ViewToolInvokeV6Message = Readonly<{
     type: 'VIEW_TOOL_INVOKE_V6'; requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string;
-    tool: ToolDescriptorV4; argumentMode: typeof VIEW_TYPE_PARAMETERS_MODE;
+    tool: ToolInvocationDescriptor; argumentMode: typeof VIEW_TYPE_PARAMETERS_MODE;
     receiver: ViewToolReceiver;
     rawArgs: Readonly<Record<string, unknown>>; effectiveArgs: Readonly<Record<string, unknown>>;
     refSources: readonly SnapshotValueRefSource[];

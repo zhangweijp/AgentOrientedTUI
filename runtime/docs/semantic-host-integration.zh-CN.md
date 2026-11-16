@@ -71,7 +71,7 @@ try {
     if (installed?.status !== 'installed') throw new Error(`Could not install ${appName}: ${JSON.stringify(installed)}`);
 
     const source = new SemanticAOTUIDrivenSource(desktop, runtime);
-    const inspect = `${appName}-Item-inspect`;
+    const inspect = `${appName}-inspect`;
     const workspace = context => context.messages.find(({ content }) =>
         String(content).startsWith('<view id="workspace"') && String(content).includes(`app_name="${appName}"`));
     async function observe(ready) {
@@ -121,7 +121,13 @@ Producer 输出不带框架 `<view>` 外壳的正文。Source 按已知的 View 
 
 把原本想表达的父/子页面分别声明为并列的独立 View，并在各自内容中清楚说明关联；不要把一个 SDK `View` 放进另一个 `View`，也不能通过手写 `data-view-id` 绕过 SDK 检查。嵌套内容修正后，下一份有效 Snapshot 会让 Semantic 健康恢复为 ready；auto、never、manual 的唤醒策略仍按原合同工作。
 
-Source 构造模型 Tools 时校验 `appName-ViewType-toolName`，例如 `system_ide-FileDetail-edit_file`。三个段分别使用 ASCII 字母、数字和下划线，以连字符分隔，整名最多 64 字符。不同 ViewType 的同名操作是不同 Tool，同类型多个 View 实例共享 Tool。非法名称报 `AOTUI_TOOL_NAME_INVALID`，组合后冲突报 `AOTUI_TOOL_NAME_COLLISION`，诊断隔离到对应 App。Source 保留合法原名，通过当前 Context 捕获的别名与 binding 映射路由调用。View id 不参与别名计算，纯 Core 使用自己的结构化身份规则。
+<a id="native-tool-aliases"></a>
+
+### 原生工具别名
+
+App 内唯一的工具默认用 `appName-toolName`，例如 `system_ide-edit_file`。完整静态声明中，多个 ViewType 定义了同名工具时，该组全部用 `appName-ViewType-toolName`。短名命中 `system-open_app`、`system-close_app`、`system-collapse_app` 或 `system-show_app` 时也用三段名。别名在页面开关、禁用和观察授权变化时保持稳定。同类型多个 View 实例共享一份 Tool。
+
+Source 校验实际使用的名称段。每段使用 ASCII 字母、数字和下划线，以连字符分隔，整名最多 64 字符。非法名称报 `AOTUI_TOOL_NAME_INVALID`，跨 App 或同轮重复别名报 `AOTUI_TOOL_NAME_COLLISION`，诊断作用于对应 App。Snapshot V5 携带注册期的同名信息。Source 从当前 Context 捕获别名与内部 `toolId` 的映射，调用时使用该映射定位工具和原 Observation。
 
 模型 Schema 从业务 Schema 派生，始终要求 `view_id`。只有部分同类型页面启用操作时，Schema 附带该轮观察的候选 ID。Runtime 验证并剥离 `view_id` 后，将业务参数交给接收页的 handler。
 
