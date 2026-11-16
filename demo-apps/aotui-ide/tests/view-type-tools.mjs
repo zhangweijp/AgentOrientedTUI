@@ -1,5 +1,29 @@
 import assert from 'node:assert/strict';
-import { fileBindings, workspaceBindings, workspaceCreateBindings, WorkspaceType, FileDetailType, SearchResultType } from '../dist/tui/ide-tool-contracts.js';
+import { createApp, createView } from '@aotui/sdk/app';
+import { workspaceBindings, workspaceCreateBindings, WorkspaceType, FileDetailType, SearchResultType } from '../dist/tui/ide-tool-contracts.js';
+
+async function prepareFileTools(owner, path, viewId, diagnostics = true) {
+  let bindings;
+  const factory = createApp({
+    app_name: 'ide_tool_fixture',
+    viewTypes: [FileDetailType],
+    initialize({ publish }) {
+      const context = { owner, file: { observed: { path }, viewId }, diagnostics };
+      publish({ views: [createView(FileDetailType, { id: viewId, kind: 'state', render: () => ({ body: '', context }) })] });
+    },
+  });
+  await factory.initialize({
+    appLifecycle: { protocol: factory.appLifecycleSupport },
+    defineTools() {},
+    refExporter: { captureRef: assert.fail },
+    signal: new AbortController().signal,
+    publishFrame(build) {
+      bindings = build().views[0].bindings;
+      return { status: 'prepared', sourceEpoch: 1 };
+    },
+  });
+  return Object.fromEntries(bindings.map(binding => [binding.name, binding]));
+}
 
 async function main() {
   let createResult = { success: true, data: { filePath: '/work/new.txt' } };
@@ -44,8 +68,10 @@ async function main() {
     assert.ok(Object.keys(definition.tools).length > 0);
   }
   const bindings = workspaceBindings(owner);
-  const opened = fileBindings(owner, { observed: { path: '/work/open.ts' }, viewId: 'fd_actual_17' }, true);
-  const rename = fileBindings(owner, { observed: { path: '/work/rename.ts' }, viewId: 'fd_actual_23' }, true);
+  const opened = await prepareFileTools(owner, '/work/open.ts', 'fd_actual_17');
+  const rename = await prepareFileTools(owner, '/work/rename.ts', 'fd_actual_23', false);
+  assert.equal(opened.read_loaded_diagnostics.enabled, true);
+  assert.equal(rename.read_loaded_diagnostics.enabled, false);
   const batchEdit = WorkspaceType.tools.batch_edit;
   assert.deepEqual({ ...batchEdit.inputSchema.properties.edits.items }, { type: 'object' },
     'batch fields stay opaque and are validated by IDESession');
@@ -85,7 +111,8 @@ async function main() {
   assert.equal(renameResult.data.view_id, 'fd_actual_23', 'rename receipt follows the preserved FileDetail View identity');
   const deleteResult = await opened.delete_file.execute({});
   assert.equal(deleteResult.data.view_id, 'workspace', 'delete receipt points to Workspace after FileDetail closes');
-  const closeResult = await fileBindings(owner, { observed: { path: '/work/renamed.ts' }, viewId: 'fd_actual_23' }, true).close_file_detail.execute({});
+  const renamed = await prepareFileTools(owner, '/work/renamed.ts', 'fd_actual_23');
+  const closeResult = await renamed.close_file_detail.execute({});
   assert.equal(closeResult.data.view_id, 'workspace', 'close receipt points to Workspace after FileDetail closes');
 
   owner.invoke = async () => success({ filePath: '/work/open.ts', diskCommitted: true, warnings: ['Disk effect completed; view synchronization did not complete'] });

@@ -1,6 +1,6 @@
 import { View, ToolCatalog, useAppRuntimeContext, useEffect, useMemo, useState, useAppLifecycle } from '@aotui/sdk';
 import { IDESession, type IDEFile } from '../core/ide-session.js';
-import { RootType, WorkspaceType, FileDetailType, SearchResultType, ideViewTypes, fileBindings, searchBindings, workspaceBindings } from './ide-tool-contracts.js';
+import { RootType, WorkspaceType, FileDetailType, SearchResultType, searchBindings, workspaceBindings } from './ide-tool-contracts.js';
 import { WorkspaceCreateView } from './WorkspaceCreateView.js';
 import { requireIDE } from '../core/ide-errors.js';
 import { resolveIDEOptions } from '../core/app-options.js';
@@ -92,13 +92,14 @@ export function ScopedIDEApp() {
 
                 </>}
                 <p>The application defines each ordinary Tool once per View Type. A Tool is callable only while the Runtime observes a matching View and the application enables it. Use the receiving View for single-file operations and explicit paths for workspace operations. File contents and query results are presented in Views.</p>
-                <ToolCatalog viewTypes={ideViewTypes} />
+                <ToolCatalog />
             </section>
             {!owner.ready && <p>{owner.error ? 'Initialization failed: ' + owner.error : 'Restoring the IDE session…'}</p>}
             {owner.warnings.length > 0 && <ul>{owner.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>}
         </View>
         <View kind="state" id="workspace" type={WorkspaceType} bindings={workspaceBindings(owner)} name="Workspace"><Workspace owner={owner} /></View>
-        {[...owner.files.values()].map(file => <View kind="state" key={file.viewId} id={file.viewId} type={FileDetailType} bindings={fileBindings(owner, file, config.enableDiagnosticsRead !== false)} name={'File: ' + file.observed.path}>
+        {[...owner.files.values()].map(file => <View kind="state" key={file.viewId} id={file.viewId} type={FileDetailType}
+            context={{ owner, file, diagnostics: config.enableDiagnosticsRead !== false }} name={'File: ' + file.observed.path}>
             <FileDetail file={file} /></View>)}
         {owner.search && <View kind="state" key={owner.search.incarnation} id="search" type={SearchResultType} bindings={searchBindings(owner, owner.search.incarnation)} name="Search Results"><Search owner={owner} /></View>}
         {config.enableWorkspaceCreate === true && owner.ready && owner.roots.map((root, index) => <WorkspaceCreateView key={root.path + ':' + root.identity}

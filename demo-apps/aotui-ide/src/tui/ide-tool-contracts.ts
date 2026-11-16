@@ -1,12 +1,10 @@
 import Type from 'typebox';
-import {
-    defineViewType, type ArgsOf, type ViewBindings,
-    type ToolResult,
-} from '@aotui/sdk';
+import { defineViewType, type ToolResult, type ViewBindings } from '@aotui/sdk';
 import type { IDEFile, IDESession } from '../core/ide-session.js';
 
 
 const closed = { additionalProperties: false } as const;
+const positionSchema = Type.Object({ line: Type.Number(), character: Type.Number() }, closed);
 const stringArray = () => Type.Array(Type.String());
 const opaqueJsonObject = () => Type.Object({}, { additionalProperties: true });
 
@@ -31,7 +29,7 @@ function fileReceipt(owner: IDESession, name: string, filePath: string, result: 
     return receipt(name, viewId ?? 'workspace', result, omitData);
 }
 
-async function hoverReceipt(owner: IDESession, file: IDEFile, args: ArgsOf<typeof FileDetailType.tools.lsp_hover>): Promise<ToolResult> {
+async function hoverReceipt(owner: IDESession, file: IDEFile, args: Readonly<Type.Static<typeof positionSchema>>): Promise<ToolResult> {
     const result = await owner.invoke('lsp_hover', { ...args, file_path: file.observed.path }, file.viewId);
     if (!result.success) return result;
     const viewId = owner.getLoadedFileViewId(file.observed.path);
@@ -42,6 +40,21 @@ async function hoverReceipt(owner: IDESession, file: IDEFile, args: ArgsOf<typeo
         : `Hover information available at ${position}.`;
     return { success: true, data: { message: `${status} See FileDetail ${viewId}, hover section.`, view_id: viewId } };
 }
+
+type FileDetailContext = { readonly owner: IDESession; readonly file: IDEFile; readonly diagnostics: boolean };
+const fileReady = ({ owner }: FileDetailContext) => owner.live && owner.ready;
+
+async function changeFile({ owner, file }: FileDetailContext, operation: string,
+    input: Readonly<Record<string, unknown>>, destination = file.observed.path): Promise<ToolResult> {
+    return fileReceipt(owner, operation, destination, await owner.invoke(operation, input, file.viewId));
+}
+
+async function queryFile({ owner, file }: FileDetailContext, operation: string, input: object): Promise<ToolResult> {
+    const path = file.observed.path;
+    const result = await owner.invoke(operation, { ...input, file_path: path }, file.viewId);
+    return fileReceipt(owner, operation, path, result, true);
+}
+
 export const RootType = defineViewType({ name: 'Root', tools: {} });
 
 export const WorkspaceType = defineViewType({ name: 'Workspace', tools: {
@@ -80,47 +93,86 @@ export const WorkspaceType = defineViewType({ name: 'Workspace', tools: {
         },
 } });
 
-export const FileDetailType = defineViewType({ name: 'FileDetail', tools: {
-        write_file: { description: 'Replace the contents of a currently loaded file after checking its disk identity and content.',
+export const FileDetailType = defineViewType<FileDetailContext>()({
+    name: 'FileDetail',
+    tools: {
+        write_file: {
+            description: 'Replace the contents of a currently loaded file after checking its disk identity and content.',
             inputSchema: Type.Object({ content: Type.String({ description: 'Replacement file text.' }) }, closed),
+            enabled: fileReady,
+            execute: ({ input, context }) => changeFile(context, 'write_file', input),
         },
-        edit_file: { description: 'Replace matching text in a currently loaded file. replaceAll defaults to false.',
+        edit_file: {
+            description: 'Replace matching text in a currently loaded file. replaceAll defaults to false.',
             inputSchema: Type.Object({ oldString: Type.String(), newString: Type.String(), replaceAll: Type.Optional(Type.Boolean()) }, closed),
+            enabled: fileReady,
+            execute: ({ input, context }) => changeFile(context, 'edit_file', input),
         },
-        delete_file: { description: 'Delete a currently loaded file after checking that its disk identity and content are unchanged.',
-            inputSchema: Type.Object({}, closed),
+        delete_file: {
+            description: 'Delete a currently loaded file after checking that its disk identity and content are unchanged.',
+            enabled: fileReady,
+            execute: ({ context }) => changeFile(context, 'delete_file', {}),
         },
-        rename_file: { description: 'Move a currently loaded file without overwriting the destination, preserving its FileDetail View ID.',
+        rename_file: {
+            description: 'Move a currently loaded file without overwriting the destination, preserving its FileDetail View ID.',
             inputSchema: Type.Object({ newPath: Type.String({ description: 'Absolute destination path inside a workspace root.' }) }, closed),
+            enabled: fileReady,
+            execute: ({ input, context }) => changeFile(context, 'rename_file', input, input.newPath),
         },
-        lsp_hover: { description: 'Query language-server hover at a one-based position in an opened document. Read the hover section of its FileDetail View.',
-            inputSchema: Type.Object({ line: Type.Number(), character: Type.Number() }, closed),
+        lsp_hover: {
+            description: 'Query language-server hover at a one-based position in an opened document. Read the hover section of its FileDetail View.',
+            inputSchema: positionSchema,
+            enabled: fileReady,
+            execute: ({ input, context: { owner, file } }) => hoverReceipt(owner, file, input),
         },
-        lsp_goto_definition: { description: 'Load definition locations at a one-based position in an opened document.',
-            inputSchema: Type.Object({ line: Type.Number(), character: Type.Number() }, closed),
+        lsp_goto_definition: {
+            description: 'Load definition locations at a one-based position in an opened document.',
+            inputSchema: positionSchema,
+            enabled: fileReady,
+            execute: ({ input, context }) => queryFile(context, 'lsp_goto_definition', input),
         },
-        lsp_find_references: { description: 'Load reference locations at a one-based position in an opened document.',
-            inputSchema: Type.Object({ line: Type.Number(), character: Type.Number() }, closed),
+        lsp_find_references: {
+            description: 'Load reference locations at a one-based position in an opened document.',
+            inputSchema: positionSchema,
+            enabled: fileReady,
+            execute: ({ input, context }) => queryFile(context, 'lsp_find_references', input),
         },
-        lsp_get_diagnostics: { description: 'Refresh diagnostics for a currently opened document and publish them in its FileDetail View.',
-            inputSchema: Type.Object({}, closed),
+        lsp_get_diagnostics: {
+            description: 'Refresh diagnostics for a currently opened document and publish them in its FileDetail View.',
+            enabled: fileReady,
+            execute: ({ input, context }) => queryFile(context, 'lsp_get_diagnostics', input),
         },
-        lsp_document_symbol: { description: 'Load document symbols for a currently opened document.',
-            inputSchema: Type.Object({}, closed),
+        lsp_document_symbol: {
+            description: 'Load document symbols for a currently opened document.',
+            enabled: fileReady,
+            execute: ({ input, context }) => queryFile(context, 'lsp_document_symbol', input),
         },
-        lsp_incoming_calls: { description: 'Load incoming calls at a one-based position in an opened document.',
-            inputSchema: Type.Object({ line: Type.Number(), character: Type.Number() }, closed),
+        lsp_incoming_calls: {
+            description: 'Load incoming calls at a one-based position in an opened document.',
+            inputSchema: positionSchema,
+            enabled: fileReady,
+            execute: ({ input, context }) => queryFile(context, 'lsp_incoming_calls', input),
         },
-        lsp_outgoing_calls: { description: 'Load outgoing calls at a one-based position in an opened document.',
-            inputSchema: Type.Object({ line: Type.Number(), character: Type.Number() }, closed),
+        lsp_outgoing_calls: {
+            description: 'Load outgoing calls at a one-based position in an opened document.',
+            inputSchema: positionSchema,
+            enabled: fileReady,
+            execute: ({ input, context }) => queryFile(context, 'lsp_outgoing_calls', input),
         },
-        close_file_detail: { description: 'Close this FileDetail View.',
-            inputSchema: Type.Object({}, closed),
+        close_file_detail: {
+            description: 'Close this FileDetail View.',
+            enabled: fileReady,
+            async execute({ context: { owner, file } }) {
+                return receipt('close_file_detail', 'workspace', await owner.invoke('close_file_detail', {}, file.viewId));
+            },
         },
-        read_loaded_diagnostics: { description: 'Read already loaded diagnostics for the selected opened file. This does not run or refresh the language server.',
-            inputSchema: Type.Object({}, closed),
+        read_loaded_diagnostics: {
+            description: 'Read already loaded diagnostics for the selected opened file. This does not run or refresh the language server.',
+            enabled: context => context.diagnostics && fileReady(context),
+            execute: ({ context: { owner, file } }) => owner.readLoadedDiagnostics(file.observed.path),
         },
-} });
+    },
+});
 
 export const SearchResultType = defineViewType({ name: 'SearchResult', tools: {
         close_search_view: { description: 'Close this SearchResult View.',
@@ -159,35 +211,6 @@ export function workspaceBindings(owner: IDESession): ViewBindings<typeof Worksp
         add_folder_to_workspace: { execute: async args => receipt('add_folder_to_workspace', 'workspace', await owner.invoke('add_folder_to_workspace', args)), enabled: enabled('add_folder_to_workspace') },
         remove_folder_from_workspace: { execute: async args => receipt('remove_folder_from_workspace', 'workspace', await owner.invoke('remove_folder_from_workspace', args)), enabled: enabled('remove_folder_from_workspace') },
         refresh_workspace: { execute: async args => receipt('refresh_workspace', 'workspace', await owner.invoke('refresh_workspace', args)), enabled: enabled('refresh_workspace') },
-    };
-}
-
-export function fileBindings(owner: IDESession, file: IDEFile, diagnostics: boolean): ViewBindings<typeof FileDetailType> {
-    const path = file.observed.path;
-    const enabled = owner.live && owner.ready;
-    const edit = async (operation: 'write_file' | 'edit_file' | 'delete_file' | 'rename_file',
-        args: Readonly<Record<string, unknown>>, destination = path) =>
-        fileReceipt(owner, operation, destination, await owner.invoke(operation, args, file.viewId));
-    const lsp = (operation: keyof typeof FileDetailType.tools) => ({
-        enabled,
-        execute: async (args: object) =>
-            fileReceipt(owner, operation, path, await owner.invoke(operation, { ...args, file_path: path }, file.viewId), true),
-    });
-    return {
-        write_file: { enabled, execute: args => edit('write_file', args) },
-        edit_file: { enabled, execute: args => edit('edit_file', args) },
-        delete_file: { enabled, execute: () => edit('delete_file', {}) },
-        rename_file: { enabled, execute: args => edit('rename_file', args, args.newPath) },
-        lsp_hover: { enabled, execute: args => hoverReceipt(owner, file, args) },
-        lsp_goto_definition: lsp('lsp_goto_definition'),
-        lsp_find_references: lsp('lsp_find_references'),
-        lsp_get_diagnostics: lsp('lsp_get_diagnostics'),
-        lsp_document_symbol: lsp('lsp_document_symbol'),
-        lsp_incoming_calls: lsp('lsp_incoming_calls'),
-        lsp_outgoing_calls: lsp('lsp_outgoing_calls'),
-        close_file_detail: { enabled, execute: async () =>
-            receipt('close_file_detail', 'workspace', await owner.invoke('close_file_detail', {}, file.viewId)) },
-        read_loaded_diagnostics: { enabled: enabled && diagnostics, execute: () => owner.readLoadedDiagnostics(path) },
     };
 }
 
