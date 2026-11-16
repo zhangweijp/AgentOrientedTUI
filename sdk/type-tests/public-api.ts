@@ -100,6 +100,13 @@ function checkPublicContextShape() {
   const flushReport: Promise<StateFlushReport> | undefined = context.persistence?.flush();
   const captured = context.persistence?.captureValue({ tabs: ['a'] });
   const bound = context.persistence?.bind('tabs', [], { hydrate: true });
+  void context.prepareProjection(() => {}, { revert: () => {} });
+  // @ts-expect-error The opening update is synchronous.
+  void context.prepareProjection(async () => {});
+  // @ts-expect-error The opening revert is synchronous.
+  void context.prepareProjection(() => {}, { revert: async () => {} });
+  // @ts-expect-error Returned thenables are also asynchronous.
+  void context.prepareProjection(() => ({} as PromiseLike<void>));
   // @ts-expect-error SDK Ref exporter is not part of the public context view.
   context.refExporter;
   // @ts-expect-error Lifecycle registration is exposed through useAppLifecycle.

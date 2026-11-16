@@ -128,6 +128,48 @@ describe('C04/C09 SDK root exports and app context', () => {
         await expect(prepare(2)).resolves.toEqual({ status: 'prepared', sourceEpoch: first + 2 });
         expect(projection.failure).toBeUndefined();
     });
+
+    it('rejects declared async update and revert functions before invoking either callback', async () => {
+        type JavaScriptPrepare = (update: () => unknown, opening?: { revert: () => unknown }) => Promise<unknown>;
+        let prepare!: JavaScriptPrepare, update!: () => void;
+        let ran = 0;
+        async function asynchronous() { ran++; }
+        function Body() {
+            prepare = useAppRuntimeContext().prepareProjection as JavaScriptPrepare;
+            const [value, setValue] = useState(0);
+            update = () => { ran++; setValue(1); };
+            return h('p', {}, String(value));
+        }
+        const x = await mount(Body);
+        const epoch = x.kernel.getProjectionCoordinator().token().epoch;
+        const error = { code: 'SNAPSHOT_INVALID', message: expect.stringContaining('synchronous') };
+        await expect(prepare(asynchronous)).rejects.toMatchObject(error);
+        await expect(prepare(update, { revert: asynchronous })).rejects.toMatchObject(error);
+        expect(ran).toBe(0);
+        expect(x.kernel.getProjectionCoordinator().token().epoch).toBe(epoch);
+        await expect(prepare(update)).resolves.toEqual({ status: 'prepared', sourceEpoch: epoch + 1 });
+    });
+
+    it('observes a returned thenable rejection and refuses the frame scheduled by that callback', async () => {
+        let prepare!: (update: () => unknown) => Promise<unknown>, set!: (value: number) => void;
+        function Body() {
+            prepare = useAppRuntimeContext().prepareProjection as typeof prepare;
+            const [value, setValue] = useState(0);
+            set = setValue;
+            return h('p', {}, String(value));
+        }
+        const x = await mount(Body);
+        const projection = x.kernel.getProjectionCoordinator();
+        const epoch = projection.token().epoch;
+        const then = vi.fn((_resolve: unknown, reject: (error: Error) => void) => reject(new Error('returned rejection')));
+        await expect(prepare(() => { set(1); return { then }; })).rejects.toMatchObject({
+            code: 'SNAPSHOT_INVALID', message: expect.stringContaining('synchronous'),
+        });
+        expect(then).toHaveBeenCalledOnce();
+        expect(projection.token().epoch).toBe(epoch);
+        expect(projection.failure?.code).toBe('SNAPSHOT_INVALID');
+        await expect(prepare(() => set(2))).resolves.toEqual({ status: 'prepared', sourceEpoch: epoch + 1 });
+    });
 });
 
 describe('C01/C02 actual component capability honesty', () => {

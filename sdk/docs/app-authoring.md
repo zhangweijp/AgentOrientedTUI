@@ -39,9 +39,9 @@ Tool handler 返回收据，业务数据通过 View 呈现。一般发布故障�
 
 ### Preact 的局部提交反馈
 
-`useAppRuntimeContext().prepareProjection(update)` 跟踪 `update` 同步安排的实际组件提交，返回局部 `PreparedProjection`，或以发布错误拒绝。写入已完成时，App 可捕获投影错误并在成功收据中说明同步情况。相同状态无需再次准备投影。
+`useAppRuntimeContext().prepareProjection(update)` 将这轮调度中的组件提交收集起来，等调度队列完成后统一准备完整候选。它返回局部 `PreparedProjection`，或以发布错误拒绝。写入已完成时，App 可捕获投影错误并在成功收据中说明同步情况。相同状态无需再次准备投影。
 
-可放弃的新增页可调用 `prepareProjection(update, { revert })`。现有页面应保持挂载，两个回调都同步安排状态更新。新增页因 `OBSERVATION_CAPACITY` 被拒绝时，SDK 调用 `revert` 并验证原快照、挂载与执行绑定确实恢复。实际重挂和无效渲染沿投影故障路径报告。导航持久化应在局部准备成功后执行。 [Preact 文件示例](examples/file-app.tsx)
+可放弃的新增页可调用 `prepareProjection(update, { revert })`。现有页面应保持挂载，两个回调都要同步安排状态更新。异步函数或返回 Promise／thenable 的回调会被拒绝。新增页因 `OBSERVATION_CAPACITY` 被拒绝时，SDK 调用 `revert` 并在恢复队列完成后验证原快照、挂载与执行绑定确实恢复。实际重挂和无效渲染沿投影故障路径报告。导航持久化应在局部准备成功后执行。 [Preact 文件示例](examples/file-app.tsx)
 
 `PreparedProjection` 确认本地准备成功。Host 的 flush 确认当前来源被 Runtime 接收。宿主再采用与本轮 Messages 和 Tools 对应的 Observation。
 

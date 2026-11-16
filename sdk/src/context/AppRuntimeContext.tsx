@@ -22,7 +22,10 @@ import type { AppID, DesktopID, IRefExporter, AppFrameView, RuntimeContext, AppL
  * 
  * Preact adapter supplies this context to the App and its Views.
  */
-export type PrepareProjection = (update: () => void, opening?: { readonly revert: () => void }) => Promise<PreparedProjection>;
+type SynchronousUpdate<Result> = () => Result & (Extract<Result, PromiseLike<unknown>> extends never ? unknown : never);
+export type PrepareProjection = <UpdateResult, RevertResult = void>(
+    update: SynchronousUpdate<UpdateResult>, opening?: { readonly revert: SynchronousUpdate<RevertResult> },
+) => Promise<PreparedProjection>;
 
 interface AppRuntimeContextValue {
     persistence?: AppStatePersistence | undefined;

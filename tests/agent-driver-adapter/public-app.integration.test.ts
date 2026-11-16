@@ -720,7 +720,7 @@ const Item = defineViewType({ name:'Item', tools: {
     inspect: { description:'Inspect published data',
         inputSchema:Type.Object({ value:refParam('Data', Type.Unknown()) }, {additionalProperties:false}) },
     grow: { description:'Open another page, optionally closing this one first',
-        inputSchema:Type.Object({ closeFirst:Type.Boolean() }, {additionalProperties:false}) },
+        inputSchema:Type.Object({ closeFirst:Type.Boolean(), asynchronous:Type.Optional(Type.Enum(['update', 'revert'])) }, {additionalProperties:false}) },
 } });
 const size = 400 * 1024;
 let value = 'x'.repeat(size);
@@ -774,29 +774,52 @@ function Details({ page, staging }) {
         trace('mount:' + page);
         return () => trace('unmount:' + page);
     }, [page]);
+    useLayoutEffect(() => { if (staging) trace('candidate:' + page); }, [staging]);
     useDataRef('data', staging ? 'candidate only' : value, { refType: 'Data' });
-    return page.repeat(size);
+    return (staging ? page.toUpperCase() : page).repeat(size);
+}
+function A({ controls, grow }) {
+    const [state, setState] = useState('open');
+    controls.setA = setState;
+    if (state === 'closed') return null;
+    return h(View, { id: 'item_a', type: Item, kind: 'state', bindings: {
+        grow,
+        inspect: state === 'candidate' ? { execute: () => ({ success: true, data: { staged: true } }) } : inspect,
+    } }, h(Details, { page: 'a', staging: state === 'candidate' }));
+}
+function B({ controls, grow }) {
+    const [opened, setOpened] = useState(false);
+    controls.setB = setOpened;
+    return opened ? h(View, { id: 'item_b', type: Item, kind: 'state', bindings: {
+        grow, inspect: { ...inspect, enabled: false },
+    } }, h(Details, { page: 'b', staging: false })) : null;
 }
 function App() {
-    const [pages, setPages] = useState('a');
+    const [controls] = useState(() => ({}));
     const { prepareProjection: prepare } = useAppRuntimeContext();
-    const grow = { async execute({ closeFirst }) {
+    const grow = { async execute({ closeFirst, asynchronous }) {
+        if (asynchronous) {
+            const rejected = () => Promise.reject(new Error('Fixture callback rejection'));
+            try {
+                if (asynchronous === 'update') await prepare(rejected);
+                else await prepare(() => controls.setA('open'), { revert: rejected });
+                return { success: true };
+            } catch (error) { return { success: false, error: { code: error.code, message: error.message } }; }
+        }
         if (closeFirst) {
-            const closed = await prepare(() => setPages(''));
+            const closed = await prepare(() => controls.setA('closed'));
             await waitForSwitch();
-            const opened = await prepare(() => setPages('b'), { revert: () => setPages('') });
+            const opened = await prepare(() => controls.setB(true), { revert: () => controls.setB(false) });
             return { success: true, data: { closedEpoch: closed.sourceEpoch, openedEpoch: opened.sourceEpoch } };
         }
         try {
-            await prepare(() => setPages('ab'), { revert: () => setPages('a') });
+            await prepare(() => { controls.setA('candidate'); controls.setB(true); }, {
+                revert: () => { controls.setA('open'); controls.setB(false); },
+            });
             return { success: true };
         } catch (error) { return openingError(error); }
     } };
-    return [...pages].map(page => h(View, { key: page, id: 'item_' + page, type: Item, kind: 'state', bindings: {
-        grow: { ...grow, enabled: page === 'a' },
-        inspect: page === 'b' ? { ...inspect, enabled: false } : pages === 'ab'
-            ? { execute: () => ({ success: true, data: { staged: true } }) } : inspect,
-    } }, h(Details, { page, staging: pages === 'ab' })));
+    return [h(A, { key: 'a', controls, grow }), h(B, { key: 'b', controls, grow })];
 }
 export default createTUIApp({ app_name: ${JSON.stringify(name)}, component: App, viewTypes: [Item] });
 `}
@@ -817,6 +840,14 @@ export default createTUIApp({ app_name: ${JSON.stringify(name)}, component: App,
             kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { size: 400 * 1024, depth: 40 } } } },
         };
         expect(await client.invoke(request(first, 'inspect', { value: 'item_a.data' }, 'large-ref'))).toMatchObject(originalHandler);
+        const synchronousError = { receipt: { outcome: { status: 'failed', details: { result: { error: {
+            code: 'SNAPSHOT_INVALID', message: expect.stringContaining('synchronous'),
+        } } } } } };
+        if (adapter === 'preact') {
+            expect(await client.invoke(request(first, 'grow', { closeFirst: false, asynchronous: 'update' }, 'promise-update')))
+                .toMatchObject(synchronousError);
+            expect(await client.preview()).toMatchObject({ status: 'previewed', source: first.source });
+        }
         const attempt = await client.invoke(request(first, 'grow', { closeFirst: false }, 'grow'));
         const preview = await client.preview(), next = await frame(client);
         expect({
@@ -828,7 +859,7 @@ export default createTUIApp({ app_name: ${JSON.stringify(name)}, component: App,
             code: 'OBSERVATION_CAPACITY', message: expect.stringContaining('Close a View'), context: { path: '$.observation' },
         } } } } } });
         expect(preview).toMatchObject({ source: first.source, views: first.views });
-        if (adapter === 'preact') expect(await trace(lifecycle)).toEqual(['mount:a', 'mount:b', 'unmount:b']);
+        if (adapter === 'preact') expect(await trace(lifecycle)).toEqual(['mount:a', 'candidate:a', 'mount:b', 'unmount:b']);
         expect(await client.invoke(request(first, 'inspect', { value: 'item_a.data' }, 'still-current'))).toMatchObject(originalHandler);
         if (next.status !== 'observed') throw Error(next.issue.code);
         expect(next.observation).toMatchObject({ source: first.source, views: first.views, refs: first.refs, tools: first.tools });
@@ -849,6 +880,12 @@ export default createTUIApp({ app_name: ${JSON.stringify(name)}, component: App,
         expect(second.source.instanceId).toBe(first.source.instanceId);
         expect(second.views.map(view => view.id)).toEqual(['item_b']);
         expect(body(second, 'item_b')).toHaveLength(400 * 1024);
+        if (adapter === 'preact') {
+            expect(await client.invoke(request(second, 'grow', { closeFirst: false, asynchronous: 'revert' }, 'promise-revert')))
+                .toMatchObject(synchronousError);
+            expect(await client.preview()).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_INVALID',
+                message: expect.stringContaining('synchronous') } });
+        }
     } finally {
         await writeFile(gate, '');
         expect(await runtime.beginShutdown().completion).toMatchObject({ ok: true, resourcesReleased: true });

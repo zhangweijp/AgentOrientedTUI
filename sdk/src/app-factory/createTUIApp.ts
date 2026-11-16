@@ -84,7 +84,7 @@ export async function mountPreactApp(
     }
 
     return {
-        whenCommitted: whenRenderCommitted,
+        whenCommitted: signal => whenRenderCommitted(signal, appContextValue),
         onLLMUsage: event => dispatchDOMAppEvent(container, 'aotui:llm-usage', event),
         close,
     };
