@@ -46,8 +46,11 @@ business state and permissions. The adapter preserves complete Driver Tool and
 message contracts; it does not execute business handlers through a second path.
 
 The Driver sees `INVOCATION_DEADLINE_EXCEEDED` as `rejected` when the original
-deadline prevented dispatch. `INVOCATION_WAIT_TIMEOUT` uses `unknown` and keeps
-its original error code and recovery message. A terminal receipt with uncertain
+deadline prevented dispatch. For `INVOCATION_WAIT_TIMEOUT`, the Driver reports
+`unknown` and tells the Agent that the original operation may still be running.
+The Agent checks the current App View for effects before repeating it. The
+trusted Host can query the original receipt with Runtime's `readReceipt` using the
+original `observationId` and `invocationId`. A terminal receipt with uncertain
 effects retains `ACTION_OUTCOME_UNKNOWN`.
 
 ## Migrating the public import

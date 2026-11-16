@@ -35,6 +35,11 @@ const unavailable = (toolName: string, toolCallId: string, code: string, message
 
 /** Keep Core receipts internal while returning Tool result data and actionable errors to the Driver. */
 function semanticToolResult(toolName: string, toolCallId: string, result: InvokeResult): ToolResult {
+    if (result.kind === 'unavailable' && result.code === 'INVOCATION_WAIT_TIMEOUT') {
+        return unavailable(toolName, toolCallId, result.code,
+            'Timed out waiting for the result of the original operation. It may still be running. ' +
+                'Check the current App View for its effects before repeating the operation.', 'unknown');
+    }
     if (result.kind !== 'receipt') return unavailable(toolName, toolCallId, result.code, result.message,
         result.kind === 'refused' || result.code === 'INVOCATION_DEADLINE_EXCEEDED' ? 'rejected' : 'unknown');
     const outcome = result.receipt.outcome;
