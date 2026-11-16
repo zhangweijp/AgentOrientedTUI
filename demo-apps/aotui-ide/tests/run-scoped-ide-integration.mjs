@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const artifacts = await mkdtemp(path.join(os.tmpdir(), 'aotui-ide-integration-'));
 const cases = [
+  ['tests/scoped-ide-admission.e2e.mjs', 'ADMISSION_FACTS'],
   ['tests/scoped-ide.e2e.mjs', 'IDE_FACTS'],
   ['tests/scoped-ide-edges.mjs', 'EDGE_FACTS'],
   ['tests/scoped-ide-close.e2e.mjs', 'CLOSE_FACTS'],

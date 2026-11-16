@@ -13,6 +13,7 @@ import { initialLoadedDiagnostics, transitionLoadedDiagnostics, type LoadedDiagn
 import { mergeWorkspaceFolders } from '../tui/workspace-folders.js';
 
 type Persistence = NonNullable<ReturnType<typeof useAppRuntimeContext>['persistence']>;
+type PrepareProjection = ReturnType<typeof useAppRuntimeContext>['prepareProjection'];
 type Binding = Extract<ReturnType<Persistence['bind']>, { status: 'bound' }>['binding'];
 export interface IDEFile { viewId: string; observed: ObservedFile; offset: number; limit: number; page: string;
     diagnostics: LoadedDiagnosticsState; panels: Record<string, unknown> }
@@ -63,7 +64,8 @@ export class IDESession {
     private startup?: Promise<void>;
     private completion?: Promise<void>;
     private cleanupFailed = false;
-    constructor(private persistence: Persistence, readonly options: IDEOptions, private changed: () => void) {
+    constructor(private persistence: Persistence, readonly options: IDEOptions, private changed: () => void,
+        private readonly prepareProjection?: PrepareProjection) {
         requireIDE(!!persistence && /^[a-zA-Z0-9_.-]{1,128}$/.test(options.sessionKey), 'IDE_SESSION_KEY_REQUIRED');
         this.history = new IDEHistory(options.historyPath);
     }
@@ -73,6 +75,29 @@ export class IDESession {
     }
     private warn(code: string): void { if (!this.warnings.includes(code)) { this.warnings.push(code); if (this.warnings.length > 8) this.warnings.shift(); } }
     private publish(): void { if (this.live) this.changed(); }
+    private async present(change: () => void, revert?: () => void): Promise<void> {
+        const update = () => { this.current(); change(); this.publish(); };
+        if (!this.prepareProjection) { update(); return; }
+        try {
+            await this.prepareProjection(update, revert ? { revert: () => { revert(); this.publish(); } } : undefined);
+        } catch (error) {
+            if (error instanceof IDEError) throw error;
+            throw new IDEError(error instanceof Error && 'code' in error && error.code === 'OBSERVATION_CAPACITY'
+                ? 'OBSERVATION_CAPACITY' : 'IDE_PROJECTION_FAILED');
+        }
+    }
+    private async navigate(change: () => void, revert: () => void): Promise<void> {
+        try { await this.present(change, revert); }
+        catch (error) { revert(); throw error; }
+    }
+    private async openRecords(records: readonly IDEFile[], guard: () => void): Promise<void> {
+        const previous = this.files, candidate = new Map(previous);
+        for (const record of records) candidate.set(record.observed.path, record);
+        await this.navigate(() => { guard(); this.files = candidate; }, () => {
+            if (this.files === candidate) this.files = previous;
+        });
+        guard();
+    }
     private workspaceFolders(): string[] { return [...new Set([...this.roots.map(root => root.path), ...this.unavailableRoots])]; }
     private setUnavailableRoots(roots: string[]): void {
         this.unavailableRoots = roots;
@@ -86,7 +111,10 @@ export class IDESession {
             if (result?.status !== 'accepted') this.warn('SESSION_UPDATE_FAILED');
         }
     }
-    private commitWorkspace(): void { this.current(); this.workspaceVersion = nextVersion(this.workspaceVersion); this.persist(); this.publish(); }
+    private commitWorkspace(render = true): void {
+        this.current(); this.workspaceVersion = nextVersion(this.workspaceVersion); this.persist();
+        if (render) this.publish();
+    }
     private async root(input: string): Promise<Root> {
         const candidate = textPath(input), canonical = await fs.realpath(candidate); this.current();
         const identity = await directoryIdentity(canonical); this.current();
@@ -187,13 +215,14 @@ export class IDESession {
             this.roots = roots; this.setUnavailableRoots(unavailable);
             this.lsp.setRoots(this.roots);
             this.expanded = recovered[2]?.status === 'missing' ? this.roots.map(root => root.path) : values.get('expandedDirs')!.filter(directory => this.roots.some(root => inside(root.path, directory)));
+            const restored: IDEFile[] = [];
             for (const file of values.get('activeFiles')!) {
                 this.current();
-                try { const observed = await this.observe(file, () => this.current()); this.files.set(file, this.record(observed, 0, 2000)); }
+                try { const observed = await this.observe(file, () => this.current()); restored.push(this.record(observed, 0, 2000)); }
                 catch (error: any) { this.current(); if (/CLEANUP|CLOSE_UNCERTAIN/.test(error?.code ?? '')) throw error; this.warn('RESTORED_FILE_UNAVAILABLE'); }
             }
             this.trees = await this.readTree(this.roots, this.expanded, () => this.current()); this.current();
-            const initial = { workspaceFolders: this.workspaceFolders(), activeFiles: [...this.files.keys()], expandedDirs: this.expanded };
+            const initial = { workspaceFolders: this.workspaceFolders(), activeFiles: [], expandedDirs: this.expanded };
             recovered.forEach((recovery, index) => {
                 const key = sessionKeys[index]!, binding = this.bindings.get(key)!;
                 // Prepare missing values before acknowledging initialization.
@@ -202,8 +231,22 @@ export class IDESession {
                 const status = binding.inspect();
                 requireIDE(confirmed.status === 'accepted' && !status.issue, 'IDE_RECOVERY_FAILED');
             });
+            await this.present(() => { this.ready = true; });
+            if (restored.length) {
+                const guard = this.workspaceGuard();
+                try { await this.openRecords(restored, guard); }
+                catch (error) {
+                    if (!(error instanceof IDEError) || error.code !== 'OBSERVATION_CAPACITY') throw error;
+                    await this.present(() => { this.warn('RESTORED_FILE_CAPACITY'); });
+                    for (const record of restored) {
+                        try { await this.openRecords([record], guard); }
+                        catch (failure) {
+                            if (!(failure instanceof IDEError) || failure.code !== 'OBSERVATION_CAPACITY') throw failure;
+                        }
+                    }
+                }
+            }
             this.persist();
-            this.ready = true;
             this.publish();
         })());
         void this.startup.catch(error => {
@@ -279,8 +322,7 @@ export class IDESession {
                     };
                     const trees = await this.readTree(this.roots, this.expanded, guard);
                     guard();
-                    this.trees = trees;
-                    this.publish();
+                    await this.present(() => { guard(); this.trees = trees; });
                 } catch {
                     refreshFailed = true;
                     this.warn('WORKSPACE_TREE_REFRESH_FAILED');
@@ -301,32 +343,49 @@ export class IDESession {
     }
     private async finishDisk(record: IDEFile | undefined, file: string, expected: string | undefined, guard: () => void, action: string, effect: { cleanupWarning?: string }) {
         const warnings: string[] = effect.cleanupWarning ? [effect.cleanupWarning] : [];
+        const syncWarning = 'Disk effect completed; view synchronization did not complete';
+        let viewOpened = action === 'create' ? false : undefined;
         let committedWorkspaceVersion: number | undefined;
         if (effect.cleanupWarning) this.cleanupFailed = true;
         try {
             guard();
+            let observed: ObservedFile | undefined;
             if (action === 'delete') {
-                this.files.delete(file); this.commitWorkspace(); committedWorkspaceVersion = this.workspaceVersion;
-                await this.lsp.closeDocument(file);
+                this.files.delete(file);
             } else {
-                const observed = await this.observe(file, guard);
+                observed = await this.observe(file, guard);
                 requireIDE(expected === undefined || observed.content === expected, 'RESOURCE_CHANGED_AFTER_WRITE');
                 const next = this.record(observed, record?.offset ?? 0, record?.limit ?? 2000, record);
                 guard();
-                if (record && record.observed.path !== file) this.files.delete(record.observed.path);
-                if (record || this.files.size < 64) this.files.set(file, next); else warnings.push('File written; active file capacity prevented opening');
-                this.commitWorkspace(); committedWorkspaceVersion = this.workspaceVersion;
-                if (record) await this.lsp.closeDocument(record.observed.path);
-                if (this.live) {
-                    try { await this.history.add(observed.root, observed.path); }
-                    catch { warnings.push('HISTORY_UPDATE_FAILED'); }
+                if (record) {
+                    if (record.observed.path !== file) this.files.delete(record.observed.path);
+                    this.files.set(file, next);
+                } else {
+                    requireIDE(this.files.size < 64, 'IDE_FILE_CAPACITY');
+                    await this.openRecords([next], guard);
+                    viewOpened = true;
                 }
+            }
+            this.commitWorkspace(false); committedWorkspaceVersion = this.workspaceVersion;
+            if (record || action === 'delete') {
+                const [projection, cleanup] = await Promise.allSettled([
+                    this.present(() => {}), this.lsp.closeDocument(record?.observed.path ?? file),
+                ]);
+                if (projection.status === 'rejected') warnings.push(syncWarning);
+                if (cleanup.status === 'rejected') throw cleanup.reason;
+            }
+            if (observed && this.live) {
+                try { await this.history.add(observed.root, observed.path); }
+                catch { warnings.push('HISTORY_UPDATE_FAILED'); }
             }
         } catch (error: any) {
             if (/CLEANUP|CLOSE_UNCERTAIN/.test(error?.code ?? '')) this.cleanupFailed = true;
-            warnings.push('Disk effect completed; view synchronization did not complete');
+            if (viewOpened === false && (error?.code === 'OBSERVATION_CAPACITY' || error?.code === 'IDE_FILE_CAPACITY')) {
+                warnings.push('File created. Close an open View before opening this file.');
+            } else if (!warnings.includes(syncWarning)) warnings.push(syncWarning);
         }
-        return { result: success({ action, filePath: file, diskCommitted: true, warnings }), committedWorkspaceVersion };
+        return { result: success({ action, filePath: file, diskCommitted: true,
+            ...(viewOpened === undefined ? {} : { viewOpened }), warnings }), committedWorkspaceVersion };
     }
     private async execute(name: string, args: Readonly<Record<string, any>>, viewId: string): Promise<ToolResult> {
         if (viewId !== 'workspace') return this.executeView(name, args, viewId);
@@ -360,13 +419,13 @@ export class IDESession {
             const records: IDEFile[] = [];
             for (const file of [...new Set(files)]) { const observed = await this.observe(file, guard); records.push(this.record(observed, offset, limit, this.files.get(file))); }
             guard(); const opened = records.filter(record => !this.files.has(record.observed.path)).length;
-            for (const record of records) this.files.set(record.observed.path, record);
-            this.commitWorkspace();
+            await this.openRecords(records, guard);
+            this.commitWorkspace(false);
             for (const record of records) {
                 try { await this.history.add(record.observed.root, record.observed.path); }
-                catch { this.warn('HISTORY_UPDATE_FAILED'); }
+                catch { this.warn('HISTORY_UPDATE_FAILED'); this.publish(); }
             }
-            this.publish(); return success({ opened, reloaded: records.length - opened, duplicateInputs: files.length - records.length, warnings: [...this.warnings] });
+            return success({ opened, reloaded: records.length - opened, duplicateInputs: files.length - records.length, warnings: [...this.warnings] });
         }
         if (name === 'multi_close_file') {
             const files = list(args.filePaths), closing = [...new Set(files)].filter(file => this.files.has(file)); guard();
@@ -387,8 +446,20 @@ export class IDESession {
             for (const root of roots) {
                 requireIDE(await directoryIdentity(root.workspace) === root.workspaceIdentity && await directoryIdentity(root.path) === root.identity, 'WORKSPACE_ROOT_CHANGED'); guard();
             }
-            this.search = { incarnation: this.searchSequence = nextVersion(this.searchSequence), query: args.pattern, paths: result.paths };
-            this.commitWorkspace(); return success(result);
+            const previous = this.search;
+            const candidate = { incarnation: this.searchSequence = nextVersion(this.searchSequence), query: args.pattern, paths: result.paths };
+            try {
+                await this.navigate(() => { guard(); this.search = candidate; }, () => {
+                    if (this.search === candidate) this.search = previous;
+                });
+            } catch (error) {
+                if (previous && error instanceof IDEError && error.code === 'OBSERVATION_CAPACITY') {
+                    // A replacement detached the old View. Prepare the prior result with a new mount.
+                    try { await this.present(guard); } catch { /* Runtime retains the actual repair diagnostic. */ }
+                }
+                throw error;
+            }
+            guard(); this.commitWorkspace(false); return success(result);
         }
         if (name === 'batch_edit') return this.batch(args.edits, guard);
         if (name === 'add_folder_to_workspace') {
@@ -402,8 +473,13 @@ export class IDESession {
             const expanded = existing ? this.expanded : [...new Set([...this.expanded, root.path])];
             requireIDE(expanded.length <= 512, 'IDE_DIRECTORY_CAPACITY');
             const tree = await this.readTree(roots, expanded, guard); guard();
-            this.roots = roots; this.setUnavailableRoots(unavailable); this.expanded = expanded; this.trees = tree;
-            this.lsp.setRoots(roots); this.commitWorkspace(); return success({ added: existing ? 0 : 1, ...(restored ? { restored } : {}) });
+            const previous = { roots: this.roots, unavailableRoots: this.unavailableRoots,
+                expanded: this.expanded, trees: this.trees, warnings: this.warnings };
+            await this.navigate(() => {
+                guard(); this.warnings = [...previous.warnings]; this.roots = roots; this.setUnavailableRoots(unavailable);
+                this.expanded = expanded; this.trees = tree;
+            }, () => { if (this.roots === roots) Object.assign(this, previous); });
+            guard(); this.lsp.setRoots(roots); this.commitWorkspace(false); return success({ added: existing ? 0 : 1, ...(restored ? { restored } : {}) });
         }
         if (name === 'remove_folder_from_workspace') {
             const folder = textPath(args.folderPath), root = this.roots.find(root => root.path === folder);

@@ -66,6 +66,10 @@ All page Tool calls require the receiving View's XML `view_id` in addition to th
 
 Search matches, LSP values and batch details appear in Views. Tool receipts can point to the actual FileDetail, Workspace after delete or close, and Workspace with a warning after a projection failure. `batch_edit` is enabled when files are loaded. Each successful search creates a SearchResult incarnation. Renaming an open file preserves its View ID and mount. The IDE checks stale file records, conflicting workspace commits and late language responses through the operation's current View.
 
+Opening FileDetails and the first SearchResult uses the complete local projection capacity. A reversible opening that exceeds it reports `OBSERVATION_CAPACITY` and keeps the accepted pages. Close an open View or reduce the displayed file range before retrying. The IDE saves active files and records recent access after local preparation. Session restoration admits saved files in order when their complete projection exceeds capacity and reports `RESTORED_FILE_CAPACITY`.
+
+`create_file` reports the completed disk write and whether its FileDetail opened through `diskCommitted` and `viewOpened`. A retained write with a failed projection carries a bounded warning. When replacing SearchResult exceeds capacity after unmounting the previous result, the IDE reports the rejection and prepares the previous result with a new mount. Calls targeting the detached incarnation are revoked.
+
 ## Behavior corrections
 
 - Missing/unreadable/unsupported/incomplete directories or searches are failures, not successful empty results. Failed search preserves the previous panel and returns a bounded sample with `complete:false`.

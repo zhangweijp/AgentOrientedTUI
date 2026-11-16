@@ -5,6 +5,8 @@ export class IDEError extends Error {
             ? 'The file is not open in this IDE. Use multi_open_file with its absolute path, read the current FileDetail View, then retry.'
             : code === 'RESOURCE_CONFLICT'
                 ? 'The file no longer matches the loaded version. Use multi_open_file to reload it, review the latest FileDetail content, then reapply your edit.'
+                : code === 'OBSERVATION_CAPACITY'
+                    ? 'The complete IDE projection exceeds the observation limit. Close an open View or reduce the displayed file range and try again.'
                 : code);
     }
 }
