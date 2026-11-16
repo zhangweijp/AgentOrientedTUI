@@ -40,12 +40,13 @@ export function arrayRef<Schema extends Type.TSchema>(
 const reservedMarkerSyntax = /[\s\p{Cc}():\\<>]|&(?:#\d+|#[xX][\da-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/u;
 
 function validateRefMarker(id: string, refType: string | undefined): void {
+    const path = typeof id === 'string' ? ('Ref ' + id).slice(0, 512) : '$.refs.id';
     if (typeof id !== 'string' || !id || id.includes('.') || reservedMarkerSyntax.test(id)) {
-        throw new SnapshotDataError('SNAPSHOT_INVALID', 'Ref ' + id,
+        throw new SnapshotDataError('SNAPSHOT_INVALID', path,
             'Ref ID must be non-empty and contain no dot, whitespace, control character or reserved Markdown marker syntax.');
     }
     if (refType !== undefined && (typeof refType !== 'string' || !refType || reservedMarkerSyntax.test(refType))) {
-        throw new SnapshotDataError('SNAPSHOT_INVALID', 'Ref ' + id,
+        throw new SnapshotDataError('SNAPSHOT_INVALID', path,
             'Ref type must be non-empty and contain no whitespace, control character or reserved Markdown marker syntax.');
     }
 }

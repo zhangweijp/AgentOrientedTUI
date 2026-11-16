@@ -60,9 +60,11 @@ describe('Ref authoring and value contracts',()=>{
    const register=vi.spyOn(x.kernel.getProjectionCoordinator(),'registerRef');
    try{await x.open();expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'raw',value:{id:'one'}}]);expect(x.container.textContent).toContain('[Raw](raw)');expect(register.mock.calls[0]).toEqual([expect.objectContaining({viewId:'detail'}),'raw',expect.any(Object),undefined]);}finally{await x.close();}
  });
- it.each(['file)', 'Plan:raw', 'name with spaces', 'file\\name', 'name&amp;other', 'file.txt'])(
-   'rejects ambiguous Ref ID %s in the descriptor formatter and during Hook publication', async id => {
-     const issue = expect.objectContaining({ code: 'SNAPSHOT_INVALID', path: 'Ref ' + id });
+ it.each(['file)', 'Plan:raw', 'name with spaces', 'file\\name', 'name&amp;other', 'file.txt',
+   Symbol('invalid') as unknown as string])(
+   'rejects invalid Ref ID %s in the descriptor formatter and during Hook publication', async id => {
+     const path = typeof id === 'string' ? 'Ref ' + id : '$.refs.id';
+     const issue = expect.objectContaining({ code: 'SNAPSHOT_INVALID', path });
      expect(() => formatRef('Label', ref(id, false))).toThrow(issue);
      const x = setup(() => { useDataRef(id, false); return null; });
      try {
