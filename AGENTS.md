@@ -515,3 +515,7 @@ IDE 启动配置已通过本地工程验收，[16](docs/sdk-runtime-design/16-re
 2026-11-16 已实现上述页面实例绑定：SDK 使用 `defineViewType` 与页面 `bindings`，Runtime 按已采用的观察校验显式 `view_id` 和独立的 Ref 来源。共享定义、页面打开和关闭、旧观察失效与一组原生 Tools 贯通 Preact、普通 TypeScript、Worker 和标准 Source。公开使用与迁移以 [SDK 作者指南](sdk/docs/app-authoring.md) 和 [Runtime 集成合同](runtime/docs/runtime-app-interaction.md) 为准。
 
 2026-11-16 项目所有者确认启动作者接口优化。SDK 主路径把工具定义和实现写在一处，页面提供实例 `context`。本轮用 IDE 文件详情页验收，另完善空业务 Schema 和 Root 自动目录。实施范围、接口和验证状态以 [专题决定](docs/sdk-runtime-design/view-type-sdk/07-decisions-and-validation.md#authoring-refinement-20261116) 为准。作者技能中的显式 `bindings` 示例适用于该入口，默认写法从随 SDK 交付的 [作者指南](sdk/docs/app-authoring.md) 获取。
+
+## 二十三、2026-11-16 反馈：继续发布前删减
+
+项目所有者确认退役仅为旧版本保留的代码和概念，直接迁移受影响的第一方消费者。本轮从含短工具名升级的实际工作树继续。[发布前删减盘点与开发计划](docs/sdk-runtime-design/pre-release-cleanup-20261116.md)是本轮当前入口，记录显式作者 bindings、Host 孤立模块与旧配置、单实例 Snapshot Core 的具体清单和准出条件。计划交由「项目优化 Coding」完整实施，研发负责人在交付后集中验收。实施状态与历史验收分开记录。
