@@ -7,11 +7,12 @@
  * @example
  * ```tsx
  * import { h } from 'preact';
- * import { createTUIApp, View } from '@aotui/sdk';
+ * import { createTUIApp, defineViewType, View } from '@aotui/sdk';
+ * const Guide = defineViewType({ name: 'Guide', tools: {} });
  * function Root() {
- *   return <View kind="instruction" id="root" type="Root" name="Root"><h1>Example</h1></View>;
+ *   return <View kind="instruction" id="root" type={Guide}><h1>Example</h1></View>;
  * }
- * export default createTUIApp({ app_name: 'example', component: Root });
+ * export default createTUIApp({ app_name: 'example', component: Root, viewTypes: [Guide] });
  * ```
  *
  * Preact's useRef is a state hook; useDataRef declares application data references.
@@ -44,6 +45,7 @@ export type {
   ToolBinding,
   ViewBindings,
   ViewType,
+  ContextualViewType,
   ToolCatalogEntry,
 } from './tools/view-type-tool.js';
 export { useLLMUsage } from './hooks/useLLMUsage.js';

@@ -29,7 +29,7 @@ type ViewRender = { readonly body: string; readonly refs?: readonly PublishedRef
 const handles = new WeakMap<object, {
     readonly type: ViewType;
     readonly metadata: ViewMetadata;
-    readonly render: () => ViewRender & { readonly bindings?: unknown };
+    readonly render: () => ViewRender & { readonly bindings?: unknown; readonly context?: unknown };
     app?: object;
 }>();
 
@@ -70,7 +70,7 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
                     invalid('$.views', 'View IDs must be unique and use only ASCII letters, digits or underscores');
                 viewIds.add(id);
                 const path = 'View ' + id;
-                const { body, refs = [], bindings } = render();
+                const { body, refs = [], bindings, context } = render();
                 if (kind !== 'instruction' && kind !== 'state' || typeof name !== 'string' || !name.trim() || typeof body !== 'string')
                     invalid(path, 'Expected View kind, name and Markdown body');
 
@@ -86,7 +86,7 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
                 }
                 views.push({
                     id, type: type.name, name, kind, owner: handle, content: { format: MARKDOWN_VIEW_FORMAT, value: body }, refs: captured,
-                    bindings: captureViewBindings(type, bindings, id),
+                    bindings: captureViewBindings(type, bindings, id, context),
                 });
             }
             return { views };
