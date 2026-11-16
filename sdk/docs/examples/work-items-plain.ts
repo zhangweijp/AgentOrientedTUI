@@ -1,5 +1,6 @@
 import { arrayRef, createApp, createView, formatRef, ref, type ToolResult } from '@aotui/sdk/app';
-import { ItemType, WorkspaceType, initialState, itemValue, label, otherViewId, selectedViewId, workViewTypes, workspaceText, type State, type WorkItemOptions } from './work-items.js';
+import { ItemType, WorkspaceType, initialState, itemRefOptions, label, listRefOptions, otherViewId, selectedViewId,
+    workViewTypes, workspaceText, type State, type WorkItemOptions } from './work-items.js';
 
 export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
     return createApp({
@@ -21,19 +22,22 @@ export function workItemsApp(app_name: string, options: WorkItemOptions = {}) {
                 id: 'workspace', kind: 'state', render: () => ({ body: workspaceText(state), context: { change, options } }),
             });
             const other = createView(ItemType, {
-                id: otherViewId, kind: 'state', render: () => ({
-                    body: formatRef('Other item', 'selected', 'Data'),
-                    refs: [ref('selected', false, { refType: 'Data', schema: itemValue })],
-                    context: { change },
-                }),
+                id: otherViewId, kind: 'state', render: () => {
+                    const selected = ref('selected', false, itemRefOptions);
+                    return { body: formatRef('Other item', selected), refs: [selected], context: { change } };
+                },
             });
             const selected = createView(ItemType, {
-                id: selectedViewId, kind: 'state', render: () => ({
-                    body: [formatRef(label, 'selected', 'Data'), formatRef('All items', 'items', 'Data[]'),
-                        ...state.items.map((_, index) => formatRef(`Item ${index + 1}`, `items[${index}]`, 'Data'))].join('\n'),
-                    refs: [ref('selected', state.value, { refType: 'Data', schema: itemValue }), arrayRef('items', state.items, { itemType: 'Data' })],
-                    context: { change },
-                }),
+                id: selectedViewId, kind: 'state', render: () => {
+                    const selectedRef = ref('selected', state.value, itemRefOptions);
+                    const items = arrayRef('items', state.items, listRefOptions);
+                    return {
+                        body: [formatRef(label, selectedRef), formatRef('All items', items),
+                            ...state.items.map((_, index) => formatRef(`Item ${index + 1}`, items, index))].join('\n'),
+                        refs: [selectedRef, items],
+                        context: { change },
+                    };
+                },
             });
             function publishState() {
                 return publish({ views: state.open ? [workspace, other, selected] : [workspace, other] });

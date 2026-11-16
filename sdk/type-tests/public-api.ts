@@ -4,6 +4,8 @@ import {
   View,
   useAppLifecycle,
   useAppRuntimeContext,
+  useArrayRef,
+  useDataRef,
   defineViewType,
   refParam,
   type AppLifecycleCallbacks,
@@ -33,6 +35,7 @@ import {
   type ViewID,
   type ViewProps,
 } from '../src/index.js';
+import { arrayRef, formatRef, ref, type ArrayRefOptions, type RefOptions } from '../src/app.js';
 
 // @ts-expect-error The retired handwritten parameter DSL no longer owns inference.
 import type { InferArgs } from '../src/index.js';
@@ -168,3 +171,43 @@ const Reader = defineViewType<object>()({name:'RecordDetail',tools:{
   read_record:{description:'Read a record.',execute:()=>({success:true}),inputSchema:Type.Object({status:Type.Enum(['ready','pending']),limit:Type.Optional(Type.Number())})},
 }});
 const readRecord = Reader.tools.read_record;
+
+const RecordSource = Type.Object({ id: Type.String(), labels: Type.Array(Type.String()) });
+const recordOptions = { refType: 'Record', schema: RecordSource } satisfies RefOptions;
+const recordsOptions = { itemType: 'Record', schema: Type.Array(RecordSource) } satisfies ArrayRefOptions;
+const record = { id: 'file (draft).txt', labels: ['Ready'] } as const;
+const records = [record] as const;
+
+function checkRefSourceTypes(unknownValue: unknown): void {
+  const single = ref('current', record, recordOptions);
+  const list = arrayRef('records', records, recordsOptions);
+  formatRef('Current', single);
+  formatRef('All', list);
+  formatRef('First', list, 0);
+  const label: RefHandle = useDataRef('current', record, recordOptions);
+  const [all, first] = useArrayRef('records', records, recordsOptions);
+  void [label('Current'), all('All'), first(0, 'First')];
+
+  ref('untyped', unknownValue);
+  useDataRef('untyped', unknownValue, { refType: 'Data', schema: undefined });
+  arrayRef('untyped_list', [unknownValue], { itemType: 'Data' });
+  useArrayRef('untyped_list', [unknownValue]);
+
+  // @ts-expect-error The value cannot widen a concrete TypeBox source schema.
+  ref('wrong', { id: 3, labels: [] }, recordOptions);
+  // @ts-expect-error Unknown values need narrowing before a typed publication.
+  useDataRef('wrong', unknownValue, recordOptions);
+  // @ts-expect-error The same source rules apply to nested fields in a Hook.
+  useDataRef('wrong', { id: 'x', labels: [false] }, recordOptions);
+  // @ts-expect-error Whole-array schema infers the type of its items.
+  arrayRef('wrong', [{ id: 'x', labels: [false] }], recordsOptions);
+  // @ts-expect-error An array of raw strings does not match the shared options.
+  useArrayRef('wrong', ['one'], recordsOptions);
+  // @ts-expect-error ArrayRef source schemas describe the whole array.
+  arrayRef('wrong', records, { schema: RecordSource });
+  // @ts-expect-error A scalar Ref has no array item formatter.
+  formatRef('Wrong', single, 0);
+  // @ts-expect-error Formatter input is the same descriptor provided for publication.
+  formatRef('Wrong', 'current');
+}
+void checkRefSourceTypes;

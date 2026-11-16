@@ -21,9 +21,9 @@ SDK 用当前候选的页面上下文构建绑定，在准备该页时调用可�
 
 两个 SDK 入口都要求 View id 非空，仅使用 ASCII 字母、数字或下划线，在 App 的当前挂载集合内唯一。示例的两个 Item 分别使用 `b` 和 `billing_export_2026_11`。View 元数据、Snapshot 和观察仍有各自的字节限额。直接使用纯 Core 构建 Producer 时，View id 可以使用更宽的字符集，须满足非空、无点及唯一性。
 
-Ref 名在所属 View 内唯一，禁用点号。使用 `formatRef(label, id, refType)` 或 hooks 返回的格式化函数按字面量显示 label。`[Selected](Data:selected)` 位于 `billing_export_2026_11` 时，显式 Ref 参数为 `billing_export_2026_11.selected`。数组元素地址为 `billing_export_2026_11.items[0]`，局部名为 `items[0]`。空数组仍有整体 Ref。普通文本按字面值传递。
+Ref 名在所属 View 内唯一。普通 TS 将同一个 `ref` 或 `arrayRef` 描述放入 `refs` 并传给 `formatRef(label, descriptor)`。用 `formatRef(label, descriptor, index)` 选数组项。Preact 用 hooks 返回的 formatter。`[Selected](Data:selected)` 位于 `billing_export_2026_11` 时，显式 Ref 参数为 `billing_export_2026_11.selected`。数组项地址为 `billing_export_2026_11.items[0]`。标识规则和示例见 [Ref 指南](readonly-ref-v2.md#发布与展示)。
 
-Tool 声明使用 TypeBox。普通字段和解析后的 Ref 允许有限 JSON 数据，包括 null、整数、混合数组和嵌套对象。Ref 可选 `schema` 校验源数据，`refParam` 则校验调用时选中的实际值。相同的源 Ref 可以用于不同目标约束。可选字段省略后仍缺失，`default` 作为 schema 注释保留。
+Tool 声明使用 TypeBox。普通字段和解析后的 Ref 允许有限 JSON 数据，包括 null、整数、混合数组和嵌套对象。Ref 的可选 `schema` 同时推导发布值类型并校验捕获的 JSON。`refParam` 校验调用时选中的实际值，可以采用更窄的目标约束。可选字段省略后仍缺失，`default` 作为 schema 注释保留。
 
 本地校验支持对象属性、必填字段、布尔 `additionalProperties`、数组 `items`、`enum`、`const`、字段及 Ref 值的 `anyOf`、字符串长度与 Unicode `pattern`、数值上下限、数组长度、`description` 和 `default`。`Type.Unknown()` 与 `Type.Any()` 仍受普通 JSON 捕获限制。显式 Ref 可作直接参数，也可作直接数组参数的元素。声明诊断区分非法、不支持和超限，并报告代码与 Schema 路径。完整 Tool profile 连同内部标记的上限为 64 KiB canonical JSON UTF-8。 [参数合同与错误码](tool-parameters.md)
 

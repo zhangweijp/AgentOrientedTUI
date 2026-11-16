@@ -6,6 +6,8 @@ import {
 
 const NoteSchema = Type.Object({ id: Type.String(), title: Type.String(), text: Type.String() },
   { additionalProperties: false });
+const noteRefOptions = { refType: 'Note', schema: NoteSchema };
+const notesRefOptions = { itemType: 'Note', schema: Type.Array(NoteSchema) };
 export const RootType = defineViewType({ name: 'Root' });
 
 export const WorkspaceType = defineViewType<{ opened: boolean; setOpened(value: boolean): void }>()({ name: 'Workspace', tools: {
@@ -53,8 +55,8 @@ const notes = [
   { id: 'internal_b', title: 'Second note', text: 'Another note' },
 ];
 function Detail({ inspection }: { inspection: string }) {
-  const noteRef = useDataRef('current', notes[0]!, { refType: 'Note' });
-  const [listRef, itemRef] = useArrayRef('notes', notes, { itemType: 'Note' });
+  const noteRef = useDataRef('current', notes[0]!, noteRefOptions);
+  const [listRef, itemRef] = useArrayRef('notes', notes, notesRefOptions);
   return <>
     <p>{noteRef('Current note: First note')}</p>
     <p>{listRef('All notes')}</p>

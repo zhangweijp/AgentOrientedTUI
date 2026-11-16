@@ -17,7 +17,8 @@
  * ```
  */
 import { useLayoutEffect, useRef } from 'preact/hooks';
-import { arrayRef, captureRefEntries, formatRef, type ArrayRefOptions } from '../app-factory/refs.js';
+import type Type from 'typebox';
+import { arrayRef, captureRefEntries, formatRef, type ArrayRefOptions, type RefSourceValue } from '../app-factory/refs.js';
 import { useRefRegistry } from '../contexts/view-runtime-context.js';
 
 /**
@@ -50,14 +51,15 @@ export type ArrayRefHandle = [ListRefFormatter, ItemRefFormatter];
  * @param options - 配置选项
  * @returns [listRef, itemRef] - 列表标题和列表项的格式化函数
  */
-export function useArrayRef(
+export function useArrayRef<Schema extends Type.TSchema>(
   refId: string,
-  data: readonly unknown[],
-  options?: ArrayRefOptions,
+  data: readonly unknown[] & RefSourceValue<Schema>,
+  options?: ArrayRefOptions<Schema>,
 ): ArrayRefHandle {
   const { captureRef, registerRef } = useRefRegistry();
-  const itemType = options?.itemType;
-  const desired = captureRefEntries(captureRef, arrayRef(refId, data, options));
+  const descriptor = arrayRef(refId, data, options);
+  const itemType = descriptor.refType;
+  const desired = captureRefEntries(captureRef, descriptor);
   type Binding = ReturnType<typeof registerRef>;
   const owner = useRef<{ bindings: Map<string, Binding>; refId: string; itemType: string | undefined; registerRef: typeof registerRef }>();
   const release = () => {
@@ -100,7 +102,7 @@ export function useArrayRef(
   });
 
   return [
-    content => formatRef(content, refId, itemType === undefined ? undefined : `${itemType}[]`),
-    (index, content) => formatRef(content, `${refId}[${index}]`, itemType),
+    content => formatRef(content, descriptor),
+    (index, content) => formatRef(content, descriptor, index),
   ];
 }
