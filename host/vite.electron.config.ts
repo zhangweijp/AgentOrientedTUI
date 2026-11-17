@@ -11,6 +11,7 @@ const commonExternal = [
   '@aotui/runtime',
   '@aotui/agent-driver-v2',
   '@aotui/sdk',
+  'better-sqlite3',
   '@ai-sdk/anthropic',
   '@ai-sdk/openai',
   '@ai-sdk/google',

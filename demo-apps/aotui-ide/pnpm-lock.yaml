@@ -10,7 +10,7 @@ overrides:
   minimatch@3.1.2: 3.1.4
   minimatch@9.0.5: 9.0.7
   picomatch@2.3.1: 2.3.2
-  preact: ^10.29.1
+  preact: 10.29.1
   brace-expansion@1: ^1.1.20
   brace-expansion@2: ^2.1.2
 
@@ -25,7 +25,7 @@ importers:
         specifier: ^10.3.10
         version: 10.5.0
       preact:
-        specifier: ^10.29.1
+        specifier: 10.29.1
         version: 10.29.1
       typebox:
         specifier: 1.4.3
