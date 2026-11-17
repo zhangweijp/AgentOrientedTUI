@@ -1,6 +1,6 @@
 /** Core owns these contracts. The Runtime root also exposes the Host-facing types. */
 import type { AppSnapshotV5, JsonValue, ViewToolReceiver, ToolDescriptorV5 } from '../snapshot/types.js';
-import type { Observation, ObservedView, ObservationGrant, ObservationSource, ObservationRegistryStats, ObservationJsonLimits } from './observation-types.js';
+import type { Observation, ObservedView, ObservationGrant, ObservationSource, ObservationRegistryStats, ObservationJsonLimits, ObservationSelection } from './observation-types.js';
 import type { SnapshotValueRefSource } from '../tool/snapshot-value-arguments.js';
 export type { AppIdentityRead, AppIdentityReader } from '../snapshot/types.js';
 type JsonObject = Readonly<Record<string, JsonValue>>;
@@ -26,7 +26,8 @@ export interface AppInvocation {
   readonly invocationId:string;
   readonly observationId:string;
   readonly toolId:string;
-  readonly input:JsonObject;
+  /** Model-facing arguments, including the receiving View's XML id. */
+  readonly input:JsonObject & { readonly view_id: string };
 }
 export interface ReceiptQuery {
   readonly observationId: string;
@@ -91,12 +92,12 @@ export interface AppInteractionPolicy {
   canReadReceipt(metadata:ReceiptMetadata, signal:CancellationSignal):boolean|Promise<boolean>;
 }
 export interface AppInteraction {
-  observe(selection:unknown):Promise<ObserveResult>;
+  observe(selection:ObservationSelection):Promise<ObserveResult>;
   preview():Promise<AppPreviewResult>;
   /** Adopt the prepared observation and release the previous observation. */
   adoptObservation(observationId:string):Readonly<{status:'adopted'}>|Readonly<{status:'rejected';issue:Issue}>;
   /** A deadline bounds this wait and the initial invocation's admission. Dispatched work continues to settlement. */
-  invoke(request:unknown, timeoutMs?:number):Promise<InvokeResult>;
+  invoke(request:AppInvocation, timeoutMs?:number):Promise<InvokeResult>;
   /** Authorize and read the original invocation's terminal receipt. The deadline only bounds this read. */
   readReceipt(query: ReceiptQuery, timeoutMs?:number):Promise<ReceiptAccess>;
   releaseObservation(observationId:string):void;
@@ -144,6 +145,9 @@ export interface InteractionStats {
   readonly issue?:Issue;
 }
 export interface InstanceInteraction extends AppInteraction {
+  /** Pure Core accepts input from transport and validates it before use. */
+  observe(selection:unknown):Promise<ObserveResult>;
+  invoke(request:unknown, timeoutMs?:number):Promise<InvokeResult>;
   inspect():InteractionStats;
   close():InteractionStats;
   whenClosed():Promise<void>;

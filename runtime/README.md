@@ -4,13 +4,13 @@ The Runtime is the Node.js Host layer for installing AOTUI applications, managin
 
 ## Choose a package entry
 
-- `@aotui/runtime` is the Node Host entry. Use `createRuntime()` to obtain an `IKernel`, install apps, and manage Desktop and Worker lifecycles.
-- `@aotui/runtime/core` is the pure TypeScript semantic Core for trusted producers and hosts that supply their own runtime integration.
-- `@aotui/runtime/adapters` exports Driver-neutral presentation helpers and the default system instruction.
-- `@aotui/agent-driver-adapter` separately provides `SemanticAOTUIDrivenSource`; its Runtime and Driver peers must be installed by the host.
-- `@aotui/runtime/adapters/memory-state-storage` provides the in-memory StateSession storage adapter.
+- `@aotui/runtime` is the Node Host entry. `createRuntime()` returns an `IKernel` for App installation, Desktop lifecycle, observation, invocation and shutdown. The managed path supplies the bundled Worker and App state storage. [Host interaction](docs/runtime-app-interaction.md) · [Persistence](docs/persistence.md)
+- `@aotui/runtime/core` is the pure TypeScript entry for trusted producers and hosts assembling their own integration. It provides the single-instance Snapshot Core, observation and invocation, projection, schema compilation and StateSession. The integrator supplies the producer, execution, authorization and storage ports. [Pure Core example](docs/core-public-entry.md)
+- `@aotui/runtime/spi` provides the factory, renderer and Host extension contracts, including `RuntimeContext`, frame bindings and Worker capability markers. Custom integrations use the SPI from their matching Runtime build. [Managed factory and Worker contract](docs/runtime-app-interaction.md)
+- `@aotui/runtime/adapters` provides Driver-neutral View markup, Tool names and system instructions. Its `/dom` entry provides helpers for DOM producers, and `/memory-state-storage` supplies an in-memory storage adapter for StateSession. [Pure Core and storage example](docs/core-public-entry.md)
+- `@aotui/agent-driver-adapter` provides the standard `SemanticAOTUIDrivenSource`. Adapter 0.5.0 uses Runtime 8.0.0 and Agent Driver 0.3.2 as peers. [Standard Source integration](docs/semantic-host-integration.zh-CN.md)
 
-The Core entry does not create Workers or grant a Host policy. A Host still owns app discovery, interaction selection, authorization, storage, and shutdown.
+App authors use `@aotui/sdk` for Preact and `@aotui/sdk/app` for plain TypeScript. SDK 0.9.0 and Runtime 8.0.0 are the matched App and Node Worker release. Use the package declarations, guides and tests from the same release for advanced integrations.
 
 ## Standard Agent integration
 
@@ -32,6 +32,8 @@ source.dispose();
 ```
 
 Use `runtime.getAppInteraction(desktopId, appId, expectedInstanceId, policy?)` for a running App. The ready result contains the bound interaction. Read the current instance ID from the Desktop app list. Use `preview()` for rendering without a calling observation. Use the Desktop close API to end the instance.
+
+The Runtime root exports `ObservationSelection`, `AppInvocation` and `ReceiptQuery` for typed Hosts. Prepare an observation with `{ all: true }`, adopt it, then send its ID, the observed Tool ID, an invocation ID and the receiving `input.view_id`. Read the terminal receipt with the original observation and invocation IDs. Runtime validates submitted requests before dispatch. [Host interaction example](docs/runtime-app-interaction.md)
 
 AppRegistry registers resolved local App packages and validates their generated manifests. The Host product package `@aotui/system-chat` provides the `agentina` executable, remote catalog discovery, and npm package installation.
 

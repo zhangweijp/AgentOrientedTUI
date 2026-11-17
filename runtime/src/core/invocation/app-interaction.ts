@@ -87,6 +87,7 @@ interface State extends ObservationState {
     projects: number;
 }
 type Fees = { source: number; fingerprint: number; metadata: number; work: number; result: number };
+type CapturedInvocation = Omit<AppInvocation, 'input'> & { readonly input: Readonly<Record<string, JsonValue>> };
 
 export function createAppInteraction(store: SnapshotStore & AppIdentityReader, options: Readonly<AppInteractionSource & {
     namespace: string; now: () => number;
@@ -247,7 +248,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         if (!jsonObject(value) || !exactFields(value, ['ok']) || typeof value.ok !== 'boolean') fail('LIVE_BINDING_CHECK_FAILED');
         if (value.ok !== true) fail('TOOL_SOURCE_STALE');
     }
-    function sourceFor(state: State, request: AppInvocation, viewId: string) {
+    function sourceFor(state: State, request: CapturedInvocation, viewId: string) {
         active(state);
         const result = observations.resolveTool({ observationId: request.observationId, toolId: request.toolId, viewId });
         if (result.status === 'rejected') fail(result.issue.code, result.issue.message, result.issue.path);
@@ -270,7 +271,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         return capture<InvocationReceipt>({ invocationId, observationId, toolId, source, completedAt, expiresAt,
             executionPhase: mapping.executionPhase, outcome: mapping.outcome }, limits.receipt, 'RESULT_UNAVAILABLE');
     }
-    async function run(state: State, entry: Entry, request: AppInvocation, controller: AbortController): Promise<void> {
+    async function run(state: State, entry: Entry, request: CapturedInvocation, controller: AbortController): Promise<void> {
         let release: (() => void) | undefined;
         let mapping: ExecutionMapping = { executionPhase: 'not-dispatched', outcome: unknownOutcome() };
         try {
@@ -430,7 +431,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         }
     }
     function capturedRequest(raw: unknown) {
-        const captured = capture<AppInvocation>(raw, limits.request, 'INVOCATION_INVALID');
+        const captured = capture<CapturedInvocation>(raw, limits.request, 'INVOCATION_INVALID');
         const request = captured.value;
         if (!jsonObject(request) || !exactFields(request, ['invocationId', 'observationId', 'toolId', 'input']) ||
             ![request.invocationId, request.observationId].every(validRequestId) || !nonEmpty(request.toolId) ||
@@ -445,7 +446,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         return now + timeoutMs;
     }
 
-    function findEntry(request: AppInvocation, fingerprint: string): Entry | undefined {
+    function findEntry(request: CapturedInvocation, fingerprint: string): Entry | undefined {
         const entry = state.entries.get(request.invocationId);
         if (entry && entry.fingerprint !== fingerprint) fail('INVOCATION_ID_CONFLICT', 'This call ID is already bound to different input or an observation.');
         return entry;

@@ -7,10 +7,9 @@ import { loadAOTUIInstruction } from './load-aotui-instruction.js';
 import { formatAppStatus, formatTimestamp } from './presentation.js';
 import { modelToolSchema, SnapshotDataError } from '@aotui/runtime/core';
 import type { ContextDrivenSource, DrivenSourceContext, MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2';
-import type { AppID } from '@aotui/runtime/spi';
-import type { IDesktop, IKernel, AppDiscoveryInfo } from '@aotui/runtime/spi';
-import type { Observation } from '@aotui/runtime/core';
-import type { InvokeResult, AppInteraction, AppInteractionPolicy } from '@aotui/runtime/core';
+import type {
+    AppID, IDesktop, IKernel, AppDiscoveryInfo, Observation, InvokeResult, AppInteraction, AppInteractionPolicy, AppInvocation,
+} from '@aotui/runtime';
 
 export interface SemanticAOTUIDrivenSourceOptions {
     includeInstruction?: boolean;
@@ -385,8 +384,9 @@ export class SemanticAOTUIDrivenSource implements ContextDrivenSource {
                     if (!route) return undefined;
                     if (!this.allowed(route.app)) return unavailable(name, callId, 'APP_DISABLED', 'This application is disabled.');
                     if (!object(args)) return unavailable(name, callId, 'INVOCATION_INVALID', 'Tool input must be an object.');
+                    // Forward provider input unchanged so Runtime owns validation and the resulting receipt.
                     try { return semanticToolResult(name, callId, await route.client.invoke({ invocationId: callId,
-                        observationId: route.observationId, toolId: route.toolId, input: args })); }
+                        observationId: route.observationId, toolId: route.toolId, input: args as AppInvocation['input'] })); }
                     catch { return unavailable(name, callId, 'INVOCATION_RESULT_UNKNOWN', 'Execution could not be confirmed. Do not blindly retry.', 'unknown'); }
                 },
             };
