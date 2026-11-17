@@ -1,6 +1,10 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { GuiUpdateEvent } from '../../src/types/session.js'
 import { IMRuntimeBridge } from '../../src/im/im-runtime-bridge.js'
+import { FeishuChannelPlugin } from '../../src/im/channels/feishu/channel.js'
 import type { IReplyHandler } from '../../src/im/channel-plugin.js'
 
 function createConfig() {
@@ -824,55 +828,89 @@ describe('IMRuntimeBridge', () => {
     })
   })
 
-  it('handles Feishu webhook challenge and account-specific token validation', async () => {
-    const processWebhook = vi.fn(async () => ({ accepted: true }))
+  it('refuses Feishu webhook challenges when only legacy IM storage exists', async () => {
+    const configRoot = await mkdtemp(join(os.tmpdir(), 'host-feishu-webhook-'))
+    const homedir = vi.spyOn(os, 'homedir').mockReturnValue(configRoot)
     const bridge = new IMRuntimeBridge({
       hostManager: {
         sendIMMessage: vi.fn(async () => undefined),
         onGuiUpdate: vi.fn(() => () => {}),
-      } as any,
-      getConfig: async () => createConfig(),
-      createGatewayManager: () => ({
-        register: vi.fn(),
-        startAll: vi.fn(async () => undefined),
-        stopAll: vi.fn(async () => undefined),
-        listChannels: vi.fn(() => []),
-        getChannel: vi.fn(() => ({
-          id: 'feishu',
-          meta: { label: 'Feishu' },
-          capabilities: { chatTypes: ['direct', 'group'], webhookInbound: true },
-          start: vi.fn(async () => undefined),
-          stop: vi.fn(async () => undefined),
-          processWebhook,
-        })),
-      }),
-      createChannelPlugins: vi.fn(() => []) as any,
+      },
+      createChannelPlugins: dispatch => [new FeishuChannelPlugin({ dispatch })],
     })
 
-    await bridge.start()
+    try {
+      const configDir = join(configRoot, '.agentina')
+      await mkdir(configDir)
+      const { im } = createConfig()
+      im.channels.feishu.connectionMode = 'webhook'
+      await writeFile(join(configDir, 'mcp.json'), JSON.stringify({ im }))
 
-    const challenge = await bridge.processFeishuWebhook({
-      type: 'url_verification',
-      token: 'verify_a',
-      challenge: 'challenge_1',
-    }, 'corpA')
+      await bridge.start()
 
-    expect(challenge).toEqual({
-      status: 200,
-      body: { challenge: 'challenge_1' },
+      expect(bridge.getRuntime()).toMatchObject({
+        started: true,
+        channels: [{ id: 'feishu', active: false, runtime: { started: false } }],
+      })
+      expect(await bridge.processFeishuWebhook({
+        type: 'url_verification',
+        challenge: 'challenge_legacy',
+      })).toEqual({
+        status: 503,
+        body: { code: 1, msg: 'feishu channel is not available' },
+      })
+    } finally {
+      await bridge.stop()
+      homedir.mockRestore()
+      await rm(configRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('handles Feishu webhook challenge and account-specific token validation after startup', async () => {
+    const config = createConfig()
+    config.im.channels.feishu.connectionMode = 'webhook'
+    const processWebhook = vi.spyOn(FeishuChannelPlugin.prototype, 'processWebhook')
+    const bridge = new IMRuntimeBridge({
+      hostManager: {
+        sendIMMessage: vi.fn(async () => undefined),
+        onGuiUpdate: vi.fn(() => () => {}),
+      },
+      getConfig: async () => config,
+      createChannelPlugins: dispatch => [new FeishuChannelPlugin({ dispatch })],
     })
 
-    const rejected = await bridge.processFeishuWebhook({
-      type: 'url_verification',
-      token: 'wrong_token',
-      challenge: 'challenge_2',
-    }, 'corpA')
+    try {
+      await bridge.start()
 
-    expect(rejected).toEqual({
-      status: 401,
-      body: { code: 1, msg: 'invalid verification token' },
-    })
-    expect(processWebhook).not.toHaveBeenCalled()
+      expect(bridge.getRuntime().channels).toMatchObject([
+        { id: 'feishu', active: true, runtime: { started: true } },
+      ])
+      const challenge = await bridge.processFeishuWebhook({
+        type: 'url_verification',
+        token: 'verify_a',
+        challenge: 'challenge_1',
+      }, 'corpA')
+
+      expect(challenge).toEqual({
+        status: 200,
+        body: { challenge: 'challenge_1' },
+      })
+
+      const rejected = await bridge.processFeishuWebhook({
+        type: 'url_verification',
+        token: 'verify_default',
+        challenge: 'challenge_2',
+      }, 'corpA')
+
+      expect(rejected).toEqual({
+        status: 401,
+        body: { code: 1, msg: 'invalid verification token' },
+      })
+      expect(processWebhook).not.toHaveBeenCalled()
+    } finally {
+      await bridge.stop()
+      processWebhook.mockRestore()
+    }
   })
 
   it('forwards parsed Feishu webhook events to channel plugin', async () => {
@@ -881,23 +919,16 @@ describe('IMRuntimeBridge', () => {
       hostManager: {
         sendIMMessage: vi.fn(async () => undefined),
         onGuiUpdate: vi.fn(() => () => {}),
-      } as any,
+      },
       getConfig: async () => createConfig(),
-      createGatewayManager: () => ({
-        register: vi.fn(),
-        startAll: vi.fn(async () => undefined),
-        stopAll: vi.fn(async () => undefined),
-        listChannels: vi.fn(() => []),
-        getChannel: vi.fn(() => ({
-          id: 'feishu',
-          meta: { label: 'Feishu' },
-          capabilities: { chatTypes: ['direct', 'group'], webhookInbound: true },
-          start: vi.fn(async () => undefined),
-          stop: vi.fn(async () => undefined),
-          processWebhook,
-        })),
-      }),
-      createChannelPlugins: vi.fn(() => []) as any,
+      createChannelPlugins: () => [{
+        id: 'feishu',
+        meta: { label: 'Feishu' },
+        capabilities: { chatTypes: ['direct', 'group'], webhookInbound: true },
+        start: vi.fn(async () => undefined),
+        stop: vi.fn(async () => undefined),
+        processWebhook,
+      }],
     })
 
     await bridge.start()

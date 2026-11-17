@@ -65,17 +65,9 @@ export interface Info {
   [key: string]: unknown
 }
 
-export interface TuiAppConfigEntry {
-  source: string
-  enabled: boolean
-  installedAt?: string
-  [key: string]: unknown
-}
-
 export interface TuiInfo {
   version?: number
   modelInputLimits?: Record<string, ModelInputLimits>
-  apps?: Record<string, TuiAppConfigEntry>
   [key: string]: unknown
 }
 
@@ -228,19 +220,14 @@ function readMcp(config: Info) {
   } else if (servers !== undefined) {
     issues.push("Invalid mcp section in ~/.agentina/mcp.json. Reconfigure it in Settings → MCP.")
   }
-  if (config.mcpServers !== undefined) {
-    issues.push("The mcpServers section in ~/.agentina/mcp.json is retired. Import it explicitly in Settings → MCP.")
-  }
   return { mcp: Object.fromEntries(entries), invalid: Object.fromEntries(invalid), issues, timeout: config.experimental?.mcp_timeout }
 }
 
 export namespace Config {
   export type InfoType = Info
-  export type TuiInfoType = TuiInfo
-  export type TuiAppConfigEntryType = TuiAppConfigEntry
 
   export async function getGlobal(): Promise<Info> {
-    const { im: _retiredIm, mcpServers: _retiredMcp, ...config } = await readConfigFile(getGlobalConfigPath())
+    const { im: _im, ...config } = await readConfigFile(getGlobalConfigPath())
     return { ...config, mcp: readMcp(config).mcp }
   }
 
@@ -263,12 +250,7 @@ export namespace Config {
     }
 
     if (file && !Array.isArray(file) && typeof file === "object" && file.im === undefined) {
-      const global = await readConfigFile(getGlobalConfigPath())
-      if (global?.im === undefined) return { im: {} }
-      return {
-        im: { enabled: false },
-        issue: "IM settings in ~/.agentina/mcp.json are retired. Reconfigure IM in Settings and save to im.json.",
-      }
+      return { im: {} }
     }
 
     const parsed = ImConfig.safeParse(file?.im)
@@ -325,52 +307,10 @@ export namespace Config {
   }
 
   export function replaceGlobalMcp(mcp: NonNullable<Info["mcp"]>): Promise<Info> {
-    return writeGlobal(({ mcpServers: _retired, ...existing }) => ({ ...existing, mcp: McpConfig.parse(mcp) }))
-  }
-
-  export async function getAppsConfig(): Promise<Record<string, TuiAppConfigEntry>> {
-    const config = await readTuiConfigFile(getTuiConfigPath())
-    const apps = config.apps
-    if (!apps || typeof apps !== "object") {
-      return {}
-    }
-    return apps
+    return writeGlobal(existing => ({ ...existing, mcp: McpConfig.parse(mcp) }))
   }
 
   export async function getTuiConfig(): Promise<TuiInfo> {
     return readTuiConfigFile(getTuiConfigPath())
-  }
-
-  export async function replaceGlobalApps(apps: Record<string, TuiAppConfigEntry>): Promise<TuiInfo> {
-    const filepath = getTuiConfigPath()
-    await fs.mkdir(path.dirname(filepath), { recursive: true })
-
-    const existing = await readTuiConfigFile(filepath)
-    const merged: TuiInfo = {
-      ...existing,
-      version: typeof existing.version === "number" ? existing.version : 2,
-      apps,
-    }
-
-    await fs.writeFile(filepath, JSON.stringify(merged, null, 2), "utf8")
-    return merged
-  }
-
-  export async function setGlobalAppEnabled(name: string, enabled: boolean): Promise<TuiInfo> {
-    const existing = await getTuiConfig()
-    const currentApps = existing.apps ?? {}
-    const current = currentApps[name]
-
-    if (!current) {
-      throw new Error(`App "${name}" not found in ~/.agentina/config.json`)
-    }
-
-    return replaceGlobalApps({
-      ...currentApps,
-      [name]: {
-        ...current,
-        enabled,
-      },
-    })
   }
 }

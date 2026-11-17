@@ -4,7 +4,6 @@
  * TypeScript interfaces for all Settings Panel components
  */
 
-import type { LLMConfigRecord, ProviderInfo } from '../../../types/llm-config.js';
 import type { ModelsDevModel } from '../../../services/index.js';
 
 export type SettingsTabKey = 'model' | 'agent' | 'prompt' | 'theme' | 'apps' | 'mcp' | 'skills' | 'im';
@@ -30,14 +29,6 @@ export interface SettingsPanelProps {
 }
 
 /**
- * SettingsPanel Component State
- */
-export interface SettingsPanelState {
-    /** Currently active tab */
-    activeTab: SettingsTabKey;
-}
-
-/**
  * SettingsSidebar Component Props
  * 
  * Left sidebar containing tab navigation buttons
@@ -47,113 +38,6 @@ export interface SettingsSidebarProps {
     activeTab: SettingsTabKey;
     /** Callback when tab changes */
     onTabChange: (tab: SettingsTabKey) => void;
-}
-
-/**
- * ModelTab Component Props
- * 
- * Displays and manages LLM model configurations
- */
-export interface ModelTabProps {
-    // No props needed - fetches data from services
-}
-
-/**
- * ModelTab Component State
- */
-export interface ModelTabState {
-    /** All saved configurations */
-    configs: LLMConfigRecord[];
-    /** ID of the active configuration */
-    activeConfigId: number | null;
-    /** Whether the configuration form is visible */
-    showForm: boolean;
-    /** ID of the configuration being edited (null for new) */
-    editingConfigId: number | null;
-    /** Available providers from models.dev */
-    providers: ProviderInfo[];
-    /** Currently selected provider in the form */
-    selectedProvider: ProviderInfo | null;
-    /** Available models for the selected provider */
-    availableModels: ModelsDevModel[];
-    /** Form data */
-    formData: ConfigFormData;
-    /** Validation errors */
-    validationErrors: Record<string, string>;
-    /** Loading state for providers */
-    loadingProviders: boolean;
-    /** Loading state for models */
-    loadingModels: boolean;
-}
-
-/**
- * Configuration Form Data
- */
-export interface ConfigFormData {
-    /** Configuration name */
-    name: string;
-    /** Provider ID */
-    providerId: string;
-    /** Model identifier */
-    model: string;
-    /** API key */
-    apiKey: string;
-    /** Custom base URL */
-    baseUrl: string;
-    /** Temperature (0-1) */
-    temperature: number;
-    /** Max steps */
-    maxSteps: number;
-}
-
-/**
- * ConfigCard Component Props
- * 
- * Displays a single model configuration with actions
- */
-export interface ConfigCardProps {
-    /** Configuration to display */
-    config: LLMConfigRecord;
-    /** Whether this is the active configuration */
-    isActive: boolean;
-    /** Callback when configuration is selected */
-    onSelect: (id: number) => void;
-    /** Callback when edit button is clicked */
-    onEdit: (id: number) => void;
-    /** Callback when delete button is clicked */
-    onDelete: (id: number) => void;
-}
-
-/**
- * ConfigForm Component Props
- * 
- * Form for adding or editing model configurations
- */
-export interface ConfigFormProps {
-    /** Configuration being edited (null for new) */
-    editingConfig: LLMConfigRecord | null;
-    /** Available providers */
-    providers: ProviderInfo[];
-    /** Callback when form is saved */
-    onSave: (data: ConfigFormData) => Promise<void>;
-    /** Callback when form is cancelled */
-    onCancel: () => void;
-}
-
-/**
- * ConfigForm Component State
- */
-export interface ConfigFormState {
-    /** Form data */
-    formData: ConfigFormData;
-    /** Currently selected provider */
-    selectedProvider: ProviderInfo | null;
-    /** Available models for selected provider */
-    availableModels: ModelsDevModel[];
-    /** Validation errors */
-    validationErrors: Record<string, string>;
-    /** Loading state for models */
-    isLoadingModels: boolean;
 }
 
 /**
@@ -286,18 +170,6 @@ export interface ProviderUpdates {
 }
 
 /**
- * ModelTabHeader Component Props (V2)
- */
-export interface ModelTabHeaderProps {
-    /** Current search query */
-    searchQuery: string;
-    /** Callback when search query changes */
-    onSearchChange: (query: string) => void;
-    /** Callback when add provider button is clicked */
-    onAddProvider: () => void;
-}
-
-/**
  * ProviderRow Component Props (V2)
  */
 export interface ProviderRowProps {
@@ -305,7 +177,6 @@ export interface ProviderRowProps {
     providers: ProviderConfig[];
     /** Database ID of the selected provider config */
     selectedProviderId: number | null;
-    /** Provider ID of the active provider (for backward compatibility, not used) */
     /** Callback when provider is selected */
     onSelectProvider: (providerConfigId: number) => void;
     /** Callback when edit button is clicked */
@@ -410,26 +281,6 @@ export interface AddProviderModalProps {
     onSave: (config: NewProviderConfig) => Promise<void>;
     /** Callback when a Custom provider is saved */
     onSaveCustom?: (input: NewCustomProviderInput) => Promise<void>;
-}
-
-/**
- * AddProviderModal Component State (V2)
- */
-export interface AddProviderModalState {
-    /** Available providers from models.dev */
-    availableProviders: ProviderInfo[];
-    /** Selected provider ID */
-    selectedProviderId: string;
-    /** Custom name input */
-    customName: string;
-    /** API key input */
-    apiKey: string;
-    /** Validation errors */
-    validationErrors: ValidationErrors;
-    /** Whether providers are loading */
-    isLoading: boolean;
-    /** Whether save is in progress */
-    isSaving: boolean;
 }
 
 /**

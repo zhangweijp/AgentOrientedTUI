@@ -14,7 +14,6 @@ const commonExternal = [
   '@ai-sdk/anthropic',
   '@ai-sdk/openai',
   '@ai-sdk/google',
-  '@ai-sdk/xai',
   'ai',
   ...builtinModules,
   ...builtinModules.map(m => `node:${m}`),

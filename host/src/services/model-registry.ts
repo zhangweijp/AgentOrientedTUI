@@ -92,16 +92,6 @@ export interface ModelFilter {
 }
 
 /**
- * 缓存状态
- */
-export interface CacheStatus {
-    lastFetch: number;
-    isStale: boolean;
-    providerCount: number;
-    modelCount: number;
-}
-
-/**
  * 缓存数据结构
  */
 interface CacheEntry {
@@ -234,41 +224,6 @@ export class ModelRegistry {
         }
 
         return providers;
-    }
-
-    /**
-     * 刷新缓存（强制重新获取数据）
-     */
-    async refresh(): Promise<void> {
-        this.logger.info('Refreshing model registry data...');
-        this.lastFetch = 0; // 强制重新获取
-        await this.fetchModelsDevData();
-    }
-
-    /**
-     * 获取缓存状态
-     */
-    getCacheStatus(): CacheStatus {
-        const now = Date.now();
-        const isStale = !this.modelsDevData || now - this.lastFetch > this.cacheTTL;
-        
-        let providerCount = 0;
-        let modelCount = 0;
-        
-        if (this.modelsDevData) {
-            providerCount = Object.keys(this.modelsDevData).length;
-            modelCount = Object.values(this.modelsDevData).reduce(
-                (sum, provider) => sum + Object.keys(provider.models).length,
-                0
-            );
-        }
-
-        return {
-            lastFetch: this.lastFetch,
-            isStale,
-            providerCount,
-            modelCount,
-        };
     }
 
     /**

@@ -50,15 +50,17 @@ it('validates configuration and exposes exact Agent, Topic and global permission
         const retired = { enabled: true, disabled: true, command: process.execPath, args: [fixture, 'retired'] };
         const original = JSON.stringify({
             mcp: { west: localServer('west'), 'west-archive': localServer('archive'), retired },
-            mcpServers: { 'old-shape': retired },
+            mcpServers: { 'old-shape': localServer('old-shape') },
         });
         await writeFile(file, original);
 
         const config = await caller.mcp.getConfig();
         expect(Object.keys(config.mcp)).toEqual(['west', 'west-archive']);
-        expect(config.issues).toEqual([expect.stringContaining('retired'), expect.stringContaining('mcpServers')]);
+        expect(config.issues).toEqual([expect.stringContaining('MCP server "retired" has invalid settings')]);
         expect(await readFile(file, 'utf8')).toBe(original);
-        expect(await caller.mcp.getRuntime()).toMatchObject({
+        const runtime = await caller.mcp.getRuntime();
+        expect(runtime).not.toHaveProperty('old-shape');
+        expect(runtime).toMatchObject({
             west: { status: 'connected', tools: [{ name: 'search', enabled: true }] },
             'west-archive': { status: 'connected', tools: [{ name: 'search', enabled: true }] },
             retired: { status: 'failed', tools: [] },
@@ -112,12 +114,13 @@ it('validates configuration and exposes exact Agent, Topic and global permission
 
         await caller.mcp.updateConfig({ mcp: { replacement: localServer('replacement') } });
         expect((await caller.mcp.getConfig()).issues).toEqual([]);
+        expect(JSON.parse(await readFile(file, 'utf8')).mcpServers).toEqual({ 'old-shape': localServer('old-shape') });
         const current = await new McpDrivenSource().getContext();
         expect((await current.executeTool?.(replacement, {}, 'new'))?.result).toContain('replacement');
         expect(await originalContext.executeTool?.(west, {}, 'old')).toMatchObject({ outcomeStatus: 'rejected' });
         expect(await driverToolNames(agentSource)).toEqual([]);
     } finally {
-        await Promise.all(['west', 'west-archive', 'replacement'].map(name => MCP.disconnect(name)));
+        await Promise.all(['west', 'west-archive', 'replacement', 'old-shape'].map(name => MCP.disconnect(name)));
         vi.unstubAllEnvs();
         await rm(home, { recursive: true, force: true });
     }

@@ -36,10 +36,7 @@ describe('IPC ModelRegistry Integration', () => {
         // Mock ModelRegistry with realistic implementations
         mockModelRegistry = {
             getProviders: vi.fn(),
-            getProviderConfig: vi.fn(),
             getModels: vi.fn(),
-            refresh: vi.fn(),
-            getCacheStatus: vi.fn(),
         } as any;
 
         // Mock HostManager (minimal)
@@ -57,27 +54,6 @@ describe('IPC ModelRegistry Integration', () => {
     });
 
     describe('Data Serialization with superjson', () => {
-        it('should serialize and deserialize Date objects correctly', async () => {
-            const now = new Date();
-            const mockStatus = {
-                lastFetch: now.getTime(),
-                isStale: false,
-                providerCount: 4,
-                modelCount: 25,
-            };
-
-            vi.mocked(mockModelRegistry.getCacheStatus).mockReturnValue(mockStatus);
-
-            // Simulate IPC: serialize → deserialize
-            const result = await caller.modelRegistry.getCacheStatus();
-            const serialized = superjson.stringify(result);
-            const deserialized = superjson.parse(serialized);
-
-            expect(deserialized.lastFetch).toBe(now.getTime());
-            expect(deserialized.isStale).toBe(false);
-            expect(deserialized.providerCount).toBe(4);
-        });
-
         it('should serialize and deserialize complex nested objects', async () => {
             const mockModels = [
                 {
@@ -240,22 +216,13 @@ describe('IPC ModelRegistry Integration', () => {
             );
         });
 
-        it('should propagate validation errors with details', async () => {
-            const error = new Error('Provider not found in models.dev: invalid-provider');
-            vi.mocked(mockModelRegistry.getProviderConfig).mockRejectedValue(error);
-
-            await expect(
-                caller.modelRegistry.getProviderConfig({ providerId: 'invalid-provider' })
-            ).rejects.toThrow('Provider not found');
-        });
-
         it('should serialize error objects correctly', async () => {
             const error = new Error('Network timeout');
             error.name = 'TimeoutError';
-            vi.mocked(mockModelRegistry.refresh).mockRejectedValue(error);
+            vi.mocked(mockModelRegistry.getModels).mockRejectedValue(error);
 
             try {
-                await caller.modelRegistry.refresh();
+                await caller.modelRegistry.getModels({ providerId: 'openai' });
                 expect.fail('Should have thrown error');
             } catch (e: any) {
                 // Simulate IPC error serialization
@@ -281,24 +248,13 @@ describe('IPC ModelRegistry Integration', () => {
             }
         });
 
-        it('should propagate errors from nested calls', async () => {
-            const error = new Error('Cache file corrupted');
-            vi.mocked(mockModelRegistry.getCacheStatus).mockImplementation(() => {
-                throw error;
-            });
-
-            await expect(caller.modelRegistry.getCacheStatus()).rejects.toThrow(
-                'Cache file corrupted'
-            );
-        });
-
         it('should handle async errors correctly', async () => {
-            vi.mocked(mockModelRegistry.refresh).mockImplementation(async () => {
+            vi.mocked(mockModelRegistry.getModels).mockImplementation(async () => {
                 await new Promise(resolve => setTimeout(resolve, 10));
                 throw new Error('Async call failed');
             });
 
-            await expect(caller.modelRegistry.refresh()).rejects.toThrow(
+            await expect(caller.modelRegistry.getModels({ providerId: 'openai' })).rejects.toThrow(
                 'Async call failed'
             );
         });
@@ -347,23 +303,14 @@ describe('IPC ModelRegistry Integration', () => {
             vi.mocked(mockModelRegistry.getModels).mockResolvedValue([
                 { id: 'openai/gpt-4', name: 'GPT-4' } as any,
             ]);
-            vi.mocked(mockModelRegistry.getCacheStatus).mockReturnValue({
-                lastFetch: Date.now(),
-                isStale: false,
-                providerCount: 1,
-                modelCount: 1,
-            });
-
             // Make multiple concurrent calls
-            const [providers, models, status] = await Promise.all([
+            const [providers, models] = await Promise.all([
                 caller.modelRegistry.getProviders(),
                 caller.modelRegistry.getModels({}),
-                caller.modelRegistry.getCacheStatus(),
             ]);
 
             expect(providers.length).toBe(1);
             expect(models.length).toBe(1);
-            expect(status.providerCount).toBe(1);
         });
 
         it('should handle rapid sequential calls', async () => {
@@ -386,43 +333,25 @@ describe('IPC ModelRegistry Integration', () => {
         });
 
         it('should preserve data types across IPC boundary', async () => {
-            const mockConfig = {
+            const mockProvider = {
                 id: 'openai',
                 name: 'OpenAI',
                 baseURL: 'https://api.openai.com/v1',
-                envKeys: ['OPENAI_API_KEY', 'OPENAI_ORG_ID'],
-                supportedModels: ['gpt-4', 'gpt-4o', 'gpt-4o-mini'],
+                modelCount: 5,
             };
 
-            vi.mocked(mockModelRegistry.getProviderConfig).mockResolvedValue(mockConfig);
+            vi.mocked(mockModelRegistry.getProviders).mockResolvedValue([mockProvider]);
 
             // Simulate IPC: serialize → deserialize
-            const result = await caller.modelRegistry.getProviderConfig({ providerId: 'openai' });
+            const result = await caller.modelRegistry.getProviders();
             const serialized = superjson.stringify(result);
-            const deserialized = superjson.parse(serialized);
+            const [deserialized] = superjson.parse<typeof result>(serialized);
 
             // Verify types
             expect(typeof deserialized.id).toBe('string');
             expect(typeof deserialized.name).toBe('string');
             expect(typeof deserialized.baseURL).toBe('string');
-            expect(Array.isArray(deserialized.envKeys)).toBe(true);
-            expect(Array.isArray(deserialized.supportedModels)).toBe(true);
-            expect(deserialized.envKeys.every((k: any) => typeof k === 'string')).toBe(true);
-        });
-
-        it('should handle mutations (refresh) correctly', async () => {
-            let refreshCount = 0;
-            vi.mocked(mockModelRegistry.refresh).mockImplementation(async () => {
-                refreshCount++;
-                await new Promise(resolve => setTimeout(resolve, 10));
-            });
-
-            // Call refresh multiple times
-            await caller.modelRegistry.refresh();
-            await caller.modelRegistry.refresh();
-            await caller.modelRegistry.refresh();
-
-            expect(refreshCount).toBe(3);
+            expect(typeof deserialized.modelCount).toBe('number');
         });
 
         it('should handle filter parameters correctly', async () => {
@@ -458,24 +387,6 @@ describe('IPC ModelRegistry Integration', () => {
     });
 
     describe('IPC Performance Characteristics', () => {
-        it('should handle small payloads efficiently', async () => {
-            const mockStatus = {
-                lastFetch: Date.now(),
-                isStale: false,
-                providerCount: 4,
-                modelCount: 25,
-            };
-
-            vi.mocked(mockModelRegistry.getCacheStatus).mockReturnValue(mockStatus);
-
-            const start = Date.now();
-            await caller.modelRegistry.getCacheStatus();
-            const duration = Date.now() - start;
-
-            // Should be very fast (< 100ms) for small payloads
-            expect(duration).toBeLessThan(100);
-        });
-
         it('should handle medium payloads efficiently', async () => {
             const mockProviders = Array.from({ length: 10 }, (_, i) => ({
                 id: `provider-${i}`,
@@ -528,19 +439,18 @@ describe('IPC ModelRegistry Integration', () => {
 
     describe('Edge Cases and Boundary Conditions', () => {
         it('should handle empty string values', async () => {
-            const mockConfig = {
+            const mockProvider = {
                 id: '',
                 name: '',
                 baseURL: '',
-                envKeys: [],
-                supportedModels: [],
+                modelCount: 0,
             };
 
-            vi.mocked(mockModelRegistry.getProviderConfig).mockResolvedValue(mockConfig);
+            vi.mocked(mockModelRegistry.getProviders).mockResolvedValue([mockProvider]);
 
-            const result = await caller.modelRegistry.getProviderConfig({ providerId: '' });
+            const result = await caller.modelRegistry.getProviders();
             const serialized = superjson.stringify(result);
-            const deserialized = superjson.parse(serialized);
+            const [deserialized] = superjson.parse<typeof result>(serialized);
 
             expect(deserialized.id).toBe('');
             expect(deserialized.name).toBe('');
@@ -569,19 +479,18 @@ describe('IPC ModelRegistry Integration', () => {
 
         it('should handle very long strings', async () => {
             const longString = 'A'.repeat(10000);
-            const mockConfig = {
+            const mockProvider = {
                 id: 'test',
                 name: longString,
                 baseURL: 'https://api.test.com/v1',
-                envKeys: ['KEY'],
-                supportedModels: ['model'],
+                modelCount: 1,
             };
 
-            vi.mocked(mockModelRegistry.getProviderConfig).mockResolvedValue(mockConfig);
+            vi.mocked(mockModelRegistry.getProviders).mockResolvedValue([mockProvider]);
 
-            const result = await caller.modelRegistry.getProviderConfig({ providerId: 'test' });
+            const result = await caller.modelRegistry.getProviders();
             const serialized = superjson.stringify(result);
-            const deserialized = superjson.parse(serialized);
+            const [deserialized] = superjson.parse<typeof result>(serialized);
 
             expect(deserialized.name.length).toBe(10000);
             expect(deserialized.name).toBe(longString);

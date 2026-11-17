@@ -12,7 +12,6 @@ afterEach(() => vi.restoreAllMocks());
 describe('Host application identity across config and capability endpoints', () => {
     it('uses the active registry keys for both Agent settings and new Topic capabilities', async () => {
         vi.spyOn(Config, 'getGlobal').mockResolvedValue({});
-        const ambient = vi.spyOn(Config, 'getAppsConfig').mockRejectedValue(new Error('Ambient registry must not be read'));
         const registry = { ide_key: { name: 'Friendly IDE', source: 'local:/apps/ide', enabled: true },
             terminal_key: { source: 'local:/apps/terminal', enabled: false } };
         const caller = appRouter.createCaller({ hostManager: { getAppsConfig: async () => registry } } as any);
@@ -20,7 +19,6 @@ describe('Host application identity across config and capability endpoints', () 
         expect((await caller.sourceControl.getDraft()).apps.items).toEqual([
             { name: 'ide_key', enabled: true }, { name: 'terminal_key', enabled: false },
         ]);
-        expect(ambient).not.toHaveBeenCalled();
     });
 
     it('shows persisted Topic overrides separately from installed apps', async () => {

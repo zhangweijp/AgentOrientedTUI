@@ -68,13 +68,6 @@ const createMockModelRegistry = (): ModelRegistry => ({
     getProviders: vi.fn().mockResolvedValue([]),
     getProviderConfig: vi.fn().mockResolvedValue({}),
     getModels: vi.fn().mockResolvedValue([]),
-    refresh: vi.fn().mockResolvedValue(undefined),
-    getCacheStatus: vi.fn().mockReturnValue({
-        lastFetch: Date.now(),
-        isStale: false,
-        providerCount: 0,
-        modelCount: 0,
-    }),
 } as any);
 
 // Mock Kernel

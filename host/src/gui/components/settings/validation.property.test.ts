@@ -6,7 +6,7 @@
 
 import { describe, it } from 'vitest';
 import * as fc from 'fast-check';
-import { validateProviderConfig, validateProviderNameUniqueness } from './validation.js';
+import { validateProviderConfig } from './validation.js';
 import type { ProviderConfig, NewProviderConfig } from './types.js';
 
 /**
@@ -38,51 +38,7 @@ const arbitraryNewProviderConfig = (): fc.Arbitrary<NewProviderConfig> => {
     });
 };
 
-/**
- * Feature: settings-panel-v2, Property 2: Provider Name Uniqueness
- * Validates: Requirements 5.6
- * 
- * For any new provider configuration, if the custom name already exists,
- * the validation should fail and prevent saving.
- */
 describe('Validation Utilities - Property-Based Tests', () => {
-    it('Property 2: Provider Name Uniqueness - duplicate names are rejected', () => {
-        fc.assert(
-            fc.property(
-                fc.array(arbitraryProviderConfig(), { minLength: 1, maxLength: 10 }),
-                fc.string({ minLength: 3, maxLength: 30 }),
-                (existingProviders, newName) => {
-                    // Check if the name already exists (case-insensitive)
-                    const normalizedNewName = newName.trim().toLowerCase();
-                    const isDuplicate = existingProviders.some(
-                        provider => provider.customName.toLowerCase() === normalizedNewName
-                    );
-
-                    // Validate the name
-                    const validationResult = validateProviderNameUniqueness(
-                        newName,
-                        existingProviders
-                    );
-
-                    // If duplicate, validation should fail
-                    if (isDuplicate) {
-                        return validationResult.isValid === false &&
-                               validationResult.errors.customName !== undefined;
-                    }
-
-                    // If not duplicate and name is valid (>= 3 chars), validation should pass
-                    if (newName.trim().length >= 3) {
-                        return validationResult.isValid === true;
-                    }
-
-                    // If name is too short, validation should fail
-                    return validationResult.isValid === false;
-                }
-            ),
-            { numRuns: 100 }
-        );
-    });
-
     /**
      * Property: Valid provider configs pass validation
      * 
@@ -236,7 +192,7 @@ describe('Validation Utilities - Property-Based Tests', () => {
     it('duplicate name detection is case-insensitive', () => {
         fc.assert(
             fc.property(
-                fc.string({ minLength: 3, maxLength: 30 }),
+                fc.string({ minLength: 3, maxLength: 30 }).filter(name => name.trim().length >= 3),
                 (customName) => {
                     const existingProvider: ProviderConfig = {
                         id: 1,
@@ -252,20 +208,21 @@ describe('Validation Utilities - Property-Based Tests', () => {
                     };
 
                     // Try to add a provider with the same name in different case
-                    const upperCaseResult = validateProviderNameUniqueness(
-                        customName.toUpperCase(),
+                    const { providerId, apiKey } = existingProvider;
+                    const upperCaseResult = validateProviderConfig(
+                        { providerId, apiKey, customName: customName.toUpperCase() },
                         [existingProvider]
                     );
 
-                    const mixedCaseResult = validateProviderNameUniqueness(
-                        customName,
+                    const mixedCaseResult = validateProviderConfig(
+                        { providerId, apiKey, customName },
                         [existingProvider]
                     );
 
                     // Both should fail validation
                     return (
-                        upperCaseResult.isValid === false &&
-                        mixedCaseResult.isValid === false
+                        upperCaseResult.errors.customName === 'This name is already in use' &&
+                        mixedCaseResult.errors.customName === 'This name is already in use'
                     );
                 }
             ),
@@ -298,32 +255,6 @@ describe('Validation Utilities - Property-Based Tests', () => {
 
                     // Should fail validation due to duplicate name
                     return result.isValid === false && result.errors.customName !== undefined;
-                }
-            ),
-            { numRuns: 100 }
-        );
-    });
-
-    /**
-     * Property: Exclude ID allows editing without duplicate error
-     * 
-     * Verifies that when editing a provider, its own name doesn't trigger
-     * a duplicate error.
-     */
-    it('exclude ID allows editing without duplicate error', () => {
-        fc.assert(
-            fc.property(
-                arbitraryProviderConfig(),
-                (provider) => {
-                    // Validate the same name with the provider's own ID excluded
-                    const result = validateProviderNameUniqueness(
-                        provider.customName,
-                        [provider],
-                        provider.id
-                    );
-
-                    // Should pass validation (not considered a duplicate)
-                    return result.isValid === true;
                 }
             ),
             { numRuns: 100 }

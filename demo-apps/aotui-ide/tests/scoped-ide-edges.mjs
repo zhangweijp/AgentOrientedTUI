@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { IDESession, filePage } from '../dist/core/ide-session.js';
 import { IDEHistory } from '../dist/core/ide-history.js';
-import { resolveIDEOptions } from '../dist/core/app-options.js';
 import { ScopedSearch } from '../dist/core/scoped-search.js';
 import { ScopedLSP } from '../dist/core/scoped-lsp.js';
 import { readObservedFile, directoryIdentity } from '../dist/core/versioned-file-write.js';
@@ -215,8 +214,10 @@ try {
         try { await arrived.promise; released.resolve(); const replies = await Promise.allSettled([first, second]); assert.equal(replies.filter(item => item.status === 'fulfilled').length, 1); }
         finally { released.resolve(); fs.open = reads; }
         assert.equal((await a.read()).workspaces[root].length, 2); await a.close(); await b.close();
-        await fs.writeFile(file, JSON.stringify({ version: 1, workspaces: {}, unexpected: false }));
-        const invalid = new IDEHistory(file); await assert.rejects(invalid.add(root, path.join(root, 'x')), code('HISTORY_INVALID')); await invalid.close();
+        const malformed = JSON.stringify({ version: 1, workspaces: { [root]: [{ path: file, lastOpened: -1 }] } });
+        await fs.writeFile(file, malformed);
+        const invalid = new IDEHistory(file); await assert.rejects(invalid.add(root, path.join(root, 'x')), code('HISTORY_INVALID'));
+        assert.equal(await fs.readFile(file, 'utf8'), malformed); await invalid.close();
         await fs.writeFile(file, '{broken'); const corrupt = new IDEHistory(file); await assert.rejects(corrupt.add(root, path.join(root, 'c'))); assert.equal(await fs.readFile(file, 'utf8'), '{broken'); await corrupt.close();
         await fs.unlink(file); const unknown = new IDEHistory(file), nativeOpen = fs.open; let attempts = 0;
         fs.open = async (p, flags, ...args) => { if (String(p) === file && flags === 'wx') { attempts++; throw Object.assign(Error(), { code: 'EIO', syscall: 'open', path: p }); } return nativeOpen(p, flags, ...args); };
@@ -359,14 +360,14 @@ try {
             for (const app of h.apps) if (!app.closed) { app.host.terminate(); await app.worker.terminate(); await app.host.waitForResourceRelease(); app.closed = true; }
         }
     });
-    await run('restores managed state and reads current history with retired metadata without rewriting it', async () => {
+    await run('restores managed state and ignores unknown history metadata without rewriting the file', async () => {
         const root = await workspace('saved-root');
         const recent = path.join(root, 'recent.txt');
         const active = path.join(root, 'active.txt');
         await fs.writeFile(active, 'managed active file');
         const historyPath = path.join(working, 'saved-history.json');
         const entries = [{ path: recent, lastOpened: 1 }];
-        const bytes = JSON.stringify({ version: 1, workspaces: { [root]: entries }, migration: { phase: 'completed', digest: 'a'.repeat(64) } });
+        const bytes = JSON.stringify({ version: 1, workspaces: { [root]: entries }, metadata: { producer: 'fixture' } });
         await fs.writeFile(historyPath, bytes);
         const sessionKey = 'saved-session';
         const initial = sessionRecords(sessionKey, { workspaceFolders: [root], activeFiles: [active], expandedDirs: [root] });
@@ -384,9 +385,6 @@ try {
             assert.deepEqual(Object.keys(updated), ['version', 'workspaces']);
             assert.deepEqual(updated.workspaces[root].map(item => item.path), [active, recent]);
         } finally { assert.equal((await x.close()).ok, true); }
-        for (const key of ['ideLegacyImportPath', 'ideLegacyDatabasePath']) {
-            assert.throws(() => resolveIDEOptions({ desktopId: 'test', appId: 'ide', launchConfig: { [key]: historyPath } }), code('IDE_LEGACY_IMPORT_RETIRED'));
-        }
     });
     await run('partial binding failure and stop during initialization cannot deadlock managed flush', async () => {
         const root = await workspace('init'), x = await session(root, { port: port => ({ ...port, bind(key, ...args) { return key === 'activeFiles' ? { status: 'rejected', issue: { code: 'CAPACITY_EXCEEDED' } } : port.bind(key, ...args); } }) });

@@ -113,7 +113,7 @@ A group probe denied with `EPERM` retains ownership and continues the existing b
 
 ## Restoration
 
-Managed state owns `workspaceFolders`, `activeFiles` and `expandedDirs` under the session key. Recent history is a separate shared file with version 1 and `workspaces`. Previously imported history remains readable if it contains a retired `migration` field. Reading preserves the original file, and the next ordinary history write saves the current fields. The IDE rejects the retired `ideLegacyImportPath` and `ideLegacyDatabasePath` launch options.
+Managed state owns `workspaceFolders`, `activeFiles` and `expandedDirs` under the session key. Recent history is a separate shared file with version 1 and `workspaces`. Reading validates the current fields, ignores other top-level metadata, and preserves the original file. An ordinary history write saves the current fields.
 
 The explicitly configured `projectPath` must be a usable directory. A separately restored root that now fails with `ENOENT` or `ENOTDIR` is listed under **Unavailable folders** while other valid roots remain usable. Its normalized absolute path stays in the existing `workspaceFolders` value across restarts and still counts toward the 16-root limit. Unavailable roots are excluded from LSP, search and file access. Permission errors, invalid saved data, identity changes and uncertain cleanup remain initialization failures; this recovery rule does not hide failures while reading the workspace tree.
 

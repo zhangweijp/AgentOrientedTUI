@@ -11,7 +11,6 @@ export function resolveIDEOptions(context: {
     launchConfig?: Record<string, unknown>;
 }): IDEOptions {
     const config = context.launchConfig ?? {};
-    requireIDE(!('ideLegacyImportPath' in config) && !('ideLegacyDatabasePath' in config), 'IDE_LEGACY_IMPORT_RETIRED');
     const defaultKey = 'ide-' + createHash('sha256')
         .update(JSON.stringify([context.desktopId, context.appId])).digest('hex').slice(0, 32);
     const sessionKey = config.ideSessionKey ?? defaultKey;
