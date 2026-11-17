@@ -14,7 +14,8 @@ export class WorkerCapacity {
     private resolveClose?: () => void;
 
     constructor(private readonly limit: number) {
-        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw closeError('CONFIG_INVALID');
+        if (limit !== Number.POSITIVE_INFINITY &&
+            (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)) throw closeError('CONFIG_INVALID');
     }
 
     reserve(): () => void {

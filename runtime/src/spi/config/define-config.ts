@@ -72,8 +72,9 @@ function validateRuntimeConfig(config: RuntimeConfig): void {
     if (!Number.isSafeInteger(worker.timeoutMs) || worker.timeoutMs < 1000 || worker.timeoutMs > 300_000) {
         errors.push('[worker.timeoutMs] worker.timeoutMs must be a safe integer between 1000ms and 300000ms');
     }
-    if (!Number.isSafeInteger(worker.maxWorkers) || worker.maxWorkers < 1 || worker.maxWorkers > 100) {
-        errors.push('[worker.maxWorkers] worker.maxWorkers must be a safe integer between 1 and 100');
+    if (worker.maxWorkers !== Number.POSITIVE_INFINITY &&
+        (!Number.isSafeInteger(worker.maxWorkers) || worker.maxWorkers < 1 || worker.maxWorkers > 100)) {
+        errors.push('[worker.maxWorkers] worker.maxWorkers must be positive Infinity or a safe integer between 1 and 100');
     }
     if (!(typeof logger.maxSystemLogs === 'number' && logger.maxSystemLogs >= 10 && logger.maxSystemLogs <= 10_000)) {
         errors.push('[logger.maxSystemLogs] logger.maxSystemLogs must be a number between 10 and 10000');
