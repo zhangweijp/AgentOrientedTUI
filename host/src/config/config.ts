@@ -227,7 +227,7 @@ export namespace Config {
   export type InfoType = Info
 
   export async function getGlobal(): Promise<Info> {
-    const config = await readConfigFile(getGlobalConfigPath())
+    const { im: _im, ...config } = await readConfigFile(getGlobalConfigPath())
     return { ...config, mcp: readMcp(config).mcp }
   }
 

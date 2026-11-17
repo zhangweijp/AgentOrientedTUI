@@ -190,11 +190,13 @@ export class IMRuntimeBridge {
   }
 
   async processFeishuWebhook(payload: unknown, accountId?: string): Promise<{ status: number; body: Record<string, unknown> }> {
-    const plugin = this.gatewayManager.getChannel('feishu') as (IChannelPlugin & {
-      processWebhook?: (event: any) => Promise<{ accepted: boolean; reason?: string }>
-    }) | undefined
+    const plugin = this.gatewayManager.getChannel('feishu')
 
-    if (!this.started || this.currentConfig?.im?.enabled === false || !plugin?.processWebhook) {
+    if (
+      !this.started
+      || !plugin?.processWebhook
+      || !this.gatewayManager.listChannels().some(channel => channel.id === plugin.id && channel.active)
+    ) {
       return {
         status: 503,
         body: { code: 1, msg: 'feishu channel is not available' },

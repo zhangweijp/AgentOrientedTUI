@@ -50,6 +50,7 @@ describe('tRPC im router', () => {
         await writeFile(mcpFile, legacy);
         expect(await caller.im.getConfig()).toEqual({ im: {} });
         expect((await Config.get()).im).toEqual({});
+        expect((await Config.getGlobal()).im).toBeUndefined();
         expect(await readFile(mcpFile, 'utf8')).toBe(legacy);
     });
 
