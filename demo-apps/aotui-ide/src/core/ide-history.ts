@@ -40,7 +40,7 @@ function histories(value: unknown): Record<string, FileInfo[]> {
 }
 function parseHistory(text: string): HistoryData {
     const data = JSON.parse(text);
-    requireIDE(data?.version === 1 && Object.keys(data).every(key => ['version', 'workspaces', 'migration'].includes(key)), 'HISTORY_INVALID');
+    requireIDE(data?.version === 1, 'HISTORY_INVALID');
     return { version: 1, workspaces: histories(data.workspaces) };
 }
 export class IDEHistory {
