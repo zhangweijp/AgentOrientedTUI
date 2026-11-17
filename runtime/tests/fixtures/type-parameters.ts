@@ -1,8 +1,9 @@
-import { compileOrdinaryProfile } from '../../src/core/tool/ordinary-parameter-profile.js';
-import { validateTypeParameters } from '../../src/adapters/ordinary-invocation-v2.js';
-import type { ViewToolInvokeV6Message } from '../../src/spi/worker-protocol/messages.js';
+import { compileToolParameters } from '../../src/core/tool/tool-parameters.js';
+import { validateInvocationParameters } from '../../src/adapters/tool-invocation.js';
+import type { ViewToolInvokeMessage } from '../../src/spi/worker-protocol/messages.js';
 
 /** Detached wire fixtures compile their own declaration; production uses the live registration. */
-export function validateCapturedTypeParameters(message: ViewToolInvokeV6Message) {
-    return validateTypeParameters(message, compileOrdinaryProfile(message.tool.inputSchema));
+export function validateCapturedTypeParameters(message: ViewToolInvokeMessage) {
+    const compiled = compileToolParameters(message.tool.inputSchema);
+    return validateInvocationParameters(message, compiled.ok ? compiled.contract : undefined);
 }

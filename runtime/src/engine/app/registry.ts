@@ -19,7 +19,7 @@ import { AOTUIError } from '../../spi/core/errors.js';
 import type { TUIConfig, AppConfigEntry } from './config.js';
 import type { AppLaunchConfig } from '../../spi/app/app-config.interface.js';
 import type { AppInteractionOptions } from '../../spi/runtime/app-interaction.interface.js';
-import { captureOptions } from './interaction-config.js';
+import { appInteractionFields, captureOptions } from './interaction-config.js';
 import { createDefaultConfig, validateConfig } from './config.js';
 // [Option C] ESM-compatible imports for file system access
 import * as fs from 'fs';
@@ -59,7 +59,7 @@ export interface AppRegistryInstallOptions extends AppInteractionOptions {
     dynamicConfig?: AppLaunchConfig;
 }
 
-const installFields = { dynamicConfig: 'object', toolsEnabled: 'boolean' } as const;
+const installFields = { dynamicConfig: 'object', ...appInteractionFields } as const;
 const entryFields = {
     name: 'string', source: 'string', enabled: 'boolean', installedAt: 'string',
     autoStart: 'boolean', originalSource: 'string', distribution: 'object',
@@ -359,8 +359,10 @@ export class AppRegistry {
             if (typeof manifest.version !== 'string' || !manifest.version || typeof manifest.entry?.main !== 'string' || !manifest.entry.main)
                 throw new TypeError('version and entry.main are required; build the App to regenerate aoapp.json');
             if (!hasViewTypeToolAuthoringProtocol(manifest)) throw Object.assign(new Error('The generated manifest declares an unsupported authoring protocol; rebuild with the matching SDK'), { code: 'APP_AUTHORING_PROTOCOL_UNSUPPORTED', path: manifestPath + '#toolAuthoringProtocol' });
-            if (manifest.persistenceSupport !== STATE_SESSION_PROTOCOL || manifest.appLifecycleSupport !== APP_LIFECYCLE_PROTOCOL)
-                throw new TypeError('The generated manifest requires the current persistence and lifecycle contracts');
+            if (Object.hasOwn(manifest, 'persistenceSupport') && manifest.persistenceSupport !== STATE_SESSION_PROTOCOL)
+                throw new TypeError('The generated manifest declares an unsupported persistenceSupport; rebuild with the matching SDK');
+            if (manifest.appLifecycleSupport !== APP_LIFECYCLE_PROTOCOL)
+                throw new TypeError('The generated manifest requires the current App lifecycle contract');
             const modulePath = pathModule.resolve(directory, manifest.entry.main);
             if (targetInfo.isFile() && target !== modulePath)
                 throw new AOTUIError('APP_IDENTITY_MISMATCH', { expected: modulePath, actual: target, path: 'manifest.entry.main' });
@@ -466,6 +468,7 @@ export class AppRegistry {
                             whenToUse,
                             config: dynamicConfig,
                             toolsEnabled: options.toolsEnabled,
+                            projectionLimits: options.projectionLimits,
                         }
                     );
                     results.push({ name, status: 'installed', appId: appId as AppID });
@@ -479,6 +482,7 @@ export class AppRegistry {
                         modulePath,
                         config: dynamicConfig,
                         toolsEnabled: options.toolsEnabled,
+                        projectionLimits: options.projectionLimits,
                     });
                     results.push({ name, status: 'registered', appId: appId as AppID });
                     console.log(`[AppRegistry] Registered "${name}" to Desktop ${desktop.id} (Pending mode)`);

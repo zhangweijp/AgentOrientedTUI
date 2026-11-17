@@ -91,7 +91,7 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
       } finally { await plain.release(); }
     } finally {
       await plainSource.dispose(); authority.close(); await authority.whenClosed();
-      assert.equal(authority.inspect().combinedBytes, 0); assert.equal(core.store.inspect().activeLeases, 0);
+      assert.equal(authority.inspect().combinedBytes, 0); assert.equal(core.store.inspect().activeHolds, 0);
       projection.close(); registry.dispose(); core.lifecycle.dispose();
     }
 

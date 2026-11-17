@@ -1,4 +1,4 @@
-import type { SnapshotIssueCode, ToolDescriptorV5, ViewSnapshotV4 } from '../snapshot/types.js';
+import type { SnapshotIssueCode, ToolDescriptor, ViewSnapshot } from '../snapshot/types.js';
 
 export interface ObservationJsonLimits {
     readonly maxDepth: number;
@@ -23,6 +23,8 @@ export type ObservationRegistryLimitOverrides = {
     readonly [K in keyof ObservationRegistryLimits]?: ObservationRegistryLimits[K] extends ObservationJsonLimits
         ? Partial<ObservationJsonLimits> : number;
 };
+export type ProjectionLimits = Pick<ObservationRegistryLimits, 'maxViews' | 'maxRefs' | 'maxTools' | 'observation' | 'metadata'>;
+export type ProjectionLimitOverrides = Pick<ObservationRegistryLimitOverrides, keyof ProjectionLimits>;
 export interface ObservationRegistryOptions {
     readonly namespace: string;
     readonly limits?: ObservationRegistryLimitOverrides;
@@ -37,8 +39,8 @@ export interface ObservationSource {
     readonly revision: number;
 }
 export interface ObservationSelection { readonly all: true }
-export type ObservedView = Readonly<Omit<ViewSnapshotV4, 'toolBindings'>>;
-export interface ObservedTool extends ToolDescriptorV5 {
+export type ObservedView = Readonly<Omit<ViewSnapshot, 'toolBindings'>>;
+export interface ObservedTool extends ToolDescriptor {
     /** Omitted when every observed View of this type can receive the Tool. */
     readonly eligibleViewIds?: readonly string[];
 }

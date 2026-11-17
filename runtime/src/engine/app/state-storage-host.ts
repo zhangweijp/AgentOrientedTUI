@@ -1,19 +1,18 @@
 import * as path from 'node:path';
 import { homedir } from 'node:os';
-import { createNodeStateStorage } from '../../adapters/storage/node-state-storage.js';
-import type { NodeStateStorageLimits } from '../../adapters/storage/node-state-storage.js';
+import { createSqliteStateStorage, type SqliteStateStorageLimits } from '../../adapters/storage/sqlite-state-storage.js';
 import { captureStorageRequest, DEFAULT_STATE_TRANSPORT_LIMITS } from '../../adapters/storage/state-storage-protocol.js';
 import type { StateStorageRequest, StateStorageResponse, StateTransportLimits } from '../../adapters/storage/state-storage-protocol.js';
 import { captureStateReadResult, captureStateMutationResult, captureStateReleaseResult, failedRead, failedMutation,
     stateIssue, unknownMutation } from '../../core/persistence/state-storage.js';
-import type { StateStorage, StateReleaseResult, StateIssueCode } from '../../core/persistence/state-storage.js';
+import type { StateStorage, StateReleaseResult, StateIssueCode, StateStorageBackend } from '../../core/persistence/state-storage.js';
+export type { StateStorageBackend } from '../../core/persistence/state-storage.js';
 
-export const DEFAULT_NODE_STATE_LIMITS: NodeStateStorageLimits = Object.freeze({ maxActiveOwners: 64, maxRoots: 16,
+export const DEFAULT_NODE_STATE_LIMITS: SqliteStateStorageLimits = Object.freeze({ maxActiveOwners: 64, maxRoots: 16,
     maxClaimedNamespaces: 512, maxPendingRequests: 256, maxRecordBytes: 262272, maxAddressBytes: 1024,
-    maxPathBytes: 4096, maxSegmentBytes: 128, maxDirectoryEntries: 4096, maxBufferedBytes: 16777216 });
-export type StateStorageBackend = Pick<ReturnType<typeof createNodeStateStorage>, 'open'>;
+    maxPathBytes: 4096, maxBufferedBytes: 16777216 });
 // Construction performs no filesystem access. All default Hosts share this exact backend.
-export const defaultStateStorageBackend = createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS);
+export const defaultStateStorageBackend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS);
 export function resolveStateDirectory(config: Readonly<Record<string, unknown>> | undefined, cwd = process.cwd()): string {
     const value = config?.AOTUI_DATA_DIR;
     if (value !== undefined && typeof value !== 'string') throw new Error('INVALID_INPUT: Invalid persistence directory');

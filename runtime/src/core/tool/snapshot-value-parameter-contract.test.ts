@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { RAW_TOOL_ARGUMENT_LIMITS, RESOLVED_TOOL_ARGUMENT_LIMITS } from '../snapshot/snapshot-support.js';
-import { compileOrdinarySchema } from './ordinary-parameter-contract.js';
-import { compileOrdinaryProfile, ordinaryParameterProfile } from './ordinary-parameter-profile.js';
+import { compileToolParameters } from './tool-parameters.js';
 
 const ref = (kind = 'File', value: any = { type: 'object' }) => ({ type: 'string', minLength: 1,
     'x-aotui-ref-kind': kind, 'x-aotui-ref-value': value });
 const schema = (properties: Record<string, any> = { file: ref() }, required = ['file'], additionalProperties = false) =>
     ({ type: 'object', properties, required, additionalProperties });
 function compile(value = schema()) {
-    const c = compileOrdinarySchema(value);
+    const c = compileToolParameters(value);
     if (!c.ok) throw Error(JSON.stringify(c.issue)); return c.contract;
 }
 describe('Ref parameters in the shared qualified compiler', () => {
@@ -19,7 +18,7 @@ describe('Ref parameters in the shared qualified compiler', () => {
         expect(c.validateModelInput({ file: 'File:a', choice: 'ok' }).ok).toBe(true);
         expect(c.validateResolvedInput({ file: { path: 'a' }, choice: 'ok' }).ok).toBe(true);
         expect(c.validateResolvedInput({ file: 'File:a', choice: 'ok' }).ok).toBe(false);
-        expect(compileOrdinaryProfile(ordinaryParameterProfile(c))?.schema).toEqual(c.schema);
+        expect(compileToolParameters(c.schema)).toMatchObject({ ok: true, contract: { schema: c.schema } });
         expect(Object.isFrozen(c.schema)).toBe(true);
     });
     it('requires exact Ref type identity and keeps significant whitespace in the declaration', () => {
@@ -36,7 +35,7 @@ describe('Ref parameters in the shared qualified compiler', () => {
         const resolved = kind === 'optional' ? {} : { file: { path: 'a' }, other: { path: 'b' } };
         expect(c.validateModelInput(raw).ok).toBe(true);
         expect(c.validateResolvedInput(resolved).ok).toBe(true);
-        expect(compileOrdinaryProfile(ordinaryParameterProfile(c))?.schema).toEqual(c.schema);
+        expect(compileToolParameters(c.schema)).toMatchObject({ ok: true, contract: { schema: c.schema } });
     });
     it('admits a bounded array of Ref names with a readonly object value per selection', () => {
         const c = compile(schema({ file: { type: 'array', items: ref(), maxItems: 2 } }));
@@ -45,14 +44,14 @@ describe('Ref parameters in the shared qualified compiler', () => {
         expect(c.validateModelInput({ file: [{ path: 'a' }] }).ok).toBe(false);
         expect(c.validateResolvedInput({ file: ['File:a'] }).ok).toBe(false);
         expect(c.validateModelInput({ file: ['a', 'b', 'c'] }).ok).toBe(false);
-        expect(compileOrdinaryProfile(ordinaryParameterProfile(c))?.schema).toEqual(c.schema);
+        expect(compileToolParameters(c.schema)).toMatchObject({ ok: true, contract: { schema: c.schema } });
     });
     it.each(['nested', 'nested-names-array', 'union'])('rejects unsupported Ref shape %s', kind => {
         const s = schema();
         if (kind === 'nested') s.properties.file = { type: 'object', properties: { nested: ref() } };
         if (kind === 'nested-names-array') s.properties.file = { type: 'array', items: { type: 'array', items: ref() } };
         if (kind === 'union') s.properties.file = { anyOf: [ref(), { type: 'null' }] };
-        expect(compileOrdinarySchema(s).ok).toBe(false);
+        expect(compileToolParameters(s).ok).toBe(false);
     });
     it('keeps an object-list payload as one Ref and validates every business item', () => {
         const c = compile(schema({ file: ref('Files', { type: 'array', items: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'], additionalProperties: false } }) }));
@@ -75,30 +74,16 @@ describe('Ref parameters in the shared qualified compiler', () => {
         expect(Object.hasOwn(r.value, '__proto__')).toBe(true); expect(r.value).not.toBe(input);
         expect(Object.isFrozen(r.value.file)).toBe(true);
     });
-    it.each(['snapshot-value-params-v1', 'ordinary-params-v1', 'future', undefined])('never upgrades an old or wrong Ref marker %s', marker => {
-        const p: any = { ...ordinaryParameterProfile(compile()) as object, 'x-aotui-parameter-contract': marker };
-        if (marker === undefined) delete p['x-aotui-parameter-contract'];
-        expect(compileOrdinaryProfile(p)).toBeNull();
-    });
-    it.each(['extra-root', 'required-order', 'missing-extra', 'old-annotation'])('rejects a noncanonical profile %s', kind => {
-        const p: any = JSON.parse(JSON.stringify(ordinaryParameterProfile(compile(schema({ file: ref(), z: { type: 'string' } }, ['file', 'z'])))));
-        if (kind === 'extra-root') p.extra = true;
-        if (kind === 'required-order') p.required.reverse();
-        if (kind === 'missing-extra') delete p.additionalProperties;
-        if (kind === 'old-annotation') p.properties.file['x-aotui-ref'] = { version: 1 };
-        expect(compileOrdinaryProfile(p)).toBeNull();
-    });
-    it('reads zero getters in Schema, profile, raw and resolved parameters', () => {
+    it('reads zero getters in Schema, raw and resolved parameters', () => {
         let reads = 0;
         const bad = Object.defineProperty({}, 'file', { enumerable: true, get() { reads++; return 'secret'; } });
-        expect(compileOrdinarySchema(schema(bad)).ok).toBe(false);
-        expect(compileOrdinaryProfile(bad)).toBeNull();
+        expect(compileToolParameters(schema(bad)).ok).toBe(false);
         expect(compile().validateModelInput(bad).ok).toBe(false);
         expect(compile().validateResolvedInput(bad).ok).toBe(false); expect(reads).toBe(0);
     });
     it('includes Ref type and complete payload Schema in canonical identity and byte limits', () => {
         expect(compile().schema).not.toEqual(compile(schema({ file: ref('Todo') })).schema);
-        expect(compileOrdinarySchema(schema({ file: ref('x'.repeat(70 * 1024)) })).ok).toBe(false);
+        expect(compileToolParameters(schema({ file: ref('x'.repeat(70 * 1024)) })).ok).toBe(false);
         const a = compile(schema({ file: ref(), z: { type: 'string' } }));
         const b = compile(schema({ z: { type: 'string' }, file: ref() })); expect(a.schema).toEqual(b.schema);
     });

@@ -3,9 +3,9 @@ import { expect, it } from 'vitest';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { SemanticSnapshotReceiver } from '../../runtime/src/adapters/snapshot/receiver.js';
 import { createViewOwnedTools } from '../../runtime/src/core/tool/view-owned-tools.js';
-import { compileOrdinarySchema } from '../../runtime/src/core/tool/ordinary-parameter-contract.js';
+import { compileToolParameters } from '../../runtime/src/core/tool/tool-parameters.js';
 import type { AppDiscoveryInfo, IDesktop, IKernel } from '../../runtime/src/spi/runtime/kernel.interface.js';
-import type { ExecutionBinding, InvocationContext, InvocationSource, AppInteractionPolicy } from '@aotui/runtime/core';
+import type { ExecutionBinding, InvocationContext, AppInteractionPolicy } from '@aotui/runtime/core';
 import type { ViewToolInvocationTerminal } from '../../runtime/src/core/tool/invocation-terminal.js';
 import type { SnapshotCore } from '../../runtime/src/core/snapshot/types.js';
 
@@ -17,7 +17,7 @@ function inspectCore(receiver: SemanticSnapshotReceiver) {
 
 function createApp(appId: string, name: string, instanceId: string, viewType: string, body: string, viewName = 'Workspace') {
     const registry = createViewOwnedTools(appId, instanceId);
-    const input = compileOrdinarySchema({ type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false });
+    const input = compileToolParameters({ type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false });
     if (!input.ok) throw new Error('The real registry fixture requires a valid ordinary Tool contract.');
 
     const invoked: string[] = [];
@@ -35,10 +35,6 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
     const receiver = new SemanticSnapshotReceiver(appId, instanceId, () => 100);
     const binding: ExecutionBinding = {
         identity: {},
-        validateInput: (_source: InvocationSource, value: Readonly<Record<string, unknown>>) => {
-            const checked = input.contract.validateModelInput(value);
-            return checked.ok ? { ok: true, value: checked.value } : { ok: false };
-        },
         isLive: source => registry.validateTypeToolBinding(source.tool, source.receiver).success
             ? { ok: true } : { ok: false },
         execute: async (context: InvocationContext) => {
@@ -60,7 +56,7 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
             type: item.viewType, name: viewName, kind: 'state' as const,
             content: { format: 'markdown-v1' as const, value: nextBody } }));
         const tools = Object.fromEntries(frame.tools.map(tool => [tool.id, tool]));
-        const accepted = receiver.acceptPrepared({ schemaVersion: 5, appId, instanceId, producerSeq: sequence,
+        const accepted = receiver.acceptPrepared({ schemaVersion: 6, appId, instanceId, producerSeq: sequence,
             sourceEpoch: sequence, capturedAt: sequence, views, refs: {}, tools });
         if (accepted.status !== 'published' && accepted.status !== 'unchanged') {
             throw new Error(`The real Snapshot Receiver rejected ${appId}: ${accepted.issue.code}`);
@@ -149,7 +145,7 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         for (const assembly of assemblies) {
             expect(assembly.receiver.getInteractionStats()).toMatchObject({ sourceBytes: 0, workBytes: 0,
                 observations: { observations: 0, reservations: 0, totalBytes: 0 } });
-            expect(inspectCore(assembly.receiver).activeLeases).toBe(0);
+            expect(inspectCore(assembly.receiver).activeHolds).toBe(0);
         }
 
         // Repair the declaration in the same live Registry and publish a new
@@ -173,7 +169,7 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
             expect(assembly.receiver.getInteractionStats()).toMatchObject({ closed: true, combinedBytes: 0,
                 observations: { observations: 0, reservations: 0, totalBytes: 0 } });
             expect(inspectCore(assembly.receiver)).toMatchObject({
-                state: 'disposed', activeLeases: 0, currentBytes: 0,
+                state: 'disposed', activeHolds: 0, currentBytes: 0,
             });
             expect(assembly.registry.inspect()).toMatchObject({ state: 'disposed', views: 0, bindings: 0, retainedBytes: 0 });
         }

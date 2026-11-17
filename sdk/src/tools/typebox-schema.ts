@@ -1,4 +1,4 @@
-import type { JsonValue, OrdinaryCompileResult } from '@aotui/runtime/core';
+import type { JsonValue, ToolParameterCompileResult } from '@aotui/runtime/core';
 
 /**
  * Export the JSON Schema portion of a TypeBox schema without invoking any
@@ -28,7 +28,7 @@ export class TypeBoxSchemaExportError extends Error {
     }
 }
 
-export function schemaDeclarationError({ code, path, message }: Extract<OrdinaryCompileResult, { ok: false }>['issue']): TypeBoxSchemaExportError {
+export function schemaDeclarationError({ code, path, message }: Extract<ToolParameterCompileResult, { ok: false }>['issue']): TypeBoxSchemaExportError {
     const codes = {
         PARAMETER_DECLARATION_INVALID: 'TOOL_SCHEMA_INVALID',
         PARAMETER_DECLARATION_UNSUPPORTED: 'TOOL_SCHEMA_UNSUPPORTED',

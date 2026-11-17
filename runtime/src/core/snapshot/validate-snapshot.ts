@@ -1,18 +1,16 @@
-import { MARKDOWN_VIEW_FORMAT } from './types.js';
-import { SNAPSHOT_SCHEMA_VERSION } from './types.js';
-/** Validate the sole supported V5 snapshot contract before it reaches storage. */
-import { canonicalJson, copyJson, diagnosticDigest, SnapshotDataError, utf8Size } from './json.js';
+import { MARKDOWN_VIEW_FORMAT, SNAPSHOT_SCHEMA_VERSION } from './types.js';
+import { canonicalJson, checkJsonLimits, copyJson, diagnosticDigest, SnapshotDataError, utf8Size } from './json.js';
 import { DEFAULT_SNAPSHOT_LIMITS, MAX_VIEW_TOOL_BINDINGS, REF_VALUE_LIMITS, VIEW_METADATA_BYTES, refKey } from './snapshot-support.js';
-import { compileCapturedOrdinaryProfile } from '../tool/ordinary-parameter-profile.js';
+import { compileCapturedToolParameters } from '../tool/tool-parameters.js';
 import type { SnapshotDraftEnvelope } from './types.js';
 import type {
-    JsonValue, PreparedAppSnapshotDraftV5, SnapshotIssue, SnapshotLimits, ToolDescriptorV5,
+    JsonValue, PreparedAppSnapshotDraft, SnapshotIssue, SnapshotLimits, ToolDescriptor,
 } from './types.js';
 
 type Plain = Readonly<Record<string, JsonValue>>;
-type V5Result =
+type SnapshotValidation =
     | Readonly<{ ok: true; value: Readonly<{
-        draft: PreparedAppSnapshotDraftV5;
+        draft: PreparedAppSnapshotDraft;
         canonicalContent: string;
         contentDigest: string;
         bytes: number;
@@ -78,7 +76,7 @@ function envelopeFromOwnDescriptors(input: unknown): SnapshotDraftEnvelope | und
         return undefined;
     }
 }
-function rejected(error: unknown, envelope?: SnapshotDraftEnvelope): V5Result {
+function rejected(error: unknown, envelope?: SnapshotDraftEnvelope): SnapshotValidation {
     const issue: SnapshotIssue = error instanceof SnapshotDataError
         ? Object.freeze({ code: error.code, path: error.path, message: error.message })
         : Object.freeze({
@@ -90,11 +88,11 @@ function rejected(error: unknown, envelope?: SnapshotDraftEnvelope): V5Result {
 }
 
 /** Validate cross-View identities and type activation references, never any Handler. */
-export function validatePreparedV5Draft(
+export function validatePreparedSnapshot(
     input: unknown,
     limits: SnapshotLimits = DEFAULT_SNAPSHOT_LIMITS,
-    previousTools?: (appId: string, instanceId: string) => Readonly<Record<string, ToolDescriptorV5>> | undefined,
-): V5Result {
+    previousTools?: (appId: string, instanceId: string) => Readonly<Record<string, ToolDescriptor>> | undefined,
+): SnapshotValidation {
     const envelope = envelopeFromOwnDescriptors(input);
     let copied: JsonValue;
     try {
@@ -109,13 +107,13 @@ export function validatePreparedV5Draft(
         const root = obj(copied, '$');
         exact(root, ['schemaVersion', 'appId', 'instanceId', 'producerSeq', 'sourceEpoch',
             'capturedAt', 'views', 'refs', 'tools'], '$');
-        if (root.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) fail('$.schemaVersion', 'Expected Snapshot V5');
+        if (root.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) fail('$.schemaVersion', 'Unsupported Snapshot schema version');
         const appId = str(root.appId, '$.appId');
         const instanceId = str(root.instanceId, '$.instanceId');
         const previous = previousTools?.(appId, instanceId);
-        int(root.producerSeq, '$.producerSeq', 1);
-        int(root.sourceEpoch, '$.sourceEpoch');
-        int(root.capturedAt, '$.capturedAt');
+        const producerSeq = int(root.producerSeq, '$.producerSeq', 1);
+        const sourceEpoch = int(root.sourceEpoch, '$.sourceEpoch');
+        const capturedAt = int(root.capturedAt, '$.capturedAt');
 
         const views = list(root.views, '$.views');
         if (views.length > limits.maxViews) fail('$.views', 'View capacity exceeded');
@@ -160,7 +158,7 @@ export function validatePreparedV5Draft(
             exact(target, ['kind', 'payload'], path + '.target');
             const payloadPath = path + '.target.payload';
             withinBytes(target.payload!, Math.min(limits.maxRefPayloadBytes, REF_VALUE_LIMITS.maxCanonicalBytes), payloadPath);
-            try { copyJson(target.payload, REF_VALUE_LIMITS); }
+            try { checkJsonLimits(target.payload, REF_VALUE_LIMITS); }
             catch (error) {
                 if (error instanceof SnapshotDataError) throw new SnapshotDataError(error.code, payloadPath + error.path.slice(1), error.message);
                 throw error;
@@ -211,23 +209,27 @@ export function validatePreparedV5Draft(
             const schema = obj(tool.inputSchema, path + '.inputSchema');
             if (schema.type !== 'object') fail(path + '.inputSchema.type', 'Tool inputs must have an object JSON schema');
             const canonical = withinBytes(schema, limits.maxToolSchemaBytes, path + '.inputSchema');
-            if (!compileCapturedOrdinaryProfile(schema, canonical, previous?.[id]?.inputSchema)) fail(path + '.inputSchema', 'Type Tools require a supported normalized parameter profile');
+            if (!compileCapturedToolParameters(schema, canonical, previous?.[id]?.inputSchema)) fail(path + '.inputSchema', 'Expected a supported normalized Tool parameter schema');
             if (!activeTools.has(id)) fail(path, 'Tool requires at least one enabled View binding');
-        }
-        const bytes = utf8Size(canonicalJson(copied));
-        if (bytes > limits.maxSnapshotBytes) {
-            throw new SnapshotDataError('SNAPSHOT_SERIALIZATION_ERROR', '$',
-                'Snapshot byte budget exceeded');
         }
         const canonicalContent = canonicalJson({
             schemaVersion: SNAPSHOT_SCHEMA_VERSION, views: root.views!, refs: root.refs!, tools: root.tools!,
         });
+        const contentBytes = new TextEncoder().encode(canonicalContent);
+        const envelopeBytes = utf8Size(canonicalJson({ appId, instanceId, producerSeq, sourceEpoch, capturedAt }));
+        // Both objects are nonempty and their keys are disjoint. Joining them
+        // replaces the two inner braces with one comma. Key order costs no bytes.
+        const bytes = contentBytes.byteLength + envelopeBytes - 1;
+        if (bytes > limits.maxSnapshotBytes) {
+            throw new SnapshotDataError('SNAPSHOT_SERIALIZATION_ERROR', '$',
+                'Snapshot byte budget exceeded');
+        }
         return Object.freeze({
             ok: true,
             value: Object.freeze({
-                draft: copied as unknown as PreparedAppSnapshotDraftV5,
+                draft: copied as unknown as PreparedAppSnapshotDraft,
                 canonicalContent,
-                contentDigest: diagnosticDigest(canonicalContent),
+                contentDigest: diagnosticDigest(contentBytes),
                 bytes,
             }),
         });

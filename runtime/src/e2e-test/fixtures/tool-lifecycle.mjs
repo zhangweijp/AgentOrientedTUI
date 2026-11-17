@@ -82,7 +82,7 @@ function Root() {
             h(Counter, { owner, id: 'counter2', generation: 1, enabled: view.enabled })),
     ]);
 }
-const factory = createTUIApp({ app_name: 'tool_lifecycle', component: Root, viewTypes:[CounterType] });
+const factory = createTUIApp({persistence:true, app_name: 'tool_lifecycle', component: Root, viewTypes:[CounterType] });
 const initialize = factory.initialize;
 factory.initialize = async (...args) => {
     if (args[0].launchConfig.holdInitialization) {

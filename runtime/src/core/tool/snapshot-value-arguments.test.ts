@@ -2,18 +2,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
 import { refKey } from '../snapshot/snapshot-support.js';
 import { canonicalJson, utf8Size } from '../snapshot/json.js';
-import type { AppSnapshotV5, JsonValue, PreparedAppSnapshotDraftV5, SnapshotStoreOptions } from '../snapshot/types.js';
-import { compileOrdinaryProfile } from './ordinary-parameter-profile.js';
+import type { AppSnapshot, JsonValue, PreparedAppSnapshotDraft, SnapshotStoreOptions } from '../snapshot/types.js';
 import { prepareViewTypeParameters } from './snapshot-value-arguments.js';
-import { compileOrdinarySchema } from './ordinary-parameter-contract.js';
-import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
+import { compileToolParameters } from './tool-parameters.js';
 
 const schema = (refType = 'unknown', parameter = 'file'): JsonValue => {
-    const result = compileOrdinarySchema({ type: 'object', properties: { [parameter]: {
+    const result = compileToolParameters({ type: 'object', properties: { [parameter]: {
         type: 'string', minLength: 1, 'x-aotui-ref-kind': refType, 'x-aotui-ref-value': { type: 'object' },
     } }, required: [parameter], additionalProperties: true });
     if (!result.ok) throw Error('Invalid parameter fixture');
-    return ordinaryParameterProfile(result.contract);
+    return result.contract.schema;
 };
 
 function fixture(options: {
@@ -43,10 +41,10 @@ function fixture(options: {
             },
         };
     }
-    function attempt(patch: Partial<PreparedAppSnapshotDraftV5> = {}) {
+    function attempt(patch: Partial<PreparedAppSnapshotDraft> = {}) {
         const seq = ++sequence;
         return core.committer.accept({
-            schemaVersion: 5, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
+            schemaVersion: 6, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
             views: [
                 { toolBindings: [{toolId,activationId}], id: viewId, viewInstanceId, type: 'FileDetail', name: 'A', kind: 'state', content: { format: 'markdown-v1', value: 'A' } },
                 { toolBindings: [], id: 'fd_B', viewInstanceId: 'mount_B', type: 'FileDetail', name: 'B', kind: 'state', content: { format: 'markdown-v1', value: 'B' } },
@@ -56,10 +54,10 @@ function fixture(options: {
             } }, ...patch,
         });
     }
-    function publish(patch: Partial<PreparedAppSnapshotDraftV5> = {}): AppSnapshotV5 {
+    function publish(patch: Partial<PreparedAppSnapshotDraft> = {}): AppSnapshot {
         const result = attempt(patch);
         expect(result.status).toBe('published');
-        if (result.status !== 'published' || result.snapshot.schemaVersion !== 5) throw new Error('Expected a published Snapshot V5');
+        if (result.status !== 'published' || result.snapshot.schemaVersion !== 6) throw new Error('Expected a published Snapshot');
         return result.snapshot;
     }
     const source = publish();
@@ -67,7 +65,9 @@ function fixture(options: {
         args: { file: `${viewId}.${refId}` } as Record<string, unknown> };
     const visibleRefs = [{ refId, viewId, viewInstanceId }];
     const tool=source.tools[toolId]!;
-    const contract=compileOrdinaryProfile(tool.inputSchema)!;
+    const compiled = compileToolParameters(tool.inputSchema);
+    if (!compiled.ok) throw new Error(compiled.issue.message);
+    const { contract } = compiled;
     const receiver={viewId,viewInstanceId,activationId};
     function prepare(data=request,granted=visibleRefs) {
         return prepareViewTypeParameters(core.store,{...context,snapshotId:data.snapshotId,tool,receiver},contract,data.args as any,granted);
@@ -83,20 +83,20 @@ function success(f: Fixture, request: Fixture['request'] = f.request) {
     return result;
 }
 function denied(f: Fixture, request: Fixture['request'], code: string) {
-    const leases = f.core.store.inspect().activeLeases;
+    const leases = f.core.store.inspect().activeHolds;
     const result = f.prepare(request);
     expect(result).toMatchObject({ status: 'rejected', issue: { code } });
-    expect(f.core.store.inspect().activeLeases).toBe(leases);
+    expect(f.core.store.inspect().activeHolds).toBe(leases);
     return result;
 }
 function assertNoLease(f: Fixture, prepared: ReturnType<typeof success>) {
     expect(prepared.status).toBe('prepared');
-    expect(f.core.store.inspect().activeLeases).toBe(0);
+    expect(f.core.store.inspect().activeHolds).toBe(0);
 }
 
 describe('W01: original Store source, exact owner and detached arguments', () => {
     it.each(['changed', 'deleted'])('prepares historical A after the latest Ref is %s', change => {
-        const f = fixture(); const held = f.core.store.acquire(f.source.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
+        const f = fixture(); const held = f.core.store.acquire(f.source.id); if (held.status !== 'acquired') throw Error('holder');
         f.publish({ refs: change === 'changed' ? f.refs({ label: 'new A' }) : {} });
         const result = success(f);
         expect(result.effectiveArgs).toEqual({ file: { label: 'A' } });
@@ -104,7 +104,7 @@ describe('W01: original Store source, exact owner and detached arguments', () =>
         expect(result.refSources).toEqual([{ param: 'file', refId: 'selected', kind: 'snapshot-value', refType: 'unknown',
             snapshotId: f.source.id, viewId: 'fd_A', viewInstanceId: 'mount_A' }]);
         expect(result.refSources[0]).not.toHaveProperty('payload');
-        held.lease.release(); assertNoLease(f,result);
+        held.hold.release(); assertNoLease(f,result);
     });
 
     it('selects same-name Refs by explicit View and never guesses from visibility', () => {
@@ -169,7 +169,7 @@ describe('W01: narrow execution subset and fixed rejection classes', () => {
         const tool = f.source.tools[f.toolId]!;
         const result = f.attempt({ tools: { [f.toolId]: { ...tool, inputSchema } } });
         expect(result).toMatchObject({ status: 'published' });
-        expect(f.core.store.inspect().activeLeases).toBe(0);
+        expect(f.core.store.inspect().activeHolds).toBe(0);
         f.core.lifecycle.dispose();
     });
     it('admits mutating Ref parameters without adding a separate Tool category', () => {

@@ -129,7 +129,7 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
             expect(report.lastIssueCode).toBeUndefined();
             const lookup = (host as any).snapshotReceiver.core.store.getById(report.snapshotId);
             expect(lookup).toMatchObject({ status:'found', snapshot:{
-                schemaVersion:5, views:[{id:'fd_0', content:{value: expect.stringContaining('Stable FileDetail')}}],
+                schemaVersion:6, views:[{id:'fd_0', content:{value: expect.stringContaining('Stable FileDetail')}}],
             }});
             if (lookup.status === 'found') {
                 expect(lookup.snapshot.revision).toBe(2);

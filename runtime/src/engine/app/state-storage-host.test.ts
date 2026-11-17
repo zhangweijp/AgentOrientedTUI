@@ -1,9 +1,10 @@
+import { readSqliteState } from '../../../tests/fixtures/sqlite-state.js';
 import { it, expect } from 'vitest';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { createStateStorageHost, DEFAULT_NODE_STATE_LIMITS, resolveStateDirectory } from './state-storage-host.js';
-import { createNodeStateStorage } from '../../adapters/storage/node-state-storage.js';
+import { createSqliteStateStorage } from '../../adapters/storage/sqlite-state-storage.js';
 import { DEFAULT_STATE_TRANSPORT_LIMITS } from '../../adapters/storage/state-storage-protocol.js';
 import { stateIssue } from '../../core/persistence/state-storage.js';
 const defer = <T = void>() => { let resolve!: (v: T) => void;const promise = new Promise<T>(r => { resolve = r; });return { promise, resolve }; };
@@ -41,7 +42,7 @@ it('B12: resolves explicit merged configuration and both historical defaults wit
     expect(() => resolveStateDirectory({ AOTUI_DATA_DIR: 42 })).toThrow('INVALID_INPUT');
 });
 it('B04/B11/B13/B14: real Node path, shared backend ownership, exact highwater and desktop fence', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'aotui-b2-host-')), backend = createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS);
+    const root = await mkdtemp(path.join(tmpdir(), 'aotui-b2-host-')), backend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS);
     const first = createStateStorageHost({ instanceId: 'i', desktopId: 'd', rootDirectory: root, backend });
     const second = createStateStorageHost({ instanceId: 'j', desktopId: 'd', rootDirectory: root, backend });
     try {
@@ -50,7 +51,7 @@ it('B04/B11/B13/B14: real Node path, shared backend ownership, exact highwater a
         expect(backend.getStats().ownerSlots).toBe(0);
         expect(await first.accept(req(2, 'replace', { text: '{"value":7}' }))).toMatchObject({ result: { status: 'applied' } });
         expect(await first.accept(req(2, 'remove'))).toMatchObject({ result: { status: 'failed' } });
-        expect(await readFile(path.join(root, 'd/a/k.json'), 'utf8')).toBe('{"value":7}');
+        expect(readSqliteState(root, 'd', 'a', 'k')).toBe('{"value":7}');
         expect(await second.accept({ ...req(1), instanceId: 'j' })).toMatchObject({ result: { status: 'failed', issue: { code: 'NAMESPACE_BUSY' } } });
         expect((await first.release()).status).toBe('released');
         expect(await second.accept({ ...req(2), instanceId: 'j' })).toMatchObject({ result: { status: 'found' } });

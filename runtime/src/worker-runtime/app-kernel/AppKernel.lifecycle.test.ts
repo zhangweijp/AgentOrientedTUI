@@ -1,22 +1,22 @@
+import { DEFAULT_PROJECTION_LIMITS } from '../../core/invocation/observation-registry.js';
 import { detailFrame, publishedTool } from '../../../tests/fixtures/app-frame.js';
 import { expect, it, vi } from 'vitest';
+import type { AppContext } from '../../spi/index.js';
 import { AppKernel } from './AppKernel.js';
 const defer = () => { let resolve!: () => void;const promise = new Promise<void>(yes => { resolve = yes; });return { promise, resolve }; };
 function fixture(initialize: (context: any) => Promise<any> | any, extra = {}) {
     let runtime: any;
-    const kernel = new AppKernel({ appName: 'test_app', factory: { async initialize(context: any) { runtime = context;return initialize(context); } }, ...extra });
-    kernel.setId('app' as any);
-    const context = { appId: 'app', desktopId: 'd' };
-    return { kernel, context, runtime: () => runtime, open: () => kernel.onOpen(context as any) };
+    const context = { appId: 'app', desktopId: 'd' } as AppContext;
+    const kernel = new AppKernel({ ...context, instanceId: 'run', projectionLimits: DEFAULT_PROJECTION_LIMITS, appName: 'test_app', factory: { async initialize(context: any) { runtime = context;return initialize(context); } }, ...extra });
+    return { kernel, context, runtime: () => runtime, open: () => kernel.onOpen() };
 }
-it('passes the enabled lifecycle port to the App and waits for its cleanup', async () => {
+it('passes the App lifecycle port to the App and waits for its cleanup', async () => {
     const close = vi.fn();
     const f = fixture(context => {
         expect(context.appLifecycle).toMatchObject({ protocol: 'app-lifecycle-v2' });
         context.appLifecycle.register({ close });
         return { close() {} };
     });
-    f.kernel.enableAppLifecycle();
     await f.open();
     await f.kernel.onClose();
     expect(close).toHaveBeenCalledTimes(1);

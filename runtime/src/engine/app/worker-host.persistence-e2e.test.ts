@@ -1,13 +1,14 @@
+import { readSqliteState } from '../../../tests/fixtures/sqlite-state.js';
 import { it, expect, vi } from 'vitest';
-import { mkdtemp, writeFile, readFile, mkdir, rm } from 'node:fs/promises';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
+import { mkdirSyncSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Worker } from 'node:worker_threads';
 import { AppWorkerHost } from './worker-host.js';
-import { createNodeStateStorage } from '../../adapters/storage/node-state-storage.js';
+import { createSqliteStateStorage } from '../../adapters/storage/sqlite-state-storage.js';
 import { DEFAULT_NODE_STATE_LIMITS } from './state-storage-host.js';
 import { invokeObservedTool, linkPreactPeer } from '../../../tests/fixtures/semantic-worker-tools.js';
 const repo = path.resolve(process.cwd(), '..');
@@ -48,10 +49,10 @@ function Root() {
   if (port && !generations.has(port.instanceId)) generations.set(port.instanceId, setter);` : ''}
   return h(View, { kind: 'instruction', id: 'root', type: RootType, context: {} }, 'Persistent state');
 }
-export default createTUIApp({viewTypes:[RootType],  app_name: 'test', component: Root });
+export default createTUIApp({persistence: ${persistent}, viewTypes:[RootType],  app_name: 'test', component: Root });
 `;
     await writeFile(file, body);
-    return { root, file, body, data: path.join(root, 'data'), record: path.join(root, 'data/app-state/d/test/state.json') };
+    return { root, file, body, data: path.join(root, 'data'), read: (app = 'test') => readSqliteState(path.join(root, 'data/app-state'), 'd', app, 'state') };
 }
 const host = (f: Awaited<ReturnType<typeof fixture>>, extra: object = {}) => {
     const target = process.env.AOTUI_W08_B2_FACTS_DIR;
@@ -81,13 +82,13 @@ it('B02/B06/B17/B19 fresh Workers restore state across two independent managed r
         expect((await invokeTool(first, 'set', { value: 1 })).success).toBe(true);
         const firstWorker = (first as any).worker as Worker;
         const close = first.close();expect(first.close()).toBe(close);await close;
-        expect(JSON.parse(await readFile(f.record, 'utf8')).value).toBe(1);
+        expect(JSON.parse(f.read()!).value).toBe(1);
         expect(firstWorker.threadId).toBe(-1);
         second = host(f);await second.start();await second.open();
         const secondWorker = (second as any).worker as Worker;expect(secondWorker).not.toBe(firstWorker);
         const restored: any = await invokeTool(second, 'flush');expect(restored.data.ok).toBe(true);
         expect((await invokeTool(second, 'set', { value: 2 })).success).toBe(true);await second.close();
-        expect(JSON.parse(await readFile(f.record, 'utf8')).value).toBe(2);
+        expect(JSON.parse(f.read()!).value).toBe(2);
         expect(secondWorker.threadId).toBe(-1);
         expect(first.appInstanceId).not.toBe(second.appInstanceId);expect(second.getPersistenceReport()).toMatchObject({ support: 'managed', unsafe: false, actualIO: 0, ownerRetained: false, release: { status: 'released' }, lifecycle: { ok: true } });
         await facts('two-rounds', { fixture: f.body, first: first.getPersistenceReport(), second: second.getPersistenceReport(), freshWorker: true, value: 2 });
@@ -121,33 +122,33 @@ it('B04/B12 actual default Hosts share backend ownership while separate app name
         expect(denied.data).toMatchObject({ ok: false, entries: [{ issue: { code: 'NAMESPACE_BUSY' } }] });
         await expect(busy.close()).rejects.toThrow('PERSISTENCE_CLOSE_FAILED');expect((await busy.waitForResourceRelease()).worker).toBe('exited');
         await other.start();await other.open();await invokeTool(other, 'set', { value: 3 });await other.close();
-        expect(JSON.parse(await readFile(path.join(f.data, 'app-state/d/other/state.json'), 'utf8')).value).toBe(3);
-        expect(JSON.parse(await readFile(f.record, 'utf8')).value).toBe(1);await first.close();
+        expect(JSON.parse(f.read('other')!).value).toBe(3);
+        expect(JSON.parse(f.read()!).value).toBe(1);await first.close();
         await facts('default-shared-hosts', { first: first.getPersistenceReport(), busy: busy.getPersistenceReport(), other: other.getPersistenceReport(), defaultBackendActuallyShared: true });
     } finally { for (const h of [first, busy, other]) await stop(h);await rm(f.root, { recursive: true, force: true }); }
 }, 15000);
-it('B15/B18 actual rename with lost IPC reply stays unknown, keeps the close failure after Worker exit', async () => {
-    const f = await fixture(), backend = createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS);
+it('B15/B18 actual SQLite commit with lost IPC reply stays unknown, keeps the close failure after Worker exit', async () => {
+    const f = await fixture(), backend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS);
     const h = host(f, { timeout: 1200, persistenceBackend: backend });
     try {
         await h.start();await h.open();await invokeTool(h, 'set', { value: 9 });
         const worker: Worker = (h as any).worker;const send = worker.postMessage.bind(worker);let lost = 0;
         worker.postMessage = ((message: any) => { if (message.type === 'STATE_STORAGE_RESPONSE' && message.action === 'replace') { lost++;return; }send(message); }) as any;
-        await expect(h.close()).rejects.toThrow();expect(lost).toBe(1);expect(JSON.parse(await readFile(f.record, 'utf8')).value).toBe(9);
+        await expect(h.close()).rejects.toThrow();expect(lost).toBe(1);expect(JSON.parse(f.read()!).value).toBe(9);
         expect(h.getPersistenceReport().unsafe).toBe(true);await h.close().catch(() => {});expect((await h.waitForResourceRelease()).worker).toBe('exited');
         await facts('lost-mutation-reply', { lost, report: h.getPersistenceReport(), backend: backend.getStats(), valueOnDisk: 9 });
     } finally { await stop(h);await rm(f.root, { recursive: true, force: true }); }
 }, 15000);
 it('B05/B18 actual initial duplicate binding failure never saves partial defaults and releases admitted owner', async () => {
     const f = await fixture();f.body = f.body.replace("const tuple = usePersistentState('state', 0);", "usePersistentState('state', 0);const tuple = usePersistentState('state', 0);");await writeFile(f.file, f.body);
-    const backend = createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS), h = host(f, { persistenceBackend: backend });
+    const backend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS), h = host(f, { persistenceBackend: backend });
     try {
         await h.start();await expect(h.open()).rejects.toMatchObject({ code: 'E_OPEN_FAILED', appId: 'app', phase: 'OPEN',
             cause: { name: 'Error', message: 'Instance already has an active storage owner',
                 stack: expect.stringContaining('usePersistentState') } });
         expect(h.getPersistenceReport()).toMatchObject({ unsafe: true, lifecycle: { ok: false, dispose: { release: { status: 'released' } } } });
-        await expect(readFile(f.record)).rejects.toHaveProperty('code', 'ENOENT');await h.close().catch(() => {});expect((await h.waitForResourceRelease()).worker).toBe('exited');
-        expect(backend.getStats().ownerSlots).toBe(0);await facts('failed-initial-commit', { fixture: f.body, report: h.getPersistenceReport(), backend: backend.getStats(), noDefaultFile: true });
+        expect(f.read()).toBeUndefined();await h.close().catch(() => {});expect((await h.waitForResourceRelease()).worker).toBe('exited');
+        expect(backend.getStats().ownerSlots).toBe(0);await facts('failed-initial-commit', { fixture: f.body, report: h.getPersistenceReport(), backend: backend.getStats(), noDefaultRecord: true });
     } finally { await stop(h);await rm(f.root, { recursive: true, force: true }); }
 }, 15000);
 it('B18 actual unmount throw still disposes storage, reports failure and prevents pooling', async () => {
@@ -156,7 +157,7 @@ const initialize = factory.initialize.bind(factory);
 factory.initialize = async (...args) => { const renderer = await initialize(...args);return { ...renderer, close() { renderer.close();throw Error('private unmount detail'); } }; };
 export default factory;
 `;await writeFile(f.file, f.body);
-    const backend = createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS), h = host(f, { persistenceBackend: backend });
+    const backend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS), h = host(f, { persistenceBackend: backend });
     try {
         await h.start();await h.open();await invokeTool(h, 'set', { value: 4 });await expect(h.close()).rejects.toThrow('PERSISTENCE_CLOSE_FAILED');
         const report = h.getPersistenceReport();expect(report).toMatchObject({ unsafe: true, lifecycle: { ok: false, unmount: 'failed', dispose: { release: { status: 'released' } } } });
@@ -165,7 +166,7 @@ export default factory;
     } finally { await stop(h);await rm(f.root, { recursive: true, force: true }); }
 }, 15000);
 it('B15/B18 real Worker termination does not release an owner while its admitted backend mutation is held', async () => {
-    const f = await fixture(), backend = createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS);
+    const f = await fixture(), backend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS);
     let entered!: () => void, finish!: () => void;
     const barrier = new Promise<void>(resolve => { entered = resolve; }), completion = new Promise<void>(resolve => { finish = resolve; });
     const h = host(f, { persistenceBackend: { async open(input: any) {
@@ -183,7 +184,7 @@ it('B15/B18 real Worker termination does not release an owner while its admitted
         finish();const resourceReport = await resources;
         expect(resourceReport).toMatchObject({ worker: 'exited', resourcesReleased: true });expect(physical.threadId).toBe(-1);
         expect(backend.getStats().ownerSlots).toBe(0);expect(h.getPersistenceReport()).toMatchObject({ actualIO: 0, ownerRetained: false, unsafe: true });
-        expect(JSON.parse(await readFile(f.record, 'utf8')).value).toBe(12);
+        expect(JSON.parse(f.read()!).value).toBe(12);
         await facts('terminated-held-mutation', { report: h.getPersistenceReport(), resourceReport, backend: backend.getStats(), actualEffectCompletedAfterDisconnect: true });
     } finally { finish();await stop(h);await h.waitForResourceRelease();await rm(f.root, { recursive: true, force: true }); }
 }, 15000);

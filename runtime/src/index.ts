@@ -54,7 +54,6 @@ export {
     AOTUIError,
     createDesktopId,
     createAppId,
-    createViewId,
 } from './spi/index.js';
 export type {
     AppContext,
@@ -75,6 +74,8 @@ export type {
     IKernel,
     InteractionCloseReport,
     LLMUsageEvent,
+    ProjectionLimitOverrides,
+    ProjectionLimits,
     ToolError,
     ToolResult,
     ReinitializeDesktopAppsOptions,
@@ -83,14 +84,13 @@ export type {
     RuntimeCloseReport,
     ShutdownOptions,
     UpdateSignal,
-    ViewID,
 } from './spi/index.js';
 
 // ============================================================================
 // 🟢 Public: App Registry (Third-Party App Management)
 // Used by Product Layer to load and manage third-party TUI apps
 // ============================================================================
-export type { StateStorageBackend } from './engine/app/state-storage-host.js';
+export type { StateStorageBackend } from './core/persistence/state-storage.js';
 export { AppRegistry } from './engine/app/registry.js';
 export type { LoadedApp, AppRegistryEntry, AppRegistryOptions, AppRegistryInstallOptions, AppRegistryFailure, AppDiscoveryResult, AppInstallResult } from './engine/app/registry.js';
 export type { TUIConfig, AppConfigEntry } from './engine/app/config.js';

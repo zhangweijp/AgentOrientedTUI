@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
 import { refKey } from '../snapshot/snapshot-support.js';
-import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
-import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
+import { compileToolParameters } from '../tool/tool-parameters.js';
 function parameters(extra = false) {
-    return compileOrdinarySchema({ type: 'object', properties: {
+    return compileToolParameters({ type: 'object', properties: {
         file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } },
         choice: { type: 'string', enum: ['ok'] }, ...(extra ? { n: { type: 'number', default: 2 } } : {}),
     }, required: ['file'], additionalProperties: true });
@@ -14,37 +13,36 @@ import { createAppInteraction } from './app-interaction.js';
 function deferred() { let resolve!: () => void;const promise = new Promise<void>(yes => { resolve = yes; });return { promise, resolve }; }
 function fixture() {
     const core = createSnapshotCore({ appId: 'app', instanceId: 'run', now: () => 0 });const id = JSON.stringify(['app', 'File', 'read']);let seq = 0;
-    let contract = parameters();if (!contract.ok) throw Error('fixture');
-    let schema = ordinaryParameterProfile(contract.contract);
-    const calls = { validate: 0, policy: 0, execute: 0 }, seen: any[] = [];
+    const contract = parameters();if (!contract.ok) throw Error('fixture');
+    let schema = contract.contract.schema;
+    const calls = { policy: 0, execute: 0 }, seen: any[] = [];
     const controls = { authorize: (_ctx: any): any => true };
     function publish(label = 'A', mounted = true) {
-        const s = ++seq;const r = core.committer.accept({ schemaVersion: 5, appId: 'app', instanceId: 'run', producerSeq: s, sourceEpoch: s, capturedAt: s,
+        const s = ++seq;const r = core.committer.accept({ schemaVersion: 6, appId: 'app', instanceId: 'run', producerSeq: s, sourceEpoch: s, capturedAt: s,
             views: mounted ? [{ toolBindings: [{ toolId: id, activationId: label === 'rule' ? 'rule-2' : 'active-1' }], id: 'aa', viewInstanceId: 'mount', type: 'File', name: 'File', kind: 'state', content: { format: 'markdown-v1', value: label } }] : [],
             refs: mounted ? { [refKey('aa', 'mount', 'id')]: { id: 'id', ownerViewId: 'aa', ownerViewInstanceId: 'mount', refType: 'unknown', target: { kind: 'snapshot-value', payload: { label } } } } : {},
             tools: mounted ? { [id]: { id, name: 'read', viewType: 'File', nameSharedAcrossViewTypes: false, description: 'Read', inputSchema: schema } } : {} });
         expect(r.status).toBe('published');if (r.status !== 'published') throw Error('publication');return r.snapshot;
     }
     const original = publish();
-    const binding = { identity: {}, isLive: () => ({ ok: true }), validateInput: (_s: unknown, input: any) => {
-        calls.validate++;if (!contract.ok) throw Error('fixture');const r = contract.contract.validateResolvedInput!(input);return r.ok ? { ok: true, value: r.value } : { ok: false };
-    }, execute: (ctx: any) => { calls.execute++;seen.push(ctx);return { kind: 'tool-result' as const, phase: 'entered-returned' as const, result: { success: true, data: { label: ctx.effectiveInput.file.label } } }; } };
+    const binding = { identity: {}, isLive: () => ({ ok: true }),
+        execute: (ctx: any) => { calls.execute++;seen.push(ctx);return { kind: 'tool-result' as const, phase: 'entered-returned' as const, result: { success: true, data: { label: ctx.effectiveInput.file.label } } }; } };
     const client = createAppInteraction(core.store, { namespace: 'ref-v2', now: () => 0, appId: 'app', instanceId: 'run', policy: { project: ({ source }) => ({
         refs: Object.values(source.refs).map(r => ({ viewId: r.ownerViewId, viewInstanceId: r.ownerViewInstanceId, refId: r.id })),
         toolIds: Object.keys(source.tools) }),
         authorize: ctx => { calls.policy++;seen.push(ctx);return controls.authorize(ctx); }, canReadReceipt: () => true }, execution: { resolve: () => binding } });
     return { core, client, controls, calls, seen, publish, original, changeRule() {
-        contract = parameters(true);
-        if (!contract.ok) throw Error('fixture');schema = ordinaryParameterProfile(contract.contract);publish('rule');
+        const changed = parameters(true);
+        if (!changed.ok) throw Error('fixture');schema = changed.contract.schema;publish('rule');
     }, async request(input: any = { file: 'aa.id', choice: 'ok' }) {
         const o = await client.observe({ all: true });if (o.status !== 'observed') throw Error('observation');expect(client.adoptObservation(o.observation.observationId)).toEqual({ status: 'adopted' });const tool = o.observation.tools[0]!;
         return { invocationId: 'i', observationId: o.observation.observationId, toolId: tool.id, input: { view_id: 'aa', ...input } };
     } };
 }
 describe('R08/R09/R11 unchanged Core coordination with versioned Ref admission', () => {
-    it('rejects ordinary parameters during prepare before custom validation, policy and dispatch', async () => {
-        const f = fixture();try { const result = await f.client.invoke(await f.request({ file: 'aa.id', choice: 7 }));expect(result).toMatchObject({ kind: 'receipt', receipt: { outcome: { code: 'TOOL_INVALID_ARGS' } } });expect(f.calls).toEqual({ validate: 0, policy: 0, execute: 0 }); }
-        finally { f.client.close(); }expect(f.core.store.inspect().activeLeases).toBe(0);
+    it('rejects ordinary parameters during prepare before policy and dispatch', async () => {
+        const f = fixture();try { const result = await f.client.invoke(await f.request({ file: 'aa.id', choice: 7 }));expect(result).toMatchObject({ kind: 'receipt', receipt: { outcome: { code: 'TOOL_INVALID_ARGS' } } });expect(f.calls).toEqual({ policy: 0, execute: 0 }); }
+        finally { f.client.close(); }expect(f.core.store.inspect().activeHolds).toBe(0);
     });
     it('keeps original A after B publication and shows the same provenance to policy and adapter', async () => {
         const f = fixture();const request = await f.request();f.publish('B');
@@ -57,6 +55,6 @@ describe('R08/R09/R11 unchanged Core coordination with versioned Ref admission',
         const running = f.client.invoke(await f.request());await started.promise;
         if (kind === 'rule') f.changeRule();if (kind === 'unmount') f.publish('A', false);if (kind === 'instance') f.client.close();release.resolve();
         const result: any = await running;expect(f.calls.execute).toBe(0);expect(result.code ?? result.receipt.outcome.code).toBe(kind === 'rule' ? 'TOOL_SOURCE_STALE' : kind === 'unmount' ? 'VIEW_INSTANCE_REVOKED' : 'APP_INTERACTION_UNAVAILABLE');
-        f.client.close();expect(f.core.store.inspect().activeLeases).toBe(0);
+        f.client.close();expect(f.core.store.inspect().activeHolds).toBe(0);
     });
 });

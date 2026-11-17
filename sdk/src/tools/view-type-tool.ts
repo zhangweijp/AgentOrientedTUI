@@ -1,11 +1,10 @@
 import Type from 'typebox';
-import { compileOrdinarySchema, modelToolSchema, ordinaryParameterProfile, SnapshotDataError } from '@aotui/runtime/core';
+import { compileToolParameters, modelToolSchema, SnapshotDataError } from '@aotui/runtime/core';
 import type { JsonValue } from '@aotui/runtime/core';
-import type { AppFrameBinding, ToolResult, TUIAppFactory } from '@aotui/runtime/spi';
+import { VIEW_TYPE_TOOL_PROTOCOL, type AppFrameBinding, type ToolResult } from '@aotui/runtime/spi';
 import { exportTypeBoxSchema, schemaDeclarationError, TypeBoxSchemaExportError } from './typebox-schema.js';
 
 export type JsonSchemaObject = Readonly<Record<string, JsonValue>>;
-export const SDK_VIEW_TYPE_PROTOCOL = 'view-type-tools-v5' satisfies TUIAppFactory['toolAuthoringProtocol'];
 const emptyInputSchema = Type.Object({}, { additionalProperties: false });
 type ObjectSchema = Type.TSchema & {
     readonly type: 'object';
@@ -159,10 +158,9 @@ function captureType(declaration: unknown, source: 'empty' | 'context' | 'descri
             });
         }
         const schema = fromTypeBox && !tool.has('inputSchema') ? emptyInputSchema : tool.get('inputSchema');
-        const compiled = compileOrdinarySchema(fromTypeBox ? exportTypeBoxSchema(schema) : schema);
+        const compiled = compileToolParameters(fromTypeBox ? exportTypeBoxSchema(schema) : schema);
         if (!compiled.ok) throw schemaDeclarationError(compiled.issue);
         try {
-            ordinaryParameterProfile(compiled.contract);
             modelToolSchema(compiled.contract.schema, name);
         } catch (error) {
             if (error instanceof SnapshotDataError && error.code === 'TOOL_SCHEMA_CAPACITY')
@@ -172,7 +170,7 @@ function captureType(declaration: unknown, source: 'empty' | 'context' | 'descri
         tools[key] = Object.freeze({ description, inputSchema: compiled.contract.schema });
     }
     const result = { name, tools: Object.freeze(tools) };
-    Object.defineProperty(result, viewTypeWitness, { value: SDK_VIEW_TYPE_PROTOCOL });
+    Object.defineProperty(result, viewTypeWitness, { value: VIEW_TYPE_TOOL_PROTOCOL });
     // Same-version SDK copies can re-capture this local behavior alongside the static metadata.
     if (contextTools) Object.defineProperty(result, contextToolsWitness, { value: Object.freeze(contextTools) });
     const type = Object.freeze(result);
@@ -185,7 +183,7 @@ function readViewType(type: ViewType): ViewType {
     if (own) return own;
     // An App can import a descriptor produced by another copy of this SDK.
     const stamp = type && Object.getOwnPropertyDescriptor(type, viewTypeWitness);
-    if (!stamp || !('value' in stamp) || stamp.value !== SDK_VIEW_TYPE_PROTOCOL)
+    if (!stamp || !('value' in stamp) || stamp.value !== VIEW_TYPE_TOOL_PROTOCOL)
         fail('VIEW_TYPE_INVALID', 'Use defineViewType to declare each ViewType');
     const captured = captureType(type, 'descriptor');
     definedTypes.set(type, captured);

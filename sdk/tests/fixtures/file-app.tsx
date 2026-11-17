@@ -28,16 +28,14 @@ function FileDetail({ filePath, file }: { filePath: string; file: FileState }) {
 }
 
 function AppRoot() {
-  const { prepareProjection } = useAppRuntimeContext();
+  const { prepareOpeningProjection } = useAppRuntimeContext();
   const [opened, setOpened] = useState<Record<string, FileState>>({});
   async function openFile(filePath: string): Promise<ToolResult> {
     const file = available.get(filePath);
     if (!file) return { success: false, error: { code: 'FILE_NOT_FOUND', message: 'Choose a.txt or b.txt.' } };
     if (Object.hasOwn(opened, filePath)) return { success: true, data: { message: 'Read the open FileDetail View.' } };
     try {
-      await prepareProjection(() => setOpened({ ...opened, [filePath]: { ...file } }), {
-        revert: () => setOpened(opened),
-      });
+      await prepareOpeningProjection(() => setOpened({ ...opened, [filePath]: { ...file } }), () => setOpened(opened));
     } catch (error) {
       return error instanceof Error && 'code' in error && error.code === 'OBSERVATION_CAPACITY'
         ? { success: false, error: { code: error.code, message: error.message } }

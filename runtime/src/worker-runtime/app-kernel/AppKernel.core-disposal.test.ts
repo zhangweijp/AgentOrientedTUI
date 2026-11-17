@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECTION_LIMITS } from '../../core/invocation/observation-registry.js';
 import { detailFrame, publishedTool } from '../../../tests/fixtures/app-frame.js';
 import { expect, it, vi } from 'vitest';
 import { AppKernel } from './AppKernel.js';
@@ -11,7 +12,7 @@ it.each(['normal', 'sync-throw', 'async-reject', 'async-held'] as const)('A17 ac
         if (mode === 'async-reject') return Promise.reject(Error('renderer async'));
         if (mode === 'async-held') return unmountGate.promise;
     });
-    const kernel = new AppKernel({ appName: 'test_app', factory: { async initialize(context: any) {
+    const kernel = new AppKernel({ appName: 'test_app', appId: 'a', desktopId: 'd', instanceId: 'run', projectionLimits: DEFAULT_PROJECTION_LIMITS, factory: { async initialize(context: any) {
         runtime = context;
         const execute = async () => {
             calls++; handlerStarted.resolve(); await handlerGate.promise; return { success: true, data: 19 };
@@ -23,8 +24,8 @@ it.each(['normal', 'sync-throw', 'async-reject', 'async-held'] as const)('A17 ac
             refs: [{ id: 'r', refType: 'Value', value: { value: 19 } }],
         })] }));
         return { close: unmount };
-    } } } as any); kernel.setId('a' as any);
-    await kernel.onOpen({ appId: 'a', desktopId: 'd' } as any);
+    } } } as any);
+    await kernel.onOpen();
     const owned = (kernel as any).viewOwnedTools, { tool, receiver } = publishedTool(kernel, 'held');
     expect(owned.inspect().bindings).toBe(1);
     const running = kernel.invokeBoundTypeTool(tool, receiver, {});

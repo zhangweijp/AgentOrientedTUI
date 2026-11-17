@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseHTML } from 'linkedom';
 
-import { extractViewFragments } from './view-fragment-extractor.js';
+import { readDOMAppViews } from './dom-app.js';
 
 function createContainer(markup: string): Element {
     const { document } = parseHTML('<html><body></body></html>');
@@ -9,11 +9,19 @@ function createContainer(markup: string): Element {
     return document.body;
 }
 
-function fragment(fragments: ReturnType<typeof extractViewFragments>, viewId: string) {
-    return fragments.find(item => item.viewId === viewId)!;
+function readViews(container: Element) {
+    return readDOMAppViews(container, node => ({
+        id: node.getAttribute('data-view-id')!,
+        type: node.getAttribute('data-view-type')!,
+        owner: node, bindings: [], refs: [],
+    }));
 }
 
-describe('R2 View projection boundaries', () => {
+function fragment(fragments: ReturnType<typeof readViews>, viewId: string) {
+    return fragments.find(item => item.id === viewId)!;
+}
+
+describe('DOM View boundaries', () => {
     it('rejects data-view-id descendants at any depth with both View identities', () => {
         const container = createContainer(`
             <div data-view-id="parent_view_123" data-view-type="Parent" data-view-kind="state">
@@ -27,7 +35,7 @@ describe('R2 View projection boundaries', () => {
 
         let rejection: unknown;
         try {
-            extractViewFragments(container);
+            readViews(container);
         } catch (error) {
             rejection = error;
         }
@@ -51,11 +59,11 @@ describe('R2 View projection boundaries', () => {
             </div>
         `);
 
-        const fragments = extractViewFragments(container);
+        const fragments = readViews(container);
 
-        expect(fragments.map(item => item.viewId).sort()).toEqual(['parent', 'sibling']);
-        expect(fragment(fragments, 'parent').markup).toContain('Ordinary parent content');
-        expect(fragment(fragments, 'sibling').markup).toContain('Ordinary sibling content');
+        expect(fragments.map(item => item.id).sort()).toEqual(['parent', 'sibling']);
+        expect(fragment(fragments, 'parent').content.value).toContain('Ordinary parent content');
+        expect(fragment(fragments, 'sibling').content.value).toContain('Ordinary sibling content');
     });
 
     it('keeps the repair hint within the diagnostic bound for arbitrary raw DOM IDs', () => {
@@ -69,7 +77,7 @@ describe('R2 View projection boundaries', () => {
 
         let rejection: unknown;
         try {
-            extractViewFragments(container);
+            readViews(container);
         } catch (error) {
             rejection = error;
         }
@@ -87,7 +95,7 @@ describe('R2 View projection boundaries', () => {
             <div data-view-id="parent" data-view-type="Parent" data-view-kind="state">Parent stable</div>
             <div data-view-id="sibling" data-view-type="Sibling" data-view-kind="state">Sibling stable</div>
         `);
-        const first = extractViewFragments(container);
+        const first = readViews(container);
         const parent = container.querySelector('[data-view-id="parent"]')!;
         const sibling = container.querySelector('[data-view-id="sibling"]')!;
         parent.innerHTML = 'Parent invalid edit <div data-view-id="rogue" data-view-kind="state" data-view-type="FixtureView">RAW_NESTED_VIEW</div>';
@@ -95,7 +103,7 @@ describe('R2 View projection boundaries', () => {
 
         let rejection: unknown;
         try {
-            extractViewFragments(container);
+            readViews(container);
         } catch (error) {
             rejection = error;
         }
@@ -105,11 +113,11 @@ describe('R2 View projection boundaries', () => {
 
         parent.textContent = 'Parent stable';
         sibling.textContent = 'Sibling stable';
-        const recovered = extractViewFragments(container);
+        const recovered = readViews(container);
 
-        expect(fragment(first, 'parent').markup).toBe('Parent stable');
-        expect(fragment(first, 'sibling').markup).toBe('Sibling stable');
-        expect(fragment(recovered, 'parent').markup).toBe('Parent stable');
-        expect(fragment(recovered, 'sibling').markup).toBe('Sibling stable');
+        expect(fragment(first, 'parent').content.value).toBe('Parent stable');
+        expect(fragment(first, 'sibling').content.value).toBe('Sibling stable');
+        expect(fragment(recovered, 'parent').content.value).toBe('Parent stable');
+        expect(fragment(recovered, 'sibling').content.value).toBe('Sibling stable');
     });
 });

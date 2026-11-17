@@ -1,5 +1,6 @@
+import { readSqliteState } from '../../tests/fixtures/sqlite-state.js';
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -7,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { RuntimeOptions } from '../facades/facades.js';
-import { createNodeStateStorage } from '../adapters/storage/node-state-storage.js';
+import { createSqliteStateStorage } from '../adapters/storage/sqlite-state-storage.js';
 import { DEFAULT_NODE_STATE_LIMITS } from '../engine/app/state-storage-host.js';
 
 const repo=resolve(process.cwd(),'..'),url=(file:string)=>pathToFileURL(file).href;
@@ -45,10 +46,10 @@ function Root() {
     port = useAppRuntimeContext().persistence;
     return h('div', null, h(View, { kind: 'state', id: 'detail', type: DetailType, context: {} }, h(Detail)));
 }
-const factory=createTUIApp({viewTypes:[DetailType], app_name:'close',component:Root});
+const factory=createTUIApp({persistence:true,viewTypes:[DetailType], app_name:'close',component:Root});
 ${scenario==='async-unmount'||scenario==='failed-unmount'?`const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,async close(){${scenario==='async-unmount'?`await writeFile(${JSON.stringify(entered)},'entered');while(!existsSync(${JSON.stringify(release)}))await new Promise(resolve=>setTimeout(resolve,5));`:''}renderer.close();${scenario==='failed-unmount'?"throw Error('private unmount detail');":''}}};};`:''}
 export default factory;`;
-    await capture(app,body);return {dir,app,entered,release,data:join(dir,'data'),record:(desktop='d',name='close')=>join(dir,'data/app-state',desktop,name,'value.json')};
+    await capture(app,body);return {dir,app,entered,release,data:join(dir,'data'),read:(desktop='d',name='close')=>readSqliteState(join(dir,'data/app-state'),desktop,name,'value')};
 }
 const makeRuntime=(options?: RuntimeOptions)=>createRuntime({worker:{timeoutMs:4000,maxWorkers: 4}},options);
 function sandbox(runtime:any,id='d',app='app'):any{return (runtime.getDesktop(id) as any).appManager.getWorkerSandbox(app);}
@@ -82,7 +83,7 @@ it('C2-26 actual default Kernel/SDK saves two Desktop values and closes all phys
         const closing=runtime.beginShutdown(),before=closing.inspect();const report=await closing.completion;await runtime.shutdown();
         expect(report).toMatchObject({state:'settled',ok:true,verification:'managed',apps:{accepted:2,settled:2,pending:0,notVerifiedReleased:0},desktops:{accepted:2,settled:2,pending:0},persistence:{managedApps:2,confirmedFlushes:2,failedFlushes:0},resources:{storageActualIO:0,retainedStorageOwners:0,openingStorageOwners:0},workers:{ownership:'owned',report:{state:'closed',total:0}}});
         expect(workers.map(worker=>worker.threadId)).toEqual([-1,-1]);expect((runtime as any).desktopManager.listDesktopIds()).toEqual([]);
-        expect(JSON.parse(await readFile(f.record('a'),'utf8')).value).toBe(11);expect(JSON.parse(await readFile(f.record('b'),'utf8')).value).toBe(22);expect(before.state).toBe('closing');await facts('normal',{before,report,physicalThreadIds:workers.map(worker=>worker.threadId)});
+        expect(JSON.parse(f.read('a')!).value).toBe(11);expect(JSON.parse(f.read('b')!).value).toBe(22);expect(before.state).toBe('closing');await facts('normal',{before,report,physicalThreadIds:workers.map(worker=>worker.threadId)});
     }finally{await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
 },20000);
 
@@ -103,7 +104,7 @@ it('C2-25/26 Q02 real SDK async unmount is progress, retaining successful flush 
         await install(runtime,f);await invoke(runtime,'d','app','set',{value:31});const box=sandbox(runtime),worker=box.workerHost.worker,closing=runtime.beginShutdown();
         await vi.waitFor(()=>expect(existsSync(f.entered)).toBe(true),{timeout:3000});const before=closing.inspect();
         expect(before).toMatchObject({state:'closing',hasFailures:false,resourcesReleased:false,persistence:{closeReceipts:1,confirmedFlushes:1,failedFlushes:0}});
-        expect((await closing.wait({timeoutMs:5})).status).toBe('deadline');expect(worker.threadId).toBeGreaterThan(0);expect(JSON.parse(await readFile(f.record(),'utf8')).value).toBe(31);
+        expect((await closing.wait({timeoutMs:5})).status).toBe('deadline');expect(worker.threadId).toBeGreaterThan(0);expect(JSON.parse(f.read()!).value).toBe(31);
         await writeFile(f.release,'go');const report=await closing.completion;expect(report.ok).toBe(true);expect(worker.threadId).toBe(-1);expect(before.state).toBe('closing');expect(before.hasFailures).toBe(false);await facts('async-unmount',{before,report,threadId:worker.threadId});
     }finally{await writeFile(f.release,'go');await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
 },15000);
@@ -126,7 +127,7 @@ it('forces actual Worker exit after a held cleanup outlives the grace period', a
             persistence: { confirmedFlushes: 1 }, workers: { report: { state: 'closed', total: 0 } } });
         expect(final.failures.flatMap(sample => sample.codes)).toContain('APP_CLOSE_DEADLINE_EXCEEDED');
         expect(worker.threadId).toBe(-1);
-        expect(JSON.parse(await readFile(f.record(), 'utf8')).value).toBe(32);
+        expect(JSON.parse(f.read()!).value).toBe(32);
     } finally {
         await writeFile(f.release, 'go');
         await runtime.beginShutdown().completion;
@@ -135,7 +136,7 @@ it('forces actual Worker exit after a held cleanup outlives the grace period', a
 }, 10000);
 
 it.each(['open','replace'] as const)('C2-27 real Node storage %s crosses a caller deadline while the original Kernel retains the actual owner',async held=>{
-    const f=await fixture(),backend=createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS),entered=deferred(),finish=deferred(),runtime=makeRuntime();
+    const f=await fixture(),backend=createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS),entered=deferred(),finish=deferred(),runtime=makeRuntime();
     inject(()=>({persistenceBackend:{async open(input:any){const result=await backend.open(input);if(result.status!=='opened')return result;
         if(held==='open'){entered.resolve();await finish.promise;}
         return {status:'opened',storage:{...result.storage,async replace(address:any,text:string){if(held==='replace'){entered.resolve();await finish.promise;}return result.storage.replace(address,text);}}};}}}));
@@ -150,7 +151,7 @@ it.each(['open','replace'] as const)('C2-27 real Node storage %s crosses a calle
         if(held==='open')expect(before.resources.openingStorageOwners).toBe(1);expect(worker.threadId).toBeGreaterThan(0);expect((runtime as any).desktopManager.get('d')).toBeDefined();
         finish.resolve();const report=await closing.completion;const result=await observedInstall;
         expect(report.resourcesReleased).toBe(true);expect(report.state).toBe('settled');expect(worker.threadId).toBe(-1);expect(backend.getStats().ownerSlots).toBe(0);expect(before.resources.storageActualIO).toBe(1);
-        if(held==='replace'){expect(report.ok).toBe(true);expect(JSON.parse(await readFile(f.record(),'utf8')).value).toBe(41);}else{
+        if(held==='replace'){expect(report.ok).toBe(true);expect(JSON.parse(f.read()!).value).toBe(41);}else{
             // SDK OPEN may already have acknowledged before hydration requests this open.
             // If admission is still pending it must fail safely; either outcome leaves no owner.
             if(result instanceof Error){expect((result as any).code).toBe('INSTALL_FAILED');expect(report.hasFailures).toBe(true);}else expect(result).toBe('app');
@@ -173,7 +174,7 @@ it('C2-28 two Runtime capacity owners / two Desktop IDs are isolated',async()=>{
 },30000);
 
 it.each(['failed','unknown','unmount'] as const)('C2-25/27 actual Kernel preserves %s failure after real resource release and keeps its old void wrapper rejected',async mode=>{
-    const f=await fixture(mode==='unmount'?'failed-unmount':'normal'),backend=createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS),runtime=makeRuntime();
+    const f=await fixture(mode==='unmount'?'failed-unmount':'normal'),backend=createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS),runtime=makeRuntime();
     if(mode!=='unmount')inject(()=>({persistenceBackend:{async open(input:any){const result=await backend.open(input);return result.status!=='opened'?result:{status:'opened',storage:{...result.storage,async replace(address:any,text:string){if(mode==='unknown'){await result.storage.replace(address,text);return {status:'unknown',issue:{code:'UNKNOWN_OUTCOME'}};}return {status:'failed',effects:'none',issue:{code:'IO_FAILED'}};}}};}}}));
     try{
         await install(runtime,f);await invoke(runtime,'d','app','set',{value:63});const box=sandbox(runtime),worker=box.workerHost.worker,promise=runtime.shutdown();
@@ -182,12 +183,12 @@ it.each(['failed','unknown','unmount'] as const)('C2-25/27 actual Kernel preserv
         if(mode==='unmount'){expect(report.persistence.confirmedFlushes).toBe(1);expect(report.persistence.failedFlushes).toBe(0);expect(report.failures.flatMap(item=>item.codes)).toContain('APP_UNMOUNT_FAILED');}
         else{expect(report.persistence.failedFlushes).toBe(1);expect(report.persistence.unsavedKeys).toBe(1);
             expect(box.getCloseReport().host.storage.uncertain).toBe(mode==='unknown');expect(report.persistence.unknownApps).toBe(mode==='unknown'?1:0);expect(backend.getStats().ownerSlots).toBe(0);}
-        if(mode==='unknown')expect(JSON.parse(await readFile(f.record(),'utf8')).value).toBe(63);expect(JSON.stringify(report)).not.toContain('private unmount detail');await facts('failure-'+mode,{report,threadId:worker.threadId,backend:backend.getStats(),fault:'controlled receipt failure around actual Node storage'});
+        if(mode==='unknown')expect(JSON.parse(f.read()!).value).toBe(63);expect(JSON.stringify(report)).not.toContain('private unmount detail');await facts('failure-'+mode,{report,threadId:worker.threadId,backend:backend.getStats(),fault:'controlled receipt failure around actual Node storage'});
     }finally{await runtime.beginShutdown().completion;await rm(f.dir,{recursive:true,force:true});}
 },20000);
 
 it.each(['app', 'desktop'] as const)('releases the original storage owner through the public %s close path', async path => {
-    const f = await fixture(), backend = createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS);
+    const f = await fixture(), backend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS);
     const retryEntered = deferred(), finishRetry = deferred();
     let releases = 0, writes = 0, completedCleanups = 0;
     const runtime = makeRuntime({ storageBackend: { async open(input: Parameters<typeof backend.open>[0]) {
@@ -224,7 +225,7 @@ it.each(['app', 'desktop'] as const)('releases the original storage owner throug
         expect(backend.getStats().ownerSlots).toBe(1);
         expect([releases, writes, completedCleanups]).toEqual([1, 1, 1]);
         expect(runtime.getAppInteraction('d', 'app', box.appInstanceId).status).toBe('rejected');
-        expect(JSON.parse(await readFile(f.record(), 'utf8')).value).toBe(73);
+        expect(JSON.parse(f.read()!).value).toBe(73);
 
         let retry: Promise<unknown>;
         if (path === 'app') {
@@ -275,7 +276,6 @@ it('C2-29 emitted createRuntime + real SDK naturally exits a fresh Node child',a
     const f=await fixture(),driver=join(f.dir,'driver.mjs');
     const script = [
         "import assert from 'node:assert/strict';",
-        "import {readFile} from 'node:fs/promises';",
         `import {createRuntime} from ${JSON.stringify(url(join(runtimeDist,'index.js')))};`,
         "const runtime=createRuntime({worker:{timeoutMs:4000,maxWorkers: 1}});",
         "await runtime.createDesktop('d');",
@@ -290,7 +290,6 @@ it('C2-29 emitted createRuntime + real SDK naturally exits a fresh Node child',a
         "assert.equal(result.kind,'receipt');assert.equal(result.receipt.outcome.status,'succeeded');opened.interaction.releaseObservation(observation.observationId);",
         "await runtime.shutdown();const report=await runtime.beginShutdown().completion;",
         "assert.equal(report.ok,true);assert.equal(report.workers.report.total,0);assert.equal(worker.threadId,-1);",
-        `assert.equal(JSON.parse(await readFile(${JSON.stringify(f.record())},'utf8')).value,74);`,
         "console.log('C2_NATURAL_END '+JSON.stringify({report,threadId:worker.threadId,value:74}));",
     ].join('\n');
     await capture(driver,script);
@@ -301,7 +300,7 @@ it('C2-29 emitted createRuntime + real SDK naturally exits a fresh Node child',a
             const guard=setTimeout(()=>{guardUsed=true;child.kill('SIGKILL');reject(Error('NATURAL_EXIT_GUARD_USED'));},15000);
             child.stdout.on('data',data=>{stdout+=data;});child.stderr.on('data',data=>{stderr+=data;});child.on('error',error=>{clearTimeout(guard);reject(error);});child.on('exit',(code,signal)=>{clearTimeout(guard);resolve({code,signal,stdout,stderr});});
         });
-        expect(guardUsed).toBe(false);expect(result).toMatchObject({code:0,signal:null});const line=result.stdout.split('\n').find(line=>line.startsWith('C2_NATURAL_END '));expect(line).toBeDefined();
+        expect(JSON.parse(f.read()!).value).toBe(74);expect(guardUsed).toBe(false);expect(result).toMatchObject({code:0,signal:null});const line=result.stdout.split('\n').find(line=>line.startsWith('C2_NATURAL_END '));expect(line).toBeDefined();
         const final=JSON.parse(line!.slice('C2_NATURAL_END '.length));expect(final).toMatchObject({threadId:-1,value:74,report:{ok:true,workers:{report:{state:'closed',total:0}}}});await facts('natural-child',{...result,guardUsed,naturalExit:true});
     }finally{await rm(f.dir,{recursive:true,force:true});}
 },20000);

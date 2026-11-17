@@ -1,4 +1,4 @@
-import type { JsonValue } from '../../core/snapshot/types.js';
+import type { JsonValue } from '../snapshot/types.js';
 
 type JsonObject = Readonly<Record<string, JsonValue>>;
 /** Public transport data. Local Error instances, stack and cause are not wire errors. */

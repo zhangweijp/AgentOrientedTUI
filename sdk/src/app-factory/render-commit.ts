@@ -6,8 +6,11 @@ import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
 import type { RefRegistry } from '../contexts/view-runtime-context.js';
 import { capturedRefValue } from './refs.js';
 
-// Preact 10's distributed builds expose these options and fields under minified names.
-// __c runs layout effects through preact/hooks before Preact drains __h (class callbacks).
+// Preact 10.29.1 distribution layout. VNode __ points to the parent and __c
+// points to the component. __P is cleared on unmount even for DOM-less components.
+// __b/__r delimit diff and render, __e reports faults, and __c runs the hook
+// commit before Preact drains each component's __h callbacks using its __v.
+// The installed-package verify-preact-commit fixture exercises this boundary.
 type MountedComponent = { __P?: Node | null };
 type CommitVNode = VNode & { __?: CommitVNode; __c?: MountedComponent };
 type CommitComponent = { __h: Array<() => void>; __v: CommitVNode };
@@ -55,7 +58,7 @@ const owners = new WeakMap<object, RenderOwner>();
 const componentKeys = new WeakMap<object, object>();
 let active: RenderBatch | undefined;
 let request: RenderRequest | undefined;
-let scheduledRun: { escaped?: { error: unknown } } | undefined;
+let runningScheduled = false;
 let installed = false;
 const asyncFunction = Object.getPrototypeOf(async function () {});
 
@@ -254,8 +257,11 @@ function installCommitHooks(): void {
             onError(error, vnode, oldVNode, info);
         } catch (unhandled) {
             if (batch && active === batch) {
+                // Preact clears its entire queue if an error escapes the drain.
+                // The failed owner publishes its fault at commit; other roots
+                // already queued for this drain can still run.
+                if (runningScheduled && !batch.request) return;
                 finish(batch);
-                if (scheduledRun && !batch.request) scheduledRun.escaped = { error: unhandled };
             }
             throw unhandled;
         }
@@ -306,7 +312,8 @@ const trackedSchedules = new WeakSet<NonNullable<typeof options.debounceRenderin
 /** Observe Preact's existing queue; do not replace it with a second scheduler. */
 export function trackRenderCommits(): void {
     if (options.debounceRendering && trackedSchedules.has(options.debounceRendering)) return;
-    // Preact's default defer is a resolved Promise.
+    // In 10.29.1 the default defer uses a resolved Promise. Preserve an
+    // installed debounceRendering hook and observe its existing callback.
     const schedule = options.debounceRendering ?? ((callback: () => void) => { void Promise.resolve().then(callback); });
     const trackedSchedule: NonNullable<typeof options.debounceRendering> = callback => {
         let complete!: () => void;
@@ -319,12 +326,11 @@ export function trackRenderCommits(): void {
         try {
             schedule(() => {
                 const parent = active;
-                const previousRun = scheduledRun;
-                const run: NonNullable<typeof scheduledRun> = {};
-                scheduledRun = run;
+                const wasRunning = runningScheduled;
+                runningScheduled = true;
                 try { callback(); }
                 catch (error) {
-                    const managed = (run.escaped && Object.is(run.escaped.error, error)) || (active && active !== parent);
+                    const managed = active && active !== parent;
                     while (active && active !== parent) {
                         active.work.failure ??= { error };
                         finish(active);
@@ -332,7 +338,7 @@ export function trackRenderCommits(): void {
                     // The managed failure is already recorded by the producer.
                     if (!managed) throw error;
                 } finally {
-                    scheduledRun = previousRun;
+                    runningScheduled = wasRunning;
                     settle();
                 }
             });
@@ -394,7 +400,8 @@ export async function prepareRenderProjection(context: object, signal: Cancellat
     const owner = owners.get(context)!;
     if (owner.attempt) throw Object.assign(new Error('A projection update is already in progress'), { code: 'PROJECTION_BUSY' });
     const revert = opening?.revert;
-    if (Object.getPrototypeOf(update) === asyncFunction || (revert && Object.getPrototypeOf(revert) === asyncFunction)) {
+    if (typeof update !== 'function' || (opening && typeof revert !== 'function') ||
+        Object.getPrototypeOf(update) === asyncFunction || (revert && Object.getPrototypeOf(revert) === asyncFunction)) {
         throw synchronousUpdateError();
     }
     let settle!: () => void;

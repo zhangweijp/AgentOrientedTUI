@@ -1,4 +1,3 @@
-import { VIEW_TYPE_TOOL_PROTOCOL } from '../runtime/app-type-tools.interface.js';
 import { APP_LIFECYCLE_PROTOCOL } from '../runtime/app-lifecycle.interface.js';
 import { STATE_SESSION_PROTOCOL } from '../runtime/state-persistence.interface.js';
 /** App module contract accepted by Runtime AppRegistry and Worker Runtime. */
@@ -6,12 +5,14 @@ import { STATE_SESSION_PROTOCOL } from '../runtime/state-persistence.interface.j
 import type { AppInstance, RuntimeContext } from './app-instance.interface.js';
 import type { AppKernelConfig } from './app-kernel.interface.js';
 
+export const VIEW_TYPE_TOOL_PROTOCOL = 'view-type-tools-v6' as const;
+
 /** Static App definition loaded from the manifest entry. */
 export interface TUIAppFactory {
     initialize(context: RuntimeContext): AppInstance | Promise<AppInstance>;
     readonly kernelConfig: AppKernelConfig;
     readonly toolAuthoringProtocol: typeof VIEW_TYPE_TOOL_PROTOCOL;
-    readonly persistenceSupport: typeof STATE_SESSION_PROTOCOL;
+    readonly persistenceSupport?: typeof STATE_SESSION_PROTOCOL;
     readonly appLifecycleSupport: typeof APP_LIFECYCLE_PROTOCOL;
 }
 
@@ -27,7 +28,7 @@ export function isTUIAppFactory(value: unknown): value is TUIAppFactory {
         if (!kernelConfig || !('value' in kernelConfig) || typeof kernelConfig.value !== 'object' ||
             kernelConfig.value === null || Array.isArray(kernelConfig.value) ||
             !initialize || !('value' in initialize) || typeof initialize.value !== 'function' ||
-            !persistenceSupport || !('value' in persistenceSupport) || persistenceSupport.value !== STATE_SESSION_PROTOCOL ||
+            (persistenceSupport && (!('value' in persistenceSupport) || persistenceSupport.value !== STATE_SESSION_PROTOCOL)) ||
             !appLifecycleSupport || !('value' in appLifecycleSupport) || appLifecycleSupport.value !== APP_LIFECYCLE_PROTOCOL) {
             return false;
         }

@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECTION_LIMITS } from '../core/invocation/observation-registry.js';
 import { expect, it, vi } from 'vitest';
 import { AppKernel } from './app-kernel/AppKernel.js';
 import { detailFrame, publishedTool } from '../../tests/fixtures/app-frame.js';
@@ -14,7 +15,8 @@ it.each([false, true])('reuses the shared contract across View reactivation and 
     const publish = (enabled = true) => runtime.publishFrame(() => ({ views: [detailFrame({
         owner, bindings: [{ name: 'read', enabled, execute }],
     })] }));
-    const kernel = new AppKernel({ appName: 'example', factory: { initialize(context) {
+    const identity = { appId: 'example', desktopId: 'desktop' } as AppContext;
+    const kernel = new AppKernel({ ...identity, instanceId: 'registered-parameters', projectionLimits: DEFAULT_PROJECTION_LIMITS, appName: 'example', factory: { initialize(context) {
         runtime = context;
         context.defineTools([{ viewType: 'Detail', name: 'read', description: 'Read', inputSchema }]);
         publish();
@@ -22,7 +24,7 @@ it.each([false, true])('reuses the shared contract across View reactivation and 
     } } } as any);
 
     try {
-        await kernel.onOpen({ appId: 'example', desktopId: 'desktop' } as AppContext);
+        await kernel.onOpen();
         const first = publishedTool(kernel, 'read');
         const contract = kernel.getBoundTypeToolContract(first.tool, first.receiver);
         expect(contract?.hasRefs).toBe(typed);

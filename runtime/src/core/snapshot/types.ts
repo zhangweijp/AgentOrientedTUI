@@ -1,5 +1,5 @@
 export const MARKDOWN_VIEW_FORMAT = 'markdown-v1' as const;
-export const SNAPSHOT_SCHEMA_VERSION = 5 as const;
+export const SNAPSHOT_SCHEMA_VERSION = 6 as const;
 /**
  * Runtime Core semantic snapshot types.
  *
@@ -22,7 +22,7 @@ export type RefTarget = Readonly<{ kind: 'snapshot-value'; payload: JsonValue }>
  * data References owned by real View instances. Each View carries only the
  * identity of its enabled bindings. Definitions are shared in the Tool table.
  */
-export interface ViewSnapshotV4 {
+export interface ViewSnapshot {
     readonly id: string;
     readonly viewInstanceId: string;
     readonly type: string;
@@ -33,14 +33,14 @@ export interface ViewSnapshotV4 {
 }
 export type ViewToolBinding = Readonly<{ toolId: string; activationId: string }>;
 export type ViewToolReceiver = Readonly<{ viewId: string; viewInstanceId: string; activationId: string }>;
-export interface RefDescriptorV2 {
+export interface RefDescriptor {
     readonly id: string;
     readonly ownerViewId: string;
     readonly ownerViewInstanceId: string;
     readonly refType: string;
     readonly target: RefTarget;
 }
-export interface ToolDescriptorV5 {
+export interface ToolDescriptor {
     readonly id: string;
     readonly name: string;
     readonly viewType: string;
@@ -49,28 +49,28 @@ export interface ToolDescriptorV5 {
     readonly description: string;
     readonly inputSchema: JsonValue;
 }
-export type ToolInvocationDescriptor = Omit<ToolDescriptorV5, 'nameSharedAcrossViewTypes'>;
-export interface PreparedAppSnapshotDraftV5 {
+export type ToolInvocationDescriptor = Omit<ToolDescriptor, 'nameSharedAcrossViewTypes'>;
+export interface PreparedAppSnapshotDraft {
     readonly schemaVersion: typeof SNAPSHOT_SCHEMA_VERSION;
     readonly appId: string;
     readonly instanceId: string;
     readonly producerSeq: number;
     readonly sourceEpoch: number;
     readonly capturedAt: number;
-    readonly views: readonly ViewSnapshotV4[];
-    readonly refs: Readonly<Record<string, RefDescriptorV2>>;
-    readonly tools: Readonly<Record<string, ToolDescriptorV5>>;
+    readonly views: readonly ViewSnapshot[];
+    readonly refs: Readonly<Record<string, RefDescriptor>>;
+    readonly tools: Readonly<Record<string, ToolDescriptor>>;
 }
-export interface AppSnapshotV5 {
+export interface AppSnapshot {
     readonly schemaVersion: typeof SNAPSHOT_SCHEMA_VERSION;
     readonly id: string;
     readonly appId: string;
     readonly instanceId: string;
     readonly revision: number;
     readonly createdAt: number;
-    readonly views: readonly ViewSnapshotV4[];
-    readonly refs: Readonly<Record<string, RefDescriptorV2>>;
-    readonly tools: Readonly<Record<string, ToolDescriptorV5>>;
+    readonly views: readonly ViewSnapshot[];
+    readonly refs: Readonly<Record<string, RefDescriptor>>;
+    readonly tools: Readonly<Record<string, ToolDescriptor>>;
     readonly contentDigest: string;
 }
 export type SnapshotDraftEnvelope = Readonly<{
@@ -91,7 +91,7 @@ type SnapshotPrepareIssueCode = typeof SNAPSHOT_PREPARE_ISSUE_CODES[number];
 export type SnapshotIssueCode =
     | SnapshotPrepareIssueCode
     | 'SNAPSHOT_CAPACITY'
-    | 'SNAPSHOT_EXPIRED'
+    | 'SNAPSHOT_UNAVAILABLE'
     | 'SNAPSHOT_UNREADY'
     | 'SNAPSHOT_SOURCE_CONFLICT'
     | 'SNAPSHOT_SEQUENCE_STALE'
@@ -119,36 +119,35 @@ export interface SnapshotIssue {
 export type SnapshotPrepareIssue = Pick<SnapshotIssue, 'message' | 'path'> & { readonly code: SnapshotPrepareIssueCode };
 
 export type CommitResult =
-    | Readonly<{ status: 'published' | 'unchanged'; snapshot: AppSnapshotV5 }>
+    | Readonly<{ status: 'published' | 'unchanged'; snapshot: AppSnapshot }>
     | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
 
 export type SnapshotRead =
-    | Readonly<{ status: 'ready'; snapshot: AppSnapshotV5 }>
+    | Readonly<{ status: 'ready'; snapshot: AppSnapshot }>
     | Readonly<{ status: 'unready' }>
-    | Readonly<{ status: 'degraded'; lastGood?: AppSnapshotV5; issue: SnapshotIssue }>
+    | Readonly<{ status: 'degraded'; lastGood?: AppSnapshot; issue: SnapshotIssue }>
     | Readonly<{ status: 'stopped' }>;
 
 export type SnapshotLookup =
-    | Readonly<{ status: 'found'; snapshot: AppSnapshotV5 }>
+    | Readonly<{ status: 'found'; snapshot: AppSnapshot }>
     | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
 
-export interface SnapshotLease {
-    readonly snapshot: AppSnapshotV5;
-    /** null means retained by an explicit owner until release/dispose. */
-    readonly expiresAt: number | null;
+export interface SnapshotHold {
+    readonly snapshot: AppSnapshot;
+    /** Idempotently relinquishes this hold. */
     release(): void;
 }
 
-export type LeaseResult =
-    | Readonly<{ status: 'acquired'; lease: SnapshotLease }>
+export type HoldResult =
+    | Readonly<{ status: 'acquired'; hold: SnapshotHold }>
     | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
 
 export type RefLookup =
-    | Readonly<{ status: 'resolved'; ref: RefDescriptorV2; target: RefTarget }>
+    | Readonly<{ status: 'resolved'; ref: RefDescriptor; target: RefTarget }>
     | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
 
 export type ToolLookup =
-    | Readonly<{ status: 'found'; tool: ToolDescriptorV5 }>
+    | Readonly<{ status: 'found'; tool: ToolDescriptor }>
     | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>;
 
 export interface RefSelector {
@@ -187,11 +186,9 @@ export interface SnapshotStoreOptions {
      * Overrides are safe integers from zero to their default, inclusive.
      * Invalid property shapes throw TypeError; invalid values throw RangeError. */
     readonly limits?: Partial<{ [Field in keyof SnapshotLimits]: SnapshotLimits[Field] | undefined }> | undefined;
-    readonly maxHistoryEntries?: number;
-    readonly maxHistoryBytes?: number;
-    readonly historyTtlMs?: number;
-    readonly leaseTtlMs?: number;
-    readonly maxActiveLeases?: number;
+    readonly maxHeldSnapshots?: number;
+    readonly maxHeldSnapshotBytes?: number;
+    readonly maxActiveHolds?: number;
     readonly maxIdentityBytes?: number;
     readonly maxCurrentBytes?: number;
 }
@@ -201,15 +198,15 @@ export interface SnapshotStoreStats {
     readonly currentBytes: number;
     readonly diagnosticBytes: number;
     readonly currentSnapshots: number;
-    readonly historicalSnapshots: number;
-    readonly historicalBytes: number;
-    readonly activeLeases: number;
+    readonly heldSnapshots: number;
+    readonly heldSnapshotBytes: number;
+    readonly activeHolds: number;
 }
 
 export interface SnapshotStore {
     readLatest(appId: string): SnapshotRead;
     getById(snapshotId: string): SnapshotLookup;
-    acquire(snapshotId: string, requestedTtlMs?: number | Readonly<{ lifetime: 'owner' }>): LeaseResult;
+    acquire(snapshotId: string): HoldResult;
     resolveRef(selector: RefSelector): RefLookup;
     getTool(selector: ToolSelector): ToolLookup;
     inspect(): SnapshotStoreStats;

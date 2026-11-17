@@ -5,4 +5,4 @@ export type { PublishedRef, RefOptions, ArrayRefOptions } from './app-factory/re
 export { defineViewType, getToolCatalog, refParam } from './tools/view-type-tool.js';
 export type { ArgsOf, ContextualViewType, DeepReadonly, ViewType } from './tools/view-type-tool.js';
 export type { JsonValue } from '@aotui/runtime/core';
-export type { PreparedProjection, ToolResult } from '@aotui/runtime/spi';
+export type { PreparedProjection, ProjectionLimits, ToolResult } from '@aotui/runtime/spi';

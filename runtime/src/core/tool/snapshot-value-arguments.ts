@@ -1,9 +1,9 @@
 import { canonicalJson, copyJson, utf8Size, type JsonCopyLimits } from '../snapshot/json.js';
 import type { JsonValue, SnapshotIssueCode, SnapshotStore } from '../snapshot/types.js';
-import type { OrdinaryParameterContract } from './ordinary-parameter-contract.js';
+import type { ToolParameterContract } from './tool-parameters.js';
 import type { InvocationSource } from '../invocation/app-interaction-types.js';
 import type { RefIdentity } from '../invocation/observation-types.js';
-import { selectedRefParameters } from './versioned-ref-declarations.js';
+import { selectedRefParameters } from './ref-parameters.js';
 import { RAW_TOOL_ARGUMENT_LIMITS as RAW, RESOLVED_TOOL_ARGUMENT_LIMITS as ARGUMENTS,
     RESOLVED_TOOL_ENVELOPE_LIMITS as ENVELOPE } from '../snapshot/snapshot-support.js';
 
@@ -39,7 +39,7 @@ export function checkRefViews(sources: readonly SnapshotValueRefSource[], raw: R
 type Limits = JsonCopyLimits & { readonly maxCanonicalBytes: number };
 /** Resolve each explicit parameter in the retained original observation, independently of the receiver. */
 export function prepareViewTypeParameters(
-    store: SnapshotStore, source: InvocationSource, contract: OrdinaryParameterContract, input: JsonObject,
+    store: SnapshotStore, source: InvocationSource, contract: ToolParameterContract, input: JsonObject,
     visibleRefs: readonly RefIdentity[],
 ): Readonly<{ status: 'rejected'; issue: Readonly<{ code: ArgumentIssueCode; message: string; path?: string }> }> | Readonly<{
     status: 'prepared'; rawArgs: JsonObject; effectiveArgs: JsonObject; refSources: readonly SnapshotValueRefSource[];

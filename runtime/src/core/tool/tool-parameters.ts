@@ -1,22 +1,21 @@
-export const VIEW_TYPE_PARAMETERS_MODE = 'view-type-parameters-v1' as const;
-import { canonicalJson, copyJson, JsonCopyLimitError, SnapshotDataError, utf8Size } from '../snapshot/json.js';
+import { canonicalJson, checkJsonLimits, copyJson, JsonCopyLimitError, SnapshotDataError, utf8Size } from '../snapshot/json.js';
 import type { JsonValue } from '../snapshot/types.js';
 import { DEFAULT_SNAPSHOT_LIMITS, RAW_TOOL_ARGUMENT_LIMITS as INPUT, RESOLVED_TOOL_ARGUMENT_LIMITS } from '../snapshot/snapshot-support.js';
 
 type JsonObject = Readonly<Record<string, JsonValue>>;
 type DeclarationCode = 'PARAMETER_DECLARATION_INVALID' | 'PARAMETER_DECLARATION_UNSUPPORTED' | 'PARAMETER_DECLARATION_CAPACITY';
 export type ParameterDiagnostic = Readonly<{ parameter?: string; path?: string; message: string }>;
-export type OrdinaryValidation =
+export type ToolParameterValidation =
   | Readonly<{ ok: true; value: JsonObject }>
   | Readonly<{ ok: false; code: 'PARAMETER_INPUT_INVALID'; diagnostics: readonly ParameterDiagnostic[] }>;
-export interface OrdinaryParameterContract {
+export interface ToolParameterContract {
   readonly schema: JsonObject;
   readonly hasRefs: boolean;
-  validateModelInput(input: unknown): OrdinaryValidation;
-  validateResolvedInput(input: unknown): OrdinaryValidation;
+  validateModelInput(input: unknown): ToolParameterValidation;
+  validateResolvedInput(input: unknown): ToolParameterValidation;
 }
-export type CompileResult =
-  | Readonly<{ ok: true; contract: OrdinaryParameterContract }>
+export type ToolParameterCompileResult =
+  | Readonly<{ ok: true; contract: ToolParameterContract }>
   | Readonly<{ ok: false; issue: Readonly<{ code: DeclarationCode; message: string; path: string }> }>;
 
 const DECLARATION = { maxDepth: 24, maxNodes: 5_000, maxApproxBytes: 64 * 1024 };
@@ -37,10 +36,10 @@ function childPath(path: string, key: string): string {
   return diagnosticPath(path + segment);
 }
 function invalid(path?: string): never {
-  throw new DeclarationError('PARAMETER_DECLARATION_INVALID', 'Expected a valid bounded ordinary parameter declaration.', path);
+  throw new DeclarationError('PARAMETER_DECLARATION_INVALID', 'Expected a valid bounded tool parameter declaration.', path);
 }
 function unsupported(path?: string): never {
-  throw new DeclarationError('PARAMETER_DECLARATION_UNSUPPORTED', 'Declaration uses unsupported ordinary parameter vocabulary.', path);
+  throw new DeclarationError('PARAMETER_DECLARATION_UNSUPPORTED', 'Declaration uses unsupported tool parameter vocabulary.', path);
 }
 function keys(value: JsonObject, allowed: readonly string[], path = '$'): void {
   for (const key of Object.keys(value)) if (!allowed.includes(key)) unsupported(childPath(path, key));
@@ -62,7 +61,7 @@ type Check = (value: JsonValue, path: string, resolved: boolean) => ValueIssue |
 type Position = 'root' | 'parameter' | 'ref-item' | 'nested';
 
 const TYPE_RULES: Readonly<Record<string, readonly string[]>> = {
-  string: ['minLength', 'maxLength', 'pattern'],
+  string: ['minLength', 'maxLength'],
   number: ['minimum', 'maximum'],
   integer: ['minimum', 'maximum'],
   object: ['properties', 'required', 'additionalProperties'],
@@ -70,7 +69,6 @@ const TYPE_RULES: Readonly<Record<string, readonly string[]>> = {
   boolean: [],
   null: [],
 };
-const MARKER = 'x-aotui-parameter-contract';
 
 function issue(path: string, message: string): ValueIssue {
   return { path: diagnosticPath(path), message };
@@ -200,13 +198,6 @@ function compileValue(field: JsonValue, path: string, position: Position): Compi
       for (const _ of value as string) length++;
       if (!validLength(length)) return issue(location, 'String length is outside the declared bounds.');
     });
-    if (has(field, 'pattern')) {
-      if (typeof field.pattern !== 'string') invalid(childPath(path, 'pattern'));
-      let pattern: RegExp;
-      try { pattern = new RegExp(field.pattern, 'u'); }
-      catch { invalid(childPath(path, 'pattern')); }
-      checks.push((value, location) => pattern.test(value as string) ? undefined : issue(location, 'String does not match the declared pattern.'));
-    }
   }
   if (type === 'number' || type === 'integer') {
     const inRange = bounds(field, 'minimum', 'maximum', path);
@@ -250,7 +241,7 @@ function declarationIssue(error: unknown) {
   }
   return Object.freeze({
     code: error instanceof DeclarationError ? error.code : 'PARAMETER_DECLARATION_INVALID' as const,
-    message: error instanceof DeclarationError ? error.message : 'Expected a valid bounded ordinary parameter declaration.',
+    message: error instanceof DeclarationError ? error.message : 'Expected a valid bounded tool parameter declaration.',
     path: diagnosticPath(error instanceof DeclarationError || error instanceof SnapshotDataError ? error.path ?? '$' : '$'),
   });
 }
@@ -265,7 +256,7 @@ export function compileValueSchema(input: unknown): Readonly<
   } catch (error) { return Object.freeze({ ok: false, issue: declarationIssue(error) }); }
 }
 
-function finish(root: JsonValue): CompileResult {
+function finish(root: JsonValue): ToolParameterCompileResult {
   if (object(root) && object(root.properties) && has(root.properties, 'view_id')) {
     throw new DeclarationError('PARAMETER_DECLARATION_INVALID',
       'view_id is reserved for the receiving View. Declare only business parameters.', '$.properties.view_id');
@@ -277,7 +268,7 @@ function finish(root: JsonValue): CompileResult {
   const fields = compiled.members!;
   const hasRefs = compiled.hasRefs;
   const requiredNames = new Set(schema.required as readonly string[]);
-  const check = (input: unknown, resolved: boolean): OrdinaryValidation => {
+  const check = (input: unknown, resolved: boolean): ToolParameterValidation => {
     const diagnostics: ParameterDiagnostic[] = [];
     const add = (failure: ValueIssue, parameter?: string) => {
       if (diagnostics.length < 16) diagnostics.push(Object.freeze({
@@ -316,7 +307,7 @@ function finish(root: JsonValue): CompileResult {
 function stripInternalSchema(input: JsonValue): JsonValue {
   if (!object(input)) return input;
   const schema = Object.fromEntries(Object.entries(input).flatMap(([key, value]) => {
-    if (key === MARKER || key === REF_KIND || key === REF_VALUE) return [];
+    if (key === REF_KIND || key === REF_VALUE) return [];
     if (key === 'properties' && object(value)) {
       const properties = Object.fromEntries(Object.entries(value).map(([name, schema]) => [name, stripInternalSchema(schema)]));
       return [[key, Object.freeze(properties)]];
@@ -359,7 +350,29 @@ export function modelToolSchema(input: JsonValue, viewType: string, eligibleView
 }
 
 /** Compile the ViewType Tool schema for model arguments and resolved handler input. */
-export function compileOrdinarySchema(schema: unknown): CompileResult {
+export function compileToolParameters(schema: unknown): ToolParameterCompileResult {
   try { return finish(copyJson(schema, DECLARATION)); }
   catch (error) { return Object.freeze({ ok: false, issue: declarationIssue(error) }); }
+}
+
+const capturedContracts = new WeakMap<JsonObject, { canonical: string; contract: ToolParameterContract }>();
+
+/** Only accept schemas from the Core's strict, immutable Snapshot capture. */
+export function compileCapturedToolParameters(schema: JsonObject, canonical: string, previous?: JsonValue): ToolParameterContract | null {
+  const prior = object(previous) ? capturedContracts.get(previous) : undefined;
+  if (prior?.canonical === canonical) {
+    capturedContracts.set(schema, prior);
+    return prior.contract;
+  }
+  try {
+    checkJsonLimits(schema, DECLARATION);
+    const compiled = finish(schema);
+    if (!compiled.ok || canonicalJson(compiled.contract.schema) !== canonical) return null;
+    capturedContracts.set(schema, { canonical, contract: compiled.contract });
+    return compiled.contract;
+  } catch { return null; }
+}
+
+export function getCapturedToolParameters(schema: JsonValue): ToolParameterContract | undefined {
+  return object(schema) ? capturedContracts.get(schema)?.contract : undefined;
 }

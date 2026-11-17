@@ -11,7 +11,7 @@ import type { AppStatePersistence } from '@aotui/runtime/spi';
 import { createContext } from 'preact';
 import { useContext, useMemo } from 'preact/hooks';
 import type { ViewType } from '../tools/view-type-tool.js';
-import type { AppID, DesktopID, AppFrameView, AppLaunchConfig, PreparedProjection } from '@aotui/runtime/spi';
+import type { AppID, DesktopID, AppFrameView, AppLaunchConfig, PreparedProjection, ProjectionLimits } from '@aotui/runtime/spi';
 import type { createViewRefs } from '../app-factory/render-commit.js';
 
 // ═══════════════════════════════════════════════════════════════
@@ -24,13 +24,14 @@ import type { createViewRefs } from '../app-factory/render-commit.js';
  * Preact adapter supplies this context to the App and its Views.
  */
 type SynchronousUpdate<Result> = () => Result & (Extract<Result, PromiseLike<unknown>> extends never ? unknown : never);
-export type PrepareProjection = <UpdateResult, RevertResult = void>(
-    update: SynchronousUpdate<UpdateResult>, opening?: { readonly revert: SynchronousUpdate<RevertResult> },
+type PrepareProjection = <UpdateResult>(update: SynchronousUpdate<UpdateResult>) => Promise<PreparedProjection>;
+type PrepareOpeningProjection = <UpdateResult, RevertResult>(
+    update: SynchronousUpdate<UpdateResult>, revert: SynchronousUpdate<RevertResult>,
 ) => Promise<PreparedProjection>;
 
 interface AppRuntimeContextValue {
     persistence?: AppStatePersistence | undefined;
-    appLifecycle?: AppLifecyclePort | undefined;
+    appLifecycle: AppLifecyclePort;
     /** App ID */
     appId: AppID;
 
@@ -39,10 +40,12 @@ interface AppRuntimeContextValue {
 
     /** App 启动配置 */
     launchConfig?: AppLaunchConfig | undefined;
+    readonly projectionLimits: ProjectionLimits;
 
     viewTypes: ReadonlyMap<string, ViewType>;
     views: WeakMap<Element, Pick<AppFrameView, 'id' | 'type' | 'owner' | 'bindings'> & Pick<ReturnType<typeof createViewRefs>, 'readRefs'>>;
     prepareProjection: PrepareProjection;
+    prepareOpeningProjection: PrepareOpeningProjection;
 }
 
 interface AppRuntimePublicContextValue {
@@ -50,8 +53,11 @@ interface AppRuntimePublicContextValue {
     readonly desktopId: DesktopID;
     readonly launchConfig?: AppLaunchConfig | undefined;
     readonly persistence?: AppStatePersistence;
-    /** Schedule a render and await its local projection. Supply a revert only for reversible View openings. */
+    readonly projectionLimits: ProjectionLimits;
+    /** Schedule a render and await local projection preparation. */
     readonly prepareProjection: PrepareProjection;
+    /** Prepare a reversible View opening, restoring navigation state on capacity rejection. */
+    readonly prepareOpeningProjection: PrepareOpeningProjection;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -64,9 +70,6 @@ interface AppRuntimePublicContextValue {
  * The Preact adapter installs the provider at the root.
  */
 export const AppRuntimeContext = createContext<AppRuntimeContextValue | null>(null);
-
-// [RFC-027-C] Factory Injection Pattern:
-// Context不再通过globalThis/Symbol注册，而是由Factory内部直接使用。
 
 // ═══════════════════════════════════════════════════════════════
 //  Hook
@@ -99,7 +102,9 @@ export function useAppRuntimeContext(): AppRuntimePublicContextValue {
         return Object.freeze({
             appId: context.appId,
             desktopId: context.desktopId,
+            projectionLimits: context.projectionLimits,
             prepareProjection: context.prepareProjection,
+            prepareOpeningProjection: context.prepareOpeningProjection,
             ...(context.launchConfig === undefined ? {} : { launchConfig: context.launchConfig }),
             ...(persistence === undefined ? {} : { persistence }),
         });

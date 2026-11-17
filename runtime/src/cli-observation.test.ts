@@ -42,7 +42,7 @@ function fixture(project?: AppInteractionPolicy['project']) {
     })));
     frame.accept();
     const views = frame.instances;
-    const published = core.committer.accept({ schemaVersion: 5, appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+    const published = core.committer.accept({ schemaVersion: 6, appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
         views: views.map(view => ({ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: view.viewId,
             kind: 'state', content: { format: 'markdown-v1', value: 'Current content' } })),
         refs: Object.fromEntries(views.map(view => [refKey(view.viewId, view.viewInstanceId, 'data'), {
@@ -55,7 +55,7 @@ function fixture(project?: AppInteractionPolicy['project']) {
     const authority = client;
     function released() {
         expect(authority.inspect().observations).toMatchObject({ observations: 0, reservations: 0, sources: 0, totalBytes: 0 });
-        expect(core.store.inspect().activeLeases).toBe(0);
+        expect(core.store.inspect().activeHolds).toBe(0);
     }
     async function close() {
         authority.close(); await authority.whenClosed(); released();

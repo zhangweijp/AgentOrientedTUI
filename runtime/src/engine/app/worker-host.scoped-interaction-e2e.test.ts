@@ -35,7 +35,7 @@ async function start() {
     worker.on('message', m => messages.push(m));
     const x = { host, worker, messages, sent, logs,
         snapshot: () => (host as any).snapshotReceiver.core.store.readLatest('scoped_sdk').snapshot,
-        refs: () => sent.filter(m => m.type === 'VIEW_TOOL_INVOKE_V6' && m.argumentMode === 'view-type-parameters-v1') };
+        refs: () => sent.filter(m => m.type === 'VIEW_TOOL_INVOKE') };
     running.push(x); await host.start(); await host.open(); return x;
 }
 function scope(x: Awaited<ReturnType<typeof start>>) {
@@ -248,11 +248,11 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
 
         await configure(x, { text: 'new version' });
         const currentView = await s.observe();
-        expect(store.inspect().historicalSnapshots).toBe(1);
-        expect(store.inspect().activeLeases).toBe(2);
+        expect(store.inspect().heldSnapshots).toBe(1);
+        expect(store.inspect().activeHolds).toBe(2);
         expect(await s.client.invoke(s.request(currentView, 'busy'))).toMatchObject({ kind: 'refused', code: 'INVOCATION_CAPACITY' });
-        const correlated = { type: 'VIEW_TOOL_INVOKE_V6_RESPONSE', requestId: wire.requestId, appId: wire.appId,
-            instanceId: wire.instanceId, argumentMode: wire.argumentMode, success: true,
+        const correlated = { type: 'VIEW_TOOL_INVOKE_RESPONSE', requestId: wire.requestId, appId: wire.appId,
+            instanceId: wire.instanceId, success: true,
             terminal: { phase: 'finished-unknown' } };
         x.worker.emit('message', { ...correlated, instanceId: 'another-instance' });
         x.worker.emit('message', { ...correlated, requestId: 'another-request' });
@@ -271,7 +271,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         }
         expect(x.host.getInteractionReport()?.core.receiptContents).toBe(0);
         expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: true, core: { activeInvocations: 1 } });
-        const late = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE' && m.requestId === wire.requestId && m.instanceId === wire.instanceId);
+        const late = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_RESPONSE' && m.requestId === wire.requestId && m.instanceId === wire.instanceId);
         const releasedAt = Math.floor(performance.timeOrigin + performance.now());
         x.worker.postMessage({ type: 'TEST_COMMAND', command: 'release-handler', viewId: 'aa' });
         const terminal = await late;
@@ -283,7 +283,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         x.worker.emit('message', terminal);
         expect(receipt(await s.client.invoke(request))).toEqual(settled);
         expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: false, core: { activeInvocations: 0, sourceBytes: 0 } });
-        expect(store.inspect()).toMatchObject({ activeLeases: 1, historicalSnapshots: 0 });
+        expect(store.inspect()).toMatchObject({ activeHolds: 1, heldSnapshots: 0 });
         expect(await s.client.invoke(s.request(originalView, 'old'))).toMatchObject({
             kind: 'refused', code: 'OBSERVATION_UNAVAILABLE',
         });
@@ -391,7 +391,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         const request = s.request(o, mode, { file: REF_A, mode }), r = receipt(await s.client.invoke(request));
         expect(r).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown', code: 'ACTION_OUTCOME_UNKNOWN' } });
         expect(r.expiresAt).toBeGreaterThan(r.completedAt);
-        const terminal = x.messages.find(m => m.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE' && m.requestId === x.refs()[0].requestId);
+        const terminal = x.messages.find(m => m.type === 'VIEW_TOOL_INVOKE_RESPONSE' && m.requestId === x.refs()[0].requestId);
         expect(terminal?.terminal).toEqual({ phase: 'finished-unknown' });
         expect(receipt(await s.client.readReceipt({ observationId: request.observationId, invocationId: request.invocationId }))).toEqual(r);
         expect(receipt(await s.client.invoke(request))).toEqual(r);

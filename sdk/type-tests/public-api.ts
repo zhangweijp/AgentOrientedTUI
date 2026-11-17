@@ -20,6 +20,7 @@ import {
   type ItemRefFormatter,
   type LLMUsageEvent,
   type ListRefFormatter,
+  type ProjectionLimits,
   type ToolError,
   type ToolResult,
   type PersistMeta,
@@ -32,7 +33,6 @@ import {
   type StateValue,
   type TUIAppConfig,
   type ViewType,
-  type ViewID,
   type ViewProps,
 } from '../src/index.js';
 import { arrayRef, formatRef, ref, type ArrayRefOptions, type RefOptions } from '../src/app.js';
@@ -101,13 +101,31 @@ function checkPublicContextShape() {
   const flushReport: Promise<StateFlushReport> | undefined = context.persistence?.flush();
   const captured = context.persistence?.captureValue({ tabs: ['a'] });
   const bound = context.persistence?.bind('tabs', [], { hydrate: true });
+  const limits: ProjectionLimits = context.projectionLimits;
+  // @ts-expect-error The configured limits are read-only.
+  limits.maxViews = 7;
+  // @ts-expect-error Nested limits are read-only as well.
+  limits.observation.maxCanonicalBytes = 8;
+  // @ts-expect-error Retained memory limits are not author configuration.
+  limits.maxTotalBytes;
+  void context.prepareProjection(() => {});
+  void context.prepareOpeningProjection(() => {}, () => {});
+  // @ts-expect-error Regular preparation takes only the update.
   void context.prepareProjection(() => {}, { revert: () => {} });
-  // @ts-expect-error The opening update is synchronous.
+  // @ts-expect-error Opening preparation requires a revert callback.
+  void context.prepareOpeningProjection(() => {});
+  // @ts-expect-error The update is synchronous.
   void context.prepareProjection(async () => {});
+  // @ts-expect-error The opening update is synchronous.
+  void context.prepareOpeningProjection(async () => {}, () => {});
   // @ts-expect-error The opening revert is synchronous.
-  void context.prepareProjection(() => {}, { revert: async () => {} });
+  void context.prepareOpeningProjection(() => {}, async () => {});
   // @ts-expect-error Returned thenables are also asynchronous.
   void context.prepareProjection(() => ({} as PromiseLike<void>));
+  // @ts-expect-error An opening update cannot return a thenable.
+  void context.prepareOpeningProjection(() => ({} as PromiseLike<void>), () => {});
+  // @ts-expect-error A revert callback cannot return a thenable.
+  void context.prepareOpeningProjection(() => {}, () => ({} as PromiseLike<void>));
   // @ts-expect-error SDK Ref exporter is not part of the public context view.
   context.refExporter;
   // @ts-expect-error Lifecycle registration is exposed through useAppLifecycle.
@@ -126,7 +144,7 @@ type PublicTypes = [
   StateValue,
   typeof defineViewType, typeof refParam, typeof View,
   ViewType,
-  ViewID, ViewProps,
+  ViewProps,
 ];
 declare const publicTypes: PublicTypes;
 void publicTypes;
@@ -160,7 +178,7 @@ const oldDescriptionConfig: TUIAppConfig = { app_name: 'old_description', descri
 void oldDescriptionConfig;
 const factory = createTUIApp(config);
 const lifecycleProtocol: 'app-lifecycle-v2' = factory.appLifecycleSupport;
-const authoringProtocol: 'view-type-tools-v5' = factory.toolAuthoringProtocol;
+const authoringProtocol: 'view-type-tools-v6' = factory.toolAuthoringProtocol;
 void lifecycleProtocol; void authoringProtocol;
 
 const cleanup: AppLifecycleCallbacks = { stop() {}, close() {} };

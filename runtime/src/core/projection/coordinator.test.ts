@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { SemanticProjectionCoordinator, type CompleteProjectionFrame } from './coordinator.js';
 import { hostedObservationCapacityIssue } from '../invocation/observation-registry.js';
 import { createSnapshotCore } from '../snapshot/store.js';
-import type { JsonValue, ViewSnapshotV4 } from '../snapshot/types.js';
-import type { ProjectionOptions } from '../../spi/app/app-instance.interface.js';
+import type { JsonValue, ViewSnapshot } from '../snapshot/types.js';
+import type { ProjectionOptions } from './coordinator.js';
 
 const aa = { viewId: 'aa', viewInstanceId: 'a1' };
 const bb = { viewId: 'bb', viewInstanceId: 'b1' };
-const view = (owner = aa, value = 'body'): ViewSnapshotV4 => ({
+const view = (owner = aa, value = 'body'): ViewSnapshot => ({
     toolBindings: [], id: owner.viewId, name: owner.viewId, type: 'File', viewInstanceId: owner.viewInstanceId,
     kind: 'state', content: { format: 'markdown-v1', value },
 });
@@ -26,7 +26,7 @@ describe('shared complete projection frame', () => {
     it('reports real failures and preserves their diagnostic on a reversible staged opening', () => {
         const { c, frame, core, publish } = fixture(hostedObservationCapacityIssue);
         const accept = vi.fn();
-        const complete = (views: ViewSnapshotV4[], options?: ProjectionOptions) => c.commit(() => frame(views, [], accept), options);
+        const complete = (views: ViewSnapshot[], options?: ProjectionOptions) => c.commit(() => frame(views, [], accept), options);
         expect(complete([view()])).toMatchObject({ status: 'prepared', sourceEpoch: 1 });
         expect(publish().status).toBe('published');
         const large = [view(aa, 'a'.repeat(400 * 1024)), view(bb, 'b'.repeat(400 * 1024))];

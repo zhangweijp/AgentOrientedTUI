@@ -7,8 +7,8 @@ async function prepareTools(type, viewId, context) {
   const factory = createApp({
     app_name: 'ide_tool_fixture',
     viewTypes: [type],
-    initialize({ publish }) {
-      publish({ views: [createView(type, { id: viewId, kind: 'state', render: () => ({ body: '', context }) })] });
+    initialize({ prepareProjection }) {
+      prepareProjection({ views: [createView(type, { id: viewId, kind: 'state', render: () => ({ body: '', context }) })] });
     },
   });
   await factory.initialize({

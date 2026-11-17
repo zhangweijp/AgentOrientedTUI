@@ -163,6 +163,8 @@ export function sandboxCloseReport(report: SandboxCloseReport, desktopId: string
                 else if (lifecycle.flush.status === 'completed' && lifecycle.flush.ok) state.persistence.confirmedFlushes = 1;
                 else state.persistence.failedFlushes = 1;
             } else state.persistence.missingCloseReceipts = 1;
+        } else if (storage!.support === 'not-used') {
+            state.persistence.notUsedApps = 1;
         } else {
             state.verification = 'mixed';
             state.persistence.unnegotiatedApps = 1;

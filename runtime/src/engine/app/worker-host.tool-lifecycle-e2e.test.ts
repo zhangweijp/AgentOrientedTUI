@@ -1,3 +1,4 @@
+import { readSqliteState } from '../../../tests/fixtures/sqlite-state.js';
 import { afterAll, beforeAll, afterEach, describe, expect, it } from 'vitest';
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -194,12 +195,12 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         } finally { authorized.resolve(true); await pending.catch(() => undefined); }
         expect(outcome(await sb.invoke(request(ob))).status).toBe('succeeded');
         await close(a); await close(b);
-        expect(JSON.parse(await readFile(join(a.root, 'state/app-state/d/a/counter.json'), 'utf8')).value).toBe(2);
+        expect(JSON.parse(readSqliteState(join(a.root, 'state/app-state'), 'd', 'a', 'counter')!).value).toBe(2);
     }, 20000);
     it('checks the current View at Worker entry and lets the App cancel a held handler on stop', async () => {
         const x = await start(), s = scope(x), observation = await s.observeCounter();
         const send = x.worker.postMessage.bind(x.worker);
-        x.worker.postMessage = (message: any) => send(message.type === 'VIEW_TOOL_INVOKE_V6' && message.argumentMode === 'view-type-parameters-v1'
+        x.worker.postMessage = (message: any) => send(message.type === 'VIEW_TOOL_INVOKE'
             ? { ...message, receiver: { ...message.receiver, activationId: 'stale-activation' } } : message);
         expect(outcome(await s.invoke(request(observation))).status).toBe('rejected');
         expect((await control(x, 'inspect')).entries).toBe(0); x.worker.postMessage = send;
@@ -208,7 +209,7 @@ describe('Actual SDK / Worker ordinary Tool and application cleanup', () => {
         await wait(x, m => m.type === 'TEST_STOPPED');
         expect(x.host.getInteractionReport()).toMatchObject({ workerToolPending: true, core: { activeInvocations: 1 } });
         expect(x.messages.some((message: any) => message.type === 'TEST_CLEANUP_ENTERED')).toBe(false);
-        const terminal = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_V6_RESPONSE', x.messages.length);
+        const terminal = wait(x, m => m.type === 'VIEW_TOOL_INVOKE_RESPONSE', x.messages.length);
         await control(x, 'release-handler');
         expect((await terminal).terminal.phase).toBe('entered-returned');
         // Closing revokes this Scope, including receipt access. It must not

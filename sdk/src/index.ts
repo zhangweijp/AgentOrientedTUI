@@ -1,19 +1,7 @@
 /**
  * @aotui/sdk - component application entry for the current Preact Runtime.
  *
- * Start with README.md; docs/api-status.md lists exact capability conditions,
- * and docs/static-tools.md describes the shared Tool contract.
- *
- * @example
- * ```tsx
- * import { h } from 'preact';
- * import { createTUIApp, defineViewType, View } from '@aotui/sdk';
- * const Guide = defineViewType({ name: 'Guide' });
- * function Root() {
- *   return <View kind="instruction" id="root" type={Guide}><h1>Example</h1></View>;
- * }
- * export default createTUIApp({ app_name: 'example', component: Root, viewTypes: [Guide] });
- * ```
+ * The package README shows how to build and run an App.
  *
  * Preact's useRef is a state hook; useDataRef declares application data references.
  */
@@ -49,13 +37,13 @@ export type {
 export { useLLMUsage } from './hooks/useLLMUsage.js';
 export type {
   AppID,
-  ViewID,
   DesktopID,
   ToolError,
   ToolResult,
   AppContext,
   AppReinitializeContext,
   LLMUsageEvent,
+  ProjectionLimits,
   AppStatePersistence,
   StateValue,
   StateBindingStatus,

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { compileOrdinarySchema } from './ordinary-parameter-contract.js';
+import { compileToolParameters } from './tool-parameters.js';
 const legacy = { type: 'string', 'x-aotui-ref': { version: 1, kind: 'snapshot-value', owner: 'tool-target' } };
 const literalNames = ['default', 'const', 'enum', 'examples'];
-const compile = (s: any) => compileOrdinarySchema(s);
+const compile = (s: any) => compileToolParameters(s);
 describe('annotation boundaries in the shared parameter grammar', () => {
     it.each(['ordinary', ...literalNames])('rejects unsupported dependency Schema member %s', name => {
         expect(compile({ type: 'object', properties: { file: { type: 'string' } }, dependencies: {

@@ -1,8 +1,11 @@
+import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
+import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { h } from 'preact';
 import { act } from 'preact/test-utils';
 import { renderToString } from 'preact-render-to-string';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as SDK from './index.js';
+import { createApp } from './app.js';
 import { createTUIApp, defineViewType, View, useState, useDataRef, useLLMUsage, useAppRuntimeContext } from './index.js';
 import { useContext } from 'preact/hooks';
 import { ViewRuntimeContext } from './contexts/view-runtime-context.js';
@@ -14,11 +17,13 @@ afterEach(async () => { for (const close of closing.splice(0)) await close();vi.
 const Detail = defineViewType({name:'Detail'});
 async function mount(Body: () => any, options: { outside?: boolean } = {}) {
     const factory = createTUIApp({ app_name: 'public_api', viewTypes:[Detail], component: () => options.outside ? h(Body, {}) : h(View, {kind: 'state', id: 'detail', type: Detail }, h(Body, {})) });
-    const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);kernel.setId('app' as any);kernel.setAppExecutionInstanceId('public_api_run');
-    kernel.enableAppLifecycle();
+    const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+        appId: createAppId('app'), desktopId: createDesktopId('desktop'),
+        instanceId: 'public_api_run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
+    });
     let closed = false;
     const close = async () => { if (!closed) { closed = true;await act(async () => { await kernel.onClose(); }); } };closing.push(close);
-    await act(async () => { await kernel.onOpen({ appId: 'app' as any, desktopId: 'desktop' as any }); });
+    await act(async () => { await kernel.onOpen(); });
     return { kernel, container: document.getElementById('app-root-app')!, close };
 }
 const currentOutputEvent = 'aotui:llm-usage';
@@ -26,6 +31,28 @@ const outputEvents = [currentOutputEvent, 'aotui:llm-text'];
 const usage = { timestamp: 10, providerId: 'provider', modelId: 'model', promptTokens: 2, completionTokens: 1, totalTokens: 3 };
 function emit(name = currentOutputEvent, detail = usage) { document.dispatchEvent(new CustomEvent(name, { detail })); }
 const calls = (spy: any) => spy.mock.calls.filter((args: any[]) => outputEvents.includes(args[0]));
+
+it.each([
+    ['TypeScript', createApp],
+    ['Preact', createTUIApp],
+] as const)('%s captures a checked, explicit persistence declaration', (_kind, create) => {
+    const common = { app_name: 'example', viewTypes: [], initialize() {}, component: () => null };
+    const config = { ...common, persistence: true };
+    const enabled = create(config);
+    config.persistence = false;
+    expect(enabled.persistenceSupport).toBe('state-session-v1');
+    expect(create(config)).not.toHaveProperty('persistenceSupport');
+    expect(create(common)).not.toHaveProperty('persistenceSupport');
+    expect(() => create({ ...common, persistence: 1 } as any)).toThrow(expect.objectContaining({
+        code: 'CONFIG_INVALID', context: { path: 'AppConfig.persistence', reason: expect.any(String) },
+    }));
+    let getterCalls = 0;
+    const accessor = Object.defineProperty({ ...common }, 'persistence', { enumerable: true, get() { getterCalls++; return true; } });
+    expect(() => create(accessor)).toThrow(expect.objectContaining({ code: 'CONFIG_INVALID' }));
+    expect(getterCalls).toBe(0);
+    const context = { appLifecycle: { protocol: 'app-lifecycle-v2', register() {} } } as any;
+    expect(() => enabled.initialize(context)).toThrow(expect.objectContaining({ code: 'PERSISTENCE_UNAVAILABLE' }));
+});
 
 describe('C04/C09 SDK root exports and app context', () => {
     it('exposes exactly the supported JavaScript entry points', () => {
@@ -77,12 +104,19 @@ describe('C04/C09 SDK root exports and app context', () => {
         const bind = vi.fn();
         const captureValue = vi.fn();
         const prepareProjection = vi.fn();
+        const prepareOpeningProjection = vi.fn();
         const persistence = { protocol: 'state-session-v1', instanceId: 'public_api_run', captureValue, bind, flush };
         let publicContext: any;
+        const projectionLimits = Object.freeze({ maxViews: 1, maxRefs: 1, maxTools: 1,
+            observation: Object.freeze({ maxDepth: 16, maxNodes: 128, maxApproxBytes: 1024, maxCanonicalBytes: 1024 }),
+            metadata: Object.freeze({ maxDepth: 8, maxNodes: 128, maxApproxBytes: 1024, maxCanonicalBytes: 1024 }),
+        });
         const fullContext = {
             appId: 'app', desktopId: 'desktop', launchConfig: { workspace: '/project' },
             persistence,
+            projectionLimits,
             prepareProjection,
+            prepareOpeningProjection,
             appLifecycle: { protocol: 'app-lifecycle-v2', register() {} },
             views: new WeakMap(),
             viewTypes: new Map(),
@@ -90,13 +124,15 @@ describe('C04/C09 SDK root exports and app context', () => {
         function CaptureContext() { publicContext = useAppRuntimeContext();return null; }
         renderToString(h(AppRuntimeContext.Provider, { value: fullContext as any }, h(CaptureContext, {})));
 
-        expect(Object.keys(publicContext).sort()).toEqual(['appId', 'desktopId', 'launchConfig', 'persistence', 'prepareProjection']);
+        expect(Object.keys(publicContext).sort()).toEqual(['appId', 'desktopId', 'launchConfig', 'persistence', 'prepareOpeningProjection', 'prepareProjection', 'projectionLimits']);
+        expect(publicContext.projectionLimits).toBe(projectionLimits);
         expect(publicContext.persistence).toBe(persistence);
         expect(Object.keys(publicContext.persistence).sort()).toEqual(['bind', 'captureValue', 'flush', 'instanceId', 'protocol']);
         expect(publicContext.persistence.bind).toBe(bind);
         expect(publicContext.persistence.captureValue).toBe(captureValue);
         expect(publicContext.persistence.flush).toBe(flush);
         expect(publicContext.prepareProjection).toBe(prepareProjection);
+        expect(publicContext.prepareOpeningProjection).toBe(prepareOpeningProjection);
         expect(publicContext).not.toHaveProperty('appLifecycle');
         expect(publicContext).not.toHaveProperty('views');
         expect(publicContext).not.toHaveProperty('viewTypes');
@@ -126,13 +162,16 @@ describe('C04/C09 SDK root exports and app context', () => {
         expect(projection.failure).toBeUndefined();
     });
 
-    it('rejects declared async update and revert functions before invoking either callback', async () => {
-        type JavaScriptPrepare = (update: () => unknown, opening?: { revert: () => unknown }) => Promise<unknown>;
-        let prepare!: JavaScriptPrepare, update!: () => void;
+    it('rejects async callbacks and an opening without a revert before invoking the update', async () => {
+        let prepare!: (update: () => unknown) => Promise<unknown>;
+        let open!: (update: () => unknown, revert?: () => unknown) => Promise<unknown>;
+        let update!: () => void;
         let ran = 0;
         async function asynchronous() { ran++; }
         function Body() {
-            prepare = useAppRuntimeContext().prepareProjection as JavaScriptPrepare;
+            const context = useAppRuntimeContext();
+            prepare = context.prepareProjection as typeof prepare;
+            open = context.prepareOpeningProjection as typeof open;
             const [value, setValue] = useState(0);
             update = () => { ran++; setValue(1); };
             return h('p', {}, String(value));
@@ -141,7 +180,9 @@ describe('C04/C09 SDK root exports and app context', () => {
         const epoch = x.kernel.getProjectionCoordinator().token().epoch;
         const error = { code: 'SNAPSHOT_INVALID', message: expect.stringContaining('synchronous') };
         await expect(prepare(asynchronous)).rejects.toMatchObject(error);
-        await expect(prepare(update, { revert: asynchronous })).rejects.toMatchObject(error);
+        await expect(open(asynchronous, update)).rejects.toMatchObject(error);
+        await expect(open(update, asynchronous)).rejects.toMatchObject(error);
+        await expect(open(update)).rejects.toMatchObject({ code: 'SNAPSHOT_INVALID', message: expect.stringContaining('revert') });
         expect(ran).toBe(0);
         expect(x.kernel.getProjectionCoordinator().token().epoch).toBe(epoch);
         await expect(prepare(update)).resolves.toEqual({ status: 'prepared', sourceEpoch: epoch + 1 });

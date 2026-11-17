@@ -1,12 +1,13 @@
+import { readSqliteState } from '../../../tests/fixtures/sqlite-state.js';
 import { expect, it } from 'vitest';
-import { mkdtemp, writeFile, readFile, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { WorkerSandbox } from './worker-sandbox.js';
 import { WorkerCapacity } from './worker-capacity.js';
-import { createNodeStateStorage } from '../../adapters/storage/node-state-storage.js';
+import { createSqliteStateStorage } from '../../adapters/storage/sqlite-state-storage.js';
 import { DEFAULT_NODE_STATE_LIMITS } from './state-storage-host.js';
 import { defineRuntimeConfig } from '../../spi/config/index.js';
 import { invokeObservedTool, linkPreactPeer } from '../../../tests/fixtures/semantic-worker-tools.js';
@@ -45,13 +46,13 @@ function Root() {
   port = useAppRuntimeContext().persistence;
   return h(View, {kind:'instruction', id:'root', type:RootType, context: { set: async args=>{setter(args.value);return {success:true};}, flush: async()=>({success:true,data:await port.flush()}), inspect: async()=>({success:true,data:{value,inspections:++inspections,realm:globalThis.__p1Probe}}) }}, 'Persistent state');
 }
-const factory=createTUIApp({app_name:'c1',component:Root,viewTypes:[RootType]});
+const factory=createTUIApp({persistence:true,app_name:'c1',component:Root,viewTypes:[RootType]});
 ${scenario === 'unmount-failure' ? "const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,close(){renderer.close();throw Error('private unmount failure');}};};" : ''}
 export default factory;`;
     await capture(app, body);
     const options = { appId: 'app' as any, desktopId: 'd' as any, appModulePath: url(app), workerScriptPath: join(repo, 'runtime/dist/worker-runtime/index.js'),
         runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 1500, maxWorkers: 1 } }), config: { AOTUI_DATA_DIR: join(dir, 'data'), AOTUI_APP_KEY: 'c1' } };
-    return { dir, app, options, record: join(dir, 'data/app-state/d/c1/value.json') };
+    return { dir, app, options, read: () => readSqliteState(join(dir, 'data/app-state'), 'd', 'c1', 'value') };
 }
 async function invokeTool(sandbox: WorkerSandbox, name: string, args: Record<string, unknown> = {}) {
     const result = await invokeObservedTool((sandbox as any).workerHost, name, args, 'root');
@@ -93,7 +94,7 @@ it('starts A → B → A in fresh realms at capacity 1 and preserves only persis
             expect(capacity.getReport().total).toBe(0);
         }
         expect(new Set(threads).size).toBe(3);
-        expect(JSON.parse(await readFile(f.record, 'utf8')).value).toBe(3);
+        expect(JSON.parse(f.read()!).value).toBe(3);
     } finally {
         await Promise.all(sandboxes.map(sandbox => sandbox.disposeAsync()));
         await capacity.close();
@@ -102,7 +103,7 @@ it('starts A → B → A in fresh realms at capacity 1 and preserves only persis
 }, 20000);
 
 it.each(['save-failure', 'lost-reply', 'unmount-failure', 'initial-failure'])('C1-15/16 actual SDK %s keeps failure facts after the Worker exits', async scenario => {
-    const f = await fixture(scenario), backend = createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS);
+    const f = await fixture(scenario), backend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS);
     const persistenceBackend = scenario === 'save-failure' ? { async open(input: any) { const result = await backend.open(input);return result.status !== 'opened' ? result : { status: 'opened', storage: { ...result.storage, async replace() { return { status: 'failed', issue: { code: 'IO_FAILED' } }; } } }; } } : backend;
     const sandbox = new WorkerSandbox({ ...f.options, persistenceBackend } as any);
     try {
@@ -115,13 +116,13 @@ it.each(['save-failure', 'lost-reply', 'unmount-failure', 'initial-failure'])('C
         await expect(sandbox.close()).rejects.toHaveProperty('code', 'SANDBOX_CLOSE_FAILED');const report = await reportPromise;
         expect(report).toMatchObject({ state: 'settled', ok: false, resourcesReleased: true, host: { worker: 'exited', storage: { support: 'managed', unsafe: true } } });
         expect(worker.threadId).toBe(-1);expect(backend.getStats().ownerSlots).toBe(0);expect(report.issues.length).toBeLessThanOrEqual(5);expect(JSON.stringify(report)).not.toContain('private');
-        expect(sandbox.getCloseReport()).toBe(report);if (scenario === 'lost-reply') expect(JSON.parse(await readFile(f.record, 'utf8')).value).toBe(7);
+        expect(sandbox.getCloseReport()).toBe(report);if (scenario === 'lost-reply') expect(JSON.parse(f.read()!).value).toBe(7);
         await facts('sandbox-' + scenario, { report, backend: backend.getStats(), physicalThreadId: worker.threadId });
     } finally { await sandbox.disposeAsync();await rm(f.dir, { recursive: true, force: true }); }
 }, 20000);
 
 it('C1-12 actual Sandbox keeps the Host owner while final save is held; graceful exit waits for real completion', async () => {
-    const f = await fixture(), backend = createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS), entered = defer(), finish = defer();
+    const f = await fixture(), backend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS), entered = defer(), finish = defer();
     const capacity = new WorkerCapacity(1);
     const sandbox = new WorkerSandbox({ ...f.options, workerCapacity: capacity, persistenceBackend: { async open(input: any) {
         const result = await backend.open(input);return result.status !== 'opened' ? result : { status: 'opened', storage: { ...result.storage,
@@ -132,7 +133,7 @@ it('C1-12 actual Sandbox keeps the Host owner while final save is held; graceful
         const before = sandbox.getCloseReport();expect(before).toMatchObject({ state: 'closing', resourcesReleased: false, host: { storage: { actualIO: 1, ownerRetained: true } } });
         expect(capacity.getReport()).toMatchObject({ total: 1 });expect(backend.getStats().ownerSlots).toBe(1);
         finish.resolve();const report = await closing;expect(report).toMatchObject({ ok: true, resourcesReleased: true, host: { worker: 'exited' } });
-        expect(backend.getStats().ownerSlots).toBe(0);expect(JSON.parse(await readFile(f.record, 'utf8')).value).toBe(9);await capacity.close();
+        expect(backend.getStats().ownerSlots).toBe(0);expect(JSON.parse(f.read()!).value).toBe(9);await capacity.close();
         await facts('sandbox-held-save', { before, report, backend: backend.getStats(), capacity: capacity.getReport() });
     } finally { finish.resolve();await sandbox.disposeAsync();await capacity.close();await rm(f.dir, { recursive: true, force: true }); }
 }, 15000);

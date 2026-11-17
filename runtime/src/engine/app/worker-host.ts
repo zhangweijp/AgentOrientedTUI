@@ -1,8 +1,8 @@
 import { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION, STATE_SESSION_VERSION } from '../../spi/index.js';
-import { SNAPSHOT_CAPABILITY, PARAMETERS_V6_CAPABILITY } from '../../spi/worker-protocol/types.js';
+import { WORKER_PROTOCOL } from '../../spi/worker-protocol/types.js';
 import { initializationError } from '../../adapters/initialization-error.js';
 import { captureAppLifecycleAck, captureAppCleanupReport } from '../../adapters/app-lifecycle-protocol.js';
-import { withExecutableTools } from '../../adapters/semantic-capability-policy.js';
+import { withToolAuthorization } from '../../adapters/tool-execution-policy.js';
 import type { AppCleanupReport } from '../../spi/runtime/app-lifecycle.interface.js';
 import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
 import { createStateStorageHost, resolveStateDirectory, type StateStorageBackend } from './state-storage-host.js';
@@ -19,20 +19,19 @@ import type { ManagedPersistenceReport } from '../../worker-runtime/state-persis
  * @module @aotui/runtime/engine/app-worker
  */
 
-import { appInteractionUnavailable, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
-import { projectCompleteViews } from '../../core/invocation/observation-registry.js';
-import { captureToolsEnabled } from './interaction-config.js';
-import { compileOrdinaryProfile } from '../../core/tool/ordinary-parameter-profile.js';
-import { captureTypeParametersRequest } from '../../adapters/ordinary-invocation-v2.js';
-import { VIEW_TYPE_PARAMETERS_MODE as PARAMETERS_MODE } from '../../core/tool/ordinary-parameter-contract.js';
+import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
+import { normalizeProjectionLimits, projectCompleteViews } from '../../core/invocation/observation-registry.js';
+import type { ProjectionLimits } from '../../core/invocation/observation-types.js';
+import { captureProjectionLimits, captureToolsEnabled } from './interaction-config.js';
+import { captureToolInvocation } from '../../adapters/tool-invocation.js';
 import { Worker } from 'worker_threads';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { SemanticSnapshotReceiver, type SemanticSnapshotReport } from '../../adapters/snapshot/receiver.js';
 import type { CancellationSignal, ExecutionBinding, ExecutionFact, AppInteraction, InstanceInteraction, InteractionStats,
     InvocationContext, InvocationSource, Issue, AppInteractionPolicy, ReceiptQuery } from '../../core/invocation/app-interaction-types.js';
-import type { JsonValue } from '../../core/snapshot/types.js';
 import { captureSnapshotPrepareIssue } from '../../core/snapshot/snapshot-support.js';
-import { captureTypeParametersTerminal, captureViewToolCapabilities } from '../../adapters/worker-message-capture.js';
+import { captureToolInvocationTerminal } from '../../adapters/worker-message-capture.js';
 import type { WorkerCapacity } from './worker-capacity.js';
 import { closeError } from '../core/close-handle.js';
 import { fileURLToPath } from 'url';
@@ -61,8 +60,8 @@ interface PendingRequest {
     resolve: (value: any) => void;
     reject: (error: Error) => void;
     timeout?: ReturnType<typeof setTimeout>;
-    init?: { worker: Worker; version: number; requested: readonly string[] };
-    ref?: { worker: Worker; appId: string; instanceId: string; completion: Promise<ExecutionFact> };
+    init?: { worker: Worker; version: number };
+    tool?: { worker: Worker; appId: string; instanceId: string; completion: Promise<ExecutionFact> };
     initialOpen?: true;
     persistence?: 'APP_SHUTDOWN' | 'APP_CLOSE';
     appCleanup?: 'APP_STOP' | 'APP_SHUTDOWN' | 'APP_CLOSE';
@@ -75,7 +74,7 @@ interface PendingRequest {
 /**
  * AppWorkerHost 配置
  */
-export interface AppWorkerHostConfig {
+export interface AppWorkerHostConfig extends AppInteractionOptions {
     persistenceBackend?: StateStorageBackend;
     appId: AppID;
     desktopId: DesktopID;
@@ -91,8 +90,7 @@ export interface AppWorkerHostConfig {
     existingWorker?: Worker;
     workerCapacity?: WorkerCapacity;
     config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig; // Configuration Injection
-    runtimeConfig?: { worker: WorkerConfig }; // [RFC-005] Runtime Config
-    toolsEnabled?: boolean;
+    runtimeConfig?: { worker: WorkerConfig };
 }
 
 /**
@@ -123,6 +121,9 @@ class ProjectionRefreshFailure extends Error {
 const DEFAULT_APP_INTERACTION_POLICY: AppInteractionPolicy = Object.freeze({
     project: projectCompleteViews, authorize: () => true, canReadReceipt: () => true,
 });
+const unusedStorageStats: ReturnType<ReturnType<typeof createStateStorageHost>['getStats']> = Object.freeze({
+    highWater: 0, closing: false, opening: false, pending: 0, actualIO: 0, bufferedBytes: 0, ownerRetained: false, uncertain: false,
+});
 
 /** AppWorkerHost - 主线程端 Worker 管理 */
 export class AppWorkerHost {
@@ -130,6 +131,7 @@ export class AppWorkerHost {
     readonly desktopId: DesktopID;
     readonly name?: string;
     private readonly config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
+    private readonly projectionLimits: ProjectionLimits;
 
     private worker: Worker | null = null;
     private status: WorkerStatus = 'starting';
@@ -141,8 +143,8 @@ export class AppWorkerHost {
     readonly appInstanceId: string;
     private readonly snapshotReceiver: SemanticSnapshotReceiver;
     private projectionRefresh?: { requestId: RequestID; promise: Promise<void> };
-    private readonly requestParameters: boolean;
-    private ordinaryParametersCapability: { worker: Worker; version: number } | null = null;
+    private readonly toolsEnabled: boolean;
+    private readyWorker: { worker: Worker; version: number } | null = null;
     private interactionsClosed = false;
     private instanceInteraction?: InstanceInteraction;
     private interactionPolicy?: AppInteractionPolicy;
@@ -154,8 +156,9 @@ export class AppWorkerHost {
     private readonly lifecycleRequests = new Set<Promise<void>>();
     private lifecycleContextVersion = 0;
     private initAttempted = false;
-    private readonly persistenceHost: ReturnType<typeof createStateStorageHost>;
-    private persistenceSupport: 'offered' | 'managed' | 'rejected' = 'offered';
+    private readonly openPersistenceHost: () => ReturnType<typeof createStateStorageHost>;
+    private persistenceHost?: ReturnType<typeof createStateStorageHost>;
+    private persistenceSupport: 'offered' | 'managed' | 'rejected' | 'not-used' = 'offered';
     private persistenceUnsafe = false;
     private lastPersistence?: ManagedPersistenceReport;
     private appLifecycleSupport: 'offered' | 'managed' | 'rejected' = 'offered';
@@ -165,7 +168,7 @@ export class AppWorkerHost {
 
     getPersistenceReport() {
         return Object.freeze({ support: this.persistenceSupport, unsafe: this.persistenceUnsafe,
-            ...this.persistenceHost.getStats(), ...(this.lastPersistence ? { lifecycle: this.lastPersistence } : {}) });
+            ...(this.persistenceHost?.getStats() ?? unusedStorageStats), ...(this.lastPersistence ? { lifecycle: this.lastPersistence } : {}) });
     }
     private resourceWorkerState: HostResourceReport['worker'] = 'not-created';
     private actualExitResolve!: () => void;
@@ -181,7 +184,7 @@ export class AppWorkerHost {
         const core = this.snapshotReceiver?.getInteractionStats();
         const interactions = Object.freeze({ closed: this.interactionsClosed, retainedOperations: core ? core.activeInvocations + core.activeReads + core.observations.reservations : 0, retainedBytes: core?.combinedBytes ?? 0 });
         const resourcesReleased = ['not-created', 'exited'].includes(this.resourceWorkerState) &&
-            storage.release?.status === 'released' && !storage.opening && storage.pending === 0 &&
+            (!this.persistenceHost || storage.release?.status === 'released') && !storage.opening && storage.pending === 0 &&
             interactions.closed && interactions.retainedOperations === 0 && interactions.retainedBytes === 0;
         return Object.freeze({ state: this.resourceSettled ? 'settled' : this.resourceReleaseStarted || this.closePromise ? 'closing' : 'active',
             appCleanup: Object.freeze({ support: this.appLifecycleSupport, ...(this.lastAppCleanup ? { report: this.lastAppCleanup } : {}) }),
@@ -193,7 +196,7 @@ export class AppWorkerHost {
         if (!this.resourcePromise) {
             this.resourcePromise = Promise.resolve().then(async () => {
                 await this.waitForWorkerExit();
-                await this.persistenceHost.disconnect();
+                await this.persistenceHost?.disconnect();
                 await this.snapshotReceiver.close();
                 this.resourceSettled = true;return this.getResourceReport();
             });
@@ -203,9 +206,10 @@ export class AppWorkerHost {
     }
     retryResourceRelease(): Promise<HostResourceReport> {
         const current = this.getResourceReport();
-        if (current.state !== 'settled' || !current.storage.ownerRetained) return this.waitForResourceRelease();
+        const storage = this.persistenceHost;
+        if (!storage || current.state !== 'settled' || !current.storage.ownerRetained) return this.waitForResourceRelease();
         this.resourceSettled = false;
-        return this.resourcePromise = this.persistenceHost.release().then(() => {
+        return this.resourcePromise = storage.release().then(() => {
             this.resourceSettled = true;
             return this.getResourceReport();
         });
@@ -228,10 +232,10 @@ export class AppWorkerHost {
     beginInteractionClose(): void {
         if (this.interactionsClosed) return;
         this.interactionsClosed = true;
-        this.revokeRefCapability();
+        this.revokeInteraction();
     }
 
-    private revokeRefCapability(): void {
+    private revokeInteraction(): void {
         if (this.projectionRefresh) {
             const pending = this.pendingRequests.get(this.projectionRefresh.requestId);
             if (pending) {
@@ -241,19 +245,19 @@ export class AppWorkerHost {
             }
             this.projectionRefresh = undefined;
         }
-        this.ordinaryParametersCapability = null;
+        this.readyWorker = null;
         this.interactionPolicy = undefined;
         if (this.interactionsClosed) void this.snapshotReceiver.close();
         else void this.snapshotReceiver.closeInteractions();
     }
 
-    hasOrdinaryParametersCapability(): boolean {
-        return !this.interactionsClosed && this.ordinaryParametersCapability?.worker === this.worker &&
-            this.ordinaryParametersCapability?.version === this.lifecycleContextVersion;
+    canExecuteTools(): boolean {
+        return this.toolsEnabled && !this.interactionsClosed && this.readyWorker?.worker === this.worker &&
+            this.readyWorker?.version === this.lifecycleContextVersion;
     }
 
     private pendingTool() {
-        for (const pending of this.pendingRequests.values()) if (pending.ref) return pending.ref;
+        for (const pending of this.pendingRequests.values()) if (pending.tool) return pending.tool;
     }
 
     private interactionAvailable(): boolean {
@@ -279,7 +283,8 @@ export class AppWorkerHost {
     private attachInteraction(policy = DEFAULT_APP_INTERACTION_POLICY): InstanceInteraction {
         if (!this.instanceInteraction) {
             const execution = { resolve: this.resolveInteractionSource };
-            this.instanceInteraction = this.snapshotReceiver.interaction(withExecutableTools(policy, () => this.hasOrdinaryParametersCapability()), execution);
+            this.instanceInteraction = this.snapshotReceiver.interaction(
+                withToolAuthorization(policy, () => this.canExecuteTools()), execution, this.projectionLimits);
             this.interactionPolicy = policy;
         }
         return this.instanceInteraction;
@@ -335,7 +340,7 @@ export class AppWorkerHost {
     getInteractionReport(): Readonly<{ toolsEnabled: boolean; workerToolPending: boolean; core: InteractionStats }> | null {
         const core = this.snapshotReceiver?.getInteractionStats();
         return core ? Object.freeze({
-            toolsEnabled: this.hasOrdinaryParametersCapability(),
+            toolsEnabled: this.canExecuteTools(),
             workerToolPending: !!this.pendingTool(), core,
         }) : null;
     }
@@ -344,21 +349,15 @@ export class AppWorkerHost {
         if (!this.interactionAvailable() || source.appId !== String(this.appId) || source.instanceId !== this.appInstanceId) return null;
         const existing = this.interactionBindings.get(source);
         if (existing) return existing;
-        if (!this.hasOrdinaryParametersCapability()) return null;
+        if (!this.canExecuteTools()) return null;
         const { nameSharedAcrossViewTypes: _sharedName, ...tool } = source.tool;
-        const parameters = compileOrdinaryProfile(tool.inputSchema);
-        if (!parameters) return null;
         const worker = this.worker!, version = this.lifecycleContextVersion;
         const binding: ExecutionBinding = Object.freeze({ identity: Object.freeze({}),
-            validateInput: (_source: InvocationSource, input: Readonly<Record<string, JsonValue>>) => {
-                const result = parameters.validateResolvedInput(input);
-                return result.ok ? { ok: true as const, value: result.value } : { ok: false as const };
-            },
             isLive: () => ({ ok: this.interactionAvailable() && this.worker === worker &&
-                this.lifecycleContextVersion === version && this.hasOrdinaryParametersCapability() }),
-            execute: (context: InvocationContext) => this.dispatchTool({ type: 'VIEW_TOOL_INVOKE_V6', requestId: generateRequestId(),
+                this.lifecycleContextVersion === version && this.canExecuteTools() }),
+            execute: (context: InvocationContext) => this.dispatchTool({ type: 'VIEW_TOOL_INVOKE', requestId: generateRequestId(),
                 appId: source.appId as AppID, instanceId: source.instanceId, snapshotId: source.snapshotId,
-                tool, argumentMode: PARAMETERS_MODE, receiver: source.receiver, rawArgs: context.rawInput,
+                tool, receiver: source.receiver, rawArgs: context.rawInput,
                 effectiveArgs: context.effectiveInput, refSources: context.refSources,
             }, { worker, version, signal: context.signal }),
         });
@@ -366,21 +365,21 @@ export class AppWorkerHost {
         return binding;
     };
 
-    private dispatchTool(message: import('../../spi/worker-protocol/messages.js').ViewToolInvokeV6Message,
+    private dispatchTool(message: import('../../spi/worker-protocol/messages.js').ViewToolInvokeMessage,
         expected: { worker: Worker; version: number; signal: CancellationSignal }): ExecutionFact | Promise<ExecutionFact> {
         const refused = (code: string, text: string): ExecutionFact => ({ kind: 'tool-result', phase: 'not-entered',
             result: { success: false, error: { code, message: text } } });
-        const live = () => this.interactionAvailable() && this.hasOrdinaryParametersCapability() &&
+        const live = () => this.interactionAvailable() && this.canExecuteTools() &&
             this.worker === expected.worker && this.lifecycleContextVersion === expected.version && !expected.signal.aborted;
         if (!live() || this.pendingTool()) return refused('TOOL_EXECUTION_UNAVAILABLE', 'Worker Tool execution is unavailable');
-        try { message = captureTypeParametersRequest(message); }
+        try { message = captureToolInvocation(message); }
         catch { return refused('REF_ARGUMENT_BUDGET_EXCEEDED', 'Complete Ref request exceeds the transport budget'); }
         if (!live() || this.pendingTool()) return refused('TOOL_EXECUTION_UNAVAILABLE', 'Worker Tool execution is unavailable');
         const { requestId, appId, instanceId } = message;
         let resolve!: (fact: ExecutionFact) => void;
         const completion = new Promise<ExecutionFact>(complete => { resolve = complete; });
         this.pendingRequests.set(requestId, { resolve, reject: () => {},
-            ref: { worker: expected.worker, appId, instanceId, completion } });
+            tool: { worker: expected.worker, appId, instanceId, completion } });
         try { expected.worker.postMessage(message); }
         catch { /* Without a terminal or exit, this attempt cannot prove completion. */ }
         return completion;
@@ -388,7 +387,7 @@ export class AppWorkerHost {
 
     private settleToolExit(worker: Worker): void {
         for (const [id, pending] of this.pendingRequests) {
-            if (pending.ref?.worker !== worker) continue;
+            if (pending.tool?.worker !== worker) continue;
             this.pendingRequests.delete(id);
             pending.resolve({ kind: 'unknown' } satisfies ExecutionFact);
         }
@@ -396,25 +395,32 @@ export class AppWorkerHost {
 
     // Notify the Desktop when an App publication changes.
     onUpdateRequest?: () => void;
-    constructor(config: AppWorkerHostConfig) {
+    constructor(config: AppWorkerHostConfig, cwd = process.cwd()) {
         const toolsEnabled = captureToolsEnabled(config);
+        this.projectionLimits = captureProjectionLimits(config);
         this.appId = config.appId;
         this.desktopId = config.desktopId;
         this.name = config.name;
         this.appModulePath = config.appModulePath;
         this.appInstanceId = randomUUID();
-        this.requestParameters = toolsEnabled !== false;
+        this.toolsEnabled = toolsEnabled !== false;
         this.snapshotReceiver = new SemanticSnapshotReceiver(String(this.appId), this.appInstanceId);
         // [C1 Fix] Default to Runtime's built-in worker-runtime
         this.workerScriptPath = config.workerScriptPath ? resolve(config.workerScriptPath) : DEFAULT_WORKER_SCRIPT;
 
-        // [RFC-005] Use Runtime Config
         const workerConfig = config.runtimeConfig?.worker ?? WORKER_DEFAULTS;
         this.timeout = config.timeout ?? workerConfig.timeoutMs;
         if (!Number.isSafeInteger(this.timeout) || this.timeout < 1 || this.timeout > 300000) throw new Error('INVALID_INPUT: Worker timeout must be 1–300000 ms');
-        this.persistenceHost = createStateStorageHost({ instanceId: this.appInstanceId, desktopId: String(this.desktopId),
-            rootDirectory: resolveStateDirectory(config.config), backend: config.persistenceBackend,
-            limits: { ...DEFAULT_STATE_TRANSPORT_LIMITS, timeoutMs: this.timeout } });
+        const backend = config.persistenceBackend;
+        let rootDirectory: string | undefined;
+        let directoryError: unknown;
+        try { rootDirectory = resolveStateDirectory(config.config, cwd); }
+        catch (error) { directoryError = error; }
+        this.openPersistenceHost = () => {
+            if (rootDirectory === undefined) throw directoryError;
+            return createStateStorageHost({ instanceId: this.appInstanceId, desktopId: String(this.desktopId),
+                rootDirectory, backend, limits: { ...DEFAULT_STATE_TRANSPORT_LIMITS, timeoutMs: this.timeout } });
+        };
 
         this.config = config.config;
         this.workerCapacity = config.workerCapacity;
@@ -458,8 +464,9 @@ export class AppWorkerHost {
                 persistence: { protocol: STATE_SESSION_PROTOCOL, version: STATE_SESSION_VERSION, instanceId: this.appInstanceId,
                     limits: DEFAULT_STATE_SESSION_LIMITS, transport: { ...DEFAULT_STATE_TRANSPORT_LIMITS, timeoutMs: this.timeout } },
                 appInstanceId: this.appInstanceId,
+                projectionLimits: this.projectionLimits,
                 appLifecycle: { protocol: APP_LIFECYCLE_PROTOCOL, version: APP_LIFECYCLE_VERSION, instanceId: this.appInstanceId },
-                requestedCapabilities: this.requestParameters ? [SNAPSHOT_CAPABILITY, PARAMETERS_V6_CAPABILITY] : [SNAPSHOT_CAPABILITY],
+                protocol: WORKER_PROTOCOL, toolsEnabled: this.toolsEnabled,
             }, 'ready');
         } catch (error) {
             if (!this.closePromise) {
@@ -486,7 +493,7 @@ export class AppWorkerHost {
 
     private cleanupPendingRequests(): void {
         for (const [id, pending] of this.pendingRequests) {
-            if (pending.ref) continue;
+            if (pending.tool) continue;
             clearTimeout(pending.timeout);
             this.pendingRequests.delete(id);
             pending.reject(new Error('Worker released/terminated'));
@@ -500,7 +507,7 @@ export class AppWorkerHost {
         return this.status;
     }
 
-    /** M2 diagnostic only. No snapshot data, Handler or live Ref is exposed. */
+    /** Report projection health and source metadata. */
     getSemanticSnapshotReport(): SemanticSnapshotReport | null {
         return this.snapshotReceiver?.report() ?? null;
     }
@@ -603,8 +610,11 @@ export class AppWorkerHost {
         try { await this.sendRequest<void>({ type: 'APP_CLOSE', requestId: generateRequestId() }); }
         catch (error) { failure ??= error; }
         if (failure) throw failure;
-        if (this.persistenceSupport === 'managed' && (!this.lastPersistence?.ok || this.persistenceHost.getStats().uncertain ||
-            this.persistenceHost.getStats().release?.status !== 'released')) {
+        const storage = this.persistenceHost;
+        // An idle session never contacted storage, so the Host stops its own admission here.
+        if (storage?.getStats().highWater === 0 && this.lastPersistence?.ok) await storage.disconnect();
+        if (this.persistenceSupport === 'managed' && (!this.lastPersistence?.ok || storage?.getStats().uncertain ||
+            storage?.getStats().release?.status !== 'released')) {
             this.persistenceUnsafe = true;
             throw new Error('PERSISTENCE_CLOSE_FAILED: Managed persistence did not complete');
         }
@@ -652,7 +662,7 @@ export class AppWorkerHost {
         }
         if (message.type === 'INIT' || message.type === 'APP_REINITIALIZE') {
             // A fresh Host cannot have a negotiated interaction before its first INIT.
-            if (message.type !== 'INIT' || this.lifecycleContextVersion !== 0) this.revokeRefCapability();
+            if (message.type !== 'INIT' || this.lifecycleContextVersion !== 0) this.revokeInteraction();
             this.lifecycleContextVersion++;
         }
         const worker = this.worker;
@@ -673,10 +683,10 @@ export class AppWorkerHost {
         }
     }
 
-    private sendRequest<T>(message: Exclude<MainToWorkerMessage, { type: 'VIEW_TOOL_INVOKE_V6' }>): Promise<T> {
+    private sendRequest<T>(message: Exclude<MainToWorkerMessage, { type: 'VIEW_TOOL_INVOKE' }>): Promise<T> {
         if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE'].includes(message.type)) this.lifecycleContextVersion++;
         if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE', 'APP_REINITIALIZE'].includes(message.type)) {
-            this.revokeRefCapability();
+            this.revokeInteraction();
         }
         return new Promise((resolve, reject) => {
             if (this.terminationRequested || (this.status === 'closing' || this.status === 'closed') && !['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE'].includes(message.type)) {
@@ -699,8 +709,7 @@ export class AppWorkerHost {
                 ...(message.type === 'APP_OPEN' ? { initialOpen: true as const } : {}),
                 ...(this.appLifecycleSupport === 'managed' && (message.type === 'APP_STOP' || message.type === 'APP_SHUTDOWN' || message.type === 'APP_CLOSE') ? { appCleanup: message.type } : {}),
                 ...(this.persistenceSupport === 'managed' && (message.type === 'APP_SHUTDOWN' || message.type === 'APP_CLOSE') ? { persistence: message.type } : {}),
-                ...(message.type === 'INIT' ? { init: { worker, version: this.lifecycleContextVersion,
-                    requested: Object.freeze([...message.requestedCapabilities]) } } : {}),
+                ...(message.type === 'INIT' ? { init: { worker, version: this.lifecycleContextVersion } } : {}),
             });
             try { worker.postMessage(message); }
             catch {
@@ -716,25 +725,26 @@ export class AppWorkerHost {
         const typeField = Object.getOwnPropertyDescriptor(msg, 'type');
         if (!typeField || !('value' in typeField)) return;
         if (typeField.value === 'STATE_STORAGE_REQUEST') {
-            if (this.persistenceSupport !== 'managed' || this.terminationRequested) return;
-            const worker = this.worker, response = this.persistenceHost.accept(msg);
+            const storage = this.persistenceHost;
+            if (!storage || this.terminationRequested) return;
+            const worker = this.worker, response = storage.accept(msg);
             if (response) void response.then(value => {
                 if (!worker || worker !== this.worker || this.terminationRequested) return;
                 try { worker.postMessage(value); }
-                catch { this.persistenceUnsafe = true;this.persistenceHost.markTransportUncertain();this.terminate(); }
+                catch { this.persistenceUnsafe = true;storage.markTransportUncertain();this.terminate(); }
             });
             return;
         }
         // Routing reads only a data descriptor; terminal content is captured before validation.
         const id = Object.getOwnPropertyDescriptor(msg, 'requestId')?.value;
-        const refPending = typeof id === 'string' ? this.pendingRequests.get(id) : undefined;
-        if (refPending?.ref) {
-            const { worker, appId, instanceId } = refPending.ref;
-            if (worker !== this.worker || typeField.value !== 'VIEW_TOOL_INVOKE_V6_RESPONSE') return;
-            const terminal = captureTypeParametersTerminal(msg, { requestId: id, appId, instanceId });
+        const toolPending = typeof id === 'string' ? this.pendingRequests.get(id) : undefined;
+        if (toolPending?.tool) {
+            const { worker, appId, instanceId } = toolPending.tool;
+            if (worker !== this.worker || typeField.value !== 'VIEW_TOOL_INVOKE_RESPONSE') return;
+            const terminal = captureToolInvocationTerminal(msg, { requestId: id, appId, instanceId });
             if (!terminal) return;
             this.pendingRequests.delete(id);
-            refPending.resolve(terminal.phase === 'finished-unknown' ? { kind: 'unknown' } : { kind: 'tool-result', ...terminal } satisfies ExecutionFact);
+            toolPending.resolve(terminal.phase === 'finished-unknown' ? { kind: 'unknown' } : { kind: 'tool-result', ...terminal } satisfies ExecutionFact);
             return;
         }
         if ((msg.type === 'INIT_RESPONSE' || msg.type === 'LIFECYCLE_RESPONSE' || msg.type === 'ERROR_RESPONSE') &&
@@ -754,71 +764,77 @@ export class AppWorkerHost {
                 let lifecycleTerminalMismatch = false;
                 if (pending.init) {
                     const rejectInitialization = (code: string, error?: Error) => {
-                        this.ordinaryParametersCapability = null;
+                        this.readyWorker = null;
+                        this.persistenceSupport = 'rejected';
+                        this.persistenceUnsafe = true;
                         clearTimeout(pending.timeout); this.pendingRequests.delete(msg.requestId);
                         // A successful INIT may have left an App and persistence session
-                        // alive in a Worker whose capabilities we cannot trust. Retire it.
+                        // alive in a Worker whose initialization cannot be used.
                         this.terminate();
                         pending.reject(error ?? new Error(code));
                     };
                     if (msg.type === 'ERROR_RESPONSE' && msg.success === false) {
-                        this.appLifecycleSupport = 'rejected'; this.persistenceSupport = 'rejected'; this.persistenceUnsafe = true;
+                        this.appLifecycleSupport = 'rejected';
                         const error = initializationError(Object.getOwnPropertyDescriptor(msg, 'error')?.value, String(this.appId), 'INIT');
                         rejectInitialization(error.code, error);
                         return;
                     }
-                    if (msg.type !== 'INIT_RESPONSE') {
-                        this.appLifecycleSupport = 'rejected'; this.persistenceSupport = 'rejected'; this.persistenceUnsafe = true;
-                        clearTimeout(pending.timeout); this.pendingRequests.delete(msg.requestId);
-                        pending.reject(new Error('APP_INIT_ACK_INVALID')); return;
+                    if (msg.type !== 'INIT_RESPONSE' || Object.getOwnPropertyDescriptor(msg, 'success')?.value !== true) {
+                        this.appLifecycleSupport = 'rejected';
+                        rejectInitialization('APP_INIT_ACK_INVALID'); return;
                     }
                     const field = Object.getOwnPropertyDescriptor(msg, 'appLifecycle');
-                    const appLifecycleAck = field && 'value' in field && msg.success
+                    const appLifecycleAck = field?.enumerable && 'value' in field
                         ? captureAppLifecycleAck(field.value, this.appInstanceId) : null;
                     this.appLifecycleSupport = appLifecycleAck ? 'managed' : 'rejected';
                     const ackField = Object.getOwnPropertyDescriptor(msg, 'persistence');
-                    const persistenceAck = ackField && 'value' in ackField && msg.success
+                    const persistenceAck = ackField?.enumerable && 'value' in ackField
                         ? capturePersistenceAck(ackField.value, this.appInstanceId) : null;
-                    this.persistenceSupport = persistenceAck ? 'managed' : 'rejected';
-                    if (!persistenceAck) this.persistenceUnsafe = true;
                     if (!appLifecycleAck) {
-                        clearTimeout(pending.timeout); this.pendingRequests.delete(msg.requestId);
-                        pending.reject(new Error('APP_LIFECYCLE_NEGOTIATION_FAILED')); return;
+                        rejectInitialization('APP_LIFECYCLE_NEGOTIATION_FAILED'); return;
                     }
-                    if (this.appStopRequested) this.beginApplicationStop();
-                    if (!persistenceAck) {
-                        clearTimeout(pending.timeout);this.pendingRequests.delete(msg.requestId);
-                        pending.reject(new Error('PERSISTENCE_NEGOTIATION_FAILED: Invalid persistence acknowledgment'));return;
+                    if (ackField && !persistenceAck) {
+                        rejectInitialization('PERSISTENCE_NEGOTIATION_FAILED: Invalid persistence acknowledgment'); return;
                     }
                     const init = pending.init;
-                    const capsField = Object.getOwnPropertyDescriptor(msg, 'acceptedCapabilities');
-                    const caps = capsField && !('value' in capsField) ? null
-                        : captureViewToolCapabilities(capsField?.value);
+                    const protocol = Object.getOwnPropertyDescriptor(msg, 'protocol');
+                    if (!protocol?.enumerable || protocol.value !== WORKER_PROTOCOL) {
+                        rejectInitialization('WORKER_PROTOCOL_UNSUPPORTED'); return;
+                    }
+                    const tools = Object.getOwnPropertyDescriptor(msg, 'toolsEnabled');
+                    if (!tools?.enumerable || tools.value !== this.toolsEnabled) {
+                        rejectInitialization('APP_INIT_ACK_INVALID'); return;
+                    }
                     const instance = Object.getOwnPropertyDescriptor(msg, 'appInstanceId')?.value;
-                    if (caps && !caps.ok) {
-                        rejectInitialization(caps.code);
+                    const path = 'INIT_RESPONSE.projectionLimits';
+                    try {
+                        const field = Object.getOwnPropertyDescriptor(msg, 'projectionLimits');
+                        const limits = normalizeProjectionLimits(field?.enumerable ? field.value : undefined, path, true);
+                        if (!isDeepStrictEqual(this.projectionLimits, limits)) throw new Error('Must match the effective limits sent in INIT');
+                    } catch (error) {
+                        const code = 'APP_INIT_ACK_INVALID';
+                        rejectInitialization(code, Object.assign(new Error(`${code}: ${path} must match INIT`), {
+                            code, path: (error as { path?: string })?.path ?? path,
+                        }));
                         return;
                     }
-                    const accepted = caps?.ok ? caps.capabilities : null;
-                    if (accepted && accepted.some(capability => !init.requested.includes(capability))) {
-                        rejectInitialization('WORKER_CAPABILITY_ACK_INVALID');
-                        return;
+                    if (instance !== this.appInstanceId) {
+                        rejectInitialization('APP_INIT_ACK_INVALID'); return;
                     }
-                    if (!accepted?.includes(SNAPSHOT_CAPABILITY)) {
-                        rejectInitialization('WORKER_SNAPSHOT_UNSUPPORTED');
-                        return;
-                    }
-                    if (init.requested.some(capability => !accepted.includes(capability))) {
-                        rejectInitialization('WORKER_CAPABILITY_UNAVAILABLE');
-                        return;
-                    }
-                    if (msg.type === 'INIT_RESPONSE' && msg.success === true &&
-                        !this.interactionsClosed &&
+                    if (!ackField) this.persistenceSupport = 'not-used';
+                    if (!this.interactionsClosed &&
                         init.worker === this.worker && init.version === this.lifecycleContextVersion &&
-                        this.status !== 'closing' && this.status !== 'closed' && !this.closePromise &&
-                        instance === this.appInstanceId && accepted !== null) {
-                        this.ordinaryParametersCapability = accepted.includes(PARAMETERS_V6_CAPABILITY) ? { worker: init.worker, version: init.version } : null;
+                        this.status !== 'closing' && this.status !== 'closed' && !this.closePromise) {
+                        if (persistenceAck) {
+                            try { this.persistenceHost = this.openPersistenceHost(); }
+                            catch (error) {
+                                rejectInitialization('INVALID_INPUT', error instanceof Error ? error : undefined); return;
+                            }
+                            this.persistenceSupport = 'managed';
+                        }
+                        this.readyWorker = { worker: init.worker, version: init.version };
                     }
+                    if (this.appStopRequested) this.beginApplicationStop();
                 }
                 if (pending.initialOpen && msg.success !== true) {
                     // APP_OPEN can fail after the Worker has initialized managed
@@ -919,13 +935,12 @@ export class AppWorkerHost {
 
     }
 
-    private handleError(error: Error): void {
+    private handleError(_error: Error): void {
         this.resourceIssues.add('WORKER_ERROR');
         this.beginInteractionClose();
         if (this.persistenceSupport === 'managed') this.persistenceUnsafe = true;
         this.lifecycleContextVersion++;
-        if (this.requestParameters) console.error('[AppWorkerHost] Worker failed in Ref-capable execution');
-        else console.error(`[AppWorkerHost] Worker ${this.appId} error:`, error);
+        console.error('[AppWorkerHost] Worker failed for App', this.appId);
         if (!this.terminationRequested) this.status = 'error';
         this.cleanupPendingRequests();
     }

@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { parseHTML } from 'linkedom';
 
-import { extractViewFragments } from './view-fragment-extractor.js';
-import { buildViewMessageMarkup } from '../adapters/view-message.js';
+import { readDOMAppViews } from './dom-app.js';
+import { buildViewMessageMarkup } from './view-message.js';
 
 function createContainer(markup: string): Element {
     const { document } = parseHTML('<html><body></body></html>');
@@ -10,19 +10,26 @@ function createContainer(markup: string): Element {
     return document.body;
 }
 
-describe('extractViewFragments', () => {
+function readViews(container: Element) {
+    return readDOMAppViews(container, node => ({
+        id: node.getAttribute('data-view-id')!,
+        type: node.getAttribute('data-view-type')!,
+        owner: node, bindings: [], refs: [],
+    }));
+}
+
+describe('DOM adapter', () => {
     it.each([
         ['no children', ''],
         ['whitespace-only children', '<span> \n  \t</span>'],
-        ['all hidden children', '<span data-state="hidden">not projected</span>'],
     ])('retains a registered View with %s as an empty body', (_label, children) => {
         const container = createContainer(`<div data-view-id="empty" data-view-type="EmptyType" data-view-kind="state">${children}</div>`);
 
-        expect(extractViewFragments(container)).toEqual([{
-            viewId: 'empty',
-            viewType: 'EmptyType',
-            viewName: undefined,
-            markup: '',
+        expect(readViews(container)).toMatchObject([{
+            id: 'empty',
+            type: 'EmptyType',
+            name: 'empty',
+            content: { value: '' },
             kind: 'state',
         }]);
     });
@@ -30,10 +37,10 @@ describe('extractViewFragments', () => {
     it('reads explicit instruction metadata', () => {
         const container = createContainer('<div data-view-id="view_0" data-view-type="Workspace" data-view-kind="instruction"><div data-role="application-instruction">Open the workspace</div></div>');
 
-        expect(extractViewFragments(container)).toMatchObject([{
-            viewId: 'view_0',
-            viewType: 'Workspace',
-            markup: 'Open the workspace',
+        expect(readViews(container)).toMatchObject([{
+            id: 'view_0',
+            type: 'Workspace',
+            content: { value: 'Open the workspace' },
             kind: 'instruction',
         }]);
     });
@@ -41,23 +48,23 @@ describe('extractViewFragments', () => {
     it('reads explicit state metadata', () => {
         const container = createContainer('<div data-view-id="view_1" data-view-type="Detail" data-view-kind="state"><span>Business content</span></div>');
 
-        expect(extractViewFragments(container)).toMatchObject([{
-            viewId: 'view_1',
-            viewType: 'Detail',
-            markup: 'Business content',
+        expect(readViews(container)).toMatchObject([{
+            id: 'view_1',
+            type: 'Detail',
+            content: { value: 'Business content' },
             kind: 'state',
         }]);
     });
 
     it('updates content without letting descendant roles change classification', () => {
         const container = createContainer('<div data-view-id="view_2" data-view-type="Detail" data-view-kind="state"><span>Before</span></div>');
-        const first = extractViewFragments(container);
+        const first = readViews(container);
         container.querySelector('span')!.textContent = 'After';
         container.querySelector('span')!.setAttribute('data-role', 'application-instruction');
-        const second = extractViewFragments(container);
+        const second = readViews(container);
 
-        expect(first[0]).toMatchObject({ markup: 'Before', kind: 'state' });
-        expect(second[0]).toMatchObject({ markup: 'After', kind: 'state' });
+        expect(first[0]).toMatchObject({ content: { value: 'Before' }, kind: 'state' });
+        expect(second[0]).toMatchObject({ content: { value: 'After' }, kind: 'state' });
     });
 
     it('preserves code whitespace and chooses a fence that cannot close on body backticks', () => {
@@ -70,10 +77,10 @@ describe('extractViewFragments', () => {
         pre.appendChild(code);
         view.appendChild(pre);
 
-        const [fragment] = extractViewFragments(container);
+        const [fragment] = readViews(container);
 
-        expect(fragment!.markup).toContain('\n````\n' + codeBody + '````\n');
-        expect(fragment!.markup.match(/\n    first line  \n```\nlast line    \n/)).not.toBeNull();
+        expect(fragment!.content.value).toContain('\n````\n' + codeBody + '````\n');
+        expect(fragment!.content.value.match(/\n    first line  \n```\nlast line    \n/)).not.toBeNull();
     });
 
     it('keeps literal View-like body text separate from View metadata', () => {
@@ -84,14 +91,14 @@ describe('extractViewFragments', () => {
         paragraph.textContent = literalBody;
         view.appendChild(paragraph);
 
-        const [fragment] = extractViewFragments(container);
+        const [fragment] = readViews(container);
         const message = buildViewMessageMarkup({
-            appId: 'ide', appName: 'IDE', viewId: fragment!.viewId, viewType: fragment!.viewType,
-            viewName: fragment!.viewName, kind: fragment!.kind, markup: fragment!.markup,
+            appId: 'ide', appName: 'IDE', viewId: fragment!.id, viewType: fragment!.type,
+            viewName: fragment!.name, kind: fragment!.kind, markup: fragment!.content.value,
         });
 
-        expect(fragment!.markup).toContain(literalBody);
-        expect(fragment!.markup).not.toContain('bar">');
+        expect(fragment!.content.value).toContain(literalBody);
+        expect(fragment!.content.value).not.toContain('bar">');
         expect(message).toContain('name="foo&gt;bar"');
         expect(message).toContain('&lt;view id="literal"&gt;body from file&lt;/view&gt;');
         expect(message.match(/<view\b/g)).toHaveLength(1);
@@ -104,11 +111,11 @@ describe('extractViewFragments', () => {
 describe('explicit View metadata contract', () => {
     it('uses only root kind metadata and never a descendant role marker', () => {
         const container = createContainer('<div data-view-id="detail" data-view-type="Detail" data-view-kind="state"><p data-role="application-instruction">Before</p></div>');
-        expect(extractViewFragments(container)[0]).toMatchObject({ kind: 'state', viewType: 'Detail' });
+        expect(readViews(container)[0]).toMatchObject({ kind: 'state', type: 'Detail' });
         container.querySelector('p')!.removeAttribute('data-role');
-        expect(extractViewFragments(container)[0]!.kind).toBe('state');
+        expect(readViews(container)[0]!.kind).toBe('state');
         container.querySelector('[data-view-id]')!.setAttribute('data-view-kind', 'instruction');
-        expect(extractViewFragments(container)[0]!.kind).toBe('instruction');
+        expect(readViews(container)[0]!.kind).toBe('instruction');
     });
 
     it.each([
@@ -117,7 +124,7 @@ describe('explicit View metadata contract', () => {
         'data-view-type="Detail" data-view-kind="other"',
     ])('rejects incomplete or invalid metadata instead of deriving it: %s', attributes => {
         const container = createContainer(`<div data-view-id="detail" ${attributes}>Body</div>`);
-        expect(() => extractViewFragments(container)).toThrow(/VIEW_METADATA_INVALID/);
+        expect(() => readViews(container)).toThrow(/VIEW_METADATA_INVALID/);
     });
 });
 
@@ -125,5 +132,5 @@ describe('explicit View metadata contract', () => {
 it('preserves inline code edge spaces and backticks through actual DOM projection', () => {
     const container = createContainer('<div data-view-id="code" data-view-type="Code" data-view-kind="state"><code></code></div>');
     container.querySelector('code')!.textContent = '  `quoted`  ';
-    expect(extractViewFragments(container)[0]!.markup).toBe('``   `quoted`   ``');
+    expect(readViews(container)[0]!.content.value).toBe('``   `quoted`   ``');
 });

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { captureInvocationJson, captureTypeParametersTerminal, captureViewToolCapabilities, exact, invocationObject, text } from './worker-message-capture.js';
-import { PARAMETERS_V6_CAPABILITY, SNAPSHOT_CAPABILITY } from '../spi/worker-protocol/types.js';
+import { captureInvocationJson, captureToolInvocationTerminal, exact, invocationObject, text } from './worker-message-capture.js';
 
 describe('bounded Worker message capture', () => {
     it('captures detached frozen JSON without invoking accessors and enforces the canonical byte ceiling', () => {
@@ -19,37 +18,16 @@ describe('bounded Worker message capture', () => {
     it('accepts only an exact, identity-correlated bounded invocation terminal', () => {
         const expected = { requestId: 'r', appId: 'a', instanceId: 'i' };
         const response = {
-            type: 'VIEW_TOOL_INVOKE_V6_RESPONSE', requestId: 'r', appId: 'a', instanceId: 'i',
-            argumentMode: 'view-type-parameters-v1', success: true,
+            type: 'VIEW_TOOL_INVOKE_RESPONSE', requestId: 'r', appId: 'a', instanceId: 'i',
+            success: true,
             terminal: { phase: 'entered-returned', result: { success: true, data: {} } },
         };
-        expect(captureTypeParametersTerminal(response, expected)).toEqual(response.terminal);
-        expect(captureTypeParametersTerminal({ ...response, requestId: 'other' }, expected)).toBeNull();
-        expect(captureTypeParametersTerminal({ ...response, extra: true }, expected)).toBeNull();
+        expect(captureToolInvocationTerminal(response, expected)).toEqual(response.terminal);
+        expect(captureToolInvocationTerminal({ ...response, requestId: 'other' }, expected)).toBeNull();
+        expect(captureToolInvocationTerminal({ ...response, extra: true }, expected)).toBeNull();
         expect(invocationObject(response)).toBe(true);
-        expect(exact(response, ['type', 'requestId', 'appId', 'instanceId', 'argumentMode', 'success', 'terminal'])).toBe(true);
+        expect(exact(response, ['type', 'requestId', 'appId', 'instanceId', 'success', 'terminal'])).toBe(true);
         expect(text('x')).toBe(true);
         expect(text('')).toBe(false);
-    });
-
-    it('bounds the negotiated capability list and rejects duplicates and accessors', () => {
-        const invalid = { ok: false, code: 'WORKER_CAPABILITY_INVALID' };
-        expect(captureViewToolCapabilities([SNAPSHOT_CAPABILITY, SNAPSHOT_CAPABILITY])).toEqual(invalid);
-        expect(captureViewToolCapabilities([SNAPSHOT_CAPABILITY, PARAMETERS_V6_CAPABILITY, 'future/v9'])).toEqual(invalid);
-        expect(captureViewToolCapabilities({})).toEqual(invalid);
-        let reads = 0;
-        const accessor = Object.defineProperty([], '0', { enumerable: true, get() { reads++; return SNAPSHOT_CAPABILITY; } });
-        expect(captureViewToolCapabilities(accessor)).toEqual(invalid);
-        expect(reads).toBe(0);
-    });
-
-    it('accepts the current capabilities and rejects unsupported capability names uniformly', () => {
-        for (const capabilities of [[], [SNAPSHOT_CAPABILITY], [SNAPSHOT_CAPABILITY, PARAMETERS_V6_CAPABILITY]]) {
-            expect(captureViewToolCapabilities(capabilities)).toEqual({ ok: true, capabilities });
-        }
-        expect(captureViewToolCapabilities(undefined)).toEqual({ ok: true, capabilities: [] });
-        for (const capability of ['app-snapshot/v4', 'view-tool-ordinary-invoke/v2', 'view-tool-ref-invoke/v2', 'view-tool-ref-invoke/v3', 'view-tool-parameters-invoke/v4', 'future/v9']) {
-            expect(captureViewToolCapabilities([capability])).toEqual({ ok: false, code: 'WORKER_CAPABILITY_UNSUPPORTED' });
-        }
     });
 });

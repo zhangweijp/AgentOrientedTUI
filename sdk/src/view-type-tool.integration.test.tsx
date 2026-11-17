@@ -1,3 +1,5 @@
+import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
+import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { Component, type ComponentChildren, h } from 'preact';
 import { useState } from 'preact/hooks';
 import { act } from 'preact/test-utils';
@@ -63,8 +65,10 @@ it('commits Preact body, Ref and context-derived tools as one frame', async () =
         </>;
     }
     const factory = createTUIApp({ app_name:'counter',viewTypes:[Counter],component:App });
-    const kernel = new AppKernel({...factory.kernelConfig,factory});
-    kernel.enableAppLifecycle();
+    const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+        appId: createAppId('counter'), desktopId: createDesktopId('desktop'),
+        instanceId: 'counter-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
+    });
     const projection = kernel.getProjectionCoordinator();
     const frame = () => {
         const publication = projection.nextPublication();
@@ -72,7 +76,7 @@ it('commits Preact body, Ref and context-derived tools as one frame', async () =
         return publication.draft;
     };
     try {
-        await act(async () => kernel.onOpen({appId:'counter' as any,desktopId:'desktop' as any}));
+        await act(async () => kernel.onOpen());
         const first = frame();
         expect(Object.keys(first.tools)).toHaveLength(1);
         const [tool] = Object.values(first.tools);

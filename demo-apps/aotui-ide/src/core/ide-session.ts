@@ -13,7 +13,7 @@ import { initialLoadedDiagnostics, transitionLoadedDiagnostics, type LoadedDiagn
 import { mergeWorkspaceFolders } from '../tui/workspace-folders.js';
 
 type Persistence = NonNullable<ReturnType<typeof useAppRuntimeContext>['persistence']>;
-type PrepareProjection = ReturnType<typeof useAppRuntimeContext>['prepareProjection'];
+type ProjectionPreparation = Pick<ReturnType<typeof useAppRuntimeContext>, 'prepareProjection' | 'prepareOpeningProjection'>;
 type Binding = Extract<ReturnType<Persistence['bind']>, { status: 'bound' }>['binding'];
 export interface IDEFile { viewId: string; observed: ObservedFile; offset: number; limit: number; page: string;
     diagnostics: LoadedDiagnosticsState; panels: Record<string, unknown> }
@@ -65,7 +65,7 @@ export class IDESession {
     private completion?: Promise<void>;
     private cleanupFailed = false;
     constructor(private persistence: Persistence, readonly options: IDEOptions, private changed: () => void,
-        private readonly prepareProjection?: PrepareProjection) {
+        private readonly projection?: ProjectionPreparation) {
         requireIDE(!!persistence && /^[a-zA-Z0-9_.-]{1,128}$/.test(options.sessionKey), 'IDE_SESSION_KEY_REQUIRED');
         this.history = new IDEHistory(options.historyPath);
     }
@@ -77,9 +77,10 @@ export class IDESession {
     private publish(): void { if (this.live) this.changed(); }
     private async present(change: () => void, revert?: () => void): Promise<void> {
         const update = () => { this.current(); change(); this.publish(); };
-        if (!this.prepareProjection) { update(); return; }
+        if (!this.projection) { update(); return; }
         try {
-            await this.prepareProjection(update, revert ? { revert: () => { revert(); this.publish(); } } : undefined);
+            if (revert) await this.projection.prepareOpeningProjection(update, () => { revert(); this.publish(); });
+            else await this.projection.prepareProjection(update);
         } catch (error) {
             if (error instanceof IDEError) throw error;
             throw new IDEError(error instanceof Error && 'code' in error && error.code === 'OBSERVATION_CAPACITY'

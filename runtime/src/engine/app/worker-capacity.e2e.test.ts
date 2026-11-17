@@ -79,7 +79,7 @@ export default createTUIApp({viewTypes:[RootType], app_name:'c1',component:Root}
 
 it('C1-20 a standalone Sandbox close permits a fresh Node child to end naturally', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-natural-')), app = join(dir, 'app.mjs'), driver = join(dir, 'driver.mjs');
-    await capture(app, `import { createTUIApp, usePersistentState, defineViewType } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};function Root(){usePersistentState('value',3);return null;}export default createTUIApp({viewTypes:[], app_name:'natural',component:Root});`);
+    await capture(app, `import { createTUIApp, usePersistentState, defineViewType } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};function Root(){usePersistentState('value',3);return null;}export default createTUIApp({persistence:true,viewTypes:[], app_name:'natural',component:Root});`);
     const output = join(dir, 'result.json');
     await capture(driver, `import {WorkerSandbox} from ${JSON.stringify(url(join(repo, 'runtime/dist/engine/app/worker-sandbox.js')))};
 import {defineRuntimeConfig} from ${JSON.stringify(url(join(repo, 'runtime/dist/spi/config/index.js')))};

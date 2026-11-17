@@ -1,3 +1,5 @@
+import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
+import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { Component, h, type ComponentChildren } from 'preact';
 import { act } from 'preact/test-utils';
 import { useState } from 'preact/hooks';
@@ -18,19 +20,16 @@ function toolsOf(kernel:AppKernel) {
 }
 function setup(component: () => any, viewTypes:readonly ViewType[]=Object.values(descriptors)) {
     const factory = createTUIApp({ app_name: 'nested_view_fixture', component, viewTypes });
-    const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
-    kernel.setId('nested_fixture' as any);
-    kernel.setAppExecutionInstanceId('nested_fixture_run');
-    kernel.enableAppLifecycle();
+    const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+        appId: createAppId('nested_fixture'), desktopId: createDesktopId('desktop'),
+        instanceId: 'nested_fixture_run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
+    });
 
     return {
         kernel,
         get container() { return document.getElementById('app-root-nested_fixture')!; },
         async open() {
-            await act(async () => kernel.onOpen({
-                appId: 'nested_fixture' as any,
-                desktopId: 'desktop_nested' as any,
-            }));
+            await act(async () => kernel.onOpen());
         },
         async close() {
             await act(async () => kernel.onClose());

@@ -18,7 +18,8 @@ if (parentPort) {
                 requestId: requestId,
                 success: true,
                 appInstanceId,
-                acceptedCapabilities: msg.requestedCapabilities,
+                protocol: msg.protocol, toolsEnabled: msg.toolsEnabled,
+                projectionLimits: msg.projectionLimits,
                 appLifecycle: {
                     protocol: 'app-lifecycle-v2',
                     version: 2,

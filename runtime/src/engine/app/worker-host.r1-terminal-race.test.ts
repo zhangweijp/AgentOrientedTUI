@@ -27,7 +27,8 @@ function respond(worker: EventEmitter, request: Request) {
         ...(init ? {
             appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId },
             persistence: { protocol: 'state-session-v1', version: 1, instanceId },
-            acceptedCapabilities: (init as any).requestedCapabilities,
+            protocol: (init as any).protocol, toolsEnabled: (init as any).toolsEnabled,
+            projectionLimits: (init as any).projectionLimits,
             appInstanceId: instanceId,
         } : {}),
         ...(!init && closesApp ? { appCleanup: { protocol: 'app-lifecycle-v2', instanceId,
@@ -67,7 +68,8 @@ const workerSource = `
             ...(init ? {
                 appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: message.appInstanceId },
                 persistence: { protocol: 'state-session-v1', version: 1, instanceId: message.appInstanceId },
-                acceptedCapabilities: message.requestedCapabilities,
+                protocol: message.protocol, toolsEnabled: message.toolsEnabled,
+                projectionLimits: message.projectionLimits,
                 appInstanceId: message.appInstanceId,
             } : {}),
             ...(!init && closesApp ? { appCleanup: { protocol: 'app-lifecycle-v2', instanceId: appInstanceId,

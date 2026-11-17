@@ -1,19 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { copyJson } from './json.js';
+import { checkJsonLimits, copyJson, SnapshotDataError } from './json.js';
 import { createSnapshotCore } from './store.js';
 import { DEFAULT_SNAPSHOT_LIMITS, refKey } from './snapshot-support.js';
-import { validatePreparedV5Draft } from './v5-validator.js';
-import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
-import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
-import type { PreparedAppSnapshotDraftV5, SnapshotCore, SnapshotStoreOptions } from './types.js';
+import { validatePreparedSnapshot } from './validate-snapshot.js';
+import { compileToolParameters } from '../tool/tool-parameters.js';
+import type { PreparedAppSnapshotDraft, SnapshotCore, SnapshotStoreOptions } from './types.js';
 
 const identity = { appId: 'task_app', instanceId: 'instance_a' };
 const KEY = refKey('workspace', 'mount_1', 'tasks[0]');
 const TOOL = JSON.stringify(['task_app', 'Workspace', 'complete_task']);
 const taskSchema = (() => {
-    const compiled = compileOrdinarySchema({ type: 'object', properties: { id: { type: 'string' } }, additionalProperties: false });
+    const compiled = compileToolParameters({ type: 'object', properties: { id: { type: 'string' } }, additionalProperties: false });
     if (!compiled.ok) throw new Error('Fixture Tool Schema must compile');
-    return ordinaryParameterProfile(compiled.contract);
+    return compiled.contract.schema;
 })();
 
 function draft(
@@ -21,9 +20,9 @@ function draft(
     epoch = seq,
     id = 'task-a',
     override: Record<string, unknown> = {},
-): PreparedAppSnapshotDraftV5 {
+): PreparedAppSnapshotDraft {
     return {
-        schemaVersion: 5,
+        schemaVersion: 6,
         ...identity,
         producerSeq: seq,
         sourceEpoch: epoch,
@@ -51,7 +50,7 @@ function draft(
             },
         },
         ...override,
-    } as PreparedAppSnapshotDraftV5;
+    } as PreparedAppSnapshotDraft;
 }
 
 function ready(core: SnapshotCore) {
@@ -61,7 +60,7 @@ function ready(core: SnapshotCore) {
     return result.snapshot;
 }
 
-function published(core: SnapshotCore, next: PreparedAppSnapshotDraftV5) {
+function published(core: SnapshotCore, next: PreparedAppSnapshotDraft) {
     const result = core.committer.accept(next);
     expect(result.status).toBe('published');
     if (result.status !== 'published') throw Error('not published: ' + JSON.stringify(result));
@@ -183,13 +182,13 @@ describe('B2-Q01 independent application lifecycle identity', () => {
         expect(core.store.readAppIdentity('task_app')).toEqual({ status: 'active', instanceId: 'instance_a' });
         expect(core.store.readAppIdentity('unknown')).toEqual({ status: 'absent' }); expect(calls).toBe(beforeCalls);
         broken = false; expect(core.store.inspect()).toEqual(before); expect(ready(core)).toBe(source);
-        if (lease.status === 'acquired') lease.lease.release();
+        if (lease.status === 'acquired') lease.hold.release();
     });
 });
 
 describe('M1 pure Core — schema & safe value contract', () => {
     it('accepts App/View/Ref/ViewTypeTool in a detached, strictly typed draft', () => {
-        const checked = validatePreparedV5Draft(draft());
+        const checked = validatePreparedSnapshot(draft());
         expect(checked.ok).toBe(true);
         if (!checked.ok) return;
         expect(checked.value.draft.refs[KEY].ownerViewInstanceId).toBe('mount_1');
@@ -207,7 +206,7 @@ describe('M1 pure Core — schema & safe value contract', () => {
         ['Tool identity mismatched', { tools: { [TOOL]: { ...draft().tools[TOOL], viewType: 'FileDetail' } } }, '$.views[0].toolBindings', 'SNAPSHOT_INVALID'],
         ['ordinary Tool carries a business target', { tools: { [TOOL]: { ...draft().tools[TOOL], target: { filePath: 'a.txt' } } } }, '$.tools', 'SNAPSHOT_INVALID'],
     ])('rejects %s before publishing', (_, override, path, code) => {
-        const tested = validatePreparedV5Draft({ ...draft(), ...override });
+        const tested = validatePreparedSnapshot({ ...draft(), ...override });
         expect(tested.ok).toBe(false);
         if (tested.ok) return;
         expect(tested.issue.code).toBe(code);
@@ -227,7 +226,7 @@ describe('M1 pure Core — schema & safe value contract', () => {
             (() => { const a = Array(2); a[0] = 'x'; return a; })(),
         ];
         for (const value of cases) {
-            const tested = validatePreparedV5Draft({
+            const tested = validatePreparedSnapshot({
                 ...draft(),
                 refs: {
                     [KEY]: { ...draft().refs[KEY], target: { kind: 'snapshot-value', payload: value } },
@@ -247,7 +246,7 @@ describe('M1 pure Core — schema & safe value contract', () => {
                 [KEY]: { ...draft().refs[KEY], target: { kind: 'snapshot-value', payload: value } },
             },
         };
-        const result = validatePreparedV5Draft(input);
+        const result = validatePreparedSnapshot(input);
         expect(result.ok).toBe(true);
         if (!result.ok) return;
         const payload = (result.value.draft.refs[KEY].target as any).payload;
@@ -259,15 +258,30 @@ describe('M1 pure Core — schema & safe value contract', () => {
 
     it('rejects depth, per-Ref bytes, and whole Snapshot budgets explicitly', () => {
         const deep = { a: { b: { c: { d: 1 } } } };
-        expect(validatePreparedV5Draft({
+        expect(validatePreparedSnapshot({
             ...draft(), refs: { [KEY]: { ...draft().refs[KEY], target: { kind: 'snapshot-value', payload: deep } } },
         }, { ...DEFAULT_SNAPSHOT_LIMITS, maxDepth: 6 }).ok).toBe(false);
         const big = 'x'.repeat(1_000);
         const value = { ...draft(), refs: {
             [KEY]: { ...draft().refs[KEY], target: { kind: 'snapshot-value', payload: { big } } },
         } };
-        expect(validatePreparedV5Draft(value, { ...DEFAULT_SNAPSHOT_LIMITS, maxRefPayloadBytes: 100 }).ok).toBe(false);
-        expect(validatePreparedV5Draft(value, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: 100 }).ok).toBe(false);
+        expect(validatePreparedSnapshot(value, { ...DEFAULT_SNAPSHOT_LIMITS, maxRefPayloadBytes: 100 }).ok).toBe(false);
+        expect(validatePreparedSnapshot(value, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: 100 }).ok).toBe(false);
+    });
+
+    it.each([
+        [Array(10_000).fill(0), '[9999]', 'Node budget exceeded'],
+        [[...Array(8_000).fill(0), 'x'.repeat(328 * 1024)], '[8000]', 'Approximate input byte budget exceeded'],
+    ])('still checks each Ref against its own node and approximate-byte budgets', (payload, suffix, message) => {
+        const input = draft();
+        const checked = validatePreparedSnapshot({ ...input, refs: {
+            [KEY]: { ...input.refs[KEY], target: { kind: 'snapshot-value', payload } },
+        } });
+        expect(checked).toMatchObject({ ok: false, issue: {
+            code: 'SNAPSHOT_SERIALIZATION_ERROR',
+            path: '$.refs[' + JSON.stringify(KEY) + '].target.payload' + suffix,
+            message,
+        } });
     });
 });
 
@@ -305,7 +319,7 @@ describe('M1 Core — versioned commit, failure & strict origin', () => {
     it('advances revision for Ref-only and Tool-only changes even if displayed View is identical', () => {
         const core = createSnapshotCore(identity);
         const first = published(core, draft());
-        const held = core.store.acquire(first.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
+        const held = core.store.acquire(first.id); if (held.status !== 'acquired') throw Error('holder');
         const second = published(core, draft(2, 2, 'task-b'));
         const third = published(core, draft(3, 3, 'task-b', { tools: {}, views: [{ ...draft().views[0]!, toolBindings: [] }] }));
         expect([first.revision, second.revision, third.revision]).toEqual([1, 2, 3]);
@@ -317,8 +331,8 @@ describe('M1 Core — versioned commit, failure & strict origin', () => {
         expect(core.store.getTool({
             snapshotId: third.id, appId: 'task_app', instanceId: 'instance_a', toolId: TOOL,
         }).status).toBe('rejected');
-        expect(core.store.inspect().historicalSnapshots).toBe(1);
-        held.lease.release(); expect(core.store.inspect().historicalSnapshots).toBe(0);
+        expect(core.store.inspect().heldSnapshots).toBe(1);
+        held.hold.release(); expect(core.store.inspect().heldSnapshots).toBe(0);
     });
 
     it('rejects changed semantic content with unchanged sourceEpoch, keeping lastGood degraded', () => {
@@ -375,7 +389,7 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
     it('keeps a historical index-based Ref bound to its original object after reordering', () => {
         const core = createSnapshotCore(identity);
         const first = published(core, draft(1, 1, 'entity-a'));
-        const held = core.store.acquire(first.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
+        const held = core.store.acquire(first.id); if (held.status !== 'acquired') throw Error('holder');
         const later = published(core, draft(2, 2, 'entity-b'));
         const oldRef = sourceRef(core, first.id);
         const newRef = sourceRef(core, later.id);
@@ -386,7 +400,7 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
             expect((newRef.target as any).payload.id).toBe('entity-b');
             expect(oldRef.ref.ownerViewId).toBe('workspace');
         }
-        held.lease.release(); expect(core.store.inspect().historicalSnapshots).toBe(0);
+        held.hold.release(); expect(core.store.inspect().heldSnapshots).toBe(0);
     });
 
     it('resolves two same-named Ref IDs only by exact View identity, never suffix search', () => {
@@ -453,7 +467,7 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
         const old = published(core, draft(1, 1, 'unused', {
             refs: { [KEY]: { ...draft().refs[KEY], target } },
         }));
-        const held = core.store.acquire(old.id, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
+        const held = core.store.acquire(old.id); if (held.status !== 'acquired') throw Error('holder');
         const newer = published(core, draft(2, 2, 'unused', {
             refs: { [KEY]: { ...draft().refs[KEY], target: newerTarget } },
         }));
@@ -462,7 +476,7 @@ describe('M1 Core — Ref identity, source scope and View generation', () => {
         if (refOld.status !== 'resolved' || refNew.status !== 'resolved') throw Error('unexpected');
         expect(refOld.target).toEqual(target);
         expect(refNew.target).toEqual(newerTarget);
-        held.lease.release(); expect(core.store.inspect().historicalSnapshots).toBe(0);
+        held.hold.release(); expect(core.store.inspect().heldSnapshots).toBe(0);
     });
 });
 
@@ -475,7 +489,7 @@ function sourceRefWithGeneration(core: SnapshotCore, snapshotId: string, viewIns
 
 describe('M1 Core — retention, leases, restart and capacity', () => {
     it('protects leased historical snapshots and rejects a commit when all retention is pinned', () => {
-        const core = createSnapshotCore({ ...identity, maxHistoryEntries: 0, maxHistoryBytes: 0 });
+        const core = createSnapshotCore({ ...identity, maxHeldSnapshots: 0, maxHeldSnapshotBytes: 0 });
         const first = published(core, draft());
         const held = core.store.acquire(first.id);
         expect(held.status).toBe('acquired');
@@ -485,42 +499,20 @@ describe('M1 Core — retention, leases, restart and capacity', () => {
         const degraded = core.store.readLatest('task_app');
         expect(degraded.status).toBe('degraded');
         if (degraded.status === 'degraded') expect(degraded.lastGood?.id).toBe(first.id);
-        expect(core.store.inspect().activeLeases).toBe(1);
-        if (held.status === 'acquired') held.lease.release();
-        expect(core.store.inspect().activeLeases).toBe(0);
+        expect(core.store.inspect().activeHolds).toBe(1);
+        if (held.status === 'acquired') held.hold.release();
+        expect(core.store.inspect().activeHolds).toBe(0);
         const second = published(core, draft(3, 3, 'entity-b'));
         expect(second.revision).toBe(2);
         const lookup = core.store.getById(first.id);
         expect(lookup.status).toBe('rejected');
-        if (lookup.status === 'rejected') expect(lookup.issue.code).toBe('SNAPSHOT_EXPIRED');
-    });
-
-    it('expires historical snapshots deterministically with an injected clock', () => {
-        let time = 10_000;
-        const options: SnapshotStoreOptions = {
-            ...identity, now: () => time, historyTtlMs: 50, leaseTtlMs: 20,
-        };
-        const core = createSnapshotCore(options);
-        const first = published(core, draft());
-        const held = core.store.acquire(first.id, 10);
-        expect(held.status).toBe('acquired');
-        time += 1;
-        published(core, draft(2, 2, 'entity-b'));
-        expect(core.store.getById(first.id).status).toBe('found');
-        time += 11;
-        expect(core.store.inspect().activeLeases).toBe(0);
-        expect(core.store.getById(first.id).status).toBe('rejected');
-        time += 40;
-        const old = core.store.getById(first.id);
-        expect(old.status).toBe('rejected');
-        expect(core.store.inspect().historicalSnapshots).toBe(0);
-        expect(ready(core).revision).toBe(2);
+        if (lookup.status === 'rejected') expect(lookup.issue.code).toBe('SNAPSHOT_UNAVAILABLE');
     });
 
     it('keeps the old run’s held Ref separate from a same-name new run', () => {
-        const original = createSnapshotCore({ ...identity, maxHistoryEntries: 1 });
+        const original = createSnapshotCore({ ...identity, maxHeldSnapshots: 1 });
         const old = published(original, draft());
-        const held = original.store.acquire(old.id, { lifetime: 'owner' });
+        const held = original.store.acquire(old.id);
         if (held.status !== 'acquired') throw Error('Expected old snapshot holder');
         original.lifecycle.stop();
         expect(original.store.readLatest('task_app')).toEqual({ status: 'stopped' });
@@ -531,7 +523,7 @@ describe('M1 Core — retention, leases, restart and capacity', () => {
         const fresh = published(replacement, draft(1, 1, 'fresh', { instanceId: 'instance_b' }));
         expect(fresh).toMatchObject({ revision: 1, instanceId: 'instance_b' });
         expect(fresh.id).not.toBe(old.id);
-        expect(replacement.store.getById(old.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
+        expect(replacement.store.getById(old.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_UNAVAILABLE' } });
         expect(original.store.resolveRef({
             snapshotId: old.id, appId: 'task_app', instanceId: 'instance_b',
             viewId: 'workspace', viewInstanceId: 'mount_1', refId: 'tasks[0]',
@@ -547,8 +539,8 @@ describe('M1 Core — retention, leases, restart and capacity', () => {
         expect(ready(replacement)).toBe(fresh);
         expect(published(replacement, draft(2, 2, 'changed', { instanceId: 'instance_b' })).revision).toBe(2);
 
-        held.lease.release();
-        expect(original.store.getById(old.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
+        held.hold.release();
+        expect(original.store.getById(old.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_UNAVAILABLE' } });
         original.lifecycle.dispose();
         expect(ready(replacement).revision).toBe(2);
     });
@@ -566,11 +558,11 @@ describe('M1 Core — retention, leases, restart and capacity', () => {
     });
 
     it('releases unleased versions immediately while retaining the current snapshot', () => {
-        const core = createSnapshotCore({ ...identity, maxHistoryEntries: 1, maxHistoryBytes: 2_000_000 });
+        const core = createSnapshotCore({ ...identity, maxHeldSnapshots: 1, maxHeldSnapshotBytes: 2_000_000 });
         const a = published(core, draft(1, 1, 'a'));
         const b = published(core, draft(2, 2, 'b'));
         const c = published(core, draft(3, 3, 'c'));
-        expect(core.store.inspect().historicalSnapshots).toBe(0);
+        expect(core.store.inspect().heldSnapshots).toBe(0);
         expect(core.store.getById(a.id).status).toBe('rejected');
         expect(core.store.getById(b.id).status).toBe('rejected');
         expect(ready(core).id).toBe(c.id);
@@ -579,11 +571,11 @@ describe('M1 Core — retention, leases, restart and capacity', () => {
 
 describe('M1 Core — in-memory behavior under repeated independent commits', () => {
     it('does not silently rebind historical refs in a deterministic 50-step state sequence', () => {
-        const core = createSnapshotCore({ ...identity, maxHistoryEntries: 64 });
+        const core = createSnapshotCore({ ...identity, maxHeldSnapshots: 64 });
         const snapshots = []; const holders: Array<() => void> = [];
         for (let n = 1; n <= 50; n++) {
             const snapshot = published(core, draft(n, n, 'entity-' + n)); snapshots.push(snapshot);
-            const lease = core.store.acquire(snapshot.id, { lifetime: 'owner' }); if (lease.status !== 'acquired') throw Error('holder'); holders.push(lease.lease.release);
+            const lease = core.store.acquire(snapshot.id); if (lease.status !== 'acquired') throw Error('holder'); holders.push(lease.hold.release);
         }
         expect(ready(core).revision).toBe(50);
         for (let n = 0; n < snapshots.length; n++) {
@@ -591,9 +583,9 @@ describe('M1 Core — in-memory behavior under repeated independent commits', ()
             expect(ref.status).toBe('resolved');
             if (ref.status === 'resolved') expect((ref.target as any).payload.id).toBe('entity-' + (n + 1));
         }
-        expect(core.store.inspect().historicalSnapshots).toBe(49);
+        expect(core.store.inspect().heldSnapshots).toBe(49);
         for (const release of holders) release();
-        expect(core.store.inspect()).toMatchObject({ activeLeases: 0, historicalSnapshots: 0, historicalBytes: 0 });
+        expect(core.store.inspect()).toMatchObject({ activeHolds: 0, heldSnapshots: 0, heldSnapshotBytes: 0 });
     });
 
     it('does not import DOM or Worker primitives into the Core contract', () => {
@@ -609,7 +601,7 @@ describe('M1 Core — in-memory behavior under repeated independent commits', ()
 
 describe('M1 Core — adversarial resource and publication invariants', () => {
     it('caps concurrent Snapshot leases and supports idempotent lease release', () => {
-        const core = createSnapshotCore({ ...identity, maxActiveLeases: 1 });
+        const core = createSnapshotCore({ ...identity, maxActiveHolds: 1 });
         const first = published(core, draft());
         const acquired = core.store.acquire(first.id);
         expect(acquired.status).toBe('acquired');
@@ -617,14 +609,14 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
         expect(overflow.status).toBe('rejected');
         if (overflow.status === 'rejected') expect(overflow.issue.code).toBe('SNAPSHOT_CAPACITY');
         if (acquired.status === 'acquired') {
-            acquired.lease.release();
-            acquired.lease.release();
+            acquired.hold.release();
+            acquired.hold.release();
         }
-        expect(core.store.inspect().activeLeases).toBe(0);
+        expect(core.store.inspect().activeHolds).toBe(0);
         const next = core.store.acquire(first.id);
         expect(next.status).toBe('acquired');
-        if (next.status === 'acquired') next.lease.release();
-        expect(core.store.inspect().activeLeases).toBe(0);
+        if (next.status === 'acquired') next.hold.release();
+        expect(core.store.inspect().activeHolds).toBe(0);
     });
 
     it('does not let a degraded App masquerade as ready after rejected schema or invalid source', () => {
@@ -653,9 +645,9 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
         const core = createSnapshotCore(identity);
         const first = published(core, draft());
         const changedSchema = (() => {
-            const compiled = compileOrdinarySchema({ type: 'object', properties: { id: { type: 'string', description: 'Task identifier' } }, additionalProperties: false });
+            const compiled = compileToolParameters({ type: 'object', properties: { id: { type: 'string', description: 'Task identifier' } }, additionalProperties: false });
             if (!compiled.ok) throw new Error('Changed Tool Schema must compile');
-            return ordinaryParameterProfile(compiled.contract);
+            return compiled.contract.schema;
         })();
         const next = published(core, draft(2, 2, 'task-a', {
             tools: { [TOOL]: { ...draft().tools[TOOL],
@@ -668,7 +660,7 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
     });
 
     it('can recover from a full pinned history without altering a retained historical Ref', () => {
-        const core = createSnapshotCore({ ...identity, maxHistoryEntries: 1 });
+        const core = createSnapshotCore({ ...identity, maxHeldSnapshots: 1 });
         const first = published(core, draft(1, 1, 'a'));
         const lease = core.store.acquire(first.id);
         expect(lease.status).toBe('acquired');
@@ -682,10 +674,10 @@ describe('M1 Core — adversarial resource and publication invariants', () => {
         const pinned = sourceRef(core, first.id);
         expect(pinned.status).toBe('resolved');
         if (pinned.status === 'resolved') expect((pinned.target as any).payload.id).toBe('a');
-        if (lease.status === 'acquired') lease.lease.release();
+        if (lease.status === 'acquired') lease.hold.release();
         expect(published(core, draft(4, 4, 'c')).revision).toBe(3);
         expect(core.store.getById(first.id).status).toBe('rejected');
-        if (leaseSecond.status === 'acquired') leaseSecond.lease.release();
+        if (leaseSecond.status === 'acquired') leaseSecond.hold.release();
     });
 
     it('does not promote an unknown or missing Ref string to a valid Ref', () => {
@@ -773,7 +765,7 @@ describe('M1 Core — nonpublishable Producer input and explicit prepare failure
                 },
             },
         });
-        const validation = validatePreparedV5Draft(input, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: 1_024 });
+        const validation = validatePreparedSnapshot(input, { ...DEFAULT_SNAPSHOT_LIMITS, maxSnapshotBytes: 1_024 });
         expect(validation.ok).toBe(false);
         if (!validation.ok) expect(validation.issue.code).toBe('SNAPSHOT_SERIALIZATION_ERROR');
     });
@@ -786,7 +778,7 @@ describe('M1 Core — edge-case schema and retention gates', () => {
         const accessor = Object.defineProperty({}, 'secret', { enumerable: true, get() { getterCalls++; return 'secret'; } });
         const hidden = Object.defineProperty({ id: 'known' }, 'secret', { value: 'unlisted', enumerable: false });
         for (const payload of [accessor, hidden, [, 1]]) {
-            const result = validatePreparedV5Draft({
+            const result = validatePreparedSnapshot({
                 ...draft(), refs: { [KEY]: {
                     ...draft().refs[KEY], target: { kind: 'snapshot-value', payload },
                 } },
@@ -799,10 +791,10 @@ describe('M1 Core — edge-case schema and retention gates', () => {
 
     it('does not accept a mistaken Tool descriptor or invalid View kind', () => {
         const wrongView = { ...draft().views[0], kind: 'not-state' };
-        const invalidView = validatePreparedV5Draft({ ...draft(), views: [wrongView] });
+        const invalidView = validatePreparedSnapshot({ ...draft(), views: [wrongView] });
         expect(invalidView.ok).toBe(false);
         const { inputSchema: _removed, ...withoutSchema } = draft().tools[TOOL];
-        const invalidTool = validatePreparedV5Draft({
+        const invalidTool = validatePreparedSnapshot({
             ...draft(),
             tools: { [TOOL]: withoutSchema },
         });
@@ -811,27 +803,23 @@ describe('M1 Core — edge-case schema and retention gates', () => {
     });
 
     it('enforces maximum node and view counts instead of allowing unbounded cloning', () => {
-        const tooManyNodes = validatePreparedV5Draft(draft(), { ...DEFAULT_SNAPSHOT_LIMITS, maxNodes: 10 });
+        const tooManyNodes = validatePreparedSnapshot(draft(), { ...DEFAULT_SNAPSHOT_LIMITS, maxNodes: 10 });
         expect(tooManyNodes.ok).toBe(false);
-        const tooManyViews = validatePreparedV5Draft(draft(), { ...DEFAULT_SNAPSHOT_LIMITS, maxViews: 0 });
+        const tooManyViews = validatePreparedSnapshot(draft(), { ...DEFAULT_SNAPSHOT_LIMITS, maxViews: 0 });
         expect(tooManyViews.ok).toBe(false);
         if (!tooManyViews.ok) expect(tooManyViews.issue.path).toBe('$.views');
     });
 
-    it('refuses invalid lease duration and fails closed on exhausted active lease capacity', () => {
-        const core = createSnapshotCore({ ...identity, leaseTtlMs: 5, maxActiveLeases: 1 });
+    it('refuses a new hold when active hold capacity is exhausted', () => {
+        const core = createSnapshotCore({ ...identity, maxActiveHolds: 1 });
         const s = published(core, draft());
-        const bad = core.store.acquire(s.id, 10);
-        expect(bad.status).toBe('rejected');
-        const zero = core.store.acquire(s.id, 0);
-        expect(zero.status).toBe('rejected');
-        const one = core.store.acquire(s.id, 5);
+        const one = core.store.acquire(s.id);
         expect(one.status).toBe('acquired');
-        const blocked = core.store.acquire(s.id, 5);
+        const blocked = core.store.acquire(s.id);
         expect(blocked.status).toBe('rejected');
         if (blocked.status === 'rejected') expect(blocked.issue.code).toBe('SNAPSHOT_CAPACITY');
-        if (one.status === 'acquired') one.lease.release();
-        expect(core.store.inspect().activeLeases).toBe(0);
+        if (one.status === 'acquired') one.hold.release();
+        expect(core.store.inspect().activeHolds).toBe(0);
     });
 
     it('requires a valid, fixed App and instance identity at construction', () => {
@@ -862,6 +850,28 @@ describe('M1 Core — edge-case schema and retention gates', () => {
 
 
 describe('M1 Core — defensive JSON boundary edge cases', () => {
+    it('uses the same strict JSON checks when a copy is unnecessary', () => {
+        let reads = 0;
+        const getter = Object.defineProperty({}, 'secret', { enumerable: true, get() { reads++; return 0; } });
+        const hidden = Object.defineProperty({}, 'secret', { value: 0 });
+        const cycle: unknown[] = [];
+        cycle.push(cycle);
+        const limits = { maxDepth: 2, maxNodes: 16, maxApproxBytes: 256 };
+        for (const value of [getter, hidden, cycle, [, 0], { [Symbol('key')]: 0 }, Object.create({ a: 0 }),
+            { value: Infinity }, [[[[null]]]], Array(16).fill(null), '大'.repeat(100)]) {
+            let issue: unknown;
+            try { copyJson(value, limits); } catch (error) { issue = error; }
+            expect(issue).toBeInstanceOf(SnapshotDataError);
+            const { code, path, message } = issue as SnapshotDataError;
+            expect(() => checkJsonLimits(value, limits)).toThrow(expect.objectContaining({ code, path, message }));
+        }
+        expect(reads).toBe(0);
+        const shared = { value: -0 };
+        expect(checkJsonLimits([shared, shared], limits)).toBeUndefined();
+        expect(Object.is(shared.value, -0)).toBe(true);
+        expect(Object.isFrozen(shared)).toBe(false);
+    });
+
     it('rejects own symbol properties and array-index getters', () => {
         const withSymbol = { id: 'a' } as Record<PropertyKey, unknown>;
         withSymbol[Symbol('secret')] = true;
@@ -893,54 +903,35 @@ describe('M1 Core — defensive JSON boundary edge cases', () => {
         if (result.status === 'rejected') expect(result.issue.code).toBe('APP_INSTANCE_MISMATCH');
     });
 
-    it('retains owner leases across time within capacity and releases historical data when the final owner settles', () => {
+    it('retains holds across time within capacity and releases historical data when the final owner settles', () => {
         let now = 0;
-        const core = createSnapshotCore({ ...identity, now: () => now, historyTtlMs: 10, leaseTtlMs: 10, maxActiveLeases: 2 });
-        const old = published(core, draft()), owner = core.store.acquire(old.id, { lifetime: 'owner' });
+        const core = createSnapshotCore({ ...identity, now: () => now, maxActiveHolds: 2 });
+        const old = published(core, draft()), owner = core.store.acquire(old.id);
         expect(owner.status).toBe('acquired'); if (owner.status !== 'acquired') return;
-        expect(owner.lease.expiresAt).toBeNull();
         published(core, draft(2, 2, 'different')); now = 1_000_000;
         const reader = core.store.acquire(old.id);
         expect(reader.status).toBe('acquired'); if (reader.status !== 'acquired') return;
-        expect(reader.lease.snapshot).toBe(old);
-        const refused = core.store.acquire(old.id, { lifetime: 'owner' });
+        expect(reader.hold.snapshot).toBe(old);
+        const refused = core.store.acquire(old.id);
         expect(refused).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_CAPACITY' } });
-        expect(core.store.inspect().activeLeases).toBe(2);
-        reader.lease.release(); owner.lease.release(); owner.lease.release();
-        expect(core.store.inspect().activeLeases).toBe(0);
+        expect(core.store.inspect().activeHolds).toBe(2);
+        reader.hold.release(); owner.hold.release(); owner.hold.release();
+        expect(core.store.inspect().activeHolds).toBe(0);
         expect(core.store.getById(old.id).status).toBe('rejected');
     });
-    it('keeps pinned owner history bounded and releases all owner leases on dispose', () => {
-        const core = createSnapshotCore({ ...identity, now: () => 0, maxHistoryEntries: 1 });
+    it('keeps held prior snapshots bounded and releases all holds on dispose', () => {
+        const core = createSnapshotCore({ ...identity, now: () => 0, maxHeldSnapshots: 1 });
         const first = published(core, draft());
-        const firstOwner = core.store.acquire(first.id, { lifetime: 'owner' });
+        const firstOwner = core.store.acquire(first.id);
         expect(firstOwner.status).toBe('acquired');
         const second = published(core, draft(2, 2, 'second'));
-        const secondOwner = core.store.acquire(second.id, { lifetime: 'owner' });
+        const secondOwner = core.store.acquire(second.id);
         expect(secondOwner.status).toBe('acquired');
         expect(core.committer.accept(draft(3, 3, 'third'))).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_CAPACITY' } });
-        expect(core.store.inspect().activeLeases).toBe(2);
-        core.lifecycle.dispose(); expect(core.store.inspect().activeLeases).toBe(0);
+        expect(core.store.inspect().activeHolds).toBe(2);
+        core.lifecycle.dispose(); expect(core.store.inspect().activeHolds).toBe(0);
         expect(core.store.getById(first.id).status).toBe('rejected');
-        if (firstOwner.status === 'acquired') firstOwner.lease.release();
-        if (secondOwner.status === 'acquired') secondOwner.lease.release();
-    });
-    it('never grants a new historical lease after retention TTL despite an existing valid timed pin', () => {
-        let now = 1_000;
-        const core = createSnapshotCore({
-            ...identity, now: () => now, historyTtlMs: 0, leaseTtlMs: 100,
-        });
-        const old = published(core, draft());
-        const lease = core.store.acquire(old.id, 100);
-        expect(lease.status).toBe('acquired');
-        now = 1_001;
-        published(core, draft(2, 2, 'different'));
-        const refused = core.store.acquire(old.id);
-        expect(refused.status).toBe('rejected');
-        if (refused.status === 'rejected') expect(refused.issue.code).toBe('SNAPSHOT_EXPIRED');
-        // Existing pin still retains the immutable data for its stated lifetime.
-        expect(core.store.getById(old.id).status).toBe('found');
-        if (lease.status === 'acquired') lease.lease.release();
-        expect(core.store.getById(old.id).status).toBe('rejected');
+        if (firstOwner.status === 'acquired') firstOwner.hold.release();
+        if (secondOwner.status === 'acquired') secondOwner.hold.release();
     });
 });

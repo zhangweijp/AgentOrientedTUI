@@ -1,8 +1,8 @@
 import { SNAPSHOT_SCHEMA_VERSION } from '../snapshot/types.js';
 import { canonicalJson, utf8Size } from '../snapshot/json.js';
-import { RAW_TOOL_ARGUMENT_LIMITS, RESOLVED_TOOL_ENVELOPE_LIMITS } from '../snapshot/snapshot-support.js';
-import type { AppIdentityReader, AppSnapshotV5, JsonValue, SnapshotStore } from '../snapshot/types.js';
-import { compileOrdinaryProfile } from '../tool/ordinary-parameter-profile.js';
+import { RAW_TOOL_ARGUMENT_LIMITS } from '../snapshot/snapshot-support.js';
+import type { AppIdentityReader, AppSnapshot, JsonValue, SnapshotStore } from '../snapshot/types.js';
+import { getCapturedToolParameters } from '../tool/tool-parameters.js';
 import { checkRefViews, prepareViewTypeParameters } from '../tool/snapshot-value-arguments.js';
 import { createObservationOperations, previewCommittedApp, type ObservationState } from './observation-registry.js';
 import type { ObservationJsonLimits } from './observation-types.js';
@@ -19,7 +19,7 @@ const profile = (maxDepth: number, maxNodes: number, bytes: number): Observation
 });
 export const DEFAULT_INTERACTION_LIMITS: InteractionLimits = Object.freeze({
     maxReceiptsPerObservation: 256, maxReceipts: 1024, maxReads: 8, receiptTtlMs: 60_000,
-    request: profile(33, 10005, 136 * KiB), ordinaryInput: profile(32, 5000, 128 * KiB),
+    request: profile(33, 10005, 136 * KiB), rawInput: profile(32, 5000, 128 * KiB),
     metadata: profile(8, 256, 32 * KiB), fact: profile(52, 32032, 520 * KiB), receipt: profile(54, 33000, 560 * KiB),
     maxSourceBytes: 32 * MiB, maxFingerprintBytes: 8 * MiB, maxMetadataBytes: 8 * MiB,
     maxWorkBytes: 16 * MiB, maxResultBytes: 16 * MiB, maxTotalBytes: 64 * MiB,
@@ -50,15 +50,14 @@ function capture<T>(raw: unknown, limits: ObservationJsonLimits, code: string): 
 function binding(raw: unknown): ExecutionBinding {
     if (raw === null) fail('TOOL_EXECUTION_UNAVAILABLE');
     try {
-        const data = dataProperties(raw, ['identity', 'validateInput', 'isLive', 'execute']);
+        const data = dataProperties(raw, ['identity', 'isLive', 'execute']);
         if (!data.identity || !['object', 'function'].includes(typeof data.identity) ||
-            ['validateInput', 'isLive', 'execute'].some(key => typeof data[key] !== 'function')) throw 0;
+            typeof data.isLive !== 'function' || typeof data.execute !== 'function') throw 0;
         return Object.freeze(data) as unknown as ExecutionBinding;
     } catch { return fail('EXECUTION_BINDING_FAILED'); }
 }
 function sameBinding(a: ExecutionBinding, b: ExecutionBinding): boolean {
-    return a.identity === b.identity && a.validateInput === b.validateInput &&
-        a.isLive === b.isLive && a.execute === b.execute;
+    return a.identity === b.identity && a.isLive === b.isLive && a.execute === b.execute;
 }
 interface Entry {
     readonly fingerprint: string;
@@ -135,7 +134,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
     const state: State = { appId: config.appId as string, instanceId: config.instanceId as string,
         policy, resolve: resolver, observations: new Map(), reservations: new Map(),
         entries: new Map(), controllers: new Set(), closing: false, invocations: 0, reads: 0, projects: 0 };
-    const sources = new Map<string, { readonly source: AppSnapshotV5; readonly bytes: number; count: number }>();
+    const sources = new Map<string, { readonly source: AppSnapshot; readonly bytes: number; count: number }>();
     const fees: Fees = { source: 0, fingerprint: 0, metadata: 0, work: 0, result: 0 };
     let closed = false;
     let expiry: ReturnType<typeof setTimeout> | undefined;
@@ -221,7 +220,7 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
         const measured = capture<ReceiptMetadata>({ ...entry.metadata, ...patch }, limits.metadata, 'INVOCATION_CAPACITY');
         entry.metadata = measured.value; // Actual metadata bytes replace the reservation only at settlement.
     }
-    function hold(source: AppSnapshotV5, release: () => void): () => void {
+    function hold(source: AppSnapshot, release: () => void): () => void {
         const existing = sources.get(source.id);
         const bytes = existing?.bytes ?? capture<unknown>(source, sourceProfile, 'INVOCATION_CAPACITY').bytes;
         charge({ source: existing ? 0 : bytes });
@@ -281,18 +280,18 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
                 fail('TOOL_INVALID_ARGS', 'Supply the receiving View\'s XML id in view_id.', '$.view_id');
             const receiverId = viewId;
             const selected = sourceFor(state, request, receiverId);
-            const acquired = store.acquire(selected.snapshotId, { lifetime: 'owner' });
+            const acquired = store.acquire(selected.snapshotId);
             if (acquired.status === 'rejected') fail(acquired.issue.code);
-            const snapshot = acquired.lease.snapshot;
-            if (snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) { acquired.lease.release(); fail('SNAPSHOT_INVALID'); }
-            try { release = hold(snapshot, acquired.lease.release); } catch (error) { acquired.lease.release(); throw error; }
+            const snapshot = acquired.hold.snapshot;
+            if (snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) { acquired.hold.release(); fail('SNAPSHOT_INVALID'); }
+            try { release = hold(snapshot, acquired.hold.release); } catch (error) { acquired.hold.release(); throw error; }
             setMetadata(entry, { source: { appId: snapshot.appId, instanceId: snapshot.instanceId, snapshotId: snapshot.id, revision: snapshot.revision } });
             const source: InvocationSource = Object.freeze({ appId: state.appId, instanceId: state.instanceId,
                 snapshotId: snapshot.id, tool: selected.tool, receiver: selected.receiver });
-            const contract = compileOrdinaryProfile(source.tool.inputSchema);
+            const contract = getCapturedToolParameters(source.tool.inputSchema);
             if (!contract) fail('REF_CONTRACT_UNSUPPORTED');
             const initial = resolve(state, source);
-            capture(request.input, contract.hasRefs ? RAW_TOOL_ARGUMENT_LIMITS : limits.ordinaryInput, 'ACTION_INPUT_INVALID');
+            capture(request.input, contract.hasRefs ? RAW_TOOL_ARGUMENT_LIMITS : limits.rawInput, 'ACTION_INPUT_INVALID');
             const prepared = prepareViewTypeParameters(store, source, contract, input, selected.visibleRefs);
             if (prepared.status === 'rejected') fail(prepared.issue.code, prepared.issue.message, prepared.issue.path);
             const { rawArgs: rawInput, effectiveArgs: effectiveInput, refSources } = prepared;
@@ -310,14 +309,6 @@ export function createAppInteraction(store: SnapshotStore & AppIdentityReader, o
                 live(latest, source);
             }
             recheck();
-            let validation: JsonValue;
-            try { validation = captureBoundedJson<JsonValue>(await initial.validateInput(source, effectiveInput, controller.signal), RESOLVED_TOOL_ENVELOPE_LIMITS).value; }
-            catch { return fail('INPUT_VALIDATOR_FAILED'); }
-            recheck();
-            if (!jsonObject(validation) || typeof validation.ok !== 'boolean' || !exactFields(validation, validation.ok ? ['ok', 'value'] : ['ok'])) fail('INPUT_VALIDATOR_FAILED');
-            if (!validation.ok) fail('ACTION_INPUT_INVALID');
-            if (!jsonObject(validation.value)) fail('INPUT_VALIDATOR_FAILED');
-            if (canonicalJson(validation.value) !== canonicalJson(effectiveInput)) fail('REF_ARGUMENT_CHANGED');
             const context: InvocationContext = Object.freeze({ invocationId: request.invocationId,
                 source, rawInput, effectiveInput, refSources, signal: controller.signal });
             let authorized: unknown;

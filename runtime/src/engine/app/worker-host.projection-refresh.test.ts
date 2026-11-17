@@ -6,22 +6,21 @@ import { join } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
 import { SemanticSnapshotReceiver } from '../../adapters/snapshot/receiver.js';
 import { SemanticProjectionCoordinator } from '../../core/projection/coordinator.js';
-import type { ToolDescriptorV5 } from '../../core/snapshot/types.js';
-import { compileOrdinarySchema } from '../../core/tool/ordinary-parameter-contract.js';
-import { ordinaryParameterProfile } from '../../core/tool/ordinary-parameter-profile.js';
+import type { ToolDescriptor } from '../../core/snapshot/types.js';
+import { compileToolParameters } from '../../core/tool/tool-parameters.js';
 
 const policy = { project: () => ({ refs: [], toolIds: [] }), authorize: () => true, canReadReceipt: () => true };
 function draft(instanceId: string, seq: number, value = 'current') {
-    return { schemaVersion: 5, appId: 'app', instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
+    return { schemaVersion: 6, appId: 'app', instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
         views: [{ toolBindings: [], id: 'file', viewInstanceId: 'file-instance', type: 'File', name: 'File', kind: 'state',
             content: { format: 'markdown-v1', value } }], refs: {}, tools: {} };
 }
 const cleanup: Array<() => void> = [];
 afterEach(() => { for (const close of cleanup.splice(0)) close(); vi.useRealTimers(); });
-function fixture() {
+function fixture(projectionLimits?: ConstructorParameters<typeof AppWorkerHost>[0]['projectionLimits']) {
     const directory = mkdtempSync(join(tmpdir(), 'aotui-refresh-unit-'));
     const host = new AppWorkerHost({ appId: 'app' as any, desktopId: 'desktop' as any,
-        appModulePath: 'unused', timeout: 50, config: { AOTUI_DATA_DIR: directory } });
+        appModulePath: 'unused', timeout: 50, config: { AOTUI_DATA_DIR: directory }, projectionLimits });
     const worker = { postMessage: vi.fn() };
     const internals = host as any; internals.worker = worker; internals.status = 'running';
     internals.snapshotReceiver.acceptPrepared(draft(host.appInstanceId, 1));
@@ -49,9 +48,9 @@ describe('refresh before the existing Scope observation', () => {
 
     it('ordinary TS publishes compatible View/Ref/Tool after a commit, reuses unchanged data, and reports projection failure without redoing business', async () => {
         const receiver = new SemanticSnapshotReceiver('app', 'instance');
-        const compiled = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
+        const compiled = compileToolParameters({ type: 'object', properties: {}, additionalProperties: false });
         if (!compiled.ok) throw new Error('fixture Schema');
-        const profile = ordinaryParameterProfile(compiled.contract);
+        const profile = compiled.contract.schema;
         const target = { viewId: 'file', viewInstanceId: 'file-instance' };
         const toolId = JSON.stringify(['app', 'File', 'edit']);
         let value = 1;
@@ -61,7 +60,7 @@ describe('refresh before the existing Scope observation', () => {
                     content: { format: 'markdown-v1', value: 'body:' + value } }],
                 refs: [{ ...target, id: 'selected', refType: 'Record', value: payload }],
                 tools: [{ id: toolId, name: 'edit', viewType: 'File', nameSharedAcrossViewTypes: false, description: 'Edit',
-                    inputSchema: profile } satisfies ToolDescriptorV5],
+                    inputSchema: profile } satisfies ToolDescriptor],
         }));
         const publish = () => {
             const publication = projection.nextPublication();
@@ -69,7 +68,7 @@ describe('refresh before the existing Scope observation', () => {
         };
         const fullPolicy = { ...policy, project: projectCompleteViews };
         let businessCalls = 0;
-        const binding = { identity: {}, validateInput: () => ({ ok: true as const, value: {} }),
+        const binding = { identity: {},
             isLive: () => ({ ok: true as const }), execute: () => ({ kind: 'tool-result' as const, phase: 'entered-returned' as const,
                 result: { success: true, data: { calls: ++businessCalls } } }) };
         try {
@@ -119,6 +118,15 @@ describe('refresh before the existing Scope observation', () => {
         const same = x.client.observe({ all: true }); x.publish(3); await same;
         expect(x.host.getSemanticSnapshotReport()!.snapshotId).toBe(id);
         x.host.beginInteractionClose(); expect(x.host.getInteractionReport()!.core).toMatchObject({ closed: true, combinedBytes: 0 });
+    });
+
+    it('applies the installed byte limit at the Host even for a complete Worker snapshot', async () => {
+        const x = fixture({ observation: { maxCanonicalBytes: 4096 } });
+        const over = x.client.observe({ all: true }); x.publish(2, 'x'.repeat(5000));
+        expect(await over).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_CAPACITY', path: '$.observation' } });
+        expect(x.host.getInteractionReport()?.core.observations.observationSlots).toBe(0);
+        const fits = x.client.observe({ all: true }); x.publish(3, 'fits the limit');
+        expect(await fits).toMatchObject({ status: 'observed', observation: { views: [{ content: { value: 'fits the limit' } }] } });
     });
 
     it('keeps the App wait slot after timeout; retries do not accumulate work, and a late terminal permits recovery', async () => {

@@ -15,13 +15,13 @@ function fixture(instance = 'i', stage?: 'authorize' | 'execute', now?: () => nu
         bindings: [{ name: 'read', enabled: true, execute: () => ({ success: true }) }] }]);
     frame.accept();
     const view = frame.instances[0]!, tool = frame.tools[0]!;
-    r.acceptPrepared({ schemaVersion: 5, appId: 'a', instanceId: instance, producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+    r.acceptPrepared({ schemaVersion: 6, appId: 'a', instanceId: instance, producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
         views: [{ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: 'View',
             kind: 'state', content: { format: 'markdown-v1', value: 'value' } }],
         refs: {}, tools: { [tool.id]: tool } });
     expect(r.report().health).toBe('ready');
     const entered = defer<void>(), gate = defer<void>(); let handlers = 0, completed = 0;
-    const binding: ExecutionBinding = { identity: {}, validateInput: (_source, input) => ({ ok: true, value: input }),
+    const binding: ExecutionBinding = { identity: {},
         isLive: source => ({ ok: registry.validateTypeToolBinding(tool, source.receiver).success }),
         execute: async () => { handlers++; if (stage === 'execute') { entered.resolve(); await gate.promise; } completed++;
             return { kind: 'tool-result', phase: 'entered-returned', result: { success: true, data: { value: 19 } } }; } };
@@ -39,20 +39,13 @@ it('uses one integer monotonic default clock for snapshots and interactions when
     vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
     vi.spyOn(Date, 'now').mockImplementation(() => wallTime);
     const f = fixture('monotonic-default');
-    let releaseShortLease: (() => void) | undefined;
     try {
         const first = await f.observe();
-        const activeLeases = f.core.store.inspect().activeLeases;
-        const snapshotId = f.r.report().snapshotId!;
-        const shortLease = f.core.store.acquire(snapshotId, 5);
-        expect(shortLease.status).toBe('acquired');
-        if (shortLease.status !== 'acquired') throw new Error('Snapshot lease unavailable');
-        releaseShortLease = shortLease.lease.release;
-        expect(Number.isSafeInteger(shortLease.lease.expiresAt)).toBe(true);
+        const activeHolds = f.core.store.inspect().activeHolds;
         elapsed = 20.75;
         wallTime = 1;
         const second = await f.observe();
-        expect(f.core.store.inspect().activeLeases).toBe(activeLeases); // The new adoption replaced the old owner; the short timed lease expired.
+        expect(f.core.store.inspect().activeHolds).toBe(activeHolds);
         elapsed = 30.5;
         const result = await f.client.invoke({ ...second, invocationId: 'monotonic-call' });
         expect(result.kind).toBe('receipt');
@@ -62,12 +55,11 @@ it('uses one integer monotonic default clock for snapshots and interactions when
         expect(result.receipt.expiresAt - result.receipt.completedAt).toBe(60_000);
         expect(second.observationId).not.toBe(first.observationId);
     } finally {
-        releaseShortLease?.();
         await f.r.close();
         vi.restoreAllMocks();
     }
     expect(f.r.getInteractionStats()).toMatchObject({ closed: true, combinedBytes: 0 });
-    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', activeLeases: 0, currentBytes: 0 });
+    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', activeHolds: 0, currentBytes: 0 });
 });
 
 it('recovers observation and invocation after a rejected injected clock rollback without replacing the App', async () => {
@@ -85,7 +77,7 @@ it('recovers observation and invocation after a rejected injected clock rollback
         expect(f.counts()).toEqual({ handlers: 1, completed: 1 });
     } finally { await f.r.close(); }
     expect(f.r.getInteractionStats()).toMatchObject({ closed: true, combinedBytes: 0 });
-    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', activeLeases: 0, currentBytes: 0 });
+    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', activeHolds: 0, currentBytes: 0 });
 });
 
 it('A16 closes authority before disposing Core and retains stopped state and resource facts', async () => {
@@ -93,7 +85,7 @@ it('A16 closes authority before disposing Core and retains stopped state and res
     const original = f.r.closeInteractions.bind(f.r); let checked = 0;
     vi.spyOn(f.r, 'closeInteractions').mockImplementation(async () => { expect(f.core.store.inspect().state).toBe(checked++ ? 'disposed' : 'active'); await original(); expect(f.r.getInteractionStats()?.closed).toBe(true); });
     await f.r.close(); await f.r.close();
-    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', activeLeases: 0, currentBytes: 0 });
+    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', activeHolds: 0, currentBytes: 0 });
     expect(f.r.report()).toMatchObject({ health: 'stopped', published: 1 });
     const poison: any = new Proxy({}, { get() { throw Error('read'); } }); f.r.acceptPrepared(poison); f.r.acceptPrepareFailure(poison);
     expect(f.r.report()).toMatchObject({ health: 'stopped', published: 1 });
@@ -104,7 +96,7 @@ it.each(['authorize', 'execute'] as const)('A16 keeps actual %s work tracked aft
     const snapshotId = f.r.report().snapshotId!;
     expect(f.r.getInteractionStats()?.activeInvocations).toBe(1);
     const closing = f.r.close();
-    expect(f.core.store.inspect()).toMatchObject({ state: 'active', currentSnapshots: 0, historicalSnapshots: 1, activeLeases: 1 });
+    expect(f.core.store.inspect()).toMatchObject({ state: 'active', currentSnapshots: 0, heldSnapshots: 1, activeHolds: 1 });
     expect(f.core.store.getById(snapshotId)).toMatchObject({ status: 'found', snapshot: { id: snapshotId } });
     expect(f.core.store.readLatest('a')).toEqual({ status: 'stopped' });
     expect(f.r.getInteractionStats()).toMatchObject({ closed: true, activeInvocations: 1 });
@@ -112,8 +104,8 @@ it.each(['authorize', 'execute'] as const)('A16 keeps actual %s work tracked aft
     expect(f.counts()).toEqual({ handlers: stage === 'execute' ? 1 : 0, completed: 0 });
     await f.client.invoke({ ...request, invocationId: 'late' }); expect(f.counts().handlers).toBe(stage === 'execute' ? 1 : 0);
     f.gate.resolve(); await pending; await closing;
-    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', historicalSnapshots: 0, activeLeases: 0 });
-    expect(f.core.store.getById(snapshotId)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
+    expect(f.core.store.inspect()).toMatchObject({ state: 'disposed', heldSnapshots: 0, activeHolds: 0 });
+    expect(f.core.store.getById(snapshotId)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_UNAVAILABLE' } });
     expect(f.counts()).toEqual({ handlers: stage === 'execute' ? 1 : 0, completed: stage === 'execute' ? 1 : 0 });
     expect(f.r.getInteractionStats()).toMatchObject({ closed: true, activeInvocations: 0, combinedBytes: 0 });
 });

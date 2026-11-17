@@ -17,7 +17,8 @@ class ControlledWorker extends EventEmitter {
             const instanceId = initMessage?.appInstanceId;
             const response: any = { type: init ? 'INIT_RESPONSE' : 'LIFECYCLE_RESPONSE',
                 requestId: message.requestId, success: true };
-            if (init) Object.assign(response, { appInstanceId: instanceId, acceptedCapabilities: message.requestedCapabilities,
+            if (init) Object.assign(response, { appInstanceId: instanceId, protocol: message.protocol, toolsEnabled: message.toolsEnabled,
+                projectionLimits: message.projectionLimits,
                 appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId },
                 persistence: { protocol: 'state-session-v1', version: 1, instanceId } });
             if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type)) Object.assign(response, {

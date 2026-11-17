@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compileOrdinarySchema, compileValueSchema, type CompileResult } from './ordinary-parameter-contract.js';
+import { compileToolParameters, compileValueSchema, type CompileResult } from './tool-parameters.js';
 
 function contract(result: CompileResult) {
   expect(result.ok).toBe(true);
@@ -16,7 +16,7 @@ function invalid(result: CompileResult, unsupported = false) {
   expect(result.issue.path.length).toBeLessThanOrEqual(512);
 }
 const schema = (properties: object, extra: object = {}) => ({ type: 'object', properties, ...extra });
-const compile = (properties: object, extra: object = {}) => contract(compileOrdinarySchema(schema(properties, extra)));
+const compile = (properties: object, extra: object = {}) => contract(compileToolParameters(schema(properties, extra)));
 
 describe('W07-B1 ordinary parameter contract', () => {
   it('normalizes required order and preserves the supported Schema vocabulary', () => {
@@ -33,7 +33,7 @@ describe('W07-B1 ordinary parameter contract', () => {
         strings: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 2, default: [''] },
       },
     };
-    const compiled = contract(compileOrdinarySchema({ ...expected, required: ['s', 'n'] }));
+    const compiled = contract(compileToolParameters({ ...expected, required: ['s', 'n'] }));
     expect(compiled.schema).toEqual(expected);
     expect(Object.keys(compiled.schema.properties as object)).toEqual(Object.keys(expected.properties));
     for (const input of [{ s: 'a😀', n: 0 }, { s: 'x', n: 0 }, { n: 0 }, { s: 'a', n: 0, extra: 1 }]) {
@@ -70,7 +70,7 @@ describe('W07-B1 ordinary parameter contract', () => {
     expect(conversions).toBe(0);
   });
   it.each([[], ['a', 'a'], [1], ['a', true], null, 'a'])('P03 rejects invalid enum options %j', options => {
-    invalid(compileOrdinarySchema(schema({ e: { type: 'string', enum: options } })));
+    invalid(compileToolParameters(schema({ e: { type: 'string', enum: options } })));
   });
 
   it.each([
@@ -90,7 +90,7 @@ describe('W07-B1 ordinary parameter contract', () => {
     expect(c.validateModelInput({ a: [] }).ok).toBe(true);
     expect(c.validateModelInput({ a: new Array(2) }).ok).toBe(false);
     expect(c.validateModelInput({ a: Object.assign(['x'], { secret: true }) }).ok).toBe(false);
-    invalid(compileOrdinarySchema(schema({ a: { type: 'array' } })));
+    invalid(compileToolParameters(schema({ a: { type: 'array' } })));
   });
 
   it('P05 counts string code points against supported length bounds', () => {
@@ -108,18 +108,34 @@ describe('W07-B1 ordinary parameter contract', () => {
     expect(e.validateModelInput({ e: 'other' }).ok).toBe(false);
   });
 
-  it('validates supported JSON Schema patterns', () => {
-    const c = contract(compileOrdinarySchema(schema({ title: { type: 'string', pattern: '^a+$' } })));
-    expect(c.validateModelInput({ title: 'aaa' }).ok).toBe(true);
-    expect(c.validateModelInput({ title: 'aba' })).toMatchObject({ ok: false, diagnostics: [{ path: '$.title' }] });
-  });
-  it('rejects malformed patterns at their declaration paths', () => {
-    expect(compileOrdinarySchema(schema({ title: { type: 'string', pattern: '[' } }))).toMatchObject({
-      ok: false, issue: { code: 'PARAMETER_DECLARATION_INVALID', path: '$.properties.title.pattern' },
+  it.each([
+    ['ordinary', { type: 'string', pattern: '^a+$' }],
+    ['malformed', { type: 'string', pattern: '[PATTERN_SAMPLE' }],
+    ['nested-quantifier with a default', { type: 'string', pattern: '^(a+)+$', default: 'a' }],
+  ])('rejects an unsupported %s pattern at its declaration path', (_label, field) => {
+    const result = compileToolParameters(schema({ title: field }));
+    expect(result).toMatchObject({
+      ok: false, issue: { code: 'PARAMETER_DECLARATION_UNSUPPORTED', path: '$.properties.title.pattern' },
     });
+    expect(JSON.stringify(result)).not.toContain(field.pattern);
   });
-  it('P05 keeps an ordinary parameter named pattern as string data', () => {
-    expect(compile({ pattern: { type: 'string', minLength: 1 } }).validateModelInput({ pattern: 'file-*.ts' }).ok).toBe(true);
+  it('rejects a pattern in a union branch inside an array of objects', () => {
+    const filter = { anyOf: [{ type: 'null' }, { type: 'string', pattern: '^file$' }] };
+    const result = compileToolParameters(schema({ rules: { type: 'array', items: schema({ filter }) } }));
+    expect(result).toMatchObject({ ok: false, issue: {
+      code: 'PARAMETER_DECLARATION_UNSUPPORTED', path: '$.properties.rules.items.properties.filter.anyOf[1].pattern',
+    } });
+  });
+  it('P05 preserves pattern as a business key in parameters and nested default and enum data', () => {
+    const options = { rules: [{ pattern: 'file-*.ts' }] };
+    const c = compile({
+      pattern: { type: 'string', minLength: 1 },
+      options: { type: 'object', default: options, enum: [options] },
+    });
+    const input = { pattern: '[', options };
+    expect(c.schema).toMatchObject({ properties: { options: { default: options, enum: [options] } } });
+    expect(c.validateModelInput(input)).toEqual({ ok: true, value: input });
+    expect(c.validateResolvedInput(input)).toEqual({ ok: true, value: input });
   });
 
   it('P06 includes numeric boundaries without conversion', () => {
@@ -132,7 +148,7 @@ describe('W07-B1 ordinary parameter contract', () => {
     { type: 'number', maximum: '2' }, { type: 'string', minLength: -1 },
     { type: 'string', maxLength: 1.5 }, { type: 'string', minLength: 2, maxLength: 1 },
     { type: 'array', items: { type: 'object' }, minItems: 2, maxItems: 1 },
-  ])('rejects malformed bounds %#', field => invalid(compileOrdinarySchema(schema({ v: field }))));
+  ])('rejects malformed bounds %#', field => invalid(compileToolParameters(schema({ v: field }))));
 
   it.each([
     [{ type: 'string' }, ''], [{ type: 'number' }, 0],
@@ -151,7 +167,7 @@ describe('W07-B1 ordinary parameter contract', () => {
     { type: 'string', enum: ['a'], default: 'b' },
     { type: 'array', items: { type: 'number' }, default: ['1'] }, { type: 'boolean', default: 0 },
     { type: 'object', default: [] },
-  ])('P07 rejects invalid defaults %#', field => invalid(compileOrdinarySchema(schema({ v: field }))));
+  ])('P07 rejects invalid defaults %#', field => invalid(compileToolParameters(schema({ v: field }))));
 
   it('P08 preserves open extras and handles dangerous own keys safely', () => {
     const params = JSON.parse('{"__proto__":{"type":"string"},"constructor":{"type":"number"},"toString":{"type":"boolean"}}');
@@ -170,27 +186,27 @@ describe('W07-B1 ordinary parameter contract', () => {
     delete input.unknown;
     expect(closed.validateModelInput(input).ok).toBe(true);
     expect(({} as any).polluted).toBeUndefined();
-    invalid(compileOrdinarySchema(schema({}, { required: ['toString'] })));
+    invalid(compileToolParameters(schema({}, { required: ['toString'] })));
   });
 
   it('captures Schema keywords and defaults and deeply freezes only copies', () => {
     const properties = { e: { type: 'string', enum: ['a'], minLength: 1 }, o: { type: 'object', default: { a: ['initial'] } } };
     const sourceSchema = schema(properties, { additionalProperties: false });
-    const c = contract(compileOrdinarySchema(sourceSchema));
+    const c = contract(compileToolParameters(sourceSchema));
     const before = JSON.stringify(c.schema);
     properties.e.enum.push('b'); properties.e.minLength = 2; properties.o.default.a[0] = 'changed';
     expect(JSON.stringify(c.schema)).toBe(before);
     expect(c.validateModelInput({ e: 'a' }).ok).toBe(true);
     expect(c.validateModelInput({ e: 'b' }).ok).toBe(false);
     expect(c.validateModelInput({ x: true }).ok).toBe(false);
-    expect(contract(compileOrdinarySchema(sourceSchema)).schema).not.toEqual(c.schema);
+    expect(contract(compileToolParameters(sourceSchema)).schema).not.toEqual(c.schema);
     expect(Object.isFrozen(properties)).toBe(false);
     expect(Object.isFrozen(properties.o.default.a)).toBe(false);
     const frozen: any = c.schema;
     expect(Reflect.set(frozen.properties.e, 'minLength', 9)).toBe(false);
     expect(Reflect.set(frozen.properties.o.default.a, '0', 'changed')).toBe(false);
     const source: any = { type: 'object', properties: { x: { type: 'number', minimum: 0, default: 1 } }, required: ['x'] };
-    const captured = contract(compileOrdinarySchema(source));
+    const captured = contract(compileToolParameters(source));
     source.properties.x.minimum = 10; source.required.length = 0;
     expect(captured.validateModelInput({ x: 1 }).ok).toBe(true);
     expect(captured.validateModelInput({}).ok).toBe(false);
@@ -215,9 +231,9 @@ describe('W07-B1 ordinary parameter contract', () => {
     const c = compile({});
     for (const value of [getter, hidden, symbol, new Custom(), cycle, new Date(0), { x: undefined }, { x: 1n }, { x() {} }, { x: -Infinity }]) {
       expect(c.validateModelInput(value).ok).toBe(false);
-      invalid(compileOrdinarySchema(value));
+      invalid(compileToolParameters(value));
     }
-    invalid(compileOrdinarySchema(schema({ v: { type: 'object', default: getter } })));
+    invalid(compileToolParameters(schema({ v: { type: 'object', default: getter } })));
     expect(reads).toBe(0);
   });
   it('P10 separates shared subobjects and normalizes -0 without freezing originals', () => {
@@ -250,16 +266,16 @@ describe('W07-B1 ordinary parameter contract', () => {
     const nested = (depth: number): any => depth ? { x: nested(depth - 1) } : 0;
     const decl = (value: unknown) => schema({ o: { type: 'object', default: { a: value } } }, { required: [], additionalProperties: true });
     const capacity = { ok: false, issue: { code: 'PARAMETER_DECLARATION_CAPACITY' } };
-    expect(compileOrdinarySchema(decl(nested(20))).ok).toBe(true);
-    expect(compileOrdinarySchema(decl(nested(21)))).toMatchObject(capacity);
-    expect(compileOrdinarySchema(decl(Array(4_991).fill(null))).ok).toBe(true);
-    expect(compileOrdinarySchema(decl(Array(4_992).fill(null)))).toMatchObject(capacity);
+    expect(compileToolParameters(decl(nested(20))).ok).toBe(true);
+    expect(compileToolParameters(decl(nested(21)))).toMatchObject(capacity);
+    expect(compileToolParameters(decl(Array(4_991).fill(null))).ok).toBe(true);
+    expect(compileToolParameters(decl(Array(4_992).fill(null)))).toMatchObject(capacity);
     const base = { type: 'object', properties: {}, required: [], additionalProperties: true, description: '' };
     const count = Math.floor((64 * 1024 - JSON.stringify(base).length) / 6);
-    expect(compileOrdinarySchema({ ...base, description: '\0'.repeat(count) }).ok).toBe(true);
-    expect(compileOrdinarySchema({ ...base, description: '\0'.repeat(count + 1) })).toMatchObject(capacity);
-    expect(compileOrdinarySchema({ ...base, description: 'x'.repeat(64 * 1024 + 1) })).toMatchObject(capacity);
-    expect(compileOrdinarySchema(schema({ ['x'.repeat(64 * 1024 + 1)]: {} }))).toMatchObject(capacity);
+    expect(compileToolParameters({ ...base, description: '\0'.repeat(count) }).ok).toBe(true);
+    expect(compileToolParameters({ ...base, description: '\0'.repeat(count + 1) })).toMatchObject(capacity);
+    expect(compileToolParameters({ ...base, description: 'x'.repeat(64 * 1024 + 1) })).toMatchObject(capacity);
+    expect(compileToolParameters(schema({ ['x'.repeat(64 * 1024 + 1)]: {} }))).toMatchObject(capacity);
   });
 
   it('reports a copy budget rejection for a small declaration and keeps invalid and unsupported distinct', () => {
@@ -267,7 +283,7 @@ describe('W07-B1 ordinary parameter contract', () => {
     expect(new TextEncoder().encode(JSON.stringify(value)).byteLength).toBeLessThan(7 * 1024);
     const capacity = { ok: false, issue: { code: 'PARAMETER_DECLARATION_CAPACITY', path: expect.stringContaining('default') } };
     expect(compileValueSchema(value)).toMatchObject(capacity);
-    expect(compileOrdinarySchema(schema({ xs: value }))).toMatchObject(capacity);
+    expect(compileToolParameters(schema({ xs: value }))).toMatchObject(capacity);
     expect(compileValueSchema({ ...value, default: ['0'] })).toMatchObject({
       ok: false, issue: { code: 'PARAMETER_DECLARATION_INVALID', path: '$.default' },
     });
@@ -277,19 +293,19 @@ describe('W07-B1 ordinary parameter contract', () => {
   });
 
   it('rejects the retired parameter DSL at the JSON Schema entry', () => {
-    invalid(compileOrdinarySchema({ x: { type: 'string', required: true, desc: 'retired' } }));
+    invalid(compileToolParameters({ x: { type: 'string', required: true, desc: 'retired' } }));
   });
   it.each([
     { type: 'string', nullable: true },
     { type: 'string', 'x-aotui-ref': {} }, { $ref: '#/a' }, { allOf: [] }, { oneOf: [] },
     { type: 'string', mystery: 1 },
     { type: 'array', items: { type: 'string' }, minLength: 1 },
-  ])('P11 rejects unsupported Schema vocabulary %#', field => invalid(compileOrdinarySchema(schema({ x: field })), true));
+  ])('P11 rejects unsupported Schema vocabulary %#', field => invalid(compileToolParameters(schema({ x: field })), true));
   it.each([
     { $ref: '#' }, { patternProperties: {} }, { additionalProperties: {} }, { 'x-aotui-mode': 'anything' },
-  ])('P11 rejects unsupported root vocabulary %#', extra => invalid(compileOrdinarySchema(schema({}, extra)), true));
+  ])('P11 rejects unsupported root vocabulary %#', extra => invalid(compileToolParameters(schema({}, extra)), true));
   it('P11 reports a bounded JSON Schema path for unsupported vocabulary', () => {
-    const result = compileOrdinarySchema(schema({ content: { type: 'string', format: 'markdown' } }));
+    const result = compileToolParameters(schema({ content: { type: 'string', format: 'markdown' } }));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('Expected an unsupported declaration');
     expect(result.issue.path).toBe('$.properties.content.format');
@@ -301,19 +317,19 @@ describe('W07-B1 ordinary parameter contract', () => {
     [{ title: { type: 'string', enum: [] } }, '$.properties.title.enum'],
     [{ count: { type: 'number', minimum: 3, maximum: 2 } }, '$.properties.count.maximum'],
   ])('P11 points invalid field keywords to their JSON Schema paths %#', (properties, expectedPath) => {
-    const result = compileOrdinarySchema(schema(properties));
+    const result = compileToolParameters(schema(properties));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('Expected an invalid declaration');
     expect(result.issue.path).toBe(expectedPath);
   });
   it('P11 points malformed required declarations at the root required keyword', () => {
-    const result = compileOrdinarySchema(schema({ title: { type: 'string' } }, { required: ['missing'] }));
+    const result = compileToolParameters(schema({ title: { type: 'string' } }, { required: ['missing'] }));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('Expected an invalid declaration');
     expect(result.issue.path).toBe('$.required');
   });
   it('P11 always returns a bounded path for capture failures without exposing exception text', () => {
-    const result = compileOrdinarySchema(schema({ title: { type: 'string', default: 1n } }));
+    const result = compileToolParameters(schema({ title: { type: 'string', default: 1n } }));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('Expected invalid JSON input');
     expect(result.issue.path).toBe('$["properties"]["title"]["default"]');
@@ -321,7 +337,7 @@ describe('W07-B1 ordinary parameter contract', () => {
     expect(JSON.stringify(result)).not.toMatch(/BigInt|Cannot serialize/);
   });
   it('P11 bounds paths even when a property name is very long', () => {
-    const result = compileOrdinarySchema(schema({ ['property_' + 'x'.repeat(2_000)]: { type: 'string', default: 1 } }));
+    const result = compileToolParameters(schema({ ['property_' + 'x'.repeat(2_000)]: { type: 'string', default: 1 } }));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('Expected an invalid declaration');
     expect(result.issue.path).toBeDefined();
@@ -330,7 +346,7 @@ describe('W07-B1 ordinary parameter contract', () => {
   it.each([
     { required: ['x', 'x'] }, { required: ['missing'] }, { required: 'x' }, { required: [1] },
     { properties: [] }, { description: 1 }, { additionalProperties: null },
-  ])('P11 rejects malformed root fields %#', extra => invalid(compileOrdinarySchema(schema({ x: { type: 'string' } }, extra))));
+  ])('P11 rejects malformed root fields %#', extra => invalid(compileToolParameters(schema({ x: { type: 'string' } }, extra))));
 
   it('P12 bounds diagnostics and never reflects input/unknown keys/exception/pattern/default text', () => {
     const properties: Record<string, object> = {};
@@ -352,7 +368,7 @@ describe('W07-B1 ordinary parameter contract', () => {
       { type: 'string', pattern: '[REGEX_SECRET' },
       { type: 'number', default: 'DEFAULT_SECRET' },
     ]) {
-      const r = compileOrdinarySchema(schema({ private: field }));
+      const r = compileToolParameters(schema({ private: field }));
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.issue.message.length).toBeLessThanOrEqual(512);
       expect(JSON.stringify(r)).not.toMatch(/REGEX_SECRET|DEFAULT_SECRET/);

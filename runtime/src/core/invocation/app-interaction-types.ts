@@ -1,5 +1,5 @@
 /** Core owns these contracts. The Runtime root also exposes the Host-facing types. */
-import type { AppSnapshotV5, JsonValue, ViewToolReceiver, ToolDescriptorV5 } from '../snapshot/types.js';
+import type { AppSnapshot, JsonValue, ViewToolReceiver, ToolDescriptor } from '../snapshot/types.js';
 import type { Observation, ObservedView, ObservationGrant, ObservationSource, ObservationRegistryStats, ObservationJsonLimits, ObservationSelection } from './observation-types.js';
 import type { SnapshotValueRefSource } from '../tool/snapshot-value-arguments.js';
 export type { AppIdentityRead, AppIdentityReader } from '../snapshot/types.js';
@@ -10,8 +10,7 @@ export interface CancellationSignal {
   addEventListener(type: 'abort', listener: () => void, options?: Readonly<{once?: boolean}>): void;
   removeEventListener(type: 'abort', listener: () => void): void;
 }
-import type { ToolResultData } from '../../spi/core/tool-result.js';
-export type { ToolResultData } from '../../spi/core/tool-result.js';
+import type { ToolResultData } from '../tool/tool-result.js';
 export type ExecutionPhase = 'not-entered' | 'entered-returned';
 export type BusinessDetails = Readonly<{kind:'tool-result'; phase:ExecutionPhase; result:ToolResultData}>;
 export type InvocationOutcome =
@@ -37,7 +36,7 @@ export interface InvocationSource {
   readonly appId:string;
   readonly instanceId:string;
   readonly snapshotId:string;
-  readonly tool:ToolDescriptorV5;
+  readonly tool:ToolDescriptor;
   readonly receiver:ViewToolReceiver;
 }
 export interface ReceiptMetadata {
@@ -74,11 +73,9 @@ export interface InvocationContext {
   readonly refSources:readonly SnapshotValueRefSource[];
   readonly signal:CancellationSignal;
 }
-export type InputValidation = Readonly<{ok:true; value:JsonObject}> | Readonly<{ok:false}>;
 export type LiveCheck = Readonly<{ok:true}> | Readonly<{ok:false}>;
 export interface ExecutionBinding {
   readonly identity:object;
-  validateInput(source:InvocationSource, input:JsonObject, signal:CancellationSignal):InputValidation|Promise<InputValidation>;
   isLive(source:InvocationSource):LiveCheck;
   execute(context:InvocationContext):ExecutionFact|Promise<ExecutionFact>;
 }
@@ -87,7 +84,7 @@ export interface ExecutionResolver {
   resolve(source:InvocationSource):ExecutionBinding|null;
 }
 export interface AppInteractionPolicy {
-  project(context:Readonly<{source:AppSnapshotV5; signal:CancellationSignal}>):ObservationGrant|Promise<ObservationGrant>;
+  project(context:Readonly<{source:AppSnapshot; signal:CancellationSignal}>):ObservationGrant|Promise<ObservationGrant>;
   authorize(context:InvocationContext):boolean|Promise<boolean>;
   canReadReceipt(metadata:ReceiptMetadata, signal:CancellationSignal):boolean|Promise<boolean>;
 }
@@ -114,7 +111,7 @@ export interface InteractionLimits {
   readonly maxReads:number;
   readonly receiptTtlMs:number;
   readonly request:ObservationJsonLimits;
-  readonly ordinaryInput:ObservationJsonLimits;
+  readonly rawInput:ObservationJsonLimits;
   readonly metadata:ObservationJsonLimits;
   readonly fact:ObservationJsonLimits;
   readonly receipt:ObservationJsonLimits;

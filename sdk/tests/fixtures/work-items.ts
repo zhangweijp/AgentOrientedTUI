@@ -23,7 +23,7 @@ export const WorkspaceType = defineViewType<ItemContext & { options: WorkItemOpt
                 options: Type.Optional(Type.Object({
                     numbers: Type.Array(Type.Union([Type.Integer({ minimum: 0, maximum: 5 }), Type.Null()]), { maxItems: 2 }),
                     mode: Type.Literal('keep'),
-                    'x-aotui-ref-kind': Type.Optional(Type.String({ pattern: '^[a-z]+$' })),
+                    'x-aotui-ref-kind': Type.Optional(Type.Literal('business')),
                 }, { additionalProperties: false })),
             }, { additionalProperties: false }),
             async execute({ input: { operation }, context: { change, options } }) {

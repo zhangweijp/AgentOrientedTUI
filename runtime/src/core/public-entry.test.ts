@@ -1,7 +1,7 @@
 import { expect, expectTypeOf, it } from 'vitest';
 import * as core from './index.js';
 import * as memory from '../adapters/storage/memory-state-storage.js';
-// @ts-expect-error AppSnapshotV5 is the only public AppSnapshot name.
+// @ts-expect-error AppSnapshot is the only public AppSnapshot name.
 import type { AppSnapshot } from './index.js';
 // @ts-expect-error V5 is the only supported committed snapshot contract.
 import type { AppSnapshotV4 } from './index.js';
@@ -17,13 +17,14 @@ import type { ViewOwnedTools } from './index.js';
 import type { StateSession } from './index.js';
 import type { ViewToolInvocationTerminal as ProtocolTerminal } from '../spi/worker-protocol/messages.js';
 import type { SafeOrdinaryInvoker as ProtocolSafeOrdinary } from './tool/invocation-terminal.js';
+import type * as spi from '../spi/index.js';
 // @ts-expect-error Ref is a parameter source, not a separate callable category.
 import type { SafeRefInvoker } from './index.js';
 
 it('C12 exports precisely the frozen Core values and separate Memory constructor', () => {
-    expect(Object.keys(core).sort()).toEqual(['MARKDOWN_VIEW_FORMAT', 'SNAPSHOT_SCHEMA_VERSION', 'VIEW_TYPE_PARAMETERS_MODE', 'createSnapshotCore', 'refKey', 'createViewOwnedTools',
+    expect(Object.keys(core).sort()).toEqual(['MARKDOWN_VIEW_FORMAT', 'SNAPSHOT_SCHEMA_VERSION', 'createSnapshotCore', 'refKey', 'createViewOwnedTools',
         'ViewToolContractError', 'SnapshotDataError', 'SemanticProjectionCoordinator', 'createAppInteraction', 'createStateSession',
-        'compileOrdinarySchema', 'compileValueSchema', 'modelToolSchema', 'ordinaryParameterProfile', 'compileOrdinaryProfile'].sort());
+        'compileToolParameters', 'compileValueSchema', 'modelToolSchema'].sort());
     expect(Object.keys(memory)).toEqual(['createMemoryStateStorage']);
 });
 
@@ -39,6 +40,15 @@ it('C13 keeps the shared terminal identity, mutable terminal data and Promise-on
     expect(entered).toEqual({ phase: 'entered-returned', result: failure });
 });
 
+it('exports one semantic type for Core and SPI consumers', () => {
+    expectTypeOf<core.ToolResult>().toEqualTypeOf<spi.ToolResult>();
+    expectTypeOf<core.AppTypeToolDefinition>().toEqualTypeOf<spi.AppTypeToolDefinition>();
+    expectTypeOf<core.AppFrameBinding>().toEqualTypeOf<spi.AppFrameBinding>();
+    expectTypeOf<core.AppProjectionFrame>().toEqualTypeOf<spi.AppProjectionFrame>();
+    expectTypeOf<core.ProjectionCommitResult>().toEqualTypeOf<spi.ProjectionCommitResult>();
+    expectTypeOf<keyof core.ExecutionBinding>().toEqualTypeOf<'identity' | 'isLive' | 'execute'>();
+});
+
 it('C18 runs actual Core, Registry and instance dispatch through the explicit entry', async () => {
     const registry = core.createViewOwnedTools('app', 'instance');
     const inputSchema = { type: 'object', properties: {}, additionalProperties: false };
@@ -49,10 +59,10 @@ it('C18 runs actual Core, Registry and instance dispatch through the explicit en
     frame.accept();
     const tool = frame.tools[0]!, view = frame.instances[0]!;
     const snapshots = core.createSnapshotCore({ appId: 'app', instanceId: 'instance', now: () => 0 });
-    expect(snapshots.committer.accept({ schemaVersion: 5, appId: 'app', instanceId: 'instance', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+    expect(snapshots.committer.accept({ schemaVersion: 6, appId: 'app', instanceId: 'instance', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
         views: [{ toolBindings: view.toolBindings, id: 'v', viewInstanceId: view.viewInstanceId, type: 'Detail', name: 'Detail', kind: 'state', content: { format: 'markdown-v1', value: 'state' } }],
         refs: {}, tools: { [tool.id]: tool } }).status).toBe('published');
-    const binding: core.ExecutionBinding = { identity: {}, validateInput: (_source, input) => ({ ok: true, value: input }),
+    const binding: core.ExecutionBinding = { identity: {},
         isLive: source => ({ ok: registry.validateTypeToolBinding(tool, source.receiver).success }), execute: async context => {
             const terminal = await registry.invokeTypeTool(tool, context.source.receiver, context.effectiveInput);
             if (terminal.phase !== 'entered-returned' || !terminal.result.success || terminal.result.data?.value !== 19) throw Error('Unexpected business result');

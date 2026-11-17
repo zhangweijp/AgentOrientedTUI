@@ -1,18 +1,17 @@
-import { validateCapturedTypeParameters as validateTypeParameters } from '../../tests/fixtures/type-parameters.js';
+import { validateCapturedTypeParameters as validateInvocationParameters } from '../../tests/fixtures/type-parameters.js';
 import { describe, expect, it } from 'vitest';
 import { createSnapshotCore } from '../core/snapshot/store.js';
 import { refKey } from '../core/snapshot/snapshot-support.js';
-import type { JsonValue, PreparedAppSnapshotDraftV5 } from '../core/snapshot/types.js';
-import { compileOrdinarySchema } from '../core/tool/ordinary-parameter-contract.js';
-import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profile.js';
+import type { JsonValue, PreparedAppSnapshotDraft } from '../core/snapshot/types.js';
+import { compileToolParameters } from '../core/tool/tool-parameters.js';
 import { prepareViewTypeParameters } from '../core/tool/snapshot-value-arguments.js';
-import { captureTypeParametersRequest } from './ordinary-invocation-v2.js';
+import { captureToolInvocation } from './tool-invocation.js';
 
 const ref = (value: JsonValue = { type: 'object', properties: { label: { type: 'string' } }, required: ['label'], additionalProperties: false }) =>
     ({ type: 'string', minLength: 1, 'x-aotui-ref-kind': 'Item', 'x-aotui-ref-value': value });
 
 function fixture(optional = false) {
-    const c = compileOrdinarySchema({ type: 'object', properties: {
+    const c = compileToolParameters({ type: 'object', properties: {
         many: { type: 'array', items: ref(), maxItems: 3 },
         one: ref(), all: ref({ type: 'array', items: { type: 'object' } }),
         ordinary: { type: 'string' },
@@ -29,14 +28,14 @@ function fixture(optional = false) {
     let sequence = 0;
     const publish = (values: typeof refs = refs) => {
         const seq = ++sequence;
-        const draft: PreparedAppSnapshotDraftV5 = { schemaVersion: 5, appId: 'a', instanceId: 'i',
+        const draft: PreparedAppSnapshotDraft = { schemaVersion: 6, appId: 'a', instanceId: 'i',
             producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
             views: [{ toolBindings: [{toolId,activationId:'active'}], id: 'items', viewInstanceId: 'mount', type: 'Items', name: 'Items', kind: 'state',
                 content: { format: 'markdown-v1', value: 'Choose published Items.' } }],
             refs: values, tools: { [toolId]: { id: toolId, name: 'choose', viewType: 'Items', nameSharedAcrossViewTypes: false, description: 'Choose Items',
-                 inputSchema: ordinaryParameterProfile(c.contract) } } };
+                 inputSchema: c.contract.schema } } };
         const result = core.committer.accept(draft);
-        if (result.status !== 'published' || result.snapshot.schemaVersion !== 5) throw Error(JSON.stringify(result));
+        if (result.status !== 'published' || result.snapshot.schemaVersion !== 6) throw Error(JSON.stringify(result));
         return result.snapshot;
     };
     const source = publish();
@@ -45,10 +44,10 @@ function fixture(optional = false) {
     const receiver = {viewId:'items',viewInstanceId:'mount',activationId:'active'};
     const prepare = (args: unknown, snapshotId = source.id, granted = visible) => prepareViewTypeParameters(core.store,
         { appId:'a',instanceId:'i',snapshotId,tool:source.tools[toolId]!,receiver }, c.contract, args as any, granted);
-    const message = (prepared: Extract<ReturnType<typeof prepare>, { status: 'prepared' }>) => captureTypeParametersRequest({
-        type: 'VIEW_TOOL_INVOKE_V6', requestId: 'call', appId: 'a', instanceId: 'i', snapshotId: source.id,
+    const message = (prepared: Extract<ReturnType<typeof prepare>, { status: 'prepared' }>) => captureToolInvocation({
+        type: 'VIEW_TOOL_INVOKE', requestId: 'call', appId: 'a', instanceId: 'i', snapshotId: source.id,
         tool, receiver,
-        argumentMode: 'view-type-parameters-v1', rawArgs: prepared.rawArgs,
+        rawArgs: prepared.rawArgs,
         effectiveArgs: prepared.effectiveArgs, refSources: prepared.refSources });
     return { core, contract: c.contract, refs, source, publish, prepare, message };
 }
@@ -66,17 +65,17 @@ describe('shared Ref selections through Core and Worker parameter grammar', () =
             ]);
             expect(Object.isFrozen(p.effectiveArgs.many)).toBe(true);
             expect(Object.isFrozen((p.effectiveArgs.many as readonly JsonValue[])[0])).toBe(true);
-            expect(validateTypeParameters(f.message(p))).toEqual({ success: true });
+            expect(validateInvocationParameters(f.message(p))).toEqual({ success: true });
             expect(f.contract.hasRefs).toBe(true);
         } finally { f.core.lifecycle.dispose(); }
-        expect(f.core.store.inspect().activeLeases).toBe(0);
+        expect(f.core.store.inspect().activeHolds).toBe(0);
     });
     it('distinguishes omitted optional selection from an empty selection and never inserts defaults', () => {
         const f = fixture(true);
         for (const [raw, expected] of [[{}, {}], [{ many: [] }, { many: [] }]]) {
             const p = f.prepare(raw); expect(p.status).toBe('prepared'); if (p.status !== 'prepared') throw Error('prepare');
             expect(p.effectiveArgs).toEqual(expected); expect(p.refSources).toEqual([]);
-            expect(validateTypeParameters(f.message(p)).success).toBe(true);
+            expect(validateInvocationParameters(f.message(p)).success).toBe(true);
         }
         f.core.lifecycle.dispose();
     });
@@ -84,7 +83,7 @@ describe('shared Ref selections through Core and Worker parameter grammar', () =
         { many: [{ label: 'A' }] }, { many: ['items.a', 'items.b', 'items.a', 'items.b'] }])('rejects invalid model selections %j', args => {
         const f = fixture();
         expect(f.prepare(args)).toMatchObject({ status: 'rejected', issue: { code: 'TOOL_INVALID_ARGS' } });
-        expect(f.core.store.inspect().activeLeases).toBe(0); f.core.lifecycle.dispose();
+        expect(f.core.store.inspect().activeHolds).toBe(0); f.core.lifecycle.dispose();
     });
     it.each(['missing', 'ambiguous', 'type', 'payload'] as const)('rejects one invalid member atomically: %s', kind => {
         const f = fixture(), args = { many: ['items.a', kind === 'missing' ? 'items.missing' : 'items.b'] };
@@ -98,7 +97,7 @@ describe('shared Ref selections through Core and Worker parameter grammar', () =
         }
         const code = { missing: 'REF_NOT_VISIBLE', ambiguous: 'REF_TARGET_UNSUPPORTED', type: 'REF_TYPE_MISMATCH', payload: 'REF_VALUE_UNSUPPORTED' }[kind];
         expect(f.prepare(args, id, visible)).toMatchObject({ status: 'rejected', issue: { code } });
-        expect(f.core.store.inspect().activeLeases).toBe(0); f.core.lifecycle.dispose();
+        expect(f.core.store.inspect().activeHolds).toBe(0); f.core.lifecycle.dispose();
     });
     it('captures array entries without running getters or accepting sparse arrays', () => {
         const f = fixture(); let reads = 0;
@@ -106,7 +105,7 @@ describe('shared Ref selections through Core and Worker parameter grammar', () =
         for (const value of [many, new Array(1)]) {
             expect(f.prepare({ many: value })).toMatchObject({ status: 'rejected', issue: { code: 'TOOL_INVALID_ARGS' } });
         }
-        expect(reads).toBe(0); expect(f.core.store.inspect().activeLeases).toBe(0); f.core.lifecycle.dispose();
+        expect(reads).toBe(0); expect(f.core.store.inspect().activeHolds).toBe(0); f.core.lifecycle.dispose();
     });
     it.each(['order', 'missing', 'param', 'snapshot', 'extra', 'ordinary'] as const)('Worker rejects altered provenance or ordinary data: %s', kind => {
         const f = fixture(), p = f.prepare({ many: ['items.a', 'items.b'], ordinary: 'keep' });
@@ -117,7 +116,7 @@ describe('shared Ref selections through Core and Worker parameter grammar', () =
                 : m.refSources.map((s, index) => index ? s : { ...s, ...(kind === 'param' ? { param: 'other' }
                     : kind === 'snapshot' ? { snapshotId: 'other' } : kind === 'extra' ? { index: 0 } : {}) });
             const changed = { ...m, refSources, ...(kind === 'ordinary' ? { effectiveArgs: { ...m.effectiveArgs, ordinary: 'changed' } } : {}) };
-            expect(validateTypeParameters(captureTypeParametersRequest(changed)).success).toBe(false);
+            expect(validateInvocationParameters(captureToolInvocation(changed)).success).toBe(false);
         } finally { f.core.lifecycle.dispose(); }
     });
 });

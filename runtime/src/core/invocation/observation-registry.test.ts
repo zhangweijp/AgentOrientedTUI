@@ -3,11 +3,10 @@ import { createSnapshotCore } from '../snapshot/store.js';
 import { createAppInteraction } from './app-interaction.js';
 import { refKey } from '../snapshot/snapshot-support.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
-import type { AppSnapshotV5, JsonValue, PreparedAppSnapshotDraftV5, SnapshotStoreOptions, ToolDescriptorV5 } from '../snapshot/types.js';
+import type { AppSnapshot, JsonValue, PreparedAppSnapshotDraft, SnapshotStoreOptions, ToolDescriptor } from '../snapshot/types.js';
 import { createViewOwnedTools } from '../tool/view-owned-tools.js';
-import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
-import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
-import { createObservationOperations, hostedObservationCapacityIssue, hostedObservationNamespace,
+import { compileToolParameters } from '../tool/tool-parameters.js';
+import { createObservationOperations, hostedObservationCapacityIssue, hostedObservationNamespace, normalizeProjectionLimits,
     type ObservationState, DEFAULT_OBSERVATION_REGISTRY_LIMITS as HARD } from './observation-registry.js';
 import type { Observation, ObservationGrant, ObservationRegistryLimitOverrides } from './observation-types.js';
 
@@ -90,10 +89,10 @@ function fixture(options: { views?: number; refs?: number; tools?: number; conte
     }
     function rebindTool(viewIndex = 0, toolIndex = 0) { prepare(viewIndex,toolIndex); }
     function remountAllViews() { pages = pages.map(page => ({...page,owner:{}})); }
-    function draft(patch: Partial<PreparedAppSnapshotDraftV5> = {}): PreparedAppSnapshotDraftV5 {
+    function draft(patch: Partial<PreparedAppSnapshotDraft> = {}): PreparedAppSnapshotDraft {
         const available = prepare();
         const seq = ++sequence;
-        return { schemaVersion: 5, ...identity, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
+        return { schemaVersion: 6, ...identity, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
             views: owners.map(v => ({ toolBindings: v.toolBindings, id: v.viewId, viewInstanceId: v.viewInstanceId, type: 'File', name: v.viewId, kind: 'state',
                 content: { format: 'markdown-v1', value: options.content ?? 'content-secret-' + v.viewId } })),
             refs: Object.fromEntries(owners.flatMap(v => Array.from({ length: options.refs ?? 2 }, (_, i) => [refKey(v.viewId, v.viewInstanceId, 'r' + i), {
@@ -102,10 +101,10 @@ function fixture(options: { views?: number; refs?: number; tools?: number; conte
             }]))),
             tools: Object.fromEntries(available.map(t => [t.id, t])), ...patch };
     }
-    function publish(patch: Partial<PreparedAppSnapshotDraftV5> = {}): AppSnapshotV5 {
+    function publish(patch: Partial<PreparedAppSnapshotDraft> = {}): AppSnapshot {
         const result = core.committer.accept(draft(patch));
         expect(result.status).toBe('published');
-        if (result.status !== 'published' || result.snapshot.schemaVersion !== 5) throw new Error('Expected a published Snapshot V5 fixture');
+        if (result.status !== 'published' || result.snapshot.schemaVersion !== 6) throw new Error('Expected a published Snapshot fixture');
         return result.snapshot;
     }
     const source = options.ready === false ? undefined : publish();
@@ -156,7 +155,7 @@ function zero(f: Fixture) {
     f.registry.close();
     expect(f.registry.inspect()).toMatchObject({ observations: 0, reservations: 0, sources: 0,
         sourceBytes: 0, observationBytes: 0, metadataBytes: 0, totalBytes: 0 });
-    expect(f.core.store.inspect().activeLeases).toBe(0); expect(f.handler).not.toHaveBeenCalled();
+    expect(f.core.store.inspect().activeHolds).toBe(0); expect(f.handler).not.toHaveBeenCalled();
 }
 
 describe('B1 projection and real source ownership', () => {
@@ -171,7 +170,7 @@ describe('B1 projection and real source ownership', () => {
         expect(observation.refs.map(ref => ref.viewId)).toEqual(['v1','v1']);
         expect(f.registry.resolveTool(key(observation))).toMatchObject({status:'found',
             snapshotId:f.source.id,visibleRefs:grant.refs.slice().reverse()});
-        expect(f.core.store.inspect().activeLeases).toBe(1); zero(f);
+        expect(f.core.store.inspect().activeHolds).toBe(1); zero(f);
     });
     it('supports an empty grant while continuing to present every open View', () => {
         const f = fixture(), observation = f.observe(emptyGrant());
@@ -207,8 +206,8 @@ describe('B1 handles, isolation and strict data', () => {
         expect(code(g.registry.resolveTool({ ...key(other), viewId: 'unobserved' }))).toBe('TOOL_UNAVAILABLE');
         expect(f.registry.inspect()).toEqual(firstStats);
         expect(g.registry.inspect()).toEqual(otherStats);
-        expect(f.core.store.inspect().activeLeases).toBe(2);
-        expect(g.core.store.inspect().activeLeases).toBe(1);
+        expect(f.core.store.inspect().activeHolds).toBe(2);
+        expect(g.core.store.inspect().activeHolds).toBe(1);
         expect(g.registry.resolveTool(key(other)).status).toBe('found');
         const completed = f.registry.complete(preparation.reservation, f.grant());
         expect(completed.status).toBe('observed'); if (completed.status !== 'observed') return;
@@ -277,7 +276,7 @@ describe('B1 handles, isolation and strict data', () => {
 
 describe('B1 original source, lifecycle and deadlines', () => {
     it('keeps the instance and original Observation usable through a long model turn until explicit release', () => {
-        const f = fixture({ store: { historyTtlMs: 10, leaseTtlMs: 10 } }), preparation = f.begin();
+        const f = fixture(), preparation = f.begin();
         f.publish({ refs: Object.fromEntries(Object.entries(f.source.refs).map(([k, r]) => [k, { ...r,
             target: { kind: 'snapshot-value', payload: { value: 'updated' } } }])) });
         f.setTime(1_000_000);
@@ -289,7 +288,7 @@ describe('B1 original source, lifecycle and deadlines', () => {
         const resolved = f.registry.resolveTool(key(completed.observation));
         expect(resolved.status).toBe('found');
         if (resolved.status === 'found') expect(resolved.snapshotId).toBe(f.source.id);
-        expect(f.core.store.inspect().activeLeases).toBe(1);
+        expect(f.core.store.inspect().activeHolds).toBe(1);
         f.registry.releaseObservation(completed.observation.observationId);
         expect(code(f.registry.resolveTool(key(completed.observation)))).toBe('OBSERVATION_UNAVAILABLE');
         expect(f.core.store.getById(f.source.id).status).toBe('rejected');
@@ -358,10 +357,10 @@ describe('B1 original source, lifecycle and deadlines', () => {
         else if (mode === 'version') f.rebindTool();
         else {
             const schema = first.inputSchema as Record<string, any>;
-            const changed = compileOrdinarySchema({type:'object',properties:{...schema.properties,optional:{type:'string'}},
+            const changed = compileToolParameters({type:'object',properties:{...schema.properties,optional:{type:'string'}},
                 required:schema.required,additionalProperties:true});
             if (!changed.ok) throw Error('Changed parameter fixture');
-            f.publish({tools:{[first.id]:{...first,inputSchema:ordinaryParameterProfile(changed.contract)}}});
+            f.publish({tools:{[first.id]:{...first,inputSchema:changed.contract.schema}}});
         }
         if (mode === 'version') f.publish();
         expect(code(f.registry.resolveTool(key(observation)))).toBe(mode === 'degraded' ? 'SNAPSHOT_UNREADY'
@@ -425,7 +424,7 @@ describe('B1 settlement, counts and shared-source fees', () => {
         for (let i = 0; i < 40; i++) {
             const p = f.begin(); expect(code(f.registry.complete(p.reservation, { invalid: 'payload-secret' }))).toBe('OBSERVATION_PROJECTION_INVALID');
             expect(f.registry.inspect()).toMatchObject({ observations: 0, reservations: 0, sources: 0, totalBytes: 0 });
-            expect(f.core.store.inspect().activeLeases).toBe(0);
+            expect(f.core.store.inspect().activeHolds).toBe(0);
         }
         zero(f);
     });
@@ -446,11 +445,13 @@ describe('B1 settlement, counts and shared-source fees', () => {
         expect(code(f.registry.begin({viewIds:['v0']}))).toBe('OBSERVATION_INVALID');
         zero(f);
     });
-    it('honors the Store lease limit without dropping an existing preparation', () => {
-        const f = fixture({ store: { maxActiveLeases: 1 } }), pending = f.begin();
+    it('completes a preparation using its existing Snapshot hold at the active limit', () => {
+        const f = fixture({ store: { maxActiveHolds: 1 } }), pending = f.begin();
         expect(code(f.registry.begin({ all:true }))).toBe('OBSERVATION_CAPACITY');
         expect(f.registry.inspect().reservations).toBe(1);
-        expect(code(f.registry.complete(pending.reservation, f.grant()))).toBe('SNAPSHOT_CAPACITY'); zero(f);
+        expect(f.registry.complete(pending.reservation, f.grant()).status).toBe('observed');
+        expect(f.core.store.inspect().activeHolds).toBe(1);
+        zero(f);
     });
 });
 
@@ -593,8 +594,20 @@ describe('B1 independently bounded JSON and total budgets', () => {
         })) });
         expect(hostedObservationCapacityIssue(fill(0))).toBeUndefined();
         expect(hostedObservationCapacityIssue(fill(1))).toMatchObject({ code: 'OBSERVATION_CAPACITY', path: '$.observation' });
-        expect(f.core.store.inspect().activeLeases).toBe(1);
+        expect(f.core.store.inspect().activeHolds).toBe(1);
         expect(f.registry.inspect()).toMatchObject({ observations: 1, reservations: 0 });
+        zero(f);
+    });
+    it.each([
+        { limits: { maxRefs: 1 }, path: '$.refs' },
+        { limits: { maxTools: 1 }, path: '$.tools' },
+        { limits: { metadata: { maxNodes: 5 } }, path: '$.metadata' },
+    ])('measures installed $path limits during complete projection preparation', ({ limits, path }) => {
+        const f = fixture({ views: 1, refs: 2, tools: 2, ready: false });
+        const draft = f.draft();
+        expect(hostedObservationCapacityIssue(draft)).toBeUndefined();
+        expect(hostedObservationCapacityIssue(draft, normalizeProjectionLimits(limits, 'options.projectionLimits')))
+            .toMatchObject({ code: 'OBSERVATION_CAPACITY', path });
         zero(f);
     });
     it('observes a near-limit View and rejects oversized metadata at its publication path', () => {

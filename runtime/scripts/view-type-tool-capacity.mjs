@@ -44,7 +44,6 @@ async function runCase(viewCount) {
         const commitMs = elapsed(begin);
         const binding = {
             identity: {},
-            validateInput: (_source, value) => ({ ok: true, value }),
             isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.receiver).success }),
             execute: async context => ({ kind: 'tool-result', ...await registry.invokeTypeTool(
                 context.source.tool, context.source.receiver, context.effectiveInput) }),
@@ -85,7 +84,7 @@ async function runCase(viewCount) {
         await client?.whenClosed();
         registry.dispose();
         snapshotCore.lifecycle.dispose();
-        assert.equal(snapshotCore.store.inspect().activeLeases, 0);
+        assert.equal(snapshotCore.store.inspect().activeHolds, 0);
         assert.equal(registry.inspect().bindings, 0);
         if (client) assert.equal(client.inspect().combinedBytes, 0);
     }

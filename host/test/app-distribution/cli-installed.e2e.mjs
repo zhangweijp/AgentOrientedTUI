@@ -25,13 +25,15 @@ async function waitFor(read, target) {
 try {
     await mkdir(home);
     await writeFile(join(folder, 'entry.mjs'), `
-import { createApp } from '@aotui/sdk/app';
-export default createApp({ app_name: '${name}', initialize({ publish }) {
-    publish({ views: [{ id: 'current', type: 'Item', kind: 'state', body: 'View from the custom manifest entry' }] });
+import { createApp, createView, defineViewType } from '@aotui/sdk/app';
+const Item = defineViewType({ name: 'Item' });
+export default createApp({ app_name: '${name}', viewTypes: [Item], initialize({ prepareProjection }) {
+    const current = createView(Item, { id: 'current', kind: 'state', render: () => ({ body: 'View from the custom manifest entry' }) });
+    prepareProjection({ views: [current] });
 }});
 `);
     await writeFile(join(folder, 'aoapp.json'), JSON.stringify({
-        app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v5',
+        app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v6',
         persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './entry.mjs' },
     }));
     await runCli('install', '.');

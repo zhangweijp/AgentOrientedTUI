@@ -12,7 +12,7 @@ function fields(value: unknown, names: readonly string[]): boolean {
 }
 
 /** At most the Tools executable by this Worker can be granted. */
-export function withExecutableTools(policy: AppInteractionPolicy, enabled: () => boolean): AppInteractionPolicy {
+export function withToolAuthorization(policy: AppInteractionPolicy, enabled: () => boolean): AppInteractionPolicy {
     if (!fields(policy, ['project', 'authorize', 'canReadReceipt'])) return policy;
     const { project, authorize, canReadReceipt } = policy;
     if ([project, authorize, canReadReceipt].some(value => typeof value !== 'function')) return policy;

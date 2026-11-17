@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createSnapshotCore } from './store.js';
 import { refKey } from './snapshot-support.js';
-import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
-import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
+import { compileToolParameters } from '../tool/tool-parameters.js';
 
-const taskToolSchema = compileOrdinarySchema({ type: 'object', properties: { target: { type: 'string' } }, required: ['target'] });
+const taskToolSchema = compileToolParameters({ type: 'object', properties: { target: { type: 'string' } }, required: ['target'] });
 if (!taskToolSchema.ok) throw new Error('Fixture Tool schema must compile');
 
 /**
@@ -49,7 +48,7 @@ class MemoryTaskApp {
             labels.push('[' + task.title + '](' + refId + ')');
         }
         return {
-            schemaVersion: 5, appId: this.appId, instanceId: this.instanceId,
+            schemaVersion: 6, appId: this.appId, instanceId: this.instanceId,
             producerSeq: ++this.producerSeq, sourceEpoch: this.sourceEpoch, capturedAt: this.producerSeq,
             views: [{
                 toolBindings: [{ toolId, activationId: 'active-complete' }], id: 'task_list', viewInstanceId: 'mount_1', type: 'TaskList',
@@ -61,7 +60,7 @@ class MemoryTaskApp {
                 [toolId]: {
                     id: toolId, name: 'complete_task', viewType: 'TaskList',
                     nameSharedAcrossViewTypes: false, description: 'Complete a task only after business CAS verification',
-                    inputSchema: ordinaryParameterProfile(taskToolSchema.contract),
+                    inputSchema: taskToolSchema.contract.schema,
                 },
             },
         };
@@ -76,7 +75,7 @@ describe('M1 isolated in-memory App → Snapshot → Ref → Tool descriptor →
         expect(original.status).toBe('published');
         if (original.status !== 'published') return;
         const originalId = original.snapshot.id;
-        const held = core.store.acquire(originalId, { lifetime: 'owner' }); if (held.status !== 'acquired') throw Error('holder');
+        const held = core.store.acquire(originalId); if (held.status !== 'acquired') throw Error('holder');
         const old = core.store.resolveRef({
             snapshotId: originalId, appId: app.appId, instanceId: app.instanceId,
             viewId: 'task_list', viewInstanceId: 'mount_1', refId: 'pending[0]',
@@ -106,6 +105,6 @@ describe('M1 isolated in-memory App → Snapshot → Ref → Tool descriptor →
         const staleAttempt = app.complete(observedTarget.id, observedTarget.revision);
         expect(staleAttempt).toBe('stale');
         expect(core.store.readLatest('tasks').status).toBe('ready');
-        held.lease.release(); expect(core.store.inspect().activeLeases).toBe(0);
+        held.hold.release(); expect(core.store.inspect().activeHolds).toBe(0);
     });
 });
