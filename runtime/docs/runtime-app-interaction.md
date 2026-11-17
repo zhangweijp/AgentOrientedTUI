@@ -70,9 +70,15 @@ SDK 工厂自动提供 `view-type-tools-v5`、托管状态和 `app-lifecycle-v2`
 
 ## Host installation and instance interaction
 
+Use `@aotui/runtime` for a Node Host that installs Apps, runs them in the bundled Worker and manages App state storage. Plain TypeScript and Preact authors build the App with `@aotui/sdk/app` and `@aotui/sdk`, respectively. Use SDK 0.9.0 with Runtime 8.0.0 from the same build.
+
+Advanced integrators use `@aotui/runtime/core` for pure semantic assembly and `@aotui/runtime/spi` for custom factories, renderers and Host extensions. The Runtime adapter entries cover presentation, DOM producer helpers and in-memory state storage. The standard Agent Driver Source is provided by `@aotui/agent-driver-adapter` with its matching Runtime and Driver peers. [Package entries](../README.md#choose-a-package-entry) · [Pure Core](core-public-entry.md) · [Persistence](persistence.md)
+
 Tool execution is enabled by default. Install with the trusted Host option `toolsEnabled: false` to keep observation and preview read-only. Installation rejects unknown Host options with `CONFIG_INVALID` and invalid `toolsEnabled` values with `TOOLS_ENABLED_INVALID` before allocation. Use the matched Runtime and SDK packages.
 
 Construct the Runtime with `createRuntime()`. The returned `IKernel` includes App interaction and shutdown reporting. Use `getDesktop()` for the `IDesktop` contract. These interfaces replace imports of the concrete `Kernel`, `IDesktopManager`, and the separate access and shutdown reporting interfaces.
+
+`AppInteraction.observe` takes `ObservationSelection`, which selects all open pages with `{ all: true }`. `AppInteraction.invoke` takes `AppInvocation`, including the observation, Tool and invocation IDs and `input.view_id`. `readReceipt` uses `ReceiptQuery` with the two original IDs. These types describe Host calls. Core accepts untyped input at the transport boundary and uses the same runtime validation for model data forwarded by the standard Source.
 
 The Worker handshake requires `app-snapshot/v5`. Each published Tool records whether another registered ViewType in the App declares that name. The standard Source uses that fact for its public aliases. When execution is enabled, the Host also requests `view-tool-parameters-invoke/v6`. Incompatible factories or required capabilities fail at load time. The `VIEW_TOOL_INVOKE_V6` request carries the execution descriptor, receiving View ID, mount identity, and activation separately from business arguments. The Worker checks the current receiver before entering its handler.
 
@@ -80,13 +86,14 @@ Both the complete normalized Tool profile and the model schema, including the de
 
 <!-- b2-example:start -->
 ```ts
-import { createRuntime, type AppInteraction, type Observation, type ReceiptQuery } from '@aotui/runtime';
+import { createRuntime, type AppInteraction, type AppInvocation, type Observation, type ObservationSelection, type ReceiptQuery } from '@aotui/runtime';
 
 export async function runExample(appUrl: string, dataDirectory: string) {
   const runtime = createRuntime({ worker: { timeoutMs: 4000, maxWorkers: 2 } });
   try {
     const desktopId = await runtime.createDesktop();
     const desktop = runtime.getDesktop(desktopId);
+    const selection: ObservationSelection = { all: true };
     async function observeReady(client: AppInteraction): Promise<Observation> {
       const deadline = Date.now() + 6000;
       while (Date.now() < deadline) {
@@ -95,7 +102,7 @@ export async function runExample(appUrl: string, dataDirectory: string) {
         desktop.output.subscribe(notify);
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
-          const result = await client.observe({ all: true });
+          const result = await client.observe(selection);
           if (result.status === 'observed') return result.observation;
           if (result.issue.code === 'APP_INTERACTION_UNAVAILABLE') throw Error(result.issue.code);
           await Promise.race([changed, new Promise<never>((_, reject) => {
@@ -121,15 +128,15 @@ export async function runExample(appUrl: string, dataDirectory: string) {
     try {
       const adopted = client.adoptObservation(observation.observationId);
       if (adopted.status !== 'adopted') throw Error(adopted.status);
-      const requests = [
-        { name: 'ordinary', input: { text: 'change' } },
-        { name: 'ref', input: { file: 'detail.file' } },
+      const requests: readonly { name: string; input: AppInvocation['input'] }[] = [
+        { name: 'ordinary', input: { view_id: 'detail', text: 'change' } },
+        { name: 'ref', input: { view_id: 'detail', file: 'detail.file' } },
       ];
       for (const [index, request] of requests.entries()) {
         const tool = observation.tools.find(tool => tool.name === request.name);
         if (!tool) throw Error('Tool unavailable');
         const result = await client.invoke({ invocationId: `example-${index}`, observationId: observation.observationId,
-          toolId: tool.id, input: { view_id: 'detail', ...request.input } });
+          toolId: tool.id, input: request.input });
         if (result.kind !== 'receipt') throw Error(result.code);
         if (result.receipt.outcome.status !== 'succeeded') throw Error(result.receipt.outcome.status);
         outcomes.push(result.receipt.outcome);

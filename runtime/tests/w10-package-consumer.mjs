@@ -75,6 +75,9 @@ import type { ScopeClient } from '@aotui/runtime/core';
 import type { AppInteraction, InstanceInteraction, ReceiptQuery } from '@aotui/runtime/core';
 export const readOriginal = (client: AppInteraction, query: ReceiptQuery) => client.readReceipt(query);
 export const inspect = (client: InstanceInteraction) => client.inspect();
+export function forwardTransport(client: InstanceInteraction, selection: unknown, request: unknown) {
+  return [client.observe(selection), client.invoke(request)];
+}
 export function retiredAlias(client: InstanceInteraction) {
   // @ts-expect-error Inspect owns expiry and statistics in the public Core API.
   return client.sweepExpired();
@@ -137,9 +140,28 @@ export type HostTypes = [
   ObservationSelection, ObservationGrant, ObserveResult, AppPreviewResult, InvocationReceipt,
   ReceiptAccess, InvokeResult, InvocationContext, ReceiptMetadata, InteractionIssue,
 ];
-export function readFromHost(client: AppInteraction, request: AppInvocation): Promise<ReceiptAccess> {
+export function checkHostRequests(client: AppInteraction, raw: unknown): Promise<ReceiptAccess> {
+  const selection: ObservationSelection = { all: true };
+  const request: AppInvocation = { observationId: 'observed', invocationId: 'invoke-1', toolId: 'inspect',
+    input: { view_id: 'detail', record: 'list.selected' } };
+  void client.observe(selection);
+  void client.invoke(request, 1000);
+  // @ts-expect-error Observation prepares all open Views.
+  void client.observe({ all: false });
+  // @ts-expect-error The old per-View selector is not part of the Host contract.
+  void client.observe({ all: true, viewIds: ['detail'] });
+  // @ts-expect-error Host callers supply the receiving View even for zero business arguments.
+  void client.invoke({ ...request, input: {} });
+  // @ts-expect-error The receiving XML id is a string.
+  void client.invoke({ ...request, input: { view_id: 1 } });
+  // @ts-expect-error The retired binding id is not a request field.
+  void client.invoke({ ...request, bindingId: 'retired' });
+  // @ts-expect-error A typed Host call needs a request shape.
+  void client.invoke(raw);
   const query: CoreReceiptQuery = { observationId: request.observationId, invocationId: request.invocationId };
   const hostQuery: ReceiptQuery = query;
+  // @ts-expect-error Receipt lookup uses the original IDs and accepts no Tool field.
+  void client.readReceipt({ ...hostQuery, toolId: 'inspect' });
   return client.readReceipt(hostQuery);
 }
 import { createTUIApp, defineViewType, View, useDataRef, refParam, type ArgsOf, useAppLifecycle, type AppLifecycleCallbacks } from '@aotui/sdk';

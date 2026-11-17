@@ -1,6 +1,11 @@
 # SDK 当前公共 API
 
-普通 TypeScript App 使用 `@aotui/sdk/app` 的 `createApp`，Preact App 使用 `@aotui/sdk` 的 `createTUIApp`。两者共享静态 `defineViewType`、TypeBox 参数合同和托管 Worker 装载。参见 [App 作者指南](app-authoring.md)。
+## 作者入口与配套版本
+
+- `@aotui/sdk` 根入口面向 Preact App 作者，提供 `createTUIApp`、`View` 和页面、Ref、状态及生命周期 Hooks。使用此入口需安装 Preact，配套包测试使用 Preact 10.29.1。
+- `@aotui/sdk/app` 面向普通 TypeScript App 作者，提供 `createApp`、稳定的 `createView` handle 和 Ref 描述。作者类型可用 ES2022 lib 编译，入口可以独立于 Preact、DOM 和 Worker 装载。
+
+两个入口共享 ViewType、TypeBox 参数和托管 App 合同。当前配套为 SDK 0.9.0 与 Runtime 8.0.0，Node Host 通过 `@aotui/runtime` 安装 App 并运行随包 Worker。使用同一批构建的包，并按配套版本的指南迁移公开合同。 [App 作者指南](app-authoring.md) · [配套安装](runtime-compatibility.md)
 
 | 能力 | 当前合同 |
 | --- | --- |
@@ -14,8 +19,6 @@
 | `registerCleanup` / `useAppLifecycle`, `persistence` / `usePersistentState` | 普通 TS / Preact 的应用资源登记和实例持久化入口 |
 
 `refParam` 由根入口和 `@aotui/sdk/app` 导出。主要工具类型包括 `ViewType`、`ArgsOf` 和 `DeepReadonly`。完整导出以匹配产物的 `sdk/src/index.ts` 和 `sdk/src/app.ts` 为准。旧 `useViewSnapshotTool`、实例 ToolUI、`SnapshotValueTool*`、`ParamSchema` / `InferArgs` 已退出。
-
-两个入口共享静态 Tool 声明格式。`/app` 的作者侧运行图可独立于 Preact、DOM 和 Worker 加载，类型可用 ES2022 lib 编译。Preact 是可选 peer，使用根入口的 Preact App 需要安装它。
 
 ## 执行与业务边界
 
