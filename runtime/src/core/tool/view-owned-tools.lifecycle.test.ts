@@ -91,14 +91,13 @@ describe('View instances and bounded committed Tool bindings', () => {
         expect(() => probe.prepareFrame([bind(a)])).toThrow(/VIEW_REGISTRY_CLOSED/);
     });
 
-    it('allocates renderer owners separately and ignores a late release after replacement', () => {
-        const registry=fixture(), left=registry.prepareMount('a','Counter'), right=registry.prepareMount('a','Counter');
-        const previous=registry.prepareFrame([bind({...a,owner:left.owner})]);
+    it('keeps the old owner live until a same-ID replacement is accepted', () => {
+        const registry=fixture(), previous=registry.prepareFrame([bind(a)]);
         previous.accept();
-        const next=registry.prepareFrame([bind({...a,owner:right.owner})]);
+        const next=registry.prepareFrame([bind({...a,owner:{}})]);
+        expect(registry.getView('a')?.viewInstanceId).toBe(previous.instances[0]!.viewInstanceId);
         next.accept();
-        left.release();
-        expect(registry.getView('a')?.viewInstanceId).toBe(right.view.viewInstanceId);
+        expect(registry.getView('a')?.viewInstanceId).toBe(next.instances[0]!.viewInstanceId);
         expect(receiver(next.instances[0]!).viewInstanceId).not.toBe(receiver(previous.instances[0]!).viewInstanceId);
     });
 

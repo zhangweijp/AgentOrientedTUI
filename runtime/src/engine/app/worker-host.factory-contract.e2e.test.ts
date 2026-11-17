@@ -155,8 +155,7 @@ describe('Worker accepts only the managed App factory contract', () => {
                 async initialize(context) {
                     if (JSON.stringify(context.launchConfig) !== ${JSON.stringify(JSON.stringify(config))}) throw new Error('WRONG_LAUNCH_CONFIG');
                     if (Object.hasOwn(globalThis, '__AOTUI_APP_CONFIG__')) throw new Error('GLOBAL_CONFIG_FALLBACK_PRESENT');
-                    context.projection.beginCommit();
-                    if (context.projection.endCommit() !== 'prepared') throw Error('EMPTY_PROJECTION_NOT_PREPARED');
+                    if (context.publishFrame(() => ({ views: [] })).status !== 'prepared') throw Error('EMPTY_PROJECTION_NOT_PREPARED');
                     return { close() {} };
                 },
             };

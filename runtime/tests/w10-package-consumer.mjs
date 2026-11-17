@@ -168,7 +168,18 @@ import { createTUIApp, defineViewType, View, useDataRef, refParam, type ArgsOf, 
 // @ts-expect-error Removed per-page bindings are not an SDK author API.
 import type { ViewBindings } from '@aotui/sdk';
 ${refOnly ? '' : ideTypeImports}
-import type { TUIAppFactory } from '@aotui/runtime/spi';
+import type { AppFrameRef, AppProjectionFrame, ProjectionCommitResult, RuntimeContext, TUIAppFactory } from '@aotui/runtime/spi';
+export function publishCompleteFrame(context: RuntimeContext): ProjectionCommitResult {
+  const selected: AppFrameRef = { id: 'selected', value: { title: 'Note' } };
+  // @ts-expect-error Captured JSON values replace commit-local Ref tokens.
+  const token: AppFrameRef = { id: 'selected', token: {} };
+  // @ts-expect-error The renderer supplies a stable owner in each complete frame.
+  void context.mountView('detail', 'File');
+  const frame: AppProjectionFrame = { views: [{ id: 'detail', type: 'File', kind: 'state', name: 'Detail',
+    content: { format: 'markdown-v1', value: '[Selected](selected)' }, owner: {}, bindings: [], refs: [selected] }] };
+  void token;
+  return context.publishFrame(() => frame);
+}
 // @ts-expect-error Removed entity-only Hook is not a public API.
 import { experimental_useVersionedEntityTool } from '@aotui/sdk';
 import type { AppLifecyclePort, AppCleanupReport } from '@aotui/runtime/spi';

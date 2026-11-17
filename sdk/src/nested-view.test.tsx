@@ -1,7 +1,7 @@
 import { Component, h, type ComponentChildren } from 'preact';
 import { act } from 'preact/test-utils';
 import { useState } from 'preact/hooks';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 import { createTUIApp } from './app-factory/createTUIApp.js';
 import { View } from './components/View.js';
@@ -143,7 +143,6 @@ describe('View nesting boundary', () => {
         }
 
         const x = setup(Root);
-        const registerRef = vi.spyOn(x.kernel.getProjectionCoordinator(), 'registerRef');
         try {
             await expect(x.open()).rejects.toMatchObject({
                 code: 'NESTED_VIEW_UNSUPPORTED',
@@ -152,7 +151,6 @@ describe('View nesting boundary', () => {
             });
 
             expect(nestedPayloadRendered).toBe(false);
-            expect(registerRef.mock.calls.every(([owner]) => owner.viewId !== 'child')).toBe(true);
             expect(instances(x.kernel)).toEqual([]);
             expect(refs(x.kernel)).toEqual([]);
             expect(x.container).toBeNull();

@@ -1,10 +1,10 @@
 import { MARKDOWN_VIEW_FORMAT, SnapshotDataError } from '@aotui/runtime/core';
 import {
-    type AppLifecycleCallbacks, type AppProjectionFrame, type PreparedProjection, type RuntimeContext, type TUIAppFactory,
+    createRefCapture, type AppLifecycleCallbacks, type AppProjectionFrame, type PreparedProjection, type RuntimeContext, type TUIAppFactory,
 } from '@aotui/runtime/spi';
 import { captureViewBindings, requireViewType, type ViewContextProps, type ViewType } from '../tools/view-type-tool.js';
 import { createAppFactory, VIEW_ID_PATTERN, type AppConfig } from './app-factory.js';
-import { captureRefEntries, type PublishedRef } from './refs.js';
+import { capturedRefValue, captureRefEntries, type PublishedRef } from './refs.js';
 
 declare const viewHandle: unique symbol;
 export interface ViewHandle { readonly [viewHandle]: true }
@@ -13,7 +13,7 @@ export interface AppAuthorContext extends
     Pick<RuntimeContext, 'appId' | 'desktopId' | 'launchConfig' | 'persistence' | 'signal'> {
     registerCleanup(callbacks: AppLifecycleCallbacks): void;
     /** Prepare a complete frame. Use opening only for navigation that can leave the current frame intact. */
-    publish(frame: { readonly views: readonly ViewHandle[] }, options?: Parameters<RuntimeContext['publishFrame']>[1]): PreparedProjection;
+    publish(frame: { readonly views: readonly ViewHandle[] }, options?: { readonly opening: true }): PreparedProjection;
 }
 
 export type CreateAppConfig = AppConfig & {
@@ -52,11 +52,11 @@ function invalid(path: string, message: string): never {
 export function createApp(config: CreateAppConfig): TUIAppFactory {
     const { initialize } = config;
     return createAppFactory(config, async (context, types) => {
-        const { appId, desktopId, persistence, launchConfig, signal, appLifecycle, refExporter } = context;
-        const capture = refExporter.captureRef.bind(refExporter);
+        const { appId, desktopId, persistence, launchConfig, signal, appLifecycle } = context;
         const app = {};
-        const publish: AppAuthorContext['publish'] = (frame, options) => context.publishFrame(() => {
+        const build = (frame: Parameters<AppAuthorContext['publish']>[0]): AppProjectionFrame => {
             if (signal.aborted) throw Object.assign(new Error('App projection is closed'), { code: 'PROJECTION_CLOSED' });
+            const capture = createRefCapture();
             const views: AppProjectionFrame['views'][number][] = [];
             const viewIds = new Set<string>();
             for (const handle of frame.views) {
@@ -77,10 +77,10 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
                 const refIds = new Set<string>();
                 const captured: AppProjectionFrame['views'][number]['refs'][number][] = [];
                 for (const item of refs) {
-                    for (const [refId, token] of captureRefEntries(capture, item)) {
+                    for (const [refId, value] of captureRefEntries(capture, item)) {
                         if (refIds.has(refId)) invalid(path + '.refs', 'Ref IDs must be unique within this View');
                         refIds.add(refId);
-                        captured.push({ id: refId, token, refType: item.refType });
+                        captured.push({ id: refId, value: capturedRefValue(id, refId, value), refType: item.refType });
                     }
                 }
                 views.push({
@@ -89,7 +89,17 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
                 });
             }
             return { views };
-        }, options);
+        };
+        const publish: AppAuthorContext['publish'] = (frame, options) => {
+            const result = context.publishFrame(() => build(frame), options);
+            if (result.status === 'prepared') return result;
+            if (result.status === 'failed' && result.cause) throw result.cause.error;
+            if ('issue' in result) {
+                const { code, path, message } = result.issue;
+                throw new SnapshotDataError(code, path ?? '$', message);
+            }
+            throw new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Expected a prepared projection');
+        };
 
         await initialize({
             appId, desktopId, signal,

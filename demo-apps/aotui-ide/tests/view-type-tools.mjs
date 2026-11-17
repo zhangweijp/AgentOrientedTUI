@@ -14,7 +14,6 @@ async function prepareTools(type, viewId, context) {
   await factory.initialize({
     appLifecycle: { protocol: factory.appLifecycleSupport },
     defineTools() {},
-    refExporter: { captureRef: assert.fail },
     signal: new AbortController().signal,
     publishFrame(build) {
       bindings = build().views[0].bindings;

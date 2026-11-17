@@ -66,7 +66,13 @@ export default createTUIApp({ app_name: 'interaction_example', viewTypes, compon
 
 SDK 工厂自动提供 `view-type-tools-v5`、托管状态和 `app-lifecycle-v2` 标记。应用可以用 `useAppLifecycle` 管理自己创建的资源。
 
-低层 SDK 适配器通过 managed factory 的 `RuntimeContext` 发布完整页面，Renderer 可用 `mountView` 获取对应的 Ref 所有者。
+## 托管生产者的完整帧
+
+普通 TypeScript 和 Preact 通过同一个 `RuntimeContext.publishFrame(() => frame)` 提交 `AppProjectionFrame`。每页提供 Markdown、稳定的 `owner` 对象、当前 `bindings` 和 `refs`。Ref 条目用 `{ id, value, refType? }` 携带已捕获的 JSON 数据。Runtime 分配实际的 View 实例身份和 Tool activation，整帧通过验证后才替换本地投影和执行绑定。
+
+从旧的 `setViewReader`、`mountView`、`refExporter` 和 `projection.beginCommit/endCommit` 迁移时，把渲染、Ref 注册及修复留在适配器，并把已完成的结果交给 `publishFrame`。同一挂载更新时复用 owner。实际卸载再挂载时使用新的 owner。适配器可从 SPI 为每次准备创建一个 `createRefCapture()`，在数据所在组件渲染时按现有预算分离 JSON。异步渲染器通过 `AppInstance.whenCommitted(signal)` 等待已排队的渲染。
+
+`publishFrame` 的 `prepared` 表示本地准备完成，Host 接收由后续发布完成。`failed` 携带诊断并阻断基于失效投影的调用。可回退的开页候选超过单 App 观察容量时，可得到 `rejected` 并保留原投影。需要保留全部原挂载实例的渲染器使用 `{ opening: true, retainViews: true }`，回退后用 `{ restore: true }` 验证还原的完整帧。
 
 ## Host installation and instance interaction
 

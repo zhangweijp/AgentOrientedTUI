@@ -2,7 +2,7 @@ import { MARKDOWN_VIEW_FORMAT } from '../core/snapshot/types.js';
 import type { AppFrameView } from '../spi/app/app-instance.interface.js';
 import type { WorkerRuntimeViewFragment } from './view-fragment-extractor.js';
 
-type DOMAttachment = Pick<AppFrameView, 'id' | 'type' | 'owner' | 'bindings'>;
+type DOMAttachment = Pick<AppFrameView, 'id' | 'type' | 'owner' | 'bindings' | 'refs'>;
 
 /** Match each rendered fragment with the author bindings on its actual DOM node. */
 export function captureDOMViews(
@@ -24,7 +24,7 @@ export function captureDOMViews(
             throw new Error('DOM projection does not match the attached View owner');
         return {
             id: viewId, type: viewType, name: viewName || viewId, kind,
-            owner: current.owner, bindings: current.bindings,
+            owner: current.owner, bindings: current.bindings, refs: current.refs,
             content: { format: MARKDOWN_VIEW_FORMAT, value: markup },
         };
     });

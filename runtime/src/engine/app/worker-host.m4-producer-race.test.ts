@@ -75,15 +75,13 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
                         const value = getAttribute(name);
                         if (!mutated && name === 'data-view-id' && value) {
                             mutated = true;
-                            const before = ctx.projection.token();
-                            let registered = false;
+                            let submitted = false;
                             try {
-                                ctx.mountView('reentrant', 'FileDetail');
-                                registered = true;
+                                ctx.publishFrame(() => ({ views: [] }));
+                                submitted = true;
                             } catch { /* swallowed deliberately; the batch must still fail */ }
                             writeFileSync(${JSON.stringify(raceTracePath)}, JSON.stringify({
-                                viewId:value, beforeEpoch:before.epoch,
-                                afterEpoch:ctx.projection.token().epoch, registered,
+                                viewId: value, submitted,
                             }));
                         }
                         return value;
@@ -122,7 +120,7 @@ describe('Semantic producer regression: a mutation during V5 preparation cannot 
             const degraded = (host as any).snapshotReceiver.core.store.readLatest('race_app');
             expect(degraded).toMatchObject({ status: 'degraded', lastGood: { id: first.snapshotId } });
             const trace = JSON.parse(await readFile(raceTracePath, 'utf8'));
-            expect(trace).toMatchObject({ viewId: 'fd_0', beforeEpoch: 1, afterEpoch: 1, registered: false });
+            expect(trace).toMatchObject({ viewId: 'fd_0', submitted: false });
             host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'repair' });
             await vi.waitFor(() => {
                 expect(host!.getSemanticSnapshotReport()).toMatchObject({ health: 'ready', revision: 2, lastToolCount: 2 });

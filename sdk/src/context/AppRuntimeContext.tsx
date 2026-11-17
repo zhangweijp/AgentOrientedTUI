@@ -3,7 +3,7 @@
  * 
  * App-level Runtime context supplied to the full managed component tree.
  * 
- * Supplies app metadata, App-owned Tool registration, View mount identities, and Ref publication ports.
+ * Supplies app metadata and the Preact adapter's View attachments.
  */
 
 import type { AppLifecyclePort } from '@aotui/runtime/spi';
@@ -11,7 +11,8 @@ import type { AppStatePersistence } from '@aotui/runtime/spi';
 import { createContext } from 'preact';
 import { useContext, useMemo } from 'preact/hooks';
 import type { ViewType } from '../tools/view-type-tool.js';
-import type { AppID, DesktopID, IRefExporter, AppFrameView, RuntimeContext, AppLaunchConfig, PreparedProjection } from '@aotui/runtime/spi';
+import type { AppID, DesktopID, AppFrameView, AppLaunchConfig, PreparedProjection } from '@aotui/runtime/spi';
+import type { createViewRefs } from '../app-factory/render-commit.js';
 
 // ═══════════════════════════════════════════════════════════════
 //  Types
@@ -39,14 +40,8 @@ interface AppRuntimeContextValue {
     /** App 启动配置 */
     launchConfig?: AppLaunchConfig | undefined;
 
-    /**
-     * RefExporter访问 (用于useRef/useArrayRef)
-     */
-    refExporter: IRefExporter;
-
     viewTypes: ReadonlyMap<string, ViewType>;
-    views: WeakMap<Element, Pick<AppFrameView, 'id' | 'type' | 'owner' | 'bindings'>>;
-    mountView: RuntimeContext['mountView'];
+    views: WeakMap<Element, Pick<AppFrameView, 'id' | 'type' | 'owner' | 'bindings'> & Pick<ReturnType<typeof createViewRefs>, 'readRefs'>>;
     prepareProjection: PrepareProjection;
 }
 

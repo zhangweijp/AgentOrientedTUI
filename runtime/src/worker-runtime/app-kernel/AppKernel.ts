@@ -6,7 +6,7 @@ import type { ToolResultData } from '../../spi/core/tool-result.js';
  *
  * Worker 内的 App 执行引擎，负责：
  * - App 生命周期管理 (onOpen, onClose...)
- * - Component View mount and owned Tool lifecycle
+ * - Committed Views and their Tool lifecycle
  * - source-bound View Tool lifecycle and invocation
  * - Semantic projection and Ref export
  *
@@ -18,9 +18,8 @@ import type {
     AppContext,
     AppKernelConfig,
     AppLaunchConfig,
-    IRefExporter, AppFrameView, AppInstance, RuntimeContext, TUIAppFactory,
+    AppProjectionFrame, AppInstance, RuntimeContext, TUIAppFactory,
 } from '../../spi/index.js';
-import type { RefValueCheck } from '../../spi/app/ref-exporter.interface.js';
 import { AOTUIError } from '../../spi/core/errors.js';
 import type { ViewToolInvocationTerminal } from '../../spi/worker-protocol/index.js';
 
@@ -41,15 +40,13 @@ import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
  *
  * 运行在 Worker 内的 App 执行引擎。
  */
-export class AppKernel implements IRefExporter {
+export class AppKernel {
     private _id: AppID = '' as AppID;
     private instance?: AppInstance;
-    private readViews?: Parameters<RuntimeContext['setViewReader']>[0];
     private context!: AppContext;
 
     private readonly projection = new SemanticProjectionCoordinator({
         identity: () => ({ appId: this.id, instanceId: this.appExecutionInstanceId }),
-        readFrame: () => this.readViews ? this.prepareFrame(this.readViews()) : { views: [], tools: [] },
         checkCapacity: hostedObservationCapacityIssue,
     });
     private appExecutionInstanceId: string = randomUUID();
@@ -70,8 +67,8 @@ export class AppKernel implements IRefExporter {
     async whenProjectionCommitted(): Promise<void> {
         this.assertActive();
         await this.instance?.whenCommitted?.(this.projectionOwner.signal);
-        await this.projection.whenCommitted(this.projectionOwner.signal);
         this.assertActive();
+        if (this.projectionOwner.signal.aborted) throw closeError('PROJECTION_CLOSED');
     }
 
     private closing = false;
@@ -176,7 +173,6 @@ export class AppKernel implements IRefExporter {
             await Promise.allSettled([this.openPromise, this.deletePromise]);
             try { await this.instance?.close(); } catch { failed = true; }
             this.instance = undefined;
-            this.readViews = undefined;
             try { await this.appLifecycle?.close(); } catch { failed = true; }
             try { this.projection.close(); } catch { failed = true; }
             if (failed) throw closeError('APP_UNMOUNT_FAILED');
@@ -209,10 +205,6 @@ export class AppKernel implements IRefExporter {
         void this.deletePromise.catch(() => {});return this.deletePromise;
     }
 
-    captureRef(data: unknown, check?: RefValueCheck): object {
-        return this.projection.captureRef(data, check);
-    }
-
     getViewRefs() {
         return this.projection.getViewRefs();
     }
@@ -225,14 +217,20 @@ export class AppKernel implements IRefExporter {
         if (!this.closing && !this.projectionOwner.signal.aborted) this.instance?.onLLMUsage?.(event);
     }
 
-    private prepareFrame(views: readonly AppFrameView[]) {
+    private prepareFrame(frame: AppProjectionFrame): CompleteProjectionFrame {
         this.assertActive();
+        if (!frame || Object.keys(frame).length !== 1 || !Array.isArray(frame.views))
+            throw new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Expected a complete View frame');
+        const views: AppProjectionFrame['views'] = frame.views;
         const plan = this.viewOwnedTools!.prepareFrame(views);
         return {
             views: views.map(({ id, type, name, kind, content }, index) => {
                 const { viewInstanceId, toolBindings } = plan.instances[index]!;
                 return { id, type, name, kind, content, viewInstanceId, toolBindings };
             }),
+            refs: views.flatMap(({ id, refs }, index) => refs.map(ref => ({
+                ...ref, viewId: id, viewInstanceId: plan.instances[index]!.viewInstanceId,
+            }))),
             tools: plan.tools,
             accept: plan.accept,
         };
@@ -248,63 +246,15 @@ export class AppKernel implements IRefExporter {
             appId: this._id,
             desktopId: this.context.desktopId,
             launchConfig: this.config.launchConfig,
-            refExporter: this,
-            projection: this.projection,
             signal: this.projectionOwner.signal,
-            setViewReader: read => {
-                if (this.readViews) throw new Error('App view reader already installed');
-                this.readViews = read;
-            },
             defineTools: definitions => {
                 this.assertActive();
                 this.projection.assertWritable();
                 owned.defineTools(definitions);
             },
-            mountView: (id, type) => {
-                this.assertActive();
-                this.projection.assertWritable();
-                const mount = owned.prepareMount(id, type);
-                let released = false;
-                return {
-                    owner: mount.owner,
-                    registerRef: (refId, data, refType) => {
-                        this.assertActive();
-                        if (released) throw new Error('View Ref owner was detached');
-                        return this.projection.registerRef(mount.view, refId, data, refType);
-                    },
-                    release: () => {
-                        if (released) return;
-                        this.projection.releaseView(mount.view.viewInstanceId);
-                        mount.release();
-                        released = true;
-                    },
-                };
-            },
             publishFrame: (build, options) => {
                 this.assertActive();
-                this.projection.beginCommit();
-                let candidate: CompleteProjectionFrame;
-                try {
-                    const frame = build();
-                    if (!frame || Object.keys(frame).length !== 1 || !Array.isArray(frame.views))
-                        throw new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Expected a complete View frame');
-                    const prepared = this.prepareFrame(frame.views);
-                    const refs: CompleteProjectionFrame['refs'][number][] = [];
-                    for (const [index, view] of frame.views.entries()) {
-                        const { viewInstanceId } = prepared.views[index]!;
-                        for (const ref of view.refs) refs.push({ ...ref, viewId: view.id, viewInstanceId });
-                    }
-                    candidate = { ...prepared, refs, opening: options?.opening === true };
-                } catch (error) {
-                    this.projection.endCommit({ error });
-                    throw error;
-                }
-                const result = this.projection.endCommit(undefined, false, candidate);
-                if (result !== 'prepared') {
-                    const failure = typeof result === 'object' ? result.issue : this.projection.failure!;
-                    throw new SnapshotDataError(failure.code, failure.path ?? '$', failure.message);
-                }
-                return Object.freeze({ status: 'prepared', sourceEpoch: this.projection.token().epoch });
+                return this.projection.commit(() => this.prepareFrame(build()), options);
             },
             persistence: this.persistence,
             appLifecycle: this.appLifecycle?.port,

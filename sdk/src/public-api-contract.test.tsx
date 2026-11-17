@@ -84,10 +84,8 @@ describe('C04/C09 SDK root exports and app context', () => {
             persistence,
             prepareProjection,
             appLifecycle: { protocol: 'app-lifecycle-v2', register() {} },
-            refExporter: { registerRef() { return { update() {}, release() {} }; } },
-            markDirty() {}, projection: { beginCommit() {}, endCommit() {} },
-            viewTools: { mount() {}, unmount() {} },
-            appTypeTools: { protocol: 'view-type-tools-v1', registerTypeTool() {} },
+            views: new WeakMap(),
+            viewTypes: new Map(),
         };
         function CaptureContext() { publicContext = useAppRuntimeContext();return null; }
         renderToString(h(AppRuntimeContext.Provider, { value: fullContext as any }, h(CaptureContext, {})));
@@ -100,9 +98,8 @@ describe('C04/C09 SDK root exports and app context', () => {
         expect(publicContext.persistence.flush).toBe(flush);
         expect(publicContext.prepareProjection).toBe(prepareProjection);
         expect(publicContext).not.toHaveProperty('appLifecycle');
-        expect(publicContext).not.toHaveProperty('refExporter');
-        expect(publicContext).not.toHaveProperty('projection');
-        expect(publicContext).not.toHaveProperty('viewTools');
+        expect(publicContext).not.toHaveProperty('views');
+        expect(publicContext).not.toHaveProperty('viewTypes');
         await expect(publicContext.persistence.flush()).resolves.toBe(report);
         expect(flush).toHaveBeenCalledOnce();
     });

@@ -29,16 +29,19 @@ export type { AppContext } from './app/store.interface.js';
 export type { AppLaunchConfig } from './app/app-config.interface.js';
 export type { TUIAppFactory } from './app/app-factory.interface.js';
 export { isTUIAppFactory, hasViewTypeToolAuthoringProtocol } from './app/app-factory.interface.js';
-export type { IRefExporter, IRefBinding, RefValueCheck } from './app/ref-exporter.interface.js';
-export type { IRefRegistry } from './app/ref-exporter.interface.js';
+export { createRefCapture, type RefCapture, type RefValueCheck } from '../core/snapshot/ref-capture.js';
+export { DEFAULT_SNAPSHOT_LIMITS } from '../core/snapshot/snapshot-support.js';
 
 // Managed App initialization and instance ports.
 export type {
     AppStatePersistence,
     AppInstance,
+    AppFrameRef,
     AppFrameView,
     AppProjectionFrame,
     PreparedProjection,
+    ProjectionCommitResult,
+    ProjectionOptions,
     RuntimeContext,
     StateBinding,
     StateBindingStatus,
@@ -75,8 +78,6 @@ export type {
 export type { IRuntimeContext } from './runtime/context.interface.js';
 
 // SDK-facing Runtime ports. These are typed capabilities, not Worker IPC.
-export type { IProjectionPort, ProjectionToken } from './runtime/projection.interface.js';
-export type { MountedView } from './runtime/view-owned-tools.interface.js';
 export type { AppTypeToolDefinition, AppFrameBinding } from './runtime/app-type-tools.interface.js';
 export type { AppCleanupReport, AppLifecycleCallbacks, AppLifecyclePort } from './runtime/app-lifecycle.interface.js';
 

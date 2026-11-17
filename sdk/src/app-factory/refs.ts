@@ -1,5 +1,5 @@
-import { compileValueSchema, SnapshotDataError } from '@aotui/runtime/core';
-import type { IRefRegistry, RefValueCheck } from '@aotui/runtime/spi';
+import { compileValueSchema, SnapshotDataError, type JsonValue } from '@aotui/runtime/core';
+import type { createRefCapture, RefCapture, RefValueCheck } from '@aotui/runtime/spi';
 import type Type from 'typebox';
 import { exportTypeBoxValueSchema, schemaDeclarationError } from '../tools/typebox-schema.js';
 import type { DeepReadonly } from '../tools/view-type-tool.js';
@@ -67,6 +67,14 @@ export function formatRef(label: string, { id, value, refType, array }: Publishe
 
 const schemas = new WeakMap<Type.TSchema, RefValueCheck>();
 
+export function capturedRefValue(viewId: string, id: string, capture: RefCapture): JsonValue {
+    if ('issue' in capture) {
+        const { code, path, message } = capture.issue;
+        throw new SnapshotDataError(code, 'Ref ' + viewId + '.' + id + (path ? ' ' + path : ''), message);
+    }
+    return capture.value;
+}
+
 function validator(schema: Type.TSchema): RefValueCheck {
     const existing = schemas.get(schema);
     if (existing) return existing;
@@ -77,11 +85,11 @@ function validator(schema: Type.TSchema): RefValueCheck {
 }
 
 export function captureRefEntries(
-    capture: IRefRegistry['captureRef'], { id, value, refType, schema, array }: PublishedRef,
-): ReadonlyMap<string, object> {
+    capture: ReturnType<typeof createRefCapture>, { id, value, refType, schema, array }: PublishedRef,
+): ReadonlyMap<string, RefCapture> {
     validateRefMarker(id, refType);
     const check = schema === undefined ? undefined : validator(schema);
-    const entries = new Map<string, object>();
+    const entries = new Map<string, RefCapture>();
     entries.set(id, capture(value, array ? captured => {
         if (!Array.isArray(captured)) return { path: '$', message: 'ArrayRef requires an array' };
         const failure = check?.(captured);

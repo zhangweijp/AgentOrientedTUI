@@ -204,7 +204,10 @@ describe('real SDK Worker observation refresh', () => {
         const receipt = await invoke(client, initial, 'change', { value: 1, invalid: true });
         expect(receipt).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { calls: 1 } } } } });
         const failed = client.observe({ all: true }); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
-        expect(await failed).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } });
+        expect(await failed).toMatchObject({ status: 'rejected', issue: {
+            code: 'SNAPSHOT_SERIALIZATION_ERROR', path: 'Ref file.selected $["value"]',
+            message: expect.stringContaining('Expected finite JSON data'),
+        } });
         expect(host.getSemanticSnapshotReport()!.health).toBe('degraded');
         host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'redraw-other' }); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
         expect(await client.observe({ all: true })).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_SERIALIZATION_ERROR' } });

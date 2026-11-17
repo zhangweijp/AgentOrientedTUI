@@ -81,7 +81,6 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
     let defined = false;
     let mounted = new Map<string, Mounted>();
     let declared = new Map<string, ReadonlyMap<string, Tool>>();
-    let prospective = new WeakMap<object, ViewInstance>();
     let mountSequence = 0;
     let activationSequence = 0;
     let bindingCount = 0;
@@ -157,15 +156,6 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             defined = true;
         },
 
-        /** A DOM attachment needs a Ref owner before layout effects. It has no live Tool bindings yet. */
-        prepareMount(id: string, type: string) {
-            assertActive();
-            const owner = Object.freeze({});
-            const view = identity(id, type);
-            prospective.set(owner, view);
-            return { owner, view, release: () => { prospective.delete(owner); } };
-        },
-
         /** Build the entire next inventory without changing any currently executable handler. */
         prepareFrame(views: readonly ViewCandidate[]) {
             assertActive();
@@ -183,10 +173,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                 owners.add(owner);
                 const prior = previous.get(id);
                 const continuous = prior && prior.owner === owner && prior.view.viewType === type ? prior : undefined;
-                const reserved = prospective.get(owner);
-                if (reserved && (reserved.viewId !== id || reserved.viewType !== type))
-                    fail('VIEW_INVALID', 'Mounted View owner does not match candidate');
-                const view = continuous?.view ?? reserved ?? identity(id, type);
+                const view = continuous?.view ?? identity(id, type);
                 const definitions = declared.get(type);
                 if (!Array.isArray(bindings) || bindings.length !== (definitions?.size ?? 0))
                     throw new SnapshotDataError('TOOL_BINDING_INVALID', `View ${id}`, 'Expected one binding for each ViewType operation');
@@ -224,7 +211,6 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                     assertActive();
                     if (mounted !== previous) fail('VIEW_INVALID', 'Prepared View inventory was superseded');
                     mounted = next;
-                    for (const owner of owners) prospective.delete(owner);
                     liveBytes = bytes;
                     bindingCount = count;
                 },
@@ -261,7 +247,6 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             disposed = true;
             mounted = new Map();
             declared.clear();
-            prospective = new WeakMap();
             staticBytes = liveBytes = bindingCount = 0;
             appId = appInstanceId = '';
         },

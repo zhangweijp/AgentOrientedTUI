@@ -7,6 +7,7 @@ import { h, render } from 'preact';
 import { act } from 'preact/test-utils';
 import { useState } from 'preact/hooks';
 import { createTUIApp } from './app-factory/createTUIApp.js';
+import { createRefCapture } from '@aotui/runtime/spi';
 import { View } from './components/View.js';
 import { useDataRef } from './hooks/useRef.js';
 import { useArrayRef } from './hooks/useArrayRef.js';
@@ -389,7 +390,7 @@ describe('M3 ArrayRef cleanup on registration failure', () => {
     it('removes every Ref registered before a later item registration throws', () => {
         const refs = new Map<string, object>();
         const registry = {
-            captureRef: (value: any, check?: (value: any) => void) => { check?.(value); return value; },
+            captureRef: createRefCapture(),
             registerRef(id: string, value: object) {
                 if (id === 'pending[1]') throw new Error('controlled Ref registration failure');
                 refs.set(id, value);

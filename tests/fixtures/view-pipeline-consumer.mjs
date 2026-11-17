@@ -63,16 +63,13 @@ export async function runViewPipeline(appURL, outputFile, resolutions = {}) {
       { id: 'guide', type: 'Guide', owner: {}, bindings: [] },
       { id: 'file_a', type: 'FileDetail', owner: {}, bindings: [] },
     ]);
-    frame.accept();
     const [guideView, fileView] = frame.instances;
-    const projection = new SemanticProjectionCoordinator({
-      identity: () => ({ appId: 'pipeline', instanceId: 'plain-run' }),
-      readFrame: () => ({ views: [
+    const projection = new SemanticProjectionCoordinator({ identity: () => ({ appId: 'pipeline', instanceId: 'plain-run' }) });
+    const prepared = projection.commit(() => ({ views: [
         { toolBindings: [], id: guideView.viewId, viewInstanceId: guideView.viewInstanceId, type: guideView.viewType, kind: 'instruction', name: 'guide', content: { format: 'markdown-v1', value: '\nRead the current file.\n' } },
         { toolBindings: [], id: fileView.viewId, viewInstanceId: fileView.viewInstanceId, type: fileView.viewType, kind: 'state', name: 'A > B & "C"\nnext', content: { format: 'markdown-v1', value: expectedBody } },
-      ], tools: frame.tools }),
-    });
-    assert.equal(projection.commit(() => {}), 'prepared');
+    ], tools: frame.tools, refs: [], accept: frame.accept }));
+    assert.equal(prepared.status, 'prepared');
     const published = projection.publishTo(core.committer);
     assert.equal(published.status, 'published');
     const authority = createAppInteraction(core.store, { namespace: 'plain-pipeline', now: Date.now, appId: 'pipeline', instanceId: 'plain-run',

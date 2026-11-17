@@ -7,16 +7,16 @@ import { ordinaryParameterProfile } from '../core/tool/ordinary-parameter-profil
 
 function fixture(ids: string[] = []) {
     const { document } = parseHTML('<html><body><main></main></body></html>'), container = document.querySelector('main')!;
-    const attachments = new WeakMap<object, { id: string; type: string; owner: object; bindings: [] }>();
+    const attachments = new WeakMap<object, { id: string; type: string; owner: object; bindings: []; refs: [] }>();
     for (const id of ids) {
         const node = document.createElement('section');
         node.setAttribute('data-view-id', id);
-        attachments.set(node, { id, type: 'File', owner: {}, bindings: [] });
+        attachments.set(node, { id, type: 'File', owner: {}, bindings: [], refs: [] });
         container.appendChild(node);
     }
     const fragments = ids.map(viewId => ({ viewId: viewId as any, viewName: viewId, viewType: 'File', markup: 'stable', kind: 'state' as const }));
     const capture = (current = fragments) => captureDOMViews(container, current, node => attachments.get(node));
-    const views = (current = fragments) => capture(current).map(({ owner, bindings, ...view }) => ({
+    const views = (current = fragments) => capture(current).map(({ owner, bindings, refs, ...view }) => ({
         ...view, viewInstanceId: 'instance-' + view.id, toolBindings: [],
     }));
     return { document, container, fragments, capture, views };
@@ -25,8 +25,8 @@ const identity = () => ({ appId: 'app', instanceId: 'run' });
 
 it('C04 explicit empty owned inventories produce a legal V5 snapshot with no tools', () => {
     const f = fixture(), core = createSnapshotCore(identity());
-    const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.views(), tools: [] }) });
-    expect(projection.commit(() => {})).toBe('prepared');
+    const projection = new SemanticProjectionCoordinator({ identity });
+    expect(projection.commit(() => ({ views: f.views(), tools: [], refs: [] }))).toMatchObject({ status: 'prepared' });
     expect(projection.publishTo(core.committer)).toMatchObject({ status: 'published', snapshot: { views: [], refs: {}, tools: {} } });
     projection.close();
     core.lifecycle.dispose();
@@ -38,8 +38,8 @@ it('retains an empty-body View beside its healthy sibling and publishes the comp
         ...fragment, markup: fragment.viewId === 'empty' ? '' : 'HEALTHY_BODY',
     }));
     const core = createSnapshotCore(identity());
-    const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.views(fragments), tools: [] }) });
-    expect(projection.commit(() => {})).toBe('prepared');
+    const projection = new SemanticProjectionCoordinator({ identity });
+    expect(projection.commit(() => ({ views: f.views(fragments), tools: [], refs: [] }))).toMatchObject({ status: 'prepared' });
     expect(projection.publishTo(core.committer).status).toBe('published');
     expect(core.store.readLatest('app')).toMatchObject({
         status: 'ready',
@@ -53,8 +53,8 @@ it('C06 missing inventories fail closed', () => {
     const f = fixture(['a']);
     for (const value of [undefined, null, {}]) {
         expect(() => captureDOMViews(f.container, f.fragments, value as any)).toThrow();
-        const projection = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.views(), tools: value as any }) });
-        expect(projection.commit(() => {})).toBe('failed');
+        const projection = new SemanticProjectionCoordinator({ identity });
+        expect(projection.commit(() => ({ views: f.views(), tools: value as any, refs: [] }))).toMatchObject({ status: 'failed' });
         expect(projection.nextPublication()).toHaveProperty('failure');
     }
 });
@@ -83,16 +83,18 @@ it('C06 duplicate DOM, unattached nodes, wrong types, Ref owner and Tool target 
     expect(() => f.capture()).toThrow(/Duplicate/); duplicate.remove();
     expect(() => captureDOMViews(f.container, f.fragments, () => undefined)).toThrow(/attached View owner/);
     expect(() => f.capture([{ ...f.fragments[0]!, viewType: 'Wrong' }])).toThrow(/attached View owner/);
-    const refs = new SemanticProjectionCoordinator({ identity, readFrame: () => ({ views: f.views(), tools: [] }) });
-    expect(refs.commit(() => { refs.registerRef({ viewId: 'missing', viewInstanceId: 'different' }, 'file', { text: 'x' }); })).toBe('failed');
+    const refs = new SemanticProjectionCoordinator({ identity });
+    expect(refs.commit(() => ({ views: f.views(), tools: [], refs: [
+        { viewId: 'missing', viewInstanceId: 'different', id: 'file', value: { text: 'x' } },
+    ] }))).toMatchObject({ status: 'failed' });
     expect(refs.nextPublication()).toMatchObject({ failure: { issue: { message: expect.stringMatching(/missing View instance/) } } });
 
     const schema = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
     if (!schema.ok) throw new Error('Invalid fixture schema');
-    const tools = new SemanticProjectionCoordinator({ identity, readFrame: () => ({
-        views: f.views(), tools: [{ id: JSON.stringify(['app', 'Missing', 'read']), name: 'read', viewType: 'Missing',
+    const tools = new SemanticProjectionCoordinator({ identity });
+    expect(tools.commit(() => ({
+        views: f.views(), refs: [], tools: [{ id: JSON.stringify(['app', 'Missing', 'read']), name: 'read', viewType: 'Missing',
             nameSharedAcrossViewTypes: false, description: 'Read', inputSchema: ordinaryParameterProfile(schema.contract) }],
-    }) });
-    expect(tools.commit(() => {})).toBe('failed');
+    }))).toMatchObject({ status: 'failed' });
     expect(tools.nextPublication()).toMatchObject({ failure: { issue: { message: expect.stringMatching(/enabled View binding/) } } });
 });

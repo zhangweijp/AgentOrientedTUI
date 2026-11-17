@@ -1,8 +1,5 @@
-import type { AppFrameRef } from '../../spi/app/app-instance.interface.js';
-import type { IRefBinding, RefValueCheck } from '../../spi/app/ref-exporter.interface.js';
-import type { IProjectionPort, ProjectionToken } from '../../spi/runtime/projection.interface.js';
-import type { CancellationSignal } from '../invocation/app-interaction-types.js';
-import { canonicalJson, copyJson, createJsonCopier, SnapshotDataError } from '../snapshot/json.js';
+import type { AppFrameRef, ProjectionCommitResult, ProjectionOptions } from '../../spi/app/app-instance.interface.js';
+import { canonicalJson, SnapshotDataError } from '../snapshot/json.js';
 import { captureSnapshotPrepareIssue, DEFAULT_SNAPSHOT_LIMITS as limits, isSnapshotPrepareIssueCode, refKey } from '../snapshot/snapshot-support.js';
 import {
     SNAPSHOT_SCHEMA_VERSION,
@@ -15,34 +12,18 @@ import { validatePreparedV5Draft } from '../snapshot/v5-validator.js';
 export interface ProjectionSource {
     identity(): { readonly appId: string; readonly instanceId: string };
     checkCapacity?(draft: PreparedAppSnapshotDraftV5): SnapshotIssue | undefined;
-    /** Return the complete rendered frame at the successful commit boundary. */
-    readFrame(): {
-        readonly views: readonly ViewSnapshotV4[];
-        readonly tools: readonly ToolDescriptorV5[];
-        readonly accept?: () => void;
-    };
 }
 
-type RefOwner = { readonly viewId: string; readonly viewInstanceId: string };
-/** Complete data producer candidate with prospective identities from the View registry. */
-export type CompleteProjectionFrame = ReturnType<ProjectionSource['readFrame']> & {
-    readonly refs: readonly (RefOwner & AppFrameRef)[];
-    readonly opening?: boolean;
-};
-type CommitResult = ReturnType<IProjectionPort['endCommit']>;
-type RenderMode = Parameters<IProjectionPort['endCommit']>[2];
-type RefEntry = RefOwner & { readonly id: string; readonly refType: string | undefined; captured?: JsonValue; published?: boolean };
-type RefCapture = { value: JsonValue } | { issue: SnapshotIssue };
-type Batch = {
-    pending: Map<RefEntry, JsonValue | undefined>;
-    captures: WeakMap<object, RefCapture>;
-    copy: (input: unknown) => JsonValue;
-    preparing: boolean;
-    issue?: SnapshotIssue;
-};
+/** Complete candidate with prospective identities from the View registry. */
+export interface CompleteProjectionFrame {
+    readonly views: readonly ViewSnapshotV4[];
+    readonly refs: readonly (AppFrameRef & { readonly viewId: string; readonly viewInstanceId: string })[];
+    readonly tools: readonly ToolDescriptorV5[];
+    readonly accept?: () => void;
+}
+
+type ProjectionToken = Readonly<{ epoch: number; ready: boolean }>;
 type Publication = { draft: PreparedAppSnapshotDraftV5 } | { failure: PreparedSnapshotFailure };
-const copyLimits = { ...limits, maxApproxBytes: limits.maxSnapshotBytes * 2 };
-class CapturedRef {} // An expired token cannot be mistaken for plain JSON.
 const asyncFunction = Object.getPrototypeOf(async function () {});
 
 function failureIssue(error: unknown): SnapshotIssue {
@@ -64,260 +45,122 @@ function failureIssue(error: unknown): SnapshotIssue {
 
 const closedError = () => Object.assign(new Error('Projection owner closed'), { code: 'PROJECTION_CLOSED' });
 
-/** One producer's successful commit boundary and latest prepared frame. Core owns published snapshots. */
-export class SemanticProjectionCoordinator implements IProjectionPort {
+/** Validate and accept one complete frame. Core owns the published snapshot. */
+export class SemanticProjectionCoordinator {
     private epoch = 0;
     private producerSeq = 0;
-    private batch?: Batch;
+    private committing = false;
+    private commitIssue?: SnapshotIssue;
     private prepared?: PreparedAppSnapshotDraftV5;
     private issue?: SnapshotIssue;
     private closed = false;
-    private readonly refs = new Map<string, RefEntry>();
-    private readonly failedRefs = new Set<RefEntry>();
     private queuedNotice = false;
     private readonly listeners = new Set<(token: ProjectionToken) => void>();
-    private readonly commits = new Set<() => void>();
 
     constructor(private readonly source: ProjectionSource) {}
 
-    beginCommit(): void {
+    assertWritable(): void {
         if (this.closed) throw closedError();
-        if (this.batch) throw new Error('Projection commit already active');
-        this.batch = { pending: new Map(), captures: new WeakMap(), copy: createJsonCopier(copyLimits), preparing: false };
-    }
-
-    /** Synchronous explicit producer entry. Returning normally submits a complete View and Tool frame. */
-    commit<Result>(operation: () => Result & (Extract<Result, PromiseLike<unknown>> extends never ? unknown : never)): ReturnType<IProjectionPort['endCommit']> {
-        const asyncError = () => new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Projection commit callback must be synchronous');
-        this.beginCommit();
-        try {
-            if (Object.getPrototypeOf(operation) === asyncFunction) throw asyncError();
-            const result = operation();
-            if (result != null && typeof (result as Partial<PromiseLike<unknown>>).then === 'function') {
-                // Observe rejection from an incorrectly typed callback without retaining its batch.
-                void Promise.resolve(result).catch(() => {});
-                throw asyncError();
-            }
-        } catch (error) {
-            this.endCommit({ error });
+        if (this.committing) {
+            const error = new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Projection bindings cannot change during preparation');
+            this.commitIssue ??= failureIssue(error);
             throw error;
         }
-        return this.endCommit();
     }
 
-    endCommit(failure?: { readonly error: unknown }, blocked?: boolean, mode?: RenderMode): CommitResult;
-    endCommit(failure: undefined, blocked: false, frame: CompleteProjectionFrame): CommitResult;
-    endCommit(failure?: { readonly error: unknown }, blocked = false, input?: CompleteProjectionFrame | RenderMode): CommitResult {
-        const frame = typeof input === 'object' ? input : undefined;
-        const mode = typeof input === 'string' ? input : undefined;
-        const batch = this.batch;
-        if (!batch) throw new Error('Projection commit end without begin');
-        batch.preparing = true;
+    commit(build: () => CompleteProjectionFrame, options?: ProjectionOptions): ProjectionCommitResult {
+        this.assertWritable();
+        this.committing = true;
         try {
-            if (failure || batch.issue) return this.fail(batch, batch.issue ?? failureIssue(failure?.error));
-            const unrepaired = !frame && (blocked || [...this.failedRefs].some(entry => !batch.pending.has(entry)));
-            const values = new Map<RefEntry, JsonValue>();
-            if (frame) {
-                for (const { token, id, viewId, viewInstanceId, refType } of frame.refs) {
-                    const capture = batch.captures.get(token);
-                    if (!capture) throw new SnapshotDataError('SNAPSHOT_INVALID', `Ref ${viewId}.${id}`, 'Ref capture is outside this commit');
-                    if ('issue' in capture) return this.fail(batch, this.refIssue(viewId, id, capture.issue));
-                    values.set({ id, viewId, viewInstanceId, refType }, capture.value);
+            let frame: CompleteProjectionFrame;
+            try {
+                const asyncError = () => new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Projection commit callback must be synchronous');
+                if (Object.getPrototypeOf(build) === asyncFunction) throw asyncError();
+                frame = build();
+                if (frame != null && typeof (frame as Partial<PromiseLike<unknown>>).then === 'function') {
+                    void Promise.resolve(frame).catch(() => {});
+                    throw asyncError();
                 }
-            } else {
-                for (const entry of this.refs.values()) {
-                    const value = batch.pending.has(entry) ? batch.pending.get(entry) : entry.captured;
-                    if (value === undefined) {
-                        if (unrepaired) continue;
-                        throw new Error('Ref has no successful capture');
-                    }
-                    values.set(entry, value);
-                }
+            } catch (error) {
+                return this.fail(this.commitIssue ?? failureIssue(error), { error });
             }
-            if (unrepaired) {
-                // Keep successful owner work for a later repair, within the existing snapshot copy budget.
-                copyJson([...values.values()], copyLimits);
-                this.remember(batch, values);
-                this.issue ??= { code: 'SNAPSHOT_INVALID', message: 'Projection still requires a repair commit' };
-                return 'blocked';
-            }
-
-            const { views, tools, accept } = frame ?? this.source.readFrame();
-            const refs: Record<string, RefDescriptorV2> = Object.create(null);
-            for (const [entry, payload] of values) {
-                const key = refKey(entry.viewId, entry.viewInstanceId, entry.id);
-                if (Object.hasOwn(refs, key)) throw new SnapshotDataError('SNAPSHOT_INVALID', '$.refs', 'Duplicate Ref in App frame');
-                refs[key] = {
-                    id: entry.id, ownerViewId: entry.viewId, ownerViewInstanceId: entry.viewInstanceId,
-                    refType: entry.refType ?? 'unknown', target: { kind: 'snapshot-value', payload },
-                };
-            }
-            const definitions: Record<string, ToolDescriptorV5> = Object.create(null);
-            for (const tool of tools) {
-                if (Object.hasOwn(definitions, tool.id)) throw new Error('Duplicate Tool definition');
-                definitions[tool.id] = tool;
-            }
-            const checked = validatePreparedV5Draft({
-                schemaVersion: SNAPSHOT_SCHEMA_VERSION, ...this.source.identity(),
-                sourceEpoch: this.epoch + 1, producerSeq: this.producerSeq + 1, capturedAt: Date.now(),
-                views, refs, tools: definitions,
-            }, limits, () => this.prepared?.tools);
-            if (batch.issue) return this.fail(batch, batch.issue);
-            if (!checked.ok) return this.fail(batch, checked.issue);
-
-            const { draft, canonicalContent } = checked.value;
-            const previous = this.prepared;
-            if (mode === 'restore') {
-                if (!previous || this.issue || previous.appId !== draft.appId || previous.instanceId !== draft.instanceId ||
-                    canonicalJson({ schemaVersion: previous.schemaVersion, views: previous.views,
-                        refs: previous.refs, tools: previous.tools } as unknown as JsonValue) !== canonicalContent) {
-                    return this.fail(batch, { code: 'SNAPSHOT_INVALID', path: '$.views',
-                        message: 'The render did not restore the accepted projection after refusing an opening' });
-                }
-            } else {
-                const capacity = this.source.checkCapacity?.(draft);
-                if (capacity) {
-                    if (capacity.code === 'OBSERVATION_CAPACITY' && previous && (frame?.opening || mode === 'opening')) {
-                        const mounted = new Set(previous.views.map(view => view.viewInstanceId));
-                        const candidate = new Set(draft.views.map(view => view.viewInstanceId));
-                        const addsView = [...candidate].some(id => !mounted.has(id));
-                        // A renderer cannot restore an owner already detached by this commit.
-                        const retainsRenderer = !this.issue && [...mounted].every(id => candidate.has(id));
-                        if (addsView && (frame || retainsRenderer)) return { status: 'rejected', issue: capacity };
-                    }
-                    return this.fail(batch, capacity);
-                }
-                accept?.();
-                this.prepared = draft;
-                this.epoch = draft.sourceEpoch;
-                this.issue = undefined;
-            }
-
-            if (frame) this.refs.clear();
-            for (const entry of values.keys()) {
-                const key = refKey(entry.viewId, entry.viewInstanceId, entry.id);
-                const ref = this.prepared!.refs[key]!;
-                if (ref.target.kind === 'snapshot-value') {
-                    entry.captured = ref.target.payload;
-                    entry.published = true;
-                    if (frame) this.refs.set(key, entry);
-                }
-            }
-            this.failedRefs.clear();
-            return mode === 'restore' ? 'restored' : 'prepared';
-        } catch (error) {
-            return this.fail(batch, failureIssue(error));
+            try { return this.prepare(frame, options); }
+            catch (error) { return this.fail(this.commitIssue ?? failureIssue(error)); }
         } finally {
-            this.batch = undefined;
-            for (const complete of this.commits) complete();
+            this.committing = false;
+            this.commitIssue = undefined;
             this.scheduleNotice();
         }
     }
 
-    private refIssue(viewId: string, id: string, issue: SnapshotIssue): SnapshotIssue {
-        return { ...issue, path: `Ref ${viewId}.${id}${issue.path ? ' ' + issue.path : ''}` };
-    }
-
-    private remember(batch: Batch, values: Map<RefEntry, JsonValue>): void {
-        for (const entry of batch.pending.keys()) {
-            entry.captured = values.get(entry);
-            this.failedRefs.delete(entry);
+    private prepare({ views, refs, tools, accept }: CompleteProjectionFrame, options?: ProjectionOptions): ProjectionCommitResult {
+        const values: Record<string, RefDescriptorV2> = Object.create(null);
+        for (const { id, value, viewId, viewInstanceId, refType } of refs) {
+            const key = refKey(viewId, viewInstanceId, id);
+            if (Object.hasOwn(values, key)) throw new SnapshotDataError('SNAPSHOT_INVALID', '$.refs', 'Duplicate Ref in App frame');
+            values[key] = { id, ownerViewId: viewId, ownerViewInstanceId: viewInstanceId,
+                refType: refType ?? 'unknown', target: { kind: 'snapshot-value', payload: value } };
         }
-    }
-
-    private fail(batch: Batch, issue: SnapshotIssue): 'failed' {
-        for (const entry of batch.pending.keys()) this.failedRefs.add(entry);
-        this.issue = issue;
-        return 'failed';
-    }
-
-    captureRef(data: unknown, check?: RefValueCheck): object {
-        const batch = this.requireBatch();
-        const capture = new CapturedRef();
-        batch.captures.set(capture, this.copyRef(batch, data, check));
-        return capture;
-    }
-
-    private copyRef(batch: Batch, data: unknown, check?: RefValueCheck): RefCapture {
-        try {
-            const value = batch.copy(data);
-            const failure = check?.(value);
-            return failure ? { issue: { code: 'SNAPSHOT_INVALID', ...failure } } : { value };
+        const definitions: Record<string, ToolDescriptorV5> = Object.create(null);
+        for (const tool of tools) {
+            if (Object.hasOwn(definitions, tool.id)) throw new Error('Duplicate Tool definition');
+            definitions[tool.id] = tool;
         }
-        catch (error) { return { issue: failureIssue(error) }; }
-    }
+        const checked = validatePreparedV5Draft({
+            schemaVersion: SNAPSHOT_SCHEMA_VERSION, ...this.source.identity(),
+            sourceEpoch: this.epoch + 1, producerSeq: this.producerSeq + 1, capturedAt: Date.now(),
+            views, refs: values, tools: definitions,
+        }, limits, () => this.prepared?.tools);
+        if (this.commitIssue) return this.fail(this.commitIssue);
+        if (!checked.ok) return this.fail(checked.issue);
 
-    registerRef(owner: RefOwner, id: string, data: unknown, refType?: string): IRefBinding {
-        this.requireBatch();
-        const { viewId, viewInstanceId } = owner;
-        if (!viewId.trim() || viewId.includes('.') || !id.trim() || id.includes('.')) {
-            throw Object.assign(new Error('View and Ref IDs must be non-empty and cannot contain a dot'), { code: 'REF_ID_INVALID' });
-        }
-        const key = refKey(viewId, viewInstanceId, id);
-        if (this.refs.has(key)) {
-            throw Object.assign(new Error(`Ref '${id}' is already registered in View '${viewId}'`),
-                { name: 'RefRegistrationError', code: 'REF_ALREADY_REGISTERED' });
-        }
-        if (this.refs.size >= limits.maxRefs) throw new Error('Ref capacity exceeded');
-        const entry: RefEntry = { viewId, viewInstanceId, id, refType };
-        this.refs.set(key, entry);
-        const update = (next: unknown) => {
-            if (this.refs.get(key) !== entry) throw new Error(`Ref binding '${id}' in View '${viewId}' is no longer active`);
-            const batch = this.requireBatch();
-            const token = next !== null && typeof next === 'object' ? batch.captures.get(next) : undefined;
-            const capture = token ?? this.copyRef(batch, next);
-            if ('issue' in capture) {
-                batch.pending.set(entry, undefined);
-                batch.issue ??= this.refIssue(viewId, id, capture.issue);
-            } else {
-                batch.pending.set(entry, capture.value);
+        const { draft, canonicalContent } = checked.value;
+        const previous = this.prepared;
+        if (options && 'restore' in options) {
+            if (!previous || this.issue || previous.appId !== draft.appId || previous.instanceId !== draft.instanceId ||
+                canonicalJson({ schemaVersion: previous.schemaVersion, views: previous.views,
+                    refs: previous.refs, tools: previous.tools } as unknown as JsonValue) !== canonicalContent) {
+                return this.fail({ code: 'SNAPSHOT_INVALID', path: '$.views',
+                    message: 'The render did not restore the accepted projection after refusing an opening' });
             }
-        };
-        update(data);
-        return { update, release: () => { if (this.refs.get(key) === entry) this.releaseRef(key, entry); } };
-    }
-
-    assertWritable(): void {
-        if (this.batch?.preparing) {
-            const error = new Error('Projection bindings cannot change during preparation');
-            this.batch.issue ??= failureIssue(error);
-            throw error;
+            return { status: 'restored', sourceEpoch: this.epoch };
         }
-    }
 
-    private requireBatch(): Batch {
+        const capacity = this.source.checkCapacity?.(draft);
+        if (this.commitIssue) return this.fail(this.commitIssue);
+        if (capacity) {
+            if (capacity.code === 'OBSERVATION_CAPACITY' && previous && options && 'opening' in options) {
+                const mounted = new Set(previous.views.map(view => view.viewInstanceId));
+                const next = new Set(draft.views.map(view => view.viewInstanceId));
+                const addsView = [...next].some(id => !mounted.has(id));
+                const retained = !options.retainViews || (!this.issue && [...mounted].every(id => next.has(id)));
+                if (addsView && retained) return { status: 'rejected', issue: capacity };
+            }
+            return this.fail(capacity);
+        }
         if (this.closed) throw closedError();
-        if (!this.batch) throw new Error('Ref writes require an active projection commit');
-        this.assertWritable();
-        return this.batch;
+        accept?.();
+        this.prepared = draft;
+        this.epoch = draft.sourceEpoch;
+        this.issue = undefined;
+        return Object.freeze({ status: 'prepared', sourceEpoch: this.epoch });
     }
 
-    private releaseRef(key: string, entry: RefEntry): void {
-        this.assertWritable();
-        this.refs.delete(key);
-        this.batch?.pending.delete(entry);
-        this.failedRefs.delete(entry);
-        entry.captured = undefined;
-    }
-
-    releaseView(viewInstanceId: string): void {
-        for (const [key, entry] of this.refs) {
-            if (entry.viewInstanceId === viewInstanceId) this.releaseRef(key, entry);
-        }
+    private fail(issue: SnapshotIssue, cause?: { readonly error: unknown }): ProjectionCommitResult {
+        if (!this.closed) this.issue = issue;
+        return { status: 'failed', issue, ...(cause ? { cause } : {}) };
     }
 
     getViewRefs() {
-        return Object.entries(this.prepared?.refs ?? {}).flatMap(([key, ref]) => {
-            const entry = this.refs.get(key);
-            if (!entry?.published || ref.target.kind !== 'snapshot-value') return [];
-            return [{ viewId: ref.ownerViewId, refId: ref.id, value: ref.target.payload,
-                ...(entry.refType === undefined ? {} : { refType: ref.refType }) }];
-        });
+        return Object.values(this.prepared?.refs ?? {}).flatMap(ref => ref.target.kind === 'snapshot-value'
+            ? [{ viewId: ref.ownerViewId, refId: ref.id, value: ref.target.payload,
+                ...(ref.refType === 'unknown' ? {} : { refType: ref.refType }) }]
+            : []);
     }
 
     nextPublication(): Publication {
         if (this.closed) throw closedError();
-        if (this.batch) throw new Error('Projection commit is still active');
+        if (this.committing) throw new Error('Projection commit is still active');
         if (this.producerSeq >= Number.MAX_SAFE_INTEGER) throw new Error('Projection producer sequence exhausted');
         const producerSeq = ++this.producerSeq;
         if (!this.issue && this.prepared) return { draft: { ...this.prepared, producerSeq } };
@@ -331,33 +174,17 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
     }
 
     get failure(): SnapshotIssue | undefined { return this.issue; }
-
     get failed(): boolean { return this.issue !== undefined; }
 
     close(): void {
         this.closed = true;
-        for (const [key, entry] of this.refs) this.releaseRef(key, entry);
-        this.batch = undefined;
         this.prepared = undefined;
         this.issue = undefined;
         this.listeners.clear();
-        for (const complete of this.commits) complete();
-    }
-
-    whenCommitted(signal: CancellationSignal): Promise<void> {
-        if (this.closed || signal.aborted) return Promise.reject(closedError());
-        if (!this.batch) return Promise.resolve();
-        return new Promise((resolve, reject) => {
-            const cleanup = () => { this.commits.delete(complete); signal.removeEventListener('abort', abort); };
-            const complete = () => { cleanup(); if (this.closed) reject(closedError()); else resolve(); };
-            const abort = () => { cleanup(); reject(closedError()); };
-            this.commits.add(complete);
-            signal.addEventListener('abort', abort, { once: true });
-        });
     }
 
     token(): ProjectionToken {
-        return Object.freeze({ epoch: this.epoch, ready: !this.closed && !this.batch });
+        return Object.freeze({ epoch: this.epoch, ready: !this.closed && !this.committing });
     }
 
     subscribe(listener: (token: ProjectionToken) => void): () => void {
@@ -370,10 +197,10 @@ export class SemanticProjectionCoordinator implements IProjectionPort {
         this.queuedNotice = true;
         queueMicrotask(() => {
             this.queuedNotice = false;
-            if (this.batch) return;
+            if (!this.token().ready) return;
             const token = this.token();
             for (const listener of [...this.listeners]) {
-                try { listener(token); } catch { /* Subscriber errors do not invalidate a prepared frame. */ }
+                try { listener(token); } catch { /* Subscriber errors do not invalidate the projection. */ }
             }
         });
     }

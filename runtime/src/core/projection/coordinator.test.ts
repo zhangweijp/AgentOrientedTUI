@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SemanticProjectionCoordinator } from './coordinator.js';
+import { SemanticProjectionCoordinator, type CompleteProjectionFrame } from './coordinator.js';
 import { hostedObservationCapacityIssue } from '../invocation/observation-registry.js';
 import { createSnapshotCore } from '../snapshot/store.js';
-import type { ViewSnapshotV4 } from '../snapshot/types.js';
+import type { JsonValue, ViewSnapshotV4 } from '../snapshot/types.js';
+import type { ProjectionOptions } from '../../spi/app/app-instance.interface.js';
 
 const aa = { viewId: 'aa', viewInstanceId: 'a1' };
 const bb = { viewId: 'bb', viewInstanceId: 'b1' };
@@ -10,35 +11,33 @@ const view = (owner = aa, value = 'body'): ViewSnapshotV4 => ({
     toolBindings: [], id: owner.viewId, name: owner.viewId, type: 'File', viewInstanceId: owner.viewInstanceId,
     kind: 'state', content: { format: 'markdown-v1', value },
 });
+const ref = (owner: typeof aa, id: string, value: JsonValue) => ({ ...owner, id, value });
 
-function fixture(views = [view(), view(bb)], checkCapacity?: typeof hostedObservationCapacityIssue) {
-    const frame = { views };
+function fixture(checkCapacity?: typeof hostedObservationCapacityIssue) {
     const identity = () => ({ appId: 'app', instanceId: 'run' });
-    const readFrame = vi.fn(() => ({ views: frame.views, tools: [] }));
-    const c = new SemanticProjectionCoordinator({ identity, readFrame, ...(checkCapacity ? { checkCapacity } : {}) });
+    const c = new SemanticProjectionCoordinator({ identity, ...(checkCapacity ? { checkCapacity } : {}) });
     const core = createSnapshotCore(identity());
-    return { c, frame, readFrame, core, publish: () => c.publishTo(core.committer) };
+    const frame = (views = [view(), view(bb)], refs: CompleteProjectionFrame['refs'] = [], accept?: () => void) =>
+        ({ views, tools: [], refs, ...(accept ? { accept } : {}) });
+    return { c, frame, core, publish: () => c.publishTo(core.committer) };
 }
 
-describe('shared projection commit boundary', () => {
-    it('reports real failures and preserves their diagnostic when a staged opening exceeds capacity', () => {
-        const { c, core, publish } = fixture(undefined, hostedObservationCapacityIssue);
+describe('shared complete projection frame', () => {
+    it('reports real failures and preserves their diagnostic on a reversible staged opening', () => {
+        const { c, frame, core, publish } = fixture(hostedObservationCapacityIssue);
         const accept = vi.fn();
-        const complete = (views: readonly ViewSnapshotV4[], opening = false) => {
-            c.beginCommit();
-            return c.endCommit(undefined, false, { views, tools: [], refs: [], accept, opening });
-        };
-        expect(complete([view()])).toBe('prepared');
+        const complete = (views: ViewSnapshotV4[], options?: ProjectionOptions) => c.commit(() => frame(views, [], accept), options);
+        expect(complete([view()])).toMatchObject({ status: 'prepared', sourceEpoch: 1 });
         expect(publish().status).toBe('published');
         const large = [view(aa, 'a'.repeat(400 * 1024)), view(bb, 'b'.repeat(400 * 1024))];
 
-        expect(complete(large)).toBe('failed');
+        expect(complete(large)).toMatchObject({ status: 'failed' });
         expect(publish()).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_CAPACITY' } });
-        expect(complete([view(aa, 'a'.repeat(513 * 1024))], true)).toBe('failed');
+        expect(complete([view(aa, 'a'.repeat(513 * 1024))], { opening: true })).toMatchObject({ status: 'failed' });
         const diagnostic = c.failure;
         expect(diagnostic).toMatchObject({ code: 'SNAPSHOT_SERIALIZATION_ERROR' });
         expect(publish()).toMatchObject({ status: 'rejected', issue: diagnostic });
-        expect(complete(large, true)).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_CAPACITY' } });
+        expect(complete(large, { opening: true })).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_CAPACITY' } });
         expect(c.failure).toBe(diagnostic);
         expect(publish()).toMatchObject({ status: 'rejected', issue: diagnostic });
         expect(c.token().epoch).toBe(1);
@@ -48,29 +47,25 @@ describe('shared projection commit boundary', () => {
 
     it('keeps observation admission in the managed assembly', () => {
         const views = [view(aa, 'a'.repeat(400 * 1024)), view(bb, 'b'.repeat(400 * 1024))];
-        const direct = fixture(views), hosted = fixture(views, hostedObservationCapacityIssue);
-        expect(direct.c.commit(() => {})).toBe('prepared');
+        const direct = fixture(), hosted = fixture(hostedObservationCapacityIssue);
+        expect(direct.c.commit(() => direct.frame(views))).toMatchObject({ status: 'prepared' });
         expect(direct.publish().status).toBe('published');
-        expect(hosted.c.commit(() => {})).toBe('failed');
+        expect(hosted.c.commit(() => hosted.frame(views))).toMatchObject({ status: 'failed' });
         expect(hosted.publish()).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_CAPACITY' } });
     });
 
-    it.each(['remount', 'different rollback'] as const)('reports a real renderer failure on %s', failure => {
+    it.each(['remount', 'different rollback'] as const)('reports a real projection failure on %s', failure => {
         const before = view(aa, 'a'.repeat(400 * 1024));
-        const { c, frame, core, publish } = fixture([before], hostedObservationCapacityIssue);
-        expect(c.commit(() => {})).toBe('prepared');
+        const { c, frame, core, publish } = fixture(hostedObservationCapacityIssue);
+        expect(c.commit(() => frame([before]))).toMatchObject({ status: 'prepared' });
         expect(publish().status).toBe('published');
-        c.beginCommit();
         const first = failure === 'remount' ? { ...before, viewInstanceId: 'a2' } : before;
-        frame.views = [first, view(bb, 'b'.repeat(400 * 1024))];
-        const result = c.endCommit(undefined, false, 'opening');
+        const next = c.commit(() => frame([first, view(bb, 'b'.repeat(400 * 1024))]), { opening: true, retainViews: true });
         let code = 'OBSERVATION_CAPACITY';
-        if (failure === 'remount') expect(result).toBe('failed');
+        if (failure === 'remount') expect(next).toMatchObject({ status: 'failed' });
         else {
-            expect(result).toMatchObject({ status: 'rejected', issue: { code } });
-            c.beginCommit();
-            frame.views = [view(aa, 'a different rollback')];
-            expect(c.endCommit(undefined, false, 'restore')).toBe('failed');
+            expect(next).toMatchObject({ status: 'rejected', issue: { code } });
+            expect(c.commit(() => frame([view(aa, 'a different rollback')]), { restore: true })).toMatchObject({ status: 'failed' });
             code = 'SNAPSHOT_INVALID';
         }
         expect(publish()).toMatchObject({ status: 'rejected', issue: { code } });
@@ -79,14 +74,9 @@ describe('shared projection commit boundary', () => {
     });
 
     it('keeps first null and non-null → null transitions, including falsy replacements', () => {
-        const { c, publish, core } = fixture();
-        const owner = { ...aa };
-        let binding!: ReturnType<typeof c.registerRef>;
+        const { c, frame, publish, core } = fixture();
         for (const value of [null, 7, null, false, 0, ''] as const) {
-            expect(c.commit(() => {
-                if (binding) binding.update(value);
-                else binding = c.registerRef(owner, 'selected', value);
-            })).toBe('prepared');
+            expect(c.commit(() => frame([view()], [ref(aa, 'selected', value)]))).toMatchObject({ status: 'prepared' });
             expect(publish().status).toBe('published');
             const snapshot = core.store.readLatest('app');
             if (snapshot.status !== 'ready') throw Error('Expected a published value');
@@ -94,152 +84,89 @@ describe('shared projection commit boundary', () => {
         }
     });
 
-    it('refuses async and thenable commits without publishing writes before the first await', async () => {
+    it('rejects async producers and disguised Promise results without accepting their frames', () => {
         const { c, frame, core, publish } = fixture();
-        c.commit(() => {});
+        c.commit(() => frame());
         expect(publish().status).toBe('published');
         const latest = core.store.readLatest('app');
         const native = vi.fn();
-        const operation = async () => { native(); };
-        // @ts-expect-error The public coordinator requires a synchronous callback.
-        expect(() => c.commit(operation)).toThrow('must be synchronous');
+        const operation = async () => { native(); return frame(); };
+        // @ts-expect-error A candidate builder is synchronous.
+        expect(c.commit(operation)).toMatchObject({ status: 'failed', issue: { message: expect.stringContaining('must be synchronous') } });
         expect(native).not.toHaveBeenCalled();
-        const disguised: () => void = () => {
-            frame.views = [view(aa, 'uncommitted')];
-            return Promise.reject(new Error('rejected author work'));
-        };
-        expect(() => c.commit(disguised)).toThrow('must be synchronous');
+        const disguised = () => Promise.reject(new Error('rejected author work')) as unknown as CompleteProjectionFrame;
+        expect(c.commit(disguised)).toMatchObject({ status: 'failed', issue: { message: expect.stringContaining('must be synchronous') } });
         expect(publish().status).toBe('rejected');
         expect(core.store.readLatest('app')).toMatchObject({ status: 'degraded', lastGood: latest.status === 'ready' ? latest.snapshot : undefined });
-        await Promise.resolve();
     });
 
-    it('joins an open batch without depending on its notification', async () => {
-        const { c } = fixture(), owner = new AbortController();
-        c.beginCommit();
-        expect(() => c.beginCommit()).toThrow(/already active/);
-        let complete = false;
-        const waiting = c.whenCommitted(owner.signal).then(() => { complete = true; });
-        await Promise.resolve();
-        expect(complete).toBe(false);
-        expect(c.endCommit()).toBe('prepared');
-        await waiting;
-        expect(complete).toBe(true);
-        expect((c as any).commits.size).toBe(0);
-        const token = c.token();
-        await c.whenCommitted(owner.signal);
-        expect(c.token()).toEqual(token);
-        expect(() => c.endCommit()).toThrow(/without begin/);
-    });
-
-    it('releases aborted waits and closes outstanding waits and bindings', async () => {
-        const { c } = fixture(), owner = new AbortController();
-        c.beginCommit();
-        const ref = c.registerRef(aa, 'selected', { value: 1 });
-        const waiting = c.whenCommitted(owner.signal);
-        owner.abort();
-        await expect(waiting).rejects.toMatchObject({ code: 'PROJECTION_CLOSED' });
-        expect((c as any).commits.size).toBe(0);
-        await expect(c.whenCommitted(owner.signal)).rejects.toMatchObject({ code: 'PROJECTION_CLOSED' });
-        c.endCommit();
+    it('discards its prepared payload on close and rejects late submissions', () => {
+        const { c, frame } = fixture();
+        c.commit(() => frame([view()], [ref(aa, 'selected', { value: 1 })]));
         c.close();
         expect(c.getViewRefs()).toEqual([]);
-        expect(() => ref.update({ value: 2 })).toThrow(/no longer active/);
+        expect(() => c.commit(() => frame())).toThrow(expect.objectContaining({ code: 'PROJECTION_CLOSED' }));
         expect(() => c.nextPublication()).toThrow(expect.objectContaining({ code: 'PROJECTION_CLOSED' }));
     });
 
-    it('notifies only after a completed batch and isolates faulty listeners', async () => {
-        const { c } = fixture();
+    it('notifies once after completed synchronous submissions and isolates faulty listeners', async () => {
+        const { c, frame } = fixture();
         const seen: number[] = [];
         c.subscribe(() => { throw new Error('Listener failure'); });
         const unsubscribe = c.subscribe(token => seen.push(token.epoch));
-        c.commit(() => {}); // queued notification must not expose the next open batch
-        c.beginCommit();
-        c.registerRef(aa, 'selected', { value: 1 });
-        expect(c.token()).toEqual({ epoch: 1, ready: false });
-        await Promise.resolve();
-        expect(seen).toEqual([]);
-        c.endCommit();
+        c.commit(() => frame());
+        c.commit(() => {
+            expect(c.token()).toEqual({ epoch: 1, ready: false });
+            expect(seen).toEqual([]);
+            return frame();
+        });
         await Promise.resolve();
         expect(seen).toEqual([2]);
         unsubscribe();
-        c.commit(() => {});
+        c.commit(() => frame());
         await Promise.resolve();
         expect(seen).toEqual([2]);
     });
 
-    it('copies only submitted Ref values and resends a cached frame without reading the source', () => {
-        const { c, frame, readFrame, publish } = fixture();
+    it('detaches Ref payloads and resends only the accepted frame without calling the producer', () => {
+        const { c, frame, publish } = fixture();
         const a = { value: 1 };
         const b = { value: 2 };
-        let refA!: ReturnType<typeof c.registerRef>;
-        let refB!: ReturnType<typeof c.registerRef>;
-        c.commit(() => { refA = c.registerRef(aa, 'items[0]', a); refB = c.registerRef(bb, 'selected', b); });
+        const build = vi.fn(() => frame([view(), view(bb)], [ref(aa, 'items[0]', a), ref(bb, 'selected', b)]));
+        c.commit(build);
         expect(publish().status).toBe('published');
         a.value = 3;
         expect(publish().status).toBe('unchanged');
-        expect(readFrame).toHaveBeenCalledTimes(1);
+        expect(build).toHaveBeenCalledTimes(1);
         expect(c.getViewRefs().map(ref => ref.value)).toEqual([{ value: 1 }, { value: 2 }]);
-        c.commit(() => { frame.views = [view(), view(bb, 'B:4')]; b.value = 4; refB.update(b); });
-        expect(publish().status).toBe('published');
-        expect(c.getViewRefs().map(ref => ref.value)).toEqual([{ value: 1 }, { value: 4 }]);
-        c.commit(() => { frame.views = [view(aa, 'A:3'), view(bb, 'B:4')]; refA.update(a); });
+        b.value = 4;
+        c.commit(build);
         expect(publish().status).toBe('published');
         expect(c.getViewRefs().map(ref => ref.value)).toEqual([{ value: 3 }, { value: 4 }]);
         expect(Object.isFrozen(a)).toBe(false);
     });
 
-    it.each(['throw', 'capture', 'schema'] as const)('keeps failed %s data out of unrelated commits and repairs at a new epoch', kind => {
-        const { c, frame, core, publish } = fixture();
-        let a!: ReturnType<typeof c.registerRef>;
-        let b!: ReturnType<typeof c.registerRef>;
-        c.commit(() => { a = c.registerRef(aa, 'selected', { value: 1 }); b = c.registerRef(bb, 'selected', { value: 2 }); });
-        const first = publish();
-        if (first.status !== 'published') throw new Error('fixture did not publish');
-        const epoch = c.token().epoch;
-        const update = () => c.commit(() => {
-            a.update(kind === 'capture' ? { value: () => 9 } : { value: 9 });
-            if (kind === 'throw') throw new Error('failed render');
-            if (kind === 'schema') frame.views = [view(), view()]; // invalid duplicate View
-        });
-        if (kind === 'throw') expect(update).toThrow('failed render');
-        else expect(update()).toBe('failed');
-        expect(c.token().epoch).toBe(epoch);
-        expect(publish().status).toBe('rejected');
-        expect(core.store.readLatest('app')).toMatchObject({ status: 'degraded', lastGood: { id: first.snapshot.id } });
-        expect(c.commit(() => { frame.views = [view(), view(bb, 'B:4')]; b.update({ value: 4 }); })).toBe('blocked');
-        expect(publish().status).toBe('rejected');
-        expect(c.getViewRefs().map(ref => ref.value)).toEqual([{ value: 1 }, { value: 2 }]);
-        expect(c.commit(() => a.update({ value: 3 }))).toBe('prepared');
+    it('rejects reentrant submissions even when the producer swallows the exception', () => {
+        const { c, frame, publish } = fixture();
+        c.commit(() => frame([view()], [ref(aa, 'selected', { value: 1 })]));
         expect(publish().status).toBe('published');
-        expect(c.getViewRefs().map(ref => ref.value)).toEqual([{ value: 3 }, { value: 4 }]);
-        expect(c.token().epoch).toBe(epoch + 1);
-    });
-
-    it('rejects writes during preparation even when the source swallows the error', () => {
-        const { c, readFrame } = fixture();
-        let binding!: ReturnType<typeof c.registerRef>;
-        c.commit(() => { binding = c.registerRef(aa, 'selected', { value: 1 }); });
-        readFrame.mockImplementationOnce(() => {
-            expect(() => binding.update({ value: 2 })).toThrow(/cannot change during preparation/);
-            return { views: [view(), view(bb)], tools: [] };
-        });
-        expect(c.commit(() => {})).toBe('failed');
+        const accept = vi.fn();
+        expect(c.commit(() => {
+            expect(() => c.commit(() => frame([], [], accept))).toThrow(/cannot change during preparation/);
+            return frame([view(aa, 'uncommitted')], [ref(aa, 'selected', { value: 2 })], accept);
+        })).toMatchObject({ status: 'failed' });
+        expect(publish().status).toBe('rejected');
+        expect(accept).not.toHaveBeenCalled();
         expect(c.getViewRefs()[0]?.value).toEqual({ value: 1 });
     });
 
     it('keeps addresses unambiguous while allowing brackets in local names and dots in values', () => {
         const { c, frame, publish } = fixture();
-        expect(() => c.commit(() => c.registerRef(aa, 'items.0', {})))
-            .toThrow(expect.objectContaining({ code: 'REF_ID_INVALID' }));
-        expect(c.commit(() => {
-            frame.views = [view({ ...aa, viewId: 'a.b' })];
-        })).toBe('failed');
+        expect(c.commit(() => frame([view()], [ref(aa, 'items.0', {})]))).toMatchObject({ status: 'failed' });
+        expect(c.commit(() => frame([view({ ...aa, viewId: 'a.b' })]))).toMatchObject({ status: 'failed' });
         expect(c.nextPublication()).toMatchObject({ failure: { issue: { message: 'View ID cannot contain a dot' } } });
-        expect(c.commit(() => {
-            frame.views = [view()];
-            c.registerRef(aa, 'items[0]', { 'file.path': 'notes/a.txt' });
-        })).toBe('prepared');
+        expect(c.commit(() => frame([view()], [ref(aa, 'items[0]', { 'file.path': 'notes/a.txt' })])))
+            .toMatchObject({ status: 'prepared' });
         expect(publish().status).toBe('published');
         expect(c.getViewRefs()).toMatchObject([{ refId: 'items[0]', value: { 'file.path': 'notes/a.txt' } }]);
     });
