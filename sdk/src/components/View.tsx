@@ -1,9 +1,10 @@
-import type { AppFrameBinding, MountedView } from '@aotui/runtime/spi';
+import type { AppFrameBinding } from '@aotui/runtime/spi';
 import { type ComponentChildren, type JSX, h } from 'preact';
 import { useContext, useLayoutEffect, useMemo } from 'preact/hooks';
 import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
 import { ViewRuntimeContext } from '../contexts/view-runtime-context.js';
 import { VIEW_ID_PATTERN } from '../app-factory/app-factory.js';
+import { createViewRefs } from '../app-factory/render-commit.js';
 import { captureViewBindings, requireViewType, type ViewContextProps, type ViewType } from '../tools/view-type-tool.js';
 
 export type ViewProps<Definition extends ViewType = ViewType> = {
@@ -32,27 +33,28 @@ export function View<const Definition extends ViewType>({ id, type, kind, name, 
 
   const next = captureViewBindings(definition, id, context);
   const slot = useMemo(() => {
-    let attached: { node: HTMLDivElement; mount: MountedView } | undefined;
+    let attached: { node: HTMLDivElement; owner: object } | undefined;
+    const { registry, readRefs, release } = createViewRefs(app, id);
     return {
       attach(node: HTMLDivElement | null) {
         if (!node && attached) {
-          if (app.views.get(attached.node)?.owner === attached.mount.owner) app.views.delete(attached.node);
-          attached.mount.release();
+          if (app.views.get(attached.node)?.owner === attached.owner) app.views.delete(attached.node);
+          release();
           attached = undefined;
         } else if (node) {
-          attached = { node, mount: app.mountView(id, definition.name) };
+          attached = { node, owner: {} };
         }
       },
       update(nextBindings: readonly AppFrameBinding[]) {
         if (!attached) throw new Error('View commit requires a DOM attachment');
-        app.views.set(attached.node, { id, type: definition.name, owner: attached.mount.owner, bindings: nextBindings });
+        app.views.set(attached.node, { id, type: definition.name, owner: attached.owner, bindings: nextBindings, readRefs });
       },
       refs: {
         viewId: id,
-        captureRef: app.refExporter.captureRef.bind(app.refExporter),
-        registerRef: (...args: Parameters<MountedView['registerRef']>) => {
+        captureRef: registry.captureRef,
+        registerRef: (...args: Parameters<typeof registry.registerRef>) => {
           if (!attached) throw new Error('Ref registration requires a DOM attachment');
-          return attached.mount.registerRef(...args);
+          return registry.registerRef(...args);
         },
       },
     };

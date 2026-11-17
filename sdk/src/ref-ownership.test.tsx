@@ -1,13 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { h, render } from 'preact';
 import { act } from 'preact/test-utils';
-import { useMemo, useState } from 'preact/hooks';
+import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 import { createTUIApp } from './app-factory/createTUIApp.js';
 import { View } from './components/View.js';
 import { useArrayRef } from './hooks/useArrayRef.js';
 import { useDataRef } from './hooks/useRef.js';
-import { ViewRuntimeContext } from './contexts/view-runtime-context.js';
+import { createRefCapture } from '@aotui/runtime/spi';
+import { useRefRegistry, ViewRuntimeContext, type RefRegistry } from './contexts/view-runtime-context.js';
 
 import {defineViewType} from './tools/view-type-tool.js';
 const RecordType=defineViewType({name:'Record'});
@@ -32,37 +33,45 @@ const refsOf = (kernel: AppKernel) => Object.fromEntries(
 
 describe('Ref registration ownership', () => {
   it('rejects a second live owner and makes update/release owner-bound and idempotent', async () => {
-    const x = setup(() => h(View, { id: 'view', type: RecordType, kind: 'state' }));
-    await x.open();
-    const projection = x.kernel.getProjectionCoordinator();
-    const firstValue = { id: 'first' };
-    const owner=x.kernel.getViewOwnedViewInstances()[0]!;
-    let first!: ReturnType<typeof projection.registerRef>;
-    projection.commit(() => {
-      first = projection.registerRef(owner, 'selected', firstValue);
-      expect(() => projection.registerRef(owner, 'selected', { id: 'duplicate' }))
-        .toThrow(expect.objectContaining({ code: 'REF_ALREADY_REGISTERED' }));
-    });
-
-    expect(refsOf(x.kernel)['view:selected']).toEqual(firstValue);
-    expect(refsOf(x.kernel)['view:selected']).not.toBe(firstValue);
-
-    const updatedValue = { id: 'updated' };
-    projection.commit(() => first.update(updatedValue));
-    expect(refsOf(x.kernel)['view:selected']).toEqual(updatedValue);
-
-    first.release();
-    first.release();
-    expect(() => first.update({ id: 'stale' })).toThrow('is no longer active');
-    const successorValue = { id: 'successor' };
-    let successor!: ReturnType<typeof projection.registerRef>;
-    projection.commit(() => { successor = projection.registerRef(owner, 'selected', successorValue); });
-    first.release();
-    expect(refsOf(x.kernel)['view:selected']).toEqual(successorValue);
-
-    const closing = x.kernel.onClose();
+    const values = [{ id: 'first' }, { id: 'updated' }, { id: 'successor' }];
+    let advance!: (step: number) => void;
+    let first!: ReturnType<RefRegistry['registerRef']>;
+    let successor!: ReturnType<RefRegistry['registerRef']>;
+    function Content() {
+      const [step, setStep] = useState(0);
+      advance = setStep;
+      const { captureRef, registerRef } = useRefRegistry();
+      const capture = captureRef(values[step]);
+      useLayoutEffect(() => {
+        if (step === 0) {
+          first = registerRef('selected', capture);
+          expect(() => registerRef('selected', capture)).toThrow(expect.objectContaining({ code: 'REF_ALREADY_REGISTERED' }));
+        } else if (step === 1) {
+          first.update(capture);
+        } else {
+          first.release();
+          first.release();
+          expect(() => first.update(capture)).toThrow('is no longer active');
+          successor = registerRef('selected', capture);
+          first.release();
+        }
+      });
+      return null;
+    }
+    const x = setup(() => h(View, { id: 'view', type: RecordType, kind: 'state' }, h(Content, {})));
+    try {
+      await x.open();
+      expect(refsOf(x.kernel)['view:selected']).toEqual(values[0]);
+      expect(refsOf(x.kernel)['view:selected']).not.toBe(values[0]);
+      await act(() => advance(1));
+      expect(refsOf(x.kernel)['view:selected']).toEqual(values[1]);
+      await act(() => advance(2));
+      expect(refsOf(x.kernel)['view:selected']).toEqual(values[2]);
+    } finally {
+      await x.close();
+    }
     expect(() => successor.release()).not.toThrow();
-    await closing;
+    expect(x.kernel.getViewRefs()).toEqual([]);
   });
 
   it('rejects duplicate declarations in real Preact when the later publisher keeps stable data', async () => {
@@ -99,25 +108,19 @@ describe('Ref registration ownership', () => {
       return null;
     }
     const x = setup(() => h(View, {kind: 'state', id: 'workspace', type: WorkspaceType }, h(Content, {})));
-    const registerRef = vi.spyOn(x.kernel.getProjectionCoordinator(), 'registerRef');
     await x.open();
-    expect((refsOf(x.kernel)['workspace:selected'] as any)?.id).toBe('one');
-    const initialBinding = registerRef.mock.results[0]!.value;
-    const updateBinding = vi.spyOn(initialBinding, 'update');
+    expect(refsOf(x.kernel)['workspace:selected']).toEqual({ id: 'one' });
 
     await act(async () => update({ id: 'two', refId: 'selected' }));
-    expect(registerRef).toHaveBeenCalledOnce();
-    expect(updateBinding).toHaveBeenCalledOnce();
-    expect((refsOf(x.kernel)['workspace:selected'] as any)?.id).toBe('two');
+    expect(refsOf(x.kernel)['workspace:selected']).toEqual({ id: 'two' });
 
     await act(async () => update({ id: 'three', refId: 'renamed' }));
     expect(refsOf(x.kernel)['workspace:selected']).toBeUndefined();
-    expect((refsOf(x.kernel)['workspace:renamed'] as any)?.id).toBe('three');
+    expect(refsOf(x.kernel)['workspace:renamed']).toEqual({ id: 'three' });
 
     await act(async () => update({ id: 'four', refId: 'selected' }));
-    expect((refsOf(x.kernel)['workspace:selected'] as any)?.id).toBe('four');
+    expect(refsOf(x.kernel)['workspace:selected']).toEqual({ id: 'four' });
     expect(refsOf(x.kernel)['workspace:renamed']).toBeUndefined();
-    expect(registerRef).toHaveBeenCalledTimes(3);
 
     await x.close();
     expect(x.kernel.getViewRefs()).toEqual([]);
@@ -126,7 +129,7 @@ describe('Ref registration ownership', () => {
   it('releases all ArrayRef bindings if a later registration fails', () => {
     const refs = new Map<string, object>();
     const registry = {
-      captureRef: (value: any, check?: (value: any) => void) => { check?.(value); return value; },
+      captureRef: createRefCapture(),
       registerRef(id: string, value: object) {
         if (id === 'pending[1]') {
           const error = new Error('controlled Ref registration failure');

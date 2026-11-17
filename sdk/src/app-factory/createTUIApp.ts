@@ -48,16 +48,19 @@ export async function mountPreactApp(
         appId: context.appId,
         desktopId: context.desktopId,
         launchConfig: context.launchConfig,
-        refExporter: context.refExporter,
         persistence: context.persistence,
         appLifecycle: context.appLifecycle,
         viewTypes,
         views,
-        mountView: context.mountView,
         prepareProjection: (update, opening) => prepareRenderProjection(appContextValue, context.signal, update, opening),
     };
     const root = h(AppRuntimeContext.Provider, { value: appContextValue }, h(RootComponent, {}));
-    const commitRender = createRenderCommit(context.projection, appContextValue);
+    const commitRender = createRenderCommit(context, appContextValue, refs => ({
+        views: readDOMAppViews(container, node => {
+            const attached = views.get(node);
+            return attached && { ...attached, refs: attached.readRefs(refs) };
+        }),
+    }));
     let attached = true;
     let unmounting = false;
     const close = () => {
@@ -75,7 +78,6 @@ export async function mountPreactApp(
         }
     };
 
-    context.setViewReader(() => readDOMAppViews(container, node => views.get(node)));
     try {
         commitRender(() => render(root, container));
     } catch (error) {

@@ -7,9 +7,10 @@ the instance captures View, Ref and Tool data. A notification is not an acknowle
 and is not required for correctness. `signalPolicy: 'never'` still permits a fresh
 observation. An unchanged Snapshot can retain its existing content identity.
 
-For an ordinary TypeScript Producer, publish the completed View/Ref/Tool frame
-through the shared projection coordinator before observing it. This does not wait
-for background business tasks, reread files or infer application dependencies.
+Both managed authoring paths submit a complete frame through
+`RuntimeContext.publishFrame`. A synchronous producer has prepared the frame
+when that call returns `prepared`. The Worker refresh waits for the adapter's
+queued render work and sends the resulting snapshot.
 
 The managed SDK joins Preact's actual queued render callback. It preserves the
 configured Preact scheduling function instead of guessing how many microtasks or

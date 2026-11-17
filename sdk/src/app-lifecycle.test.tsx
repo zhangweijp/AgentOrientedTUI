@@ -12,7 +12,7 @@ afterEach(() => { for (const unmount of mounted.splice(0)) unmount(); vi.restore
 
 function mountLifecycle(component: () => unknown, lifecycle?: unknown) {
     const view = render(h(AppRuntimeContext.Provider, {
-        value: { appId: 'app', desktopId: 'desktop', refExporter: {}, markDirty() {}, appLifecycle: lifecycle } as any,
+        value: { appId: 'app', desktopId: 'desktop', appLifecycle: lifecycle } as any,
     }, h(component, {})));
     mounted.push(view.unmount);
     return view;

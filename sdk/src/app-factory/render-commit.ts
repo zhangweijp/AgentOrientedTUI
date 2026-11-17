@@ -1,7 +1,10 @@
-import { SnapshotDataError, type CancellationSignal } from '@aotui/runtime/core';
+import { SnapshotDataError, type CancellationSignal, type JsonValue, type SnapshotIssue } from '@aotui/runtime/core';
 import { options, type VNode } from 'preact';
-import type { IProjectionPort, PreparedProjection } from '@aotui/runtime/spi';
+import { createRefCapture, DEFAULT_SNAPSHOT_LIMITS, type AppFrameRef, type AppProjectionFrame, type PreparedProjection,
+    type ProjectionCommitResult, type RuntimeContext } from '@aotui/runtime/spi';
 import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
+import type { RefRegistry } from '../contexts/view-runtime-context.js';
+import { capturedRefValue } from './refs.js';
 
 // Preact 10's distributed builds expose these options and fields under minified names.
 // __c runs layout effects through preact/hooks before Preact drains __h (class callbacks).
@@ -15,11 +18,14 @@ type CommitOptions = typeof options & {
     __e: (error: unknown, vnode: CommitVNode, oldVNode?: CommitVNode, info?: unknown) => void;
 };
 
-type CommitResult = ReturnType<IProjectionPort['endCommit']>;
-type CommitMode = Parameters<IProjectionPort['endCommit']>[2];
+type CommitMode = 'opening' | 'restore';
+type RenderRef = { id: string; refType: string | undefined; value?: JsonValue };
+type RefValues = ReadonlyMap<RenderRef, JsonValue>;
 type RenderWork = {
     rendered: Set<object>;
     unmounting: Set<MountedComponent>;
+    capture: ReturnType<typeof createRefCapture>;
+    refs: Map<RenderRef, JsonValue>;
     failure?: { error: unknown };
 };
 type ProjectionAttempt = {
@@ -27,7 +33,15 @@ type ProjectionAttempt = {
     collecting: boolean;
     work?: RenderWork;
 };
-type RenderOwner = { projection: IProjectionPort; failed: Set<object>; attempt?: ProjectionAttempt };
+type RenderOwner = {
+    runtime: Pick<RuntimeContext, 'publishFrame' | 'signal'>;
+    readFrame: (refs: RefValues) => AppProjectionFrame;
+    refs: Set<RenderRef>;
+    failed: Set<object>;
+    failure?: { error: unknown };
+    preparing?: RenderWork;
+    attempt?: ProjectionAttempt;
+};
 type RenderRequest = { owner: RenderOwner; started: boolean; finishError?: { error: unknown } };
 type RenderBatch = {
     root: CommitVNode;
@@ -66,7 +80,7 @@ function includes(batch: RenderBatch, vnode: CommitVNode): boolean {
     return false;
 }
 
-function projectionError(issue?: IProjectionPort['failure']): SnapshotDataError {
+function projectionError(issue?: SnapshotIssue): SnapshotDataError {
     return new SnapshotDataError(issue?.code ?? 'SNAPSHOT_INVALID', issue?.path ?? '$.views',
         issue?.message ?? 'The render did not prepare a projection');
 }
@@ -75,16 +89,112 @@ function synchronousUpdateError(): SnapshotDataError {
     return new SnapshotDataError('SNAPSHOT_INVALID', '$.views', 'Projection update and revert callbacks must be synchronous');
 }
 
-function finishProjection(owner: RenderOwner, { rendered, unmounting, failure }: RenderWork, mode?: CommitMode): CommitResult {
+function createWork(): RenderWork {
+    return { rendered: new Set(), unmounting: new Set(), capture: createRefCapture(), refs: new Map() };
+}
+
+function refValue(entry: RenderRef, values: RefValues): JsonValue | undefined {
+    const next = values.get(entry);
+    return next === undefined ? entry.value : next;
+}
+
+/** Registry attached to one Preact View. Runtime sees only its completed JSON values. */
+export function createViewRefs(context: object, viewId: string) {
+    const owner = owners.get(context)!;
+    const entries = new Map<string, RenderRef>();
+    const writable = () => {
+        if (owner.preparing) {
+            const error = new Error('Projection bindings cannot change during preparation');
+            owner.preparing.failure ??= { error };
+            throw error;
+        }
+    };
+    const work = () => {
+        writable();
+        if (active?.owner !== owner) throw new Error('Ref writes require an active projection commit');
+        return active.work;
+    };
+    const release = (entry: RenderRef) => {
+        writable();
+        entries.delete(entry.id);
+        owner.refs.delete(entry);
+        if (active?.owner === owner) active.work.refs.delete(entry);
+        delete entry.value;
+    };
+    const registry: RefRegistry = {
+        captureRef: (data, check) => work().capture(data, check),
+        registerRef(id, data, refType) {
+            work();
+            if (!viewId.trim() || viewId.includes('.') || !id.trim() || id.includes('.')) {
+                throw Object.assign(new Error('View and Ref IDs must be non-empty and cannot contain a dot'), { code: 'REF_ID_INVALID' });
+            }
+            if (entries.has(id)) {
+                throw Object.assign(new Error(`Ref '${id}' is already registered in View '${viewId}'`),
+                    { name: 'RefRegistrationError', code: 'REF_ALREADY_REGISTERED' });
+            }
+            if (owner.refs.size >= DEFAULT_SNAPSHOT_LIMITS.maxRefs) throw new Error('Ref capacity exceeded');
+            const entry = { id, refType };
+            entries.set(id, entry);
+            owner.refs.add(entry);
+            const update = (value: Parameters<RefRegistry['registerRef']>[1]) => {
+                if (entries.get(id) !== entry) throw new Error(`Ref binding '${id}' in View '${viewId}' is no longer active`);
+                const current = work();
+                try { current.refs.set(entry, capturedRefValue(viewId, id, value)); }
+                catch (error) { current.failure ??= { error }; }
+            };
+            update(data);
+            return { update, release: () => { if (entries.get(id) === entry) release(entry); } };
+        },
+    };
+    return {
+        registry,
+        readRefs(values: RefValues): AppFrameRef[] {
+            return [...entries.values()].map(entry => {
+                const value = refValue(entry, values);
+                if (value === undefined) throw new Error('Ref has no successful capture');
+                return { id: entry.id, refType: entry.refType, value };
+            });
+        },
+        release() { for (const entry of entries.values()) release(entry); },
+    };
+}
+
+function finishProjection(owner: RenderOwner, work: RenderWork, mode?: CommitMode): ProjectionCommitResult | undefined {
+    if (owner.runtime.signal.aborted) return;
+    const { rendered, unmounting } = work;
     const removed = new Set([...unmounting].filter(component => !component.__P).map(componentKey));
     for (const key of removed) owner.failed.delete(key);
     const blocked = [...owner.failed].some(key => !rendered.has(key));
-    const result = owner.projection.endCommit(failure, blocked, mode);
-    if (result === 'failed') {
+    let result: ProjectionCommitResult | undefined;
+    try {
+        if (blocked && !work.failure) {
+            // Retain successful repair work within the same detached JSON budget.
+            const values = [...owner.refs].map(entry => refValue(entry, work.refs)).filter(value => value !== undefined);
+            const retained = createRefCapture()(values);
+            if ('issue' in retained) work.failure = { error: projectionError(retained.issue) };
+        }
+        if (work.failure || !blocked) {
+            owner.preparing = work;
+            result = owner.runtime.publishFrame(() => {
+                const check = () => { if (work.failure) throw work.failure.error; };
+                check();
+                const frame = owner.readFrame(work.refs);
+                check();
+                return frame;
+            }, mode === 'opening' ? { opening: true, retainViews: true } : mode === 'restore' ? { restore: true } : undefined);
+            if (result.status === 'failed') throw projectionError(result.issue);
+        }
+    } catch (error) {
+        owner.failure = { error };
         for (const key of rendered) if (!removed.has(key)) owner.failed.add(key);
-    } else if (typeof result === 'string') {
-        for (const key of rendered) owner.failed.delete(key);
+        return;
+    } finally {
+        delete owner.preparing;
     }
+    if (result?.status === 'rejected') return result;
+    for (const [entry, value] of work.refs) entry.value = value;
+    for (const key of rendered) owner.failed.delete(key);
+    if (result) delete owner.failure;
     return result;
 }
 
@@ -115,11 +225,8 @@ function installCommitHooks(): void {
             const owner = explicit?.owner ?? ownerOf(vnode);
             if (owner) {
                 const attempt = !explicit && owner.attempt?.collecting ? owner.attempt : undefined;
-                const work = attempt?.work ?? { rendered: new Set<object>(), unmounting: new Set<MountedComponent>() };
-                if (!attempt?.work) {
-                    owner.projection.beginCommit();
-                    if (attempt) attempt.work = work;
-                }
+                const work = attempt?.work ?? createWork();
+                if (attempt) attempt.work = work;
                 if (explicit) explicit.started = true;
                 active = { root: vnode, owner, work, deferred: !!attempt, parent: active, request: explicit };
             }
@@ -169,9 +276,10 @@ function installCommitHooks(): void {
     };
 }
 
-export function createRenderCommit(projection: IProjectionPort, context: object): (render: () => void) => void {
+export function createRenderCommit(runtime: RenderOwner['runtime'], context: object,
+    readFrame: RenderOwner['readFrame']): (render: () => void) => void {
     installCommitHooks();
-    const owner: RenderOwner = { projection, failed: new Set() };
+    const owner: RenderOwner = { runtime, readFrame, refs: new Set(), failed: new Set() };
     owners.set(context, owner);
     return render => {
         const previous = request;
@@ -250,7 +358,7 @@ export async function whenRenderCommitted(signal: CancellationSignal, context?: 
 }
 
 async function commitUpdate(owner: RenderOwner, attempt: ProjectionAttempt, signal: CancellationSignal,
-    update: () => unknown, mode?: CommitMode): Promise<CommitResult | undefined> {
+    update: () => unknown, mode?: CommitMode): Promise<ProjectionCommitResult | undefined> {
     let failure: { error: unknown } | undefined;
     attempt.collecting = true;
     try {
@@ -266,15 +374,16 @@ async function commitUpdate(owner: RenderOwner, attempt: ProjectionAttempt, sign
 
     const work = attempt.work;
     delete attempt.work;
-    let result: CommitResult | undefined;
+    let result: ProjectionCommitResult | undefined;
     if (work) {
         if (failure) work.failure ??= failure;
         result = finishProjection(owner, work, mode);
     } else if (mode === 'restore' && !signal.aborted) {
-        owner.projection.beginCommit();
-        result = owner.projection.endCommit(failure ?? {
+        const missed = createWork();
+        missed.failure = failure ?? {
             error: new SnapshotDataError('SNAPSHOT_INVALID', '$.views', 'The opening rollback did not commit a render'),
-        });
+        };
+        result = finishProjection(owner, missed);
     }
     if (failure) throw failure.error;
     return result;
@@ -296,11 +405,12 @@ export async function prepareRenderProjection(context: object, signal: Cancellat
         trackRenderCommits();
         await whenRenderCommitted(signal);
         const result = await commitUpdate(owner, attempt, signal, update, revert ? 'opening' : undefined);
-        if (revert && typeof result === 'object') {
+        if (revert && result?.status === 'rejected') {
             const restored = await commitUpdate(owner, attempt, signal, revert, 'restore');
-            throw projectionError(restored === 'restored' ? result.issue : owner.projection.failure);
+            if (restored?.status === 'restored') throw projectionError(result.issue);
+            throw owner.failure ? owner.failure.error : projectionError();
         }
-        if (result !== 'prepared') throw projectionError(owner.projection.failure);
-        return Object.freeze({ status: 'prepared', sourceEpoch: owner.projection.token().epoch });
+        if (result?.status !== 'prepared') throw owner.failure ? owner.failure.error : projectionError();
+        return result;
     } finally { delete owner.attempt; settle(); }
 }

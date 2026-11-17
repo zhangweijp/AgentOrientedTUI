@@ -20,7 +20,7 @@ it.each(['normal', 'sync-throw', 'async-reject', 'async-held'] as const)('A17 ac
             inputSchema: { type: 'object', properties: {}, additionalProperties: false } }]);
         context.publishFrame(() => ({ views: [detailFrame({
             bindings: [{ name: 'held', enabled: true, execute }],
-            refs: [{ id: 'r', refType: 'Value', token: context.refExporter.captureRef({ value: 19 }) }],
+            refs: [{ id: 'r', refType: 'Value', value: { value: 19 } }],
         })] }));
         return { close: unmount };
     } } } as any); kernel.setId('a' as any);
@@ -36,8 +36,8 @@ it.each(['normal', 'sync-throw', 'async-reject', 'async-held'] as const)('A17 ac
     unmountGate.resolve();
     if (mode === 'sync-throw' || mode === 'async-reject') await expect(closing).rejects.toHaveProperty('code', 'APP_UNMOUNT_FAILED'); else await closing;
     expect(owned.inspect()).toEqual({ state: 'disposed', views: 0, bindings: 0, retainedBytes: 0 });
-    expect(() => owned.prepareMount('new', 'Detail')).toThrow(expect.objectContaining({ code: 'VIEW_REGISTRY_CLOSED' }));
-    expect(() => runtime.mountView('new', 'Detail')).toThrow(expect.objectContaining({ code: 'APP_KERNEL_CLOSED' }));
+    expect(() => owned.prepareFrame([])).toThrow(expect.objectContaining({ code: 'VIEW_REGISTRY_CLOSED' }));
+    expect(() => runtime.publishFrame(() => ({ views: [] }))).toThrow(expect.objectContaining({ code: 'APP_KERNEL_CLOSED' }));
     expect(unmount).toHaveBeenCalledTimes(1); expect(kernel.getViewRefs()).toEqual([]);
     expect((kernel as any).viewRegistry).toBeUndefined(); expect((kernel as any).typeTools).toBeUndefined();
 });

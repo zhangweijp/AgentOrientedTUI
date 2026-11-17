@@ -35,7 +35,7 @@ V5 Snapshot 的 `ToolDescriptorV5` 要求布尔字段 `nameSharedAcrossViewTypes
 
 两个 Tool 都声明一次到 `Note` ViewType，统一使用正式 `view-type-parameters-v1` profile。`add` 接收普通数值；`read` 接收一个必填 Note 对象 Ref。Note 是本例的内存业务数据，不是文件定位。下面的 JSON 注解与 SDK TypeBox `refParam` 对应，低层装配者不另造 Ref parser。Core 从原观察解析参数，授权与执行使用同一 effectiveInput。
 
-普通 TypeScript 使用 `SemanticProjectionCoordinator.commit` 提交完整页面和当前工具，用现有 binding 提交参与本次的 Ref。框架管理发布版本，观察读取已准备的结果。正文只在 View 中呈现；Tool 返回完成收据，测试见证独立记录旧/新 Ref 的冻结值。b1 标记中的正文由真实新包消费者逐字提取、以 ES2022-only/types:[] 严格编译后执行，不能用另写的等价示例代替。
+纯 Core 装配通过 `SemanticProjectionCoordinator.commit` 的同步回调交出完整 View、Ref 和 Tool。先由 `prepareFrame` 生成候选实例和绑定，再交给协调器在整帧验证通过后调用 `accept`。框架管理发布版本，观察读取已接受的结果。正文通过 View 呈现，Tool 返回完成收据。示例分别验证旧观测和新观测读到的冻结 Ref 值。包消费者提取 b1 标记里的示例，以 ES2022-only 和 `types: []` 严格编译并执行。
 
 <!-- b1-example:start -->
 ```ts
@@ -58,8 +58,8 @@ const previewInstanceId = 'tutorial-preview-1';
 const preview = createSnapshotCore({ appId, instanceId: previewInstanceId, limits: previewLimits });
 previewLimits.maxViews = 1;
 const registry = createViewOwnedTools(appId, instanceId);
-const attachment = registry.prepareMount('detail', 'Note');
-const { view, owner } = attachment;
+const owner = {};
+const view = { viewId: 'detail', viewType: 'Note' };
 
 const addSchema = {
   type: 'object', properties: { n: { type: 'number' } },
@@ -78,22 +78,7 @@ check(compileOrdinarySchema(addSchema).ok, 'Add Schema');
 check(compileOrdinarySchema(readSchema).ok, 'Ref Schema');
 
 let count = 1, noteText = 'old', handlerEntries = 0, addEnabled = true;
-const projection = new SemanticProjectionCoordinator({
-  identity: () => ({ appId, instanceId }),
-  readFrame: () => {
-    const candidate = registry.prepareFrame([{ id: view.viewId, type: view.viewType, owner, bindings: [
-      { name: 'add', enabled: addEnabled, execute: add },
-      { name: 'read', enabled: true, execute: read },
-    ] }]);
-    const published = candidate.instances[0]; check(published, 'Expected the Note View');
-    return {
-      views: [{ id: view.viewId, viewInstanceId: published.viewInstanceId, type: view.viewType, name: 'Note', kind: 'state',
-        content: { format: 'markdown-v1', value: `Counter: ${count}\nNote: ${noteText}` }, toolBindings: published.toolBindings }],
-      tools: candidate.tools, accept: candidate.accept,
-    };
-  },
-});
-let selected: ReturnType<typeof projection.registerRef> | undefined;
+const projection = new SemanticProjectionCoordinator({ identity: () => ({ appId, instanceId }) });
 const witness: Array<{ text: string; frozen: boolean }> = [];
 async function add(args: Readonly<Record<string, unknown>>): Promise<ToolResult> {
   check(typeof args.n === 'number', 'Expected validated number');
@@ -125,10 +110,20 @@ const binding: ExecutionBinding = {
 function publish(text: string) {
   const prepared = projection.commit(() => {
     noteText = text;
-    if (selected) selected.update({ text });
-    else selected = projection.registerRef(view, 'selected', { text }, 'Note');
+    const candidate = registry.prepareFrame([{ id: view.viewId, type: view.viewType, owner, bindings: [
+      { name: 'add', enabled: addEnabled, execute: add },
+      { name: 'read', enabled: true, execute: read },
+    ] }]);
+    const published = candidate.instances[0]; check(published, 'Expected the Note View');
+    const { viewInstanceId, toolBindings } = published;
+    return {
+      views: [{ id: view.viewId, viewInstanceId, type: view.viewType, name: 'Note', kind: 'state',
+        content: { format: 'markdown-v1', value: `Counter: ${count}\nNote: ${noteText}` }, toolBindings }],
+      refs: [{ viewId: view.viewId, viewInstanceId, id: 'selected', refType: 'Note', value: { text } }],
+      tools: candidate.tools, accept: candidate.accept,
+    };
   });
-  check(prepared === 'prepared', 'Expected a complete View, Ref and Tool frame');
+  check(prepared.status === 'prepared', 'Expected a complete View, Ref and Tool frame');
   const result = projection.publishTo(snapshots.committer);
   check(result.status === 'published', 'Expected a new source version');
 }
@@ -207,7 +202,7 @@ try {
 } finally {
   snapshots.lifecycle.stop();
   authority.close(); await authority.whenClosed();
-  attachment.release(); projection.close(); registry.dispose(); snapshots.lifecycle.dispose();
+  projection.close(); registry.dispose(); snapshots.lifecycle.dispose();
 }
 check(registry.inspect().bindings === 0 && snapshots.store.inspect().activeLeases === 0, 'Registry and Snapshot cleanup');
 

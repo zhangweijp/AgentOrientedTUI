@@ -49,34 +49,31 @@ describe('refresh before the existing Scope observation', () => {
 
     it('ordinary TS publishes compatible View/Ref/Tool after a commit, reuses unchanged data, and reports projection failure without redoing business', async () => {
         const receiver = new SemanticSnapshotReceiver('app', 'instance');
-        const owner = new AbortController();
         const compiled = compileOrdinarySchema({ type: 'object', properties: {}, additionalProperties: false });
         if (!compiled.ok) throw new Error('fixture Schema');
         const profile = ordinaryParameterProfile(compiled.contract);
         const target = { viewId: 'file', viewInstanceId: 'file-instance' };
         const toolId = JSON.stringify(['app', 'File', 'edit']);
         let value = 1;
-        const projection = new SemanticProjectionCoordinator({
-            identity: () => ({ appId: 'app', instanceId: 'instance' }),
-            readFrame: () => ({
+        const projection = new SemanticProjectionCoordinator({ identity: () => ({ appId: 'app', instanceId: 'instance' }) });
+        const prepare = (payload = { value }) => projection.commit(() => ({
                 views: [{ toolBindings: [{ toolId, activationId: 'active-' + value }], id: target.viewId, viewInstanceId: target.viewInstanceId, type: 'File', name: 'File', kind: 'state',
                     content: { format: 'markdown-v1', value: 'body:' + value } }],
+                refs: [{ ...target, id: 'selected', refType: 'Record', value: payload }],
                 tools: [{ id: toolId, name: 'edit', viewType: 'File', nameSharedAcrossViewTypes: false, description: 'Edit',
                     inputSchema: profile } satisfies ToolDescriptorV5],
-            }),
-        });
+        }));
         const publish = () => {
             const publication = projection.nextPublication();
             return 'draft' in publication ? receiver.acceptPrepared(publication.draft) : receiver.acceptPrepareFailure(publication.failure);
         };
-        let selected!: ReturnType<typeof projection.registerRef>;
         const fullPolicy = { ...policy, project: projectCompleteViews };
         let businessCalls = 0;
         const binding = { identity: {}, validateInput: () => ({ ok: true as const, value: {} }),
             isLive: () => ({ ok: true as const }), execute: () => ({ kind: 'tool-result' as const, phase: 'entered-returned' as const,
                 result: { success: true, data: { calls: ++businessCalls } } }) };
         try {
-            projection.commit(() => { selected = projection.registerRef(target, 'selected', { value }, 'Record'); });
+            expect(prepare()).toMatchObject({ status: 'prepared' });
             expect(publish().status).toBe('published');
             const interaction = receiver.interaction(fullPolicy, { resolve: () => binding });
             const initial = await interaction.observe({ all: true });
@@ -85,10 +82,8 @@ describe('refresh before the existing Scope observation', () => {
             const business = await interaction.invoke({ invocationId: 'ts-business', observationId: initial.observation.observationId,
                 toolId: initial.observation.tools[0]!.id, input: { view_id: 'file' } });
             expect(business).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded' } } });
-            projection.beginCommit(); let completed = false;
-            const committed = projection.whenCommitted(owner.signal).then(() => { completed = true; });
-            value = 2; selected.update({ value });
-            expect(completed).toBe(false); projection.endCommit(); await committed;
+            value = 2;
+            expect(prepare()).toMatchObject({ status: 'prepared' });
             expect(publish().status).toBe('published');
             const current = await interaction.observe({ all: true }); expect(current.status).toBe('observed');
             if (current.status === 'observed') interaction.releaseObservation(current.observation.observationId);
@@ -99,16 +94,17 @@ describe('refresh before the existing Scope observation', () => {
             const id = receiver.report().snapshotId;
             expect(publish().status).toBe('unchanged');
             expect(receiver.report().snapshotId).toBe(id);
-            expect(projection.commit(() => selected.update({ invalid: () => 0 }))).toBe('failed');
+            expect(prepare({ invalid: () => 0 } as any)).toMatchObject({ status: 'failed' });
             expect(publish().status).toBe('rejected');
             expect((await interaction.observe({ all: true })).status).toBe('rejected');
             expect(business).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { calls: 1 } } } } });
             expect(businessCalls).toBe(1);
-            projection.commit(() => { value = 5; selected.update({ value }); });
+            value = 5;
+            expect(prepare()).toMatchObject({ status: 'prepared' });
             expect(publish().status).toBe('published');
             expect((await interaction.observe({ all: true })).status).toBe('observed');
             interaction.close(); expect(receiver.getInteractionStats()).toMatchObject({ combinedBytes: 0 });
-        } finally { owner.abort(); projection.close(); receiver.close(); }
+        } finally { projection.close(); receiver.close(); }
     });
 
     it('joins reception of a correlated fresh snapshot instead of reading old data or waiting for a notification', async () => {

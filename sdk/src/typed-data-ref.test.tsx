@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { h } from 'preact';
 import { act } from 'preact/test-utils';
 import { useMemo, useState } from 'preact/hooks';
@@ -40,25 +40,22 @@ describe('Ref authoring and value contracts',()=>{
      const data=useMemo(()=>({id:state.id,title:'Plan title'}),[state.id]);
      const ref=useDataRef(state.refId,data,{refType:state.refType});return h('p',{},ref('Selected'));
    }
-   const x=setup(Content);const register=vi.spyOn(x.kernel.getProjectionCoordinator(),'registerRef');
+   const x=setup(Content);
    try{
     await x.open();expect(x.container.textContent).toContain('[Selected](Plan:current_plan)');
     expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'current_plan',refType:'Plan',value:{id:'one',title:'Plan title'}}]);
-    const initial=register.mock.results[0]!.value;const update=vi.spyOn(initial,'update'),release=vi.spyOn(initial,'release');
     await act(async()=>set({id:'two',refId:'current_plan',refType:'Plan'}));
-    expect(register).toHaveBeenCalledOnce();expect(update).toHaveBeenCalledOnce();expect(x.kernel.getViewRefs()[0]!.value).toEqual({id:'two',title:'Plan title'});
-    await act(async()=>set({id:'two',refId:'renamed',refType:'Plan'}));expect(release).toHaveBeenCalledOnce();
-    const renamed=register.mock.results[1]!.value;const releaseRenamed=vi.spyOn(renamed,'release');
+    expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'current_plan',refType:'Plan',value:{id:'two',title:'Plan title'}}]);
+    await act(async()=>set({id:'two',refId:'renamed',refType:'Plan'}));
+    expect(x.kernel.getViewRefs().map(ref => ref.refId)).toEqual(['renamed']);
     await act(async()=>set({id:'two',refId:'renamed',refType:'DraftPlan'}));
-    expect(releaseRenamed).toHaveBeenCalledOnce();expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'renamed',refType:'DraftPlan',value:{id:'two',title:'Plan title'}}]);
+    expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'renamed',refType:'DraftPlan',value:{id:'two',title:'Plan title'}}]);
     expect(x.container.textContent).toContain('[Selected](DraftPlan:renamed)');
-    initial.release();renamed.release();expect(x.kernel.getViewRefs()).toHaveLength(1);
    }finally{await x.close();}expect(x.kernel.getViewRefs()).toEqual([]);
  });
  it('keeps a two-argument Ref untyped through registration and display',async()=>{
    const x=setup(()=>{const mark=useDataRef('raw',{id:'one'});return h('p',{},mark('Raw'));});
-   const register=vi.spyOn(x.kernel.getProjectionCoordinator(),'registerRef');
-   try{await x.open();expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'raw',value:{id:'one'}}]);expect(x.container.textContent).toContain('[Raw](raw)');expect(register.mock.calls[0]).toEqual([expect.objectContaining({viewId:'detail'}),'raw',expect.any(Object),undefined]);}finally{await x.close();}
+   try{await x.open();expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'raw',value:{id:'one'}}]);expect(x.container.textContent).toContain('[Raw](raw)');}finally{await x.close();}
  });
  it.each(['file)', 'Plan:raw', 'name with spaces', 'file\\name', 'name&amp;other', 'file.txt',
    Symbol('invalid') as unknown as string])(
@@ -95,16 +92,18 @@ describe('Ref authoring and value contracts',()=>{
    try{await expect(x.open()).rejects.toMatchObject({code:'REF_ALREADY_REGISTERED'});expect(x.kernel.getViewRefs()).toEqual([]);}finally{await x.close();}
  });
  it('does not let a typed publisher cleanup delete a successor with the same full ID',async()=>{
-   let hide!:()=>void;
-   function Publisher(){useDataRef('current_plan',{id:'first'},{refType:'Plan'});return null;}
-   function Content(){const [show,set]=useState(true);hide=()=>set(false);return show?h(Publisher,{}):null;}
-   const x=setup(Content);const register=vi.spyOn(x.kernel.getProjectionCoordinator(),'registerRef');
-   try{await x.open();const first=register.mock.results[0]!.value;first.release();
-     const projection=x.kernel.getProjectionCoordinator();
-     let successor!: ReturnType<typeof projection.registerRef>;
-     projection.commit(() => { successor=projection.registerRef(x.kernel.getViewOwnedViewInstances()[0]!,'current_plan',{id:'successor'},'Plan'); });
-     await act(hide);expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'current_plan',refType:'Plan',value:{id:'successor'}}]);
-     successor.release();expect(x.kernel.getViewRefs()).toEqual([]);
+   let show!:(id: string | null)=>void;
+   function Publisher({id}: {id: string}){useDataRef('current_plan',{id},{refType:'Plan'});return null;}
+   function Content(){const [id,set]=useState<string | null>('first');show=set;return id === null ? null : h(Publisher,{id,key:id});}
+   const x=setup(Content);
+   try{
+     await x.open();
+     const instance = x.kernel.getViewOwnedViewInstances()[0]!.viewInstanceId;
+     await act(() => show('successor'));
+     expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'current_plan',refType:'Plan',value:{id:'successor'}}]);
+     expect(x.kernel.getViewOwnedViewInstances()[0]!.viewInstanceId).toBe(instance);
+     await act(() => show(null));
+     expect(x.kernel.getViewRefs()).toEqual([]);
    }finally{await x.close();}
  });
  it.each(['', '   ', 'Plan)', 'Type:Plan', 42, null])('rejects invalid explicit refType %s',async refType=>{

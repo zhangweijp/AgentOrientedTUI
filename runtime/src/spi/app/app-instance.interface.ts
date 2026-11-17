@@ -1,19 +1,16 @@
 import type { CancellationSignal } from '../../core/invocation/app-interaction-types.js';
-import type { ViewSnapshotV4 } from '../../core/snapshot/types.js';
+import type { JsonValue, SnapshotIssue, ViewSnapshotV4 } from '../../core/snapshot/types.js';
 import type { AppID, DesktopID } from '../core/types.js';
 import type { LLMUsageEvent } from '../core/llm-usage.js';
-import type { IProjectionPort } from '../runtime/projection.interface.js';
-import type { MountedView } from '../runtime/view-owned-tools.interface.js';
 import type { AppFrameBinding, AppTypeToolDefinition } from '../runtime/app-type-tools.interface.js';
 import type { AppLifecyclePort } from '../runtime/app-lifecycle.interface.js';
 import type { AppStatePersistence } from '../runtime/state-persistence.interface.js';
 import type { AppLaunchConfig } from './app-config.interface.js';
-import type { IRefExporter } from './ref-exporter.interface.js';
 export type { AppStatePersistence, StateValue, StateIssue, StateBinding, StateBindingStatus, StateFlushReport } from '../runtime/state-persistence.interface.js';
 
 export interface AppFrameRef {
     readonly id: string;
-    readonly token: object;
+    readonly value: JsonValue;
     readonly refType?: string | undefined;
 }
 
@@ -21,11 +18,19 @@ export interface AppFrameRef {
 export interface AppFrameView extends Omit<ViewSnapshotV4, 'viewInstanceId' | 'toolBindings'> {
     readonly owner: object;
     readonly bindings: readonly AppFrameBinding[];
+    readonly refs: readonly AppFrameRef[];
 }
 export interface AppProjectionFrame {
-    readonly views: readonly (AppFrameView & { readonly refs: readonly AppFrameRef[] })[];
+    readonly views: readonly AppFrameView[];
 }
 export type PreparedProjection = Readonly<{ status: 'prepared'; sourceEpoch: number }>;
+export type ProjectionOptions =
+    | Readonly<{ opening: true; retainViews?: true }>
+    | Readonly<{ restore: true }>;
+export type ProjectionCommitResult = PreparedProjection
+    | Readonly<{ status: 'restored'; sourceEpoch: number }>
+    | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>
+    | Readonly<{ status: 'failed'; issue: SnapshotIssue; cause?: { readonly error: unknown } }>;
 
 export interface RuntimeContext {
     readonly appId: AppID;
@@ -33,18 +38,12 @@ export interface RuntimeContext {
     readonly launchConfig?: AppLaunchConfig;
     readonly persistence?: AppStatePersistence;
     readonly appLifecycle?: AppLifecyclePort;
-    readonly refExporter: IRefExporter;
-    readonly projection: IProjectionPort;
     /** Aborted when the instance stops admitting new work. */
     readonly signal: CancellationSignal;
     /** Supply the static definitions once before publishing Views. */
     defineTools(definitions: readonly AppTypeToolDefinition[]): void;
-    /** Obtain a renderer-owned Ref attachment. It becomes executable only after commit. */
-    mountView(id: string, type: string): MountedView;
-    /** Install the renderer's full-frame reader before its first commit. */
-    setViewReader(read: () => readonly AppFrameView[]): void;
-    /** Prepare one complete frame locally. Host acceptance happens separately. */
-    publishFrame(build: () => AppProjectionFrame, options?: { readonly opening: true }): PreparedProjection;
+    /** Prepare one complete frame locally. A throwing build records a projection failure. */
+    publishFrame(build: () => AppProjectionFrame, options?: ProjectionOptions): ProjectionCommitResult;
 }
 
 export interface AppInstance {

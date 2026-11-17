@@ -23,7 +23,7 @@ it('passes the enabled lifecycle port to the App and waits for its cleanup', asy
 });
 it.each(['sync', 'async'])('C2-18 %s unmount failure still clears owned registries', async kind => {
     const f = fixture(context => {
-        context.publishFrame(() => ({ views: [detailFrame({ refs: [{ id: 'key', refType: 'Value', token: context.refExporter.captureRef({}) }] })] }));
+        context.publishFrame(() => ({ views: [detailFrame({ refs: [{ id: 'key', refType: 'Value', value: {} }] })] }));
         return { close: () => { if (kind === 'sync') throw Error('private sync');return Promise.reject(Error('private async')); } };
     });
     await f.open();expect(f.kernel.getViewOwnedViewInstances()).toHaveLength(1);expect(f.kernel.getViewRefs()).toHaveLength(1);
@@ -36,7 +36,7 @@ it('C2-19 closing during initialization owns the late renderer without registeri
     const f = fixture(async () => { entered.resolve();await finish.promise;return { close: unmount }; });
     const opening = f.open();expect(f.open()).toBe(opening);await entered.promise;const closing = f.kernel.onClose();
     expect(f.runtime().registerView).toBeUndefined();expect(f.runtime().allocateViewId).toBeUndefined();expect(f.runtime().typeTools).toBeUndefined();
-    expect(() => f.runtime().mountView('later', 'Detail')).toThrow(expect.objectContaining({ code: 'APP_KERNEL_CLOSED' }));
+    expect(() => f.runtime().publishFrame(() => ({ views: [] }))).toThrow(expect.objectContaining({ code: 'APP_KERNEL_CLOSED' }));
     expect(f.runtime().markDirty).toBeUndefined();
     await expect(f.kernel.onReinitialize()).rejects.toHaveProperty('code', 'APP_KERNEL_CLOSED');
     finish.resolve();await expect(opening).rejects.toHaveProperty('code', 'APP_KERNEL_CLOSED');await closing;expect(unmount).toHaveBeenCalledTimes(1);
