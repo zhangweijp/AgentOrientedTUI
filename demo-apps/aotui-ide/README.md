@@ -24,11 +24,11 @@ Opening files publishes FileDetail Views and makes the IDE's FileDetail Tool set
 
 File contents, search matches and LSP results appear in their current Views. Successful search, LSP and batch Tool results carry receipts rather than duplicate result collections. Receipts point to the actual FileDetail ID while that View remains current; delete/close receipts point to Workspace, and a failed View refresh preserves its warning and points to Workspace for recovery.
 
-See [SCOPED_IDE.md](./SCOPED_IDE.md) for tool contracts, limits and cleanup, and [Semantic Host integration](../../runtime/docs/semantic-host-integration.zh-CN.md) for context ownership and outcomes.
+See [SCOPED_IDE.md](./SCOPED_IDE.md) for tool contracts, limits and cleanup. Host usage and outcomes are in the [Runtime README](../../runtime/README.md).
 
 ## Runtime Requirements
 
-- Matching SDK 0.9.0 and Runtime 8.0.0 artifacts from one delivery. The IDE uses `view-type-tools-v5` authoring, `view-type-parameters-v1` ordinary and Ref parameters, Snapshot 4, and `app-lifecycle-v2`. Runtime checks the `createTUIApp` authoring marker before initialization.
+- Matching SDK 0.9.0 and Runtime 8.0.0 artifacts from one delivery. The IDE uses `view-type-tools-v6` authoring, `view-type-parameters-v1` ordinary and Ref parameters, Snapshot 4, and `app-lifecycle-v2`. Runtime checks the `createTUIApp` authoring marker before initialization.
 - TypeBox 1.4.3 for the IDE's single-source Tool parameter declarations.
 - Optional local language servers for advanced code intelligence
 

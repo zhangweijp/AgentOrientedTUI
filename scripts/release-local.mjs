@@ -227,7 +227,7 @@ function consumerInputs(profile, folder) {
         'build-a/agent-driver-adapter/node_modules/vitest')), '../vite')).version;
     json(path.join(folder, 'package.json'), { private: true, type: 'module',
         dependencies: { ...local, typebox: sdk.peerDependencies.typebox, ...(host && {
-            preact: '10.29.1', ai: driver.dependencies.ai, zod: driver.devDependencies.zod,
+            preact: sdk.peerDependencies.preact, ai: driver.dependencies.ai, zod: driver.devDependencies.zod,
             '@ai-sdk/provider-utils': driver.dependencies['@ai-sdk/provider-utils'],
         }) },
         devDependencies: { typescript: '7.0.2', '@types/node': nodeTypes, ...(host && {
@@ -330,10 +330,11 @@ function consumers(profile) {
         const blocked = !installed && `Requires ${label}-install`;
         const data = { AOTUI_DATA_DIR: path.join(folder, 'synthetic-state') };
         stage(`${label}-resolution`, () => { runFact.resolution = verifyResolution(label, folder, host); }, blocked);
-        stage(`${label}-docs`, () => run(`${label}-docs`, folder, process.execPath, [path.join(inputs, 'sdk/tests/srt01-m4/verify-docs.mjs'), folder,
-            path.join(report, 'docs.json'), host ? 'full' : 'plain'], data), blocked);
+        stage(`${label}-package-consumer`, () => run(`${label}-package-consumer`, folder, process.execPath,
+            [path.join(inputs, 'sdk/tests/package-consumer/verify-package-consumer.mjs'), folder,
+                path.join(report, 'package-consumer.json'), host ? 'full' : 'plain'], data), blocked);
         if (!host) continue;
-        stage(`${label}-w10`, () => run(`${label}-w10`, folder, process.execPath, [path.join(inputs, 'runtime/tests/w10-package-consumer.mjs'), folder,
+        stage(`${label}-w10`, () => run(`${label}-w10`, folder, process.execPath, [path.join(inputs, 'runtime/tests/verify-installed-contracts.mjs'), folder,
             path.join(report, 'w10.json'), 'ref-only'], data), blocked);
         stage(`${label}-lifecycle`, () => {
             fs.mkdirSync(path.dirname(path.join(folder, lifecycleSpec)), { recursive: true });

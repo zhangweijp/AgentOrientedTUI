@@ -7,7 +7,7 @@
 - `README.md` explains the idea and the interface model.
 - `GUIDE.md` explains the repository layout, architecture, stack, and local development flow.
 
-The App authoring guide covers runnable TypeScript and Preact Apps, including the current Tool and Ref contracts. [App authoring guide](./sdk/docs/app-authoring.md)
+Build with the SDK and run the App through a managed Worker. [SDK README](sdk/README.md) · [Runtime README](runtime/README.md)
 
 For the current Runtime Host, Core, and Semantic Source entry points, start with the [Runtime package guide](./runtime/README.md).
 
@@ -299,4 +299,4 @@ agentina install ./demo-apps/<app-folder> --force
 - [README.zh-CN.md](./README.zh-CN.md): Chinese version of the main README
 
 
-当前 View 必须显式声明 `type` 和 `kind="instruction" | "state"`，实例 `id` 只标识页面实例。正文不携带框架外壳，XML 文本仅在最终呈现时转义一次；[View 声明与正文合同](sdk/docs/views.md)说明两种 Producer、原样内容和迁移方式。
+当前 View 必须显式声明 `type` 和 `kind="instruction" | "state"`，实例 `id` 标识页面实例。App 提交原始正文，XML 文本在最终呈现时转义一次。 [SDK README](sdk/README.md)

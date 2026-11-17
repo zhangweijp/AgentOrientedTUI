@@ -3,7 +3,7 @@
 
 ## Build an AOTUI App
 
-Start with the [SDK author guide](sdk/README.md), run its [file example](sdk/docs/examples/file-app.tsx), then add [Ref selection](sdk/docs/readonly-ref-v2.md) when choosing displayed objects. [View semantics](sdk/docs/views.md), [plain TypeScript App authoring](sdk/docs/app-authoring.md), and [package/validation instructions](sdk/docs/runtime-compatibility.md) share the current public contract. The repository [App Builder skill](.agents/skills/aotui-app-builder/SKILL.md) follows the same path. Application authors need no private Runtime protocol or custom Ref resolver.
+Build the counter in the [SDK README](sdk/README.md) and run it through a real Worker using the [Runtime README](runtime/README.md). For Agent authors working in this repository, see the [App Builder skill](.agents/skills/aotui-app-builder/SKILL.md).
 
 > Experimental project. This repository is for research, prototyping, and internal exploration. It is not production-ready and should not be used as-is in production environments.
 
@@ -148,7 +148,7 @@ The claim is narrower: the agent should work against maintained, actionable view
 
 A file is only a minimal case. Real applications are more demanding because they involve more than reading state. They involve object selection, object identity, action availability, and state transitions across views.
 
-This hypothetical messaging app uses the current Tool presentation and Ref address conventions. Runnable examples are available in the SDK guide. [App authoring guide](./sdk/docs/app-authoring.md)
+This hypothetical messaging app uses the current Tool presentation and Ref address conventions. [SDK README](sdk/README.md)
 
 Suppose the user says:
 
@@ -309,4 +309,4 @@ If agent-oriented interfaces are going to mature into infrastructure rather than
 This README focuses on the interface model itself. If you want the repository map, architecture layers, tech stack, and local development workflow, see [GUIDE.md](./GUIDE.md).
 
 
-当前 View 必须显式声明 `type` 和 `kind="instruction" | "state"`，实例 `id` 只标识页面实例。正文不携带框架外壳，XML 文本仅在最终呈现时转义一次；[View 声明与正文合同](sdk/docs/views.md)说明两种 Producer、原样内容和迁移方式。
+当前 View 必须显式声明 `type` 和 `kind="instruction" | "state"`，实例 `id` 标识页面实例。App 提交原始正文，XML 文本在最终呈现时转义一次。 [SDK README](sdk/README.md)

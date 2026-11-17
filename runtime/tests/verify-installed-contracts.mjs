@@ -9,7 +9,7 @@ assert.ok(['full', 'ref-only'].includes(selection));
 const refOnly = selection === 'ref-only';
 assert.ok(process.env.AOTUI_DATA_DIR && path.isAbsolute(process.env.AOTUI_DATA_DIR), 'Explicit synthetic state root is required');
 assert.ok(consumer && factsPath);
-const facts = { consumer, selection, completeW10Claimed: false, skipped: refOnly ? ['Core documentation example (covered by its separate consumer)', 'IDE type/factory checks', 'real IDE/LSP run'] : [], startedAt: new Date().toISOString(), cases: [], passed: false };
+const facts = { consumer, selection, completeW10Claimed: false, skipped: refOnly ? ['Pure Core scenario (covered by the package consumer)', 'IDE type/factory checks', 'real IDE/LSP run'] : [], startedAt: new Date().toISOString(), cases: [], passed: false };
 const folder = path.join(consumer, 'public-checks-' + path.basename(factsPath, '.json')); await fs.mkdir(folder);
 async function run(args, name) {
     try { const result = await execute(process.execPath, args, { cwd: consumer, maxBuffer: 8 * 1024 * 1024 });
@@ -18,12 +18,10 @@ async function run(args, name) {
 }
 try {
     if (!refOnly) {
-    const coreDoc = await fs.readFile(path.join(consumer, 'node_modules/@aotui/runtime/docs/core-public-entry.md'), 'utf8');
-    const example = coreDoc.match(/<!-- b1-example:start -->\n```ts\n([\s\S]*?)\n```\n<!-- b1-example:end -->/)?.[1]; assert.ok(example);
-    await fs.writeFile(path.join(folder, 'core-example.ts'), example);
+        await fs.copyFile(new URL('./fixtures/public-core.ts', import.meta.url), path.join(folder, 'public-core.ts'));
     }
-    await fs.writeFile(path.join(folder, 'tool-types.ts'), `import type { RefTarget, ToolResult, ViewToolInvocationTerminal, ExecutionBinding, AppSnapshotV5, SnapshotRead } from '@aotui/runtime/core';
-import { createSnapshotCore, SNAPSHOT_SCHEMA_VERSION, type OrdinaryCompileResult, type SnapshotStoreOptions, type SnapshotLimits } from '@aotui/runtime/core';
+    await fs.writeFile(path.join(folder, 'tool-types.ts'), `import type { RefTarget, ToolResult, ViewToolInvocationTerminal, ExecutionBinding, AppSnapshot, SnapshotRead } from '@aotui/runtime/core';
+import { createSnapshotCore, SNAPSHOT_SCHEMA_VERSION, type ToolParameterCompileResult, type SnapshotStoreOptions, type SnapshotLimits } from '@aotui/runtime/core';
 // @ts-expect-error The JSON copy budget reason is internal to Core.
 import { JsonCopyLimitError } from '@aotui/runtime/core';
 const identity = { appId: 'notes', instanceId: 'limits-check' };
@@ -39,7 +37,7 @@ export function snapshotLifecycle() {
   core.lifecycle.stop();
   core.lifecycle.dispose();
 }
-export function declarationCategory(result: OrdinaryCompileResult) {
+export function declarationCategory(result: ToolParameterCompileResult) {
   if (result.ok) return 'accepted';
   const code = result.issue.code;
   switch (code) {
@@ -50,16 +48,16 @@ export function declarationCategory(result: OrdinaryCompileResult) {
   const unreachable: never = code;
   return unreachable;
 }
-// @ts-expect-error The former SDK registration export is retired.
+// @ts-expect-error The previous register ABI is retired.
 import { ORDINARY_INVOCATION_MODE } from '@aotui/runtime/core';
 // @ts-expect-error The former invoker ABI is retired.
 import type { SafeOrdinaryInvoker } from '@aotui/runtime/core';
-// @ts-expect-error V5 is the sole public AppSnapshot DTO.
+// @ts-expect-error Historical aliases are retired.
 import type { AppSnapshotV4 } from '@aotui/runtime/core';
-// @ts-expect-error The V2 DTO is also retired.
+// @ts-expect-error The older DTO is also retired.
 import type { AppSnapshotV2 } from '@aotui/runtime/core';
-// @ts-expect-error AppSnapshotV5 is the only public AppSnapshot type name.
-import type { AppSnapshot } from '@aotui/runtime/core';
+// @ts-expect-error AppSnapshot is the only public AppSnapshot type name.
+import type { AppSnapshotV5 } from '@aotui/runtime/core';
 // @ts-expect-error Validation envelope details are not part of the Core package API.
 import type { SnapshotDraftEnvelope } from '@aotui/runtime/core';
 // @ts-expect-error Snapshot health is represented by SnapshotRead.status.
@@ -97,7 +95,7 @@ const ref: RefTarget = { kind: 'snapshot-value', payload: { id: 'one', version: 
 ref.payload = {};
 // @ts-expect-error Business identity belongs inside the captured payload.
 const oldRef: RefTarget = { kind: 'entity', entityId: 'one' };
-const schemaVersion: 5 = SNAPSHOT_SCHEMA_VERSION;
+const schemaVersion: 6 = SNAPSHOT_SCHEMA_VERSION;
 const result: ToolResult = { success: false, error: { code: 'PARTIAL', message: 'Application reports partial work' } };
 // @ts-expect-error The former Tool failure classification is retired.
 const oldResult: ToolResult = { ...result, effects: 'none' };
@@ -107,22 +105,22 @@ const oldTerminal: ViewToolInvocationTerminal = { ...terminal, failureEffects: '
 const execute: ExecutionBinding['execute'] = ({ source }) => source.receiver.viewId
   ? { kind: 'tool-result', ...terminal }
   : { kind: 'unknown' };
-const readySnapshot = (read: SnapshotRead): AppSnapshotV5 | undefined => read.status === 'ready' ? read.snapshot : undefined;
+const readySnapshot = (read: SnapshotRead): AppSnapshot | undefined => read.status === 'ready' ? read.snapshot : undefined;
 void [ref, oldRef, schemaVersion, result, oldResult, oldTerminal, execute, readySnapshot];
 `);
     const compiler = { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, exactOptionalPropertyTypes: true, skipLibCheck: false,
         lib: ['ES2022'], types: [], outDir: './core-out' };
-    await fs.writeFile(path.join(folder, 'core-tsconfig.json'), JSON.stringify({ compilerOptions: compiler, files: refOnly ? ['./tool-types.ts'] : ['./core-example.ts', './tool-types.ts'] }));
+    await fs.writeFile(path.join(folder, 'core-tsconfig.json'), JSON.stringify({ compilerOptions: compiler, files: refOnly ? ['./tool-types.ts'] : ['./public-core.ts', './tool-types.ts'] }));
     const tsc = path.join(consumer, 'node_modules/typescript/bin/tsc');
-    await run([tsc, '-p', path.join(folder, 'core-tsconfig.json')], refOnly ? 'Core Tool, SnapshotLimits and declaration types compile with ES2022 only; Core tutorial covered separately' : 'pure Core exact documentation and generic Tool types compile with ES2022 only; removed entity transport exports are absent');
-    if (!refOnly) await run([path.join(folder, 'core-out/core-example.js')], 'pure Core exact package documentation executes');
+    await run([tsc, '-p', path.join(folder, 'core-tsconfig.json')], 'Core Tool, SnapshotLimits and declaration types compile with ES2022 only');
+    if (!refOnly) await run([path.join(folder, 'core-out/public-core.js')], 'public Core fixture executes');
     const ideTypeImports = `import ideDefault from '@agentina/aotui-ide';
 // @ts-expect-error The IDE package has one default managed factory, not route-specific entries.
 import { ideEntryForRoute } from '@agentina/aotui-ide';`;
     const ideTypeAssertions = `const ideFactory: TUIAppFactory = ideDefault;
 const persistenceSupport: 'state-session-v1' = ideFactory.persistenceSupport;
 const ideLifecycleSupport: 'app-lifecycle-v2' = ideFactory.appLifecycleSupport;
-const ideToolAuthoringProtocol: 'view-type-tools-v5' = ideFactory.toolAuthoringProtocol;
+const ideToolAuthoringProtocol: 'view-type-tools-v6' = ideFactory.toolAuthoringProtocol;
 void [persistenceSupport, ideLifecycleSupport, ideToolAuthoringProtocol, ideFactory];`;
     await fs.writeFile(path.join(folder, 'sdk-types.ts'), `import { h } from 'preact';
 import { Type } from 'typebox';
@@ -226,7 +224,7 @@ function Root() {
 ${refOnly ? '' : ideTypeAssertions}
 const managedFactory = createTUIApp({ app_name: 'package_types', component: Root, viewTypes: [Counter] });
 const lifecycleSupport: 'app-lifecycle-v2' = managedFactory.appLifecycleSupport;
-const toolAuthoringProtocol: 'view-type-tools-v5' = managedFactory.toolAuthoringProtocol;
+const toolAuthoringProtocol: 'view-type-tools-v6' = managedFactory.toolAuthoringProtocol;
 // @ts-expect-error Managed lifecycle support is the default factory contract, not a config flag.
 createTUIApp({ app_name: 'retired_lifecycle_flag', component: Root, viewTypes: [Counter], experimentalAppLifecycle: true });
 export default managedFactory;
