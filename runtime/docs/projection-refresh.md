@@ -11,6 +11,8 @@ Both managed authoring paths submit a complete frame through
 `RuntimeContext.publishFrame`. A synchronous producer has prepared the frame
 when that call returns `prepared`. The Worker refresh waits for the adapter's
 queued render work and sends the resulting snapshot.
+When a Tool settles, the Worker flushes any queued publication before sending
+its terminal response. An explicit refresh always requests the full frame.
 
 The managed SDK joins Preact's actual queued render callback. It preserves the
 configured Preact scheduling function instead of guessing how many microtasks or
