@@ -109,7 +109,7 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
             });
             if (response) {
                 // Projection is a separate fact. It cannot erase a trusted business terminal.
-                try { flushInteractionProjection(); }
+                try { if (publicationTimer) flushInteractionProjection(); }
                 finally { parentPort?.postMessage(response); }
             }
         } catch { /* No trusted terminal: Host records unknown. */ }
@@ -355,7 +355,7 @@ function schedulePublication(): void {
     }, PUBLICATION_THROTTLE_MS);
 }
 
-/** Observation joins the renderer queue; invocation receipts can send the cached result immediately. */
+/** Observation requests a full frame. A Tool terminal flushes queued publication work. */
 function flushInteractionProjection(requestId?: RequestID): void {
     if (publicationTimer) {
         clearTimeout(publicationTimer);

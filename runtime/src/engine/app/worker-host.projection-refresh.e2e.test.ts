@@ -161,7 +161,15 @@ describe('real SDK Worker observation refresh', () => {
         expect(snapshot.views.map((v: any) => v.content.value).join(' ')).toContain('workspace:1');
         expect(Object.values(snapshot.refs)).toMatchObject([{ target: { payload: { value: 1 } } }]);
         expect(host.onUpdateRequest).not.toHaveBeenCalled();
-        client.releaseObservation(next.observationId); expect(host.getInteractionReport()!.core.observations.observations).toBe(0);
+        const received = host.getSemanticSnapshotReport()!.prepared;
+        expect(await invoke(client, next, 'read', { record: 'file.selected' }))
+            .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { value: 1 } } } } });
+        expect(host.getSemanticSnapshotReport()!.prepared).toBe(received);
+        const confirmed = await observe(client);
+        expect(host.getSemanticSnapshotReport()!.prepared).toBe(received + 1);
+        expect(confirmed.source).toEqual(next.source);
+        client.releaseObservation(confirmed.observationId);
+        expect(host.getInteractionReport()!.core.observations.observations).toBe(0);
     });
 
     it('reuses confirmed content when nothing changes', async () => {
