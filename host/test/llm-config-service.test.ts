@@ -47,13 +47,6 @@ const createMockModelRegistry = (): ModelRegistry => ({
         { id: 'gpt-4o', catalogId: 'openai/gpt-4o', name: 'GPT-4o', tool_call: true, reasoning: false },
         { id: 'claude-3-5-sonnet-20241022', catalogId: 'anthropic/claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', tool_call: true, reasoning: false },
     ]),
-    refresh: vi.fn().mockResolvedValue(undefined),
-    getCacheStatus: vi.fn().mockReturnValue({
-        lastFetch: Date.now(),
-        isStale: false,
-        providerCount: 2,
-        modelCount: 3,
-    }),
 } as any);
 
 describe('LLMConfigService', () => {

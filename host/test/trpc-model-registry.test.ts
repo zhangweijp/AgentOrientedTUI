@@ -22,10 +22,7 @@ describe('tRPC ModelRegistry Router', () => {
         // Mock ModelRegistry
         mockModelRegistry = {
             getProviders: vi.fn(),
-            getProviderConfig: vi.fn(),
             getModels: vi.fn(),
-            refresh: vi.fn(),
-            getCacheStatus: vi.fn(),
         } as any;
 
         // Mock HostManager (minimal mock)
@@ -82,50 +79,6 @@ describe('tRPC ModelRegistry Router', () => {
             await expect(caller.modelRegistry.getProviders()).rejects.toThrow(
                 'Failed to fetch providers'
             );
-        });
-    });
-
-    describe('getProviderConfig', () => {
-        it('should return provider configuration', async () => {
-            const mockConfig = {
-                id: 'openai',
-                name: 'OpenAI',
-                baseURL: 'https://api.openai.com/v1',
-                envKeys: ['OPENAI_API_KEY'],
-                supportedModels: ['gpt-4', 'gpt-4o', 'gpt-4o-mini'],
-            };
-
-            vi.mocked(mockModelRegistry.getProviderConfig).mockResolvedValue(mockConfig);
-
-            const result = await caller.modelRegistry.getProviderConfig({
-                providerId: 'openai',
-            });
-
-            expect(result).toEqual(mockConfig);
-            expect(mockModelRegistry.getProviderConfig).toHaveBeenCalledWith('openai');
-        });
-
-        it('should validate providerId parameter', async () => {
-            // Test with missing providerId
-            await expect(
-                caller.modelRegistry.getProviderConfig({} as any)
-            ).rejects.toThrow();
-        });
-
-        it('should validate providerId type', async () => {
-            // Test with invalid type
-            await expect(
-                caller.modelRegistry.getProviderConfig({ providerId: 123 } as any)
-            ).rejects.toThrow();
-        });
-
-        it('should handle provider not found error', async () => {
-            const error = new Error('Provider not found in models.dev: invalid-provider');
-            vi.mocked(mockModelRegistry.getProviderConfig).mockRejectedValue(error);
-
-            await expect(
-                caller.modelRegistry.getProviderConfig({ providerId: 'invalid-provider' })
-            ).rejects.toThrow('Provider not found');
         });
     });
 
@@ -271,93 +224,7 @@ describe('tRPC ModelRegistry Router', () => {
         });
     });
 
-    describe('refresh', () => {
-        it('should call ModelRegistry refresh', async () => {
-            vi.mocked(mockModelRegistry.refresh).mockResolvedValue(undefined);
-
-            await caller.modelRegistry.refresh();
-
-            expect(mockModelRegistry.refresh).toHaveBeenCalledTimes(1);
-        });
-
-        it('should handle refresh errors', async () => {
-            const error = new Error('Failed to refresh cache');
-            vi.mocked(mockModelRegistry.refresh).mockRejectedValue(error);
-
-            await expect(caller.modelRegistry.refresh()).rejects.toThrow(
-                'Failed to refresh cache'
-            );
-        });
-    });
-
-    describe('getCacheStatus', () => {
-        it('should return cache status', async () => {
-            const mockStatus = {
-                lastFetch: Date.now(),
-                isStale: false,
-                providerCount: 4,
-                modelCount: 25,
-            };
-
-            vi.mocked(mockModelRegistry.getCacheStatus).mockReturnValue(mockStatus);
-
-            const result = await caller.modelRegistry.getCacheStatus();
-
-            expect(result).toEqual(mockStatus);
-            expect(mockModelRegistry.getCacheStatus).toHaveBeenCalledTimes(1);
-        });
-
-        it('should return stale status', async () => {
-            const mockStatus = {
-                lastFetch: Date.now() - 25 * 60 * 60 * 1000, // 25 hours ago
-                isStale: true,
-                providerCount: 4,
-                modelCount: 25,
-            };
-
-            vi.mocked(mockModelRegistry.getCacheStatus).mockReturnValue(mockStatus);
-
-            const result = await caller.modelRegistry.getCacheStatus();
-
-            expect(result.isStale).toBe(true);
-        });
-
-        it('should return zero counts when no data', async () => {
-            const mockStatus = {
-                lastFetch: 0,
-                isStale: true,
-                providerCount: 0,
-                modelCount: 0,
-            };
-
-            vi.mocked(mockModelRegistry.getCacheStatus).mockReturnValue(mockStatus);
-
-            const result = await caller.modelRegistry.getCacheStatus();
-
-            expect(result.providerCount).toBe(0);
-            expect(result.modelCount).toBe(0);
-        });
-    });
-
     describe('Type Safety', () => {
-        it('should enforce correct input types for getProviderConfig', async () => {
-            vi.mocked(mockModelRegistry.getProviderConfig).mockResolvedValue({
-                id: 'openai',
-                name: 'OpenAI',
-                baseURL: 'https://api.openai.com/v1',
-                envKeys: ['OPENAI_API_KEY'],
-                supportedModels: ['gpt-4'],
-            });
-
-            // This should compile without errors
-            const result = await caller.modelRegistry.getProviderConfig({
-                providerId: 'openai',
-            });
-
-            expect(result.id).toBe('openai');
-            expect(result.envKeys).toBeInstanceOf(Array);
-        });
-
         it('should enforce correct input types for getModels', async () => {
             vi.mocked(mockModelRegistry.getModels).mockResolvedValue([]);
 
@@ -405,13 +272,6 @@ describe('tRPC ModelRegistry Router', () => {
             // Invalid capability value
             await expect(
                 caller.modelRegistry.getModels({ capability: 'invalid_capability' } as any)
-            ).rejects.toThrow();
-        });
-
-        it('should handle missing required parameters', async () => {
-            // Missing providerId
-            await expect(
-                caller.modelRegistry.getProviderConfig(undefined as any)
             ).rejects.toThrow();
         });
 

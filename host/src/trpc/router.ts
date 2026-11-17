@@ -408,13 +408,6 @@ const modelRegistryRouter = router({
         .query(async ({ ctx }) => {
             return ctx.modelRegistry.getProviders();
         }),
-    getProviderConfig: publicProcedure
-        .input(z.object({
-            providerId: z.string()
-        }))
-        .query(async ({ input, ctx }) => {
-            return ctx.modelRegistry.getProviderConfig(input.providerId);
-        }),
     getModels: publicProcedure
         .input(z.object({
             providerId: z.string().optional(),
@@ -423,14 +416,6 @@ const modelRegistryRouter = router({
         }))
         .query(async ({ input, ctx }) => {
             return ctx.modelRegistry.getModels(input);
-        }),
-    refresh: publicProcedure
-        .mutation(async ({ ctx }) => {
-            await ctx.modelRegistry.refresh();
-        }),
-    getCacheStatus: publicProcedure
-        .query(async ({ ctx }) => {
-            return ctx.modelRegistry.getCacheStatus();
         }),
 });
 

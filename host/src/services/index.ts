@@ -15,7 +15,6 @@ export type {
     ModelsDevAPI,
     ProviderConfig,
     ModelFilter,
-    CacheStatus,
 } from './model-registry.js';
 
 // 如果需要在主进程中使用实现类，请直接从 model-registry.js 导入

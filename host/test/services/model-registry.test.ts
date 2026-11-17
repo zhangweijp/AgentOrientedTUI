@@ -338,6 +338,23 @@ describe('ModelRegistry Service', () => {
             expect(providers).toHaveLength(3);
         });
 
+        it('uses the last cached catalog when a stale lookup cannot refresh it', async () => {
+            mockFetch.mockResolvedValueOnce({ ok: true, json: async () => mockModelsDevData });
+            const before = await registry.getProviders();
+            const now = Date.now();
+            mockFetch.mockRejectedValueOnce(new Error('Network error'));
+            vi.mocked(fs.readFile).mockResolvedValueOnce(JSON.stringify({ data: mockModelsDevData, timestamp: now }));
+
+            const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 25 * 60 * 60 * 1000);
+            try {
+                expect(await registry.getProviders()).toEqual(before);
+                expect(mockFetch).toHaveBeenCalledTimes(2);
+                expect(fs.readFile).toHaveBeenCalledWith(mockCacheFile, 'utf-8');
+            } finally {
+                clock.mockRestore();
+            }
+        });
+
         it('should save cache with correct structure', async () => {
             mockFetch.mockResolvedValueOnce({
                 ok: true,
@@ -552,85 +569,6 @@ describe('ModelRegistry Service', () => {
 
             // Google model has 0 cost, should be included
             expect(models.some(m => m.id === 'gemini-2.0-flash-exp')).toBe(true);
-        });
-    });
-
-    describe('Cache Status', () => {
-        it('should return correct cache status after fetch', async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: async () => mockModelsDevData,
-            });
-
-            await registry.getProviders();
-
-            const status = registry.getCacheStatus();
-
-            expect(status.lastFetch).toBeGreaterThan(0);
-            expect(status.isStale).toBe(false);
-            expect(status.providerCount).toBe(3);
-            expect(status.modelCount).toBe(5);
-        });
-
-        it('should indicate stale cache after TTL', async () => {
-            // Mock old cached data
-            const oldCachedData = {
-                data: mockModelsDevData,
-                timestamp: Date.now() - 25 * 60 * 60 * 1000, // 25 hours ago
-            };
-            vi.mocked(fs.readFile).mockResolvedValueOnce(JSON.stringify(oldCachedData));
-
-            mockFetch.mockRejectedValueOnce(new Error('Network error'));
-
-            await registry.getProviders();
-
-            const status = registry.getCacheStatus();
-
-            expect(status.isStale).toBe(true);
-        });
-
-        it('should return zero counts when no data', async () => {
-            const status = registry.getCacheStatus();
-
-            expect(status.lastFetch).toBe(0);
-            expect(status.isStale).toBe(true);
-            expect(status.providerCount).toBe(0);
-            expect(status.modelCount).toBe(0);
-        });
-    });
-
-    describe('Refresh Functionality', () => {
-        it('should force refresh data', async () => {
-            // Initial fetch
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: async () => mockModelsDevData,
-            });
-
-            await registry.getProviders();
-
-            expect(mockFetch).toHaveBeenCalledTimes(1);
-
-            // Refresh should fetch again
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: async () => mockModelsDevData,
-            });
-
-            await registry.refresh();
-
-            expect(mockFetch).toHaveBeenCalledTimes(2);
-        });
-
-        it('uses the last cached catalog when refresh fails', async () => {
-            mockFetch.mockResolvedValueOnce({ ok: true, json: async () => mockModelsDevData });
-            const before = await registry.getProviders();
-
-            mockFetch.mockRejectedValueOnce(new Error('Network error'));
-            vi.mocked(fs.readFile).mockResolvedValueOnce(JSON.stringify({ data: mockModelsDevData, timestamp: Date.now() }));
-            await registry.refresh();
-
-            expect(await registry.getProviders()).toEqual(before);
         });
     });
 

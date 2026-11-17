@@ -13,7 +13,6 @@ import { SettingsPanel } from './SettingsPanel.js';
 import { SettingsSidebar } from './SettingsSidebar.js';
 import { ModelTab } from './ModelTab.js';
 import { ThemeTab } from './ThemeTab.js';
-import { ModelTabHeader } from './ModelTabHeader.js';
 
 describe('Responsive Behavior', () => {
     const defaultProps = {
@@ -268,77 +267,6 @@ describe('Responsive Behavior', () => {
                 expect(gridContainer.className).toContain('gap-3');
                 expect(gridContainer.className).toContain('sm:gap-4');
             }
-        });
-    });
-
-    describe('ModelTabHeader responsive layout', () => {
-        it('should stack vertically on mobile', () => {
-            const { container } = render(
-                <ModelTabHeader 
-                    searchQuery="" 
-                    onSearchChange={vi.fn()} 
-                    onAddProvider={vi.fn()} 
-                />
-            );
-
-            const headerRow = container.querySelector('[class*="flex-col"]');
-            expect(headerRow?.className).toContain('flex-col');
-            expect(headerRow?.className).toContain('sm:flex-row');
-        });
-
-        it('should have responsive heading size', () => {
-            const { container } = render(
-                <ModelTabHeader 
-                    searchQuery="" 
-                    onSearchChange={vi.fn()} 
-                    onAddProvider={vi.fn()} 
-                />
-            );
-
-            const heading = container.querySelector('h2');
-            expect(heading?.className).toContain('text-[17px]');
-            expect(heading?.className).toContain('sm:text-[22px]');
-            expect(heading?.className).toContain('md:text-[28px]');
-        });
-
-        it('should have responsive spacing', () => {
-            const { container } = render(
-                <ModelTabHeader 
-                    searchQuery="" 
-                    onSearchChange={vi.fn()} 
-                    onAddProvider={vi.fn()} 
-                />
-            );
-
-            const mainContainer = container.querySelector('[class*="space-y"]');
-            expect(mainContainer?.className).toContain('space-y-3');
-            expect(mainContainer?.className).toContain('sm:space-y-4');
-        });
-
-        it('should center button content on mobile', () => {
-            const { container } = render(
-                <ModelTabHeader 
-                    searchQuery="" 
-                    onSearchChange={vi.fn()} 
-                    onAddProvider={vi.fn()} 
-                />
-            );
-
-            const button = container.querySelector('button');
-            expect(button?.className).toContain('justify-center');
-        });
-
-        it('should have full width search bar on mobile', () => {
-            const { container } = render(
-                <ModelTabHeader 
-                    searchQuery="" 
-                    onSearchChange={vi.fn()} 
-                    onAddProvider={vi.fn()} 
-                />
-            );
-
-            const searchContainer = container.querySelector('.flex-1');
-            expect(searchContainer?.className).toContain('w-full');
         });
     });
 

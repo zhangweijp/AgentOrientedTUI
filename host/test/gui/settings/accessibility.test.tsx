@@ -10,7 +10,6 @@ import { SettingsPanel } from '../../../src/gui/components/settings/SettingsPane
 import { ModelTab } from '../../../src/gui/components/settings/ModelTab.js';
 import { ThemeTab } from '../../../src/gui/components/settings/ThemeTab.js';
 import { AddProviderModal } from '../../../src/gui/components/settings/AddProviderModal.js';
-import { ConfigCard } from '../../../src/gui/components/settings/ConfigCard.js';
 import { ThemeCard } from '../../../src/gui/components/settings/ThemeCard.js';
 import { SettingsSidebar } from '../../../src/gui/components/settings/SettingsSidebar.js';
 
@@ -160,43 +159,6 @@ describe('Accessibility Tests', () => {
             expect(onSelect).toHaveBeenCalled();
         });
 
-        it('should allow keyboard navigation on ConfigCard', () => {
-            const onSelect = vi.fn();
-            const onEdit = vi.fn();
-            const onDelete = vi.fn();
-
-            const config = {
-                id: 1,
-                name: 'Test Config',
-                model: 'gpt-4',
-                providerId: 'openai',
-                apiKey: 'sk-test1234',
-                temperature: 0.7,
-                maxSteps: 10,
-                isActive: false,
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-            };
-
-            render(
-                <ConfigCard
-                    config={config}
-                    isActive={false}
-                    onSelect={onSelect}
-                    onEdit={onEdit}
-                    onDelete={onDelete}
-                />
-            );
-
-            const card = screen.getByRole('listitem');
-            
-            fireEvent.keyDown(card, { key: 'Enter' });
-            expect(onSelect).toHaveBeenCalled();
-
-            onSelect.mockClear();
-            fireEvent.keyDown(card, { key: ' ' });
-            expect(onSelect).toHaveBeenCalled();
-        });
     });
 
     describe('Focus Trap', () => {
