@@ -91,6 +91,9 @@ export function staticCases(api, Type) {
       assert.deepEqual(api.getToolCatalog([api.defineViewType({ name: 'Empty' })]), []);
       const search = inputSchema => define({ name: 'Search', tools: { search: { ...declaration(), inputSchema } } });
       assert.throws(() => search(Type.Object({ path: Type.String({ format: 'email' }) })), code('TOOL_SCHEMA_UNSUPPORTED'));
+      for (const path of [Type.String({ pattern: '^file$' }), Type.TemplateLiteral('file-${number}')]) {
+        assert.throws(() => search(Type.Object({ path })), { code: 'TOOL_SCHEMA_UNSUPPORTED', path: '$.properties.path.pattern' });
+      }
       assert.equal(search(Type.Object({ pattern: Type.String() })).tools.search.inputSchema.properties.pattern.type, 'string');
     }],
   ];

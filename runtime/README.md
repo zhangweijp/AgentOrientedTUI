@@ -1,67 +1,72 @@
-# `@aotui/runtime`
+# @aotui/runtime
 
-The Runtime is the Node.js Host layer for installing AOTUI applications, managing Worker execution, publishing current Views and Refs, binding observations and calls to each App instance, and reporting actual resource release.
+Run trusted AOTUI Apps in a Node Host. Runtime owns Worker lifecycle, complete View snapshots, Observation adoption, and Tool dispatch. The App owns business state and effects. The Host owns execution policy, the model request, and its context budget.
+
+## Install an App and make a call
+
+Use Runtime 8.0.0 and SDK 0.9.0 from the same delivery. Build the counter in the README shipped with `@aotui/sdk`. Put the following in `host.mjs` in the same project and run `node host.mjs ./dist/app.js`. To install packaged Apps by manifest, use `AppRegistry`.
+
+```js
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { createRuntime } from '@aotui/runtime';
+
+const runtime = createRuntime();
+try {
+  const desktopId = await runtime.createDesktop();
+  const appId = await runtime.installDynamicWorkerApp(desktopId, pathToFileURL(resolve(process.argv[2])).href);
+  const desktop = runtime.getDesktop(desktopId);
+  const instanceId = desktop.getInstalledApps().find(app => app.appId === appId)?.appInstanceId;
+  if (!instanceId) throw Error('App instance unavailable');
+  const access = runtime.getAppInteraction(desktopId, appId, instanceId);
+  if (access.status !== 'ready') throw Error(access.issue.message);
+  const client = access.interaction;
+
+  async function observe() {
+    const result = await client.observe({ all: true });
+    if (result.status !== 'observed') throw Error(result.issue.message);
+    const observation = result.observation;
+    if (client.adoptObservation(observation.observationId).status !== 'adopted') {
+      client.releaseObservation(observation.observationId);
+      throw Error('Observation could not be adopted');
+    }
+    return observation;
+  }
+
+  const current = await observe();
+  const tool = current.tools.find(tool => tool.name === 'add');
+  if (!tool) throw Error('Counter tool unavailable');
+  const result = await client.invoke({
+    observationId: current.observationId,
+    toolId: tool.id,
+    invocationId: 'increment-1',
+    input: { view_id: 'counter', by: 1 },
+  });
+  if (result.kind !== 'receipt' || result.receipt.outcome.status !== 'succeeded') {
+    throw Error(JSON.stringify(result));
+  }
+
+  const next = await observe();
+  console.log(next.views.find(view => view.id === 'counter')?.content.value);
+  client.releaseObservation(next.observationId);
+} finally {
+  const close = await runtime.beginShutdown().completion;
+  if (!close.resourcesReleased || !close.ok) throw Error(JSON.stringify(close));
+}
+```
+
+## Integrate with a model
+
+- A successful `observe({ all: true })` contains every opened View in the current committed frame. Use the Tools and eligible `view_id` values of that same Observation. Ref arguments resolve against the original adopted data, subject to policy and live source checks.
+- Format the complete projection into XML-wrapped Markdown User Messages and supply the available Tool schemas. Check the actual request budget, including history, instructions, other Apps and reserved output, before adoption. If the request does not fit, release the candidate and keep the adopted Observation. Adopting a new one revokes the previous calling eligibility. Use `preview()` for diagnostics without adopting.
+- Tool receipts describe operations. Business data and its changes appear in Views. A successful operation can be followed by a failed observation. A wait timeout can leave work in flight. Use `readReceipt({ observationId, invocationId })` with the original IDs while the record is retained. For an `unknown` outcome, use the receipt, View and App recovery instructions before deciding whether to repeat a write.
+- The bundled Node Worker runs **trusted App code** with host-granted system access. The default `worker.maxWorkers` is `Number.POSITIVE_INFINITY`. Install with `toolsEnabled: false` for observation-only access. The Host can lower an App's fixed `projectionLimits` for admission. Await shutdown completion and check `resourcesReleased` before treating the Worker and its owned resources as released.
+- State storage is opt-in per App. Hosts using the default SQLite backend install the optional `better-sqlite3@13.2.0` peer. Hosts with another backend can supply `storageBackend`. A staged state update becomes a confirmed save when its flush receipt reports success. Existing records in `state.sqlite3` remain readable. Automatic import of older JSON state files ended.
 
 ## Choose a package entry
 
-- `@aotui/runtime` is the Node Host entry. `createRuntime()` returns an `IKernel` for App installation, Desktop lifecycle, observation, invocation and shutdown. The managed path supplies the bundled Worker and App state storage. [Host interaction](docs/runtime-app-interaction.md) · [Persistence](docs/persistence.md)
-- `@aotui/runtime/core` is the pure TypeScript entry for trusted producers and hosts assembling their own integration. It provides the single-instance Snapshot Core, observation and invocation, projection, schema compilation and StateSession. The integrator supplies the producer, execution, authorization and storage ports. [Pure Core example](docs/core-public-entry.md)
-- `@aotui/runtime/spi` provides the factory, renderer and Host extension contracts, including `RuntimeContext`, frame bindings and Worker capability markers. Custom integrations use the SPI from their matching Runtime build. [Managed factory and Worker contract](docs/runtime-app-interaction.md)
-- `@aotui/runtime/adapters` provides Driver-neutral View markup, Tool names and system instructions. Its `/dom` entry provides helpers for DOM producers, and `/memory-state-storage` supplies an in-memory storage adapter for StateSession. [Pure Core and storage example](docs/core-public-entry.md)
-- `@aotui/agent-driver-adapter` provides the standard `SemanticAOTUIDrivenSource`. Adapter 0.5.0 uses Runtime 8.0.0 and Agent Driver 0.3.2 as peers. [Standard Source integration](docs/semantic-host-integration.zh-CN.md)
+- `@aotui/runtime` provides the managed Node Host and public interaction types.
+- `@aotui/runtime/core` provides pure TypeScript semantics for hosts assembling their own producer, execution policy, and resource ports. `@aotui/runtime/spi` supplies the factory and integration types. Publish normalized Tool input schemas. Use `store.acquire(snapshotId)` to hold a source across turns and release the hold when its consumer finishes.
+- `@aotui/runtime/adapters` provides presentation helpers. The standard Agent Driver Source lives in the separate `@aotui/agent-driver-adapter` package.
 
-App authors use `@aotui/sdk` for Preact and `@aotui/sdk/app` for plain TypeScript. SDK 0.9.0 and Runtime 8.0.0 are the matched App and Node Worker release. Use the package declarations, guides and tests from the same release for advanced integrations.
-
-## Standard Agent integration
-
-Install apps through the Runtime's AppRegistry and use `SemanticAOTUIDrivenSource` as a Context-driven AgentDriver source. Each call to `getContext()` returns one coherent set of messages, Tools, and captured execution bindings. Release that same Context after the model turn and all tool calls finish:
-
-```ts
-import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
-
-const source = new SemanticAOTUIDrivenSource(desktop, runtime);
-const context = await source.getContext();
-try {
-  // Manual consumers adopt explicitly. The normal Driver does this before its model turn.
-  await context.adopt?.();
-  // Use this Context's messages, tools and executeTool until the turn finishes.
-} finally {
-  await context.release?.();
-}
-source.dispose();
-```
-
-Use `runtime.getAppInteraction(desktopId, appId, expectedInstanceId, policy?)` for a running App. The ready result contains the bound interaction. Read the current instance ID from the Desktop app list. Use `preview()` for rendering without a calling observation. Use the Desktop close API to end the instance.
-
-The Runtime root exports `ObservationSelection`, `AppInvocation` and `ReceiptQuery` for typed Hosts. Prepare an observation with `{ all: true }`, adopt it, then send its ID, the observed Tool ID, an invocation ID and the receiving `input.view_id`. Read the terminal receipt with the original observation and invocation IDs. Runtime validates submitted requests before dispatch. [Host interaction example](docs/runtime-app-interaction.md)
-
-AppRegistry registers resolved local App packages and validates their generated manifests. The Host product package `@aotui/system-chat` provides the `agentina` executable, remote catalog discovery, and npm package installation.
-
-## Current interaction contract
-
-Tool execution is enabled by default. The trusted Host can install with `toolsEnabled: false` to keep View observation and preview read-only. One App/ViewType Tool contract covers ordinary parameters and multiple top-level object or object-list Refs, including optional fields and ordered arrays of Ref names. A whole-array Ref remains a single string input; a multi-selection is an array of strings. Runtime resolves the complete Ref name from the bound Observation and supplies frozen values. A read-only payload does not make the Tool read-only: the App owns business mutation and validation. Worker negotiation, activation, source checks and authorization still apply. The retired `interactionModes` option is rejected.
-
-Preact Apps declare shared tools with `defineViewType<Context>()` and register the descriptors in `createTUIApp({ app_name, component, viewTypes })`. Each page supplies its own `View.context`. A call uses `view_id` to select the receiving View. Root lists names with `ToolCatalog`. Complete definitions belong in Context Tools. The factory advertises managed `app-lifecycle-v2` support by default. Apps that own resources register callbacks with `useAppLifecycle({ stop?, close? })`.
-
-Each Snapshot Core binds one App run through `createSnapshotCore({ appId, instanceId })` and captures optional limits at creation. Overrides can only lower the default limits. The default Tool schema limit is 64 KiB of canonical JSON UTF-8 for the complete normalized profile, including its internal marker. [Pure Core configuration and migration](docs/core-public-entry.md#snapshot-limits)
-
-The Core tracks one real operation per App instance. Use `readReceipt({ observationId, invocationId })` to read the original or late result under the instance policy. Both IDs come from the original invocation. A receipt records success, business failure, rejection before handler entry, or an unknown outcome. Read the App's error and recovery data alongside its current View before making another change. The caller's wait can end while the operation is still running.
-
-App authors start with `README.md` and `docs/app-authoring.md` in `@aotui/sdk`. See the [local delivery guide](docs/sdk-runtime-distribution.md#current-delivery) for matching packages.
-
-## Documentation
-
-- [Semantic Host integration](docs/semantic-host-integration.zh-CN.md)
-- [Runtime App interaction](docs/runtime-app-interaction.md)
-- [Local INIT / OPEN diagnostics](docs/initialization-diagnostics.md)
-- [View Tools and app cleanup](docs/tool-lifecycle.md)
-- [Runtime shutdown reports](docs/runtime-shutdown.md)
-- [Pure Core public entry](docs/core-public-entry.md)
-- [Persistence](docs/persistence.md)
-- [Worker lifecycle](docs/worker-lifecycle.md)
-- [Dated package distribution evidence](docs/sdk-runtime-distribution.md)
-
-See the repository [guide](../GUIDE.md) for package build order and local development.
-
-
-当前 View 必须显式声明 `type` 和 `kind="instruction" | "state"`，实例 `id` 只标识页面实例。正文由最终消息边界包装并编码一次。两种 Producer、原样内容和迁移方式见 `@aotui/sdk` 包内 `docs/views.md`。
+Installed declaration entry points are under `dist/`. In this repository, see the [public Host entry](src/index.ts), [Core exports](src/core/index.ts), and [integration ports](src/spi/index.ts).

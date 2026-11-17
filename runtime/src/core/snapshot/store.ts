@@ -1,25 +1,22 @@
 import { SNAPSHOT_SCHEMA_VERSION } from './types.js';
 import type {
-    AppSnapshotV5, CommitResult, LeaseResult, PreparedSnapshotFailure, RefLookup, RefSelector, SnapshotCore,
-    SnapshotHealth, SnapshotIssue, SnapshotIssueCode, SnapshotLease, SnapshotLookup, SnapshotRead,
+    AppSnapshot, CommitResult, HoldResult, PreparedSnapshotFailure, RefLookup, RefSelector, SnapshotCore,
+    SnapshotHealth, SnapshotIssue, SnapshotIssueCode, SnapshotHold, SnapshotLookup, SnapshotRead,
     SnapshotStoreOptions, SnapshotStoreStats, ToolLookup, ToolSelector, AppIdentityRead,
 } from './types.js';
 import { utf8Size } from './json.js';
 import { captureSnapshotLimits, refKey, snapshotId } from './snapshot-support.js';
-import { validatePreparedV5Draft } from './v5-validator.js';
+import { validatePreparedSnapshot } from './validate-snapshot.js';
 
 interface SnapshotEntry {
-    readonly snapshot: AppSnapshotV5;
+    readonly snapshot: AppSnapshot;
     canonical: string | undefined;
     readonly bytes: number;
-    readonly leases: Map<object, number | null>;
-    retiredAt?: number;
+    holds: number;
 }
-const DEFAULT_HISTORY_ENTRIES = 64;
-const DEFAULT_HISTORY_BYTES = 32 * 1024 * 1024;
-const DEFAULT_HISTORY_TTL = 10 * 60_000;
-const DEFAULT_LEASE_TTL = 60_000;
-const DEFAULT_MAX_ACTIVE_LEASES = 1_024;
+const DEFAULT_HELD_SNAPSHOTS = 64;
+const DEFAULT_HELD_SNAPSHOT_BYTES = 32 * 1024 * 1024;
+const DEFAULT_ACTIVE_HOLDS = 1_024;
 
 function boundedText(value: string, limit: number): string {
     let prefix = '', bytes = 0;
@@ -44,14 +41,6 @@ function issue(
         ...(context.path !== undefined ? { path: boundedText(typeof context.path === 'string' ? context.path : '', 512) } : {}),
     });
 }
-function releaseLease(leases: Map<object, number | null> | undefined, token: object, settle: (() => void) | undefined): () => void {
-    return () => {
-        if (!leases) return;
-        const owned = leases, finish = settle;
-        leases = undefined; settle = undefined;
-        owned.delete(token); finish?.();
-    };
-}
 function capacity(label: string): never {
     throw Object.assign(new Error('Snapshot capacity exceeded: ' + label), { code: 'SNAPSHOT_CAPACITY' });
 }
@@ -67,8 +56,7 @@ function nonEmpty(value: string, label: string): void {
  * A Snapshot Core belongs to one App run. The trusted owner binds its identity
  * at construction and controls stop/dispose. Only the committer can publish.
  *
- * Synchronous Core commit is intentional: no await can interleave the final pointer swap.
- * Does NOT prove that a Producer's input represented an atomic SDK render; M3 owns that.
+ * The Producer supplies a complete frame. The Core publishes it in one synchronous commit.
  */
 export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore {
     const limits = captureSnapshotLimits(options);
@@ -76,16 +64,12 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
     nonEmpty(appId, 'appId');
     nonEmpty(instanceId, 'instanceId');
     const now = options.now ?? Date.now;
-    const maxHistoryEntries = options.maxHistoryEntries ?? DEFAULT_HISTORY_ENTRIES;
-    const maxHistoryBytes = options.maxHistoryBytes ?? DEFAULT_HISTORY_BYTES;
-    const historyTtlMs = options.historyTtlMs ?? DEFAULT_HISTORY_TTL;
-    const leaseTtlMs = options.leaseTtlMs ?? DEFAULT_LEASE_TTL;
-    const maxActiveLeases = options.maxActiveLeases ?? DEFAULT_MAX_ACTIVE_LEASES;
-    positiveInteger(maxActiveLeases, 'maxActiveLeases', true);
-    positiveInteger(maxHistoryEntries, 'maxHistoryEntries', true);
-    positiveInteger(maxHistoryBytes, 'maxHistoryBytes', true);
-    positiveInteger(historyTtlMs, 'historyTtlMs', true);
-    positiveInteger(leaseTtlMs, 'leaseTtlMs');
+    const maxHeldSnapshots = options.maxHeldSnapshots ?? DEFAULT_HELD_SNAPSHOTS;
+    const maxHeldSnapshotBytes = options.maxHeldSnapshotBytes ?? DEFAULT_HELD_SNAPSHOT_BYTES;
+    const maxActiveHolds = options.maxActiveHolds ?? DEFAULT_ACTIVE_HOLDS;
+    positiveInteger(maxHeldSnapshots, 'maxHeldSnapshots', true);
+    positiveInteger(maxHeldSnapshotBytes, 'maxHeldSnapshotBytes', true);
+    positiveInteger(maxActiveHolds, 'maxActiveHolds', true);
 
     const ceilings = { maxIdentityBytes: 8 * 1024 * 1024, maxCurrentBytes: 32 * 1024 * 1024 };
     const retention = {
@@ -101,6 +85,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
     let identity: Readonly<{ appId: string; instanceId: string }> | undefined = { appId, instanceId };
     let status: SnapshotHealth = 'unready';
     let current: SnapshotEntry | undefined;
+    let activeHolds = 0;
     let lastIssue: SnapshotIssue | undefined;
     let seenProducerSeq = 0;
     let seenSourceEpoch = 0;
@@ -111,39 +96,31 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
         if (!Number.isFinite(value) || value < 0) throw new RangeError('Clock must provide finite non-negative milliseconds');
         return value;
     }
-    function cleanLeases(entry: SnapshotEntry, time: number): void {
-        for (const [id, deadline] of entry.leases) {
-            if (deadline !== null && time >= deadline) entry.leases.delete(id);
-        }
-    }
-    function trimExpired(time = clock()): void {
-        for (const [id, entry] of entries) {
-            cleanLeases(entry, time);
-            if (entry.retiredAt !== undefined && entry.leases.size === 0) {
-                entries.delete(id);
-            }
-        }
-    }
-    function historyFitsAfterCommit(time: number): boolean {
-        trimExpired(time);
-        let count = 0, bytes = 0;
-        // Only held entries, including the outgoing current snapshot, survive the swap.
+    function holdsFitAfterCommit(): boolean {
+        let count = 0;
+        let bytes = 0;
         for (const entry of entries.values()) {
-            if (entry.leases.size === 0) continue;
+            if (entry.holds === 0) continue;
             count++;
             bytes += entry.bytes;
         }
-        return count <= maxHistoryEntries && bytes <= maxHistoryBytes;
+        return count <= maxHeldSnapshots && bytes <= maxHeldSnapshotBytes;
     }
-    function retire(entry: SnapshotEntry, time: number): void {
+    function retire(entry: SnapshotEntry): void {
         entry.canonical = undefined;
-        entry.retiredAt = time;
-        if (entry.leases.size === 0) entries.delete(entry.snapshot.id);
+        if (entry.holds === 0) entries.delete(entry.snapshot.id);
     }
-    function clearExpiredAndLookup(id: string): SnapshotEntry | undefined {
-        if (!identity) return undefined;
-        trimExpired();
-        return entries.get(id);
+    function releaseHold(id: string): () => void {
+        let released = false;
+        return () => {
+            if (released) return;
+            released = true;
+            const entry = entries.get(id);
+            if (!entry) return;
+            entry.holds--;
+            activeHolds--;
+            if (entry !== current && entry.holds === 0) entries.delete(id);
+        };
     }
     function rejected(code: SnapshotIssueCode, message: string, context: Parameters<typeof issue>[2] = {}): CommitResult {
         return Object.freeze({ status: 'rejected', issue: issue(code, message, context) });
@@ -163,17 +140,14 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
             lastIssue = undefined;
             const previous = current;
             current = undefined;
-            let time: number | undefined;
-            try { time = clock(); trimExpired(time); }
-            catch { /* Revocation and explicit lease release do not require time. */ }
-            if (previous) retire(previous, time ?? previous.snapshot.createdAt);
+            if (previous) retire(previous);
         },
         dispose(): void {
             if (!identity) return;
             identity = undefined;
             current = undefined;
             lastIssue = undefined;
-            for (const entry of entries.values()) entry.leases.clear();
+            activeHolds = 0;
             entries.clear();
         },
     });
@@ -201,7 +175,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
             const source = identity;
             if (!source) return rejected('APP_STOPPED', 'Snapshot Core is closed');
             const time = clock();
-            const checked = validatePreparedV5Draft(input, limits, (appId, instanceId) =>
+            const checked = validatePreparedSnapshot(input, limits, (appId, instanceId) =>
                 appId === source.appId && instanceId === source.instanceId ? current?.snapshot.tools : undefined);
             if (!identity) return rejected('APP_STOPPED', 'Snapshot Core is closed');
             if (!checked.ok) {
@@ -268,8 +242,8 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
                 markDegraded(source, problem);
                 return Object.freeze({ status: 'rejected', issue: problem });
             }
-            if (!historyFitsAfterCommit(time)) {
-                const problem = issue('SNAPSHOT_CAPACITY', 'Retained lease budget prevents a safe commit', { appId: draft.appId });
+            if (!holdsFitAfterCommit()) {
+                const problem = issue('SNAPSHOT_CAPACITY', 'Held snapshot budget prevents a safe commit', { appId: draft.appId });
                 markDegraded(source, problem);
                 return Object.freeze({ status: 'rejected', issue: problem });
             }
@@ -284,13 +258,13 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
                 refs: data.draft.refs,
                 tools: data.draft.tools,
                 contentDigest: data.contentDigest,
-            }) as AppSnapshotV5;
+            }) as AppSnapshot;
             const record: SnapshotEntry = {
                 snapshot, canonical: data.canonicalContent, bytes: data.bytes,
-                leases: new Map(),
+                holds: 0,
             };
             // The following mutation block has no await and publishes one pointer.
-            if (current) retire(current, time);
+            if (current) retire(current);
             entries.set(snapshot.id, record);
             current = record;
             seenSourceEpoch = draft.sourceEpoch;
@@ -308,7 +282,6 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
         readLatest(appId: string): SnapshotRead {
             if (!identity) return Object.freeze({ status: 'stopped' });
             if (identity.appId !== appId) return Object.freeze({ status: 'unready' });
-            trimExpired();
             if (status === 'ready' && current) {
                 return Object.freeze({ status: 'ready', snapshot: current.snapshot });
             }
@@ -322,49 +295,26 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
             return Object.freeze({ status: status === 'stopped' ? 'stopped' as const : 'unready' as const });
         },
         getById(id: string): SnapshotLookup {
-            const entry = clearExpiredAndLookup(id);
+            const entry = entries.get(id);
             if (entry) return Object.freeze({ status: 'found', snapshot: entry.snapshot });
             return Object.freeze({
                 status: 'rejected',
-                issue: issue('SNAPSHOT_EXPIRED', 'Snapshot is unavailable or expired', { snapshotId: id }),
+                issue: issue('SNAPSHOT_UNAVAILABLE', 'Snapshot unavailable', { snapshotId: id }),
             });
         },
-        acquire(id: string, requestedTtlMs?: number | Readonly<{ lifetime: 'owner' }>): LeaseResult {
-            const entry = clearExpiredAndLookup(id);
-            if (!entry) {
-                return Object.freeze({ status: 'rejected', issue: issue('SNAPSHOT_EXPIRED', 'Snapshot unavailable', { snapshotId: id }) });
-            }
-            const fields = requestedTtlMs !== null && typeof requestedTtlMs === 'object'
-                ? Object.getOwnPropertyDescriptors(requestedTtlMs) : undefined;
-            const owned = fields !== undefined && Reflect.ownKeys(fields).length === 1 &&
-                fields.lifetime?.enumerable === true && 'value' in fields.lifetime && fields.lifetime.value === 'owner';
-            const ttl = requestedTtlMs === undefined ? leaseTtlMs : requestedTtlMs;
-            if (!owned && (typeof ttl !== 'number' || !Number.isSafeInteger(ttl) || ttl <= 0 || ttl > leaseTtlMs)) {
-                return Object.freeze({ status: 'rejected', issue: issue('SNAPSHOT_INVALID', 'Invalid lease TTL', { snapshotId: id }) });
-            }
-            const time = clock();
-            // An explicit owner keeps the original source usable across long model
-            // turns. A timed pin alone must not renew expired history forever.
-            if (entry.retiredAt !== undefined && time >= entry.retiredAt + historyTtlMs &&
-                ![...entry.leases.values()].some(deadline => deadline === null)) {
-                return Object.freeze({ status: 'rejected', issue: issue('SNAPSHOT_EXPIRED', 'Historical snapshot retention expired', { snapshotId: id }) });
-            }
-            const activeLeaseCount = [...entries.values()].reduce((sum, item) => sum + item.leases.size, 0);
-            if (activeLeaseCount >= maxActiveLeases) {
-                return Object.freeze({ status: 'rejected', issue: issue('SNAPSHOT_CAPACITY', 'Active lease limit reached', { snapshotId: id }) });
-            }
-            const expiresAt = owned ? null : time + (ttl as number);
-            const token = {};
-            entry.leases.set(token, expiresAt);
-            const lease: SnapshotLease = Object.freeze({
-                snapshot: entry.snapshot, expiresAt, release: releaseLease(entry.leases, token, () => {
-                    if (entry.retiredAt !== undefined && entry.leases.size === 0) entries.delete(id);
-                }),
-            });
-            return Object.freeze({ status: 'acquired', lease });
+        acquire(id: string): HoldResult {
+            const entry = entries.get(id);
+            if (!entry) return Object.freeze({ status: 'rejected',
+                issue: issue('SNAPSHOT_UNAVAILABLE', 'Snapshot unavailable', { snapshotId: id }) });
+            if (activeHolds >= maxActiveHolds) return Object.freeze({ status: 'rejected',
+                issue: issue('SNAPSHOT_CAPACITY', 'Active snapshot hold limit reached', { snapshotId: id }) });
+            entry.holds++;
+            activeHolds++;
+            const hold: SnapshotHold = Object.freeze({ snapshot: entry.snapshot, release: releaseHold(id) });
+            return Object.freeze({ status: 'acquired', hold });
         },
         resolveRef(selector: RefSelector): RefLookup {
-            if (!identity) return Object.freeze({ status: 'rejected', issue: issue('SNAPSHOT_EXPIRED', 'Snapshot Core is closed') });
+            if (!identity) return Object.freeze({ status: 'rejected', issue: issue('SNAPSHOT_UNAVAILABLE', 'Snapshot Core is closed') });
             const lookup = store.getById(selector.snapshotId);
             if (lookup.status === 'rejected') return lookup;
             const snapshot = lookup.snapshot;
@@ -388,7 +338,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
             return Object.freeze({ status: 'resolved', ref, target: ref.target });
         },
         getTool(selector: ToolSelector): ToolLookup {
-            if (!identity) return Object.freeze({ status: 'rejected', issue: issue('SNAPSHOT_EXPIRED', 'Snapshot Core is closed') });
+            if (!identity) return Object.freeze({ status: 'rejected', issue: issue('SNAPSHOT_UNAVAILABLE', 'Snapshot Core is closed') });
             const lookup = store.getById(selector.snapshotId);
             if (lookup.status === 'rejected') return lookup;
             const snapshot = lookup.snapshot;
@@ -403,17 +353,15 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
                 'Tool unavailable in source snapshot', { snapshotId: selector.snapshotId }) });
         },
         inspect(): SnapshotStoreStats {
-            if (identity) trimExpired();
-            const snapshots = [...entries.values()];
-            const histories = snapshots.filter(entry => entry.retiredAt !== undefined);
+            const held = [...entries.values()].filter(entry => entry !== current);
             return Object.freeze({
                 state: identity ? 'active' : 'disposed',
                 currentBytes: current?.bytes ?? 0,
                 diagnosticBytes: lastIssue ? utf8Size(lastIssue.code) + utf8Size(lastIssue.message) + utf8Size(lastIssue.path ?? '') : 0,
                 currentSnapshots: current ? 1 : 0,
-                historicalSnapshots: histories.length,
-                historicalBytes: histories.reduce((sum, entry) => sum + entry.bytes, 0),
-                activeLeases: snapshots.reduce((sum, entry) => sum + entry.leases.size, 0),
+                heldSnapshots: held.length,
+                heldSnapshotBytes: held.reduce((sum, entry) => sum + entry.bytes, 0),
+                activeHolds,
             });
         },
     });

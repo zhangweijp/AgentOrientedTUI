@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { apps, close, facts, factsFile, fileView, invoke, runCase, scope, start, toolNames, viewText, working } from './ide-test-harness.mjs';
+import { createRequire } from 'node:module';
+import { apps, close, facts, factsFile, fileView, invoke, modules, runCase, scope, start, toolNames, viewText, working } from './ide-test-harness.mjs';
 
 const fileViews = result => result.views.filter(view => view.type === 'FileDetail').map(view => view.id);
-const activeFiles = async (app, key) =>
-    JSON.parse(await fs.readFile(path.join(app.data, 'app-state', 'test', key, 'activeFiles.json'), 'utf8')).value;
+function activeFiles(app, key) {
+    const Driver = createRequire(path.join(modules, '@aotui/runtime/package.json'))('better-sqlite3');
+    const db = new Driver(path.join(app.data, 'app-state', 'state.sqlite3'), { readonly: true, fileMustExist: true });
+    try {
+        const row = db.prepare('SELECT record FROM aotui_state WHERE namespace = ? AND key = ?')
+            .get(JSON.stringify(['test', key]), 'activeFiles');
+        return JSON.parse(row.record).value;
+    } finally { db.close(); }
+}
 
 try {
     await runCase('FileDetail opening preserves two accepted pages over the default observation limit', async () => {

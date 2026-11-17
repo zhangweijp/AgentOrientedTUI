@@ -36,7 +36,10 @@ export function createStateStorageProxy(instanceId: string, limits: StateTranspo
         replace: (address: StateAddress, text: string) => request('replace', address, text) as Promise<StateMutationResult>,
         remove: (address: StateAddress) => request('remove', address) as Promise<StateMutationResult>,
         release: () => {
-            if (!releasePromise) { closing = true;releasePromise = request('release') as Promise<StateReleaseResult>; }
+            if (!releasePromise) {
+                closing = true;
+                releasePromise = sequence === 0 ? Promise.resolve({ status: 'released' }) : request('release') as Promise<StateReleaseResult>;
+            }
             return releasePromise;
         },
     });

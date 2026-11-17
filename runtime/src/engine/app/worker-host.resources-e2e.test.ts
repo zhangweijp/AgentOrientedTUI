@@ -1,12 +1,13 @@
+import { readSqliteState } from '../../../tests/fixtures/sqlite-state.js';
 import { expect, it, vi } from 'vitest';
 import { once } from 'node:events';
-import { mkdtemp, writeFile, readFile, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { AppWorkerHost } from './worker-host.js';
-import { createNodeStateStorage } from '../../adapters/storage/node-state-storage.js';
+import { createSqliteStateStorage } from '../../adapters/storage/sqlite-state-storage.js';
 import { DEFAULT_NODE_STATE_LIMITS } from './state-storage-host.js';
 import { invokeObservedTool, linkPreactPeer } from '../../../tests/fixtures/semantic-worker-tools.js';
 
@@ -36,10 +37,10 @@ function Root(){
   [,setter] = usePersistentState('value',0);
   return h(View, {kind:'instruction',id:'root',type:RootType,context: { set: async args=>{setter(args.value);return {success:true};} }}, 'Managed state');
 }
-export default createTUIApp({app_name:'c1',component:Root,viewTypes:[RootType]});`);
+export default createTUIApp({persistence:true,app_name:'c1',component:Root,viewTypes:[RootType]});`);
     const host = new AppWorkerHost({ appId: 'app' as any, desktopId: 'd' as any, appModulePath: url(app), timeout: 2000,
         workerScriptPath: join(repo, 'runtime/dist/worker-runtime/index.js'), config: { AOTUI_DATA_DIR: join(dir, 'data'), AOTUI_APP_KEY: 'c1' }, ...extra });
-    return { dir, host, record: join(dir, 'data/app-state/d/c1/value.json') };
+    return { dir, host, read: () => readSqliteState(join(dir, 'data/app-state'), 'd', 'c1', 'value') };
 }
 async function setPersistedValue(host: AppWorkerHost, value: number) {
     const result = await invokeObservedTool(host, 'set', { value }, 'root');
@@ -47,7 +48,7 @@ async function setPersistedValue(host: AppWorkerHost, value: number) {
     return result.receipt.outcome.value;
 }
 it.each(['open', 'replace'] as const)('C1-12 actual Node backend %s remains supervised after actual Worker exit', async held => {
-    const backend = createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS), entered = defer(), finish = defer();
+    const backend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS), entered = defer(), finish = defer();
     const f = await fixture({ persistenceBackend: { async open(input: any) {
         const result = await backend.open(input);if (result.status !== 'opened') return result;
         if (held === 'open') { entered.resolve();await finish.promise; }
@@ -66,13 +67,13 @@ it.each(['open', 'replace'] as const)('C1-12 actual Node backend %s remains supe
         let settled = false;void waiting.then(() => { settled = true; });await Promise.resolve();expect(settled).toBe(false);
         const before = host.getResourceReport();finish.resolve();const report = await waiting;
         expect(backend.getStats().ownerSlots).toBe(0);expect(report).toMatchObject({ state: 'settled', worker: 'exited', resourcesReleased: true, storage: { unsafe: true, actualIO: 0, opening: false, release: { status: 'released' } } });
-        if (held === 'replace') expect(JSON.parse(await readFile(f.record, 'utf8')).value).toBe(12);
+        if (held === 'replace') expect(JSON.parse(f.read()!).value).toBe(12);
         await facts('held-storage-' + held, { before, report, backend: backend.getStats(), actualEffectMayOutliveWorker: true });
     } finally { finish.resolve();host.terminate();await host.waitForResourceRelease();await rm(f.dir, { recursive: true, force: true }); }
 }, 15000);
 
 it.each(['failed', 'unknown'] as const)('C1-19 a terminal backend %s release is settled but cannot claim resourcesReleased', async status => {
-    const backend = createNodeStateStorage(DEFAULT_NODE_STATE_LIMITS);
+    const backend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS);
     const f = await fixture({ persistenceBackend: { async open(input: any) {
         const result = await backend.open(input);if (result.status !== 'opened') return result;
         return { status: 'opened', storage: { ...result.storage, async release() { await result.storage.release();return { status, issue: { code: 'IO_FAILED' } }; } } };

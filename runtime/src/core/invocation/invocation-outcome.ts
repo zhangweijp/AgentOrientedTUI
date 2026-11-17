@@ -1,4 +1,4 @@
-import { isToolResultData } from '../../spi/core/tool-result.js';
+import { isToolResultData } from '../tool/tool-result.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
 import type { JsonValue } from '../snapshot/types.js';
 import type { ObservationJsonLimits } from './observation-types.js';

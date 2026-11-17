@@ -29,7 +29,7 @@ beforeAll(async () => {
         await symlink(join(repository, owner, 'node_modules', name), join(consumer, 'node_modules', name), 'dir');
     }
     for (const file of ['work-items.ts', 'work-items-plain.ts', 'work-items-preact.tsx', 'file-app.tsx', 'file-tools.ts']) {
-        await cp(join(repository, 'sdk/docs/examples', file), join(consumer, file));
+        await cp(join(repository, 'sdk/tests/fixtures', file), join(consumer, file));
     }
     await writeFile(join(consumer, 'package.json'), JSON.stringify({ type: 'module' }));
     await writeFile(join(consumer, 'type-contract.ts'), `
@@ -87,7 +87,7 @@ async function appFolder(name: string, code: string) {
     await mkdir(folder);
     await writeFile(join(folder, 'entry.mjs'), code);
     await writeFile(join(folder, 'aoapp.json'), JSON.stringify({
-        app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v5',
+        app_name: name, version: '0.1.0', toolAuthoringProtocol: 'view-type-tools-v6',
         persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2', entry: { main: './entry.mjs' },
     }));
     return folder;
@@ -217,6 +217,10 @@ export default factory;
             expect(modelSchema).not.toHaveProperty('x-aotui-parameter-contract');
             expect(modelSchema).not.toHaveProperty('properties.selected.x-aotui-ref-value');
             expect(modelSchema).not.toHaveProperty('properties.elements.items.x-aotui-ref-kind');
+            const updateSchema = (model.tools[name + '-update']!.inputSchema as { jsonSchema: unknown }).jsonSchema;
+            expect(updateSchema).toMatchObject({ properties: { options: { properties: {
+                'x-aotui-ref-kind': { const: 'business' },
+            } } } });
             expect(await model.executeTool(name + '-update', { operation: 'reset' }, 'missing-model-receiver'))
                 .toMatchObject({ outcomeStatus: 'rejected', error: { code: 'TOOL_INVALID_ARGS', message: expect.stringContaining('$.view_id') } });
             expect(await model.executeTool(name + '-update', { view_id: 'workspace', operation: 'reset', options: { mode: 'keep', numbers: [1, '2'] } }, 'model-error'))
@@ -226,7 +230,7 @@ export default factory;
         // Use a current binding to update, then read the original captured value
         // until this consumer explicitly adopts the new Observation.
         current = await observe(client);
-        const reset = request(current, 'update', { operation: 'reset', options: { mode: 'keep', numbers: [1, null] } }, 'reset');
+        const reset = request(current, 'update', { operation: 'reset', options: { mode: 'keep', numbers: [1, null], 'x-aotui-ref-kind': 'business' } }, 'reset');
         success(await client.invoke(reset)); success(await client.invoke(reset));
         success(await call('inspect', { selected: selectedRef }));
         current = await observe(client);
@@ -375,10 +379,10 @@ async function prepare(signal) {
 }
 ${adapter === 'plain' ? `
 import { createApp } from '@aotui/sdk/app';
-export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[], async initialize({ signal, registerCleanup, publish }) {
+export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[], async initialize({ signal, registerCleanup, prepareProjection }) {
     await prepare(signal);
     registerCleanup({ stop, close });
-    try { publish({ views: [] }); } catch (error) { trace(error.code); throw error; }
+    try { prepareProjection({ views: [] }); } catch (error) { trace(error.code); throw error; }
 } });` : `
 import { createTUIApp, useAppLifecycle } from '@aotui/sdk';
 const factory = createTUIApp({ app_name: ${JSON.stringify(name)}, viewTypes: [], component: () => {
@@ -449,13 +453,13 @@ import { createApp, defineViewType } from '@aotui/sdk/app';
 defineViewType()({ name: 'Workspace', tools: { bad: { description: 'Invalid declaration',
     inputSchema: Type.Object({ nested: Type.Object({ entry: Type.String({ format: 'email' }) }) }),
     execute: () => ({ success: true }) } } });
-export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[], initialize({ publish }) { publish({ views: [] }); } });
+export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[], initialize({ prepareProjection }) { prepareProjection({ views: [] }); } });
 `);
     const healthy = await appFolder('healthy_schema', `
 import { createApp, createView, defineViewType } from '@aotui/sdk/app';
 const Workspace = defineViewType({ name:'Workspace' });
-export default createApp({ app_name: 'healthy_schema', viewTypes:[Workspace], initialize({ publish }) {
-    publish({ views: [createView(Workspace, { id:'workspace', kind:'state', render:() => ({body:'Healthy'}) })] });
+export default createApp({ app_name: 'healthy_schema', viewTypes:[Workspace], initialize({ prepareProjection }) {
+    prepareProjection({ views: [createView(Workspace, { id:'workspace', kind:'state', render:() => ({body:'Healthy'}) })] });
 } });
 `);
     const registry = new AppRegistry();
@@ -487,7 +491,7 @@ it.each([
         code: 'TOOL_BINDING_INVALID', path: 'View workspace.context', message: 'Supply the instance context object for this ViewType',
     } },
     { fault: 'schema', errorName: 'TypeBoxSchemaExportError', issue: {
-        code: 'TOOL_SCHEMA_UNSUPPORTED', path: '$.properties.value.format', message: 'Declaration uses unsupported ordinary parameter vocabulary.',
+        code: 'TOOL_SCHEMA_UNSUPPORTED', path: '$.properties.value.format', message: 'Declaration uses unsupported tool parameter vocabulary.',
     } },
 ])('preserves a running App $fault diagnostic in observe and the Agent context', async ({ fault, errorName, issue }) => {
     const name = 'broken_' + fault, sibling = 'diagnostic_peer_' + fault;
@@ -501,7 +505,7 @@ const Workspace = defineViewType()({ name:'Workspace', tools:{
     change: { ...tool, execute: ({ context }) => context.change() },
     inspect: { ...tool, execute: () => ({ success:true }) },
 } });
-export default createApp({ app_name:${JSON.stringify(name)}, viewTypes:[Workspace], initialize({ publish, signal }) {
+export default createApp({ app_name:${JSON.stringify(name)}, viewTypes:[Workspace], initialize({ prepareProjection, signal }) {
     let content = { body:'Committed diagnostic workspace',
         refs:[ref('selected', 'last good', { schema:Type.String() })] };
     function change() {
@@ -513,19 +517,19 @@ export default createApp({ app_name:${JSON.stringify(name)}, viewTypes:[Workspac
             ...candidate, context:${fault === 'context' ? 'undefined' : '{ change }'},
         }) });
         try {
-            publish({ views:[rejected] });
+            prepareProjection({ views:[rejected] });
         } catch (error) {
             appendFileSync(${JSON.stringify(log)}, JSON.stringify({ name:error.name, code:error.code, path:error.path, message:error.message }) + '\\n');
             void (async () => {
                 while (!signal.aborted && !existsSync(${JSON.stringify(gate)})) await new Promise(resolve => setTimeout(resolve, 5));
-                if (!signal.aborted) publish({ views:[workspace] });
+                if (!signal.aborted) prepareProjection({ views:[workspace] });
             })();
             return { success:true };
         }
         throw Error('Invalid frame committed');
     }
     const workspace = createView(Workspace, { id:'workspace', kind:'state', render:() => ({ ...content, context: { change } }) });
-    publish({ views:[workspace] });
+    prepareProjection({ views:[workspace] });
 } });
 `);
     const healthy = await appFolder(sibling, `
@@ -605,7 +609,7 @@ const Item = defineViewType()({ name:'Item', tools:{
         execute({ input }) { trace('entered:' + input.selected); return { success:true }; },
     },
 } });
-export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspace, Item], initialize({ publish }) {
+export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspace, Item], initialize({ prepareProjection }) {
     let savedText = 'Item';
     const item = createView(Item, { id:'item_a', kind:'state', render:() => ({ body:savedText,
         refs:[ref('selected', 'committed', { refType:'Text', schema })], context:{ canInspect:true },
@@ -615,7 +619,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
     }) });
     function change(operation) {
             if (operation === 'close' || operation === 'open') {
-                publish({ views: operation === 'close' ? [workspace] : [workspace, item] });
+                prepareProjection({ views: operation === 'close' ? [workspace] : [workspace, item] });
                 return { success:true };
             }
             if (operation === 'save') {
@@ -624,13 +628,13 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
                 savedText = text;
             }
             const candidate = createView(Item, {id:'spill',kind:'state',render:() => ({
-                body: operation === 'ref' || operation === 'marker' ? 'Replacement' : 'x'.repeat(513 * 1024),
+                body: operation === 'ref' || operation === 'marker' ? 'Replacement' : 'x'.repeat((operation === 'save' ? 32 : 513) * 1024),
                 refs: operation === 'marker' ? [ref('selected)', 'ambiguous')] :
                     operation === 'ref' ? [ref('selected', 2, { refType:'Text', schema })] : [],
                 context: { canInspect:false },
             })});
             try {
-                publish({ views:[workspace, candidate] });
+                prepareProjection({ views:[workspace, candidate] });
                 throw Error('Invalid App frame committed');
             } catch (error) {
                 if (!error.code) throw error;
@@ -638,13 +642,13 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
             }
             const repair = async () => {
                 while (!existsSync(${JSON.stringify(log)} + '-' + operation)) await new Promise(resolve => setTimeout(resolve, 5));
-                publish({ views:[workspace, item] });
+                prepareProjection({ views:[workspace, item] });
             };
             void repair();
             if (operation === 'save') return { success:true, data: { message:'File saved. View refresh failed.' } };
             return { success:true };
     }
-    publish({ views:[workspace, item] });
+    prepareProjection({ views:[workspace, item] });
 } });
 `);
     const registry = new AppRegistry();
@@ -652,7 +656,10 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
     try {
         await registry.registerTransient('local:' + folder);
         const desktopId = await runtime.createDesktop(createDesktopId(name));
-        const [installation] = await registry.installAll(runtime.getDesktop(desktopId), { dynamicConfig: { AOTUI_DATA_DIR: join(folder, 'data') } });
+        const [installation] = await registry.installAll(runtime.getDesktop(desktopId), {
+            dynamicConfig: { AOTUI_DATA_DIR: join(folder, 'data') },
+            projectionLimits: { observation: { maxCanonicalBytes: 16 * 1024 } },
+        });
         if (!installation || installation.status === 'failed') throw Error(JSON.stringify(installation));
         const client = interaction(runtime, desktopId, installation.appId);
         const before = await observe(client);
@@ -697,7 +704,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
             outcome: { status: 'succeeded', value: { success: true, data: { message: 'File saved. View refresh failed.' } } } } });
         expect(await readFile(savedFile, 'utf8')).toBe('Saved business text\n');
         const diagnostic = { status: 'rejected', issue: {
-            code: 'SNAPSHOT_SERIALIZATION_ERROR', path: '$.views[1].content.value',
+            code: 'OBSERVATION_CAPACITY', path: '$.observation',
         } };
         expect(await frame(client)).toMatchObject(diagnostic);
         expect(await client.preview()).toMatchObject(diagnostic);
@@ -722,7 +729,7 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Workspa
     }
 }, 15_000);
 
-it.each(adapters)('rejects opening a second 400 KiB View in %s and keeps the first fully observable and callable', async adapter => {
+it.each(adapters)('enforces separate installed page and byte limits in %s while retaining the accepted page', async adapter => {
     const name = 'capacity_' + adapter;
     const gate = join(consumer, name + '-open-b');
     const lifecycle = join(consumer, name + '-lifecycle');
@@ -738,11 +745,13 @@ const Item = defineViewType()({ name:'Item', tools: {
         description:'Inspect published data',
         inputSchema:Type.Object({ value:refParam('Data', Type.Unknown()) }, {additionalProperties:false}),
         enabled: ({ canInspect }) => canInspect,
-        execute({ input: { value }, context: { staging } }) {
+        execute({ input: { value }, context: { staging, projectionLimits } }) {
             if (staging) return { success: true, data: { staged: true } };
             let depth = 0;
             while (Array.isArray(value)) { value = value[0]; depth++; }
-            return { success: true, data: { size: value.length, depth } };
+            const { maxViews, observation, metadata } = projectionLimits;
+            const frozen = [projectionLimits, observation, metadata].every(Object.isFrozen);
+            return { success: true, data: { size: value.length, depth, maxViews, bytes: observation.maxCanonicalBytes, frozen } };
         },
     },
     grow: {
@@ -752,7 +761,7 @@ const Item = defineViewType()({ name:'Item', tools: {
         execute: ({ input, context }) => context.grow(input),
     },
 } });
-const size = 400 * 1024;
+const size = 20 * 1024;
 let value = 'x'.repeat(size);
 for (let index = 0; index < 40; index++) value = [value];
 const openingError = error => {
@@ -763,18 +772,18 @@ const waitForSwitch = async () => {
     while (!existsSync(${JSON.stringify(gate)})) await new Promise(resolve => setTimeout(resolve, 5));
 };
 ${adapter === 'plain' ? `
-export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Item], initialize({ publish }) {
+export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Item], initialize({ prepareProjection, prepareOpeningProjection, projectionLimits }) {
     let staging = false;
     async function grow({ closeFirst }) {
         if (closeFirst) {
-            const closed = publish({ views: [] });
+            const closed = prepareProjection({ views: [] });
             await waitForSwitch();
-            const opened = publish({ views: [second] }, { opening: true });
+            const opened = prepareOpeningProjection({ views: [second] });
             return { success: true, data: { closedEpoch: closed.sourceEpoch, openedEpoch: opened.sourceEpoch } };
         }
         staging = true;
         try {
-            publish({ views: [first, second] }, { opening: true });
+            prepareOpeningProjection({ views: [first, second] });
             return { success: true };
         } catch (error) {
             return openingError(error);
@@ -782,12 +791,12 @@ export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[Item], 
     }
     const first = createView(Item, { id:'item_a', kind:'state', render:() => ({ body:'a'.repeat(size),
         refs:[ref('data', value, {refType:'Data'})],
-        context: { staging, grow, canInspect:true, canGrow:true },
+        context: { staging, grow, canInspect:true, canGrow:true, projectionLimits },
     }) });
     const second = createView(Item, { id:'item_b', kind:'state', render:() => ({ body:'b'.repeat(size),
         context: { staging:false, grow, canInspect:false, canGrow:false },
     }) });
-    publish({ views:[first] });
+    prepareProjection({ views:[first] });
 }});
 ` : `
 const trace = entry => appendFileSync(${JSON.stringify(lifecycle)}, entry + '\\n');
@@ -802,10 +811,11 @@ function Details({ page, staging }) {
 }
 function A({ controls, grow }) {
     const [state, setState] = useState('open');
+    const { projectionLimits } = useAppRuntimeContext();
     controls.setA = setState;
     if (state === 'closed') return null;
     const staging = state === 'candidate';
-    return h(View, { id: 'item_a', type: Item, kind: 'state', context: { staging, grow, canInspect:true, canGrow:true } },
+    return h(View, { id: 'item_a', type: Item, kind: 'state', context: { staging, grow, canInspect:true, canGrow:true, projectionLimits } },
         h(Details, { page: 'a', staging }));
 }
 function B({ controls, grow }) {
@@ -816,26 +826,25 @@ function B({ controls, grow }) {
 }
 function App() {
     const [controls] = useState(() => ({}));
-    const { prepareProjection: prepare } = useAppRuntimeContext();
+    const { prepareProjection, prepareOpeningProjection } = useAppRuntimeContext();
     async function grow({ closeFirst, asynchronous }) {
         if (asynchronous) {
             const rejected = () => Promise.reject(new Error('Fixture callback rejection'));
             try {
-                if (asynchronous === 'update') await prepare(rejected);
-                else await prepare(() => controls.setA('open'), { revert: rejected });
+                if (asynchronous === 'update') await prepareOpeningProjection(rejected, () => {});
+                else await prepareOpeningProjection(() => controls.setA('open'), rejected);
                 return { success: true };
             } catch (error) { return { success: false, error: { code: error.code, message: error.message } }; }
         }
         if (closeFirst) {
-            const closed = await prepare(() => controls.setA('closed'));
+            const closed = await prepareProjection(() => controls.setA('closed'));
             await waitForSwitch();
-            const opened = await prepare(() => controls.setB(true), { revert: () => controls.setB(false) });
+            const opened = await prepareOpeningProjection(() => controls.setB(true), () => controls.setB(false));
             return { success: true, data: { closedEpoch: closed.sourceEpoch, openedEpoch: opened.sourceEpoch } };
         }
         try {
-            await prepare(() => { controls.setA('candidate'); controls.setB(true); }, {
-                revert: () => { controls.setA('open'); controls.setB(false); },
-            });
+            await prepareOpeningProjection(() => { controls.setA('candidate'); controls.setB(true); },
+                () => { controls.setA('open'); controls.setB(false); });
             return { success: true };
         } catch (error) { return openingError(error); }
     }
@@ -851,13 +860,18 @@ export default createTUIApp({ app_name: ${JSON.stringify(name)}, component: App,
         await registry.registerTransient('local:' + folder);
         const desktopId = await runtime.createDesktop(createDesktopId(name));
         const desktop = runtime.getDesktop(desktopId);
-        const [installed] = await registry.installAll(desktop, { dynamicConfig: { AOTUI_DATA_DIR: join(folder, 'data') } });
+        const [installed] = await registry.installAll(desktop, {
+            projectionLimits: { maxViews: 1 },
+            dynamicConfig: { AOTUI_DATA_DIR: join(folder, 'data'), projectionLimits: { maxViews: 256 } },
+        });
         if (!installed || installed.status !== 'installed') throw Error(JSON.stringify(installed));
         const client = interaction(runtime, desktopId, installed.appId);
         const first = await observe(client);
-        expect(body(first, 'item_a')).toHaveLength(400 * 1024);
+        expect(body(first, 'item_a')).toHaveLength(20 * 1024);
         const originalHandler = {
-            kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { size: 400 * 1024, depth: 40 } } } },
+            kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: {
+                size: 20 * 1024, depth: 40, maxViews: 1, frozen: true,
+            } } } },
         };
         expect(await client.invoke(request(first, 'inspect', { value: 'item_a.data' }, 'large-ref'))).toMatchObject(originalHandler);
         const synchronousError = { receipt: { outcome: { status: 'failed', details: { result: { error: {
@@ -876,7 +890,7 @@ export default createTUIApp({ app_name: ${JSON.stringify(name)}, component: App,
             observation: next.status === 'observed' ? next.observation.views.map(view => view.id) : next.issue.code,
         }).toEqual({ outcome: 'failed', preview: ['item_a'], observation: ['item_a'] });
         expect(attempt).toMatchObject({ receipt: { outcome: { details: { result: { error: {
-            code: 'OBSERVATION_CAPACITY', message: expect.stringContaining('Close a View'), context: { path: '$.observation' },
+            code: 'OBSERVATION_CAPACITY', message: expect.stringContaining('Close a View'), context: { path: '$.views' },
         } } } } } });
         expect(preview).toMatchObject({ source: first.source, views: first.views });
         if (adapter === 'preact') expect(await trace(lifecycle)).toEqual(['mount:a', 'candidate:a', 'mount:b', 'unmount:b']);
@@ -885,6 +899,21 @@ export default createTUIApp({ app_name: ${JSON.stringify(name)}, component: App,
         expect(next.observation).toMatchObject({ source: first.source, views: first.views, refs: first.refs, tools: first.tools });
         expect(client.adoptObservation(next.observation.observationId)).toEqual({ status: 'adopted' });
         expect(await client.invoke(request(next.observation, 'inspect', { value: 'item_a.data' }, 'new-observation'))).toMatchObject(originalHandler);
+
+        const secondApp = await runtime.installDynamicWorkerApp(desktopId, join(folder, 'entry.mjs'), {
+            appId: 'byte_limited', projectionLimits: { maxViews: 2, observation: { maxApproxBytes: 32 * 1024, maxCanonicalBytes: 32 * 1024 } },
+        });
+        const bytes = interaction(runtime, desktopId, secondApp);
+        const byteFrame = await observe(bytes);
+        expect(await bytes.invoke(request(byteFrame, 'grow', { closeFirst: false }, 'open-over-byte-limit'))).toMatchObject({
+            receipt: { outcome: { status: 'failed', details: { result: { error: {
+                code: 'OBSERVATION_CAPACITY', context: { path: '$.observation' },
+            } } } } },
+        });
+        expect(await bytes.preview()).toMatchObject({ status: 'previewed', source: byteFrame.source, views: byteFrame.views });
+        expect(await bytes.invoke(request(byteFrame, 'inspect', { value: 'item_a.data' }, 'still-callable'))).toMatchObject({
+            receipt: { outcome: { status: 'succeeded', value: { data: { maxViews: 2, bytes: 32 * 1024, frozen: true } } } },
+        });
 
         const switching = client.invoke(request(next.observation, 'grow', { closeFirst: true }, 'close-then-open'));
         await expect.poll(async () => {
@@ -899,7 +928,7 @@ export default createTUIApp({ app_name: ${JSON.stringify(name)}, component: App,
         const second = await observe(client);
         expect(second.source.instanceId).toBe(first.source.instanceId);
         expect(second.views.map(view => view.id)).toEqual(['item_b']);
-        expect(body(second, 'item_b')).toHaveLength(400 * 1024);
+        expect(body(second, 'item_b')).toHaveLength(20 * 1024);
         if (adapter === 'preact') {
             expect(await client.invoke(request(second, 'grow', { closeFirst: false, asynchronous: 'revert' }, 'promise-revert')))
                 .toMatchObject(synchronousError);
@@ -918,10 +947,10 @@ it('lists registered pending Apps while hiding a Worker whose first install is s
     const folder = await appFolder(name, `
 import { appendFileSync, existsSync } from 'node:fs';
 import { createApp } from '@aotui/sdk/app';
-export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[], async initialize({ publish }) {
+export default createApp({ app_name: ${JSON.stringify(name)}, viewTypes:[], async initialize({ prepareProjection }) {
     appendFileSync(${JSON.stringify(log)}, 'initializing');
     while (!existsSync(${JSON.stringify(release)})) await new Promise(resolve => setTimeout(resolve, 5));
-    publish({ views: [] });
+    prepareProjection({ views: [] });
 }});
 `);
     const runtime = createRuntime();
@@ -978,7 +1007,7 @@ const Root = defineViewType()({ name:'Root', tools:{
 } });
 const Empty = defineViewType({name:'Empty'});
 const viewTypes = [Root, Counter, Empty];
-export default createApp({ app_name:'page_receivers', viewTypes, initialize({publish}) {
+export default createApp({ app_name:'page_receivers', viewTypes, initialize({prepareProjection}) {
     let enabled = true, open = true;
     const make = (id, initial) => {
         let count = initial;
@@ -1011,8 +1040,21 @@ export default createApp({ app_name:'page_receivers', viewTypes, initialize({pub
         const {status,sourceEpoch} = commit();
         return {success:true,data:{status,sourceEpoch}};
     }
-    function commit() { return publish({ views: open ? [root,a,b,empty] : [root,b,empty] }); }
+    function commit() { return prepareProjection({ views: open ? [root,a,b,empty] : [root,b,empty] }); }
     commit();
+}});
+`);
+    const peerName = 'budget_peer';
+    const peerFolder = await appFolder(peerName, `
+import { createApp, createView, defineViewType } from '@aotui/sdk/app';
+const Peer = defineViewType()({ name: 'Peer', tools: {
+    review: { description: 'Review the selected page', execute() { return { success: true }; } },
+} });
+export default createApp({ app_name: ${JSON.stringify(peerName)}, viewTypes: [Peer], initialize({ prepareProjection }) {
+    const views = ['peer_first', 'peer_second'].map(id => createView(Peer, { id, kind: 'state',
+        render: () => ({ body: 'Peer context ' + id + ' ' + 'x'.repeat(700), context: {} }),
+    }));
+    prepareProjection({ views });
 }});
 `);
     const runtime = createRuntime({});
@@ -1023,8 +1065,16 @@ export default createApp({ app_name:'page_receivers', viewTypes, initialize({pub
     try {
         const id = await runtime.createDesktop(createDesktopId(name)), desktop = runtime.getDesktop(id);
         await registry.registerTransient('local:' + folder);
-        const [installed] = await registry.installAll(desktop);
+        await registry.registerTransient('local:' + peerFolder);
+        const [installed] = await registry.installSelected(desktop, [name], {
+            projectionLimits: { maxViews: 4, maxTools: 2, observation: { maxCanonicalBytes: 12 * 1024 } },
+        });
         if (!installed || installed.status !== 'installed') throw Error(JSON.stringify(installed));
+        const [peer] = await registry.installSelected(desktop, [peerName], {
+            projectionLimits: { maxViews: 2, maxTools: 1, observation: { maxCanonicalBytes: 8 * 1024 } },
+        });
+        if (!peer || peer.status !== 'installed') throw Error(JSON.stringify(peer));
+        const peerClient = interaction(runtime, id, peer.appId), peerFrame = await observe(peerClient);
         const client = interaction(runtime, id, installed.appId);
         let first = await observe(client);
         const add = first.tools.find(tool => tool.name === 'add')!;
@@ -1087,22 +1137,44 @@ export default createApp({ app_name:'page_receivers', viewTypes, initialize({pub
                 },
             });
         source = new SemanticAOTUIDrivenSource(desktop, runtime, {includeInstruction:false});
-        let limit = 1500;
+        let limit = 10_000;
+        const adoptHistory = vi.fn(), releaseHistory = vi.fn();
+        const history: import('@aotui/agent-driver-v2').ContextDrivenSource = {
+            name: 'history', onUpdate: () => () => {},
+            async getContext() {
+                return { messages: [
+                    { role: 'system', content: 'Host rules sentinel', timestamp: 1, region: 'static' },
+                    { role: 'user', content: 'User history sentinel ' + 'h'.repeat(8_000), timestamp: 2 },
+                ], tools: {}, adopt: adoptHistory, release: releaseHistory };
+            },
+        };
         const errors = vi.fn();
         driver = new AgentDriverV2({llm:{model:'local',provider:{id:'openai'},apiKey:'unused',
-            inputBudget:() => ({contextWindow:limit,maxOutputTokens:1000})},sources:[source],onRunError:errors});
+            inputBudget:() => ({contextWindow:limit,maxOutputTokens:1000})},sources:[source, history],onRunError:errors});
         const run = async () => { await driver!.trigger(); await (driver as any).runInFlight; };
         await run();
         expect(sent).toHaveLength(0);
-        expect(errors).toHaveBeenCalledWith(expect.objectContaining({code:'MODEL_INPUT_BUDGET_EXCEEDED'}));
-        // The failed request never adopted its candidate, so the previous observation still works.
+        expect(errors).toHaveBeenCalledWith(expect.objectContaining({ code:'MODEL_INPUT_BUDGET_EXCEEDED',
+            details: expect.objectContaining({ inputLimit: 9000, outputReserved: 1000 }),
+        }));
+        expect(adoptHistory).not.toHaveBeenCalled();
+        expect(releaseHistory).toHaveBeenCalledOnce();
         expect(await call('add','b','after-budget-failure')).toMatchObject(entered);
+        expect(await peerClient.invoke(request(peerFrame, 'review', { view_id: 'peer_first' }, 'after-budget-failure'))).toMatchObject(entered);
+        for (const active of [client, peerClient]) {
+            const replacement = await frame(active);
+            if (replacement.status !== 'observed') throw Error('Candidate not released: ' + replacement.issue.code);
+            active.releaseObservation(replacement.observation.observationId);
+        }
         limit = 64_000;
         await run();
         expect(sent).toHaveLength(1);
+        expect(adoptHistory).toHaveBeenCalledOnce();
         const model = sent[0]!;
         const prompt = JSON.stringify(model.prompt);
-        for (const id of ['root','a','b','empty']) expect(prompt).toContain('id=\\"' + id + '\\"');
+        for (const id of ['root','a','b','empty','peer_first','peer_second']) expect(prompt).toContain('id=\\"' + id + '\\"');
+        expect(prompt).toContain('Host rules sentinel');
+        expect(prompt).toContain('User history sentinel');
         expect(prompt).toContain('Counter &lt;a&gt;');
         expect(prompt).toContain('Counter.add');
         expect(prompt).not.toContain('toolBindings');
@@ -1116,6 +1188,7 @@ export default createApp({ app_name:'page_receivers', viewTypes, initialize({pub
             expect.objectContaining({name:'system-open_app',inputSchema:expect.not.objectContaining({
                 required:expect.arrayContaining(['view_id']),
             })}),
+            expect.objectContaining({name:peerName + '-review'}),
         ]));
     } finally {
         driver?.stop(); driver?.dispose(); mock?.mockRestore(); source?.dispose();
@@ -1152,10 +1225,10 @@ const RootType = defineViewType()({ name: 'Root', tools: {
         execute: ({ input, context }) => context.setMode(input.mode),
     },
 } });
-export default createApp({ app_name: 'alias_selection', viewTypes: [RootType, NumberType, TextType], initialize({ publish }) {
+export default createApp({ app_name: 'alias_selection', viewTypes: [RootType, NumberType, TextType], initialize({ prepareProjection }) {
     let mode = 'closed', label = 'Original';
     const finish = view => {
-        publish({ views: mode === 'closed' ? [root, a, another] : [root, a, another, text] });
+        prepareProjection({ views: mode === 'closed' ? [root, a, another] : [root, a, another, text] });
         return { success: true, data: { view } };
     };
     const numberView = (id, value) => {

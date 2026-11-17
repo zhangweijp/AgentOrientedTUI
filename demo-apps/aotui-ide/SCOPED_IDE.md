@@ -1,8 +1,8 @@
 # AOTUI IDE package integration
 
-The package has one current entry: its default managed `TUIAppFactory`, created with `createTUIApp` and backed by `ScopedIDEApp`. It has one business owner per App and uses instance-bound Runtime interaction, committed snapshots and managed app state. Normal Host startup uses standard AppRegistry installation and the generic Semantic Source. See the [Host integration contract](../../runtime/docs/semantic-host-integration.zh-CN.md).
+The package exports a default managed `TUIAppFactory`, created with `createTUIApp` and backed by `ScopedIDEApp`. It has one business owner per App and uses instance-bound Runtime interaction, committed snapshots and managed app state. Normal Host startup uses standard AppRegistry installation and the generic Semantic Source. [Runtime README](../../runtime/README.md)
 
-The current authoring contract uses SDK 0.9.0 with Runtime 8.0.0. `createTUIApp` supplies `toolAuthoringProtocol: 'view-type-tools-v5'`, which Runtime checks when it loads the factory. The IDE declares ordinary Tool inputs once with TypeBox 1.4.3 and registers them at App scope. This replaces the old `useViewTypeTool(name, options, handler, config?)` and per-View `target` routing. See the [public Tool author guide](../../sdk/docs/view-type-tools.md) for a runnable authoring example and [migration steps](../../sdk/docs/migration.md).
+The current authoring contract uses SDK 0.9.0 with Runtime 8.0.0. `createTUIApp` supplies `toolAuthoringProtocol: 'view-type-tools-v6'`, which Runtime checks when it loads the factory. The IDE declares Tool inputs once with TypeBox 1.4.3 and supplies per-page context. [SDK README and runnable App](../../sdk/README.md)
 
 ## Standard installation and explicit custom hosts
 
@@ -135,7 +135,7 @@ Build Runtime → SDK → IDE in an isolated checkout; run the existing package 
 
 ## Local terminal from exact installed packages
 
-Install a matching Runtime/SDK/IDE delivery into a normal consumer first; versions alone do not prove artifact identity. Use the delivery's actual package manifests and lockfile, as described by the [distribution contract](../../runtime/docs/sdk-runtime-distribution.md). There is no special generated terminal environment or alternate app route. The old repository `scripts/scoped-ide.mjs` prepare/run/verify wrapper has been removed.
+Use the delivery's package manifests and lockfile to install a matching Runtime, SDK and IDE into an independent consumer. [Runtime README](../../runtime/README.md)
 
 Run the example shipped with the installed IDE from that consumer directory:
 

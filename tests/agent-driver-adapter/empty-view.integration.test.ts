@@ -36,7 +36,7 @@ function appSource(): string {
             const [bodies, setBodies] = useState({
                 no_children: null,
                 whitespace: '  \\n  ',
-                hidden: null,
+                conditional: null,
             });
 
             const page = (id, child) => h(View, { kind: 'state', id, type: EmptyType, context: { id, setBodies } }, child);
@@ -44,9 +44,7 @@ function appSource(): string {
                 h(View, { kind: 'state', id: 'healthy_view', type: HealthyType }, h('p', {}, 'HEALTHY_SIBLING_BODY')),
                 page('no_children', bodies.no_children === null ? null : h('p', {}, bodies.no_children)),
                 page('whitespace', bodies.whitespace === null ? null : h('span', {}, bodies.whitespace)),
-                page('hidden', bodies.hidden === null
-                    ? h('span', { 'data-state': 'hidden' }, 'HIDDEN_BODY')
-                    : h('p', {}, bodies.hidden)),
+                page('conditional', bodies.conditional === null ? null : h('p', {}, bodies.conditional)),
             ]));
         }
 
@@ -156,7 +154,7 @@ describe('empty View projection in a real Worker and Semantic Source', () => {
             ]));
             expect(current.messages.filter(message => String(message.content).startsWith('<view '))).toHaveLength(4);
             expect(viewMessage(current, 'healthy_view')).toContain('HEALTHY_SIBLING_BODY');
-            for (const id of ['no_children', 'whitespace', 'hidden']) {
+            for (const id of ['no_children', 'whitespace', 'conditional']) {
                 expect(viewBodyFromMessage(viewMessage(current, id))).toBe('');
             }
             const initialViews = latestSnapshot(host).views;

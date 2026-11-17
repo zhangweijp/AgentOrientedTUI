@@ -88,6 +88,9 @@ importers:
       ai:
         specifier: 6.0.326
         version: 6.0.326(zod@4.6.7)
+      better-sqlite3:
+        specifier: 13.2.0
+        version: 13.2.0
       electron-trpc:
         specifier: 0.4.5
         version: 0.4.5(@trpc/client@10.45.4(@trpc/server@10.45.4))(@trpc/server@10.45.4)(electron@45.3.1)
@@ -2808,6 +2811,10 @@ packages:
     engines: {node: '>=6.0.0'}
     hasBin: true
 
+  better-sqlite3@13.2.0:
+    resolution: {integrity: sha512-Z8Q/9x/uNyKxA1v4FNodyItRVRw1TeKBrmj32JhxhR0ceNcBY+wMobt/Bv7M7TzwPAXjnZRtNaEsATnUZSKWZQ==}
+    engines: {node: '>=22'}
+
   bluebird@3.7.2:
     resolution: {integrity: sha512-XpNj6GDQzdfW+r2Wnn7xiSAd7TM3jzkxGXBGTtWKuSXv1xUV+azxAm8jdWZN06QTQk+2N2XB9jRDkvbmQmcRtg==}
 
@@ -3865,6 +3872,10 @@ packages:
   node-abi@4.26.0:
     resolution: {integrity: sha512-8QwIZqikRvDIkXS2S93LjzhsSPJuIbfaMETWH+Bx8oOT9Sa9UsUtBFQlc3gBNd1+QINjaTloitXr1W3dQLi9Iw==}
     engines: {node: '>=22.12.0'}
+
+  node-addon-api@8.9.2:
+    resolution: {integrity: sha512-VijLXbi3UACN69I0JVXJsX4tjACjNoQDgv2gTF6sx2wWEi8tkSg2eX8p5gSIFi8z2+DL3oHmY6OyKce38SDolg==}
+    engines: {node: ^18 || ^20 || >= 21}
 
   node-api-version@0.2.1:
     resolution: {integrity: sha512-2xP/IGGMmmSQpI1+O/k72jF/ykvZ89JeuKX3TLJAYPDVLUalrshrLHkeVcCCZqG/eEa635cr8IBYzgnDvM2O8Q==}
@@ -8231,6 +8242,10 @@ snapshots:
 
   baseline-browser-mapping@2.11.36: {}
 
+  better-sqlite3@13.2.0:
+    dependencies:
+      node-addon-api: 8.9.2
+
   bluebird@3.7.2: {}
 
   body-parser@1.20.9:
@@ -9377,6 +9392,8 @@ snapshots:
   node-abi@4.26.0:
     dependencies:
       semver: 7.7.4
+
+  node-addon-api@8.9.2: {}
 
   node-api-version@0.2.1:
     dependencies:

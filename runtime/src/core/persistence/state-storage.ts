@@ -18,6 +18,8 @@ const messages = {
     CAPACITY_EXCEEDED: 'Persistence capacity exceeded',
     PERMISSION_DENIED: 'Storage permission denied',
     IO_FAILED: 'Storage I/O failed',
+    STORAGE_BUSY: 'Storage is busy',
+    STORAGE_DRIVER_UNAVAILABLE: 'The Host storage driver could not load. Install the driver for this Host or provide a storage backend.',
     NAMESPACE_BUSY: 'Namespace belongs to another active owner',
     OWNER_BUSY: 'Instance already has an active storage owner',
     OWNER_RELEASED: 'Storage owner was released',
@@ -51,6 +53,9 @@ export interface StateStorage {
     remove(address: StateAddress): Promise<StateMutationResult>;
     /** released promises that all previously admitted effects have actually ended. */
     release(): Promise<StateReleaseResult>;
+}
+export interface StateStorageBackend {
+    open(input: Readonly<{ owner: string; rootDirectory: string }>): Promise<Readonly<{ status: 'opened'; storage: StateStorage }> | Rejected>;
 }
 export const failedRead = (code: StateIssueCode): StateReadResult => Object.freeze({ status: 'failed', issue: stateIssue(code) });
 export const failedMutation = (code: StateIssueCode): StateMutationResult => Object.freeze({ status: 'failed', effects: 'none', issue: stateIssue(code) });

@@ -146,7 +146,7 @@ describe('real SDK Worker observation refresh', () => {
             .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { value: 2 } } } } });
         const store = (host as any).snapshotReceiver.core.store;
         expect(store.getById(first.source.snapshotId).status).toBe('rejected');
-        expect(store.inspect()).toMatchObject({ historicalSnapshots: 0, historicalBytes: 0 });
+        expect(store.inspect()).toMatchObject({ heldSnapshots: 0, heldSnapshotBytes: 0 });
         expect(store.getById(next.observation.source.snapshotId).status).toBe('found');
     });
     it('observes queued commits and compatible View/Ref/Tool without a prior notification or fixed sleep', async () => {

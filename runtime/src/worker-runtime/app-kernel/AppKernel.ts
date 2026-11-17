@@ -1,37 +1,21 @@
-import type { ToolResultData } from '../../spi/core/tool-result.js';
-/**
- * AOTUI Runtime - App Kernel
- *
- * [方案 B] 从 @aotui/sdk 迁移到 @aotui/runtime/worker-runtime。
- *
- * Worker 内的 App 执行引擎，负责：
- * - App 生命周期管理 (onOpen, onClose...)
- * - Committed Views and their Tool lifecycle
- * - source-bound View Tool lifecycle and invocation
- * - Semantic projection and Ref export
- *
- * @module @aotui/runtime/worker-runtime/app-kernel
- */
-
+import type { ToolResultData } from '../../core/tool/tool-result.js';
 import type {
-    AppID,
     AppContext,
     AppKernelConfig,
     AppLaunchConfig,
-    AppProjectionFrame, AppInstance, RuntimeContext, TUIAppFactory,
+    AppInstance, RuntimeContext, TUIAppFactory,
 } from '../../spi/index.js';
-import { AOTUIError } from '../../spi/core/errors.js';
 import type { ViewToolInvocationTerminal } from '../../spi/worker-protocol/index.js';
 
-import { SemanticProjectionCoordinator, type CompleteProjectionFrame } from '../../core/projection/coordinator.js';
+import { SemanticProjectionCoordinator, type AppProjectionFrame, type CompleteProjectionFrame } from '../../core/projection/coordinator.js';
 import { hostedObservationCapacityIssue } from '../../core/invocation/observation-registry.js';
+import type { ProjectionLimits } from '../../core/invocation/observation-types.js';
 import { createViewOwnedTools } from '../../core/tool/view-owned-tools.js';
-import type { OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
+import type { ToolParameterContract } from '../../core/tool/tool-parameters.js';
 import type { ToolInvocationDescriptor, ViewToolReceiver } from '../../core/snapshot/types.js';
 import { createAppLifecycle } from '../app-lifecycle.js';
 import type { AppStatePersistence } from '../../spi/runtime/state-persistence.interface.js';
 import { SnapshotDataError } from '../../core/snapshot/json.js';
-import { randomUUID } from 'node:crypto';
 import { closeError } from '../../engine/core/close-handle.js';
 import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
 
@@ -41,28 +25,16 @@ import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
  * 运行在 Worker 内的 App 执行引擎。
  */
 export class AppKernel {
-    private _id: AppID = '' as AppID;
     private instance?: AppInstance;
-    private context!: AppContext;
+    private readonly context: AppContext;
+    private readonly projection: SemanticProjectionCoordinator;
+    private readonly viewOwnedTools: ReturnType<typeof createViewOwnedTools>;
+    private readonly appLifecycle: ReturnType<typeof createAppLifecycle>;
 
-    private readonly projection = new SemanticProjectionCoordinator({
-        identity: () => ({ appId: this.id, instanceId: this.appExecutionInstanceId }),
-        checkCapacity: hostedObservationCapacityIssue,
-    });
-    private appExecutionInstanceId: string = randomUUID();
-    private viewOwnedTools?: ReturnType<typeof createViewOwnedTools>;
-
-    private persistence?: AppStatePersistence;
-    private appLifecycle?: ReturnType<typeof createAppLifecycle>;
-    enableAppLifecycle(): void {
-        this.assertActive();
-        if (this.appLifecycle) throw new Error('APP_LIFECYCLE_ALREADY_ENABLED');
-        this.appLifecycle = createAppLifecycle(this.appExecutionInstanceId);
-    }
-    getAppCleanupReport() { return this.appLifecycle?.getReport(); }
+    getAppCleanupReport() { return this.appLifecycle.getReport(); }
     private readonly projectionOwner = new AbortController();
-    beginShutdown(): void { this.closing = true; this.projectionOwner.abort(); this.appLifecycle?.stop(); }
-    stopApplication(): void { this.projectionOwner.abort(); this.appLifecycle?.stop(); }
+    beginShutdown(): void { this.closing = true; this.projectionOwner.abort(); this.appLifecycle.stop(); }
+    stopApplication(): void { this.projectionOwner.abort(); this.appLifecycle.stop(); }
 
     async whenProjectionCommitted(): Promise<void> {
         this.assertActive();
@@ -81,85 +53,64 @@ export class AppKernel {
         return { success: false, error: { code: 'SNAPSHOT_UNREADY', message: 'App projection requires a successful commit' } };
     }
 
-    setPersistence(port: AppStatePersistence): void {
-        this.assertActive();
-        if (this.instance || port.instanceId !== this.appExecutionInstanceId || this.persistence) throw new Error('Invalid persistence instance');
-        this.persistence = port;
-    }
-
     getProjectionCoordinator(): SemanticProjectionCoordinator {
         return this.projection;
     }
 
-    setAppExecutionInstanceId(instanceId: string): void {
-        this.assertActive();
-        if (!instanceId.trim() || this.viewOwnedTools) {
-            throw new Error('App execution identity must be assigned before View initialization');
-        }
-        this.appExecutionInstanceId = instanceId;
-    }
-
-    /**
-     * Stage 6 preflight: checks LIVE Runtime-owned Tool binding without invoking
-     * a Handler. A trusted Host must still independently authorize any I/O.
-     */
+    /** Check the current execution binding without invoking its handler. */
     validateBoundTypeTool(source: ToolInvocationDescriptor, receiver: ViewToolReceiver): ToolResultData {
         if (this.closing) return this.closedToolResult();
         if (this.projection.failed) return this.failedProjectionResult();
-        if (!this.viewOwnedTools) return { success: false, error: {
-            code: 'TOOL_UNAVAILABLE', message: 'ViewType Tool registry not initialized',
-        } };
         return this.viewOwnedTools.validateTypeToolBinding(source, receiver);
     }
 
-    getBoundTypeToolContract(source: ToolInvocationDescriptor, receiver: ViewToolReceiver): OrdinaryParameterContract | undefined {
-        return this.closing ? undefined : this.viewOwnedTools?.getTypeToolContract(source, receiver);
+    getBoundTypeToolContract(source: ToolInvocationDescriptor, receiver: ViewToolReceiver): ToolParameterContract | undefined {
+        return this.closing ? undefined : this.viewOwnedTools.getTypeToolContract(source, receiver);
     }
 
     invokeBoundTypeTool(source: ToolInvocationDescriptor, receiver: ViewToolReceiver,
         args: Readonly<Record<string, unknown>>): ViewToolInvocationTerminal | Promise<ViewToolInvocationTerminal> {
         if (this.closing) return { phase: 'not-entered', result: this.closedToolResult() };
         if (this.projection.failed) return { phase: 'not-entered', result: this.failedProjectionResult() };
-        if (!this.viewOwnedTools) return { phase: 'not-entered', result: { success: false,
-            error: { code: 'TOOL_UNAVAILABLE', message: 'ViewType Tool registry not initialized' } } };
         return this.viewOwnedTools.invokeTypeTool(source, receiver, args);
     }
 
     isRefViewLive(viewId: string, viewInstanceId: string): boolean {
-        return this.viewOwnedTools?.getView(viewId)?.viewInstanceId === viewInstanceId;
+        return this.viewOwnedTools.getView(viewId)?.viewInstanceId === viewInstanceId;
     }
 
-    /** Stage 2 source inventory, captured alongside Tool bindings in Worker. */
     getViewOwnedViewInstances() {
-        return this.viewOwnedTools?.listViews() ?? Object.freeze([]);
+        return this.viewOwnedTools.listViews();
     }
 
-    constructor(private readonly config: AppKernelConfig & {
+    constructor(private readonly config: AppKernelConfig & AppContext & {
+        instanceId: string;
         factory: Pick<TUIAppFactory, 'initialize'>;
         launchConfig?: AppLaunchConfig | undefined;
-    }) {}
-
-    get id(): AppID {
-        return this._id;
+        projectionLimits: ProjectionLimits;
+        persistence?: AppStatePersistence;
+    }) {
+        const { appId, desktopId, instanceId, projectionLimits, persistence } = config;
+        if (!desktopId?.trim() || persistence && persistence.instanceId !== instanceId)
+            throw new Error('Invalid App execution identity');
+        this.context = Object.freeze({ appId, desktopId });
+        this.viewOwnedTools = createViewOwnedTools(appId, instanceId);
+        this.appLifecycle = createAppLifecycle(instanceId);
+        this.projection = new SemanticProjectionCoordinator({
+            identity: () => ({ appId, instanceId }),
+            checkCapacity: draft => hostedObservationCapacityIssue(draft, projectionLimits),
+        });
     }
 
-    setId(id: AppID): void {
-        this.assertActive();
-        if (!id || this._id && this._id !== id) throw new AOTUIError('APP_IDENTITY_MISMATCH', { expected: this._id || 'Runtime-assigned App ID', actual: id, path: 'AppKernel.id' });
-        this._id = id;
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    //  Lifecycle
-    // ─────────────────────────────────────────────────────────────
-
-    onOpen(context: AppContext): Promise<void> {
+    onOpen(): Promise<void> {
         if (this.closing) return Promise.reject(closeError('APP_KERNEL_CLOSED'));
         if (this.openPromise) return this.openPromise;
         this.openPromise = Promise.resolve().then(async () => {
-            this.assertActive();this.setId(context.appId);this.context = context;
+            this.assertActive();
             await this.initializeInstance();
             this.assertActive();
+            const issue = this.projection.failure;
+            if (issue?.code === 'OBSERVATION_CAPACITY') throw new SnapshotDataError(issue.code, issue.path ?? '$', issue.message);
         });
         void this.openPromise.catch(() => {});return this.openPromise;
     }
@@ -168,32 +119,29 @@ export class AppKernel {
         if (this.closePromise) return this.closePromise;
         this.beginShutdown();
         let failed = false;
-        this.viewOwnedTools?.dispose();
+        this.viewOwnedTools.dispose();
         this.closePromise = Promise.resolve().then(async () => {
             await Promise.allSettled([this.openPromise, this.deletePromise]);
             try { await this.instance?.close(); } catch { failed = true; }
             this.instance = undefined;
-            try { await this.appLifecycle?.close(); } catch { failed = true; }
+            try { await this.appLifecycle.close(); } catch { failed = true; }
             try { this.projection.close(); } catch { failed = true; }
             if (failed) throw closeError('APP_UNMOUNT_FAILED');
         });
         void this.closePromise.catch(() => {});return this.closePromise;
     }
 
-    async onReinitialize(context?: import('../../spi/index.js').AppReinitializeContext): Promise<void> {
+    async onReinitialize(reason?: string): Promise<void> {
         this.assertActive();
         if (this.config.onReinitialize) {
             await this.config.onReinitialize({
                 ...this.context,
-                reason: context?.reason ?? (this.config.launchConfig as { __aotuiLifecycle?: { reason?: string } } | undefined)
+                reason: reason ?? (this.config.launchConfig as { __aotuiLifecycle?: { reason?: string } } | undefined)
                     ?.__aotuiLifecycle?.reason,
             });
         }
     }
 
-    /**
-     * [RFC-015] App Delete Lifecycle
-     */
     onDelete(): Promise<void> {
         if (this.deletePromise) return this.deletePromise;
         if (this.closing) return Promise.reject(closeError('LIFECYCLE_CONFLICT'));
@@ -222,7 +170,7 @@ export class AppKernel {
         if (!frame || Object.keys(frame).length !== 1 || !Array.isArray(frame.views))
             throw new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Expected a complete View frame');
         const views: AppProjectionFrame['views'] = frame.views;
-        const plan = this.viewOwnedTools!.prepareFrame(views);
+        const plan = this.viewOwnedTools.prepareFrame(views);
         return {
             views: views.map(({ id, type, name, kind, content }, index) => {
                 const { viewInstanceId, toolBindings } = plan.instances[index]!;
@@ -237,27 +185,23 @@ export class AppKernel {
     }
 
     private async initializeInstance(): Promise<void> {
-        // M4 Stage 1: the Core registry is scoped to the trusted App execution.
-        const owned = this.viewOwnedTools ??= createViewOwnedTools(
-            String(this._id), this.appExecutionInstanceId,
-        );
-
+        const { launchConfig, projectionLimits, persistence } = this.config;
         const runtimeContext: RuntimeContext = {
-            appId: this._id,
-            desktopId: this.context.desktopId,
-            launchConfig: this.config.launchConfig,
+            ...this.context,
+            launchConfig,
+            projectionLimits,
             signal: this.projectionOwner.signal,
             defineTools: definitions => {
                 this.assertActive();
                 this.projection.assertWritable();
-                owned.defineTools(definitions);
+                this.viewOwnedTools.defineTools(definitions);
             },
             publishFrame: (build, options) => {
                 this.assertActive();
                 return this.projection.commit(() => this.prepareFrame(build()), options);
             },
-            persistence: this.persistence,
-            appLifecycle: this.appLifecycle?.port,
+            ...(persistence === undefined ? {} : { persistence }),
+            appLifecycle: this.appLifecycle.port,
         };
 
         const instance = await this.config.factory.initialize(runtimeContext);

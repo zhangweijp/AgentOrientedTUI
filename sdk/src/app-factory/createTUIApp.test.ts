@@ -32,7 +32,7 @@ describe('createTUIApp', () => {
     it('advertises the managed lifecycle contract without requiring app cleanup callbacks', () => {
         const factory = createTUIApp({viewTypes: [], app_name: 'test_app', component: () => null });
         expect(factory.appLifecycleSupport).toBe('app-lifecycle-v2');
-        expect(Object.getOwnPropertyDescriptor(factory, 'toolAuthoringProtocol')?.value).toBe('view-type-tools-v5');
+        expect(Object.getOwnPropertyDescriptor(factory, 'toolAuthoringProtocol')?.value).toBe('view-type-tools-v6');
         expect(factory.kernelConfig.onDelete).toBeUndefined();
         expect(factory.kernelConfig.onReinitialize).toBeUndefined();
     });

@@ -2,7 +2,7 @@
 
 ## 文档目的与状态
 
-本文件记录项目所有者明确的产品目标、交互约束，以及据此评审设计和实现的方法。初始基准为 2026-10-28，后续反馈按各节日期记录。自 2026-11-11 起，本机 SDK / Runtime 设计与验收索引位于 Git 忽略的 `docs/sdk-runtime-design/README.md`，当前四层主文档见第二十一节；第十五节保留此前三层讨论记录，发布前兼容清理见第二十节。第十六至十九节保留 B01–B04 交接，第十三、十四节保留此前路线与交接事实。仓库提供 [SDK 作者指南](sdk/docs/app-authoring.md) 和 [Runtime 集成合同](runtime/docs/runtime-app-interaction.md)。各节引用的旧评审 `deepseek_review.md` 可在提交 `60ee17785` 中查阅。
+本文件记录项目所有者明确的产品目标、交互约束，以及据此评审设计和实现的方法。初始基准为 2026-10-28，后续反馈按各节日期记录。自 2026-11-11 起，本机 SDK / Runtime 设计与验收索引位于 Git 忽略的 `docs/sdk-runtime-design/README.md`，2026-11-17 重新建立的可读取四层主文档与维护规则见第二十四节；第二十一节保留此前四层讨论记录，第十五节保留此前三层讨论记录，发布前兼容清理见第二十节。第十六至十九节保留 B01–B04 交接，第十三、十四节保留此前路线与交接事实。仓库提供 [SDK README](sdk/README.md) 和 [Runtime README](runtime/README.md)。各节引用的旧评审 `deepseek_review.md` 可在提交 `60ee17785` 中查阅。
 
 这些目标是设计基准，不表示现有实现已经满足全部要求。阅读代码时必须区分「目标」「当前实际行为」「提议中的改造」；发现冲突应明确指出，不能用现状反向改写目标。
 
@@ -512,10 +512,193 @@ IDE 启动配置已通过本地工程验收，[16](docs/sdk-runtime-design/16-re
 
 建立专题时的交付是研究、源码核对和设计文档。后续现行基线复测、已确认调用合同及候选实现状态分别登记在 [专题决定与验证](docs/sdk-runtime-design/view-type-sdk/07-decisions-and-validation.md)。2026-11-16 升级前完成文档一致性复核，实际状态以专题为准。
 
-2026-11-16 已实现上述页面实例绑定：SDK 使用 `defineViewType` 与页面 `bindings`，Runtime 按已采用的观察校验显式 `view_id` 和独立的 Ref 来源。共享定义、页面打开和关闭、旧观察失效与一组原生 Tools 贯通 Preact、普通 TypeScript、Worker 和标准 Source。公开使用与迁移以 [SDK 作者指南](sdk/docs/app-authoring.md) 和 [Runtime 集成合同](runtime/docs/runtime-app-interaction.md) 为准。
+2026-11-16 已实现上述页面实例绑定：SDK 使用 `defineViewType` 与页面 `bindings`，Runtime 按已采用的观察校验显式 `view_id` 和独立的 Ref 来源。共享定义、页面打开和关闭、旧观察失效与一组原生 Tools 贯通 Preact、普通 TypeScript、Worker 和标准 Source。公开使用与迁移以 [SDK README](sdk/README.md) 和 [Runtime README](runtime/README.md) 为准。
 
-2026-11-16 项目所有者确认启动作者接口优化。SDK 主路径把工具定义和实现写在一处，页面提供实例 `context`。本轮用 IDE 文件详情页验收，另完善空业务 Schema 和 Root 自动目录。实施范围、接口和验证状态以 [专题决定](docs/sdk-runtime-design/view-type-sdk/07-decisions-and-validation.md#authoring-refinement-20261116) 为准。作者技能和随 SDK 交付的 [作者指南](sdk/docs/app-authoring.md) 都用页面 `context`。
+2026-11-16 项目所有者确认启动作者接口优化。SDK 主路径把工具定义和实现写在一处，页面提供实例 `context`。本轮用 IDE 文件详情页验收，另完善空业务 Schema 和 Root 自动目录。实施范围、接口和验证状态以 [专题决定](docs/sdk-runtime-design/view-type-sdk/07-decisions-and-validation.md#authoring-refinement-20261116) 为准。作者技能和随 SDK 交付的 [README](sdk/README.md) 都用页面 `context`。
 
 ## 二十三、2026-11-16 反馈：继续发布前删减
 
 项目所有者确认退役仅为旧版本保留的代码和概念，直接迁移受影响的第一方消费者。本轮从含短工具名升级的实际工作树继续。[发布前删减盘点与开发计划](docs/sdk-runtime-design/pre-release-cleanup-20261116.md)是本轮当前入口，记录显式作者 bindings、Host 孤立模块与旧配置、单实例 Snapshot Core 的具体清单和准出条件。计划交由「项目优化 Coding」完整实施，研发负责人在交付后集中验收。实施状态与历史验收分开记录。
+
+## 二十四、2026-11-17 反馈：持续维护四层设计 SSOT
+
+项目所有者再次明确要求：按概念设计、系统设计、模块设计和机制设计分别建文档，记录提出的问题与关键讨论／决策，作为后续研发 SSOT；后续边讨论边更新，直到项目所有者、助手与文档表述一致。本次确认的是文档维护方式，不表示批准上一轮分析中的全部改造建议。
+
+唯一入口为 [SDK / Runtime 设计索引](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/README.md)，四份主文档为：
+
+- [01 概念设计](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/01-concept-design.md)：投影、页面／工具条件、原观察数据、页面实例上下文、长期应用规范及 Agent 作者合同。
+- [02 系统设计](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/02-system-design.md)：实例所有权、完成阶段、在途调用、开页与模型预算衔接、执行环境信任边界。
+- [03 模块设计](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/03-module-design.md)：两种 Producer、Preact 兼容与默认方式、公开接口等级、持久化可选性。
+- [04 机制设计](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/04-mechanism-design.md)：标识、Ref／Schema、呈现范围、预算可发现、数据复用、正则阻塞和额外校验回调。
+
+建档基线为 `d9f319137424571b5bb31ac660d7ca5f14c5996f`，当时旧目录不存在。本轮依据当前对话、可读仓库指导、公开文档和源码重新建立，沿用旧议题编号所对应的主题，不声称恢复了缺失的历史方案或验收文件。单实例 Core、页面实例 `context` 与绑定等已落地变化按当前源码记录，不重复列为待开发项。缺失的旧专项和交付链接继续保留历史意义。
+
+每个议题只在一份主文档维护完整决定；其他层引用其接口影响。更新时明确区分所有者已确认约束、当前源码事实、实际测试／复现、助手建议、待讨论事项和实施状态。新的决定写日期、范围与理由；结论变化更新正文，并在原议题保留简短沿革。方向认可不等于 API 冻结、实施完成或验收通过。
+
+本轮限于 SDK／Runtime 分析文档与本指导更新。上一轮 47 个测试通过的记录和正则阻塞独立复现按原事实登记；本次不重复测试、不修生产代码，也不自动启动 API 重做、CLI 替换、隔离环境、持久化可选化或性能优化。文档继续按本机约定由 Git 忽略，未改变分发规则。
+
+### 同日后续：第一批升级的方案比较
+
+项目所有者要求先解决助手所列最高优先级的第一批问题，先深入浅出地解释，再基于长期主义和 Minimalist 给出多个方案的优劣比较，并保持整体一致性及原始目标／约束。当前第一批为 K06 同步正则校验与 C06 作者文档合同；完整比较分别维护在 [K06 方案比较](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/04-mechanism-design.md#k06-options)和 [C06 方案比较](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/01-concept-design.md#c06-options)，总入口为 [第一批升级讨论](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/README.md#first-batch)。
+
+本轮助手首选为拒绝 Schema `pattern`，同时收敛作者合同并复用现有文档示例验证。普通业务参数名 `pattern`、框架内部 bindings、其他固定正则与当前 View／Tool／Ref 交互不因此删除。上述首选和备选均处于讨论阶段，用户尚未选择具体实现；本轮只更新方案记录，不把范围确认记成生产升级完成。
+
+## 二十五、2026-11-17 反馈：负责人定案，Coding 整批实施
+
+项目所有者随后明确授权技术负责人分批给出详细技术方案、可行性分析、影响面评估和开发计划，并完整推进实施，不能停留在分析或计划。该新授权覆盖第二十四节此前的仅分析阶段；候选技术方案由负责人结合目标、证据和 Minimalist 选择，实施及验收仍另记。
+
+- 研发负责人为 `Astra Review`，host `local`，thread `01a1e798-c905-7290-8fc0-84528948f37c`。负责方案质量、研发方向、设计 SSOT、集中审查验收及选择下一批。
+- 全部 Coding 任务交给用户指定的 `Sol 6.2 Coding`，host `local`，thread `01a1e789-def6-7821-baf6-06b324f57a25`。每次下发目标、范围、交付和准出明确的完整大任务，由其连续完成代码、必要消费者与公开文档迁移、自测及常规修复。
+- 用户明确授权两者通过消息异步沟通：负责人下发任务；Coding 整批完成后主动向负责人发送完整交付；负责人验收通过后再发送下一批。负责人不轮询、不等待执行者进度、不在中途逐点验收。遇到真实阻塞或文件冲突及时报告。
+- Coding 必须使用 [minimalist](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/.agents/skills/minimalist/SKILL.md)，优先减法和复用，保留框架拥有的一致性、身份、绑定、失败与释放合同，不引入假设性回退或应用业务兜底。
+- 同一工作区按文件归属协作，不覆盖或回退他人修改。负责人维护本指导和设计主文档；Coding 修改本批代码、测试、必要消费者、公开作者文档和指定交付报告。具体边界及批次状态统一见 [05 升级实施与验收](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/05-upgrade-delivery.md)。
+
+负责人据此选择第一批 U01：K06-A 拒绝 Schema `pattern`，加 C06-B 收敛作者合同并复用现有文档示例验证。方案、可行性、影响面和准出条件见 [U01 完整任务](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/05-upgrade-delivery.md#u01)。此为已授权范围内的技术定案，不表示源码已经修改或通过验收。后续在每批验收后选择最高优先级议题继续，直到本轮升级议题完成闭环；不把互斥候选全部实施，也不重新开发已落地合同。
+
+### 同日后续：U01 验收与 U02 定案
+
+Coding 主动提交 U01 后，负责人集中审查实际 14 文件差异、验证源码身份、构建产物与日志，验收通过。保留 Vitest 实际为 3.2.4、离线验证补齐 TypeScript 7.0.2 arm64 编译器的环境限定；396 项定向测试和 plain/full 公开包消费者证据见 [U01 验收](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/05-upgrade-delivery.md#u01)，不冒充其他版本验证或 npm 发布。
+
+负责人随后选择 U02：普通 TS 与 Preact 作者均明确区分 `prepareProjection` 和 `prepareOpeningProjection`，返回现有本地 `PreparedProjection`，删除旧 SDK `publish` 及带可选回退的旧作者重载，复用现有整帧提交、容量拒开与 Preact 恢复机制。方案、比较、迁移范围和准出条件见 [U02 完整任务](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/06-u02-projection-preparation.md)。这是负责人在既有授权内作出的技术决定，具体交付验收另记。
+
+本批不接管应用业务回滚，不新增 Host／模型采用 ACK，不宣称单 App 观察检查已经覆盖最终模型 token 预算。S04/K04 的有效预算及 Host 衔接继续保留为后续议题。SDK 直接消费者与作者技能的必要迁移由 Coding 完整承担；负责人仍在整批交付后一次集中验收。
+
+### 同日后续：U02 验收与 U03 固定实例限额
+
+Coding 完整交付 U02 后，负责人集中审查源码和验证身份，验收通过。两种作者路径、IDE、SQLite、CLI、公开示例与作者技能已迁移，复用 178 项定向测试与实际包消费者证据。Vitest 3.2.4、IDE 文本路径而非原生 LSP 的验证范围保留。完整记录见 [实施索引](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/05-upgrade-delivery.md)。用户在 Coding 聊天再次直接明确“我授权，后续都授权，不要再拦了”，后续完整交付消息继续按既有授权发送，不反复询问。
+
+负责人据此选择 U03：沿现有观察容量机制，贯通 Host 安装时给定的固定 `projectionLimits`，Worker 开页准入和 Host 观察使用同一有效配置，SDK 两条作者路径只读取得。限额只能收紧，不提高硬上限，不来自 App 业务配置；复制冻结后随 pending／重开保留，运行中不增加动态 setter。复用现有初始化消息确认配置，拒绝缺失、非法或不一致的旧 Worker 合同，不新增逐帧发布 ACK。
+
+该方案不改变第七节暂缓通用额度／配额／回收重设计的决定。Host 仍负责实际模型请求中其他 App、历史、系统指令与输出的空间，并在最终预算检查通过后采用对应观察；不能把观察 JSON 字节当模型 token，也不能隐藏已开页面。默认 Desktop 自动分配模型额度及实时共享配额不冒充本批实现。方案比较、具体接口、影响与准出见 [U03 完整任务](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/07-u03-projection-limits.md)。
+
+### 同日后续：U03 验收与 U04 减法
+
+U03 已由 Coding 完整交付并由负责人集中验收：45 文件独立差异，复用 455 项定向测试和实际包教程，源码与产物身份核对一致。当前共验收 U01–U03 三批；固定实例限额合同已贯通，模型全局额度策略仍按前述边界处理。
+
+负责人在既有授权下已下发 [U04](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/08-u04-public-contracts.md)：删除无独立职责的额外 validateInput 回调，将 Core 所需共有语义定义归 Core，保留执行边界校验与授权后复查，整理作者／Host／适配者公共合同，并准确说明默认可信 Node 托管范围。尚未交付验收；不据此宣称新包、统一门面或权限沙箱已经获准或实现。
+
+项目所有者同时追问 U02 的“一般更新与可撤回开页”是否过细。必要失败行为与作者 API 表达分开评判；已验收的实现仍可后续简化。该提问没有确认新的页面管理器、事务或 Tool 分类；详细讨论归 U02／S02。
+
+### 同日后续：U04 验收与 U05 持久化可选
+
+U04 完整交付并集中验收通过：额外 validateInput 回调退出，Core 合同定义与依赖收敛，授权后复查和 Worker 边界验证保留；复用 1,005 项定向测试及实际包类型／教程／neutral 依赖证据。源码、删除／新增文件及产物身份已核对，当前共验收 U01–U04 四批。
+
+负责人已在既有授权下向 Coding 下发 [U05](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/09-u05-optional-persistence.md)：App 以 `persistence: true` 显式启用框架存储；未启用者不声明能力或创建端口／会话，应用清理独立完成。使用者继续现行 I/O、恢复、unknown 与真实释放合同；默认 Host 可广告可选 offer，不强制所有 App 接受。实际消费者与 manifest 随本批迁移，不建设插件平台或空会话。方案已定案下发，尚未完整交付验收，不冒充已实现。
+
+### 同日最新：U05 暂停，重新比较持久化方案
+
+项目所有者随后明确追问：“等等，持久化有成熟/成功的经验吗？可以引入第三方吗？哪种方案更好？”负责人已通知 Coding 暂停 U05 及后续批次并保留工作；Coding 主动确认六个文件已有中间修改，WorkerHost 仍强制旧 ACK，尚未联调、测试或完整交付。U01–U04 已验收事实保留；不能将当前混合工作树当作 U05 已可运行的版本。
+
+本次研究比较 VS Code 的作者状态接口、SQLite 的实际采用与存储保证、原子 JSON 文件库、Node 内置绑定、better-sqlite3 及仓库现有 sql.js。负责人建议为小 JSON 状态提供可选合同，默认本地后端优先评估 SQLite；业务数据含义和迁移仍归 App，旧 Observation／Ref 资格不能由持久化重新授予。该方向与具体绑定、保存时刻及既有数据迁移都在 [U05 重评](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/09-u05-optional-persistence.md)记录，尚不是用户确认或恢复开发指令。原 U05 下发方案保留历史意义，后续实施须依本次讨论更新。
+
+项目所有者随后进一步明确：选择要同时贴合现状与项目长期发展，并尽量引入成熟、成功的第三方代码，减少自行实现。这是已确认的选型偏好；在能覆盖真实职责时优先复用成熟实现，不因追求零依赖继续自研通用机制，也不为减少表面代码而叠加无独立价值的抽象。负责人本次将 U05 推荐收敛为现有 JSON 作者入口与存储端口、显式可选化、SQLite + better-sqlite3。具体库是负责人推荐，不记为用户亲自指定；数据迁移和分发尚未验证，Coding 仍暂停。
+
+### 同日最新：确认 SQLite 方案并恢复原推进方式
+
+项目所有者随后回复“可以，继续按照原来的节奏推进吧”，确认上述方案并恢复实施。U05 的暂停已解除，按完整大任务交 Sol 6.2 Coding 连续实施、主动交付后负责人集中验收，通过后再下发下一批；不轮询、不守候、不做中途逐点验收。
+
+负责人完整任务包括：保留 SDK JSON 状态用法并显式可选化；通过现有存储端口使用 SQLite + better-sqlite3；Runtime 可选 peer、实际 Node Host 显式安装；默认后端按实际根目录惰性建立专用存储 Worker／连接，避免同步数据库操作阻塞宿主；旧 JSON 按 namespace 一次性事务导入并标记完成，保留原文件且不双写／回退；删除失去职责的旧文件后端，迁移直接消费者与公开材料并验证实际包。具体方案及准出统一见 [U05 正式任务](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/09-u05-optional-persistence.md#implementation)。这不是全量业务数据迁移或 Agent 检查点系统；未交付验收前不宣称已实现。当前 U01–U04 四批已验收，U05–U07 三批待完成。
+
+### 同日最新：U05 已验收，推进 U06
+
+U05 已由 Coding 完整交付，负责人集中验收通过：59 条本批路径和 131 条累计路径与验证树一致，复用 Runtime／SDK／实际包 Adapter 共 839 项测试，以及无原生依赖的包消费、旧数据跨进程事务迁移和 Node／Electron 实际原生加载证据。两种 SDK 路径显式启用持久化，默认 SQLite + better-sqlite3 13.2.0，按物理根目录惰性创建专用 Worker／连接，旧文件后端退出。完整 GUI、其他平台及最终 Semantic 人工验收不在本批通过范围；详情见设计实施索引的 U05 验收。
+
+当前共验收 U01–U05 五批，余下 U06、U07 两批。负责人已定案并成功消息下发 [U06 完整任务](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/10-u06-preact-commit.md)：以实际验证的 Preact 10.29.1 为当前单一适配支持版本，收敛必要内部依赖与升级验证，保持 Preact 默认模型、普通 TS 共用 Core、提交一致性与失败／关闭语义。版本选择是负责人在已授权范围内的工程决定，不写成用户亲自指定。完整交付后集中验收，再定案 U07 的实测减法；无需中途逐点批准。
+
+### 同日最新：U06 已验收，最后一批 U07 已下发
+
+U06 已完整交付并由负责人集中验收：25 条本批路径、149 条累计路径与验证树一致，复用 SDK／相关 Runtime 共 178 项测试及实际包回归，五消费者完成编译／清单验证。当前 Preact 适配支持 10.29.1；保留原 hook 链，修复两个 App 共用渲染队列时一个 App 的异步异常导致另一 App 更新丢失，维持错误记录、恢复与关闭。plain 无需 Preact，实包 full 和 Token Monitor 证明同一 Preact 模块消费。验收限于实际 Node ESM 范围，不扩写其他版本、SSR、任意插件或完整发行矩阵。
+
+目前 U01–U06 六批已验收，余下最后一批已成功下发的 [U07](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/11-u07-snapshot-processing.md)。负责人定案先做可比测量，再消除同一边界内仅为检查而分配的副本，按实测选择 canonical／ArrayRef 复用；共享现有严格 JSON 规则，保留每 Ref 额度、完整帧、跨 Worker 验证、原观察绑定与释放。不新增全局缓存或增量协议；没有收益／复杂度不合适的候选删除并记录。全部 Coding 继续交 Sol 6.2 Coding 连续完成，主动交付后一次集中验收，未验收前不宣称本轮全部完成。
+
+### 同日新增：公开文档误删恢复与 README 收敛
+
+项目所有者确认 `sdk/docs` 和 `runtime/docs` 的删除是误删，明确要求原样恢复；同时说明后续目标是删除 SDK／Runtime 模块下的 docs，各保留一个 README，讲清最关键的事情，其余由代码表达。该方向已确认，不需要再次询问是否恢复或是否采用 README 收敛。
+
+恢复以 U06 已验收完整验证树为准，保留 U01–U06 的文档升级，不用旧 HEAD 版本覆盖；恢复两个目录的 29 个文档／示例与 U07 功能修改分别记录。Coding 继续 U07，README 收敛作为新增 U08 在其验收后整项实施。README 应简明保留关键使用路径与不能仅由类型表达的行为边界；不把原 docs 拼成巨大 README，不另建文档存放区。同步清理引用、打包及依赖 docs 示例的验证，必要可执行合同迁入合适代码／测试位置，无职责材料删除。本次范围是模块内公开 docs，不取消根目录设计 SSOT 的持续维护。
+
+同日恢复完成：Coding 已恢复 SDK 18、Runtime 11 个文档／示例，负责人独立核对文件集合与 SHA-256 全部匹配 U06 验收树。误删问题已解除；恢复不计入 U07 功能补丁，README 收敛仍按新增 U08 后续实施。
+
+### 同日最新：原七批升级已验收，新增 U08 定案
+
+U07 已完整交付并经负责人集中验收：五条本批路径、154 条累计路径与验证树一致，实际包身份核对成立；复用 Runtime／SDK 共 1,155 项定向测试及 plain／full 消费和 U06 提交隔离回归。严格 JSON 共用检查／复制规则，Ref 较小额度不再分配丢弃副本；canonical 内容和 UTF-8 字节在一次校验中复用。ArrayRef 扣额、完整帧、跨 Worker 校验、来源失效和释放保证保留。
+
+同一实包夹具的六轮原始样本经负责人重算，32 View 与大 ArrayRef 更新至采用观察的 p50 改善约 9.3%／10.0%；小负载收益不稳定，部分尾延迟没有改善，消息体积与完整帧往返不变。不能据此宣称普遍 Agent 加速、token 节约或即时 RSS 下降。具体环境、身份与范围见 U07 验收记录。
+
+原 U01–U07 七批已全部验收，所有者新增的 README 收敛仍须完成。[U08 完整任务](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/12-u08-readme-only.md)已定案并成功消息下发 Coding：两个模块各留简洁 README，退出 docs，同步必要 fixture、消费验证、分发与有效引用；核心运行合同不因文档删除改变。全部 Coding 仍交 Sol 6.2 Coding，整批交付后集中验收。任务完成不等于 npm 已发布或最终 Semantic 人工验收。
+
+### 同日最终：U01–U08 已全部完成工程验收
+
+U08 已完整交付并经负责人集中验收：59 条本批路径、184 条累计路径与验证树一致，四包产物身份核对成立。SDK／Runtime 各保留根 README，两个 docs 目录在源码与实际包中均退出；23 份 Markdown 删除，六个有真实消费者的 App 示例原样迁入测试，Core／Host／Source 的独立行为验证转为 fixture。旧文档布局与候选版本文字专属检查删除，必要发行消费和引用迁移完成。
+
+两个 README 的同一计数器已从实际包编译运行至 `Count: 1`。plain／full 包消费、公开 App 集成 16 项、W10 ref-only 4 项及 U06 提交隔离探针通过。Runtime 运行产物不变，SDK 只调整入口注释／映射，未借文档删除改变核心合同。负责人已更新当前 AGENTS 和设计 SSOT 使用入口，历史记录保留原事实。
+
+完整发行双构建未完成：离线缓存缺 better-sqlite3 13.2.0 导致 Runtime 安装失败，后续矩阵未执行；冻结后的新消费脚本与 W10 对独立安装 tar 已通过。本轮工程准出完成，不能写成完整发行、npm 发布或最终 Semantic 人工验收。当前 U01–U08 全部验收，无待交付批次；不自动启动新的优化或重构，后续按项目所有者新的明确需求推进。
+
+### 同日补充：人工验收前对齐实际运行环境
+
+所有者询问是否可以开始验收后，负责人发现共享工作树的 Runtime／SDK／Adapter dist 与已验收 U08 构建不同，Host 依赖链接到这些本地包，且 better-sqlite3 实际为 12.6.2 而非声明及验收的 13.2.0。源码／独立 tar 的工程验收不因此作废，但不能据此宣称本机桌面启动已使用新版本。
+
+已交 Coding 完成人工验收环境准备：对齐依赖与必要构建，核实真实加载来源，用临时数据目录进行必要冒烟后交付准确启动命令和限制。保留用户业务数据、应用安装记录、模型配置和凭据，不发起真实模型请求。该任务属于运行环境落地，不新增功能批次；完成前明确标注本机人工验收就绪尚未确认。
+
+### 同日最终补充：本机人工验收环境已就绪
+
+Coding 完成人工验收运行准备后，负责人独立核对四个核心包的 dist 全部与 U08 一致，184 条累计源码路径保持；Host／Runtime 实际共用 better-sqlite3 13.2.0，Host Main、preload 与 renderer 已重建并核对身份。真实 Electron 45.3.1 项目页及 IPC、四 App 观察、IDE 标准 Source 操作、Planning SQLite 保存重开、两个 IDE 用例与 19 项 Host 预览测试通过。生成产物与安装状态已对齐，当前可以开始本机人工验收。
+
+启动命令见 `docs/sdk-runtime-design/deliveries/manual-acceptance-ready.md`。AOTUI_DATA_DIR 只隔离框架 App 状态和 IDE 会话等对应数据，普通启动仍沿用用户已有 Host 对话和模型配置；用测试项目、新话题验收，恢复测试保持同一目录及话题。自动冒烟未发起真实模型请求，不替代最终 Semantic 人工签收；本次环境准备也不等于完整安装版发行验收。
+
+## 二十六、2026-11-17 反馈：人工验收通过，继续删除旧概念与代码
+
+项目所有者明确反馈“我测试了一下没问题”，并要求：项目尚无正式用户、未正式发布，不应为兼容旧版本保留过时代码和概念；需要详细可删除代码盘点、可行性、影响面、开发计划，然后交 Sol 6.2 Coding 完整实施。本次 Semantic 路径的人工验收通过，第六节中等待所有者此次验收的退出前提已满足，不追加重复确认；不因此宣称跨平台发行矩阵或 npm 发布完成。
+
+当前新增任务为 [U09 验收后删减](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/13-u09-post-acceptance-cleanup.md)，接续已验收 U01–U08 的实际 dirty 工作树。范围以 SDK / Runtime 为主及其必要直接消费者，所有 Coding 继续交指定聊天 Sol 6.2 Coding；整项实施、自测和汇报后由负责人集中验收，不轮询、不等待、不做中途逐项门禁。
+
+负责人已确定沿现行链做减法：退出旧 JSON 自动导入与其文件名规则、参数模式包装、历史类型代号、Worker 能力列表、快照限时租约和 AppKernel 多步身份装配；收敛 DOM 中间结构，删除无职责导出与失效配置，同步测试和实际构建产物。具体合同以四层主文档及 U09 为准，当前是已授权技术方案，不代表代码已完成。
+
+旧别名、回退、兼容开关不因历史存在而保留。现行 SQLite 数据和用户文件不删除，旧 JSON 只停止自动导入；Host toolsEnabled、真正协议边界、Ref/实例绑定、跨边界验证、容量限制、真实在途持有与资源释放继续存在。SDK / Runtime 各只保留一个简短 README，负责人设计 SSOT 仍位于根目录忽略文档中。执行者必须使用本仓库 minimalist，不重置或覆盖他人修改。
+
+### 同日更新：主目录开发，U01–U09 累计版本统一验收
+
+项目所有者明确反馈“没必要啊，U1-U9 一起改，我一起验收不好吗”。据此，主目录 `/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI` 作为开发主线；不再为保护上一批版本而默认隔离开发、等待负责人验收副本后才合入。已在临时副本完成的 U09 工作按实际增量接回，保留 U01–U08 及共享工作树其他修改，再在主目录连续完成开发、迁移、自测和修复。
+
+临时目录仅用于独立安装、测试数据、必要验证和证据，不构成另一条待合入开发线。执行者不独占主目录，不整树覆盖、不 reset/clean，不丢弃其他人的改动。最终交付主目录中源码、依赖、生成清单及实际构建产物一致的 U01–U09 累计版本；负责人整项集中工程复核后，所有者统一验收，不要求逐批再次签收。此前工程/人工验收事实保留，已完成工作不重做。已向 Sol 6.2 Coding 下发本次调整，具体迁回与最终完成状态以实际交付为准。
+
+### 同日更新：U09 完成交付，主目录累计版本就绪
+
+收到 Coding 主动提交的完整交付后，负责人集中工程验收通过。U09 的 R01–R09 已实施，173 条本批路径和 1,244 个构建文件与主目录一致；累计源码除负责人维护的本文件外均与验证身份匹配。Runtime/SDK 生产 TypeScript 模块净减 3 个、399 行，删除旧兼容和重复状态，保留真实身份、授权、来源、容量与释放合同。
+
+复用 Runtime 1,677、SDK 153、Adapter 52、Host 预览 19 项及实际包、Worker/Source、默认 App、IDE/LSP 和 Node/Electron Node 模式 SQLite 的有效验证。负责人在主目录另跑 7 个相关文件、212 项回归通过；这一子集不重复累加为额外覆盖。当前 Worker 使用 `app-worker/v1`，工厂/manifest 使用 `view-type-tools-v6`，Snapshot schemaVersion 为 6；现有 SQLite 表与记录格式不变。详细独立核对、交付身份和未覆盖边界归 [U09 验收记录](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/05-upgrade-delivery.md#u09-负责人验收记录)。
+
+本轮 U01–U09 无待交付批次，用户可在主目录使用 `./run.sh` 统一测试最终累计版本。U01–U08 原人工验收事实保留，U09 的工程通过不冒充用户已经测试通过。完整双构建发行矩阵、U09 交互式 GUI/真实模型请求和 npm 发布没有因此被宣称完成。主目录继续作为开发主线；不自动新增 U10，不恢复隔离开发及逐批要求用户签收的流程。
+
+### 同日后续：真实 Host 验收问题定位
+
+所有者回传从主目录启动后的 DeepSeek 验收报告，要求检查 A1–A4 是否为 bug 及其根因。负责人只读核对了本轮唯一标记的原始调用和 Planning 业务数据，Coding 完成真实 Planning/Worker/Source 的最小隔离复核；未修改生产代码或验收现场。结论与证据统一记录在 [14 Host 验收根因](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/14-host-acceptance-findings.md)。
+
+关闭页面后传入其旧 view_id 得到 TOOL_UNAVAILABLE 符合当前实例绑定，验收计划不应要求先进入 IDE 再返回 IDE_FILE_NOT_LOADED。首轮 PlanDetail 工具泄漏未在独立公开链复现，所有者确认原始终端日志未保留；不能把模型事后叙述当成实际工具表。Planning 的 complete_phase 会联动完成剩余任务，已完成阶段仅显示阶段 Ref，不展示任务明细；本轮“核对清单”仍在数据库且已 completed，问题归应用说明及可见/可操作入口，尚未修复。当前 View 位于最近工具历史之前可由 Driver 分区顺序解释，不据此扩展为内核发布乱序。上述定位不改写此前工程验收，也不代表人工体验已经全部通过。
+
+### 同日追加：App 启动失败后从 Desktop 缺席，已复现
+
+所有者继续反馈其他验收话题中 Planning App 消失。定位发现 Host 默认保留 10 个会话、每话题自动启动默认 App，而 Runtime 内所有 Desktop 共用的 App Worker 上限为 10。AppRegistry 的自动安装失败后，AppManager 回滚移除安装记录，Host 仅 console.warn 仍返回会话创建成功；Source 与 GUI 只枚举已安装记录，失败 App 因此没有可见名称和错误原因。
+
+Coding 用当前真实四 App、默认 Runtime、AppRegistry 和标准 Source 顺序创建三个隔离 Desktop，负责人核对脚本、原始日志和 228 个副本构建文件：前两个各四 App 成功，第三个只有 IDE/Terminal；Lite Browser/Planning 均实际返回 WORKER_CAPACITY_EXCEEDED，且从 Desktop、View 与 Tools 缺席，健康 IDE 调用仍成功。原用户话题缺少启动错误日志，历史具体触发码保持推断；当前可复现缺陷成立。详细证据归 [Host 验收根因 A5](/Users/zhangwei/JSWorkSpace/learning_code/AgentOrientedTUI/docs/sdk-runtime-design/14-host-acceptance-findings.md)。
+
+本次仅诊断，未改生产代码/用户数据、未重启用户 Host；问题尚未修复。建议复用已有登记/打开路径保留失败 App 的可发现性、具体错误与合法重试，再协调 Host 会话和自动启动资源策略；不删除 Runtime 容量保护，不把单纯提高上限当成完整修复，不引入通用调度平台。此建议不冒充已授权并完成的新实施批次。
+
+### 同日最新决定：Worker 数量默认不限，限额设计暂缓
+
+项目所有者明确要求：“现在限额的上限改成无穷大吧，后续聊清楚了，再把这个限额做明白”。本次所指是一个 Runtime 共享的 App Worker 数量上限，不是 LLM 上下文/token 限额。该明确决定覆盖上段关于保持默认 Worker 数量保护的建议；更大的 App 注册、启动失败呈现和 Host 资源策略改造派单已撤回，不作为本批实施范围。
+
+本批仅将默认 `worker.maxWorkers` 改为无限制，并同步必要配置校验、简短说明和实际构建。沿用现有 Worker 生命周期与真实退出清理；不新增队列、调度、自动回收或重试机制，不改上下文预算、页面限制、会话数及用户 App 配置。显式有限配置的现有行为可以保留，完整限额策略后续再讨论。全部 Coding 已交 Sol 6.2 Coding 在主目录完成，负责人整项验收；当前记为已派单，未宣称实现或验收完成。
+
+### 同日追加授权：修复后整理全部改动，分批提交并合并主干
+
+项目所有者要求当前修复完成后，由 Sol 6.2 Coding 为当前全部代码改动创建分支，按逻辑分批写清楚 Commit，最后合并主干。范围包含主目录尚未提交的 U01–U09 累计成果、本次 Worker 默认无限制修复，以及相应消费者、测试、配置和应跟踪文档；不只提交本次小修复。
+
+当前主干已核对为 `main`。Coding 完整交付本次修复，负责人完成既定的一次集中验收与文档同步后，由 Coding 在主目录创建 `codex/` 分支、按实际最终改动与依赖分组提交，再合并回本地 `main`，保留各批提交。每个提交说明目的、主要变化、影响和真实验证；不伪造中间提交独立通过测试的事实。保留他人改动，不重写既有历史；根设计 SSOT、构建目录、临时证据和业务数据继续遵守现有忽略规则。已有有效验收直接复用，收尾核对提交覆盖、合并结果和未提交余项。此项已授权并下发，不需重复询问用户；尚未宣称分支提交、合并或远端同步完成。
+
+### 同日交付：Worker 默认无限制已通过集中验收
+
+Coding 完整交付后，负责人检查七个本批文件及原始复现，核对主目录七个源码文件、886 个 Runtime/Host 构建文件和四 App 副本的 228 个文件身份，全部一致。生产变化只有默认值和两处必要校验：默认 `worker.maxWorkers = Number.POSITIVE_INFINITY`，显式有限 1–100 的既有行为保留；没有前单超范围增量，没有新增资源策略或机制。
+
+六个相关文件、38 项定向回归通过。三个 Desktop 各四个真实 App 全部启动成功；第三个标准 Source 中 Planning 可见，实际 create_plan 成功并出现新的 PlanDetail 和相应类型工具。隔离 Runtime 的真实 Worker 从 12 个正常关闭至 0，关闭报告成功且资源已释放；此事实不推断用户现有 Host 的状态。Runtime 与 Host 主进程/preload 已构建并核对实际依赖，用户自行重新启动主目录 `./run.sh` 后加载新默认值。修复已验收，后续已授权的全量分批提交与合并进入执行；限额体系及其他启动失败呈现仍留待后续讨论。

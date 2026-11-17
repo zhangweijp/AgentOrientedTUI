@@ -201,6 +201,7 @@ export class Desktop implements IDesktop {
                 config: mergedConfig, // [RFC-026] Injected Config
                 runtimeConfig: this.config, // [RFC-005] Pass Runtime Config
                 toolsEnabled: options?.toolsEnabled,
+                projectionLimits: options?.projectionLimits,
             }
         );
     }
@@ -231,6 +232,7 @@ export class Desktop implements IDesktop {
             config: { ...this.context?.env, ...options.config },
             runtimeConfig: this.config,
             toolsEnabled: options.toolsEnabled,
+            projectionLimits: options.projectionLimits,
         });
     }
     // --- Lifecycle Methods ---

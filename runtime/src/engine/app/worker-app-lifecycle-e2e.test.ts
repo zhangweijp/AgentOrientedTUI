@@ -1,3 +1,4 @@
+import { readSqliteState } from '../../../tests/fixtures/sqlite-state.js';
 import { expect, it } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -30,7 +31,7 @@ function Root() {
     const [, set] = usePersistentState('value', 0);
     return h('div', null, h(View, { kind: 'instruction', id: 'root', type: RootType, context: { set } }, 'Managed state'));
 }
-const factory=createTUIApp({viewTypes:[RootType], app_name:'close',component:Root});
+const factory=createTUIApp({persistence:true,viewTypes:[RootType], app_name:'close',component:Root});
 const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,${mode === 'async' ? 'async ' : ''}close(){renderer.close();${mode === 'async' ? 'await Promise.resolve();' : ''}throw Error('private renderer detail');}};};export default factory;`);
     const sandbox = new WorkerSandbox({ appId: 'app', desktopId: 'd', appModulePath: url(app),
         workerScriptPath: join(repo,'runtime/dist/worker-runtime/index.js'), runtimeConfig: defineRuntimeConfig({ worker: { timeoutMs: 3000, maxWorkers: 1 } }), config: { AOTUI_DATA_DIR: join(dir,'data'), AOTUI_APP_KEY: 'close' } });
@@ -38,7 +39,7 @@ const initialize=factory.initialize.bind(factory);factory.initialize=async(...ar
         await sandbox.installDynamic();await invokeObservedTool((sandbox as any).workerHost,'save',{value:7},'root');const worker = (sandbox as any).workerHost.worker;
         const close = sandbox.close();await expect(close).rejects.toHaveProperty('code','SANDBOX_CLOSE_FAILED');const report = await sandbox.disposeAsync();
         expect(report).toMatchObject({ state:'settled', resourcesReleased:true, ok:false, host:{ worker:'exited', storage:{ support:'managed', lifecycle:{ unmount:'failed', flush:{ok:true}, dispose:{release:{status:'released'}} } } } });
-        expect(worker.threadId).toBe(-1);expect(JSON.parse(await readFile(join(dir,'data/app-state/d/close/value.json'),'utf8')).value).toBe(7);
+        expect(worker.threadId).toBe(-1);expect(JSON.parse(readSqliteState(join(dir, 'data/app-state'), 'd', 'close', 'value')!).value).toBe(7);
         expect(JSON.stringify(report)).not.toContain('private renderer detail');await facts('unmount-'+mode,{report,threadId:worker.threadId});
     } finally { await sandbox.disposeAsync();await rm(dir,{recursive:true,force:true}); }
 }, 15000);

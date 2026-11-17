@@ -1,12 +1,25 @@
-import type { AppFrameBinding, AppTypeToolDefinition } from '../../spi/runtime/app-type-tools.interface.js';
-import type { ToolResultData } from '../../spi/core/tool-result.js';
+import type { ToolResult, ToolResultData } from './tool-result.js';
 import { canonicalJson, copyJson, SnapshotDataError, utf8Size } from '../snapshot/json.js';
 import { DEFAULT_SNAPSHOT_LIMITS, MAX_VIEW_TOOL_BINDINGS } from '../snapshot/snapshot-support.js';
-import type { JsonValue, ToolDescriptorV5, ToolInvocationDescriptor, ViewToolBinding, ViewToolReceiver } from '../snapshot/types.js';
-import { compileOrdinarySchema, modelToolSchema, type OrdinaryParameterContract } from './ordinary-parameter-contract.js';
-import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
+import type { JsonValue, ToolDescriptor, ToolInvocationDescriptor, ViewToolBinding, ViewToolReceiver } from '../snapshot/types.js';
+import { compileToolParameters, modelToolSchema, type ToolParameterContract } from './tool-parameters.js';
 import type { ViewToolInvocationTerminal } from './invocation-terminal.js';
 import { sameToolDefinition } from './source-binding.js';
+
+/** One shared business contract for an operation on a ViewType. */
+export interface AppTypeToolDefinition {
+    readonly viewType: string;
+    readonly name: string;
+    readonly description: string;
+    readonly inputSchema: Readonly<Record<string, unknown>>;
+}
+
+/** One candidate handler on one View. Functions stay in the App execution environment. */
+export interface AppFrameBinding {
+    readonly name: string;
+    readonly enabled: boolean;
+    readonly execute: (args: Readonly<Record<string, unknown>>) => ToolResult | Promise<ToolResult>;
+}
 
 export interface ViewInstance {
     readonly viewId: string;
@@ -26,7 +39,7 @@ export interface ViewOwnedToolsStats {
     readonly retainedBytes: number;
 }
 
-type Tool = { readonly descriptor: ToolDescriptorV5; readonly contract: OrdinaryParameterContract };
+type Tool = { readonly descriptor: ToolDescriptor; readonly contract: ToolParameterContract };
 type Binding = ViewToolBinding & Pick<AppFrameBinding, 'execute'>;
 type Mounted = {
     readonly owner: object;
@@ -128,12 +141,12 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
                 const { viewType, name, description } = definition;
                 const type = types.get(viewType) ?? new Map<string, Tool>();
                 if (type.has(name)) fail('TOOL_DUPLICATE', 'Duplicate Tool ' + viewType + '.' + name);
-                const compiled = compileOrdinarySchema(definition.inputSchema);
+                const compiled = compileToolParameters(definition.inputSchema);
                 if (!compiled.ok) {
                     const { code, message, path } = compiled.issue;
                     throw new ViewToolContractError(code === 'PARAMETER_DECLARATION_CAPACITY' ? 'TOOL_SCHEMA_CAPACITY' : code, message, path);
                 }
-                const inputSchema = ordinaryParameterProfile(compiled.contract);
+                const inputSchema = compiled.contract.schema;
                 modelToolSchema(inputSchema, viewType);
                 const first = firstByName.get(name);
                 const descriptor = { id: JSON.stringify([appId, viewType, name]), viewType, name, description, inputSchema,
@@ -163,7 +176,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
             const previous = mounted;
             const next = new Map<string, Mounted>();
             const owners = new Set<object>();
-            const tools = new Map<string, ToolDescriptorV5>();
+            const tools = new Map<string, ToolDescriptor>();
             let bytes = 0;
             let count = 0;
             let entries = 0;
@@ -225,7 +238,7 @@ export function createViewOwnedTools(appId: string, appInstanceId: string, limit
         validateTypeToolBinding(tool: ToolInvocationDescriptor, receiver: ViewToolReceiver): ToolResultData {
             return current(tool, receiver).error ?? { success: true };
         },
-        getTypeToolContract(tool: ToolInvocationDescriptor, receiver: ViewToolReceiver): OrdinaryParameterContract | undefined {
+        getTypeToolContract(tool: ToolInvocationDescriptor, receiver: ViewToolReceiver): ToolParameterContract | undefined {
             return current(tool, receiver).contract;
         },
         async invokeTypeTool(tool: ToolInvocationDescriptor, receiver: ViewToolReceiver,

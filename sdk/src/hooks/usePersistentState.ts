@@ -14,7 +14,7 @@ export type PersistOptions<T> = {
 export type PersistStatus = StateBindingStatus | Readonly<{ phase: 'pending' }>;
 export type PersistMeta = { ready: boolean; clear: () => Promise<void>; getStatus: () => PersistStatus };
 const error = (issue: StateIssue) => Object.assign(new Error(issue.message), { code: issue.code });
-const unavailable = () => Object.assign(new Error('Instance persistence is unavailable; use a compatible managed Runtime'), { code: 'PERSISTENCE_UNAVAILABLE' });
+const unavailable = () => Object.assign(new Error('Instance persistence is unavailable; set persistence: true on the App factory and use a compatible Runtime'), { code: 'PERSISTENCE_UNAVAILABLE' });
 
 export type AOTUILifecycleMetadata = {
   startupKind?: "normal" | "reinitialize";

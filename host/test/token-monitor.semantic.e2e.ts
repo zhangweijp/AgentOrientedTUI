@@ -119,7 +119,7 @@ try {
     await fs.mkdir(broken);
     await fs.writeFile(path.join(broken, 'aoapp.json'), JSON.stringify({
         app_name: 'broken', version: '0.1.0', entry: { main: './index.mjs' },
-        toolAuthoringProtocol: 'view-type-tools-v5', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
+        toolAuthoringProtocol: 'view-type-tools-v6', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
     }));
     await fs.writeFile(path.join(broken, 'index.mjs'), 'export default {};');
     const warning = console.warn, issues: unknown[][] = [];

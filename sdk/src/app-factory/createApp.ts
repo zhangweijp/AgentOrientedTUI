@@ -9,11 +9,15 @@ import { capturedRefValue, captureRefEntries, type PublishedRef } from './refs.j
 declare const viewHandle: unique symbol;
 export interface ViewHandle { readonly [viewHandle]: true }
 
+type ViewFrame = { readonly views: readonly ViewHandle[] };
+
 export interface AppAuthorContext extends
-    Pick<RuntimeContext, 'appId' | 'desktopId' | 'launchConfig' | 'persistence' | 'signal'> {
+    Pick<RuntimeContext, 'appId' | 'desktopId' | 'launchConfig' | 'persistence' | 'projectionLimits' | 'signal'> {
     registerCleanup(callbacks: AppLifecycleCallbacks): void;
-    /** Prepare a complete frame. Use opening only for navigation that can leave the current frame intact. */
-    publish(frame: { readonly views: readonly ViewHandle[] }, options?: { readonly opening: true }): PreparedProjection;
+    /** Prepare a complete frame for a subsequent observation. */
+    prepareProjection(frame: ViewFrame): PreparedProjection;
+    /** Prepare a reversible opening that can leave the current frame intact on capacity rejection. */
+    prepareOpeningProjection(frame: ViewFrame): PreparedProjection;
 }
 
 export type CreateAppConfig = AppConfig & {
@@ -52,9 +56,9 @@ function invalid(path: string, message: string): never {
 export function createApp(config: CreateAppConfig): TUIAppFactory {
     const { initialize } = config;
     return createAppFactory(config, async (context, types) => {
-        const { appId, desktopId, persistence, launchConfig, signal, appLifecycle } = context;
+        const { appId, desktopId, persistence, launchConfig, projectionLimits, signal, appLifecycle } = context;
         const app = {};
-        const build = (frame: Parameters<AppAuthorContext['publish']>[0]): AppProjectionFrame => {
+        const build = (frame: ViewFrame): AppProjectionFrame => {
             if (signal.aborted) throw Object.assign(new Error('App projection is closed'), { code: 'PROJECTION_CLOSED' });
             const capture = createRefCapture();
             const views: AppProjectionFrame['views'][number][] = [];
@@ -90,7 +94,7 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
             }
             return { views };
         };
-        const publish: AppAuthorContext['publish'] = (frame, options) => {
+        const prepare = (frame: ViewFrame, options?: { readonly opening: true }): PreparedProjection => {
             const result = context.publishFrame(() => build(frame), options);
             if (result.status === 'prepared') return result;
             if (result.status === 'failed' && result.cause) throw result.cause.error;
@@ -102,11 +106,12 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
         };
 
         await initialize({
-            appId, desktopId, signal,
+            appId, desktopId, signal, projectionLimits,
             ...(persistence === undefined ? {} : { persistence }),
             ...(launchConfig === undefined ? {} : { launchConfig }),
-            registerCleanup: callbacks => { appLifecycle!.register(callbacks); },
-            publish,
+            registerCleanup: callbacks => { appLifecycle.register(callbacks); },
+            prepareProjection: frame => prepare(frame),
+            prepareOpeningProjection: frame => prepare(frame, { opening: true }),
         });
         return { close() {} };
     });

@@ -76,7 +76,7 @@ function literalBlock(text: string): string {
 export default createApp({
     app_name: 'sqlite_work_items',
     viewTypes: workViewTypes,
-    async initialize({ launchConfig, publish, registerCleanup, signal }) {
+    async initialize({ launchConfig, prepareProjection, registerCleanup, signal }) {
         const sqlite = openSqlite(launchConfig?.databasePath, launchConfig?.sqliteExecutable);
         registerCleanup({ stop: sqlite.stop, close: sqlite.close });
         let selectedId: number | undefined;
@@ -143,7 +143,7 @@ SELECT changes() AS direct, total_changes() AS total;`);
         function show(detailId: number | undefined) {
             if (detailId === undefined) detail = undefined;
             else if (detail?.id !== detailId) detail = { id: detailId, view: createDetail(detailId) };
-            publish({ views: detail ? [root, list, detail.view] : [root, list] });
+            prepareProjection({ views: detail ? [root, list, detail.view] : [root, list] });
         }
 
         function unavailable(issue: SqliteIssue): SqliteIssue {

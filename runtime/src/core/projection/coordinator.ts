@@ -1,29 +1,53 @@
-import type { AppFrameRef, ProjectionCommitResult, ProjectionOptions } from '../../spi/app/app-instance.interface.js';
 import { canonicalJson, SnapshotDataError } from '../snapshot/json.js';
 import { captureSnapshotPrepareIssue, DEFAULT_SNAPSHOT_LIMITS as limits, isSnapshotPrepareIssueCode, refKey } from '../snapshot/snapshot-support.js';
 import {
     SNAPSHOT_SCHEMA_VERSION,
-    type JsonValue, type PreparedAppSnapshotDraftV5, type PreparedSnapshotFailure,
-    type RefDescriptorV2, type SnapshotCommitter, type SnapshotIssue,
-    type ToolDescriptorV5, type ViewSnapshotV4,
+    type JsonValue, type PreparedAppSnapshotDraft, type PreparedSnapshotFailure,
+    type RefDescriptor, type SnapshotCommitter, type SnapshotIssue,
+    type ToolDescriptor, type ViewSnapshot,
 } from '../snapshot/types.js';
-import { validatePreparedV5Draft } from '../snapshot/v5-validator.js';
+import { validatePreparedSnapshot } from '../snapshot/validate-snapshot.js';
+import type { AppFrameBinding } from '../tool/view-owned-tools.js';
+
+export interface AppFrameRef {
+    readonly id: string;
+    readonly value: JsonValue;
+    readonly refType?: string | undefined;
+}
+
+/** Completed author data. The app runtime supplies mounted identities and Tool activations. */
+export interface AppFrameView extends Omit<ViewSnapshot, 'viewInstanceId' | 'toolBindings'> {
+    readonly owner: object;
+    readonly bindings: readonly AppFrameBinding[];
+    readonly refs: readonly AppFrameRef[];
+}
+export interface AppProjectionFrame {
+    readonly views: readonly AppFrameView[];
+}
+export type PreparedProjection = Readonly<{ status: 'prepared'; sourceEpoch: number }>;
+export type ProjectionOptions =
+    | Readonly<{ opening: true; retainViews?: true }>
+    | Readonly<{ restore: true }>;
+export type ProjectionCommitResult = PreparedProjection
+    | Readonly<{ status: 'restored'; sourceEpoch: number }>
+    | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>
+    | Readonly<{ status: 'failed'; issue: SnapshotIssue; cause?: { readonly error: unknown } }>;
 
 export interface ProjectionSource {
     identity(): { readonly appId: string; readonly instanceId: string };
-    checkCapacity?(draft: PreparedAppSnapshotDraftV5): SnapshotIssue | undefined;
+    checkCapacity?(draft: PreparedAppSnapshotDraft): SnapshotIssue | undefined;
 }
 
 /** Complete candidate with prospective identities from the View registry. */
 export interface CompleteProjectionFrame {
-    readonly views: readonly ViewSnapshotV4[];
+    readonly views: readonly ViewSnapshot[];
     readonly refs: readonly (AppFrameRef & { readonly viewId: string; readonly viewInstanceId: string })[];
-    readonly tools: readonly ToolDescriptorV5[];
+    readonly tools: readonly ToolDescriptor[];
     readonly accept?: () => void;
 }
 
 type ProjectionToken = Readonly<{ epoch: number; ready: boolean }>;
-type Publication = { draft: PreparedAppSnapshotDraftV5 } | { failure: PreparedSnapshotFailure };
+type Publication = { draft: PreparedAppSnapshotDraft } | { failure: PreparedSnapshotFailure };
 const asyncFunction = Object.getPrototypeOf(async function () {});
 
 function failureIssue(error: unknown): SnapshotIssue {
@@ -51,7 +75,7 @@ export class SemanticProjectionCoordinator {
     private producerSeq = 0;
     private committing = false;
     private commitIssue?: SnapshotIssue;
-    private prepared?: PreparedAppSnapshotDraftV5;
+    private prepared?: PreparedAppSnapshotDraft;
     private issue?: SnapshotIssue;
     private closed = false;
     private queuedNotice = false;
@@ -94,19 +118,19 @@ export class SemanticProjectionCoordinator {
     }
 
     private prepare({ views, refs, tools, accept }: CompleteProjectionFrame, options?: ProjectionOptions): ProjectionCommitResult {
-        const values: Record<string, RefDescriptorV2> = Object.create(null);
+        const values: Record<string, RefDescriptor> = Object.create(null);
         for (const { id, value, viewId, viewInstanceId, refType } of refs) {
             const key = refKey(viewId, viewInstanceId, id);
             if (Object.hasOwn(values, key)) throw new SnapshotDataError('SNAPSHOT_INVALID', '$.refs', 'Duplicate Ref in App frame');
             values[key] = { id, ownerViewId: viewId, ownerViewInstanceId: viewInstanceId,
                 refType: refType ?? 'unknown', target: { kind: 'snapshot-value', payload: value } };
         }
-        const definitions: Record<string, ToolDescriptorV5> = Object.create(null);
+        const definitions: Record<string, ToolDescriptor> = Object.create(null);
         for (const tool of tools) {
             if (Object.hasOwn(definitions, tool.id)) throw new Error('Duplicate Tool definition');
             definitions[tool.id] = tool;
         }
-        const checked = validatePreparedV5Draft({
+        const checked = validatePreparedSnapshot({
             schemaVersion: SNAPSHOT_SCHEMA_VERSION, ...this.source.identity(),
             sourceEpoch: this.epoch + 1, producerSeq: this.producerSeq + 1, capturedAt: Date.now(),
             views, refs: values, tools: definitions,

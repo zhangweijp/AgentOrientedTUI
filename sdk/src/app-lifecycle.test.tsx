@@ -4,6 +4,7 @@ import { act } from 'preact/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppLifecycleCallbacks } from '@aotui/runtime/spi';
 import { AppRuntimeContext } from './context/AppRuntimeContext.js';
+import { createTUIApp } from './app-factory/createTUIApp.js';
 import { useAppLifecycle } from './hooks/useAppLifecycle.js';
 import { useState } from 'preact/hooks';
 
@@ -70,6 +71,9 @@ describe('useAppLifecycle', () => {
 
     it('rejects a missing Runtime lifecycle port before registering', () => {
         function Root() { useAppLifecycle({}); return null; }
-        expect(() => mountLifecycle(Root)).toThrow('APP_LIFECYCLE_UNSUPPORTED');
+        const factory = createTUIApp({ app_name: 'lifecycle', viewTypes: [], component: Root });
+        for (const appLifecycle of [undefined, { protocol: 'app-lifecycle-v2' }]) {
+            expect(() => factory.initialize({ appLifecycle } as any)).toThrow('APP_LIFECYCLE_UNSUPPORTED');
+        }
     });
 });

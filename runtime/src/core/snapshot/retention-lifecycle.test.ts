@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createSnapshotCore } from './store.js';
 import { refKey } from './snapshot-support.js';
-import { validatePreparedV5Draft } from './v5-validator.js';
+import { validatePreparedSnapshot } from './validate-snapshot.js';
 import { canonicalJson, utf8Size } from './json.js';
 import type { JsonValue } from './types.js';
 
 function draft(appId = 'a', instanceId = 'i', seq = 1, value = 'old') {
-    return { schemaVersion: 5 as const, appId, instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 0,
+    return { schemaVersion: 6 as const, appId, instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: 0,
         views: [{ toolBindings: [], id: 'v', viewInstanceId: 'g', type: 'Detail', name: value, kind: 'state' as const,
             content: { format: 'markdown-v1' as const, value } }],
         refs: { [refKey('v', 'g', 'r')]: { id: 'r', ownerViewId: 'v', ownerViewInstanceId: 'g', refType: 'Value',
@@ -24,19 +24,19 @@ describe('W09-A Snapshot finite retention', () => {
     it('releases retired payload immediately when publication leaves it without a holder', () => {
         const c = createSnapshotCore({ ...identity, now: () => 0 });
         const old = published(c), next = published(c, draft('a', 'i', 2, 'new'));
-        expect(c.store.getById(old.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_EXPIRED' } });
-        expect(c.store.inspect()).toMatchObject({ historicalSnapshots: 0, historicalBytes: 0 });
+        expect(c.store.getById(old.id)).toMatchObject({ status: 'rejected', issue: { code: 'SNAPSHOT_UNAVAILABLE' } });
+        expect(c.store.inspect()).toMatchObject({ heldSnapshots: 0, heldSnapshotBytes: 0 });
         expect(c.store.getById(next.id).status).toBe('found'); c.lifecycle.dispose();
     });
     it('drops the retired snapshot on the last release while preserving a second holder and current data', () => {
         const c = createSnapshotCore({ ...identity, now: () => 0 });
-        const old = published(c), a = c.store.acquire(old.id, { lifetime: 'owner' }), b = c.store.acquire(old.id, { lifetime: 'owner' });
+        const old = published(c), a = c.store.acquire(old.id), b = c.store.acquire(old.id);
         if (a.status !== 'acquired' || b.status !== 'acquired') throw Error('holders');
         const next = published(c, draft('a', 'i', 2, 'new'));
-        a.lease.release(); expect(c.store.getById(old.id).status).toBe('found');
-        b.lease.release(); b.lease.release();
+        a.hold.release(); expect(c.store.getById(old.id).status).toBe('found');
+        b.hold.release(); b.hold.release();
         expect(c.store.getById(old.id).status).toBe('rejected');
-        expect(c.store.inspect()).toMatchObject({ historicalSnapshots: 0, historicalBytes: 0, currentSnapshots: 1, activeLeases: 0 });
+        expect(c.store.inspect()).toMatchObject({ heldSnapshots: 0, heldSnapshotBytes: 0, currentSnapshots: 1, activeHolds: 0 });
         expect(c.store.getById(next.id).status).toBe('found'); c.lifecycle.dispose();
     });
     it('A01 captures the current snapshot byte limit at construction', () => {
@@ -97,18 +97,18 @@ describe('W09-A Snapshot finite retention', () => {
         const bytes = size(draft());
         let clockFailed = false;
         const c = createSnapshotCore({ ...identity, now: () => { if (clockFailed) throw Error('clock'); return 0; },
-            maxCurrentBytes: bytes, maxHistoryBytes: 0 });
-        const old = published(c), lease = c.store.acquire(old.id, { lifetime: 'owner' });
+            maxCurrentBytes: bytes, maxHeldSnapshotBytes: 0 });
+        const old = published(c), lease = c.store.acquire(old.id);
         if (lease.status !== 'acquired') throw Error('Expected lease');
         clockFailed = broken;
         c.lifecycle.stop();
         c.lifecycle.stop();
         clockFailed = false;
         expect(c.committer.accept(draft('a', 'i', 2))).toMatchObject({ status: 'rejected', issue: { code: 'APP_STOPPED' } });
-        expect(c.store.inspect()).toMatchObject({ currentBytes: 0, historicalBytes: bytes, activeLeases: 1 });
+        expect(c.store.inspect()).toMatchObject({ currentBytes: 0, heldSnapshotBytes: bytes, activeHolds: 1 });
         expect(c.store.getById(old.id).status).toBe('found');
-        lease.lease.release();
-        expect(c.store.inspect()).toMatchObject({ currentBytes: 0, historicalBytes: 0, activeLeases: 0 });
+        lease.hold.release();
+        expect(c.store.inspect()).toMatchObject({ currentBytes: 0, heldSnapshotBytes: 0, activeHolds: 0 });
     });
     it.each([509, 510, 511, 512, 513, 200000])('A07 bounds prepare diagnostic text %s with exact byte accounting', length => {
         const c = createSnapshotCore({ ...identity, now: () => 0 });
@@ -143,7 +143,7 @@ describe('W09-A Snapshot finite retention', () => {
         expect(utf8Size(r.issue.path ?? '')).toBeLessThanOrEqual(512); expect(utf8Size(r.issue.message)).toBeLessThanOrEqual(512);
         expect(c.store.inspect().diagnosticBytes).toBeGreaterThan(0);
         expect(c.committer.accept(draft('a', 'i', 3)).status).toBe('unchanged'); expect(c.store.inspect().diagnosticBytes).toBe(0);
-        expect(validatePreparedV5Draft(draft()).ok).toBe(true);
+        expect(validatePreparedSnapshot(draft()).ok).toBe(true);
     });
     it.each([false, true])('A08/A09 permanent disposal works with failing clock=%s without reading hostile input', broken => {
         let badClock = false, reads = 0;
@@ -154,12 +154,12 @@ describe('W09-A Snapshot finite retention', () => {
         const hostile = new Proxy({}, { get() { throw Error('input read'); }, getOwnPropertyDescriptor() { throw Error('input descriptor read'); } });
         expect(c.committer.accept(hostile)).toMatchObject({ issue: { code: 'APP_STOPPED' } });
         expect(c.committer.reportPrepareFailure(hostile as any)).toMatchObject({ issue: { code: 'APP_STOPPED' } });
-        c.lifecycle.stop(); lease.lease.release(); lease.lease.release();
+        c.lifecycle.stop(); lease.hold.release(); lease.hold.release();
         expect(c.store.readLatest('a')).toEqual({ status: 'stopped' }); expect(c.store.readAppIdentity('a')).toEqual({ status: 'absent' });
-        expect(c.store.getById(snapshot.id)).toMatchObject({ issue: { code: 'SNAPSHOT_EXPIRED' } });
-        expect(c.store.acquire(snapshot.id)).toMatchObject({ issue: { code: 'SNAPSHOT_EXPIRED' } });
-        expect(c.store.resolveRef(hostile as any)).toMatchObject({ issue: { code: 'SNAPSHOT_EXPIRED' } });
-        expect(c.store.getTool(hostile as any)).toMatchObject({ issue: { code: 'SNAPSHOT_EXPIRED' } });
+        expect(c.store.getById(snapshot.id)).toMatchObject({ issue: { code: 'SNAPSHOT_UNAVAILABLE' } });
+        expect(c.store.acquire(snapshot.id)).toMatchObject({ issue: { code: 'SNAPSHOT_UNAVAILABLE' } });
+        expect(c.store.resolveRef(hostile as any)).toMatchObject({ issue: { code: 'SNAPSHOT_UNAVAILABLE' } });
+        expect(c.store.getTool(hostile as any)).toMatchObject({ issue: { code: 'SNAPSHOT_UNAVAILABLE' } });
         const stats = c.store.inspect(); expect(stats.state).toBe('disposed');
         for (const [key, value] of Object.entries(stats)) if (key !== 'state') expect(value).toBe(0);
         expect(Object.isFrozen(stats)).toBe(true); expect(c.store.inspect()).not.toBe(stats); expect(reads).toBe(before);

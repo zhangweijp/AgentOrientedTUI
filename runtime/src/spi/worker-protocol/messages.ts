@@ -1,4 +1,3 @@
-import { VIEW_TYPE_PARAMETERS_MODE } from '../../core/tool/ordinary-parameter-contract.js';
 import type { AppLifecycleAck } from '../../adapters/app-lifecycle-protocol.js';
 import type { AppCleanupReport } from '../runtime/app-lifecycle.interface.js';
 import type { StatePersistenceOffer, StatePersistenceAck, StateStorageRequest, StateStorageResponse } from '../../adapters/storage/state-storage-protocol.js';
@@ -23,9 +22,10 @@ import type { ManagedPersistenceReport } from '../../worker-runtime/state-persis
  * @module @aotui/runtime/spi/worker-protocol
  */
 
-import type { RequestID, AppID, DesktopID } from './types.js';
+import type { WORKER_PROTOCOL, RequestID, AppID, DesktopID } from './types.js';
 import type { AppLaunchConfig } from '../app/app-config.interface.js';
 import type { ViewToolReceiver, SnapshotPrepareIssue, ToolInvocationDescriptor } from '../../core/snapshot/types.js';
+import type { ProjectionLimits } from '../../core/invocation/observation-types.js';
 import type { SnapshotValueRefSource } from '../../core/tool/snapshot-value-arguments.js';
 import type { LLMUsageEvent } from '../core/llm-usage.js';
 
@@ -39,8 +39,9 @@ import type { LLMUsageEvent } from '../core/llm-usage.js';
  */
 export interface InitMessage {
     type: 'INIT';
-    persistence: StatePersistenceOffer;
+    persistence?: StatePersistenceOffer;
     appLifecycle: AppLifecycleAck;
+    projectionLimits: ProjectionLimits;
     requestId: RequestID;
     appId: AppID;
     desktopId: DesktopID;
@@ -50,9 +51,10 @@ export interface InitMessage {
     appName?: string;
     /** 应用启动配置 (Configuration Injection) */
     config?: AppLaunchConfig;
-    /** M2: Runtime-generated logical App execution instance token. */
+    /** Host-assigned identity of this App execution. */
     appInstanceId: string;
-    requestedCapabilities: string[];
+    protocol: typeof WORKER_PROTOCOL;
+    toolsEnabled: boolean;
 }
 
 /**
@@ -64,21 +66,20 @@ export interface AppLifecycleMessage {
     reason?: string;
 }
 
-export type { OrdinaryParameterContract } from '../../core/tool/ordinary-parameter-contract.js';
 import type { ViewToolInvocationTerminal } from '../../core/tool/invocation-terminal.js';
 export type { ViewToolInvocationTerminal } from '../../core/tool/invocation-terminal.js';
 
 /** The qualified receiver and Ref provenance are distinct from business parameters. */
-export type ViewToolInvokeV6Message = Readonly<{
-    type: 'VIEW_TOOL_INVOKE_V6'; requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string;
-    tool: ToolInvocationDescriptor; argumentMode: typeof VIEW_TYPE_PARAMETERS_MODE;
+export type ViewToolInvokeMessage = Readonly<{
+    type: 'VIEW_TOOL_INVOKE'; requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string;
+    tool: ToolInvocationDescriptor;
     receiver: ViewToolReceiver;
     rawArgs: Readonly<Record<string, unknown>>; effectiveArgs: Readonly<Record<string, unknown>>;
     refSources: readonly SnapshotValueRefSource[];
 }>;
-export type ViewToolInvokeV6Response = Readonly<{
-    type: 'VIEW_TOOL_INVOKE_V6_RESPONSE'; requestId: RequestID; appId: AppID; instanceId: string;
-    argumentMode: typeof VIEW_TYPE_PARAMETERS_MODE; success: true;
+export type ViewToolInvokeResponse = Readonly<{
+    type: 'VIEW_TOOL_INVOKE_RESPONSE'; requestId: RequestID; appId: AppID; instanceId: string;
+    success: true;
     terminal: ViewToolInvocationTerminal | Readonly<{ phase: 'finished-unknown' }>;
 }>;
 
@@ -87,7 +88,7 @@ export type ViewToolInvokeV6Response = Readonly<{
  */
 export type MainToWorkerMessage =
     | Readonly<{ type: 'FLUSH_PROJECTION'; requestId: RequestID }>
-    | ViewToolInvokeV6Message
+    | ViewToolInvokeMessage
     | StateStorageResponse
     | InitMessage
     | AppLifecycleMessage
@@ -127,9 +128,11 @@ export interface ResponseBase {
  */
 export interface InitResponse extends ResponseBase {
     type: 'INIT_RESPONSE';
-    persistence: StatePersistenceAck;
+    persistence?: StatePersistenceAck;
     appLifecycle: AppLifecycleAck;
-    acceptedCapabilities: string[];
+    projectionLimits: ProjectionLimits;
+    protocol: typeof WORKER_PROTOCOL;
+    toolsEnabled: boolean;
     appInstanceId: string;
 }
 
@@ -181,7 +184,7 @@ export interface SnapshotPrepareFailedPush {
  */
 export type WorkerToMainMessage =
     | StateStorageRequest
-    | ViewToolInvokeV6Response
+    | ViewToolInvokeResponse
     | InitResponse
     | LifecycleResponse
     | ErrorResponse

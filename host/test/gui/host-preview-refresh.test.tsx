@@ -44,7 +44,6 @@ function assembly(topicId: string, instanceId: string) {
     frame.accept();
     const view = frame.instances[0]!;
     const binding: ExecutionBinding = { identity: {},
-        validateInput: (_source, value) => ({ ok: true, value }),
         isLive: source => ({ ok: registry.validateTypeToolBinding(source.tool, source.receiver).success }),
         execute: async () => { entries++; return { kind: 'tool-result', phase: 'entered-returned', result: { success: true } }; },
     };
@@ -61,7 +60,7 @@ function assembly(topicId: string, instanceId: string) {
     };
     function publish(body: string, notify = true) {
         businessValue = body;
-        const accepted = core.committer.accept({ schemaVersion: 5, appId: 'preview_app', instanceId,
+        const accepted = core.committer.accept({ schemaVersion: 6, appId: 'preview_app', instanceId,
             producerSeq: ++sequence, sourceEpoch: sequence, capturedAt: Date.now(),
             views: [{ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: 'Workspace', kind: 'state', name: 'Current work',
                 content: { format: 'markdown-v1', value: body } }], refs: {},
@@ -170,7 +169,7 @@ describe('current Host preview subscription', () => {
             } finally { agent.dispose(); }
             expect(app.authority.inspect().observations.observationSlots).toBe(0);
             expect(app.authority.inspect()).toMatchObject({ sourceBytes: 0, workBytes: 0 });
-            expect(app.core.store.inspect().activeLeases).toBe(0);
+            expect(app.core.store.inspect().activeHolds).toBe(0);
         } finally { await f.dispose(); }
     });
     it('covers publication between the initial query and IPC subscription attachment', async () => {
@@ -260,7 +259,7 @@ describe('current Host preview subscription', () => {
             const app = f.sessions.get('release').app, barrier = app.holdNextRead();
             app.publish('Held preview'); await barrier.started.promise;
             expect(app.authority.inspect().observations.observationSlots).toBe(0);
-            expect(app.core.store.inspect().activeLeases).toBe(0);
+            expect(app.core.store.inspect().activeHolds).toBe(0);
             const ensureCalls = f.ensure.mock.calls.length;
             const cached = f.bridge.getSnapshot('release');
             stop(); const eventCount = events.mock.calls.length;
@@ -269,7 +268,7 @@ describe('current Host preview subscription', () => {
             expect(app.authority.inspect().observations.observationSlots).toBe(0);
             barrier.resume.resolve();
             await vi.waitFor(() => expect(app.authority.inspect().observations.observationSlots).toBe(0));
-            expect(app.core.store.inspect().activeLeases).toBe(0);
+            expect(app.core.store.inspect().activeHolds).toBe(0);
             expect(app.authority.inspect()).toMatchObject({ sourceBytes: 0, workBytes: 0 });
             expect(f.bridge.getSnapshot('release')).toBe(cached);
             expect(app.listeners.size).toBe(0);
@@ -460,7 +459,7 @@ it('restores the current preview after real Session teardown without accepting t
         const current = f.sessions.get('recycled'); expect(current).not.toBe(previous);
         // The old Desktop listener is gone; the pending preview owns only rendered data.
         expect(app.listeners.size).toBe(0); expect(app.authority.inspect().observations.observationSlots).toBe(0);
-        expect(app.core.store.inspect().activeLeases).toBe(0);
+        expect(app.core.store.inspect().activeHolds).toBe(0);
         (f.host as any).emitGuiUpdate({ topicId: 'recycled', type: 'assistant',
             message: { role: 'assistant', content: 'Current Session reply' } });
         expect(f.bridge.getMessages('recycled').some(message => message.content === 'Current Session reply')).toBe(true);
@@ -468,7 +467,7 @@ it('restores the current preview after real Session teardown without accepting t
         await vi.waitFor(() => expect(f.bridge.getSnapshot('recycled')).toContain('New incarnation page'));
         expect(seen.some(value => value.includes('Held previous Session'))).toBe(false);
         expect(app.listeners.size).toBe(0); expect(app.authority.inspect().observations.observationSlots).toBe(0);
-        expect(app.core.store.inspect().activeLeases).toBe(0); expect(app.authority.inspect()).toMatchObject({ sourceBytes: 0, workBytes: 0 });
+        expect(app.core.store.inspect().activeHolds).toBe(0); expect(app.authority.inspect()).toMatchObject({ sourceBytes: 0, workBytes: 0 });
         app.publish('Late old Desktop notification');
         expect(f.bridge.getSnapshot('recycled')).toContain('New incarnation page');
         current.app.publish('New incarnation second update');
@@ -540,7 +539,7 @@ it('invalidates the held old result even if the replacement Desktop refuses its 
         await vi.waitFor(() => expect(f.bridge.getSnapshot('rebind_closing')).toContain('Current closing snapshot'));
         expect(seen.some(value => value.includes('Held old result must not appear'))).toBe(false);
         expect(previous.app.authority.inspect().observations.observationSlots).toBe(0);
-        expect(previous.app.core.store.inspect().activeLeases).toBe(0);
+        expect(previous.app.core.store.inspect().activeHolds).toBe(0);
         (f.host as any).emitGuiUpdate({ topicId: 'rebind_closing', type: 'assistant',
             message: { role: 'assistant', content: 'Chat while preview listener is unavailable' } });
         expect(f.bridge.getMessages('rebind_closing').some(message => message.content === 'Chat while preview listener is unavailable')).toBe(true);

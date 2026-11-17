@@ -1,6 +1,6 @@
 import Type from 'typebox';
 import { View, createTUIApp, defineViewType, refParam, type ArgsOf } from '../src/index.js';
-import { createApp, createView, type ViewHandle } from '../src/app.js';
+import { createApp, createView, type ProjectionLimits, type ViewHandle } from '../src/app.js';
 // @ts-expect-error Per-page author bindings have left the root entry.
 import type { ViewBindings } from '../src/index.js';
 // @ts-expect-error Per-page author bindings have left the plain entry.
@@ -28,11 +28,19 @@ const detailContext: DetailContext = { record() {} };
 const detail = createView(Detail,{id:'one',kind:'state',render:() => ({body:'Rows',context:detailContext})});
 const empty = createView(Empty,{id:'empty',kind:'instruction',render:() => ({body:'Hello'})});
 const views: readonly ViewHandle[] = [detail,empty];
-export const plain = createApp({app_name:'plain',viewTypes:[Detail,Empty],initialize({publish}) {
-    const ready: 'prepared' = publish({views}).status;
-    void ready;
+export const plain = createApp({app_name:'plain',viewTypes:[Detail,Empty],initialize(context) {
+    const limits: ProjectionLimits = context.projectionLimits;
+    // @ts-expect-error The Host owns the effective limits, including their nested values.
+    limits.metadata.maxNodes = 4;
+    const ready: 'prepared' = context.prepareProjection({views}).status;
+    const opened: 'prepared' = context.prepareOpeningProjection({views}).status;
+    void [ready, opened];
+    // @ts-expect-error The old author entry was removed.
+    context.publish({views});
+    // @ts-expect-error Openings use a separate author entry.
+    context.prepareProjection({views}, {opening:true});
     // @ts-expect-error No App-wide binding map
-    publish({views,bindings:{}});
+    context.prepareProjection({views,bindings:{}});
 }});
 export const preact = createTUIApp({app_name:'preact',viewTypes:[Detail,Empty],component:() =>
     <View id="b" kind="state" type={Detail} context={detailContext}/>});

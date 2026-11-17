@@ -11,7 +11,7 @@ import type { WorkerCapacity } from './worker-capacity.js';
 import type { StateStorageBackend } from './state-storage-host.js';
 import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
 import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
-import { captureToolsEnabled } from './interaction-config.js';
+import { captureProjectionLimits, captureToolsEnabled } from './interaction-config.js';
 
 /**
  * Sandbox 状态机
@@ -81,7 +81,8 @@ export class WorkerSandbox {
 
     constructor(private readonly config: WorkerSandboxConfig) {
         const toolsEnabled = captureToolsEnabled(config);
-        this.config = { ...config, toolsEnabled };
+        const projectionLimits = captureProjectionLimits(config);
+        this.config = { ...config, toolsEnabled, projectionLimits };
         this.appId = config.appId;
         this.desktopId = config.desktopId;
     }
@@ -116,10 +117,12 @@ export class WorkerSandbox {
     installDynamic(): Promise<void> {
         if (this.intent) return Promise.reject(lifecycleError('SANDBOX_CLOSED'));
         if (this.installPromise) return this.installSettled ? Promise.reject(lifecycleError('SANDBOX_ALREADY_INSTALLED')) : this.installPromise;
+        const cwd = process.cwd();
+        const config = { ...this.config, config: this.config.config && { ...this.config.config } };
         const current = () => { if (this.intent) throw lifecycleError('SANDBOX_CLOSED'); };
         this.installPromise = Promise.resolve().then(async () => {
             current();
-            const host = this.workerHost = new AppWorkerHost(this.config);
+            const host = this.workerHost = new AppWorkerHost(config, cwd);
             host.onUpdateRequest = () => { if (!this.intent && this.workerHost === host) this.onUpdateRequest?.(); };
             await host.start();current();await host.open();current();this._status = 'running';
         }).then(() => { this.installSettled = true; }, error => {

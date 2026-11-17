@@ -1,4 +1,4 @@
-import type { ViewSnapshotV4 } from '../core/snapshot/types.js';
+import type { ViewSnapshot } from '../core/snapshot/types.js';
 
 /** XML text encoding happens once here; Producers supply an unwrapped Markdown body. */
 export function buildViewMessageMarkup(view: {
@@ -6,7 +6,7 @@ export function buildViewMessageMarkup(view: {
     appName: string;
     viewId: string;
     viewType: string;
-    kind: ViewSnapshotV4['kind'];
+    kind: ViewSnapshot['kind'];
     viewName?: string;
     markup: string;
     suffix?: string;

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
-import { compileOrdinarySchema, createSnapshotCore, createViewOwnedTools, createAppInteraction } from '../index.js';
-import type { AppSnapshotV5, CancellationSignal, ExecutionBinding, ExecutionFact, InputValidation, InvocationContext,
+import { createSnapshotCore, createViewOwnedTools, createAppInteraction } from '../index.js';
+import type { AppSnapshot, CancellationSignal, ExecutionBinding, ExecutionFact, InvocationContext,
     ReceiptMetadata, ReceiptQuery, AppInteractionPolicy } from '../index.js';
 
 function deferred<T = void>() {
@@ -19,21 +19,19 @@ function fixture(instanceId = 'run', namespace = 'close:run') {
     const plan = registry.prepareFrame([{id:'v',type:'Detail',owner:{},bindings:[{name:'read',enabled:true,execute:()=>({success:true})}]}]);
     plan.accept();
     const [view] = plan.instances, [tool] = plan.tools;
-    const committed = core.committer.accept({ schemaVersion: 5, appId: 'app', instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 10,
+    const committed = core.committer.accept({ schemaVersion: 6, appId: 'app', instanceId, producerSeq: 1, sourceEpoch: 1, capturedAt: 10,
         views: [{ toolBindings: view!.toolBindings, id: 'v', viewInstanceId: view.viewInstanceId, type: 'Detail', name: 'Detail', kind: 'state', content: { format: 'markdown-v1', value: 'value' } }], refs: {},
         tools: { [tool.id]: tool } });
-    if (committed.status !== 'published' || committed.snapshot.schemaVersion !== 5) throw Error('Fixture source');
-    const grant = (source: AppSnapshotV5) => ({refs:[],toolIds:Object.keys(source.tools)});
+    if (committed.status !== 'published' || committed.snapshot.schemaVersion !== 6) throw Error('Fixture source');
+    const grant = (source: AppSnapshot) => ({refs:[],toolIds:Object.keys(source.tools)});
     const controls = {
         project: (context: Parameters<AppInteractionPolicy['project']>[0]): ReturnType<AppInteractionPolicy['project']> => grant(context.source),
-        validate: (_source: Parameters<ExecutionBinding['validateInput']>[0], input: Parameters<ExecutionBinding['validateInput']>[1], _signal: CancellationSignal): Maybe<InputValidation> => ({ ok: true, value: input }),
         authorize: (_context: InvocationContext): Maybe<boolean> => true,
         execute: (_context: InvocationContext): Maybe<ExecutionFact> => success(),
         read: (_metadata: ReceiptMetadata, _signal: CancellationSignal): Maybe<boolean> => true,
     };
-    const calls = { handler: 0, authorize: 0, validate: 0, project: 0, read: 0 };
+    const calls = { handler: 0, authorize: 0, project: 0, read: 0 };
     const binding: ExecutionBinding = { identity: {},
-        validateInput: (source, input, signal) => { calls.validate++; return controls.validate(source, input, signal); },
         isLive: source => ({ ok: registry.validateTypeToolBinding(tool, source.receiver).success }),
         execute: context => { calls.handler++; return controls.execute(context); } };
     const input = { appId: 'app', instanceId, policy: {
@@ -51,7 +49,7 @@ function fixture(instanceId = 'run', namespace = 'close:run') {
     async function zero() { await completion; expect(completed).toBe(true);
         expect(authority.inspect()).toMatchObject({ closed: true, activeInvocations: 0, activeReads: 0,
             receiptEntries: 0, receiptContents: 0, sourceBytes: 0, fingerprintBytes: 0, metadataBytes: 0, workBytes: 0, resultBytes: 0, combinedBytes: 0 });
-        clockMode = 'normal'; expect(core.store.inspect().activeLeases).toBe(0); core.lifecycle.dispose(); registry.dispose(); }
+        clockMode = 'normal'; expect(core.store.inspect().activeHolds).toBe(0); core.lifecycle.dispose(); registry.dispose(); }
     return { core, registry, authority, client, input, observe, controls, calls, completion, pending, zero, setClock: (mode: string) => { clockMode = mode; }, setTime: (value: number) => { time = value; } };
 }
 
@@ -76,21 +74,18 @@ it.each(['resolve', 'reject'] as const)('C02 actual project %s retains cancelled
     expect((await work).status).toBe('rejected'); await f.zero();
 });
 
-it.each(['resolve', 'reject'] as const)('C03 actual input validator %s never admits authorize/handler after close', async outcome => {
-    const f = fixture(), request = await f.observe(), entered = deferred(), gate = deferred<InputValidation>();
-    f.controls.validate = (_source, _input, signal) => { entered.resolve(); expect(signal.aborted).toBe(false); return gate.promise; };
-    const work = f.client.invoke(request); await entered.promise; f.authority.close(); await f.pending();
-    expect(f.authority.inspect().activeInvocations).toBe(1); expect(f.calls.authorize).toBe(0); expect(f.calls.handler).toBe(0);
-    if (outcome === 'reject') gate.reject(Error('validate')); else gate.resolve({ ok: true, value: {} });
-    await work; await f.zero(); expect(f.calls.authorize).toBe(0); expect(f.calls.handler).toBe(0);
-});
-
-it.each(['allow', 'deny', 'reject'] as const)('C04 actual authorize %s cannot enter handler after close', async outcome => {
+it.each(['allow', 'deny', 'reject'] as const)('C04 held authorization %s retains its source until it settles after close', async outcome => {
     const f = fixture(), request = await f.observe(), entered = deferred(), gate = deferred<boolean>();
-    f.controls.authorize = context => { entered.resolve(); expect(context.signal.aborted).toBe(false); return gate.promise; };
+    let signal: CancellationSignal | undefined;
+    f.controls.authorize = context => { signal = context.signal; entered.resolve(); expect(signal.aborted).toBe(false); return gate.promise; };
     const work = f.client.invoke(request); await entered.promise; f.authority.close(); await f.pending();
+    expect(signal?.aborted).toBe(true);
+    expect(f.core.store.inspect().activeHolds).toBe(1);
+    expect(f.authority.inspect().activeInvocations).toBe(1);
+    expect(f.calls).toMatchObject({ authorize: 1, handler: 0 });
     if (outcome === 'reject') gate.reject(Error('authorize')); else gate.resolve(outcome === 'allow');
-    await work; await f.zero(); expect(f.calls.handler).toBe(0);
+    expect(await work).toMatchObject({ kind: 'unavailable', code: 'APP_INTERACTION_UNAVAILABLE' });
+    await f.zero(); expect(f.calls.handler).toBe(0);
 });
 it('C04 synchronous authorization throw with reentrant close completes after finally', async () => {
     const f = fixture(), request = await f.observe();
@@ -166,12 +161,11 @@ it('abort reentry keeps one completion and duplicate waiters share one execution
     expect(f.calls.handler).toBe(1);
 });
 
-it.each(['project', 'validate', 'authorize', 'execute', 'read'].flatMap(stage => ['throw', 'back'].map(clock => ({ stage, clock }))))('C09 $stage finally completes with clock $clock', async ({ stage, clock }) => {
+it.each(['project', 'authorize', 'execute', 'read'].flatMap(stage => ['throw', 'back'].map(clock => ({ stage, clock }))))('C09 $stage finally completes with clock $clock', async ({ stage, clock }) => {
     const f = fixture(), request = stage === 'project' ? undefined : await f.observe(), entered = deferred(), gate = deferred();
     let work: Promise<unknown>;
     if (stage === 'project') { f.controls.project = async () => { entered.resolve(); await gate.promise; return { refs: [], toolIds: [] }; }; work = f.client.observe({ all: true }); }
     else {
-        if (stage === 'validate') f.controls.validate = async (_source, input) => { entered.resolve(); await gate.promise; return { ok: true, value: input }; };
         if (stage === 'authorize') f.controls.authorize = async () => { entered.resolve(); await gate.promise; return true; };
         if (stage === 'execute') f.controls.execute = async () => { entered.resolve(); await gate.promise; return success(); };
         if (stage === 'read') f.controls.read = async () => { entered.resolve(); await gate.promise; return true; };
@@ -233,7 +227,7 @@ it('reads multiple authorized receipts after adoption and prunes retired calls a
         f.setTime(60_030);
         expect(f.authority.inspect().receiptEntries).toBe(0);
         expect(await f.client.invoke(held)).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
-        expect(f.core.store.inspect().activeLeases).toBe(1);
+        expect(f.core.store.inspect().activeHolds).toBe(1);
     } finally {
         gate.resolve(success());
         await work;

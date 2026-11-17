@@ -7,9 +7,7 @@ type ElementTraverser = (el: Element) => string;
 // ============ List Helper Functions ============
 
 /**
- * Transform nested list with proper prefixes using recursive Visitor calls
- * 
- * [RFC-FIX] Use traverse instead of textContent to preserve semantic information
+ * Render nested list items recursively to preserve their Markdown markup.
  */
 function transformNestedList(
     list: Element,
@@ -23,7 +21,6 @@ function transformNestedList(
         const child = children[i];
         if (child.tagName.toLowerCase() === 'li') {
             const prefix = isOrdered ? `${i + 1}. ` : '- ';
-            // [FIX] Use recursive traversal instead of textContent
             const content = traverse(child);
             items.push(prefix + content.trim());
         }
@@ -33,10 +30,7 @@ function transformNestedList(
 }
 
 /**
- * Transform list item with proper indentation for nested lists
- * 
- * [RFC-FIX] Use recursive Visitor Pattern for all child elements,
- * ensuring nested markup inside <li> keeps its normal HTML presentation.
+ * Indent nested lists while preserving the markup of each item.
  */
 function transformListItem(
     li: Element,

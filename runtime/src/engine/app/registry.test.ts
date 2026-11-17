@@ -15,7 +15,7 @@ function createMockFactory(name: string): TUIAppFactory {
     return {
         persistenceSupport: 'state-session-v1',
         appLifecycleSupport: 'app-lifecycle-v2',
-        toolAuthoringProtocol: 'view-type-tools-v5',
+        toolAuthoringProtocol: 'view-type-tools-v6',
         kernelConfig: {
             appName: name,
             description: `${name} App`,
@@ -35,7 +35,7 @@ describe('AppRegistry', () => {
         await fs.writeFile(path.join(appDir, 'dist/index.mjs'), 'throw new Error("REGISTRY_MUST_NOT_IMPORT_APP");');
         await fs.writeFile(path.join(appDir, 'aoapp.json'), JSON.stringify({ app_name: name, version: '1.0.0',
             description: `${name} App`, whatItIs: 'Static metadata', whenToUse: 'Unit fixture',
-            toolAuthoringProtocol: 'view-type-tools-v5', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
+            toolAuthoringProtocol: 'view-type-tools-v6', persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
             entry: { main: './dist/index.mjs' }, ...patch }));
         return appDir;
     }
@@ -193,6 +193,14 @@ describe('AppRegistry', () => {
         expect(() => registry.resolveModulePath(`local:${other}`)).toThrow(expect.objectContaining({ code: 'APP_IDENTITY_MISMATCH' }));
     });
 
+    it('accepts an omitted persistence marker and rejects invalid manifest values', async () => {
+        const none = await writeApp('no_storage', 'no_storage', { persistenceSupport: undefined });
+        const unsupported = await writeApp('bad_storage', 'bad_storage', { persistenceSupport: 'state-session-v0' });
+        const registry = new AppRegistry({ configPath });
+        expect(registry.resolveModulePath(`local:${none}`)).toBe(path.join(none, 'dist/index.mjs'));
+        expect(() => registry.resolveModulePath(`local:${unsupported}`)).toThrow(expect.objectContaining({ code: 'APP_MANIFEST_INVALID' }));
+    });
+
     describe('Component factory detection', () => {
         it('accepts only the component-factory contract, not retired manifest/create or callable factories', () => {
             const factory = createMockFactory('test');
@@ -204,7 +212,8 @@ describe('AppRegistry', () => {
             expect(isTUIAppFactory({ ...factory, kernelConfig: { appName: '' } })).toBe(false);
             const { persistenceSupport: _persistence, ...withoutPersistence } = factory;
             const { appLifecycleSupport: _lifecycle, ...withoutLifecycle } = factory;
-            expect(isTUIAppFactory(withoutPersistence)).toBe(false);
+            expect(isTUIAppFactory(withoutPersistence)).toBe(true);
+            expect(isTUIAppFactory({ ...factory, persistenceSupport: undefined })).toBe(false);
             expect(isTUIAppFactory(withoutLifecycle)).toBe(false);
             expect(isTUIAppFactory({ ...factory, persistenceSupport: 'legacy' })).toBe(false);
             expect(isTUIAppFactory({ ...factory, appLifecycleSupport: 'legacy' })).toBe(false);

@@ -18,7 +18,7 @@ describe('Transformer Integration', () => {
         const el = createMockElement(html);
         const result = transformElement(el);
 
-        const m = result.markup;
+        const m = result;
 
         // The transform emits body content; message metadata is added at the boundary.
         expect(m).not.toContain('<view');
@@ -50,8 +50,8 @@ describe('Transformer Integration', () => {
         const el = createMockElement(html);
         const result = transformElement(el);
 
-        expect(result.markup).toContain('First view text');
-        expect(result.markup).toContain('Second view text');
-        expect(result.markup).not.toContain('<application');
+        expect(result).toContain('First view text');
+        expect(result).toContain('Second view text');
+        expect(result).not.toContain('<application');
     });
 });

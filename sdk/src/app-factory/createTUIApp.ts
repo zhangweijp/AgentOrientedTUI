@@ -48,11 +48,13 @@ export async function mountPreactApp(
         appId: context.appId,
         desktopId: context.desktopId,
         launchConfig: context.launchConfig,
-        persistence: context.persistence,
+        projectionLimits: context.projectionLimits,
+        ...(context.persistence === undefined ? {} : { persistence: context.persistence }),
         appLifecycle: context.appLifecycle,
         viewTypes,
         views,
-        prepareProjection: (update, opening) => prepareRenderProjection(appContextValue, context.signal, update, opening),
+        prepareProjection: update => prepareRenderProjection(appContextValue, context.signal, update),
+        prepareOpeningProjection: (update, revert) => prepareRenderProjection(appContextValue, context.signal, update, { revert }),
     };
     const root = h(AppRuntimeContext.Provider, { value: appContextValue }, h(RootComponent, {}));
     const commitRender = createRenderCommit(context, appContextValue, refs => ({

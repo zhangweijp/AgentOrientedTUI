@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
-import { captureToolsEnabled } from './interaction-config.js';
+import { captureProjectionLimits, captureToolsEnabled } from './interaction-config.js';
+import { DEFAULT_PROJECTION_LIMITS } from '../../core/invocation/observation-registry.js';
 import { AppWorkerHost } from './worker-host.js';
 import { WorkerSandbox } from './worker-sandbox.js';
 import { AppManager } from './manager.js';
@@ -51,5 +52,43 @@ it('rejects unknown Host options before allocating a Worker or pending App', asy
     expect(reads).toBe(0);
     expect(desktop.getInstalledApps()).toEqual([]);
     expect(await desktop.registerPendingApp({ modulePath: '/unused', toolsEnabled: false })).toBe('app_0');
+    await desktop.dispose();
+});
+
+it('copies just the trusted projection limits and forwards the same frozen effective value', () => {
+    const overrides = { maxViews: 2, metadata: { maxNodes: 30 }, observation: { maxApproxBytes: 4096 } };
+    const limits = captureProjectionLimits({ projectionLimits: overrides });
+    overrides.maxViews = 3;
+    overrides.metadata.maxNodes = 40;
+    overrides.observation.maxApproxBytes = 8192;
+    expect(limits).toEqual({ ...DEFAULT_PROJECTION_LIMITS, maxViews: 2,
+        metadata: { ...DEFAULT_PROJECTION_LIMITS.metadata, maxNodes: 30 },
+        observation: { ...DEFAULT_PROJECTION_LIMITS.observation, maxApproxBytes: 4096 },
+    });
+    expect([limits, limits.observation, limits.metadata].every(Object.isFrozen)).toBe(true);
+    expect(captureProjectionLimits({ projectionLimits: limits })).toBe(limits);
+    expect(captureProjectionLimits()).toBe(DEFAULT_PROJECTION_LIMITS);
+});
+
+it('rejects out-of-range, unknown and accessor limits before an instance is reserved', async () => {
+    const desktop = new Desktop('d');
+    let reads = 0;
+    const accessor = Object.defineProperty({}, 'maxDepth', { enumerable: true, get() { reads++; return 1; } });
+    for (const [projectionLimits, field] of [
+        [{ maxViews: DEFAULT_PROJECTION_LIMITS.maxViews + 1 }, 'maxViews'],
+        [{ maxRefs: 0 }, 'maxRefs'],
+        [{ maxTools: 1.5 }, 'maxTools'],
+        [{ maxTotalBytes: 8 }, 'maxTotalBytes'],
+        [{ observation: [] }, 'observation'],
+        [{ metadata: accessor }, 'metadata.maxDepth'],
+    ] as const) {
+        const error = { code: 'CONFIG_INVALID', context: { path: `options.projectionLimits.${field}` } };
+        await expect(desktop.installDynamicWorkerApp('/unused', { projectionLimits } as never)).rejects.toMatchObject(error);
+    }
+    await expect(desktop.registerPendingApp({ modulePath: '/unused', projectionLimits: { maxViews: 0 } }))
+        .rejects.toMatchObject({ code: 'CONFIG_INVALID', context: { path: 'options.projectionLimits.maxViews' } });
+    expect(reads).toBe(0);
+    expect(desktop.getInstalledApps()).toEqual([]);
+    expect(await desktop.registerPendingApp({ modulePath: '/unused' })).toBe('app_0');
     await desktop.dispose();
 });

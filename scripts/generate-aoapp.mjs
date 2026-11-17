@@ -1,4 +1,4 @@
-import { isTUIAppFactory, hasViewTypeToolAuthoringProtocol, captureAppMetadata } from '@aotui/runtime/spi';
+import { isTUIAppFactory, hasViewTypeToolAuthoringProtocol, VIEW_TYPE_TOOL_PROTOCOL, captureAppMetadata } from '@aotui/runtime/spi';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -34,7 +34,7 @@ export async function buildAoappManifest(appDir) {
 
   const result = {
     ...metadata,
-    toolAuthoringProtocol: Object.getOwnPropertyDescriptor(factory, 'toolAuthoringProtocol')?.value,
+    toolAuthoringProtocol: VIEW_TYPE_TOOL_PROTOCOL,
     persistenceSupport: Object.getOwnPropertyDescriptor(factory, 'persistenceSupport')?.value,
     appLifecycleSupport: Object.getOwnPropertyDescriptor(factory, 'appLifecycleSupport')?.value,
     version: pkg.version ?? '0.1.0',

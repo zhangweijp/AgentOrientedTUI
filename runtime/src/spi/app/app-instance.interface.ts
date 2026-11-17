@@ -1,43 +1,22 @@
 import type { CancellationSignal } from '../../core/invocation/app-interaction-types.js';
-import type { JsonValue, SnapshotIssue, ViewSnapshotV4 } from '../../core/snapshot/types.js';
+import type { ProjectionLimits } from '../../core/invocation/observation-types.js';
+import type { AppProjectionFrame, ProjectionCommitResult, ProjectionOptions } from '../../core/projection/coordinator.js';
+import type { AppTypeToolDefinition } from '../../core/tool/view-owned-tools.js';
 import type { AppID, DesktopID } from '../core/types.js';
 import type { LLMUsageEvent } from '../core/llm-usage.js';
-import type { AppFrameBinding, AppTypeToolDefinition } from '../runtime/app-type-tools.interface.js';
 import type { AppLifecyclePort } from '../runtime/app-lifecycle.interface.js';
 import type { AppStatePersistence } from '../runtime/state-persistence.interface.js';
 import type { AppLaunchConfig } from './app-config.interface.js';
 export type { AppStatePersistence, StateValue, StateIssue, StateBinding, StateBindingStatus, StateFlushReport } from '../runtime/state-persistence.interface.js';
-
-export interface AppFrameRef {
-    readonly id: string;
-    readonly value: JsonValue;
-    readonly refType?: string | undefined;
-}
-
-/** Completed author data. Runtime supplies the mounted identities and Tool activations. */
-export interface AppFrameView extends Omit<ViewSnapshotV4, 'viewInstanceId' | 'toolBindings'> {
-    readonly owner: object;
-    readonly bindings: readonly AppFrameBinding[];
-    readonly refs: readonly AppFrameRef[];
-}
-export interface AppProjectionFrame {
-    readonly views: readonly AppFrameView[];
-}
-export type PreparedProjection = Readonly<{ status: 'prepared'; sourceEpoch: number }>;
-export type ProjectionOptions =
-    | Readonly<{ opening: true; retainViews?: true }>
-    | Readonly<{ restore: true }>;
-export type ProjectionCommitResult = PreparedProjection
-    | Readonly<{ status: 'restored'; sourceEpoch: number }>
-    | Readonly<{ status: 'rejected'; issue: SnapshotIssue }>
-    | Readonly<{ status: 'failed'; issue: SnapshotIssue; cause?: { readonly error: unknown } }>;
 
 export interface RuntimeContext {
     readonly appId: AppID;
     readonly desktopId: DesktopID;
     readonly launchConfig?: AppLaunchConfig;
     readonly persistence?: AppStatePersistence;
-    readonly appLifecycle?: AppLifecyclePort;
+    readonly appLifecycle: AppLifecyclePort;
+    /** Effective fixed limits on this App's complete projection. */
+    readonly projectionLimits: ProjectionLimits;
     /** Aborted when the instance stops admitting new work. */
     readonly signal: CancellationSignal;
     /** Supply the static definitions once before publishing Views. */

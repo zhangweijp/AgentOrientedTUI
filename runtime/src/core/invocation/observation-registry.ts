@@ -1,6 +1,6 @@
 import { SNAPSHOT_SCHEMA_VERSION } from '../snapshot/types.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
-import type { AppIdentityReader, AppSnapshotV5, PreparedAppSnapshotDraftV5, SnapshotLease, SnapshotPrepareIssue, SnapshotStore } from '../snapshot/types.js';
+import type { AppIdentityReader, AppSnapshot, PreparedAppSnapshotDraft, SnapshotHold, SnapshotPrepareIssue, SnapshotStore } from '../snapshot/types.js';
 import { sameToolDefinition, viewToolReceiver } from '../tool/source-binding.js';
 import type { AppPreviewResult } from './app-interaction-types.js';
 import { DEFAULT_SNAPSHOT_LIMITS as snapshotLimits, OBSERVATION_METADATA_BYTES, snapshotId } from '../snapshot/snapshot-support.js';
@@ -8,7 +8,7 @@ import type {
     Observation, ObservationGrant, ObservationIssue, ObservationSource, ObservedView,
     ObservationIssueCode, ObservationJsonLimits, ObservationRegistryLimits,
     ObservationRegistryOptions, ObservationRegistryStats, ObservationRejected,
-    RefIdentity, ReservationHandle,
+    ProjectionLimits, RefIdentity, ReservationHandle,
 } from './observation-types.js';
 
 const KiB = 1024, MiB = KiB * KiB;
@@ -23,8 +23,10 @@ export const DEFAULT_OBSERVATION_REGISTRY_LIMITS: ObservationRegistryLimits = Ob
     maxSourceBytes: 32 * MiB, maxObservationBytes: 16 * MiB,
     maxMetadataBytes: 8 * MiB, maxTotalBytes: 64 * MiB,
 });
+const { maxViews, maxRefs, maxTools, observation, metadata } = DEFAULT_OBSERVATION_REGISTRY_LIMITS;
+export const DEFAULT_PROJECTION_LIMITS: ProjectionLimits = Object.freeze({ maxViews, maxRefs, maxTools, observation, metadata });
 
-type ObservationFrame = Pick<AppSnapshotV5, 'views' | 'refs' | 'tools'>;
+type ObservationFrame = Pick<AppSnapshot, 'views' | 'refs' | 'tools'>;
 export const hostedObservationNamespace = (instanceId: string): string => 'host:' + instanceId;
 const observationId = (namespace: string, sequence: number): string => namespace + ':observation:' + sequence;
 
@@ -84,12 +86,12 @@ function bounded<T>(input: unknown, limits: ObservationJsonLimits, code: Observa
         return { value: value as T, bytes };
     } catch { return fail(code, path); }
 }
-function checkViewCount(frame: Pick<ObservationFrame, 'views'>, limits: ObservationRegistryLimits): void {
+function checkViewCount(frame: Pick<ObservationFrame, 'views'>, limits: ProjectionLimits): void {
     if (frame.views.length > limits.maxViews) fail('OBSERVATION_CAPACITY', '$.views');
 }
 
 function projectObservation(frame: ObservationFrame, source: ObservationSource, id: string,
-    grant: ObservationGrant, limits: ObservationRegistryLimits) {
+    grant: ObservationGrant, limits: ProjectionLimits) {
     const invalid = 'OBSERVATION_PROJECTION_INVALID';
     object(grant, ['refs', 'toolIds'], invalid);
     if (!Array.isArray(grant.refs) || !Array.isArray(grant.toolIds)) fail(invalid);
@@ -136,13 +138,13 @@ function projectObservation(frame: ObservationFrame, source: ObservationSource, 
     const output = bounded<Observation>({ observationId: id, source, expiresAt: null,
         views: observedViews(frame), refs: projectedRefs, tools }, limits.observation, 'OBSERVATION_CAPACITY', '$.observation');
     const metadata = bounded<ObservationGrant>({ refs: grant.refs, toolIds: tools.map(tool => tool.id) },
-        limits.metadata, 'OBSERVATION_CAPACITY', '$.observation');
+        limits.metadata, 'OBSERVATION_CAPACITY', '$.metadata');
     return { observation: output.value, metadata: metadata.value, publicBytes: output.bytes, metadataBytes: metadata.bytes };
 }
 
-/** Measure the default managed Worker's full projection before accepting a frame. */
-export function hostedObservationCapacityIssue(draft: PreparedAppSnapshotDraftV5): SnapshotPrepareIssue | undefined {
-    const limits = DEFAULT_OBSERVATION_REGISTRY_LIMITS;
+/** Measure the managed Worker's full projection before accepting a frame. */
+export function hostedObservationCapacityIssue(draft: PreparedAppSnapshotDraft,
+    limits: ProjectionLimits = DEFAULT_PROJECTION_LIMITS): SnapshotPrepareIssue | undefined {
     const revision = Number.MAX_SAFE_INTEGER;
     const { appId, instanceId } = draft;
     // Use the Host's exact encodings at their largest counter widths.
@@ -151,7 +153,7 @@ export function hostedObservationCapacityIssue(draft: PreparedAppSnapshotDraftV5
     try {
         checkViewCount(draft, limits);
         const grant = bounded<ObservationGrant>(projectCompleteViews({ source: draft }), limits.metadata,
-            'OBSERVATION_CAPACITY', '$.observation').value;
+            'OBSERVATION_CAPACITY', '$.metadata').value;
         projectObservation(draft, source, id, grant, limits);
     } catch (error) {
         if (!(error instanceof RegistryFailure) || error.code !== 'OBSERVATION_CAPACITY') throw error;
@@ -159,16 +161,55 @@ export function hostedObservationCapacityIssue(draft: PreparedAppSnapshotDraftV5
     }
 }
 
-function configuration(input: unknown, allowed: readonly string[]): Record<string, unknown> {
+function invalidLimit(path: string, message: string): never {
+    throw Object.assign(new TypeError(message), { path });
+}
+function configuration(input: unknown, allowed: readonly string[], path: string): Record<string, unknown> {
     if (!input || typeof input !== 'object' || Array.isArray(input) ||
-        ![Object.prototype, null].includes(Object.getPrototypeOf(input))) throw new TypeError('Invalid observation registry configuration');
+        ![Object.prototype, null].includes(Object.getPrototypeOf(input))) invalidLimit(path, 'Expected a plain object');
     const descriptors = Object.getOwnPropertyDescriptors(input);
-    if (Reflect.ownKeys(descriptors).some(key => typeof key !== 'string' || !allowed.includes(key) ||
-        !descriptors[key]!.enumerable || !('value' in descriptors[key]!))) throw new TypeError('Invalid observation registry configuration');
+    for (const key of Reflect.ownKeys(descriptors)) {
+        const field = `${path}.${String(key)}`;
+        if (typeof key !== 'string' || !allowed.includes(key)) invalidLimit(field, 'Unknown field');
+        if (!descriptors[key]!.enumerable || !('value' in descriptors[key]!)) invalidLimit(field, 'Expected an enumerable data property');
+    }
     return Object.fromEntries(Object.entries(descriptors).map(([key, value]) => [key, value.value]));
 }
 
-interface Hold { readonly source: AppSnapshotV5; readonly lease: SnapshotLease }
+function normalizeLimits<T extends ProjectionLimits>(input: unknown, defaults: T, path: string, complete = false): T {
+    if (input === undefined && !complete) return defaults;
+    const overrides = configuration(input, Object.keys(defaults), path);
+    const effectiveNumber = (value: unknown, hard: number, field: string): number => {
+        if (value === undefined && !complete) return hard;
+        if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0 || value > hard) {
+            invalidLimit(field, `Expected a positive safe integer up to ${hard}`);
+        }
+        return value;
+    };
+    const result: Record<string, number | ObservationJsonLimits> = {};
+    for (const [key, hard] of Object.entries(defaults) as [string, number | ObservationJsonLimits][]) {
+        const field = `${path}.${key}`;
+        const override = overrides[key];
+        if (typeof hard === 'number') result[key] = effectiveNumber(override, hard, field);
+        else if (override === undefined && !complete) result[key] = hard;
+        else {
+            const lower = configuration(override, Object.keys(hard), field);
+            const effective = { ...hard };
+            for (const limit of Object.keys(hard) as (keyof ObservationJsonLimits)[]) {
+                effective[limit] = effectiveNumber(lower[limit], hard[limit], `${field}.${limit}`);
+            }
+            result[key] = Object.freeze(effective);
+        }
+    }
+    return Object.freeze(result) as unknown as T;
+}
+
+/** Host options are partial; a Worker message must carry every effective field. */
+export function normalizeProjectionLimits(input: unknown, path: string, complete = false): ProjectionLimits {
+    return normalizeLimits(input, DEFAULT_PROJECTION_LIMITS, path, complete);
+}
+
+interface Hold { readonly source: AppSnapshot; readonly hold: SnapshotHold }
 export interface Reservation extends Hold {
     readonly observationId: string;
     cancelled: boolean;
@@ -195,33 +236,14 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
     if (!hasIdentity) throw new TypeError('Invalid observation registry store');
     let namespace: string, limits: ObservationRegistryLimits;
     try {
-        const config = configuration(options, ['namespace', 'limits']);
+        const config = configuration(options, ['namespace', 'limits'], 'options');
         if (!text(config.namespace) || utf8Size(config.namespace) > 128) throw 0;
         namespace = config.namespace;
-        const overrides = config.limits === undefined ? {} : configuration(config.limits, Object.keys(DEFAULT_OBSERVATION_REGISTRY_LIMITS));
-        const result: Record<string, number | ObservationJsonLimits> = {};
-        for (const [key, hard] of Object.entries(DEFAULT_OBSERVATION_REGISTRY_LIMITS)) {
-            const override = overrides[key];
-            if (typeof hard === 'number') {
-                const value = override === undefined ? hard : override;
-                if (!Number.isSafeInteger(value) || (value as number) <= 0 || (value as number) > hard) throw 0;
-                result[key] = value as number;
-            } else {
-                const lower = override === undefined ? {} : configuration(override, Object.keys(hard));
-                const effective = { ...hard };
-                for (const field of Object.keys(hard) as (keyof ObservationJsonLimits)[]) {
-                    const value = lower[field] === undefined ? hard[field] : lower[field];
-                    if (!Number.isSafeInteger(value) || (value as number) <= 0 || (value as number) > hard[field]) throw 0;
-                    Object.assign(effective, { [field]: value });
-                }
-                result[key] = Object.freeze(effective);
-            }
-        }
-        limits = Object.freeze(result) as unknown as ObservationRegistryLimits;
+        limits = normalizeLimits(config.limits, DEFAULT_OBSERVATION_REGISTRY_LIMITS, 'options.limits');
     } catch { throw new TypeError('Invalid observation registry configuration'); }
     let sequence = 0;
     let sourceBytes = 0, observationBytes = 0, metadataBytes = 0;
-    const sources = new Map<string, { readonly source: AppSnapshotV5; readonly bytes: number; references: number }>();
+    const sources = new Map<string, { readonly source: AppSnapshot; readonly bytes: number; references: number }>();
     const nextObservationId = (): string => {
         if (sequence === Number.MAX_SAFE_INTEGER) fail('OBSERVATION_CAPACITY');
         const value = observationId(namespace, ++sequence);
@@ -229,7 +251,7 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
         return value;
     };
     function dropHold(hold: Hold): void {
-        try { hold.lease.release(); } finally {
+        try { hold.hold.release(); } finally {
             const entry = sources.get(hold.source.id)!;
             if (--entry.references === 0) { sources.delete(hold.source.id); sourceBytes -= entry.bytes; }
         }
@@ -252,21 +274,19 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
     function requireActive(): void {
         if (state.closing) fail('APP_INTERACTION_UNAVAILABLE');
     }
-    function ready(): AppSnapshotV5 {
+    function ready(): AppSnapshot {
         const latest = store.readLatest(state.appId);
         if (latest.status !== 'ready') fail(latest.status === 'stopped' ? 'APP_STOPPED' : 'SNAPSHOT_UNREADY');
         if (latest.snapshot.instanceId !== state.instanceId) fail('APP_INSTANCE_MISMATCH');
         if (latest.snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) fail('SNAPSHOT_INVALID');
         return latest.snapshot;
     }
-    function reacquire(source: AppSnapshotV5): void {
+    function requireSource(source: AppSnapshot): void {
         ready();
-        const result = store.acquire(source.id);
+        const result = store.getById(source.id);
         if (result.status === 'rejected') fail(result.issue.code);
-        try {
-            if (result.lease.snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION || result.lease.snapshot.appId !== state.appId ||
-                result.lease.snapshot.instanceId !== state.instanceId) fail('APP_INSTANCE_MISMATCH');
-        } finally { result.lease.release(); }
+        if (result.snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION || result.snapshot.appId !== state.appId ||
+            result.snapshot.instanceId !== state.instanceId) fail('APP_INSTANCE_MISMATCH');
     }
     function capacity(nextSource: number, nextPublic: number, nextMetadata: number): void {
         if (nextSource > limits.maxSourceBytes || nextPublic > limits.maxObservationBytes ||
@@ -289,7 +309,7 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
         limits,
         isCurrent, releaseAll, stats,
         begin(input: unknown) {
-            let lease: SnapshotLease | undefined;
+            let hold: SnapshotHold | undefined;
             try {
                 refresh(); requireActive();
                 const captured = bounded<Record<string, unknown>>(input, limits.capture, 'OBSERVATION_INVALID').value;
@@ -298,23 +318,23 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
                     fail('OBSERVATION_CAPACITY');
                 const source = ready();
                 checkViewCount(source, limits);
-                const acquired = store.acquire(source.id, { lifetime: 'owner' });
+                const acquired = store.acquire(source.id);
                 if (acquired.status === 'rejected') fail(acquired.issue.code);
-                lease = acquired.lease;
+                hold = acquired.hold;
                 const existing = sources.get(source.id);
                 const bytes = existing?.bytes ?? bounded(source, limits.source, 'OBSERVATION_CAPACITY', '$.snapshot').bytes;
                 capacity(sourceBytes + (existing ? 0 : bytes), observationBytes + limits.observation.maxCanonicalBytes,
                     metadataBytes + limits.metadata.maxCanonicalBytes);
                 const token = Object.freeze({ reservation: true as const });
-                const value = { source, lease, observationId: nextObservationId(), cancelled: false };
+                const value = { source, hold, observationId: nextObservationId(), cancelled: false };
                 if (existing) existing.references++;
                 else { sources.set(source.id, { source, bytes, references: 1 }); sourceBytes += bytes; }
                 state.reservations.set(token, value);
                 observationBytes += limits.observation.maxCanonicalBytes; metadataBytes += limits.metadata.maxCanonicalBytes;
-                lease = undefined;
+                hold = undefined;
                 return Object.freeze({ status: 'reserved' as const, reservation: token, source });
             } catch (error) { return rejected(error); }
-            finally { lease?.release(); }
+            finally { hold?.release(); }
         },
         complete(token: ReservationHandle, input: unknown) {
             const value = state.reservations.get(token);
@@ -322,14 +342,14 @@ export function createObservationOperations(store: SnapshotStore & AppIdentityRe
             try {
                 refresh();
                 if (!value || state.closing || value.cancelled) fail('RESERVATION_UNAVAILABLE');
-                reacquire(value.source);
-                const grant = bounded<ObservationGrant>(input, limits.metadata, 'OBSERVATION_PROJECTION_INVALID').value;
+                requireSource(value.source);
+                const grant = bounded<ObservationGrant>(input, limits.metadata, 'OBSERVATION_PROJECTION_INVALID', '$.metadata').value;
                 const { appId, instanceId, id: snapshotId, revision } = value.source;
                 const projected = projectObservation(value.source, { appId, instanceId, snapshotId, revision },
                     value.observationId, grant, limits);
                 capacity(sourceBytes, observationBytes - limits.observation.maxCanonicalBytes + projected.publicBytes,
                     metadataBytes - limits.metadata.maxCanonicalBytes + projected.metadataBytes);
-                state.observations.set(value.observationId, { ...projected, source: value.source, lease: value.lease });
+                state.observations.set(value.observationId, { ...projected, source: value.source, hold: value.hold });
                 observationBytes += projected.publicBytes; metadataBytes += projected.metadataBytes;
                 transferred = true;
                 return Object.freeze({ status: 'observed' as const, observation: projected.observation });

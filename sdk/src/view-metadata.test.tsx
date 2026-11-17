@@ -1,8 +1,9 @@
+import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
+import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { h } from 'preact';
 import { act } from 'preact/test-utils';
 import { describe, expect, it } from 'vitest';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
-import { extractViewFragments } from '../../runtime/src/worker-runtime/view-fragment-extractor.js';
 import { createApp, createView } from './app-factory/createApp.js';
 import { createTUIApp } from './app-factory/createTUIApp.js';
 import { View } from './components/View.js';
@@ -22,15 +23,15 @@ describe('explicit View author metadata', () => {
     it('rejects empty and non-ASCII View IDs in both authoring paths, including final line breaks', async () => {
         for (const id of ['', 'file.a', 'file a', 'file-a', '文件', 'file"', 'file\n', 'file\r\n']) {
             expect(() => View({ id, type: _FixtureFileDetail, kind: 'state' })).toThrow(/View.*[Ii][Dd]/);
-            const factory = createApp({ app_name: 'metadata', viewTypes:[_FixtureFileDetail], initialize({ publish }) {
-                publish({views:[createView(_FixtureFileDetail,{id,kind:'state',render:()=>({body:'File data'})})]});
+            const factory = createApp({ app_name: 'metadata', viewTypes:[_FixtureFileDetail], initialize({ prepareProjection }) {
+                prepareProjection({views:[createView(_FixtureFileDetail,{id,kind:'state',render:()=>({body:'File data'})})]});
             } });
-            const kernel = new AppKernel({ ...factory.kernelConfig, factory });
-            kernel.setId('metadata' as any);
-            kernel.setAppExecutionInstanceId('metadata-run');
-            kernel.enableAppLifecycle();
+            const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+                appId: createAppId('metadata'), desktopId: createDesktopId('desktop'),
+                instanceId: 'metadata-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
+            });
             try {
-                await expect(kernel.onOpen({ appId: 'metadata' as any, desktopId: 'desktop' as any }))
+                await expect(kernel.onOpen())
                     .rejects.toMatchObject({ code: 'SNAPSHOT_INVALID', path: '$.views' });
             } finally { await kernel.onClose(); }
         }
@@ -43,21 +44,20 @@ describe('explicit View author metadata', () => {
                 h('p', { 'data-role': 'application-instruction' }, 'File data')),
         ]);
         const factory = createTUIApp({viewTypes:[_FixtureGuide,_FixtureFileDetail],  app_name: 'metadata', component });
-        const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
-        kernel.setId('metadata' as any);
-        kernel.setAppExecutionInstanceId('metadata-run');
-        kernel.enableAppLifecycle();
+        const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+            appId: createAppId('metadata'), desktopId: createDesktopId('desktop'),
+            instanceId: 'metadata-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
+        });
         try {
-            await act(async () => kernel.onOpen({ appId: 'metadata' as any, desktopId: 'desktop' as any,
-                 }));
+            await act(async () => kernel.onOpen());
             const container = document.getElementById('app-root-metadata')!;
-            expect(extractViewFragments(container).map(({ viewId, viewType, kind }) => ({ viewId, viewType, kind })))
+            const publication = kernel.getProjectionCoordinator().nextPublication();
+            if (!('draft' in publication)) throw Error('Expected a View projection');
+            expect(publication.draft.views.map(({ id, type, kind }) => ({ viewId: id, viewType: type, kind })))
                 .toEqual([
                     { viewId: 'guide', viewType: 'Guide', kind: 'instruction' },
                     { viewId: 'file_1', viewType: 'FileDetail', kind: 'state' },
                 ]);
-            container.querySelector('p')!.removeAttribute('data-role');
-            expect(extractViewFragments(container)[1]!.kind).toBe('state');
             expect(kernel.getViewOwnedViewInstances().map(view => view.viewType).sort()).toEqual(['FileDetail', 'Guide']);
             expect(container.querySelector('[view]')).toBeNull();
         } finally {

@@ -1,9 +1,11 @@
+import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
+import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { describe, expect, it } from 'vitest';
 import { h } from 'preact';
 import { act } from 'preact/test-utils';
 import { useMemo, useState } from 'preact/hooks';
 import Type from 'typebox';
-import { compileOrdinarySchema } from '@aotui/runtime/core';
+import { compileToolParameters } from '@aotui/runtime/core';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 import { createTUIApp, View, useArrayRef, useDataRef, refParam, defineViewType } from './index.js';
 import { arrayRef, formatRef, ref, refParam as plainRefParam } from './app.js';
@@ -11,10 +13,11 @@ import { arrayRef, formatRef, ref, refParam as plainRefParam } from './app.js';
 const Detail=defineViewType({name:'Detail'});
 function setup(Content: () => any) {
  const factory = createTUIApp({ app_name: 'typed_refs', viewTypes:[Detail], component: () => h(View, {kind: 'state',id:'detail',type:Detail},h(Content, {})) });
- const kernel = new AppKernel({...factory.kernelConfig,factory} as any);
- kernel.setId('app' as any);
- kernel.enableAppLifecycle();
- return {kernel,get container(){return document.getElementById('app-root-app')!;},open:()=>kernel.onOpen({appId:'app' as any,desktopId:'desktop' as any}),
+ const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+     appId: createAppId('app'), desktopId: createDesktopId('desktop'),
+     instanceId: 'typed-data-ref-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
+ });
+ return {kernel,get container(){return document.getElementById('app-root-app')!;},open:()=>kernel.onOpen(),
  async close(){await kernel.onClose();}};
 }
 const schema=Type.Object({id:Type.String(),title:Type.String()},{additionalProperties:false});
@@ -127,6 +130,20 @@ describe('Ref authoring and value contracts',()=>{
    const parameter=refParam('Plan',getterSchema);expect(reads).toBe(0);
    expect(()=>define(parameter)).toThrow(expect.objectContaining({code:'TOOL_SCHEMA_INVALID'}));expect(reads).toBe(0);
  });
+ it('rejects a pattern in the Ref target Schema at Tool declaration', () => {
+   const value = Type.Object({ title: Type.String({ pattern: '^plan$' }) });
+   expect(() => define(refParam('Plan', value))).toThrow(expect.objectContaining({
+     code: 'TOOL_SCHEMA_UNSUPPORTED', path: '$.properties.plan["x-aotui-ref-value"].properties.title.pattern',
+   }));
+ });
+ it('rejects a pattern in the Ref source Schema before registering a value', async () => {
+   const value = Type.Array(Type.String({ pattern: '^plan$' }));
+   const x = setup(() => { useDataRef('plans', ['plan'], { schema: value }); return null; });
+   try {
+     await expect(x.open()).rejects.toMatchObject({ code: 'TOOL_SCHEMA_UNSUPPORTED', path: '$.items.pattern' });
+     expect(x.kernel.getViewRefs()).toEqual([]);
+   } finally { await x.close(); }
+ });
  it('reports a standalone Ref schema copy limit at publication without registering the value', async () => {
    const schema = Type.Array(Type.Number(), { default: Array(3_000).fill(0) });
    const x = setup(() => { useDataRef('values', [], { refType: 'Numbers', schema }); return null; });
@@ -151,7 +168,7 @@ describe('Ref authoring and value contracts',()=>{
    const input=Type.Object({plans:Type.Array(refParam('Plan',schema),{maxItems:3}),
      optional:Type.Optional(refParam('Plan',schema))},{additionalProperties:false});
    const tool=defineViewType<object>()({name:'Plan',tools:{choose:{description:'Choose Plans',inputSchema:input,execute:()=>({success:true})}}}).tools.choose;
-   const compiled=compileOrdinarySchema(tool.inputSchema);
+   const compiled=compileToolParameters(tool.inputSchema);
    expect(compiled.ok).toBe(true);if(!compiled.ok)throw Error('contract');
    expect(compiled.contract.validateModelInput({plans:['detail.a','detail.b']}).ok).toBe(true);
    expect(compiled.contract.validateResolvedInput({plans:[{id:'a',title:'A'},{id:'b',title:'B'}]}).ok).toBe(true);

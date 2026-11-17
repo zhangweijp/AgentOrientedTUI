@@ -1,21 +1,32 @@
 import { it, expect } from 'vitest';
+import { resolve } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { AppWorkerHost } from './worker-host.js';
 
 class TestWorker extends EventEmitter {
-    sent: any[] = [];terminated = 0;shutdownFailed = false;closeFailed = false;openFailed = false;ack: 'valid' | 'missing' | 'invalid' = 'valid';
+    sent: any[] = [];terminated = 0;shutdownFailed = false;closeFailed = false;openFailed = false;
+    ack: 'valid' | 'missing' | 'invalid' | 'undefined' | 'accessor' = 'valid';
+    ackReads = 0;
+    contactStorage = true;
     pendingCloseResponse: any;
     postMessage(message: any) {
         this.sent.push(message);
-        if (message.type === 'STATE_STORAGE_RESPONSE' && this.pendingCloseResponse) {
+        if (message.type === 'STATE_STORAGE_RESPONSE' && message.action === 'release' && this.pendingCloseResponse) {
             const response = this.pendingCloseResponse;this.pendingCloseResponse = undefined;
             queueMicrotask(() => this.emit('message', response));return;
         }
         queueMicrotask(() => {
-            if (message.type === 'INIT') this.emit('message', { type: 'INIT_RESPONSE', requestId: message.requestId, success: true,
+            if (message.type === 'INIT') {
+                const reply = { type: 'INIT_RESPONSE', requestId: message.requestId, success: true,
                 appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: message.appInstanceId },
-                acceptedCapabilities: message.requestedCapabilities,
-                ...(this.ack === 'missing' ? {} : { persistence: { protocol: 'state-session-v1', version: 1, instanceId: this.ack === 'invalid' ? 'other' : message.appInstanceId } }) });
+                protocol: message.protocol, toolsEnabled: message.toolsEnabled,
+                projectionLimits: message.projectionLimits,
+                appInstanceId: message.appInstanceId,
+                ...(this.ack === 'missing' ? {} : { persistence: this.ack === 'undefined' ? undefined :
+                    { protocol: 'state-session-v1', version: 1, instanceId: this.ack === 'invalid' ? 'other' : message.appInstanceId } }) };
+                if (this.ack === 'accessor') Object.defineProperty(reply, 'persistence', { get: () => { this.ackReads++; return undefined; } });
+                this.emit('message', reply);
+            }
             else if (message.type === 'APP_OPEN' && this.openFailed) {
                 const instanceId = this.sent[0].appInstanceId;
                 this.emit('message', { type: 'LIFECYCLE_RESPONSE', requestId: message.requestId, success: false,
@@ -34,27 +45,82 @@ class TestWorker extends EventEmitter {
                         protocol: 'app-lifecycle-v2', instanceId, state: closing ? cleanupFailed ? 'failed' : 'completed' : 'stopped',
                         issues: cleanupFailed ? [closing ? 'APP_CLEANUP_FAILED' : 'APP_STOP_FAILED'] : [],
                     } } : {}),
-                    ...(['APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type) ? { persistence: { protocol: 'state-session-v1', instanceId,
+                    ...(this.ack !== 'missing' && ['APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type) ? { persistence: { protocol: 'state-session-v1', instanceId,
                         ok: closing && !persistenceFailed,
                         unmount: closing ? cleanupFailed ? 'failed' : 'completed' : 'pending', flush: { status: 'completed', ok: true, entries: [] },
                         ...(closing ? { dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } : {}) } } : {}) };
-                if (message.type === 'APP_CLOSE') {
+                if (message.type === 'APP_CLOSE' && this.contactStorage && this.ack !== 'missing') {
                     this.pendingCloseResponse = response;
-                    this.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1, instanceId, sequence: 1, action: 'release' });
+                    this.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1, instanceId, sequence: 2, action: 'release' });
                 } else this.emit('message', response);
             }
         });
     }
     terminate() { this.terminated++;return Promise.resolve(0); }
 }
-const setup = (worker = new TestWorker()) => ({ worker, host: new AppWorkerHost({ appId: 'a' as any, desktopId: 'd' as any,
-    appModulePath: '/unused', timeout: 1000, config: { AOTUI_DATA_DIR: '/unused' }, existingWorker: worker as any }) });
-it.each(['missing', 'invalid', 'valid'] as const)('B02: separate persistence ACK %s; no backend opens merely from negotiation', async ack => {
+const setup = (worker = new TestWorker(), options: Partial<ConstructorParameters<typeof AppWorkerHost>[0]> = {}) => ({
+    worker, host: new AppWorkerHost({ appId: 'a' as any, desktopId: 'd' as any,
+        appModulePath: '/unused', timeout: 1000, config: { AOTUI_DATA_DIR: '/unused' }, existingWorker: worker as any, ...options }),
+});
+it.each(['missing', 'invalid', 'undefined', 'accessor', 'valid'] as const)('B02: separate persistence ACK %s; no backend opens merely from negotiation', async ack => {
     const { worker, host } = setup();worker.ack = ack;
-    if (ack === 'valid') await host.start();
+    if (ack === 'valid' || ack === 'missing') await host.start();
     else await expect(host.start()).rejects.toThrow('PERSISTENCE_NEGOTIATION_FAILED');
-    expect(host.getPersistenceReport()).toMatchObject({ support: ack === 'valid' ? 'managed' : 'rejected', actualIO: 0, ownerRetained: false });
+    expect(worker.ackReads).toBe(0);
+    expect(host.getPersistenceReport()).toMatchObject({ support: ack === 'valid' ? 'managed' : ack === 'missing' ? 'not-used' : 'rejected', actualIO: 0, ownerRetained: false });
     host.terminate();
+});
+it('ignores unsolicited storage and a bad directory for an unnegotiated App, then confirms App cleanup', async () => {
+    let opens = 0;
+    const { worker, host } = setup(new TestWorker(), { config: { AOTUI_DATA_DIR: 3 }, persistenceBackend: {
+        async open() { opens++;throw Error('unexpected open'); },
+    } });
+    worker.ack = 'missing';
+    await host.start();
+    worker.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1, instanceId: host.appInstanceId,
+        sequence: 1, action: 'read', address: { namespace: '["d","a"]', key: 'value' } });
+    await host.open();
+    await host.close();
+    expect(opens).toBe(0);
+    const report = await host.waitForResourceRelease();
+    expect(report).toMatchObject({ resourcesReleased: true, appCleanup: { report: { state: 'completed' } },
+        storage: { support: 'not-used', highWater: 0, ownerRetained: false, actualIO: 0 } });
+    expect(report.storage).not.toHaveProperty('release');
+    expect(report.storage).not.toHaveProperty('lifecycle');
+    expect(worker.sent.filter(message => message.type === 'STATE_STORAGE_RESPONSE')).toHaveLength(0);
+});
+
+it('does not allocate new storage for an ACK that arrives during close', async () => {
+    const { worker, host } = setup();
+    worker.contactStorage = false;
+    const starting = host.start();
+    const closed = host.close();
+    await expect(starting).rejects.toThrow();
+    await closed;
+    const report = await host.waitForResourceRelease();
+    expect(report).toMatchObject({ resourcesReleased: true, appCleanup: { report: { state: 'completed' } } });
+    expect(report.storage.support).not.toBe('managed');
+    expect(report.storage).not.toHaveProperty('release');
+});
+
+it('captures a relative directory and backend before negotiation', async () => {
+    let directory: string | undefined;
+    const config = { AOTUI_DATA_DIR: 'captured' };
+    const { worker, host } = setup(new TestWorker(), { config, persistenceBackend: {
+        async open(input) {
+            directory = input.rootDirectory;
+            return { status: 'rejected', issue: { code: 'IO_FAILED', message: 'test' } };
+        },
+    } });
+    try {
+        const pending = host.start();
+        config.AOTUI_DATA_DIR = 'changed';
+        await pending;
+        worker.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1, instanceId: host.appInstanceId,
+            sequence: 1, action: 'read', address: { namespace: '["d","a"]', key: 'value' } });
+        await host.close();
+        expect(directory).toBe(resolve('captured/app-state'));
+    } finally { host.terminate(); await host.waitForResourceRelease(); }
 });
 it('B04: one logical initialization; constructor timeout is bounded', async () => {
     const { host } = setup();await host.start();await expect(host.start()).rejects.toThrow('APP_INSTANCE_REUSE_UNSUPPORTED');host.terminate();

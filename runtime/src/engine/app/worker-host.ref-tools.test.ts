@@ -1,0 +1,272 @@
+import { Worker } from 'node:worker_threads';
+import { mkdtemp, mkdir, readFile, writeFile, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { build } from 'esbuild';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+const REF_A = 'aa.alpha', REF_B = 'bb.beta', BIG_A = 'aa.capacity_alpha';
+const NORMAL_HOST_TIMEOUT_MS = 3000;
+const FAULT_HOST_TIMEOUT_MS = 1500;
+const invokes = (m: any) => m.type === 'VIEW_TOOL_INVOKE';
+const closing: Array<() => Promise<void> | void> = [], facts: any[] = [];
+let tag = 0;
+afterEach(async () => { for (const close of closing.splice(0)) await close();vi.restoreAllMocks(); });
+function deferred() { let resolve!: () => void;const promise = new Promise<void>(yes => { resolve = yes; });return { promise, resolve }; }
+function project({source}:any, visible:string[]) {
+    return {refs:Object.values(source.refs).filter((ref:any)=>visible.includes(ref.ownerViewId))
+        .map((ref:any)=>({viewId:ref.ownerViewId,viewInstanceId:ref.ownerViewInstanceId,refId:ref.id})),toolIds:Object.keys(source.tools)};
+}
+function activation(snapshot:any, tool:any, id='aa') {
+    return snapshot.views.find((view:any)=>view.id===id)?.toolBindings.find((ref:any)=>ref.toolId===tool.id)?.activationId;
+}
+function scope(x: any, visible = ['aa', 'bb']) {
+    const authorizations: any[] = [], invocations: any[] = [], observations: any[] = [], control = { authorize: (_c: any): any => true };
+    const opened = x.host.getAppInteraction({ project: (ctx: any) => project(ctx,visible), authorize: (c: any) => { authorizations.push({ source: c.source, rawInput: c.rawInput, effectiveInput: c.effectiveInput, refSources: c.refSources });return control.authorize(c); }, canReadReceipt: () => true });
+    expect(opened.status).toBe('ready');if (opened.status !== 'ready') throw Error(opened.issue.code);
+    const client = opened.interaction;x.scopes ??= [];x.scopes.push({ authorizations, invocations, observations });
+    return { client, control, authorizations, async observe(ids = visible) { visible=ids; const r = await client.observe({ all:true });observations.push(r);expect(r.status).toBe('observed');expect(client.adoptObservation(r.observation.observationId)).toEqual({ status: 'adopted' });return r.observation; },
+        request(o: any, name = 'inspect', input: any = { file: REF_A, choice: 'ok' }, view = 'aa') { const tool = o.tools.find((t: any) => t.name === name);expect(tool).toBeDefined();const args = Object.create(Object.getPrototypeOf(input), Object.getOwnPropertyDescriptors(input));
+            Object.defineProperty(args, 'view_id', { value: view, enumerable: true });
+            return { invocationId: 'i-' + (++tag), observationId: o.observationId, toolId: tool.id, input: args }; },
+        async invoke(request: any) { const id = Object.getOwnPropertyDescriptor(request, 'invocationId')?.value;const result = await client.invoke(request);invocations.push({ invocationId: id, result });return result; } };
+}
+function receipt(r: any) { expect(r.kind).toBe('receipt');return r.receipt; }
+function value(r: any) { const result = receipt(r);expect(result.outcome.status).toBe('succeeded');return result.outcome.value; }
+let temporary: string, Host: any, appFile: string, workerFile: string;
+function wait(x: any, predicate: (m: any) => boolean, from = 0): Promise<any> {
+    const existing = x.messages.slice(from).find(predicate);if (existing) return Promise.resolve(existing);
+    return new Promise((yes, no) => { const timer = setTimeout(() => { x.worker.off('message', receive);no(Error('Ref V2 barrier expired; ' + x.logs.join('').slice(-2000))); }, 5000);
+        function receive(m: any) { if (predicate(m)) { clearTimeout(timer);x.worker.off('message', receive);yes(m); } }x.worker.on('message', receive); });
+}
+async function control(x: any, type: string, data: any = {}) {
+    const id = ++tag, from = x.messages.length, previousTimeout = x.host.timeout;
+    if (previousTimeout < NORMAL_HOST_TIMEOUT_MS) x.host.timeout = NORMAL_HOST_TIMEOUT_MS;
+    try {
+        x.worker.postMessage({ type: 'TEST_COMMAND', command: type, data: { ...data, tag: id } });
+        return await wait(x, m => m.type === (type === 'state' ? 'REF_V2_COMMITTED' : 'REF_V2_CONTROL_ACK') && m.tag === id, from);
+    } finally { x.host.timeout = previousTimeout; }
+}
+async function change(x: any, patch: any, predicate: (draft: any) => boolean) { const from = x.messages.length;await control(x, 'state', { patch });return wait(x, m => m.type === 'SNAPSHOT_PREPARED' && predicate(m.draft), from); }
+function assertReceiverReplacement(x: any, before: any) {
+    const after = x.snapshot();
+    const oldTool: any = Object.values(before.tools).find((tool: any) => tool.name === 'inspect');
+    const newTool: any = Object.values(after.tools).find((tool: any) => tool.name === 'inspect');
+    expect(newTool).toEqual(oldTool);
+    expect(activation(after, newTool)).not.toBe(activation(before, oldTool));
+}
+const remounted = (previous: any, draft: any, id = 'aa') =>
+    draft.views.some((view: any) => view.id === id &&
+        view.viewInstanceId !== previous.views.find((old: any) => old.id === id)?.viewInstanceId);
+async function start(options: any = {}) {
+    const caseId = expect.getState().currentTestName;
+    const worker = options.existing ?? new Worker(workerFile, { stdout: true, stderr: true, env: { ...process.env, AOTUI_DATA_DIR: join(temporary, 'data-' + (++tag)) } });
+    const messages: any[] = [], rawMessages: any[] = [], sent: any[] = [], attempted: any[] = [], logs: string[] = [], workerErrors: any[] = [];let transform: ((m: any) => any) | undefined;
+    worker.on('error', (error: any) => workerErrors.push({ name: error.name, message: error.message, code: error.code }));
+    const emit = worker.emit.bind(worker);worker.emit = (event: string, ...args: any[]) => { if (event === 'message') { rawMessages.push(args[0]);const changed = transform ? transform(args[0]) : args[0];if (changed === null) return false;args[0] = changed; }return emit(event, ...args); };
+    const post = worker.postMessage.bind(worker);worker.postMessage = (m: any) => { attempted.push(m);sent.push(m);post(m); };
+    worker.stdout?.on('data', (b: any) => logs.push(String(b)));worker.stderr?.on('data', (b: any) => logs.push(String(b)));
+    const host = new Host({ appId: 'app', desktopId: 'd', appModulePath: appFile,
+        existingWorker: worker, timeout: options.timeout ?? NORMAL_HOST_TIMEOUT_MS,
+        config: { AOTUI_DATA_DIR: process.env.AOTUI_DATA_DIR ?? join(temporary, 'host-state') } });
+    worker.on('message', (m: any) => messages.push(m));
+    const x: any = { host, worker, messages, rawMessages, sent, attempted, logs, transform(fn: any) { transform = fn; },
+        entries: () => rawMessages.filter(m => m.type === 'REF_V2_HANDLER_ENTER'), handlerEntries: () => rawMessages.filter(m => m.type === 'REF_HANDLER_ENTRY'), guards: () => rawMessages.filter(m => m.type === 'REF_APP_GUARD'), posts: () => sent.filter(invokes), snapshot: () => host.snapshotReceiver.core.store.readLatest('app').snapshot };
+    closing.push(async () => {
+        const beforeCleanup = host.getInteractionReport?.(), owned = host.worker === worker;
+        host.terminate(); if (owned) await worker.terminate(); await host.waitForResourceRelease();
+        facts.push({ kind: 'actual Node Worker Ref invocation', caseId, workerFile, appModulePath: appFile,
+            instanceId: host.appInstanceId, rawMessages, deliveredMessages: messages, sent, attempted, scopes: x.scopes, logs, workerErrors,
+            counts: { dispatches: x.posts().length, handlerEntries: x.handlerEntries().length, guards: x.guards().length, businessEntries: x.entries().length },
+            beforeCleanup, cleanup: { method: 'low-level Host/Worker termination', settled: true,
+                gracefulRuntimeShutdownClaimed: false, resourceReport: host.getResourceReport(), interactionReport: host.getInteractionReport?.() } });
+    });
+    await host.start();await host.open();await wait(x, m => m.type === 'SNAPSHOT_PREPARED');return x;
+}
+describe('R07–R24 actual SDK / emitted Host / Node Worker Ref invocation', () => {
+    beforeAll(async () => {
+        const runtime = resolve(process.cwd()), sdk = resolve(runtime, '../sdk');
+        
+        temporary = await mkdtemp(join(process.env.AOTUI_MIGRATION_TEMP_DIR ?? tmpdir(), 'aotui-ref-migration-'));
+        workerFile = join(runtime, 'dist/worker-runtime/index.js');
+        Host = (await import(pathToFileURL(join(runtime, 'dist/engine/app/worker-host.js')).href)).AppWorkerHost;
+        const modules = join(temporary, 'node_modules');
+        await mkdir(join(modules, '@aotui'), { recursive: true });
+        for (const name of ['preact', 'linkedom']) await symlink(join(runtime, 'node_modules', name), join(modules, name), 'dir');
+        await symlink(join(sdk, 'node_modules/typebox'), join(modules, 'typebox'), 'dir');
+        await symlink(runtime, join(modules, '@aotui/runtime'), 'dir');
+        appFile = join(temporary, 'app.mjs');
+        await build({ stdin: { contents: await readFile(join(runtime, 'tests/fixtures/ref-v2-slice.mjs'), 'utf8'), resolveDir: runtime,
+            sourcefile: 'ref-v2-slice.mjs', loader: 'js' }, outfile: appFile,
+            alias: { '@aotui/sdk': join(sdk, 'dist/index.js') }, bundle: true, platform: 'node', format: 'esm', target: 'node20', packages: 'external', logLevel: 'silent' });
+        await writeFile(join(process.env.AOTUI_MIGRATION_INPUTS_DIR ?? temporary, 'ref-protocol.bundle.mjs'), await readFile(appFile), { flag: 'wx' });
+        facts.push({ kind: 'current emitted inputs', runtime, sdk, appFile, workerFile, node: process.version });
+    });
+    afterAll(async () => { if (process.env.AOTUI_W07_REF_V2_FACTS_FILE) await writeFile(process.env.AOTUI_W07_REF_V2_FACTS_FILE, JSON.stringify({ kind: 'Worker Ref call evidence', facts, afterAllReached: true }, null, 2), { flag: 'wx' }); });
+    it('R08/R09/R12 really enters only the original target with one substituted slot and no default fill', async () => {
+        const x = await start(), s = scope(x), o = await s.observe(), input = { file: REF_A, choice: 'ok', text: '😀', tags: ['a', 'b'] };
+        const a = value(await s.invoke(s.request(o, 'inspect', input, 'aa'))), b = value(await s.invoke(s.request(o, 'inspect', { ...input, file: REF_B }, 'bb')));
+        expect(a.data.view).toBe('aa');expect(b.data.view).toBe('bb');expect(a.data.args.file).toMatchObject({ label: 'A', view: 'aa' });expect(Object.hasOwn(a.data.args, 'n')).toBe(false);
+        const post = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE' && m.refSources[0].viewId === 'aa');expect(post.rawArgs).toEqual(input);expect(post.effectiveArgs).toEqual(a.data.args);expect(post.tool.inputSchema.properties.file).toMatchObject({ 'x-aotui-ref-kind': 'Data' });
+        expect(post.refSources[0]).toMatchObject({ refId: 'alpha', snapshotId: post.snapshotId, viewId: 'aa' });expect(s.authorizations.find(a => a.effectiveInput.file.view === 'aa').effectiveInput).toEqual(a.data.args);
+        expect(x.entries().filter((e: any) => e.name === 'inspect')).toHaveLength(2);
+    });
+    it.each(['enum', 'array', 'range', 'required', 'extra', 'null', 'getter'])('R08/R21 invalid %s never authorizes/posts/enters', async kind => {
+        const x = await start(), s = scope(x), o = await s.observe();let reads = 0;const input: any = { file: REF_A, choice: 'ok' };
+        if (kind === 'enum') input.choice = 7;if (kind === 'array') input.tags = ['a'];if (kind === 'range') input.n = 5;
+        if (kind === 'required') delete input.choice;if (kind === 'extra') input.private = 'REF_V2_PRIVATE_INPUT';if (kind === 'null') input.meta = null;
+        if (kind === 'getter') Object.defineProperty(input, 'n', { enumerable: true, get() { reads++;return 2; } });
+        const result = await s.invoke(s.request(o, 'inspect', input));expect(result.kind === 'receipt' ? result.receipt.outcome.status : result.code).not.toBe('succeeded');
+        expect(s.authorizations).toHaveLength(0);expect(x.posts()).toHaveLength(0);expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);expect(reads).toBe(0);expect(JSON.stringify([x.sent, x.logs])).not.toContain('REF_V2_PRIVATE_INPUT');
+    });
+    it('R09/R13 uses historical A while the current committed handler observes revision2 without rebind', async () => {
+        const x = await start(), s = scope(x), o = await s.observe();const request = s.request(o);const tool = o.tools.find((tool:any)=>tool.id===request.toolId); const expected=activation(x.snapshot(),tool);
+        await change(x, { text: 'B', revision: 2 }, d => Object.values(d.refs).some((r: any) => r.ownerViewId === 'aa' && r.id === 'alpha' && r.target.payload.label === 'B'));
+        const output = value(await s.invoke(request));expect(output.data.args.file.label).toBe('A');expect(output.data.revision).toBe(2);
+        expect(x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE').receiver.activationId).toBe(expected);
+    });
+    it('R21 preserves open ordinary literals and whitespace without treating data as Schema markers', async () => {
+        const x = await start(), s = scope(x), o = await s.observe();const extra = { 'x-aotui-ref': { kind: 'DATA' }, 'x-aotui-parameter-contract': 'DATA', refSource: 'DATA', text: '  unchanged  ' };
+        const output = value(await s.invoke(s.request(o, 'open_ref', { file: REF_A, extra })));expect(output.data.args.extra).toEqual(extra);expect(output.data.args.file.literal).toEqual({ 'x-aotui-ref': { kind: 'DATA' }, 'x-aotui-parameter-contract': 'DATA', refSource: 'DATA' });
+        expect(x.entries()).toHaveLength(1);expect(x.entries()[0].frozen).toBe(true);expect(x.entries()[0].refFrozen).toBe(true);
+    });
+    it('R21 preserves special own Ref parameter names through real Core/codec/SDK execution', async () => {
+        const x = await start(), s = scope(x), o = await s.observe();const names = ['', '__proto__', 'constructor', 'x-aotui-ref', 'x-aotui-parameter-contract', 'line\nname'];
+        for (const [index, param] of names.entries()) {
+            const result = value(await s.invoke(s.request(o, 'special_' + index, Object.fromEntries([[param, REF_A]]))));expect(Object.hasOwn(result.data.args, param)).toBe(true);expect(result.data.args[param]).toMatchObject({ label: 'A', view: 'aa' });
+            const request = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE' && m.tool.name === 'special_' + index);expect(request.refSources[0].param).toBe(param);
+        }
+        expect(x.entries()).toHaveLength(names.length);expect(x.entries().every((e: any) => e.frozen && e.refFrozen)).toBe(true);
+    });
+    it.each(['foreign', 'type'])('R10 refuses %s Ref before policy', async kind => {
+        const x = await start(), s = scope(x, ['aa']), o = await s.observe();const result = receipt(await s.invoke(s.request(o, kind === 'type' ? 'typed' : 'inspect', { file: kind === 'foreign' ? 'bb.private_beta' : REF_A, ...(kind === 'foreign' ? { choice: 'ok' } : {}) })));
+        expect(result.outcome.code).toBe(kind === 'type' ? 'REF_TYPE_MISMATCH' : 'REF_NOT_VISIBLE');expect(s.authorizations).toHaveLength(0);expect(x.posts()).toHaveLength(0);expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);
+    });
+    it.each(['default', 'ref-metadata', 'unmount', 'close'])('R11 revokes %s during awaited policy before dispatch', async kind => {
+        const x = await start();await change(x, { showSecond: false }, d => !d.views.some((v: any) => v.id === 'bb'));
+        const s = scope(x, ['aa']), o = await s.observe(), entered = deferred(), release = deferred();s.control.authorize = () => { entered.resolve();return release.promise.then(() => true); };
+        const running = s.invoke(s.request(o));await entered.promise;
+        const beforeReplacement = x.snapshot();
+        try {
+        if (kind === 'default') await change(x, { defaultValue: 3 }, draft => remounted(beforeReplacement, draft));
+        if (kind === 'ref-metadata') await change(x, { refType: 'File' }, draft => remounted(beforeReplacement, draft));
+        if (kind === 'default' || kind === 'ref-metadata') assertReceiverReplacement(x, beforeReplacement);
+        if (kind === 'unmount') await change(x, { show: false }, d => !d.views.some((v: any) => v.id === 'aa'));if (kind === 'close') x.host.beginInteractionClose();
+        } finally { release.resolve(); await running.catch(() => undefined); }
+        const result = await running;expect(result.code ?? result.receipt.outcome.code).toBe(kind === 'close' ? 'APP_INTERACTION_UNAVAILABLE' : 'VIEW_INSTANCE_REVOKED');expect(x.posts()).toHaveLength(0);expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);
+    });
+    it.each([5001, 10000])('R20 dispatches a legal %i-node Ref through the real Worker', async nodes => {
+        const x = await start();await change(x, { capacityNodes: nodes }, d => Object.values(d.refs).some((r: any) => r.ownerViewId === 'aa' && r.id === 'capacity_alpha' && r.target.payload.list.length === nodes - 4));
+        const s = scope(x, ['aa']), o = await s.observe(), result = await s.invoke(s.request(o, 'capacity', { file: BIG_A }));
+        expect(value(result).data.nodes).toBe(nodes);expect(s.authorizations).toHaveLength(1);expect(x.posts()).toHaveLength(1);
+        expect(x.entries()).toHaveLength(1);expect(x.entries()[0].nestedFrozen).toBe(true);
+    });
+    it('R20 rejects a 10001-node Ref at publication, before any authorization or dispatch', async () => {
+        const x = await start(), s = scope(x, ['aa']), o = await s.observe();
+        const from = x.messages.length; await control(x, 'state', { patch: { capacityNodes: 10002 } });
+        const failure = await wait(x, m => m.type === 'SNAPSHOT_PREPARE_FAILED', from);
+        expect(failure.error.path).toContain('capacity_alpha');
+        expect(receipt(await s.invoke(s.request(o, 'capacity', { file: BIG_A }))).outcome).toMatchObject({
+            status: 'rejected', code: 'SNAPSHOT_UNREADY',
+        });
+        expect(s.authorizations).toHaveLength(0);expect(x.posts()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);
+    });
+    it('checks the original Ref owner again in the Worker when the Host has yet to receive the removal', async () => {
+        const x = await start(), s = scope(x), o = await s.observe(), entered = deferred(), release = deferred();
+        s.control.authorize = () => { entered.resolve(); return release.promise.then(() => true); };
+        const running = s.invoke(s.request(o, 'inspect', { file: REF_A, choice: 'ok' }, 'bb'));
+        try {
+            await entered.promise;
+            x.transform((message: any) => message.type === 'SNAPSHOT_PREPARED' ? null : message);
+            await control(x, 'state', { patch: { show: false } });
+            expect(x.snapshot().views.map((view: any) => view.id)).toEqual(['root', 'aa', 'bb']);
+            release.resolve();
+            expect(receipt(await running)).toMatchObject({ executionPhase: 'not-entered',
+                outcome: { status: 'rejected', code: 'REF_VIEW_UNAVAILABLE', path: '$.file' } });
+            expect(x.posts()).toHaveLength(1);expect(x.handlerEntries()).toHaveLength(0);
+        } finally { x.transform(undefined); release.resolve(); await running.catch(() => undefined); }
+    });
+    it('R20 oversized raw input is refused before policy and Worker dispatch', async () => {
+        const x = await start(), s = scope(x), o = await s.observe(), result = await s.invoke(s.request(o, 'open_ref', { file: REF_A, extra: { value: 'x'.repeat(150000) } }));
+        expect(result.kind === 'receipt' ? result.receipt.outcome.status : result.code).not.toBe('succeeded');expect(s.authorizations).toHaveLength(0);expect(x.posts()).toHaveLength(0);expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);
+    });
+    it('R14 last-matching-View re-mount revokes type activation; per-object D2 difference is covered by dual Producer', async () => {
+        const x = await start(), s = scope(x), o = await s.observe(), old = s.request(o);
+        await change(x, { enabled: false }, d => !Object.values(d.tools).some((t: any) => t.name === 'inspect'));
+        expect(receipt(await s.invoke(old)).outcome.status).toBe('rejected');expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);
+        await change(x, { enabled: true }, d => Object.values(d.tools).some((t: any) => t.name === 'inspect'));value(await s.invoke(s.request(await s.observe())));
+        await change(x, { showSecond: false }, d => !d.views.some((v: any) => v.id === 'bb'));
+        const before = await s.observe(['aa']), stale = s.request(before), handlersBeforeClose = x.handlerEntries().length;await change(x, { show: false }, d => !d.views.some((v: any) => v.id === 'aa'));
+        await change(x, { show: true }, d => d.views.some((v: any) => v.id === 'aa'));expect(receipt(await s.invoke(stale)).outcome.status).toBe('rejected');expect(x.handlerEntries()).toHaveLength(handlersBeforeClose);value(await s.invoke(s.request(await s.observe(['aa']))));
+    });
+    it('R10 actual Worker rejects a foreign App instance before entering its callable', async () => {
+        const x = await start(), s = scope(x), o = await s.observe();value(await s.invoke(s.request(o)));const source = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE');
+        const requestId = 'foreign-' + (++tag), from = x.messages.length, count = x.entries().length, handlerCount = x.handlerEntries().length;
+        x.worker.postMessage({ ...source, requestId, instanceId: 'other' });
+        const response = await wait(x, m => m.type === 'VIEW_TOOL_INVOKE_RESPONSE' && m.requestId === requestId, from);expect(response.terminal).toMatchObject({ phase: 'not-entered', result: { error: { code: 'APP_INSTANCE_MISMATCH' } } });expect(x.entries()).toHaveLength(count);expect(x.handlerEntries()).toHaveLength(handlerCount);
+    });
+    it.each(['disable', 'replace'])('R15 Worker refuses the old binding after a queued request is %s', async kind => {
+        const x = await start();await change(x, { showSecond: false }, d => !d.views.some((v: any) => v.id === 'bb'));const s = scope(x, ['aa']), o = await s.observe(), queued: any[] = [], held = deferred();
+        const physical = x.worker.postMessage.bind(x.worker);x.worker.postMessage = (m: any) => { if (m.type === 'VIEW_TOOL_INVOKE') { queued.push(m);held.resolve(); }else physical(m); };
+        const running = s.invoke(s.request(o));await held.promise;const beforeReplacement = x.snapshot();
+        if (kind === 'disable') await change(x, { enabled: false }, d => !Object.values(d.tools).some((t: any) => t.name === 'inspect'));
+        else { await change(x, { defaultValue: 3 }, draft => remounted(beforeReplacement, draft));assertReceiverReplacement(x, beforeReplacement); }
+        expect(queued).toHaveLength(1);expect(queued[0].tool.inputSchema.properties.file).toHaveProperty('x-aotui-ref-kind');physical(queued[0]);
+        const result = receipt(await running);expect(result.outcome.status).toBe('rejected');expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);expect(x.host.getInteractionReport().workerToolPending).toBe(false);
+        const terminal = x.rawMessages.find((m: any) => m.type === 'VIEW_TOOL_INVOKE_RESPONSE' && m.requestId === queued[0].requestId);expect(terminal.terminal.phase).toBe('not-entered');
+    });
+    it.each(['business', 'throw'])('R16 distinguishes %s failure and settles the Worker request', async mode => {
+        const x = await start();
+        await control(x, 'mode', { mode });
+        const s = scope(x), o = await s.observe(), result = receipt(await s.invoke(s.request(o)));
+        const reply = x.rawMessages.find((message: any) => message.type === 'VIEW_TOOL_INVOKE_RESPONSE');
+        if (mode === 'business') {
+            expect(result).toMatchObject({ executionPhase: 'entered-returned', outcome: {
+                status: 'failed', details: { result: { error: { code: 'BUSINESS' } } },
+            } });
+            expect(reply.terminal.phase).toBe('entered-returned');
+        } else {
+            expect(result).toMatchObject({ executionPhase: 'unknown', outcome: { status: 'unknown' } });
+            expect(reply.terminal).toEqual({ phase: 'finished-unknown' });
+        }
+        expect(x.host.getInteractionReport().workerToolPending).toBe(false);
+        expect(JSON.stringify({ reply, result })).not.toContain('REF_V2_PRIVATE_EXCEPTION');
+    });
+    it.each(['drop', 'type', 'extra-field', 'instance', 'request', 'huge'])('R17 %s terminal cannot settle an active invocation', async kind => {
+        const x = await start();
+        x.host.timeout = FAULT_HOST_TIMEOUT_MS;
+        x.transform((m: any) => m.type !== 'VIEW_TOOL_INVOKE_RESPONSE' ? m : kind === 'drop' ? null : kind === 'type' ? { ...m, type: 'VIEW_TOOL_INVOKE_REF_V1_RESPONSE' } : kind === 'extra-field' ? { ...m, unexpected: true } : kind === 'instance' ? { ...m, instanceId: 'other' } : kind === 'request' ? { ...m, requestId: 'other' }
+            : { ...m, terminal: { phase: 'entered-returned', result: { success: true, data: 'x'.repeat(9 * 1024 * 1024) } } });
+        const s = scope(x), o = await s.observe();
+        expect(await s.invoke(s.request(o))).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT' });
+        expect(x.host.getInteractionReport().workerToolPending).toBe(true);expect(x.entries()).toHaveLength(1);
+        const count = x.posts().length;await s.invoke(s.request(o));expect(x.posts()).toHaveLength(count);x.host.terminate();expect((await x.host.waitForResourceRelease()).worker).toBe('exited');
+    });
+    it('R17 a Worker exit while the handler is held is unknown with no automatic retry', async () => {
+        const x = await start();await control(x, 'mode', { mode: 'hold' });const s = scope(x), o = await s.observe(), request = s.request(o), running = s.invoke(request);await wait(x, m => m.type === 'REF_V2_HANDLER_ENTER');await x.worker.terminate();
+        expect(await running).toMatchObject({ kind: 'unavailable', code: 'APP_INTERACTION_UNAVAILABLE' });expect(x.host.getInteractionReport().workerToolPending).toBe(false);expect(x.posts()).toHaveLength(1);expect(x.entries()).toHaveLength(1);x.host.terminate();expect((await x.host.waitForResourceRelease()).worker).toBe('exited');
+    });
+    it.each(['inspect', 'capacity', 'plain'])('R18 actual %s response loss closes new dispatch', async name => {
+        const x = await start();x.host.timeout = FAULT_HOST_TIMEOUT_MS;
+        const s = scope(x), o = await s.observe();x.transform((m: any) => m.type === 'VIEW_TOOL_INVOKE_RESPONSE' ? null : m);
+        const args = name === 'inspect' ? { file: REF_A, choice: 'ok' } : name === 'capacity' ? { file: BIG_A } : { view_id: 'aa' };
+        const request = s.request(o, name, args, 'aa');
+        expect(await s.invoke(request)).toMatchObject({ kind: 'unavailable', code: 'INVOCATION_WAIT_TIMEOUT' });
+        expect(x.entries()).toHaveLength(1);expect(x.host.getInteractionReport().workerToolPending).toBe(true);const count = x.posts().length;
+        for (const [next, nextArgs] of [['inspect', { file: REF_A, choice: 'ok' }], ['capacity', { file: BIG_A }], ['plain', { view_id: 'aa' }]] as const)
+            await s.invoke(s.request(o, next, nextArgs, 'aa'));
+        expect(x.posts()).toHaveLength(count);expect(x.entries()).toHaveLength(1);x.host.terminate();expect((await x.host.waitForResourceRelease()).worker).toBe('exited');
+    });
+    it('R18 a new physical Worker has a new App identity and accepts fresh bindings', async () => {
+        const x = await start(), s = scope(x), o = await s.observe();
+        value(await s.invoke(s.request(o)));
+        await x.host.close();
+        expect(x.worker.threadId).toBe(-1);
+        const next = await start({ caseId: 'new App instance' });
+        expect(next.worker).not.toBe(x.worker);
+        expect(next.host.appInstanceId).not.toBe(x.host.appInstanceId);
+        expect(await s.invoke(s.request(o))).toMatchObject({ code: 'APP_INTERACTION_UNAVAILABLE' });
+        const n = scope(next), observed = await n.observe();
+        value(await n.invoke(n.request(observed)));
+    }, 10000);
+});

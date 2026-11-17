@@ -1,3 +1,5 @@
+import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
+import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Component, h, options } from 'preact';
 import { act } from 'preact/test-utils';
@@ -30,11 +32,11 @@ async function fixture(insideAct = false) {
         return h(View,{kind:'state',id:'file',type:Editable,context:{value}},h(Content,{value}));
     }
     const factory = createTUIApp({ viewTypes:[Editable], app_name: 'refresh_app', component: App });
-    const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
-    kernel.setId('refresh_app' as any);
-    kernel.enableAppLifecycle();
-    const open = () => kernel.onOpen({ appId: 'refresh_app' as any, desktopId: 'desktop' as any,
-         });
+    const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+        appId: createAppId('refresh_app'), desktopId: createDesktopId('desktop'),
+        instanceId: 'refresh-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
+    });
+    const open = () => kernel.onOpen();
     if (insideAct) await act(async () => { await open(); }); else await open();
     return { kernel, get container() { return document.getElementById('app-root-refresh_app')!; }, update, queue, flush: () => { while (queue.length) queue.shift()!(); } };
 }
@@ -52,10 +54,12 @@ describe('SDK queued render commit completion', () => {
         }
         const factory = createTUIApp({ viewTypes:[File], app_name: 'render_capture', component: () =>
             h(View, { id: 'file', type: File, kind: 'state' }, [h(OtherLayout, { key: 'layout' }), h(Body, { key: 'body' })]) });
-        const kernel = new AppKernel({ ...factory.kernelConfig, factory });
-        kernel.enableAppLifecycle();
+        const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+            appId: createAppId('render_capture'), desktopId: createDesktopId('desktop'),
+            instanceId: 'render-capture-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
+        });
         try {
-            await kernel.onOpen({ appId: 'render_capture' as any, desktopId: 'desktop' as any });
+            await kernel.onOpen();
             const publication = kernel.getProjectionCoordinator().nextPublication();
             expect(publication).toMatchObject({ draft: { views: [{ content: { value: expect.stringContaining('Value 1') } }] } });
             expect(kernel.getViewRefs()[0]?.value).toEqual({ value: 1 });
@@ -91,14 +95,15 @@ describe('SDK queued render commit completion', () => {
                 h(View, { id: 'aa', key: 'a', type: File, kind: 'state' }, h(A, {})),
                 h(View, { id: 'bb', key: 'b', type: File, kind: 'state' }, h(B, {})),
             ] });
-            const kernel = new AppKernel({ ...factory.kernelConfig, factory });
-            kernel.enableAppLifecycle();
+            const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+                appId: createAppId('failure_batch'), desktopId: createDesktopId('desktop'),
+                instanceId: 'run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
+            });
             const core = createSnapshotCore({ appId: 'failure_batch', instanceId: 'run' });
-            kernel.setAppExecutionInstanceId('run');
             const projection = kernel.getProjectionCoordinator();
             const publish = () => projection.publishTo(core.committer);
             try {
-                await kernel.onOpen({ appId: 'failure_batch' as any, desktopId: 'desktop' as any });
+                await kernel.onOpen();
             const container = document.getElementById('app-root-failure_batch')!;
                 const initial = publish();
                 if (initial.status !== 'published') throw new Error('Missing initial snapshot');
@@ -149,11 +154,13 @@ describe('SDK queued render commit completion', () => {
             h(View, { id: 'aa', type: File, kind: 'state', key: 'a' }, h(A, {})),
             h(View, { id: 'bb', type: File, kind: 'state', key: 'b' }, h(B, {})),
         ] });
-        const kernel = new AppKernel({ ...factory.kernelConfig, factory });
-        kernel.enableAppLifecycle();
+        const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+            appId: createAppId('ref_refresh'), desktopId: createDesktopId('desktop'),
+            instanceId: 'ref-refresh-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
+        });
         const refs = () => Object.fromEntries(kernel.getViewRefs().map(({ refId, value }) => [refId, value]));
         try {
-            await kernel.onOpen({ appId: 'ref_refresh' as any, desktopId: 'desktop' as any });
+            await kernel.onOpen();
             const container = document.getElementById('app-root-ref_refresh')!;
             selected.value = 3;
             items.push({ value: 4 });

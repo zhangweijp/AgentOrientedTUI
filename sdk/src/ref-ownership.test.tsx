@@ -1,3 +1,5 @@
+import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
+import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { describe, expect, it } from 'vitest';
 import { h, render } from 'preact';
 import { act } from 'preact/test-utils';
@@ -15,14 +17,14 @@ const RecordType=defineViewType({name:'Record'});
 const WorkspaceType=defineViewType({name:'Workspace'});
 function setup(component: () => any) {
   const factory = createTUIApp({ app_name: 'ref_ownership', viewTypes:[RecordType,WorkspaceType], component });
-  const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
-  kernel.setId('ref_ownership_app' as any);
-  kernel.enableAppLifecycle();
+  const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+      appId: createAppId('ref_ownership_app'), desktopId: createDesktopId('desktop'),
+      instanceId: 'ref-ownership-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
+  });
   return {
     kernel,
     get container() { return document.getElementById('app-root-ref_ownership_app')!; },
-    open: () => kernel.onOpen({ appId: 'ref_ownership_app' as any, desktopId: 'desktop' as any,
-       }),
+    open: () => kernel.onOpen(),
     async close() { await kernel.onClose(); },
   };
 }

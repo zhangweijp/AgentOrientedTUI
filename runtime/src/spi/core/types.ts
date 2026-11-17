@@ -28,6 +28,3 @@ export type DesktopID = string & { readonly [__brand]: 'DesktopID' };
 
 /** 应用唯一标识 (Branded Type) */
 export type AppID = string & { readonly [__brand]: 'AppID' };
-
-/** 视图唯一标识 (Branded Type) */
-export type ViewID = string & { readonly [__brand]: 'ViewID' };

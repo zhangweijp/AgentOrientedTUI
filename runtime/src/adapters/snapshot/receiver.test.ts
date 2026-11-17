@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SemanticSnapshotReceiver } from './receiver.js';
 
 function draft(seq: number, text = 'current') {
-    return { schemaVersion: 5, appId: 'app', instanceId: 'instance',
+    return { schemaVersion: 6, appId: 'app', instanceId: 'instance',
         producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
         views: [{ toolBindings: [], id: 'file', viewInstanceId: 'file-instance', type: 'File', name: 'File', kind: 'state',
             content: { format: 'markdown-v1', value: text } }], refs: {}, tools: {} };
@@ -98,13 +98,13 @@ describe('receiver-owned interaction lifetime', () => {
         if (first.status !== 'observed') throw Error(first.issue.code);
         expect(interaction.adoptObservation(first.observation.observationId)).toEqual({ status: 'adopted' });
         time = 60001;
-        expect(core.store.inspect().activeLeases).toBe(1);
+        expect(core.store.inspect().activeHolds).toBe(1);
         receiver.acceptPrepared(draft(2, 'new current'));
         const second = await interaction.observe({ all: true });
         if (second.status !== 'observed') throw Error(second.issue.code);
         time = 660002;
         const retained = core.store.acquire(id);
-        expect(retained.status).toBe('acquired'); retained.lease.release();
+        expect(retained.status).toBe('acquired'); retained.hold.release();
         interaction.releaseObservation(first.observation.observationId);
         interaction.releaseObservation(second.observation.observationId);
         expect(core.store.acquire(id).status).toBe('rejected');

@@ -1,13 +1,13 @@
-import { validateCapturedTypeParameters as validateTypeParameters } from '../../../tests/fixtures/type-parameters.js';
+import { validateCapturedTypeParameters as validateInvocationParameters } from '../../../tests/fixtures/type-parameters.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
 import { refKey, REF_VALUE_LIMITS, RESOLVED_TOOL_ARGUMENT_LIMITS as ARGS, RESOLVED_TOOL_ENVELOPE_LIMITS as ENVELOPE } from '../snapshot/snapshot-support.js';
 import { canonicalJson, utf8Size } from '../snapshot/json.js';
 import { createAppInteraction } from '../invocation/app-interaction.js';
 import { createViewOwnedTools } from './view-owned-tools.js';
-import { compileOrdinarySchema } from './ordinary-parameter-contract.js';
+import { compileToolParameters } from './tool-parameters.js';
 import { prepareViewTypeParameters } from './snapshot-value-arguments.js';
-import { captureTypeParametersRequest } from '../../adapters/ordinary-invocation-v2.js';
+import { captureToolInvocation } from '../../adapters/tool-invocation.js';
 
 const ref = (kind = 'Note', payload: any = { type: 'object' }) => ({ type: 'string', minLength: 1,
     'x-aotui-ref-kind': kind, 'x-aotui-ref-value': payload });
@@ -25,7 +25,7 @@ function fixture(fields: Record<string, any> = { a: ref(), b: ref() }, required 
     values: Record<string, any> = { a: notes[0], b: notes[1] }, kinds: Record<string, string> = {}) {
     const schema = { type: 'object', properties: { ...fields, ordinary: { type: 'string', enum: ['keep'], default: 'keep' } },
         required, additionalProperties: false };
-    const compiled = compileOrdinarySchema(schema);
+    const compiled = compileToolParameters(schema);
     if (!compiled.ok) throw Error(JSON.stringify(compiled.issue));
     const core = createSnapshotCore({ appId: 'app', instanceId: 'run' }), registry = createViewOwnedTools('app', 'run');
     cleanup.push(() => { registry.dispose(); core.lifecycle.dispose(); });
@@ -42,7 +42,7 @@ function fixture(fields: Record<string, any> = { a: ref(), b: ref() }, required 
     const visible = Object.keys(values).map(id => ({ refId: id, viewId: view.viewId, viewInstanceId: view.viewInstanceId }));
     function publish(next = values) {
         const n = ++seq;
-        const result = core.committer.accept({ schemaVersion: 5, appId: 'app', instanceId: 'run', producerSeq: n, sourceEpoch: n, capturedAt: n,
+        const result = core.committer.accept({ schemaVersion: 6, appId: 'app', instanceId: 'run', producerSeq: n, sourceEpoch: n, capturedAt: n,
             views: [{ toolBindings: view.toolBindings, id: view.viewId, type: view.viewType, viewInstanceId: view.viewInstanceId, name: 'Notes', kind: 'state', content: { format: 'markdown-v1', value: 'Current notes ' + n } }],
             refs: Object.fromEntries(Object.entries(next).map(([id, payload]) => [refKey(view.viewId, view.viewInstanceId, id), {
                 id, ownerViewId: view.viewId, ownerViewInstanceId: view.viewInstanceId,
@@ -62,7 +62,6 @@ function fixture(fields: Record<string, any> = { a: ref(), b: ref() }, required 
         if (bindings.has(source)) return bindings.get(source);
         const binding = { identity: source,
         isLive: () => ({ ok: registry.validateTypeToolBinding(source.tool, source.receiver).success }),
-        validateInput: (_source, input) => { const r = compiled.contract.validateResolvedInput!(input); return r.ok ? { ok: true, value: r.value } : { ok: false }; },
         execute: async context => { dispatches.push(context); const terminal = await registry.invokeTypeTool(source.tool, source.receiver, context.effectiveInput);
             return { kind: 'tool-result', phase: terminal.phase, result: terminal.result }; },
     }; bindings.set(source, binding); return binding; } } });
@@ -70,7 +69,7 @@ function fixture(fields: Record<string, any> = { a: ref(), b: ref() }, required 
         client.close(); await client.whenClosed(); registry.dispose(); core.lifecycle.dispose();
         expect(client.inspect()).toMatchObject({ closed: true, combinedBytes: 0 });
         expect(registry.inspect()).toMatchObject({ state: 'disposed', views: 0, bindings: 0, retainedBytes: 0 });
-        expect(core.store.inspect().activeLeases).toBe(0);
+        expect(core.store.inspect().activeHolds).toBe(0);
     });
     function prepare(args: any) {
         return prepareViewTypeParameters(core.store,{appId:'app',instanceId:'run',snapshotId:original.id,tool,receiver},
@@ -121,13 +120,13 @@ describe('serial observation adoption with object and array Refs', () => {
         expect(f.entries[1]).toMatchObject({ a: notes[1], b: [notes[1]] });
         expect(f.client.adoptObservation(first.observation.observationId)).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_UNAVAILABLE' } });
         expect(f.core.store.getById(f.original.id).status).toBe('rejected');
-        expect(f.core.store.inspect()).toMatchObject({ historicalSnapshots: 0, historicalBytes: 0 });
+        expect(f.core.store.inspect()).toMatchObject({ heldSnapshots: 0, heldSnapshotBytes: 0 });
     });
 
     it('preserves an independent holder and current data while releasing only the superseded source', async () => {
         const f = fixture();
         const first = await f.client.observe({ all: true }); if (first.status !== 'observed') throw Error('first');
-        const shared = f.core.store.acquire(f.original.id, { lifetime: 'owner' }); if (shared.status !== 'acquired') throw Error('shared holder');
+        const shared = f.core.store.acquire(f.original.id); if (shared.status !== 'acquired') throw Error('shared holder');
         try {
             f.client.adoptObservation(first.observation.observationId);
             const current = f.publish({ a: notes[1], b: notes[0] });
@@ -135,10 +134,10 @@ describe('serial observation adoption with object and array Refs', () => {
             expect(f.client.adoptObservation(next.observation.observationId)).toEqual({ status: 'adopted' });
             expect(f.core.store.getById(f.original.id).status).toBe('found');
             expect(f.core.store.getById(current.id).status).toBe('found');
-            shared.lease.release(); shared.lease.release();
+            shared.hold.release(); shared.hold.release();
             expect(f.core.store.getById(f.original.id).status).toBe('rejected');
             expect(f.core.store.getById(current.id).status).toBe('found');
-        } finally { shared.lease.release(); }
+        } finally { shared.hold.release(); }
     });
 
     it('failed preparation and released previews do not replace the adopted observation', async () => {
@@ -156,7 +155,7 @@ describe('serial observation adoption with object and array Refs', () => {
         expect(f.entries[0]).toMatchObject({ a: notes[0], b: notes[1] });
         f.client.close();
         expect(f.client.adoptObservation(first.observation.observationId)).toMatchObject({ status: 'rejected', issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });
-        expect(f.core.store.inspect()).toMatchObject({ historicalSnapshots: 0, historicalBytes: 0, activeLeases: 0 });
+        expect(f.core.store.inspect()).toMatchObject({ heldSnapshots: 0, heldSnapshotBytes: 0, activeHolds: 0 });
     });
 });
 
@@ -196,7 +195,7 @@ describe('multi/optional: actual registration, original source, and instance inv
     it('permits the same Ref in compatible fields without acquiring another source lease', () => {
         const f = fixture(); const p = f.prepared({ a: 'aa.a', b: 'aa.a' }); expect(p.effectiveArgs).toEqual({ a: notes[0], b: notes[0] });
         expect(p.effectiveArgs.a).not.toBe(p.effectiveArgs.b); expect(p.refSources.map(s => s.refId)).toEqual(['a', 'a']);
-        expect(f.core.store.inspect().activeLeases).toBe(0);
+        expect(f.core.store.inspect().activeHolds).toBe(0);
     });
     it.each([['missing', {}, 'TOOL_INVALID_ARGS'], ['ungranted', { b: 'missing' }, 'REF_NOT_VISIBLE'],
         ['wrong type', { b: 'aa.b' }, 'REF_TYPE_MISMATCH'], ['invalid ordinary', { b: 'aa.b', ordinary: 'changed' }, 'TOOL_INVALID_ARGS']])
@@ -208,12 +207,12 @@ describe('multi/optional: actual registration, original source, and instance inv
                 toolId: o.observation.tools[0]!.id, input: { view_id: 'aa', a: 'aa.a', ...input as any } });
             expect(result).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'rejected', code } } });
             expect(f.dispatches).toEqual([]); expect(f.entries).toEqual([]); f.client.releaseObservation(o.observation.observationId);
-            expect(f.core.store.inspect().activeLeases).toBe(0);
+            expect(f.core.store.inspect().activeHolds).toBe(0);
         });
     it.each([undefined, null, '', [], {}, 0, false])('rejects present invalid optional value %j rather than skipping it', b => {
         const f = fixture({ a: ref(), b: ref() }, ['a']);
         expect(f.prepare({ a: 'aa.a', b })).toMatchObject({ status: 'rejected', issue: { code: 'TOOL_INVALID_ARGS' } });
-        expect(f.core.store.inspect().activeLeases).toBe(0);
+        expect(f.core.store.inspect().activeHolds).toBe(0);
     });
 });
 
@@ -233,7 +232,7 @@ function budgetResult(f: ReturnType<typeof fixture>, args: any, over: boolean) {
     const p = f.prepare(args);
     if (over) expect(p).toMatchObject({ status: 'rejected', issue: { code: 'REF_ARGUMENT_BUDGET_EXCEEDED' } });
     else expect(p.status, JSON.stringify(p)).toBe('prepared');
-    expect(f.core.store.inspect().activeLeases).toBe(0);
+    expect(f.core.store.inspect().activeHolds).toBe(0);
 }
 describe('multi/optional: complete arguments and envelope retain cumulative limits', () => {
     const max = ARGS.maxCanonicalBytes;
@@ -254,7 +253,7 @@ describe('multi/optional: complete arguments and envelope retain cumulative limi
             expect(p.refSources.map(source => source.refId)).toEqual(['a', longName]);
             frozen(p.effectiveArgs);
         }
-        expect(f.core.store.inspect().activeLeases).toBe(0);
+        expect(f.core.store.inspect().activeHolds).toBe(0);
     });
 
     it.each([ARGS.maxNodes - 1, ARGS.maxNodes, ARGS.maxNodes + 1])('counts %i nodes across both Ref payloads', nodes => {
@@ -296,14 +295,14 @@ describe('multi/optional: complete arguments and envelope retain cumulative limi
 function message(f: ReturnType<typeof fixture>, raw: any) {
     const p = f.prepared(raw);
     const { nameSharedAcrossViewTypes: _sharedName, ...tool } = f.tool;
-    return JSON.parse(JSON.stringify({ type: 'VIEW_TOOL_INVOKE_V6', requestId: 'test', appId: 'app', instanceId: 'run',
-        argumentMode: 'view-type-parameters-v1', snapshotId: f.original.id, tool, receiver: f.receiver,
+    return JSON.parse(JSON.stringify({ type: 'VIEW_TOOL_INVOKE', requestId: 'test', appId: 'app', instanceId: 'run',
+        snapshotId: f.original.id, tool, receiver: f.receiver,
         rawArgs: p.rawArgs, effectiveArgs: p.effectiveArgs, refSources: p.refSources }));
 }
 describe('multi/optional: V6 checks actual present slots and transport consistency', () => {
     it.each([{}, { a: 'aa.a' }, { b: 'aa.b' }, { a: 'aa.a', b: 'aa.b', ordinary: 'keep' }])('accepts exact present Ref slots %j', raw => {
         const f = fixture({ a: ref(), b: list() }, [], { a: notes[0], b: notes });
-        const m = captureTypeParametersRequest(message(f, raw)); expect(validateTypeParameters(m)).toEqual({ success: true });
+        const m = captureToolInvocation(message(f, raw)); expect(validateInvocationParameters(m)).toEqual({ success: true });
         expect(m.refSources.map(s => s.param)).toEqual(Object.keys(raw).filter(k => k !== 'ordinary').sort());
     });
     it.each(['missing source', 'extra source', 'reversed sources', 'parameter', 'raw ref', 'ref type', 'snapshot', 'kind', 'empty view', 'wrong view', 'numeric ref', 'empty mount', 'ordinary', 'invalid payload'])
@@ -323,18 +322,18 @@ describe('multi/optional: V6 checks actual present slots and transport consisten
             if (kind === 'empty mount') m.refSources[1].viewInstanceId = '';
             if (kind === 'ordinary') delete m.effectiveArgs.ordinary;
             if (kind === 'invalid payload') m.effectiveArgs.b = [];
-            expect(validateTypeParameters(captureTypeParametersRequest(m))).toMatchObject({ success: false, error: { code: 'E_INVALID_ARGS' } });
+            expect(validateInvocationParameters(captureToolInvocation(m))).toMatchObject({ success: false, error: { code: 'E_INVALID_ARGS' } });
         });
     it.each(['value only', 'source and value'])('rejects absent optional injection: %s', kind => {
         const f = fixture({ a: ref(), b: ref() }, ['a']); const m = message(f, { a: 'aa.a' }); m.effectiveArgs.b = notes[1];
         if (kind === 'source and value') m.refSources.push({ ...m.refSources[0], param: 'b', refId: 'b' });
-        expect(validateTypeParameters(captureTypeParametersRequest(m))).toMatchObject({ success: false, error: { code: 'E_INVALID_ARGS' } });
+        expect(validateInvocationParameters(captureToolInvocation(m))).toMatchObject({ success: false, error: { code: 'E_INVALID_ARGS' } });
     });
     it.each(['same-shape payload', 'nonempty mount', 'coherent ref name'])('documents the existing trusted-transport boundary: %s', kind => {
         const f = fixture(); const m = message(f, { a: 'aa.a', b: 'aa.b' });
         if (kind === 'same-shape payload') m.effectiveArgs.b = { changed: true };
         if (kind === 'nonempty mount') m.refSources[1].viewInstanceId = 'unverified-mount';
         if (kind === 'coherent ref name') { m.rawArgs.b = 'aa.unverified-ref'; m.refSources[1].refId = 'unverified-ref'; }
-        expect(validateTypeParameters(captureTypeParametersRequest(m))).toEqual({ success: true });
+        expect(validateInvocationParameters(captureToolInvocation(m))).toEqual({ success: true });
     });
 });

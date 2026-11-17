@@ -1,4 +1,4 @@
-import type { ToolResultData } from '../../spi/core/tool-result.js';
+import type { ToolResultData } from './tool-result.js';
 
 export type ViewToolInvocationTerminal =
     | { phase: 'not-entered'; result: ToolResultData }

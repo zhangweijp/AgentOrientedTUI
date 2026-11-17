@@ -18,7 +18,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import type { DesktopID, AppID, ViewID } from './types.js';
+import type { DesktopID, AppID } from './types.js';
 
 // ============================================================================
 // ID Prefixes (Internal Convention)
@@ -32,7 +32,6 @@ import type { DesktopID, AppID, ViewID } from './types.js';
 export const ID_PREFIXES = {
     Desktop: 'dt_',
     App: 'app_',
-    View: 'view_',
 } as const;
 // ============================================================================
 // Factory Functions
@@ -59,17 +58,4 @@ export function createAppId(indexOrId: number | string): AppID {
         return `${ID_PREFIXES.App}${indexOrId}` as AppID;
     }
     return indexOrId as AppID;
-}
-
-/**
- * 创建 ViewID
- * 
- * @param indexOrId - View 索引号或现有 ID 字符串
- * @returns Branded ViewID
- */
-export function createViewId(indexOrId: number | string): ViewID {
-    if (typeof indexOrId === 'number') {
-        return `${ID_PREFIXES.View}${indexOrId}` as ViewID;
-    }
-    return indexOrId as ViewID;
 }

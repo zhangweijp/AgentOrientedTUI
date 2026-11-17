@@ -1,5 +1,5 @@
 import { viewToolReceiver } from '../../src/core/tool/source-binding.js';
-import type { AppProjectionFrame } from '../../src/spi/app/app-instance.interface.js';
+import type { AppProjectionFrame } from '../../src/core/projection/coordinator.js';
 import type { AppKernel } from '../../src/worker-runtime/app-kernel/AppKernel.js';
 
 type TestView = AppProjectionFrame['views'][number];

@@ -18,7 +18,7 @@ describe('Semantic view HTML projection', () => {
                 <a href="https://example.com">Documentation</a>
             </div>
         </body></html>`);
-        const { markup } = transformElement(document.body);
+        const markup = transformElement(document.body);
 
         expect(markup).not.toContain('<view');
         expect(markup).toContain('## Conversations');
@@ -36,7 +36,7 @@ describe('Semantic view HTML projection', () => {
                 <a view-target="Other" desc="Open another view">Other view</a>
             </div>
         </body></html>`);
-        const { markup } = transformElement(document.body);
+        const markup = transformElement(document.body);
 
         expect(markup).toContain('Edit file');
         expect(markup).toContain('Other view');

@@ -38,6 +38,15 @@ export function copyJson(input: unknown, limits: JsonCopyLimits): JsonValue {
 
 /** Several values in the same candidate can share the existing copy budget. */
 export function createJsonCopier(limits: JsonCopyLimits): (input: unknown) => JsonValue {
+    return createJsonWalker(limits, true);
+}
+
+/** Check a captured value against a narrower budget without building a second tree. */
+export function checkJsonLimits(input: unknown, limits: JsonCopyLimits): void {
+    createJsonWalker(limits, false)(input);
+}
+
+function createJsonWalker(limits: JsonCopyLimits, clone: boolean): (input: unknown) => JsonValue {
     const ancestors = new Set<object>();
     let nodes = 0;
     let approxBytes = 0;
@@ -48,7 +57,7 @@ export function createJsonCopier(limits: JsonCopyLimits): (input: unknown) => Js
             throw new JsonCopyLimitError(path, 'Approximate input byte budget exceeded');
         }
     }
-    function copy(value: unknown, path: string, depth: number): JsonValue {
+    function walk(value: unknown, path: string, depth: number): JsonValue {
         reserve(2, path); // minimum structural overhead; final canonical bytes are checked separately
         if (++nodes > limits.maxNodes) {
             throw new JsonCopyLimitError(path, 'Node budget exceeded');
@@ -91,17 +100,18 @@ export function createJsonCopier(limits: JsonCopyLimits): (input: unknown) => Js
                 if (keys.length !== length + 1) {
                     throw new SnapshotDataError('SNAPSHOT_SERIALIZATION_ERROR', path, 'Sparse array or extra properties');
                 }
-                const result: JsonValue[] = [];
+                const result: JsonValue[] | undefined = clone ? [] : undefined;
                 for (let i = 0; i < length; i++) {
                     const descriptor = descriptors[String(i)];
                     if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
                         throw new SnapshotDataError('SNAPSHOT_SERIALIZATION_ERROR', path + '[' + i + ']', 'Invalid array element');
                     }
-                    result.push(copy(descriptor.value, path + '[' + i + ']', depth + 1));
+                    const child = walk(descriptor.value, path + '[' + i + ']', depth + 1);
+                    result?.push(child);
                 }
-                return Object.freeze(result);
+                return result ? Object.freeze(result) : null;
             }
-            const result: Record<string, JsonValue> = Object.create(null) as Record<string, JsonValue>;
+            const result: Record<string, JsonValue> | undefined = clone ? Object.create(null) : undefined;
             for (const key of keys as string[]) {
                 const descriptor = descriptors[key]!;
                 const fieldPath = path + '[' + JSON.stringify(key) + ']';
@@ -112,19 +122,20 @@ export function createJsonCopier(limits: JsonCopyLimits): (input: unknown) => Js
                 if (!descriptor.enumerable || !('value' in descriptor)) {
                     throw new SnapshotDataError('SNAPSHOT_SERIALIZATION_ERROR', fieldPath, 'Accessors/hidden properties are forbidden');
                 }
-                Object.defineProperty(result, key, {
+                const child = walk(descriptor.value, fieldPath, depth + 1);
+                if (result) Object.defineProperty(result, key, {
                     enumerable: true,
                     configurable: false,
                     writable: false,
-                    value: copy(descriptor.value, fieldPath, depth + 1),
+                    value: child,
                 });
             }
-            return Object.freeze(result);
+            return result ? Object.freeze(result) : null;
         } finally {
             ancestors.delete(value);
         }
     }
-    return input => copy(input, '$', 0);
+    return input => walk(input, '$', 0);
 }
 
 /** Lossless canonical encoding of *strict* JSON data (object field order normalized). */
@@ -142,8 +153,7 @@ export function utf8Size(value: string): number {
 }
 
 /** For diagnostics only. Equality and authorization compare canonical data, not this hash. */
-export function diagnosticDigest(canonical: string): string {
-    const bytes = new TextEncoder().encode(canonical);
+export function diagnosticDigest(bytes: Uint8Array): string {
     let value = 0xcbf29ce484222325n;
     for (const byte of bytes) {
         value = BigInt.asUintN(64, (value ^ BigInt(byte)) * 0x100000001b3n);

@@ -1,3 +1,5 @@
+import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
+import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 /**
  * M3 real SDK + Preact + AppKernel contract probes (NOT hand-authored HTML).
  * Assertions compare mounted View identities, Ref/Tool projections and the Core epoch.
@@ -30,15 +32,14 @@ function toolsOf(kernel:AppKernel) {
 }
 function setup(component: () => any, viewTypes: readonly ViewType[] = [EmptyWorkspace]) {
     const factory = createTUIApp({ app_name: 'm3_app', component, viewTypes });
-    const kernel = new AppKernel({ ...factory.kernelConfig, factory } as any);
-    kernel.setId('m3_app_0' as any);
-    kernel.enableAppLifecycle();
+    const kernel = new AppKernel({ ...factory.kernelConfig, factory,
+        appId: createAppId('m3_app_0'), desktopId: createDesktopId('desktop_0'),
+        instanceId: 'projection-test-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
+    });
     return {
         kernel, get container() { return document.getElementById('app-root-m3_app_0')!; },
         async open() {
-            await kernel.onOpen({
-                appId: 'm3_app_0' as any, desktopId: 'desktop_0' as any,
-            });
+            await kernel.onOpen();
         },
         async close() {
             await kernel.onClose();
@@ -157,7 +158,7 @@ describe('M3 SDK semantic projection commit', () => {
             const html = x.container.innerHTML;
             const beforeEpoch = x.kernel.getProjectionCoordinator().token().epoch;
             let domChanges = 0;
-            const observer = new MutationObserver(records => { domChanges += records.length; });
+            const observer = new window.MutationObserver(records => { domChanges += records.length; });
             observer.observe(x.container, { childList: true, subtree: true, characterData: true, attributes: true });
             update({ id: 'B' });
             await sleep(45);
@@ -274,7 +275,7 @@ describe('M3 ArrayRef marker and registry parity', () => {
             let domMutations = 0;
             const beforeHtml = x.container.innerHTML;
             const beforeEpoch = x.kernel.getProjectionCoordinator().token().epoch;
-            const observer = new MutationObserver(records => { domMutations += records.length; });
+            const observer = new window.MutationObserver(records => { domMutations += records.length; });
             observer.observe(x.container, { childList: true, subtree: true, attributes: true, characterData: true });
             setItems({ items: [{ id: 'B' }, { id: 'A' }], itemType: 'Task' });
             await sleep(40);

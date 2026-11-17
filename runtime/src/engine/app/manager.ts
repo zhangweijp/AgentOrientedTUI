@@ -27,12 +27,14 @@ import { WorkerCapacity } from './worker-capacity.js';
 import { RUNTIME_DEFAULTS } from '../../spi/config/index.js';
 import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
 import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
-import { captureToolsEnabled } from './interaction-config.js';
+import { captureProjectionLimits, captureToolsEnabled } from './interaction-config.js';
+import type { ProjectionLimits } from '../../core/invocation/observation-types.js';
 
 /**
  * 已安装的 App 信息
  */
 interface InstalledApp extends AppInteractionOptions {
+    readonly projectionLimits: ProjectionLimits;
     appId: AppID;
     name?: string;
     /** [RFC-013] App 描述 - 告诉 Agent 什么时候使用此 App */
@@ -156,8 +158,10 @@ export class AppManager {
     }
     install(appModulePath: string, options?: InstallOptions): Promise<AppID> {
         let id: AppID;
+        let projectionLimits: ProjectionLimits;
         try {
             const toolsEnabled = captureToolsEnabled(options);
+            projectionLimits = captureProjectionLimits(options);
             options = { ...options, toolsEnabled };
             this.capacity();id = options?.appId ?? this.allocateId();
             if (this.installedApps.has(id) || this.workers.has(id) || this.appTasks.has(id)) throw closeError('APP_ALREADY_EXISTS');
@@ -166,7 +170,7 @@ export class AppManager {
             const meta: InstalledApp = { appId: id, name: options?.name, description: options?.description, whatItIs: options?.whatItIs,
                 whenToUse: options?.whenToUse, status: 'pending', modulePath: appModulePath,
                 config: options?.config, runtimeConfig: options?.runtimeConfig,
-                toolsEnabled: options?.toolsEnabled };
+                toolsEnabled: options?.toolsEnabled, projectionLimits };
             this.installedApps.set(id, meta);
             try { await this.installMeta(meta); }
             catch (error) {
@@ -186,7 +190,7 @@ export class AppManager {
             const worker = new WorkerSandbox({ appId: meta.appId, desktopId: this.desktop.id, name: meta.name, appModulePath: meta.modulePath!,
                 config,
                 runtimeConfig: meta.runtimeConfig ?? this.options.runtimeConfig, workerCapacity: this.workerCapacity,
-                toolsEnabled: meta.toolsEnabled, persistenceBackend: this.options.storageBackend });
+                toolsEnabled: meta.toolsEnabled, projectionLimits: meta.projectionLimits, persistenceBackend: this.options.storageBackend });
             record = this.owned(meta.appId, worker);record.meta = meta;this.workers.set(meta.appId, worker);
             worker.onUpdateRequest = () => { if (this.phase === 'active' && this.workers.get(meta.appId) === worker) this.desktop.emitSignal('manual_refresh'); };
             await worker.installDynamic();
@@ -211,12 +215,13 @@ export class AppManager {
     }
     registerPendingApp(options: PendingOptions): AppID {
         const toolsEnabled = captureToolsEnabled(options);
+        const projectionLimits = captureProjectionLimits(options);
         this.assertActive();const id = options.appId ?? this.allocateId();
         if (this.installedApps.has(id) || this.workers.has(id) || this.appTasks.has(id)) throw closeError('APP_ALREADY_EXISTS');
         this.installedApps.set(id, { appId: id, name: options.name, description: options.description, whatItIs: options.whatItIs, whenToUse: options.whenToUse,
             status: 'pending', modulePath: options.modulePath,
             config: options.config, runtimeConfig: options.runtimeConfig,
-            toolsEnabled });
+            toolsEnabled, projectionLimits });
         this.desktop.logSystem(`Registered pending app: ${id} (${options.name ?? 'unnamed'})`);return id;
     }
     startPendingApp(id: AppID): Promise<boolean> {

@@ -18,31 +18,8 @@
             {
                 "argsIgnorePattern": "^_"
             }
-        ],
-        "no-restricted-imports": [
-            "error",
-            {
-                "paths": [
-                    {
-                        "name": "preact/hooks",
-                        "message": "Please import hooks from './preact-hooks.js' (or relative path) to ensure single Preact instance."
-                    }
-                ]
-            }
         ]
     },
-    "overrides": [
-        {
-            "files": [
-                "src/hooks/preact-hooks.ts",
-                "src/hooks/index.ts",
-                "src/index.ts"
-            ],
-            "rules": {
-                "no-restricted-imports": "off"
-            }
-        }
-    ],
     "env": {
         "node": true,
         "es2022": true,

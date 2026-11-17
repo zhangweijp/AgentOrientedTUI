@@ -25,7 +25,7 @@
   },
   "peerDependencies": {
     "typebox": "1.4.3",
-    "preact": "^10.29.1"
+    "preact": "10.29.1"
   },
   "peerDependenciesMeta": {
     "preact": {
@@ -45,7 +45,7 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.4",
     "jsdom": "^27.0.1",
-    "preact": "^10.29.1",
+    "preact": "10.29.1",
     "preact-render-to-string": "^6.6.4",
     "prettier": "^3.7.4",
     "typescript": "npm:@typescript/typescript6@6.0.2",
@@ -59,7 +59,7 @@
     "minimatch@3.1.2": "3.1.4",
     "minimatch@9.0.5": "9.0.7",
     "picomatch@4.0.3": "4.0.4",
-    "preact": "^10.29.1",
+    "preact": "10.29.1",
     "rollup": "^4.60.1",
     "brace-expansion@1": "^1.1.20",
     "brace-expansion@2": "^2.1.2"
@@ -72,15 +72,14 @@
       "minimatch@3.1.2": "3.1.4",
       "minimatch@9.0.5": "9.0.7",
       "picomatch@4.0.3": "4.0.4",
-      "preact": "^10.29.1",
+      "preact": "10.29.1",
       "rollup": "^4.60.1",
       "brace-expansion@1": "^1.1.20",
       "brace-expansion@2": "^2.1.2"
     }
   },
   "files": [
-    "dist",
-    "docs"
+    "dist"
   ],
   "keywords": [
     "aotui",

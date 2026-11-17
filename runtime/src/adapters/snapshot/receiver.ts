@@ -3,6 +3,7 @@ import { createSnapshotCore } from '../../core/snapshot/store.js';
 import { createAppInteraction } from '../../core/invocation/app-interaction.js';
 import { hostedObservationNamespace, previewCommittedApp } from '../../core/invocation/observation-registry.js';
 import type { ExecutionResolver, InstanceInteraction, AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
+import type { ProjectionLimits } from '../../core/invocation/observation-types.js';
 import type { CommitResult, PreparedSnapshotFailure, SnapshotHealth, SnapshotIssueCode } from '../../core/snapshot/types.js';
 
 export interface SemanticSnapshotReport {
@@ -51,10 +52,11 @@ export class SemanticSnapshotReceiver {
         this.core = createSnapshotCore({ appId, instanceId, now });
     }
 
-    interaction(policy: AppInteractionPolicy, execution: ExecutionResolver): InstanceInteraction {
+    interaction(policy: AppInteractionPolicy, execution: ExecutionResolver, projectionLimits?: ProjectionLimits): InstanceInteraction {
         if (this.interactionsClosed || this.stopped) throw new Error('App interaction is unavailable');
         return this.interactions ??= createAppInteraction(this.core.store, {
             appId: this.appId, instanceId: this.instanceId, namespace: hostedObservationNamespace(this.instanceId), now: this.now, policy, execution,
+            observationLimits: projectionLimits,
         });
     }
 

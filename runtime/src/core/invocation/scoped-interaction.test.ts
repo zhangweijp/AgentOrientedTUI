@@ -2,13 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSnapshotCore } from '../snapshot/store.js';
 import { refKey } from '../snapshot/snapshot-support.js';
 import { canonicalJson, copyJson, utf8Size } from '../snapshot/json.js';
-import type { AppSnapshotV5, JsonValue, PreparedAppSnapshotDraftV5, SnapshotStoreOptions, ToolDescriptorV5 } from '../snapshot/types.js';
+import type { AppSnapshot, JsonValue, PreparedAppSnapshotDraft, SnapshotStoreOptions, ToolDescriptor } from '../snapshot/types.js';
 import { createViewOwnedTools } from '../tool/view-owned-tools.js';
 import { createAppInteraction, DEFAULT_INTERACTION_LIMITS as HARD } from './app-interaction.js';
 import type { CancellationSignal, ExecutionBinding, ExecutionFact, InteractionLimitOverrides, InvocationContext, ReceiptMetadata, ReceiptQuery, InstanceInteraction, AppInvocation } from './app-interaction-types.js';
 import type { Observation, ObservationGrant, ObservationRegistryLimitOverrides } from './observation-types.js';
-import { ordinaryParameterProfile } from '../tool/ordinary-parameter-profile.js';
-import { compileOrdinarySchema } from '../tool/ordinary-parameter-contract.js';
+import { compileToolParameters } from '../tool/tool-parameters.js';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -241,8 +240,8 @@ function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverride
     const tools = createViewOwnedTools('app', 'run');
     let pages = ['v0','v1'].map(id => ({id,type:'File',owner:{}}));
     let owners: ReturnType<ReturnType<typeof createViewOwnedTools>['prepareFrame']>['instances'];
-    const ordinary = compileOrdinarySchema({ type: 'object', properties: {} });
-    const snapshotValue = compileOrdinarySchema({ type: 'object', properties: {
+    const ordinary = compileToolParameters({ type: 'object', properties: {} });
+    const snapshotValue = compileToolParameters({ type: 'object', properties: {
         file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } },
         line: { type: 'string' },
     }, required: ['file'], additionalProperties: true });
@@ -265,18 +264,18 @@ function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverride
             target: { kind: 'snapshot-value' as const, payload: value },
         }])));
     }
-    function publish(patch: Partial<PreparedAppSnapshotDraftV5> = {}): AppSnapshotV5 {
+    function publish(patch: Partial<PreparedAppSnapshotDraft> = {}): AppSnapshot {
         const available = prepare();
-        const seq = ++sequence, result = core.committer.accept({ schemaVersion: 5, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
+        const seq = ++sequence, result = core.committer.accept({ schemaVersion: 6, ...context, producerSeq: seq, sourceEpoch: seq, capturedAt: time,
             views: owners.map(v => ({ toolBindings: v.toolBindings, id: v.viewId, viewInstanceId: v.viewInstanceId, type: 'File', name: v.viewId, kind: 'state',
                 content: { format: 'markdown-v1', value: 'content-secret-' + v.viewId } })), refs: refs(),
             tools: Object.fromEntries(available.map(t => [t.id, t])), ...patch });
         expect(['published', 'unchanged']).toContain(result.status);
-        if (result.status === 'rejected' || result.snapshot.schemaVersion !== 5) throw new Error('Expected a published Snapshot V5 fixture'); return result.snapshot;
+        if (result.status === 'rejected' || result.snapshot.schemaVersion !== 6) throw new Error('Expected a published Snapshot fixture'); return result.snapshot;
     }
     const source = publish();
-    const calls = { project: 0, validate: 0, authorize: 0, handler: 0, read: 0, live: 0, resolve: 0, resolveRef: 0 };
-    const seen: { validateInput?: Readonly<Record<string, JsonValue>>; authorize?: InvocationContext; execute?: InvocationContext; metadata?: ReceiptMetadata; validateSignal?: CancellationSignal; readSignal?: CancellationSignal } = {};
+    const calls = { project: 0, authorize: 0, handler: 0, read: 0, live: 0, resolve: 0, resolveRef: 0 };
+    const seen: { authorize?: InvocationContext; execute?: InvocationContext; metadata?: ReceiptMetadata; readSignal?: CancellationSignal } = {};
     function grant(snapshot = source, visible = ['v0', 'v1'], refIds = ['visible']): ObservationGrant {
         return { refs: Object.values(snapshot.refs).filter(r => visible.includes(r.ownerViewId) && refIds.includes(r.id))
             .map(r => ({ viewId:r.ownerViewId, viewInstanceId:r.ownerViewInstanceId, refId:r.id })),
@@ -284,14 +283,12 @@ function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverride
     }
     const controls = {
         project: (ctx: Parameters<import('./app-interaction-types.js').AppInteractionPolicy['project']>[0]): unknown => grant(ctx.source),
-        validate: (_source: unknown, input: Readonly<Record<string, JsonValue>>, _signal?: CancellationSignal): unknown => ({ ok: true, value: input }),
         authorize: (_ctx: InvocationContext): unknown => true,
         execute: (_ctx: InvocationContext): unknown => success(),
         read: (_metadata: ReceiptMetadata, _signal?: CancellationSignal): unknown => true,
         live: (): unknown => ({ ok: true }),
     };
     let current: ExecutionBinding | null = { identity: {},
-        validateInput: (source, input, signal) => { calls.validate++; seen.validateInput = input; seen.validateSignal = signal; return controls.validate(source, input, signal) as never; },
         isLive: () => { calls.live++; return controls.live() as never; },
         execute: ctx => { calls.handler++; seen.execute = ctx; return controls.execute(ctx) as never; } };
     const store = { ...core.store, resolveRef(selector: Parameters<typeof core.store.resolveRef>[0]) { calls.resolveRef++; return core.store.resolveRef(selector); } };
@@ -314,7 +311,7 @@ function fixture(options: { withRef?: boolean; limits?: InteractionLimitOverride
     function zero() {
         authority.close(); expect(authority.inspect()).toMatchObject({ receiptEntries: 0, receiptContents: 0,
             activeInvocations: 0, activeReads: 0, invocationBytes: 0, combinedBytes: 0 });
-        expect(core.store.inspect().activeLeases).toBe(0);
+        expect(core.store.inspect().activeHolds).toBe(0);
     }
     return { authority, core, tools, owners, source, refs, publish, calls, seen, controls, store, input, open, observe, request, grant, now,
         setTime: (value: number) => { time = value; }, setClockError: (value: boolean) => { clockThrows = value; }, get clockMessageReads() { return clockMessageReads; },
@@ -385,10 +382,9 @@ describe('B2-T01/T02: real instance publication and trusted assembly', () => {
 });
 
 describe('B2-T11: cancellation and actual settlement', () => {
-    it.each(['validate', 'authorize', 'execute', 'read'] as const)('retains closing instance resources until ignored cancellation of %s settles', async stage => {
+    it.each(['authorize', 'execute', 'read'] as const)('retains closing instance resources until ignored cancellation of %s settles', async stage => {
         const f = fixture();
         const client = f.open(), observation = await f.observe(client), gate = deferred<unknown>(), started = deferred<void>();
-        if (stage === 'validate') f.controls.validate = (_, input) => { started.resolve(); return gate.promise.then(() => ({ ok: true, value: input })); };
         if (stage === 'authorize') f.controls.authorize = () => { started.resolve(); return gate.promise; };
         if (stage === 'execute') f.controls.execute = () => { started.resolve(); return gate.promise; };
         if (stage === 'read') f.controls.read = () => { started.resolve(); return gate.promise; };
@@ -396,7 +392,6 @@ describe('B2-T11: cancellation and actual settlement', () => {
         await started.promise; client.close();
         expect(f.authority.inspect()).toMatchObject({ observations: { observations: 0 } });
         expect((await client.observe({ all: true })).status).toBe('rejected'); expect(f.authority.inspect().workBytes).toBeGreaterThan(0);
-        if (stage === 'validate') expect(f.seen.validateSignal!.aborted).toBe(true);
         if (stage === 'authorize') expect(f.seen.authorize!.signal.aborted).toBe(true);
         if (stage === 'execute') expect(f.seen.execute!.signal.aborted).toBe(true);
         if (stage === 'read') expect(f.seen.readSignal!.aborted).toBe(true);
@@ -404,23 +399,23 @@ describe('B2-T11: cancellation and actual settlement', () => {
         expect(code(await pending)).toBe('APP_INTERACTION_UNAVAILABLE'); expect(f.authority.inspect().combinedBytes).toBe(0); f.zero();
     });
     it('releases an observation while retaining the source of actual dispatched work', async () => {
-        const f = fixture({ store: { historyTtlMs: 10, leaseTtlMs: 10 } }), client = f.open(), observation = await f.observe(client),
+        const f = fixture(), client = f.open(), observation = await f.observe(client),
             gate = deferred<unknown>(), started = deferred<void>();
         f.controls.execute = () => { started.resolve(); return gate.promise; };
         const request = f.request(observation), pending = client.invoke(request); await started.promise;
         const charged = f.authority.inspect().sourceBytes;
         client.releaseObservation(observation.observationId);
         f.publish({ refs: f.refs({ version: 'S2' }) }); f.setTime(10);
-        expect(f.core.store.inspect().activeLeases).toBe(1);
+        expect(f.core.store.inspect().activeHolds).toBe(1);
         expect(f.authority.inspect().sourceBytes).toBe(charged);
         expect(f.seen.execute!.signal.aborted).toBe(false);
         gate.resolve(success()); expect(receipt(await pending).outcome.status).toBe('succeeded');
         expect(receipt(await client.readReceipt(receiptQuery(request))).outcome.status).toBe('succeeded');
-        expect(f.core.store.inspect().activeLeases).toBe(0); expect(f.authority.inspect().sourceBytes).toBe(0); f.zero();
+        expect(f.core.store.inspect().activeHolds).toBe(0); expect(f.authority.inspect().sourceBytes).toBe(0); f.zero();
     });
-    it.each(['validate', 'execute'] as const)('settles %s work during a bad completion clock without inventing a receipt time or replaying it', async stage => {
+    it.each(['authorize', 'execute'] as const)('settles %s work during a bad completion clock without inventing a receipt time or replaying it', async stage => {
         const f = fixture(); f.setTime(10); const client = f.open(), observation = await f.observe(client), gate = deferred<unknown>(), started = deferred<void>();
-        if (stage === 'validate') f.controls.validate = (_, input) => { started.resolve(); return gate.promise.then(() => ({ ok: true, value: input })); };
+        if (stage === 'authorize') f.controls.authorize = () => { started.resolve(); return gate.promise; };
         else f.controls.execute = () => { started.resolve(); return gate.promise; };
         const pending = client.invoke(f.request(observation)); await started.promise; f.setTime(9); gate.resolve(stage === 'execute' ? success() : true);
         expect(code(await pending)).toBe('RESULT_UNAVAILABLE'); expect(f.authority.inspect()).toMatchObject({ activeInvocations: 0, activeReads: 0, workBytes: 0, resultBytes: 0, sourceBytes: 0, receiptEntries: 1 });
@@ -434,25 +429,18 @@ describe('B2-T03/T04/T05: deduplication and ordinary/Ref parameter paths', () =>
     it('synchronously reserves before callback reentry, reuses execution and checks each read independently', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client), request = f.request(observation);
         let reentered: ReturnType<InstanceInteraction['invoke']> | undefined;
-        f.controls.validate = (_, input) => { reentered = client.invoke(request); return { ok: true, value: input }; };
+        f.controls.authorize = () => { reentered = client.invoke(request); return true; };
         const first = client.invoke(request), concurrent = client.invoke(structuredClone(request));
         expect(receipt(await first).outcome.status).toBe('succeeded'); receipt(await concurrent); receipt(await reentered!); receipt(await client.invoke(request));
-        expect(f.calls.handler).toBe(1); expect(f.calls.validate).toBe(1); expect(f.calls.authorize).toBe(1); expect(f.calls.read).toBe(4);
+        expect(f.calls.handler).toBe(1); expect(f.calls.authorize).toBe(1); expect(f.calls.read).toBe(4);
         expect(await client.invoke({ ...request, input: { changed: true } })).toMatchObject({ kind: 'refused', code: 'INVOCATION_ID_CONFLICT' }); f.zero();
-    });
-    it('rejects a Host validator that rewrites ordinary input', async () => {
-        const f = fixture(), client = f.open(), observed = await f.observe(client);
-        f.controls.validate = () => ({ ok: true, value: { line: 7, defaulted: true } });
-        const result = receipt(await client.invoke(f.request(observed, 'ordinary', { line: '7', surplus: true })));
-        expect(result.outcome).toMatchObject({ status: 'rejected', code: 'REF_ARGUMENT_CHANGED' });
-        expect(f.calls.authorize).toBe(0); expect(f.calls.handler).toBe(0); f.zero();
     });
     it('uses the committed ordinary Schema and rejects a binding with a retired mode', async () => {
         const f = fixture({ schema: { type: 'object', properties: { line: { type: 'string' } }, required: ['line'] } });
         const client = f.open(), observed = await f.observe(client);
         const invalid = receipt(await client.invoke(f.request(observed, 'invalid', { line: 7 })));
         expect(invalid.outcome).toMatchObject({ status: 'rejected', code: 'TOOL_INVALID_ARGS', path: '$.line' });
-        expect(f.calls.validate).toBe(0);
+        expect(f.calls.authorize).toBe(0);
         const legacy = { ...f.binding!, mode: 'ordinary-v2' }; f.binding = legacy;
         const retired = receipt(await client.invoke(f.request(observed, 'legacy-binding', { line: '7' })));
         expect(retired.outcome).toMatchObject({ status: 'rejected', code: 'EXECUTION_BINDING_FAILED' });
@@ -463,19 +451,14 @@ describe('B2-T03/T04/T05: deduplication and ordinary/Ref parameter paths', () =>
         const raw = { file: 'v0.visible', line: '7', surplus: true, nodes: Array(6000).fill(null) };
         const result = receipt(await client.invoke(f.request(observed, 'ref', raw)));
         expect(result.outcome.status).toBe('succeeded'); expect(f.seen.execute!.effectiveInput).toMatchObject({ file: { version: 'S1' }, line: '7', surplus: true });
-        expect(f.seen.execute!.effectiveInput).toBe(f.seen.validateInput); expect(f.seen.execute!.rawInput.file).toBe('v0.visible');
+        expect(f.seen.execute).toBe(f.seen.authorize); expect(f.seen.execute!.rawInput.file).toBe('v0.visible');
+        expect([f.seen.execute!.rawInput, f.seen.execute!.effectiveInput, f.seen.execute!.effectiveInput.file].every(Object.isFrozen)).toBe(true);
         expect(f.seen.execute!.refSources[0]).toMatchObject({ snapshotId: f.source.id, viewId: 'v0', refId: 'visible' }); f.zero();
     });
-    it('rejects Ref validators that transform values and never calls authorize/execute', async () => {
-        const f = fixture({ withRef: true }), client = f.open(), observation = await f.observe(client);
-        f.controls.validate = (_, input) => ({ ok: true, value: { ...input, line: 7 } });
-        expect(receipt(await client.invoke(f.request(observation))).outcome).toMatchObject({ status: 'rejected', code: 'REF_ARGUMENT_CHANGED' });
-        expect(f.calls.authorize).toBe(0); expect(f.calls.handler).toBe(0); f.zero();
-    });
-    it('rejects invisible same-owner Ref before any Store.resolveRef/validation/authorization', async () => {
+    it('rejects an invisible same-owner Ref before Store.resolveRef or authorization', async () => {
         const f = fixture({ withRef: true }), client = f.open(), observation = await f.observe(client);
         expect(receipt(await client.invoke(f.request(observation, 'hidden', { file: 'v0.hidden' }))).outcome).toMatchObject({ code: 'REF_NOT_VISIBLE' });
-        expect(f.calls.resolveRef).toBe(0); expect(f.calls.validate).toBe(0); expect(f.calls.authorize).toBe(0); expect(f.calls.handler).toBe(0); f.zero();
+        expect(f.calls.resolveRef).toBe(0); expect(f.calls.authorize).toBe(0); expect(f.calls.handler).toBe(0); f.zero();
     });
     it('keeps Ref type and mixed root selector restrictions', async () => {
         const f = fixture({ withRef: true, refType: 'Other' }), client = f.open(), observation = await f.observe(client);
@@ -487,7 +470,7 @@ describe('B2-T03/T04/T05: deduplication and ordinary/Ref parameter paths', () =>
 
 describe('B2-T06: post-await original source and callable revalidation', () => {
     it('invokes the same observed Binding after a long model turn while reading the exact original Ref', async () => {
-        const f = fixture({ withRef: true, store: { historyTtlMs: 10, leaseTtlMs: 10 } }), client = f.open();
+        const f = fixture({ withRef: true }), client = f.open();
         const observed = await client.observe({ all: true });
         expect(observed.status).toBe('observed'); if (observed.status !== 'observed') return;
         expect(observed.observation.expiresAt).toBeNull();
@@ -503,16 +486,16 @@ describe('B2-T06: post-await original source and callable revalidation', () => {
         expect(f.calls.handler).toBe(1); f.zero();
     });
     it('keeps an original source through long authorization without expiring ownership or bypassing current permission', async () => {
-        const f = fixture({ withRef: true, store: { historyTtlMs: 10, leaseTtlMs: 10 } });
+        const f = fixture({ withRef: true });
         const client = f.open(), observation = await f.observe(client), gate = deferred<boolean>(), started = deferred<void>();
         f.controls.authorize = () => { started.resolve(); return gate.promise; };
         const pending = client.invoke(f.request(observation)); await started.promise;
         f.publish({ refs: f.refs({ version: 'S2' }) }); f.setTime(1_000_000);
-        expect(f.core.store.inspect().activeLeases).toBe(2);
+        expect(f.core.store.inspect().activeHolds).toBe(2);
         expect(f.seen.authorize!.signal.aborted).toBe(false);
         gate.resolve(false);
         expect(receipt(await pending).outcome).toMatchObject({ status: 'rejected', code: 'TOOL_PERMISSION_DENIED' });
-        expect(f.calls.handler).toBe(0); expect(f.core.store.inspect().activeLeases).toBe(1); f.zero();
+        expect(f.calls.handler).toBe(0); expect(f.core.store.inspect().activeHolds).toBe(1); f.zero();
     });
     it('publishes an empty semantic projection through all after the App removes its Views', async () => {
         const f = fixture(), client = f.open();
@@ -521,24 +504,37 @@ describe('B2-T06: post-await original source and callable revalidation', () => {
             observation: { views: [], refs: [], tools: [] } });
         expect(f.calls.project).toBe(1); expect(f.calls.handler).toBe(0); f.zero();
     });
-    it.each(['validate', 'authorize'] as const)('uses the original Ref snapshot after %s is suspended', async stage => {
-        const f = fixture({ withRef: true }), client = f.open(), observation = await f.observe(client), gate = deferred<unknown>(), started = deferred<void>();
-        if (stage === 'validate') f.controls.validate = (_, input) => { started.resolve(); return gate.promise.then(() => ({ ok: true, value: input })); };
-        else f.controls.authorize = () => { started.resolve(); return gate.promise; };
-        const pending = client.invoke(f.request(observation)); await started.promise; f.publish({ refs: f.refs({ version: 'S2' }) }); gate.resolve(true);
-        expect(receipt(await pending).outcome.status).toBe('succeeded'); expect(f.seen.execute!.effectiveInput.file).toEqual({ version: 'S1' }); f.zero();
+    it.each(['update', 'close'] as const)('rechecks the source page of a cross-page Ref after %s during authorization', async change => {
+        const f = fixture({ withRef: true }), client = f.open(), observation = await f.observe(client), gate = deferred<boolean>(), started = deferred<void>();
+        f.controls.authorize = () => { started.resolve(); return gate.promise; };
+        const pending = client.invoke(f.request(observation, 'cross-page', { view_id: 'v1', file: 'v0.visible' }));
+        await started.promise;
+        expect(f.core.store.inspect().activeHolds).toBe(2);
+        if (change === 'update') f.publish({ refs: f.refs({ version: 'S2' }) });
+        else f.publish({ views: f.source.views.filter(view => view.id !== 'v0'),
+            refs: Object.fromEntries(Object.entries(f.source.refs).filter(([, ref]) => ref.ownerViewId !== 'v0')) });
+        gate.resolve(true);
+        const result = receipt(await pending);
+        if (change === 'update') {
+            expect(result.outcome.status).toBe('succeeded');
+            expect(f.seen.execute!.effectiveInput.file).toEqual({ version: 'S1' });
+        } else {
+            expect(result.outcome).toMatchObject({ status: 'rejected', code: 'REF_VIEW_UNAVAILABLE', path: '$.file' });
+            expect(f.calls.handler).toBe(0);
+        }
+        expect(f.core.store.inspect().activeHolds).toBe(1); f.zero();
     });
-    it.each(['release', 'disable', 'remount', 'schema', 'identity', 'function', 'live', 'null', 'getter'] as const)('blocks %s after validation without entering business', async change => {
+    it.each(['release', 'disable', 'remount', 'schema', 'identity', 'function', 'live', 'null', 'getter'] as const)('blocks %s after authorization without entering business', async change => {
         const f = fixture(), client = f.open(), observation = await f.observe(client), gate = deferred<unknown>(), started = deferred<void>();
-        f.controls.validate = (_, input) => { started.resolve(); return gate.promise.then(() => ({ ok: true, value: input })); };
+        f.controls.authorize = () => { started.resolve(); return gate.promise; };
         const pending = client.invoke(f.request(observation)); await started.promise;
         if (change === 'release') client.releaseObservation(observation.observationId);
         else if (change === 'disable') { f.rebindTool(); f.publish(); }
         else if (change === 'remount') { f.remountAll(); f.publish();
         } else if (change === 'schema') {
             const tool = Object.values(f.source.tools)[0]!;
-            const changed = compileOrdinarySchema({ type: 'object', properties: { x: { type: 'string' } } }); if (!changed.ok) throw new Error('Changed Tool schema must compile');
-            f.publish({ tools: { [tool.id]: { ...tool, inputSchema: ordinaryParameterProfile(changed.contract) } } });
+            const changed = compileToolParameters({ type: 'object', properties: { x: { type: 'string' } } }); if (!changed.ok) throw new Error('Changed Tool schema must compile');
+            f.publish({ tools: { [tool.id]: { ...tool, inputSchema: changed.contract.schema } } });
         } else if (change === 'identity') f.binding = { ...f.binding!, identity: {} };
         else if (change === 'function') f.binding = { ...f.binding!, execute: () => success('must-not-run') };
         else if (change === 'live') f.controls.live = () => ({ ok: false });
@@ -573,12 +569,9 @@ describe('B2-T07/T08/T09: phases, current reading and deletable results', () => 
         expect(result.executionPhase).toBe('entered-returned'); expect(result.outcome.status).toBe('failed');
         expect(result.outcome).toHaveProperty('details.result.error.code', code); f.zero();
     });
-    it.each(['validator-throw', 'validator-getter', 'validator-false', 'live-getter', 'authorize-throw', 'authorize-false', 'execute-throw', 'execute-getter', 'execute-oversize'] as const)('classifies %s by the actual boundary and keeps exception text private', async mode => {
+    it.each(['live-getter', 'authorize-throw', 'authorize-false', 'execute-throw', 'execute-getter', 'execute-oversize'] as const)('classifies %s by the actual boundary and keeps exception text private', async mode => {
         const f = fixture(), client = f.open(), observation = await f.observe(client); let reads = 0;
         const exception = { get message() { reads++; return 'secret-marker'; }, toString() { reads++; return 'secret-marker'; } };
-        if (mode === 'validator-throw') f.controls.validate = () => { throw exception; };
-        if (mode === 'validator-getter') f.controls.validate = () => ({ get ok() { reads++; throw exception; } });
-        if (mode === 'validator-false') f.controls.validate = () => ({ ok: false });
         if (mode === 'live-getter') f.controls.live = () => ({ get ok() { reads++; throw exception; } });
         if (mode === 'authorize-throw') f.controls.authorize = () => { throw exception; };
         if (mode === 'authorize-false') f.controls.authorize = () => 'true';
@@ -598,7 +591,7 @@ describe('B2-T07/T08/T09: phases, current reading and deletable results', () => 
         expect(f.calls.read).toBe(4); expect(f.calls.handler).toBe(1); f.zero();
     });
     it('reads settled results after releasing Observation and expiring the original history', async () => {
-        const f = fixture({ withRef: true, store: { historyTtlMs: 10 } }), client = f.open();
+        const f = fixture({ withRef: true }), client = f.open();
         const observation = await f.observe(client), request = f.request(observation);
         const original = receipt(await client.invoke(request)); client.releaseObservation(observation.observationId);
         f.publish({ refs: f.refs({ version: 'S2' }) }); f.setTime(10);
@@ -697,7 +690,7 @@ describe('B2-T01/T11 additional revocation and completion faults', () => {
     it('keeps settled reading separate from temporary degraded source availability', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client);
         receipt(await client.invoke(f.request(observation)));
-        expect(f.core.committer.accept({ schemaVersion: 5, ...context, producerSeq: 20, sourceEpoch: 20, capturedAt: 0,
+        expect(f.core.committer.accept({ schemaVersion: 6, ...context, producerSeq: 20, sourceEpoch: 20, capturedAt: 0,
             views: f.source.views, refs: { malformed: null }, tools: f.source.tools }).status).toBe('rejected');
         expect(f.core.store.readLatest('app').status).toBe('degraded');
         receipt(await client.invoke(f.request(observation))); expect((await client.observe({ all: true })).status).toBe('rejected'); f.zero();
@@ -714,7 +707,7 @@ describe('B2-T01/T11 additional revocation and completion faults', () => {
     it('refuses an invalid admission clock before claiming any ID or running callbacks', async () => {
         const f = fixture(); f.setTime(10); const client = f.open(), observation = await f.observe(client); f.setTime(9);
         expect(await client.invoke(f.request(observation))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_INTERNAL_ERROR' });
-        expect(f.authority.inspect()).toMatchObject({ receiptEntries: 0, invocationBytes: 0 }); expect(f.calls.validate).toBe(0);
+        expect(f.authority.inspect()).toMatchObject({ receiptEntries: 0, invocationBytes: 0 }); expect(f.calls.authorize).toBe(0);
         f.setTime(10); f.zero();
     });
 });
@@ -789,13 +782,13 @@ describe('B2-T12: individual counters and transactional byte responsibility', ()
         expect(f.authority.inspect().sourceBytes).toBe(0); expect(f.calls.handler).toBe(1); f.zero();
     });
     it('honors independent Store lease limits without widening them', async () => {
-        const f = fixture({ store: { maxActiveLeases: 2 } }), client = f.open(), observation = await f.observe(client);
-        const held = f.core.store.acquire(f.source.id, { lifetime: 'owner' });
+        const f = fixture({ store: { maxActiveHolds: 2 } }), client = f.open(), observation = await f.observe(client);
+        const held = f.core.store.acquire(f.source.id);
         if (held.status !== 'acquired') throw Error(held.issue.code);
         try {
             expect(receipt(await client.invoke(f.request(observation))).outcome).toMatchObject({ status: 'rejected', code: 'SNAPSHOT_CAPACITY' });
             expect(f.calls.handler).toBe(0);
-        } finally { held.lease.release(); f.zero(); }
+        } finally { held.hold.release(); f.zero(); }
     });
     it('rejects canonical control-character amplification at the new entry without calling business', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client);
@@ -839,13 +832,14 @@ describe('B2-T12: independent depth/node/approximate/canonical profiles', () => 
             else expect(receipt(result).outcome.status).toBe('succeeded'); expect(f.calls.handler).toBe(delta < 0 ? 0 : 1); f.zero();
         }
     });
-    it.each(fields)('bounds ordinary input %s before validator entry', async field => {
+    it.each(fields)('bounds ordinary input %s before authorization', async field => {
         const n = measure({ view_id: 'v0', ...sample }, field);
         for (const delta of [-1, 0, 1]) {
-            const f = fixture({ limits: { ordinaryInput: { [field]: n + delta } } }), client = f.open(), observed = await f.observe(client);
+            const f = fixture({ limits: { rawInput: { [field]: n + delta } } }), client = f.open(), observed = await f.observe(client);
             const result = receipt(await client.invoke(f.request(observed, 'profile', sample)));
             expect(result.outcome.status).toBe(delta < 0 ? 'rejected' : 'succeeded');
-            if (delta < 0) expect(result.outcome).toMatchObject({ code: 'ACTION_INPUT_INVALID' }); expect(f.calls.handler).toBe(delta < 0 ? 0 : 1); f.zero();
+            if (delta < 0) expect(result.outcome).toMatchObject({ code: 'ACTION_INPUT_INVALID' });
+            expect(f.calls.authorize).toBe(delta < 0 ? 0 : 1); expect(f.calls.handler).toBe(delta < 0 ? 0 : 1); f.zero();
         }
     });
     it.each(fields)('bounds filled metadata %s and never expands beyond its admission reservation', async field => {
@@ -895,7 +889,7 @@ describe('B2-Q01: stopped and successor instance authority', () => {
         const f = fixture(), { readAppIdentity: _, ...legacy } = f.store;
         expect(() => createAppInteraction(legacy as never, { ...f.input, namespace: 'missing', now: f.now })).toThrow('Invalid observation registry store'); f.zero();
     });
-    it.each(['project', 'validate', 'authorize', 'execute', 'read'] as const)('cancels %s on stop and retains its responsibility until actual settlement', async stage => {
+    it.each(['project', 'authorize', 'execute', 'read'] as const)('cancels %s on stop and retains its responsibility until actual settlement', async stage => {
         const f = fixture();
         const client = f.open(), gate = deferred<unknown>(), started = deferred<void>(); let signal: CancellationSignal | undefined;
         if (stage === 'project') {
@@ -906,7 +900,6 @@ describe('B2-Q01: stopped and successor instance authority', () => {
             expect(signal!.aborted).toBe(true); gate.resolve(f.grant()); expect((await pending).status).toBe('rejected'); f.zero(); return;
         }
         const observation = await f.observe(client);
-        if (stage === 'validate') f.controls.validate = (_, input, s) => { signal = s; started.resolve(); return gate.promise.then(() => ({ ok: true, value: input })); };
         if (stage === 'authorize') f.controls.authorize = ctx => { signal = ctx.signal; started.resolve(); return gate.promise; };
         if (stage === 'execute') f.controls.execute = ctx => { signal = ctx.signal; started.resolve(); return gate.promise; };
         if (stage === 'read') f.controls.read = (_, s) => { signal = s; started.resolve(); return gate.promise; };
@@ -917,7 +910,7 @@ describe('B2-Q01: stopped and successor instance authority', () => {
         expect((await client.observe({ all: true })).status).toBe('rejected');
         gate.resolve(stage === 'execute' ? success() : true);
         expect(code(await pending)).toBe('APP_INTERACTION_UNAVAILABLE');
-        expect(f.calls.handler).toBe(stage === 'validate' || stage === 'authorize' ? 0 : 1); f.zero();
+        expect(f.calls.handler).toBe(stage === 'authorize' ? 0 : 1); f.zero();
     });
     it('revalidates stop after an already suspended reading policy returns true', async () => {
         const f = fixture(), client = f.open(), observation = await f.observe(client), gate = deferred<boolean>(), started = deferred<void>();
@@ -943,7 +936,7 @@ describe('B2-Q01: stopped and successor instance authority', () => {
         const plan = next.prepareFrame([{id:'v0',type:'File',owner:{},bindings:[{name:'run',enabled:true,execute:()=>({success:true})}]}]);
         const mounted = plan.instances[0]!, tool = plan.tools[0]!;
         expect(successor.committer.accept({
-            schemaVersion: 5, appId: 'app', instanceId: 'run-2', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+            schemaVersion: 6, appId: 'app', instanceId: 'run-2', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
             views: [{ toolBindings: mounted.toolBindings, id: 'v0', viewInstanceId: mounted.viewInstanceId,
                 type: 'File', name: 'new', kind: 'state', content: { format: 'markdown-v1', value: 'new' } }],
             refs: {}, tools: { [tool.id]: tool },

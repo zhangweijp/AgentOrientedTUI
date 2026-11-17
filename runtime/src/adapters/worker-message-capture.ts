@@ -1,8 +1,6 @@
-import { isToolResultData } from '../spi/core/tool-result.js';
-import { SNAPSHOT_CAPABILITY, PARAMETERS_V6_CAPABILITY } from '../spi/worker-protocol/types.js';
+import { isToolResultData } from '../core/tool/tool-result.js';
 import { canonicalJson, copyJson, utf8Size, type JsonCopyLimits } from '../core/snapshot/json.js';
 import type { JsonValue } from '../core/snapshot/types.js';
-import { VIEW_TYPE_PARAMETERS_MODE } from '../core/tool/ordinary-parameter-contract.js';
 import type { ViewToolInvocationTerminal } from '../spi/worker-protocol/messages.js';
 
 /** Shared hard ceiling for bounded Worker IPC JSON envelopes. */
@@ -39,26 +37,6 @@ export function captureInvocationJson(
     return value;
 }
 
-type ViewToolCapabilityCapture =
-    | Readonly<{ ok: true; capabilities: readonly string[] }>
-    | Readonly<{ ok: false; code: 'WORKER_CAPABILITY_UNSUPPORTED' | 'WORKER_CAPABILITY_INVALID' }>;
-
-/** Capture the bounded capability list and validate it against the current Worker protocol. */
-export function captureViewToolCapabilities(input: unknown): ViewToolCapabilityCapture {
-    try {
-        const capabilities = captureInvocationJson(input === undefined ? [] : input,
-            { maxDepth: 1, maxNodes: 7, maxApproxBytes: 512, maxCanonicalBytes: 512 });
-        if (!Array.isArray(capabilities) || capabilities.length > 2 ||
-            !capabilities.every(item => text(item) && item.length <= 128) || new Set(capabilities).size !== capabilities.length) {
-            return Object.freeze({ ok: false, code: 'WORKER_CAPABILITY_INVALID' });
-        }
-        if (!capabilities.every(item => item === PARAMETERS_V6_CAPABILITY || item === SNAPSHOT_CAPABILITY)) {
-            return Object.freeze({ ok: false, code: 'WORKER_CAPABILITY_UNSUPPORTED' });
-        }
-        return Object.freeze({ ok: true, capabilities });
-    } catch { return Object.freeze({ ok: false, code: 'WORKER_CAPABILITY_INVALID' }); }
-}
-
 export function invocationReceiver(value: JsonValue | undefined): boolean {
     return invocationObject(value) && exact(value, ['viewId', 'viewInstanceId', 'activationId']) &&
         text(value.viewId) && !value.viewId.includes('.') && text(value.viewInstanceId) && text(value.activationId);
@@ -71,17 +49,17 @@ export function invocationToolDescriptor(value: JsonValue | undefined): boolean 
 }
 
 /** Capture and correlate a bounded invocation terminal without trusting Worker payloads. */
-export function captureTypeParametersTerminal(
+export function captureToolInvocationTerminal(
     input: unknown,
     expected: Readonly<{ requestId: string; appId: string; instanceId: string }>
 ): ViewToolInvocationTerminal | Readonly<{ phase: 'finished-unknown' }> | null {
     try {
         const value = captureInvocationJson(input);
         if (!invocationObject(value) || !exact(value, [
-            'type', 'requestId', 'appId', 'instanceId', 'argumentMode', 'success', 'terminal',
-        ]) || value.type !== 'VIEW_TOOL_INVOKE_V6_RESPONSE' || value.requestId !== expected.requestId ||
+            'type', 'requestId', 'appId', 'instanceId', 'success', 'terminal',
+        ]) || value.type !== 'VIEW_TOOL_INVOKE_RESPONSE' || value.requestId !== expected.requestId ||
             value.appId !== expected.appId || value.instanceId !== expected.instanceId ||
-            value.argumentMode !== VIEW_TYPE_PARAMETERS_MODE || value.success !== true || !invocationObject(value.terminal)) {
+            value.success !== true || !invocationObject(value.terminal)) {
             return null;
         }
         const { phase, result } = value.terminal;

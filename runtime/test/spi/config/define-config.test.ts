@@ -45,7 +45,7 @@ describe('Configuration Architecture', () => {
             expect(config).not.toHaveProperty('lock');
             expect(config).not.toHaveProperty('snapshot');
 
-            expect(config.worker.maxWorkers).toBe(10);
+            expect(config.worker.maxWorkers).toBe(Number.POSITIVE_INFINITY);
         });
 
         it('should return a frozen immutable object', () => {
@@ -63,8 +63,8 @@ describe('Configuration Architecture', () => {
 
             expect(overridden.worker).not.toBe(input.worker);
             expect(overridden.logger).not.toBe(input.logger);
-            expect(first.worker.maxWorkers).toBe(10);
-            expect(later.worker.maxWorkers).toBe(10);
+            expect(first.worker.maxWorkers).toBe(Number.POSITIVE_INFINITY);
+            expect(later.worker.maxWorkers).toBe(Number.POSITIVE_INFINITY);
             expect(overridden.worker.maxWorkers).toBe(12);
             expect(Object.isFrozen(RUNTIME_DEFAULTS.worker)).toBe(true);
             expect(Object.isFrozen(RUNTIME_DEFAULTS.logger)).toBe(true);
@@ -167,7 +167,7 @@ describe('Configuration Architecture', () => {
 
         it('uses defaults for explicitly undefined partial fields', () => {
             expect(defineRuntimeConfig({ worker: undefined, logger: { maxSystemLogs: undefined } })).toMatchObject({
-                worker: { timeoutMs: 30_000, maxWorkers: 10 },
+                worker: { timeoutMs: 30_000, maxWorkers: Number.POSITIVE_INFINITY },
                 logger: { maxSystemLogs: 100 },
             });
         });

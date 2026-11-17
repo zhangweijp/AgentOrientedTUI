@@ -1,16 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import { validatePreparedV5Draft } from '../snapshot/v5-validator.js';
-import { compileOrdinarySchema } from './ordinary-parameter-contract.js';
-import { ordinaryParameterProfile } from './ordinary-parameter-profile.js';
+import { validatePreparedSnapshot } from '../snapshot/validate-snapshot.js';
+import { compileToolParameters } from './tool-parameters.js';
 import { createViewOwnedTools } from './view-owned-tools.js';
 const field = (refType = 'File') => ({ type: 'string', minLength: 1, 'x-aotui-ref-kind': refType, 'x-aotui-ref-value': { type: 'object' } });
 const input = (refType = 'File') => ({ type: 'object', properties: { file: field(refType) }, required: ['file'], additionalProperties: true });
 function schema(refType = 'File'): any {
-    const c = compileOrdinarySchema(input(refType)); if (!c.ok) throw Error('fixture'); return ordinaryParameterProfile(c.contract);
+    const c = compileToolParameters(input(refType)); if (!c.ok) throw Error('fixture'); return c.contract.schema;
 }
 function draft(inputSchema = schema(), activationId = 'active-1', sequence = 1): any {
     const id = JSON.stringify(['app', 'FileDetail', 'inspect']);
-    return { schemaVersion: 5, appId: 'app', instanceId: 'run', producerSeq: sequence, sourceEpoch: sequence, capturedAt: sequence,
+    return { schemaVersion: 6, appId: 'app', instanceId: 'run', producerSeq: sequence, sourceEpoch: sequence, capturedAt: sequence,
         views: [{ toolBindings: [{ toolId: id, activationId }], id: 'fd_A', viewInstanceId: 'mount', type: 'FileDetail', name: 'A', kind: 'state', content: { format: 'markdown-v1', value: 'A' } }], refs: {},
         tools: { [id]: { id, name: 'inspect', viewType: 'FileDetail', nameSharedAcrossViewTypes: false, description: 'Inspect', inputSchema } } };
 }
@@ -29,7 +28,7 @@ function publish(registry: ReturnType<typeof setup>) {
 describe('shared versioned Ref declaration boundary', () => {
     it.each(['File', 'Todo', ' File '])('preserves explicit refType %s', refType => {
         const s = schema(refType); expect(s.properties.file['x-aotui-ref-kind']).toBe(refType);
-        expect(validatePreparedV5Draft(draft(s)).ok).toBe(true);
+        expect(validatePreparedSnapshot(draft(s)).ok).toBe(true);
     });
     it.each(['empty-kind', 'non-string-kind', 'wrong-type', 'missing-value', 'unknown-field'])('rejects malformed declaration %s', kind => {
         const s: any = input(); const f = s.properties.file;
@@ -38,15 +37,15 @@ describe('shared versioned Ref declaration boundary', () => {
         if (kind === 'wrong-type') f.type = 'object';
         if (kind === 'missing-value') delete f['x-aotui-ref-value'];
         if (kind === 'unknown-field') f.extra = true;
-        expect(compileOrdinarySchema(s).ok).toBe(false);
+        expect(compileToolParameters(s).ok).toBe(false);
     });
     it('rejects declaration accessors without executing them', () => {
         const s = input(); const getter = vi.fn(() => 'File'); Object.defineProperty(s.properties.file, 'x-aotui-ref-kind', { enumerable: true, get: getter });
-        expect(compileOrdinarySchema(s).ok).toBe(false); expect(getter).not.toHaveBeenCalled();
+        expect(compileToolParameters(s).ok).toBe(false); expect(getter).not.toHaveBeenCalled();
     });
     it('normalizes equivalent property order and registers one shared Tool for two Views', () => {
-        const a = compileOrdinarySchema({ ...input(), properties: { file: field(), question: { type: 'string' } } });
-        const b = compileOrdinarySchema({ ...input(), properties: { question: { type: 'string' }, file: field() } });
+        const a = compileToolParameters({ ...input(), properties: { file: field(), question: { type: 'string' } } });
+        const b = compileToolParameters({ ...input(), properties: { question: { type: 'string' }, file: field() } });
         if (!a.ok || !b.ok) throw Error('fixture'); expect(a.contract.schema).toEqual(b.contract.schema);
         const r = setup(); register(r, a.contract.schema);
         const frame = publish(r);
@@ -56,9 +55,9 @@ describe('shared versioned Ref declaration boundary', () => {
         r.dispose();
     });
     it('admits Ref name arrays through the same Snapshot and registration contract', () => {
-        const c = compileOrdinarySchema({ type: 'object', properties: { file: { type: 'array', items: field() } }, required: ['file'], additionalProperties: false });
+        const c = compileToolParameters({ type: 'object', properties: { file: { type: 'array', items: field() } }, required: ['file'], additionalProperties: false });
         if (!c.ok) throw Error('fixture');
-        expect(validatePreparedV5Draft(draft(ordinaryParameterProfile(c.contract))).ok).toBe(true);
+        expect(validatePreparedSnapshot(draft(c.contract.schema)).ok).toBe(true);
         const r = setup(); register(r, c.contract.schema);
         expect(publish(r).tools).toHaveLength(1); r.dispose();
     });
@@ -70,19 +69,19 @@ describe('shared versioned Ref declaration boundary', () => {
         if (kind === '$defs') s.$defs = { file: field() };
         if (kind === 'allOf') s.allOf = [];
         if (kind === 'legacy-marker') s['x-aotui-parameter-contract'] = 'snapshot-value-params-v1';
-        expect(validatePreparedV5Draft(draft(s)).ok).toBe(false);
+        expect(validatePreparedSnapshot(draft(s)).ok).toBe(false);
     });
     it('preserves marker-shaped business default data', () => {
         const payload = { 'x-aotui-ref': { version: 99 } };
-        const s = compileOrdinarySchema({ type: 'object', properties: { ordinary: { type: 'object', default: payload } } });
+        const s = compileToolParameters({ type: 'object', properties: { ordinary: { type: 'object', default: payload } } });
         expect(s.ok).toBe(true); if (!s.ok) throw Error('fixture');
-        expect(validatePreparedV5Draft(draft(ordinaryParameterProfile(s.contract))).ok).toBe(true);
+        expect(validatePreparedSnapshot(draft(s.contract.schema)).ok).toBe(true);
     });
     it('admits Ref parameters but rejects old Snapshot versions and metadata', () => {
-        expect(validatePreparedV5Draft(draft(schema())).ok).toBe(true);
-        expect(validatePreparedV5Draft({ ...draft(), schemaVersion: 1 }).ok).toBe(false);
+        expect(validatePreparedSnapshot(draft(schema())).ok).toBe(true);
+        expect(validatePreparedSnapshot({ ...draft(), schemaVersion: 1 }).ok).toBe(false);
         const bad = JSON.parse(JSON.stringify(schema())); bad.properties.file['x-aotui-ref'] = { version: 1 };
-        expect(validatePreparedV5Draft(draft(bad)).ok).toBe(false);
+        expect(validatePreparedSnapshot(draft(bad)).ok).toBe(false);
     });
     it('refuses duplicate owners atomically regardless of equivalent or changed schema', () => {
         const r = setup(); register(r); const before = publish(r);
@@ -95,7 +94,7 @@ describe('shared versioned Ref declaration boundary', () => {
         expect(() => register(r, s)).toThrow(); expect(getter).not.toHaveBeenCalled(); expect(r.inspect()).toMatchObject({ bindings: 0, views: 0 }); r.dispose();
     });
     it('rejects oversize Ref metadata without truncation', () => {
-        const bad = input('x'.repeat(70 * 1024)); expect(compileOrdinarySchema(bad).ok).toBe(false);
-        expect(validatePreparedV5Draft(draft({ ...bad, 'x-aotui-parameter-contract': 'view-type-parameters-v1' })).ok).toBe(false);
+        const bad = input('x'.repeat(70 * 1024)); expect(compileToolParameters(bad).ok).toBe(false);
+        expect(validatePreparedSnapshot(draft({ ...bad, 'x-aotui-parameter-contract': 'view-type-parameters-v1' })).ok).toBe(false);
     });
 });

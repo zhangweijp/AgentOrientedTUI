@@ -39,7 +39,7 @@ describe('installation errors across a real Worker and AppManager', () => {
 import { createTUIApp, defineViewType } from '@aotui/sdk';
 export default {
     persistenceSupport: 'state-session-v1', appLifecycleSupport: 'app-lifecycle-v2',
-    toolAuthoringProtocol: 'view-type-tools-v5',
+    toolAuthoringProtocol: 'view-type-tools-v6',
     kernelConfig: { appName: 'diagnostics' },
     initialize(context) {
         function InitialRender() { ${renderBody} }

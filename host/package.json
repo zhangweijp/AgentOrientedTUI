@@ -28,6 +28,7 @@
   "build": {
     "appId": "com.aotui.system-chat",
     "productName": "Agentina",
+    "npmRebuild": false,
     "files": [
       "dist/**/*",
       "dist-gui/**/*"
@@ -36,7 +37,9 @@
       "output": "release"
     },
     "asarUnpack": [
-      "**/worker-runtime/**/*"
+      "**/worker-runtime/**/*",
+      "**/adapters/storage/sqlite-state-worker.js",
+      "**/better-sqlite3/prebuilds/**/*"
     ],
     "mac": {
       "icon": "build/icons/mac/icon.icns"
@@ -67,6 +70,7 @@
     "@types/sql.js": "^1.4.9",
     "adm-zip": "^0.6.1",
     "ai": "6.0.326",
+    "better-sqlite3": "13.2.0",
     "electron-trpc": "0.4.5",
     "express": "^4.22.3",
     "framer-motion": "^12.29.0",

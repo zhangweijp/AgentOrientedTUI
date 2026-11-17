@@ -10,25 +10,24 @@
 export type {
     AppID,
     DesktopID,
-    ViewID,
 } from './core/types.js';
 export {
     createAppId,
     createDesktopId,
-    createViewId,
 } from './core/id-factory.js';
-export type { ToolError, ToolResult } from './core/tool-result.js';
+export type { ToolError, ToolResult } from '../core/tool/tool-result.js';
 export { AOTUIError } from './core/errors.js';
 export type { ErrorCode } from './core/errors.js';
 export type { UpdateSignal } from './core/signals.js';
 export type { LLMUsageEvent } from './core/llm-usage.js';
+export type { ProjectionLimits, ProjectionLimitOverrides } from '../core/invocation/observation-types.js';
 
 // App factory, configuration, lifecycle, and semantic View integration.
 export type { AppKernelConfig, AppReinitializeContext, SignalPolicy } from './app/app-kernel.interface.js';
 export type { AppContext } from './app/store.interface.js';
 export type { AppLaunchConfig } from './app/app-config.interface.js';
 export type { TUIAppFactory } from './app/app-factory.interface.js';
-export { isTUIAppFactory, hasViewTypeToolAuthoringProtocol } from './app/app-factory.interface.js';
+export { isTUIAppFactory, hasViewTypeToolAuthoringProtocol, VIEW_TYPE_TOOL_PROTOCOL } from './app/app-factory.interface.js';
 export { createRefCapture, type RefCapture, type RefValueCheck } from '../core/snapshot/ref-capture.js';
 export { DEFAULT_SNAPSHOT_LIMITS } from '../core/snapshot/snapshot-support.js';
 
@@ -36,12 +35,6 @@ export { DEFAULT_SNAPSHOT_LIMITS } from '../core/snapshot/snapshot-support.js';
 export type {
     AppStatePersistence,
     AppInstance,
-    AppFrameRef,
-    AppFrameView,
-    AppProjectionFrame,
-    PreparedProjection,
-    ProjectionCommitResult,
-    ProjectionOptions,
     RuntimeContext,
     StateBinding,
     StateBindingStatus,
@@ -49,6 +42,7 @@ export type {
     StateIssue,
     StateValue,
 } from './app/app-instance.interface.js';
+export type { AppFrameRef, AppFrameView, AppProjectionFrame, PreparedProjection, ProjectionCommitResult, ProjectionOptions } from '../core/projection/coordinator.js';
 
 // Product Host contracts and lifecycle/reporting semantics.
 export type {
@@ -78,12 +72,11 @@ export type {
 export type { IRuntimeContext } from './runtime/context.interface.js';
 
 // SDK-facing Runtime ports. These are typed capabilities, not Worker IPC.
-export type { AppTypeToolDefinition, AppFrameBinding } from './runtime/app-type-tools.interface.js';
+export type { AppTypeToolDefinition, AppFrameBinding } from '../core/tool/view-owned-tools.js';
 export type { AppCleanupReport, AppLifecycleCallbacks, AppLifecyclePort } from './runtime/app-lifecycle.interface.js';
 
 export { captureAppMetadata } from './app/app-metadata.js';
 export type { AppMetadata } from './app/app-metadata.js';
-export { VIEW_TYPE_TOOL_PROTOCOL } from './runtime/app-type-tools.interface.js';
 export { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION } from './runtime/app-lifecycle.interface.js';
 export { STATE_SESSION_PROTOCOL, STATE_SESSION_VERSION } from './runtime/state-persistence.interface.js';
-export { SNAPSHOT_CAPABILITY, PARAMETERS_V6_CAPABILITY } from './worker-protocol/types.js';
+export { WORKER_PROTOCOL } from './worker-protocol/types.js';
