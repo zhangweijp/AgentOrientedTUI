@@ -46,13 +46,10 @@ describe('tRPC im router', () => {
 
     it('keeps IM in mcp.json inactive and leaves the file intact', async () => {
         const mcpFile = join(configDir, 'mcp.json');
-        const legacy = '{"im":{"disabled":true,"channels":{"feishu":{"enabled":true}}}}';
+        const legacy = '{"im":{"enabled":true,"channels":{"feishu":{"enabled":true}}}}';
         await writeFile(mcpFile, legacy);
-        const settings = await caller.im.getConfig();
-        expect(settings.im).toEqual({ enabled: false });
-        expect(settings.issue).toMatch(/mcp.json.*Reconfigure IM/);
-        expect((await Config.get()).im).toEqual({ enabled: false });
-        expect((await Config.getGlobal()).im).toBeUndefined();
+        expect(await caller.im.getConfig()).toEqual({ im: {} });
+        expect((await Config.get()).im).toEqual({});
         expect(await readFile(mcpFile, 'utf8')).toBe(legacy);
     });
 

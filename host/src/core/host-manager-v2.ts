@@ -1,19 +1,7 @@
 /**
- * @aotui/host - HostManager V2 (Refactored)
- * 
- * 简化为委托模式，核心逻辑移到 SessionManagerV3
- * 
- * 职责:
- * - 委托给 SessionManagerV3
- * - 转发 GUI 事件
- * - 提供向后兼容的 API
- * - 管理当前 Topic 状态
- * 
- * 设计变更:
- * - ❌ 移除 AgentDriver 创建逻辑
- * - ❌ 移除 HostDrivenSource 创建逻辑
- * - ✅ 委托给 SessionManagerV3
- * - ✅ 保留向后兼容 API
+ * @aotui/host - HostManager V2
+ *
+ * 管理当前 Topic 和 GUI 事件，会话操作委托给 SessionManagerV3。
  */
 
 import type { ModelMessage } from 'ai';
