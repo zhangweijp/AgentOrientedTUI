@@ -53,3 +53,9 @@ ui.md
 /review-evidence/
 /MINIMAL_CORE/
 /SRT/
+
+# Versioned SDK / Runtime design SSOT
+!/docs/
+/docs/*
+!/docs/sdk-runtime-design/
+!/docs/sdk-runtime-design/**
