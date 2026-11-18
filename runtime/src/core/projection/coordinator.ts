@@ -153,7 +153,7 @@ export class SemanticProjectionCoordinator {
             if (Object.hasOwn(definitions, tool.id)) throw new Error('Duplicate Tool definition');
             definitions[tool.id] = tool;
         }
-        const checked = validatePreparedSnapshot({
+        let checked: ReturnType<typeof validatePreparedSnapshot> | undefined = validatePreparedSnapshot({
             schemaVersion: SNAPSHOT_SCHEMA_VERSION, ...this.source.identity(),
             sourceEpoch: this.epoch + 1, producerSeq: this.producerSeq + 1, capturedAt: Date.now(),
             views, refs: values, tools: definitions,
@@ -162,6 +162,8 @@ export class SemanticProjectionCoordinator {
         if (!checked.ok) return this.fail(checked.issue);
 
         const { draft, canonicalContent } = checked.value;
+        // Drop the temporary UTF-8 bytes before the capacity check measures the observation.
+        checked = undefined;
         const previous = this.prepared;
         if (options && 'restore' in options) {
             if (!previous || this.issue || previous.appId !== draft.appId || previous.instanceId !== draft.instanceId ||

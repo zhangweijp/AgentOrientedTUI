@@ -1,5 +1,5 @@
 import { MARKDOWN_VIEW_FORMAT, SNAPSHOT_SCHEMA_VERSION } from './types.js';
-import { canonicalJson, checkJsonLimits, copyJson, diagnosticDigest, SnapshotDataError, utf8Size } from './json.js';
+import { canonicalJson, checkJsonLimits, copyJson, SnapshotDataError, utf8Size } from './json.js';
 import { DEFAULT_SNAPSHOT_LIMITS, MAX_VIEW_TOOL_BINDINGS, REF_VALUE_LIMITS, VIEW_METADATA_BYTES, refKey } from './snapshot-support.js';
 import { compileCapturedToolParameters } from '../tool/tool-parameters.js';
 import type { SnapshotDraftEnvelope } from './types.js';
@@ -12,7 +12,7 @@ type SnapshotValidation =
     | Readonly<{ ok: true; value: Readonly<{
         draft: PreparedAppSnapshotDraft;
         canonicalContent: string;
-        contentDigest: string;
+        contentBytes: Uint8Array;
         bytes: number;
     }> }>
     | Readonly<{ ok: false; issue: SnapshotIssue; envelope?: SnapshotDraftEnvelope }>;
@@ -229,7 +229,7 @@ export function validatePreparedSnapshot(
             value: Object.freeze({
                 draft: copied as unknown as PreparedAppSnapshotDraft,
                 canonicalContent,
-                contentDigest: diagnosticDigest(contentBytes),
+                contentBytes,
                 bytes,
             }),
         });

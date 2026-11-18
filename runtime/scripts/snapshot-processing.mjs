@@ -9,8 +9,8 @@ import { Worker } from 'node:worker_threads';
 
 const [runtime, sdk, mode = 'all', count = '40'] = process.argv.slice(2);
 const samples = Number(count), warmup = 12;
-assert.ok(runtime && sdk && ['all', 'micro', 'worker'].includes(mode) && Number.isSafeInteger(samples) && samples > 0,
-    'Usage: node runtime/scripts/snapshot-processing.mjs <Runtime package dir> <SDK package dir> [all|micro|worker] [samples]');
+assert.ok(runtime && sdk && ['all', 'micro', 'worker', 'digest'].includes(mode) && Number.isSafeInteger(samples) && samples > 0,
+    'Usage: node runtime/scripts/snapshot-processing.mjs <Runtime package dir> <SDK package dir> [all|micro|worker|digest] [samples]');
 const emitted = (dir, file) => pathToFileURL(resolve(dir, 'dist', file)).href;
 const appId = 'snapshot_probe', type = 'File', toolName = 'advance';
 const profiles = [
@@ -38,6 +38,85 @@ const summarize = values => {
     return { p50: percentile(0.5), p95: percentile(0.95), samples: values.map(value => +value.toFixed(3)) };
 };
 
+function timeDigestPath(run, verify) {
+    const timings = [];
+    for (let i = -warmup; i < samples; i++) {
+        const start = performance.now();
+        const result = run();
+        const elapsed = performance.now() - start;
+        verify(result);
+        if (i >= 0) timings.push(elapsed);
+    }
+
+    return summarize(timings);
+}
+
+function countDigestWork(run, verify) {
+    // The FNV loop calls asUintN once per byte.
+    const truncate = BigInt.asUintN, encode = TextEncoder.prototype.encode;
+    const canonicalEncodes = [];
+    let fnvBytes = 0;
+    BigInt.asUintN = (bits, value) => { fnvBytes++; return truncate(bits, value); };
+    TextEncoder.prototype.encode = function (value) {
+        const result = encode.call(this, value);
+        if (value?.startsWith('{"refs":{},"schemaVersion":')) canonicalEncodes.push(result.byteLength);
+        return result;
+    };
+    try { verify(run()); }
+    finally { BigInt.asUintN = truncate; TextEncoder.prototype.encode = encode; }
+    assert.ok(canonicalEncodes.length > 0);
+    const digestCalls = fnvBytes / canonicalEncodes[0];
+    assert.ok(Number.isInteger(digestCalls));
+    return { canonicalEncodes, fnvBytes, digestCalls };
+}
+
+async function digestPaths(measure) {
+    const { createSnapshotCore, SemanticProjectionCoordinator } = await import(emitted(runtime, 'core/index.js'));
+    const { hostedObservationCapacityIssue } = await import(emitted(runtime, 'core/invocation/observation-registry.js'));
+    return [64, 512, 2048].map(kib => {
+        const bodyBytes = kib * 1024;
+        const identity = { appId: 'bench', instanceId: 'one' };
+        const projection = new SemanticProjectionCoordinator({ identity: () => identity });
+        const core = createSnapshotCore(identity);
+        const views = Array.from({ length: Math.ceil(kib / 128) }, (_, index) => ({
+            id: 'v' + index, viewInstanceId: 'vi' + index, type: 'Detail', name: 'View', kind: 'state', toolBindings: [],
+            content: { format: 'markdown-v1', value: 'a'.repeat(Math.min(bodyBytes, 128 * 1024)) },
+        }));
+        const frame = { views, refs: [], tools: [] };
+        try {
+            const prepare = measure(() => projection.commit(() => frame), result => {
+                assert.equal(result.status, 'prepared');
+            });
+            const publication = projection.nextPublication();
+            assert.ok('draft' in publication);
+            const { draft } = publication;
+            const alternate = { ...draft, views: [{ ...views[0], content: {
+                ...views[0].content, value: 'b' + views[0].content.value.slice(1),
+            } }, ...views.slice(1)] };
+            const seeded = core.committer.accept(draft);
+            assert.equal(seeded.status, 'published');
+            let sequence = draft.producerSeq, epoch = draft.sourceEpoch, last = seeded.snapshot, next = draft;
+            const publish = () => core.committer.accept({ ...next, producerSeq: ++sequence, sourceEpoch: ++epoch });
+            const published = measure(() => {
+                next = next === draft ? alternate : draft;
+                return publish();
+            }, result => {
+                assert.equal(result.status, 'published');
+                assert.equal(result.snapshot.revision, last.revision + 1);
+                assert.notEqual(result.snapshot.contentDigest, last.contentDigest);
+                assert.match(result.snapshot.contentDigest, /^fnv1a64:[0-9a-f]{16}$/);
+                last = result.snapshot;
+            });
+            const unchanged = measure(publish, result => {
+                assert.equal(result.status, 'unchanged');
+                assert.equal(result.snapshot, last);
+            });
+            const hostedIssue = hostedObservationCapacityIssue(draft);
+            return { bodyBytes, views: views.length, defaultHostedProjectionIssue: hostedIssue ?? null, prepare, published, unchanged };
+        } finally { projection.close(); core.lifecycle.dispose(); }
+    });
+}
+
 // Count work separately from timed calls so the wrappers do not affect timings.
 function validationWork(validate, draft) {
     const freeze = Object.freeze, encode = TextEncoder.prototype.encode;
@@ -55,7 +134,7 @@ function validationWork(validate, draft) {
     try {
         const result = validate(draft);
         assert.equal(result.ok, true);
-        return { freezes, encodes, encodedBytes, canonical, frameBytes: result.value.bytes, digest: result.value.contentDigest };
+        return { freezes, encodes, encodedBytes, canonical, frameBytes: result.value.bytes };
     } finally { Object.freeze = freeze; TextEncoder.prototype.encode = encode; }
 }
 
@@ -219,6 +298,23 @@ export default createApp({ app_name: 'snapshot_probe', viewTypes: [File], initia
 }
 
 const results = { node: process.version, platform: process.platform, arch: process.arch, samples, warmup };
-if (mode !== 'micro') results.worker = await workers();
-if (mode !== 'worker') results.micro = await micro();
+if (mode === 'digest') {
+    // Both versions start timing with the same number of actual FNV calls.
+    const { diagnosticDigest } = await import(emitted(runtime, 'core/snapshot/json.js'));
+    const seed = new Uint8Array(4096).fill(97);
+    results.digestWarmup = { calls: 384, bytesPerCall: seed.byteLength };
+    for (let i = 0; i < results.digestWarmup.calls; i++) diagnosticDigest(seed);
+    const timings = await digestPaths(timeDigestPath);
+    // Patching an intrinsic can change V8's optimization of later samples.
+    const work = await digestPaths(countDigestWork);
+    results.digest = timings.map(({ prepare, published, unchanged, ...profile }, index) => ({
+        ...profile,
+        prepare: { ms: prepare, work: work[index].prepare },
+        published: { ms: published, work: work[index].published },
+        unchanged: { ms: unchanged, work: work[index].unchanged },
+    }));
+} else {
+    if (mode !== 'micro') results.worker = await workers();
+    if (mode !== 'worker') results.micro = await micro();
+}
 console.log(JSON.stringify(results, null, 2));

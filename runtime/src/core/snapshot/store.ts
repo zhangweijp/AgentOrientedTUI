@@ -4,7 +4,7 @@ import type {
     SnapshotHealth, SnapshotIssue, SnapshotIssueCode, SnapshotHold, SnapshotLookup, SnapshotRead,
     SnapshotStoreOptions, SnapshotStoreStats, ToolLookup, ToolSelector, AppIdentityRead,
 } from './types.js';
-import { utf8Size } from './json.js';
+import { diagnosticDigest, utf8Size } from './json.js';
 import { captureSnapshotLimits, refKey, snapshotId } from './snapshot-support.js';
 import { validatePreparedSnapshot } from './validate-snapshot.js';
 
@@ -257,7 +257,7 @@ export function createSnapshotCore(options: SnapshotStoreOptions): SnapshotCore 
                 views: data.draft.views,
                 refs: data.draft.refs,
                 tools: data.draft.tools,
-                contentDigest: data.contentDigest,
+                contentDigest: diagnosticDigest(data.contentBytes),
             }) as AppSnapshot;
             const record: SnapshotEntry = {
                 snapshot, canonical: data.canonicalContent, bytes: data.bytes,
