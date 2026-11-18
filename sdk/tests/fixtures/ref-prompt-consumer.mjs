@@ -5,13 +5,13 @@ import Type from 'typebox';
 import { AppRegistry, createRuntime } from '@aotui/runtime';
 import { createViewOwnedTools, modelToolSchema } from '@aotui/runtime/core';
 import { defineViewType, getToolCatalog, refParam } from '@aotui/sdk';
-import { AgentDriverV2 } from '@aotui/agent-driver-v2';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { viewTypes } from './full-out/ref-prompt-app.js';
+import { runProviderTurn } from './scripted-provider-turn.mjs';
 
 const checkChangedHints = process.argv.includes('--assert-hints');
+const checkListWords = process.argv.includes('--assert-list-words');
 const runtime = createRuntime();
-const beforeFetch = globalThis.fetch;
 const runs = [];
 let diagnostic, source, current, client;
 const bytes = text => Buffer.byteLength(text, 'utf8');
@@ -128,40 +128,9 @@ try {
     const turn = { label, window, adoptions: [], receipts: [], toolResults: [] };
     current = turn;
     runs.push(turn);
-    globalThis.fetch = async (url, init) => {
-      assert.equal(String(url), 'https://fixture.invalid/v1/chat/completions');
-      assert.equal(init.method, 'POST');
-      assert.deepEqual(turn.adoptions, ['adopted']);
-      assert.equal(turn.body, undefined);
-      turn.body = init.body;
-      const delta = calls.length ? { tool_calls: calls.map(([id, name, args], index) => ({
-        id, index, type: 'function', function: { name: toolName(name), arguments: JSON.stringify({ view_id: 'editor', ...args }) },
-      })) } : { content: 'Done' };
-      const chunk = (delta, finish_reason) => 'data: ' + JSON.stringify({ id: 'ref-fixture', model: 'fixture', created: 1,
-        choices: [{ index: 0, delta, finish_reason }] }) + '\n\n';
-      return new Response(chunk(delta, null) + chunk({}, calls.length ? 'tool_calls' : 'stop') + 'data: [DONE]\n\n',
-        { headers: { 'Content-Type': 'text/event-stream' } });
-    };
-    const finished = Promise.withResolvers();
-    const driver = new AgentDriverV2({
-      sources: [{ name: 'history', onUpdate: () => () => {}, getContext: () => ({
-        messages: [{ role: 'user', content: 'Select visible items.', timestamp: 2 }], tools: {},
-      }) }, { name: source.name, onUpdate: () => () => {}, async getContext() {
-        const context = await source.getContext();
-        return { ...context, async release() { await context.release(); finished.resolve(); },
-          async executeTool(...args) {
-            const result = await context.executeTool(...args);
-            turn.toolResults.push(result);
-            return result;
-          } };
-      } }],
-      llm: { model: 'fixture', provider: { id: 'ref-test', baseURL: 'https://fixture.invalid/v1' }, apiKey: 'fixture',
-        inputBudget: () => ({ contextWindow: window, maxOutputTokens: 256 }) },
-      onRunError(error) { turn.error = { code: error.code, message: error.message, details: error.details }; },
-    });
-    const timer = setTimeout(() => finished.reject(new Error('Context was not released for ' + label)), 10000);
-    try { await Promise.all([driver.trigger(), finished.promise]); }
-    finally { clearTimeout(timer); driver.stop(); driver.dispose(); current = undefined; }
+    const replies = calls.map(([id, name, args]) => [id, toolName(name), { view_id: 'editor', ...args }]);
+    try { await runProviderTurn(source, turn, replies, () => assert.deepEqual(turn.adoptions, ['adopted'])); }
+    finally { current = undefined; }
     return turn;
   }
 
@@ -183,6 +152,19 @@ try {
   const filesView = wire.messages.find(m => m.role === 'user' && m.content.startsWith('<view id="files"'));
   assert.match(filesView.content, /\[label\]\(File:items\[0\]\)/);
   assert.match(filesView.content, /\[all files\]\(File\[\]:items\)/);
+  assert.ok(filesView.content.includes('\n- password\n'));
+  if (checkListWords) {
+    for (const line of ['- test.txt — View editor', '- FileDetail: edit, close', '- **Status:** ready',
+      '- Open [label](File:items[0]) &amp; ``  say ` hi  ``', '    1. password',
+      '    2. *Choose* [other file](File:items[1])']) {
+      assert.ok(filesView.content.includes(line + '\n'), 'Missing list line ' + line);
+    }
+    const rows = ['Open file', 'Open file', '**Status:** ready', 'password', 'Nested file', 'State *ready* now',
+      '*password*', '[Open](#editor) editor', 'Move ``  say ` hi  `` to [inline ref](File:items[0])'];
+    assert.ok(filesView.content.includes(rows.map(row => '- ' + row + '\n').join('')));
+    assert.ok(filesView.content.includes('- Inline boundaries\n' +
+      rows.map((row, index) => '    ' + (index + 1) + '. ' + row + '\n').join('')));
+  }
   const catalog = getToolCatalog(viewTypes);
   const schemas = Object.fromEntries(wire.tools.filter(({ function: tool }) => tool.name.startsWith('refs-select_'))
     .map(({ function: tool }) => {
@@ -243,7 +225,6 @@ try {
   console.log(JSON.stringify({ diagnostic, threshold, runs, oldSource, expectedActions, params, capacity,
     wireBytes: bytes(accepted.body), toolsBytes: bytes(JSON.stringify(wire.tools)) }));
 } finally {
-  globalThis.fetch = beforeFetch;
   source?.dispose();
   const report = await runtime.beginShutdown().completion;
   assert.ok(report.ok && report.resourcesReleased, JSON.stringify(report));

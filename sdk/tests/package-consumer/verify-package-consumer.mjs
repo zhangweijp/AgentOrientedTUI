@@ -117,7 +117,7 @@ if (!plain) {
   facts.assembly = { archiveSHA256, ...lastJson(assembly) };
 
   const refPrompt = await checked('ref-prompt-provider-execution', [
-    path.join(output, 'ref-prompt-consumer.mjs'), '--assert-hints',
+    path.join(output, 'ref-prompt-consumer.mjs'), '--assert-hints', '--assert-list-words',
   ]);
   facts.refPrompt = lastJson(refPrompt);
 

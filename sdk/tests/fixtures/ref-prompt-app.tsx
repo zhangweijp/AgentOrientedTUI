@@ -1,5 +1,6 @@
 import Type from 'typebox';
-import { createTUIApp, defineViewType, refParam, useArrayRef, useDataRef, useState, View } from '@aotui/sdk';
+import { createTUIApp, defineViewType, refParam, useArrayRef, useDataRef, useState, View,
+  type ArrayRefHandle, type ItemRefFormatter } from '@aotui/sdk';
 
 const File = Type.Object({ path: Type.String() });
 const Task = Type.Object({ name: Type.String() });
@@ -50,9 +51,43 @@ const Editor = defineViewType<{ enabled: boolean; record(value: string): void; r
 });
 export const viewTypes = [List, Editor];
 
+function InlineWordRows({ item }: { item: ItemRefFormatter }) {
+  return <>
+    <li><span>{'Open '}</span><span>file</span></li>
+    <li><span>Open</span><span>{' file'}</span></li>
+    <li><strong>Status:</strong><span>{' ready'}</span></li>
+    <li><span>pass</span><span>word</span></li>
+    <li><span><small>{'Nested '}</small></span><span>file</span></li>
+    <li><span>State</span><em>{' ready '}</em><span>now</span></li>
+    <li><em><span>pass</span><span>word</span></em></li>
+    <li><a href="#editor">{'Open '}</a><span>editor</span></li>
+    <li><span>{'Move '}</span><code>{' say ` hi '}</code><span>{' to '}{item(0, 'inline ref')}</span></li>
+  </>;
+}
+
+function FilesRows({ refs: [all, item] }: { refs: ArrayRefHandle }) {
+  const file = 'test.txt';
+  const editor = 'editor';
+  const type = 'FileDetail';
+  const tools = ['edit', 'close'];
+  const status = 'ready';
+  return <ul>
+    <li>{file} — View {editor}</li>
+    <li>{type}: {tools.join(', ')}</li>
+    <li><strong>Status:</strong> {status}</li>
+    <li>{'pass'}{'word'}</li>
+    <li>Open {item(0, 'label')} &amp; <code>{' say ` hi '}</code>
+      <ol><li>{'pass'}{'word'}</li><li><em>Choose</em> {item(1, 'other file')}</li></ol>
+    </li>
+    <li>{all('all files')}</li>
+    <InlineWordRows item={item} />
+    <li>Inline boundaries<ol><InlineWordRows item={item} /></ol></li>
+  </ul>;
+}
+
 function FilesContent({ entries }: { entries: typeof files }) {
-  const [all, item] = useArrayRef('items', entries, refOptions);
-  return <p>{all('all files')} {item(0, 'label')} {item(1, 'other file')}</p>;
+  const refs = useArrayRef('items', entries, refOptions);
+  return <FilesRows refs={refs} />;
 }
 
 function FilesPage({ entries }: { entries: typeof files }) {
@@ -60,9 +95,9 @@ function FilesPage({ entries }: { entries: typeof files }) {
 }
 
 function BrokenFilesPage({ entries }: { entries: typeof files }) {
-  const [all, item] = useArrayRef('items', entries, refOptions);
+  const refs = useArrayRef('items', entries, refOptions);
   return <View id="files" type={List} kind="state">
-    <p>{all('all files')} {item(0, 'label')} {item(1, 'other file')}</p>
+    <FilesRows refs={refs} />
   </View>;
 }
 
