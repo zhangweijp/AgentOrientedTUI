@@ -57,16 +57,57 @@ try {
 
 ## Integrate with a model
 
-- A successful `observe({ all: true })` contains every opened View in the current committed frame. Use the Tools and eligible `view_id` values of that same Observation. Ref arguments resolve against the original adopted data, subject to policy and live source checks.
-- Format the complete projection into XML-wrapped Markdown User Messages and supply the available Tool schemas. Check the actual request budget, including history, instructions, other Apps and reserved output, before adoption. If the request does not fit, release the candidate and keep the adopted Observation. Adopting a new one revokes the previous calling eligibility. Use `preview()` for diagnostics without adopting.
-- Tool receipts describe operations. Business data and its changes appear in Views. A successful operation can be followed by a failed observation. A wait timeout can leave work in flight. Use `readReceipt({ observationId, invocationId })` with the original IDs while the record is retained. For an `unknown` outcome, use the receipt, View and App recovery instructions before deciding whether to repeat a write.
-- The bundled Node Worker runs **trusted App code** with host-granted system access. The default `worker.maxWorkers` is `Number.POSITIVE_INFINITY`. Install with `toolsEnabled: false` for observation-only access. The Host can lower an App's fixed `projectionLimits` for admission. Await shutdown completion and check `resourcesReleased` before treating the Worker and its owned resources as released.
-- State storage is opt-in per App. Hosts using the default SQLite backend install the optional `better-sqlite3@13.2.0` peer. Hosts with another backend can supply `storageBackend`. A staged state update becomes a confirmed save when its flush receipt reports success. Existing records in `state.sqlite3` remain readable. Automatic import of older JSON state files ended.
+The counter example has no model request. A model Host follows this sequence:
+
+1. **Install and acquire an interaction.** Keep the App's runtime instance identity and choose its execution policy. Check installation results before offering the App to the Agent.
+2. **Observe completely.** `observe({ all: true })` waits for the App's queued projection refresh and captures every opened View with compatible Refs and Tools. It does not wait for unrelated background business work. Projection failures remain diagnostics; do not present them as normal snapshots.
+3. **Assemble and budget the actual request.** Format raw View bodies into XML-wrapped Markdown User Messages once, and attach that Observation's Tool schemas. Count history, instructions, all App sources, other context and reserved output. If it does not fit, release the candidate and retain the adopted source; silently omitting opened pages is invalid.
+4. **Adopt, then send.** Call `adoptObservation` after the final request check, check its result, and send the matching messages and tools. Adoption replaces the previous Observation's calling eligibility. Keep the source alive until its turn and calls finish. `preview()` and background publication do not adopt anything.
+5. **Invoke from that source.** Use its `observationId`, Tool id and a call-specific `invocationId`. The framework consumes required `view_id`, validates the receiving page instance and passes business arguments to its context. Explicit Ref addresses can select another View in the same App instance and original Observation.
+6. **Read the receipt, observe changes and close.** Receipts report operations and recovery information; business data appears in the next successful observation. Release unused observations. At shutdown, await `runtime.beginShutdown().completion` and check both `ok` and `resourcesReleased`.
+
+For the repository's Driver, the separate [Agent Driver adapter](../agent-driver-adapter/README.md) performs Source integration. When its Apps Source is enabled, fixed `system-open_app` and `system-close_app` tools take an `app_id` selected from the current Desktop list. App Tool aliases and the adoption hook are documented there. Other Agent systems can use Runtime directly.
+
+## Source binding, receipts and recovery
+
+Refs resolve to captured read-only JSON values from the call's original Observation. Runtime checks both the receiver and Ref source, including their App run, page mount and live eligibility. Closing and reopening a page with the same id cannot redirect an old call to the new instance. A shared ViewType Tool can remain active for another page while the closed page is unavailable. App business checks still decide whether the observed object exists, belongs to the right parent and may be changed now.
+
+Adopting a new Observation revokes further calls and Ref resolution through the old one. A valid Observation or already dispatched invocation can still hold the old source data until its responsibility ends. Once the last holder releases a retired snapshot, Runtime drops its reference; physical JavaScript garbage collection has its own timing. A data hold does not grant invocation authority.
+
+A successful business operation can be followed by a failed observation. Recover the projection from actual business state rather than repeating the write. A wait timeout can leave the original operation in flight: it does not prove cancellation or non-execution. Use `readReceipt({ observationId, invocationId })` with the original IDs while the receipt record is retained. Reading a receipt does not restore old invocation eligibility. For an `unknown` outcome, follow the receipt, current View and App recovery instructions before deciding whether to repeat a write.
+
+Invocation records prevent duplicate dispatch within their retained scope; they do not provide business exactly-once execution across restarts. Apps own external conflict handling, long-running task progress and business compensation. Runtime owns the calls it dispatched, necessary source holds and late settlement. A shutdown request alone does not establish that Workers or storage resources have physically exited.
+
+## Managed execution, limits and storage
+
+The bundled Node Worker runs **trusted App code** with Host-granted system access. It provides execution and lifecycle boundaries, rather than a filesystem or network permission sandbox; see [Node Worker documentation](https://nodejs.org/api/worker_threads.html). Install with `toolsEnabled: false` for observation-only access. Host policy and live execution checks remain separate from Tool discovery.
+
+The default `worker.maxWorkers` is `Number.POSITIVE_INFINITY`; explicit finite settings keep their existing validation and counting. This removes the default ten-App Worker cap. It does not enlarge projection limits, remove other startup failures or change the model context budget. `AppRegistry.installAll()` returns per-App results; failed installation can roll back the installed entry, so a Host should retain and expose failures rather than infer success from the remaining list.
+
+The Host can lower an App's `projectionLimits` at installation. That immutable configuration is shared by Worker admission, Host observation and the SDK's read-only author context. It bounds complete per-App projection counts and JSON sizes. Snapshot, Ref payload and Tool Schema limits also apply; their defaults are in the repository's [snapshot limits](src/core/snapshot/snapshot-support.ts) and [observation limits](src/core/invocation/observation-registry.ts). These byte and count limits are not the assembled request's token budget. App pagination and reversible opening handle local capacity; automatic allocation from remaining model space is not provided.
+
+Framework state storage is opt-in through the App's `persistence: true`. Hosts using the default SQLite backend explicitly install the optional `better-sqlite3@13.2.0` peer; the backend lazily uses a dedicated storage Worker and connection per physical storage root. Pure Core, Apps without framework persistence and custom `storageBackend` consumers do not require that native driver. A staged update becomes a confirmed save when its flush receipt reports success. Current records in `state.sqlite3` remain readable. Older JSON files are left untouched and are not automatically imported. Apps own business data migrations.
+
+## Versions and distribution
+
+Use matching SDK 0.9.0 and Runtime 8.0.0 artifacts and regenerate the App manifest when rebuilding. The current boundaries identify their own formats:
+
+| Boundary | Current identifier |
+| --- | --- |
+| App factory and `aoapp.json` | `view-type-tools-v6` |
+| Snapshot | `schemaVersion: 6` |
+| Worker initialization | `app-worker/v1` with fixed `toolsEnabled` and checked `projectionLimits` |
+| App lifecycle | `app-lifecycle-v2` |
+| Optional state session | `state-session-v1` |
+
+These identifiers are boundary checks, not a cross-version negotiation or fallback mechanism. Current consumption has been verified with local Node ESM package builds and the pinned SDK Preact baseline. SQLite's native module must match the Host's Node or Electron ABI. This is not a claim of published artifacts, an unrestricted renderer matrix or complete platform distribution support.
 
 ## Choose a package entry
 
 - `@aotui/runtime` provides the managed Node Host and public interaction types.
-- `@aotui/runtime/core` provides pure TypeScript semantics for hosts assembling their own producer, execution policy, and resource ports. `@aotui/runtime/spi` supplies the factory and integration types. Publish normalized Tool input schemas. Use `store.acquire(snapshotId)` to hold a source across turns and release the hold when its consumer finishes.
-- `@aotui/runtime/adapters` provides presentation helpers. The standard Agent Driver Source lives in the separate `@aotui/agent-driver-adapter` package.
+- `@aotui/runtime/core` provides pure TypeScript semantics for hosts assembling their own producer, execution policy and resource ports. Core owns shared interaction definitions; `@aotui/runtime/spi` composes factory and environment integration types. Producers supply complete frames and normalized Tool schemas. The repository's [Core consumer](tests/fixtures/public-core.ts) shows the lower-level assembly.
+- `@aotui/runtime/adapters` provides presentation helpers; `/adapters/dom` and `/adapters/memory-state-storage` provide the existing DOM and in-memory storage adaptations. The standard Agent Driver Source lives in the separate `@aotui/agent-driver-adapter` package.
 
-Installed declaration entry points are under `dist/`. In this repository, see the [public Host entry](src/index.ts), [Core exports](src/core/index.ts), and [integration ports](src/spi/index.ts).
+Custom Core consumers use `store.acquire(snapshotId)` for an explicit source hold, check its result and release the hold when finished. Holds have ownership rather than a lease timeout; observation and in-flight call lifetimes remain authoritative for their own holds. Receipt retention and execution deadlines are separate contracts.
+
+Installed declarations are under `dist/` and consumed through the package exports above. Source and fixture links in this README refer to the repository: [public Host entry](src/index.ts), [Core exports](src/core/index.ts), [integration ports](src/spi/index.ts), and [interaction types](src/core/invocation/app-interaction-types.ts).
