@@ -33,7 +33,7 @@ AOTUI (Agent-Oriented TUI) is a framework that provides AI Agents with a text-ba
 
 - **De-visualized**: TUI uses semantic markdown instead of pixels and UI controls
 - **Declared Parameters**: Tools accept paths, IDs, ordinary JSON or explicit Refs according to their own parameter schemas
-- **Worker-Isolated**: Each Desktop runs applications in isolated environments for safety and reliability
+- **App execution**: The default Node Host runs each trusted App in a Worker thread with Host-granted system access.
 
 ## Where You Are
 

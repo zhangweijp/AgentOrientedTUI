@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
@@ -75,7 +77,7 @@ await compile('core', { lib: ['ES2022'], types: [], outDir: './core-out' },
   ['public-core.ts', 'work-items-plain.ts']);
 
 if (!plain) {
-  await stageFixtures(sdkFixtures, ['file-app.tsx', 'file-tools.ts', 'ref-app.tsx', 'work-items-preact.tsx', 'source-host.mjs']);
+  await stageFixtures(sdkFixtures, ['file-app.tsx', 'file-tools.ts', 'ref-app.tsx', 'work-items-preact.tsx', 'source-host.mjs', 'assembly-consumer.mjs']);
   await stageFixtures(runtimeFixtures, ['managed-host.ts', 'managed-host-app.mjs']);
   await stageReadmeExample(sdkRoot, 'tsx', 'readme-app.tsx');
   await stageReadmeExample(runtimeRoot, 'js', 'readme-host.mjs');
@@ -102,6 +104,16 @@ if (!plain) {
   assert.match(workspace, /"selected":null/);
   assert.doesNotMatch(JSON.stringify(receipt), /Inspections:/);
   facts.sourceHost = { receipt, workspace, resourcesReleased: true };
+
+  const archive = fileURLToPath(new URL('./baselines/work-items-sdk-0.9.0.tgz', import.meta.url));
+  const archiveSHA256 = createHash('sha256').update(await fs.readFile(archive)).digest('hex');
+  assert.equal(archiveSHA256, '01e700d0db0394a247e7f97683ade6453605ea31d3cd9e0b466660f71a0c07b1');
+  const baseline = await fs.mkdtemp(path.join(output, 'work-items-baseline-'));
+  await execute('tar', ['-xzf', archive, '-C', baseline, '--strip-components', '1']);
+  const assembly = await checked('assembly-provider-execution', [
+    '--experimental-import-meta-resolve', path.join(output, 'assembly-consumer.mjs'), baseline,
+  ]);
+  facts.assembly = { archiveSHA256, ...lastJson(assembly) };
 
   const commitFixture = path.join(output, 'verify-preact-commit.mjs');
   await fs.copyFile(new URL('./verify-preact-commit.mjs', import.meta.url), commitFixture);

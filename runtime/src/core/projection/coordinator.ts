@@ -7,7 +7,7 @@ import {
     type ToolDescriptor, type ViewSnapshot,
 } from '../snapshot/types.js';
 import { validatePreparedSnapshot } from '../snapshot/validate-snapshot.js';
-import type { AppFrameBinding } from '../tool/view-owned-tools.js';
+import type { AppFrameBinding, createViewOwnedTools } from '../tool/view-owned-tools.js';
 
 export interface AppFrameRef {
     readonly id: string;
@@ -68,6 +68,29 @@ function failureIssue(error: unknown): SnapshotIssue {
 }
 
 const closedError = () => Object.assign(new Error('Projection owner closed'), { code: 'PROJECTION_CLOSED' });
+
+/** Stage live bindings with their View and Ref identities. Only a valid complete frame can install them. */
+export function commitAppFrame(projection: SemanticProjectionCoordinator, registry: ReturnType<typeof createViewOwnedTools>,
+    build: () => AppProjectionFrame, options?: ProjectionOptions): ProjectionCommitResult {
+    return projection.commit(() => {
+        const frame = build();
+        if (!frame || Object.keys(frame).length !== 1 || !Array.isArray(frame.views))
+            throw new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Expected a complete View frame');
+        const views: AppProjectionFrame['views'] = frame.views;
+        const plan = registry.prepareFrame(views);
+        return {
+            views: views.map(({ id, type, name, kind, content }, index) => {
+                const { viewInstanceId, toolBindings } = plan.instances[index]!;
+                return { id, type, name, kind, content, viewInstanceId, toolBindings };
+            }),
+            refs: views.flatMap(({ id, refs }, index) => refs.map(ref => ({
+                ...ref, viewId: id, viewInstanceId: plan.instances[index]!.viewInstanceId,
+            }))),
+            tools: plan.tools,
+            accept: plan.accept,
+        };
+    }, options);
+}
 
 /** Validate and accept one complete frame. Core owns the published snapshot. */
 export class SemanticProjectionCoordinator {
