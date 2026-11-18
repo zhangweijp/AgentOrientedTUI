@@ -4,7 +4,8 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { loadOptionalSetting } from '@ai-sdk/provider-utils';
+import { loadOptionalSetting, type FetchFunction } from '@ai-sdk/provider-utils';
+import { createParser } from 'eventsource-parser';
 import type { LanguageModel } from 'ai';
 import type { LLMConfig } from './interfaces.js';
 
@@ -36,6 +37,11 @@ export function validateModelConfig(config: LLMConfig): void {
 }
 
 export function createLanguageModel(config: LLMConfig): Extract<LanguageModel, { specificationVersion: 'v3' }> {
+    return createLanguageModelWithChatFetch(config);
+}
+
+/** The Driver can observe the two Chat adapters whose parsers discard [DONE]. */
+export function createLanguageModelWithChatFetch(config: LLMConfig, chatFetch?: FetchFunction): Extract<LanguageModel, { specificationVersion: 'v3' }> {
     validateModelConfig(config);
     const { id: providerId, baseURL, headers } = config.provider;
     const apiKey = config.apiKey || getApiKeyFromEnv(providerId);
@@ -46,14 +52,45 @@ export function createLanguageModel(config: LLMConfig): Extract<LanguageModel, {
         );
     }
 
-    return buildProvider(providerId, apiKey, baseURL, headers).languageModel(config.model);
+    return buildProvider(providerId, apiKey, baseURL, headers, chatFetch).languageModel(config.model);
+}
+
+export function observeChatStreamEnd() {
+    let latestAttempt: { done: boolean } | undefined;
+    const fetch: FetchFunction = async (...args) => {
+        const attempt = { done: false };
+        latestAttempt = attempt;
+        const response = await globalThis.fetch(...args);
+        if (!response.ok || !response.body) return response;
+
+        const decoder = new TextDecoder();
+        let endsWithCR = false;
+        const parser = createParser({ onEvent: ({ data }) => {
+            if (data === '[DONE]') attempt.done = true;
+        } });
+        // Read alongside the provider on its only body stream, with the same backpressure and cancellation.
+        const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+                if (chunk.length > 0) endsWithCR = chunk[chunk.length - 1] === 0x0d;
+                parser.feed(decoder.decode(chunk, { stream: true }));
+                controller.enqueue(chunk);
+            },
+            flush() {
+                // Resolve a pending CR at EOF without adding another SSE line.
+                parser.feed(decoder.decode() + (endsWithCR ? '\n' : ''));
+            },
+        }));
+        return new Response(body, response);
+    };
+    return { fetch, missingDone: () => latestAttempt?.done === false };
 }
 
 function buildProvider(
     providerId: string,
     apiKey: string,
     customBaseURL: string | undefined,
-    headers: Record<string, string> | undefined
+    headers: Record<string, string> | undefined,
+    chatFetch?: FetchFunction,
 ) {
     const { baseURL } = resolveProviderEndpoint(providerId, customBaseURL);
     switch (providerId) {
@@ -62,7 +99,7 @@ function buildProvider(
         case 'google':
             return createGoogleGenerativeAI({ apiKey, baseURL, headers });
         case 'deepseek':
-            return createDeepSeek({ apiKey, baseURL, headers });
+            return createDeepSeek({ apiKey, baseURL, headers, fetch: chatFetch });
         case 'xai':
             return createOpenAI({ apiKey, baseURL, headers });
         case 'openai':
@@ -72,6 +109,7 @@ function buildProvider(
                     apiKey,
                     baseURL,
                     headers,
+                    fetch: chatFetch,
                 });
             }
             return createOpenAI({ apiKey, baseURL, headers });
@@ -95,6 +133,7 @@ function buildProvider(
                 apiKey,
                 baseURL,
                 headers,
+                fetch: chatFetch,
             });
         }
     }

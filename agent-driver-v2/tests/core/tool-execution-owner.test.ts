@@ -3,7 +3,7 @@ import * as ai from 'ai';
 import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { AgentDriverV2 } from '../../src/core/agent-driver-v2.js';
 import { LLMClient } from '../../src/core/llm-client.js';
-import type { ContextDrivenSource } from '../../src/core/interfaces.js';
+import type { ContextDrivenSource, LLMConfig } from '../../src/core/interfaces.js';
 
 // Native ESM exports cannot be spied on directly. Record calls while delegating
 // every invocation to the real installed streamText implementation.
@@ -36,6 +36,7 @@ afterEach(async () => {
         await vi.runOnlyPendingTimersAsync();
         vi.useRealTimers();
     }
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
 });
 
@@ -69,7 +70,7 @@ function descriptor(execute?: ai.Tool['execute']) {
     return Object.freeze(tool);
 }
 
-function turn(tool: ai.Tool, execute: NonNullable<ai.Tool['execute']>) {
+function turn(tool: ai.Tool, execute: NonNullable<ai.Tool['execute']>, llm: LLMConfig = config) {
     const release = vi.fn();
     const executeTool = vi.fn(async (toolName: string, args: unknown, toolCallId: string) => ({
         toolName, toolCallId, result: await execute(args, { toolCallId, messages: [] }),
@@ -82,7 +83,7 @@ function turn(tool: ai.Tool, execute: NonNullable<ai.Tool['execute']>) {
         })),
     };
     const onAssistantMessage = vi.fn(), onToolResult = vi.fn(), onRunError = vi.fn();
-    const driver = new AgentDriverV2({ sources: [source], llm: config, onAssistantMessage, onToolResult, onRunError });
+    const driver = new AgentDriverV2({ sources: [source], llm, onAssistantMessage, onToolResult, onRunError });
     drivers.push(driver);
     return { driver, source, executeTool, release, onAssistantMessage, onToolResult, onRunError };
 }
@@ -249,5 +250,53 @@ describe('Source tool execution owner', () => {
         expect(current.onAssistantMessage).not.toHaveBeenCalled();
         expect(current.onToolResult).not.toHaveBeenCalled();
         expect(model.doStreamCalls).toHaveLength(1);
+    });
+
+    it.each([
+        { kind: 'bare EOF', dispatches: false },
+        { kind: 'explicit provider reason', dispatches: true },
+        { kind: 'independent DONE split across chunks', dispatches: true },
+        { kind: 'independent DONE ending with CR', dispatches: true },
+        { kind: 'literal, comment and unterminated DONE', dispatches: false },
+    ])('checks compatible tool completion for $kind', async ({ kind, dispatches }) => {
+        const chunk = (delta: object, finish_reason: string | null) => 'data: ' + JSON.stringify({ id: 'fixture',
+            model: config.model, created: 1, choices: [{ index: 0, delta, finish_reason }] }) + '\n\n';
+        const fetch = vi.fn(async (url: unknown) => {
+            expect(String(url)).toBe('https://fixture.invalid/v1/chat/completions');
+            const tool = { id: 'owner-call', index: 0, type: 'function',
+                function: { name: 'counter', arguments: JSON.stringify(input) } };
+            const frames = [chunk({ tool_calls: [tool] }, null)];
+            if (kind === 'explicit provider reason') frames.push(chunk({}, 'provider-specific-finish'));
+            if (kind === 'independent DONE split across chunks') frames.push('data: [DO', 'NE]\r', '\n\r', '\n');
+            if (kind === 'independent DONE ending with CR') frames.push('data: [DONE]\r', '\r');
+            if (kind === 'literal, comment and unterminated DONE') {
+                frames.push(chunk({ content: 'Literal [DONE]' }, null), ': [DONE]\n\n', 'data: [DONE]\r');
+            }
+            const stream = new ReadableStream({
+                pull(controller) {
+                    const frame = frames.shift();
+                    if (frame === undefined) controller.close();
+                    else controller.enqueue(new TextEncoder().encode(frame));
+                },
+            });
+            return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+        });
+        vi.stubGlobal('fetch', fetch);
+        const execute = vi.fn(async () => ({ ok: true }));
+        const current = turn(descriptor(execute), execute,
+            { ...config, provider: { id: 'compatible-owner', baseURL: 'https://fixture.invalid/v1' } });
+
+        await current.driver.trigger();
+        await current.driver['runInFlight'];
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(current.release).toHaveBeenCalledTimes(1);
+        expect(current.executeTool).toHaveBeenCalledTimes(Number(dispatches));
+        expect(current.onAssistantMessage).toHaveBeenCalledTimes(Number(dispatches));
+        expect(current.onToolResult).toHaveBeenCalledTimes(Number(dispatches));
+        if (dispatches) expect(current.onRunError).not.toHaveBeenCalled();
+        else expect(current.onRunError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            message: expect.stringContaining('without a termination signal'),
+        }));
     });
 });
