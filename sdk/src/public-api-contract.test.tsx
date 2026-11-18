@@ -142,21 +142,29 @@ describe('C04/C09 SDK root exports and app context', () => {
 
     it('returns the actual subtree preparation and rejects a render that failed or did not commit', async () => {
         let prepare!: (value: number) => Promise<unknown>;
+        let noUpdate!: () => Promise<unknown>;
+        const renderFailure = Object.assign(new Error('render failure'), { code: 'SNAPSHOT_INVALID', path: '$.views.detail' });
         function Body() {
             const { prepareProjection } = useAppRuntimeContext();
             const [value, setValue] = useState(0);
             prepare = next => prepareProjection(() => setValue(next));
-            if (value < 0) throw Error('render failure');
+            noUpdate = () => prepareProjection(() => {});
+            if (value < 0) throw renderFailure;
             return h('p', {}, String(value));
         }
         const x = await mount(Body);
         const projection = x.kernel.getProjectionCoordinator();
         const first = projection.token().epoch;
         await expect(prepare(1)).resolves.toEqual({ status: 'prepared', sourceEpoch: first + 1 });
-        await expect(prepare(1)).rejects.toMatchObject({ code: 'SNAPSHOT_INVALID' });
+        await expect(prepare(1)).rejects.toMatchObject({
+            code: 'SNAPSHOT_INVALID', path: '$.views', message: expect.stringContaining('did not observe a Preact commit for this App'),
+        });
         expect(projection.failure).toBeUndefined();
-        await expect(prepare(-1)).rejects.toMatchObject({ code: 'SNAPSHOT_INVALID' });
-        expect(projection.failure?.code).toBe('SNAPSHOT_INVALID');
+        expect(projection.token().epoch).toBe(first + 1);
+        const fault = { code: 'SNAPSHOT_INVALID', path: '$.views.detail', message: 'render failure' };
+        await expect(prepare(-1)).rejects.toMatchObject({ ...fault, cause: renderFailure });
+        expect(projection.failure).toEqual(fault);
+        await expect(noUpdate()).rejects.toMatchObject({ ...fault, cause: renderFailure });
         expect(projection.token().epoch).toBe(first + 1);
         await expect(prepare(2)).resolves.toEqual({ status: 'prepared', sourceEpoch: first + 2 });
         expect(projection.failure).toBeUndefined();

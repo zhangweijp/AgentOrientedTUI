@@ -98,6 +98,8 @@ TypeBox 可表达的范围大于当前支持子集。常用类型、对象属性
 
 默认 Preact 入口中，`useAppRuntimeContext().prepareProjection(update)` 接收同步状态更新回调，等待本次实际渲染准备完成。可撤回的开页使用 `prepareOpeningProjection(update, revert)`，两个回调都同步，保留原页面挂载，开页容量拒绝时恢复导航。这是明确的导航恢复合同，业务事务和已经发生的外部写入由 App 负责。
 
+常规准备需要该 App 产生一次真实提交。同步回调把状态设成当前值时，Preact 可能跳过提交，此时准备调用以 `SNAPSHOT_INVALID` 拒绝并给出排查提示。已记录的提交故障优先返回原诊断。准备结果和业务操作结果各自独立。
+
 普通 TypeScript 入口 `@aotui/sdk/app` 无需 Preact。用 `createApp`、`createView` 和 `defineViewType`，保留稳定页面 handle，在 `render` 返回 Markdown、`context` 和 Ref 描述。`prepareProjection({ views })` 提供全部打开页面；`prepareOpeningProjection({ views })` 准备可放弃的开页候选，成功后再确认 App 自己的导航状态。
 
 两种入口都只承诺本地准备，返回 `PreparedProjection`。Host 的下一次成功观察才确认新数据可观察。作者只读取得 Host 固定的 `projectionLimits`，用于选择内容和分页大小；是否容纳取决于完整候选，模型总 token 预算另由 Host 检查。一般业务更新若已写入却准备失败，收据保留真实结果和呈现恢复提示，再从当前业务数据修复 View，不能重做写入来伪装恢复。

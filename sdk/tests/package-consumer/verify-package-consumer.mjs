@@ -78,7 +78,7 @@ await compile('core', { lib: ['ES2022'], types: [], outDir: './core-out' },
 
 if (!plain) {
   await stageFixtures(sdkFixtures, ['file-app.tsx', 'file-tools.ts', 'ref-app.tsx', 'work-items-preact.tsx', 'source-host.mjs', 'assembly-consumer.mjs']);
-  await stageFixtures(sdkFixtures, ['ref-prompt-app.tsx', 'ref-prompt-consumer.mjs']);
+  await stageFixtures(sdkFixtures, ['ref-prompt-app.tsx', 'ref-prompt-consumer.mjs', 'scripted-provider-turn.mjs']);
   await stageFixtures(runtimeFixtures, ['managed-host.ts', 'managed-host-app.mjs']);
   await stageReadmeExample(sdkRoot, 'tsx', 'readme-app.tsx');
   await stageReadmeExample(runtimeRoot, 'js', 'readme-host.mjs');
@@ -123,7 +123,7 @@ if (!plain) {
 
   const commitFixture = path.join(output, 'verify-preact-commit.mjs');
   await fs.copyFile(new URL('./verify-preact-commit.mjs', import.meta.url), commitFixture);
-  const commit = lastJson(await checked('preact-commit-execution', [commitFixture]));
+  const commit = lastJson(await checked('preact-commit-execution', [commitFixture, '--assert-prepare-diagnostic']));
   const sdkPackage = JSON.parse(await fs.readFile(path.join(sdkRoot, 'package.json'), 'utf8'));
   assert.equal(commit.version, sdkPackage.peerDependencies.preact);
   facts.preactCommit = commit;
