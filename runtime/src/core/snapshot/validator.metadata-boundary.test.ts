@@ -71,9 +71,9 @@ describe('Snapshot metadata boundary', () => {
         if (!checked.ok) throw new Error('Expected a valid fixture');
         expect(checked.value).toEqual({
             draft: original, canonicalContent: expected.canonicalContent,
-            contentDigest: expected.contentDigest, bytes: expected.bytes,
+            contentBytes: new TextEncoder().encode(expected.canonicalContent), bytes: expected.bytes,
         });
-        expect(Reflect.ownKeys(checked.value)).toEqual(['draft', 'canonicalContent', 'contentDigest', 'bytes']);
+        expect(Reflect.ownKeys(checked.value)).toEqual(['draft', 'canonicalContent', 'contentBytes', 'bytes']);
         expect(Object.isFrozen(checked)).toBe(true);
         expect(Object.isFrozen(checked.value)).toBe(true);
         frozenData(checked.value.draft);
@@ -152,7 +152,9 @@ describe('Snapshot metadata boundary', () => {
         try {
             const first = core.committer.accept(fixture());
             if (first.status !== 'published') throw new Error('Expected publication');
-            expect(first.snapshot.contentDigest).toBe(expected.contentDigest);
+            expect(Object.getOwnPropertyDescriptor(first.snapshot, 'contentDigest')).toEqual({
+                value: expected.contentDigest, writable: false, enumerable: true, configurable: false,
+            });
             const same = core.committer.accept({ ...fixture(), producerSeq: 2, sourceEpoch: 2 });
             expect(same.status).toBe('unchanged');
             if (same.status !== 'unchanged') throw new Error('Expected unchanged');
@@ -180,8 +182,12 @@ it('retains complete metadata for a legal empty Snapshot application', () => {
     const checked = validatePreparedSnapshot(input);
     if (!checked.ok) throw new Error('Expected legal empty Snapshot');
     expect(checked.value).toEqual({ draft: input, canonicalContent: expected.emptyCanonicalContent,
-        contentDigest: expected.emptyContentDigest, bytes: expected.emptyBytes });
+        contentBytes: new TextEncoder().encode(expected.emptyCanonicalContent), bytes: expected.emptyBytes });
     frozenData(checked.value.draft);
+    const core = createSnapshotCore({ appId: input.appId, instanceId: input.instanceId });
+    try {
+        expect(core.committer.accept(input)).toMatchObject({ status: 'published', snapshot: { contentDigest: expected.emptyContentDigest } });
+    } finally { core.lifecycle.dispose(); }
 });
 
 it('enforces the complete Snapshot byte limit directly', () => {

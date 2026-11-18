@@ -2,9 +2,25 @@
  * Converts standard HTML tags to Markdown after the View-root check.
  */
 
-type ElementTraverser = (el: Element) => string;
+type ElementTraverser = (el: Element, listInline?: boolean) => string;
 
-// ============ List Helper Functions ============
+/** JSX can split a sentence across Text nodes. The node data carries its word boundaries. */
+function renderListChild(node: Node, traverse: ElementTraverser): string {
+    if (node.nodeType === 3) return (node as Text).data;
+    return node.nodeType === 1 ? traverse(node as Element, true) : '';
+}
+
+function renderListChildren(el: Element, traverse: ElementTraverser): string {
+    return Array.from(el.childNodes, child => renderListChild(child, traverse)).join('');
+}
+
+/** Keep authored separators outside Markdown delimiters. */
+function wrapInline(text: string, open: string, close: string): string {
+    const content = text.trim();
+    if (!content) return text;
+    const start = text.length - text.trimStart().length;
+    return text.slice(0, start) + open + content + close + text.slice(start + content.length);
+}
 
 /**
  * Render nested list items recursively to preserve their Markdown markup.
@@ -40,27 +56,18 @@ function transformListItem(
     const parts: string[] = [];
     let mainContent = '';
 
-    // Process children of li
     const childNodes = li.childNodes;
     for (let i = 0; i < childNodes.length; i++) {
         const node = childNodes[i];
-
-        if (node.nodeType === 3) { // Text node
-            mainContent += (node as Text).textContent?.trim() || '';
-        } else if (node.nodeType === 1) { // Element node
+        if (node.nodeType === 1) {
             const el = node as Element;
             const tagName = el.tagName.toLowerCase();
-
             if (tagName === 'ul' || tagName === 'ol') {
-                // Nested list - process with indentation using recursive traversal
-                const nestedItems = transformNestedList(el, traverse);
-                parts.push(...nestedItems);
-            } else {
-                // Use recursive traversal for all nested elements.
-                const childOutput = traverse(el);
-                mainContent += childOutput;
+                parts.push(...transformNestedList(el, traverse));
+                continue;
             }
         }
+        mainContent += renderListChild(node, traverse);
     }
 
     // Build result: main content with prefix, then nested items indented
@@ -76,6 +83,7 @@ export function transformHtml(
     el: Element,
     children: (el: Element) => string[],
     traverseElement: ElementTraverser,
+    listInline: boolean,
 ): string {
     const tagName = el.tagName.toLowerCase();
 
@@ -84,26 +92,29 @@ export function transformHtml(
 
     // Handle line breaks
     if (tagName === 'br') return '\n';
+    if (tagName === 'li') {
+        return renderListChildren(el, traverseElement).trim();
+    }
 
-    const childTexts = children(el);
+    const joinedChildren = () => children(el).join(' ');
 
     // G. Handle standard HTML elements integration from pure.ts
     if (/^h[1-6]$/.test(tagName)) {
         const level = '#'.repeat(parseInt(tagName[1]));
-        return `\n${level} ${childTexts.join(' ')}\n`;
+        return `\n${level} ${joinedChildren()}\n`;
     }
 
     if (tagName === 'p') {
-        const content = childTexts.join(' ').trim();
+        const content = joinedChildren().trim();
         return content ? `\n${content}\n` : '';
     }
 
-    if (tagName === 'strong' || tagName === 'b') {
-        return `**${childTexts.join(' ')}**`;
-    }
-
-    if (tagName === 'em' || tagName === 'i') {
-        return `*${childTexts.join(' ')}*`;
+    const strong = tagName === 'strong' || tagName === 'b';
+    if (strong || tagName === 'em' || tagName === 'i') {
+        const mark = strong ? '**' : '*';
+        return listInline
+            ? wrapInline(renderListChildren(el, traverseElement), mark, mark)
+            : mark + joinedChildren() + mark;
     }
 
     if (tagName === 'code' && el.parentElement?.tagName.toLowerCase() !== 'pre') {
@@ -131,12 +142,13 @@ export function transformHtml(
 
     if (tagName === 'a') {
         const href = el.getAttribute('href') || '';
-        const text = childTexts.join(' ').trim() || href;
-        return `[${text}](${href})`;
+        const label = listInline ? renderListChildren(el, traverseElement) : joinedChildren();
+        const text = label.trim();
+        return listInline && text ? wrapInline(label, '[', `](${href})`) : `[${text || href}](${href})`;
     }
 
     if (tagName === 'blockquote') {
-        const quoted = childTexts.join(' ').trim()
+        const quoted = joinedChildren().trim()
             .split('\n')
             .map(line => `> ${line}`)
             .join('\n');
@@ -174,11 +186,5 @@ export function transformHtml(
         return '\n' + items.join('\n') + '\n';
     }
 
-    // Handle orphan li (shouldn't happen normally)
-    if (tagName === 'li') {
-        return childTexts.join(' ');
-    }
-
-    // Default: Join children
-    return childTexts.join(' ');
+    return listInline ? renderListChildren(el, traverseElement) : joinedChildren();
 }

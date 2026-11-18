@@ -83,9 +83,11 @@ function includes(batch: RenderBatch, vnode: CommitVNode): boolean {
     return false;
 }
 
-function projectionError(issue?: SnapshotIssue): SnapshotDataError {
-    return new SnapshotDataError(issue?.code ?? 'SNAPSHOT_INVALID', issue?.path ?? '$.views',
+function projectionError(issue?: SnapshotIssue, cause?: { readonly error: unknown }): SnapshotDataError {
+    const error = new SnapshotDataError(issue?.code ?? 'SNAPSHOT_INVALID', issue?.path ?? '$.views',
         issue?.message ?? 'The render did not prepare a projection');
+    if (cause) Object.defineProperty(error, 'cause', { value: cause.error, configurable: true, writable: true });
+    return error;
 }
 
 function synchronousUpdateError(): SnapshotDataError {
@@ -185,7 +187,7 @@ function finishProjection(owner: RenderOwner, work: RenderWork, mode?: CommitMod
                 check();
                 return frame;
             }, mode === 'opening' ? { opening: true, retainViews: true } : mode === 'restore' ? { restore: true } : undefined);
-            if (result.status === 'failed') throw projectionError(result.issue);
+            if (result.status === 'failed') throw projectionError(result.issue, result.cause);
         }
     } catch (error) {
         owner.failure = { error };
@@ -384,6 +386,10 @@ async function commitUpdate(owner: RenderOwner, attempt: ProjectionAttempt, sign
     if (work) {
         if (failure) work.failure ??= failure;
         result = finishProjection(owner, work, mode);
+    } else if (mode === undefined && !failure && !owner.failure && !signal.aborted) {
+        throw new SnapshotDataError('SNAPSHOT_INVALID', '$.views',
+            'prepareProjection did not observe a Preact commit for this App. Check that the callback changes state used by this App. ' +
+            'Setting state to its current value can skip the commit.');
     } else if (mode === 'restore' && !signal.aborted) {
         const missed = createWork();
         missed.failure = failure ?? {

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件是项目的开发准则，按核心概念和模块职责组织，维护当前有效的项目目标、跨模块约束和工作方式。SDK 的应用开发合同归 SDK README，Runtime 的宿主集成合同归 Runtime README；讨论过程、批次进度和验收证据留在任务报告及 Git 历史中。
+本文件是项目的开发准则，按核心概念和模块职责组织，维护当前有效的项目目标、跨模块约束和工作方式。SDK 的当前应用开发合同归 SDK README，Runtime 的当前宿主集成合同归 Runtime README。SDK / Runtime 的 12 项设计讨论与决策统一维护于 [设计 SSOT](docs/sdk-runtime-design/README.md)；其中明确区分已确认要求、待讨论方案、暂缓及撤回意见，不把候选设计写成现行能力。其他批次进度和验收证据留在任务报告及 Git 历史中。
 
 阅读与修改代码时，区分产品要求、当前实现和待讨论方案。发现冲突应明确指出，不能用现状反向改写目标，也不能把建议写成已实现的能力。沟通要有条理、讲清因果，用具体例子深入浅出地解释。
 
@@ -23,10 +23,10 @@
 
 ### View 与 Projection
 
-- View 是进入 Agent 上下文的应用页面，使用 XML + Markdown 呈现，包装为 Messages 中的 User Message。
+- 一个 View 实例对应 GUI 网站或桌面应用中的一个页面，可展示多个业务对象，也可在自身生命周期内切换内容或当前对象；不强制一个 View 永久对应一个业务对象。View 使用 XML + Markdown 呈现，包装为 Messages 中的 User Message；页面概念详见 [议题 02](docs/sdk-runtime-design/02-view-page-semantics.md)。
 - 页面显式声明 `id`、`type`、`kind`；`kind` 区分 `instruction` 与 `state`。不从实例 ID、正文或 DOM 后代推断类型和类别。
 - 页面只有打开与未打开。成功观察必须包含同一来源中的全部已打开页面；容量不足时不接受新页打开，不能保持页面打开却在成功观察中省略它。
-- Projection 是应用当前状态的投影。Agent 操作 App，App 更新业务状态，框架再投影已提交的 View、Ref 和工具能力。Messages 不是应用数据库，不提供任意对话或记忆 CRUD。
+- Projection 是应用当前状态的投影。由 AOTUI 产出的 Messages 既表达外部事实，也是 Agent 对这些事实的记忆；Agent 只能通过应用提供的有限操作改变这部分记忆。App 更新业务状态，框架再投影已提交的 View、Ref 和工具能力；不提供对任意对话或其他来源记忆的 CRUD。事实与记忆的定义详见 [议题 01](docs/sdk-runtime-design/01-messages-facts-and-memory.md)。
 - 同一逻辑 View 在当前投影中只保留最新有效快照。用户对话、操作收据和审计历史有各自用途，不因此删除。
 - View 元数据与正文分开，由唯一呈现边界包装并正确转义。正文不自行携带框架外壳，不用正则猜测或拆除 `<view>`。
 - 应用只管理自己的投影；不能改写用户指令或其他来源的上下文。
@@ -90,7 +90,7 @@
 
 - 默认作者模型保持 Preact；普通 TypeScript 入口共享相同 Core 语义，不另造内核。改变默认作者模型或用 CLI 替换原生 Tools，须单独讨论。
 - App 与 SDK 的 Preact 适配保持同一受支持版本、同一模块实例。升级时核对实际提交顺序、hook 链、异常隔离与关闭；不以 DOM 变化或固定延迟冒充渲染提交完成。
-- 当前使用 `prepareProjection` 准备一般更新，`prepareOpeningProjection` 处理可撤回开页。它们不承诺业务事务回滚，也不代替 Host 的观察采用。
+- 当前使用 `prepareProjection` 准备一般更新，`prepareOpeningProjection` 处理可撤回开页。它们不承诺业务事务回滚，也不代替 Host 的观察采用。开页准入与恢复的具体重设计暂缓，事实与候选记录归 [议题 10](docs/sdk-runtime-design/10-opening-deferred.md)，不从其他改造顺带固定新方案。
 - 参数值域使用 JSON，作者 Schema 复用 TypeBox 和已有编译器，不另造 Schema DSL。维护声明、模型 Schema、运行时校验和类型推导的一致性。
 - 当前公共 Schema 不支持 `pattern` 关键字；声明期给出明确诊断。App 普通业务参数可以名为 `pattern`，业务格式验证仍归 App，不因同名而禁用。
 - 公共文档、类型、示例和错误提示构成同一作者合同。评价 SDK 要看 Agent 能否只靠公开入口生成正确 App、修复成本与私有 API 依赖，而非仅看代码行数。
@@ -159,9 +159,10 @@
 | 项目目标、核心概念、模块关系与研发约束 | 本文件 |
 | App 作者 | [SDK README](sdk/README.md)、[App Builder 技能](.agents/skills/aotui-app-builder/SKILL.md) |
 | Host 集成者与底层适配者 | [Runtime README](runtime/README.md) |
+| SDK / Runtime 长期设计讨论、用户决策与待定方案 | [设计 SSOT 索引](docs/sdk-runtime-design/README.md)；12 个议题各归一份文档 |
 
 - SDK、Runtime 各只保留一个简短 README，讲关键入口和无法仅由类型表达的合同；其余让代码、类型和可执行例子表达，不恢复模块内 docs 或把旧指南拼成巨大 README。
-- 项目总纲和跨模块约束以 AGENTS.md 为准；SDK README 维护应用开发合同，Runtime README 维护宿主集成合同。每个主题归一处维护，其他入口引用，不建立替代设计目录或平行规范。主目录 README 保持项目介绍的职责，不承载研发规则和设计讨论记录。
+- 项目总纲和跨模块约束以 AGENTS.md 为准；SDK README 维护当前应用开发合同，Runtime README 维护当前宿主集成合同。用户明确要求的 SDK / Runtime 设计议题唯一维护于 `docs/sdk-runtime-design/`，按索引状态区分已确认与待讨论内容；其他入口引用，不建立竞争性的平行规范。主目录 README 保持项目介绍的职责，不承载研发规则和设计讨论记录。
 - 本文件与模块 README 按核心概念与模块组织，区分当前合同和待讨论方向。不要把候选方案或本地验证扩写成已实现能力或通用保证。
 - 文档使用相对链接指向现有源码、类型和可执行例子，包消费者所需的入口必须随包可用；不依赖本机设计目录、临时证据路径或失效的历史文件。
-- 更新本文件时直接修改所属概念或模块的规则。讨论用具体例子比较收益、代价和边界；只有有效结论进入本文件或对应模块 README，时间线、验收流水和 Commit 清单不追加到开发准则或 README。
+- 更新本文件时直接修改所属概念或模块的规则。讨论用具体例子比较收益、代价和边界；SDK / Runtime 关键讨论与决定更新对应 SSOT 正文及简短决策记录，只有已确认且适用的结论进入本文件，已生效的使用合同进入对应模块 README。时间线、验收流水和 Commit 清单不追加到开发准则或模块 README。

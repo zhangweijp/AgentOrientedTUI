@@ -65,6 +65,22 @@ npx tsc --module NodeNext --target ES2022 --strict --jsx react-jsx --jsxImportSo
 
 Preact 用 `useDataRef`、`useArrayRef` 发布数据；普通 TypeScript 用 `ref`、`arrayRef` 和 `formatRef`。Tool 用 `refParam` 声明接受的业务类型和目标值 Schema，handler 收到已解析的深只读值，无须让模型抄写内部业务 ID。
 
+把 Ref hook 放在 `<View>` 渲染的内容子组件里。返回 `<View>` 的函数自身无法读取它提供的作用域。
+
+```tsx
+const FilesType = defineViewType({ name: 'Files' });
+type File = { path: string };
+
+function FilesPage({ files }: { files: readonly File[] }) {
+  return <View id="files" type={FilesType} kind="state"><FilesContent files={files} /></View>;
+}
+
+function FilesContent({ files }: { files: readonly File[] }) {
+  const [allFiles] = useArrayRef('items', files, { itemType: 'File' });
+  return <p>{allFiles('全部文件')}</p>;
+}
+```
+
 | `id="detail"` 页面内的展示 | 显式 Ref 参数中的调用地址 |
 | --- | --- |
 | `[First note](Note:notes[0])` | `detail.notes[0]` |
@@ -74,11 +90,15 @@ Preact 用 `useDataRef`、`useArrayRef` 发布数据；普通 TypeScript 用 `re
 
 业务参数使用 TypeBox 对象 Schema，无参数时可省略声明。值域为 JSON：null、布尔、有限数字、字符串、数组和普通对象；循环引用、类实例等不能作为 Ref payload。普通路径、标题和内容按原有参数输入。显式 Ref 支持顶层单值、数组多选及可选参数，整数组与元素按声明的目标值校验；没有通用嵌套 Ref 表达式或字段访问语法。
 
+工具参数说明在固定字节内提示声明的 Ref 类型和可确认的值形状。例如，指向整组文件的参数仍填一个地址，选择多个文件的参数填地址数组。
+
 TypeBox 可表达的范围大于当前支持子集。常用类型、对象属性、数组、`enum`、`const`、`anyOf` 及部分范围约束可用；不支持的关键词在声明期给出 code 和路径。当前拒绝 Schema 的 `pattern` 关键词，业务参数名仍可叫 `pattern`。`default` 是注释，不自动填值，也不自动转换输入类型。精确子集见仓库的 [TypeBox 导出](src/tools/typebox-schema.ts)与 [Runtime 参数编译器](../runtime/src/core/tool/tool-parameters.ts)。业务格式检查在副作用前由 App 完成。
 
 ## 准备完整投影
 
 默认 Preact 入口中，`useAppRuntimeContext().prepareProjection(update)` 接收同步状态更新回调，等待本次实际渲染准备完成。可撤回的开页使用 `prepareOpeningProjection(update, revert)`，两个回调都同步，保留原页面挂载，开页容量拒绝时恢复导航。这是明确的导航恢复合同，业务事务和已经发生的外部写入由 App 负责。
+
+常规准备需要该 App 产生一次真实提交。同步回调把状态设成当前值时，Preact 可能跳过提交，此时准备调用以 `SNAPSHOT_INVALID` 拒绝并给出排查提示。已记录的提交故障优先返回原诊断。准备结果和业务操作结果各自独立。
 
 普通 TypeScript 入口 `@aotui/sdk/app` 无需 Preact。用 `createApp`、`createView` 和 `defineViewType`，保留稳定页面 handle，在 `render` 返回 Markdown、`context` 和 Ref 描述。`prepareProjection({ views })` 提供全部打开页面；`prepareOpeningProjection({ views })` 准备可放弃的开页候选，成功后再确认 App 自己的导航状态。
 

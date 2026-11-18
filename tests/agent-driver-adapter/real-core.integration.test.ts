@@ -2,6 +2,7 @@ import { projectCompleteViews } from '../../runtime/src/core/invocation/observat
 import { expect, it } from 'vitest';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
 import { SemanticSnapshotReceiver } from '../../runtime/src/adapters/snapshot/receiver.js';
+import { commitAppFrame, SemanticProjectionCoordinator } from '../../runtime/src/core/projection/coordinator.js';
 import { createViewOwnedTools } from '../../runtime/src/core/tool/view-owned-tools.js';
 import { compileToolParameters } from '../../runtime/src/core/tool/tool-parameters.js';
 import type { AppDiscoveryInfo, IDesktop, IKernel } from '../../runtime/src/spi/runtime/kernel.interface.js';
@@ -47,17 +48,17 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
         resolve: () => binding,
     };
 
-    let sequence = 0;
+    const projection = new SemanticProjectionCoordinator({ identity: () => ({ appId, instanceId }) });
     const publish = (nextBody = body) => {
-        sequence++;
-        const frame = registry.prepareFrame([{ id: 'workspace', type, owner, bindings: [{ name: 'run', enabled: true, execute }] }]);
-        frame.accept();
-        const views = frame.instances.map(item => ({ toolBindings: item.toolBindings, id: item.viewId, viewInstanceId: item.viewInstanceId,
-            type: item.viewType, name: viewName, kind: 'state' as const,
-            content: { format: 'markdown-v1' as const, value: nextBody } }));
-        const tools = Object.fromEntries(frame.tools.map(tool => [tool.id, tool]));
-        const accepted = receiver.acceptPrepared({ schemaVersion: 6, appId, instanceId, producerSeq: sequence,
-            sourceEpoch: sequence, capturedAt: sequence, views, refs: {}, tools });
+        commitAppFrame(projection, registry, () => ({ views: [{
+            id: 'workspace', type, name: viewName, kind: 'state', owner,
+            content: { format: 'markdown-v1', value: nextBody }, refs: [],
+            bindings: [{ name: 'run', enabled: true, execute }],
+        }] }));
+        const publication = projection.nextPublication();
+        const accepted = 'draft' in publication
+            ? receiver.acceptPrepared(publication.draft)
+            : receiver.acceptPrepareFailure(publication.failure);
         if (accepted.status !== 'published' && accepted.status !== 'unchanged') {
             throw new Error(`The real Snapshot Receiver rejected ${appId}: ${accepted.issue.code}`);
         }
@@ -66,7 +67,7 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
 
     return {
         app: { appId: appId as AppDiscoveryInfo['appId'], appInstanceId: instanceId, name, status: 'running' as const },
-        registry, receiver, execution, invoked,
+        registry, receiver, projection, execution, invoked,
         repairViewType(next: string) {
             type = next;
             owner = {};
@@ -165,6 +166,7 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         source.dispose();
         for (const assembly of assemblies) {
             await assembly.receiver.close();
+            assembly.projection.close();
             assembly.registry.dispose();
             expect(assembly.receiver.getInteractionStats()).toMatchObject({ closed: true, combinedBytes: 0,
                 observations: { observations: 0, reservations: 0, totalBytes: 0 } });
@@ -178,6 +180,7 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         source.dispose();
         for (const assembly of assemblies) {
             await assembly.receiver.close();
+            assembly.projection.close();
             assembly.registry.dispose();
         }
     }

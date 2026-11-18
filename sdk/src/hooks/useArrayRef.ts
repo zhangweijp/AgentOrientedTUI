@@ -56,7 +56,7 @@ export function useArrayRef<Schema extends Type.TSchema>(
   data: readonly unknown[] & RefSourceValue<Schema>,
   options?: ArrayRefOptions<Schema>,
 ): ArrayRefHandle {
-  const { captureRef, registerRef } = useRefRegistry();
+  const { captureRef, registerRef } = useRefRegistry('useArrayRef', refId);
   const descriptor = arrayRef(refId, data, options);
   const itemType = descriptor.refType;
   const desired = captureRefEntries(captureRef, descriptor);

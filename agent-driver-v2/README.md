@@ -123,6 +123,8 @@ const model = createLanguageModel(config);
 
 OpenAI 的官方地址走 Responses API，明确配置的兼容地址走 Chat Completions。Anthropic、Google、DeepSeek、xAI 和 OpenRouter 各自按选定的 Provider 配置请求。通用 OpenAI-compatible 服务需要自己的 `provider.id` 和 `provider.baseURL`。
 
+`AgentDriverV2` 使用通用 Chat Completions 或内置 DeepSeek 时，带工具调用的流可以用显式 `finish_reason` 或一条完整的 SSE 事件 `data: [DONE]` 表示结束。若工具参数已经收全，连接却在两个结束信号都缺失时关闭，Driver 会通过 `onRunError` 报告本轮中断，避免分派这次调用。
+
 `apiKey` 可以直接提供，或使用对应 Provider 的环境变量。OpenAI、Anthropic、Google、DeepSeek、xAI 和 OpenRouter 分别读取 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GOOGLE_API_KEY`（也支持 `GOOGLE_GENERATIVE_AI_API_KEY`）、`DEEPSEEK_API_KEY`、`XAI_API_KEY` 和 `OPENROUTER_API_KEY`。通用 Provider 使用其大写 ID 对应的 `<ID>_API_KEY`。
 
 ### 模型路由迁移

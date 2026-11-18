@@ -3,14 +3,14 @@ import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-fact
 import { describe, expect, it } from 'vitest';
 import { h, render } from 'preact';
 import { act } from 'preact/test-utils';
-import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
+import { useContext, useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 import { createTUIApp } from './app-factory/createTUIApp.js';
 import { View } from './components/View.js';
 import { useArrayRef } from './hooks/useArrayRef.js';
 import { useDataRef } from './hooks/useRef.js';
 import { createRefCapture } from '@aotui/runtime/spi';
-import { useRefRegistry, ViewRuntimeContext, type RefRegistry } from './contexts/view-runtime-context.js';
+import { ViewRuntimeContext, type RefRegistry } from './contexts/view-runtime-context.js';
 
 import {defineViewType} from './tools/view-type-tool.js';
 const RecordType=defineViewType({name:'Record'});
@@ -34,6 +34,29 @@ const refsOf = (kernel: AppKernel) => Object.fromEntries(
 );
 
 describe('Ref registration ownership', () => {
+  it.each([
+    ['useDataRef', 'items', () => useDataRef('items', { private: 'RefPayload' })],
+    ['useArrayRef', 'unsafe\nlabel', () => useArrayRef('unsafe\nlabel', ['RefPayload'])],
+  ] as const)('explains how to move %s into its View', async (hook, id, publish) => {
+    const x = setup(function Page() {
+      publish();
+      return h(View, { id: 'files', type: RecordType, kind: 'state' });
+    });
+    try {
+      let message;
+      await expect(x.open().catch(error => {
+        message = error.message;
+        throw error;
+      })).rejects.toThrow('rendered as a child of <View>');
+      expect(message).toContain(hook);
+      if (id === 'items') expect(message).toContain('"items"');
+      else expect(message).not.toContain('unsafe');
+      expect(message).not.toMatch(/RefPayload|"files"/);
+    } finally {
+      await x.close();
+    }
+  });
+
   it('rejects a second live owner and makes update/release owner-bound and idempotent', async () => {
     const values = [{ id: 'first' }, { id: 'updated' }, { id: 'successor' }];
     let advance!: (step: number) => void;
@@ -42,7 +65,7 @@ describe('Ref registration ownership', () => {
     function Content() {
       const [step, setStep] = useState(0);
       advance = setStep;
-      const { captureRef, registerRef } = useRefRegistry();
+      const { captureRef, registerRef } = useContext(ViewRuntimeContext)!;
       const capture = captureRef(values[step]);
       useLayoutEffect(() => {
         if (step === 0) {

@@ -25,7 +25,7 @@ export function useDataRef<Schema extends Type.TSchema>(
 ): RefHandle {
   const descriptor = ref(refId, data, options);
   const { refType } = descriptor;
-  const { captureRef, registerRef } = useRefRegistry();
+  const { captureRef, registerRef } = useRefRegistry('useDataRef', refId);
   const captured = captureRefEntries(captureRef, descriptor).get(refId)!;
   const bindingRef = useRef<{
     binding: ReturnType<typeof registerRef>; refId: string; refType: string | undefined; registerRef: typeof registerRef;

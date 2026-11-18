@@ -7,7 +7,7 @@ import {
     type ToolDescriptor, type ViewSnapshot,
 } from '../snapshot/types.js';
 import { validatePreparedSnapshot } from '../snapshot/validate-snapshot.js';
-import type { AppFrameBinding } from '../tool/view-owned-tools.js';
+import type { AppFrameBinding, createViewOwnedTools } from '../tool/view-owned-tools.js';
 
 export interface AppFrameRef {
     readonly id: string;
@@ -68,6 +68,29 @@ function failureIssue(error: unknown): SnapshotIssue {
 }
 
 const closedError = () => Object.assign(new Error('Projection owner closed'), { code: 'PROJECTION_CLOSED' });
+
+/** Stage live bindings with their View and Ref identities. Only a valid complete frame can install them. */
+export function commitAppFrame(projection: SemanticProjectionCoordinator, registry: ReturnType<typeof createViewOwnedTools>,
+    build: () => AppProjectionFrame, options?: ProjectionOptions): ProjectionCommitResult {
+    return projection.commit(() => {
+        const frame = build();
+        if (!frame || Object.keys(frame).length !== 1 || !Array.isArray(frame.views))
+            throw new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Expected a complete View frame');
+        const views: AppProjectionFrame['views'] = frame.views;
+        const plan = registry.prepareFrame(views);
+        return {
+            views: views.map(({ id, type, name, kind, content }, index) => {
+                const { viewInstanceId, toolBindings } = plan.instances[index]!;
+                return { id, type, name, kind, content, viewInstanceId, toolBindings };
+            }),
+            refs: views.flatMap(({ id, refs }, index) => refs.map(ref => ({
+                ...ref, viewId: id, viewInstanceId: plan.instances[index]!.viewInstanceId,
+            }))),
+            tools: plan.tools,
+            accept: plan.accept,
+        };
+    }, options);
+}
 
 /** Validate and accept one complete frame. Core owns the published snapshot. */
 export class SemanticProjectionCoordinator {
@@ -130,7 +153,7 @@ export class SemanticProjectionCoordinator {
             if (Object.hasOwn(definitions, tool.id)) throw new Error('Duplicate Tool definition');
             definitions[tool.id] = tool;
         }
-        const checked = validatePreparedSnapshot({
+        let checked: ReturnType<typeof validatePreparedSnapshot> | undefined = validatePreparedSnapshot({
             schemaVersion: SNAPSHOT_SCHEMA_VERSION, ...this.source.identity(),
             sourceEpoch: this.epoch + 1, producerSeq: this.producerSeq + 1, capturedAt: Date.now(),
             views, refs: values, tools: definitions,
@@ -139,6 +162,8 @@ export class SemanticProjectionCoordinator {
         if (!checked.ok) return this.fail(checked.issue);
 
         const { draft, canonicalContent } = checked.value;
+        // Drop the temporary UTF-8 bytes before the capacity check measures the observation.
+        checked = undefined;
         const previous = this.prepared;
         if (options && 'restore' in options) {
             if (!previous || this.issue || previous.appId !== draft.appId || previous.instanceId !== draft.instanceId ||

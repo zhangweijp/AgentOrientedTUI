@@ -193,7 +193,7 @@ describe('M1 pure Core — schema & safe value contract', () => {
         if (!checked.ok) return;
         expect(checked.value.draft.refs[KEY].ownerViewInstanceId).toBe('mount_1');
         expect(checked.value.draft.views[0]!.toolBindings).toEqual([{ toolId: TOOL, activationId: 'task-tool-activation-1' }]);
-        expect(checked.value.contentDigest.startsWith('fnv1a64:')).toBe(true);
+        expect(checked.value.contentBytes).toEqual(new TextEncoder().encode(checked.value.canonicalContent));
         expect(Object.isFrozen(checked.value.draft.refs[KEY].target)).toBe(true);
     });
 

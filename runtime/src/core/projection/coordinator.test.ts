@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SemanticProjectionCoordinator, type CompleteProjectionFrame } from './coordinator.js';
+import { commitAppFrame, SemanticProjectionCoordinator, type AppFrameRef, type CompleteProjectionFrame } from './coordinator.js';
 import { hostedObservationCapacityIssue } from '../invocation/observation-registry.js';
 import { createSnapshotCore } from '../snapshot/store.js';
 import type { JsonValue, ViewSnapshot } from '../snapshot/types.js';
 import type { ProjectionOptions } from './coordinator.js';
+import { createViewOwnedTools } from '../tool/view-owned-tools.js';
+import { viewToolReceiver } from '../tool/source-binding.js';
 
 const aa = { viewId: 'aa', viewInstanceId: 'a1' };
 const bb = { viewId: 'bb', viewInstanceId: 'b1' };
@@ -23,6 +25,44 @@ function fixture(checkCapacity?: typeof hostedObservationCapacityIssue) {
 }
 
 describe('shared complete projection frame', () => {
+    it('installs live handlers only after their complete App frame passes validation', async () => {
+        const { c, core, publish } = fixture();
+        const registry = createViewOwnedTools('app', 'run');
+        registry.defineTools([{ viewType: 'File', name: 'read', description: 'Read the current file',
+            inputSchema: { type: 'object', properties: {}, additionalProperties: false } }]);
+        const owner = {};
+        const commit = (mount: object, file: string, refs: readonly AppFrameRef[] = []) => commitAppFrame(c, registry, () => ({
+            views: [{ id: 'editor', type: 'File', name: 'Editor', kind: 'state', content: { format: 'markdown-v1', value: 'Editor' },
+                owner: mount, refs, bindings: [{ name: 'read', enabled: true, execute: () => ({ success: true, data: { file } }) }] }],
+        }));
+        try {
+            expect(commit(owner, 'test.txt').status).toBe('prepared');
+            expect(publish().status).toBe('published');
+            const source = core.store.readLatest('app');
+            if (source.status !== 'ready') throw new Error('Expected a published editor');
+            const tool = Object.values(source.snapshot.tools)[0]!;
+            const receiver = viewToolReceiver(source.snapshot.views[0]!, tool.id)!;
+            const selected = { id: 'selected', value: 1 };
+
+            // A replacement mount is valid in the registry. Its duplicate Ref fails in the coordinator.
+            expect(commit({}, 'discarded.txt', [selected, selected])).toMatchObject({
+                status: 'failed', issue: { code: 'SNAPSHOT_INVALID', path: '$.refs' },
+            });
+            expect(publish().status).toBe('rejected');
+            expect(registry.getView('editor')?.viewInstanceId).toBe(receiver.viewInstanceId);
+            // Probe the registry directly to identify which handler it retained while the source is degraded.
+            expect(await registry.invokeTypeTool(tool, receiver, {})).toMatchObject({ result: { data: { file: 'test.txt' } } });
+
+            expect(commit(owner, 'notes.txt').status).toBe('prepared');
+            expect(publish().status).toBe('unchanged');
+            expect(await registry.invokeTypeTool(tool, receiver, {})).toMatchObject({ result: { data: { file: 'notes.txt' } } });
+        } finally {
+            c.close();
+            registry.dispose();
+            core.lifecycle.dispose();
+        }
+    });
+
     it('reports real failures and preserves their diagnostic on a reversible staged opening', () => {
         const { c, frame, core, publish } = fixture(hostedObservationCapacityIssue);
         const accept = vi.fn();

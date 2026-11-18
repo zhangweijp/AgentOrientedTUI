@@ -304,6 +304,33 @@ function finish(root: JsonValue): ToolParameterCompileResult {
   }) });
 }
 
+// The previous address-only hint used 118 JSON bytes. Stay within that budget
+// so legal declarations still fit with the same eligible receiver list.
+const REF_HINT_MAX_JSON_BYTES = 118;
+const REF_ADDRESS_HINT = 'Use view_id.ref_id (source View id + exact local name with any index).';
+
+function collectRefValueShapes(schema: JsonValue | undefined, shapes: Set<string>): boolean {
+  if (!object(schema)) return false;
+  if (typeof schema.type === 'string' && has(TYPE_RULES, schema.type)) {
+    shapes.add(schema.type);
+    return true;
+  }
+  return Array.isArray(schema.anyOf) && schema.anyOf.length > 0 &&
+    schema.anyOf.every(branch => collectRefValueShapes(branch, shapes));
+}
+
+function refParameterHint(refType: string, valueSchema: JsonValue | undefined): string {
+  const shapes = new Set<string>();
+  const shape = collectRefValueShapes(valueSchema, shapes) ? 'Value shape ' + [...shapes].join(' or ') + '. ' : '';
+  const type = refType !== 'unknown' && refType.length < REF_HINT_MAX_JSON_BYTES && !/[\p{Cc}\p{Cf}]/u.test(refType)
+    ? 'Ref type ' + JSON.stringify(refType) + '. ' : '';
+  for (const prefix of [type + shape, shape, type]) {
+    const hint = prefix + REF_ADDRESS_HINT;
+    if (utf8Size(JSON.stringify(hint)) - 2 <= REF_HINT_MAX_JSON_BYTES) return hint;
+  }
+  return REF_ADDRESS_HINT;
+}
+
 function stripInternalSchema(input: JsonValue): JsonValue {
   if (!object(input)) return input;
   const schema = Object.fromEntries(Object.entries(input).flatMap(([key, value]) => {
@@ -317,9 +344,9 @@ function stripInternalSchema(input: JsonValue): JsonValue {
     return [[key, value]];
   }));
   if (typeof input[REF_KIND] === 'string') {
-    const address = 'A visible Ref address as view_id.ref_id. Use the containing View id and the exact local Ref name, including any index.';
+    const hint = refParameterHint(input[REF_KIND], input[REF_VALUE]);
     schema.description = typeof input.description === 'string' && input.description
-      ? input.description + ' ' + address : address;
+      ? input.description + ' ' + hint : hint;
   }
   return Object.freeze(schema);
 }

@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto';
 import { APICallError, streamText, wrapLanguageModel, type Tool, type ModelMessage } from 'ai';
 import type { LLMConfig, LLMResponse, ModelInputLimits } from './interfaces.js';
 import { Logger } from '../utils/logger.js';
-import { createLanguageModel, validateModelConfig } from './provider-factory.js';
+import { createLanguageModelWithChatFetch, observeChatStreamEnd, validateModelConfig } from './provider-factory.js';
 
 export class ModelInputError extends Error {
     constructor(readonly code: 'MODEL_INPUT_BUDGET_EXCEEDED' | 'MODEL_INPUT_LIMITS_UNAVAILABLE' | 'MODEL_INPUT_UNMEASURABLE', message: string, readonly details?: Readonly<Record<string, number | string>>) {
@@ -51,8 +51,8 @@ export class LLMClient {
         this.logger = new Logger('LLMClient');
     }
 
-    private createProvider() {
-        return createLanguageModel(this.config);
+    private createProvider(chatFetch?: typeof globalThis.fetch) {
+        return createLanguageModelWithChatFetch(this.config, chatFetch);
     }
 
     /**
@@ -113,10 +113,12 @@ export class LLMClient {
                 message.content.some(part => part.type === 'file' || part.type === 'image'))) {
                 throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'This Host cannot count media inputs. Remove the attachment to continue.');
             }
-            const provider = this.createProvider();
+            const hasTools = Object.keys(effectiveTools).length > 0;
+            const streamEnd = hasTools ? observeChatStreamEnd() : undefined;
+            const provider = this.createProvider(streamEnd?.fetch);
             // A request with adopted context must keep the same tools at the provider boundary.
             const retryWithoutTools = !callbacks?.preserveTools &&
-                this.config.provider.id === 'openrouter' && Object.keys(effectiveTools).length > 0;
+                this.config.provider.id === 'openrouter' && hasTools;
             let admitted: Promise<void> | undefined;
             const model = budget || callbacks?.beforeRequest || retryWithoutTools ? wrapLanguageModel({ model: provider, middleware: {
                 specificationVersion: 'v3',
@@ -246,6 +248,10 @@ export class LLMClient {
                 args: (tc as any).args ?? (tc as any).input,
             }));
             const finishReason = await result.finishReason;
+            if (toolCalls.length > 0 && streamEnd?.missingDone() &&
+                finishReason === 'other' && (await result.rawFinishReason) === undefined) {
+                throw new Error('The model stream ended without a termination signal. Tool calls require a complete response.');
+            }
             const usage = await result.usage;
 
             const hasText = typeof text === 'string' && text.trim().length > 0;

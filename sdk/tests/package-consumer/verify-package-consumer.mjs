@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
@@ -75,12 +77,13 @@ await compile('core', { lib: ['ES2022'], types: [], outDir: './core-out' },
   ['public-core.ts', 'work-items-plain.ts']);
 
 if (!plain) {
-  await stageFixtures(sdkFixtures, ['file-app.tsx', 'file-tools.ts', 'ref-app.tsx', 'work-items-preact.tsx', 'source-host.mjs']);
+  await stageFixtures(sdkFixtures, ['file-app.tsx', 'file-tools.ts', 'ref-app.tsx', 'work-items-preact.tsx', 'source-host.mjs', 'assembly-consumer.mjs']);
+  await stageFixtures(sdkFixtures, ['ref-prompt-app.tsx', 'ref-prompt-consumer.mjs', 'scripted-provider-turn.mjs']);
   await stageFixtures(runtimeFixtures, ['managed-host.ts', 'managed-host-app.mjs']);
   await stageReadmeExample(sdkRoot, 'tsx', 'readme-app.tsx');
   await stageReadmeExample(runtimeRoot, 'js', 'readme-host.mjs');
   await compile('full', { lib: ['ES2022', 'DOM'], types: ['node'], jsx: 'react-jsx', jsxImportSource: 'preact', outDir: './full-out' },
-    ['readme-app.tsx', 'file-app.tsx', 'ref-app.tsx', 'work-items-preact.tsx', 'managed-host.ts']);
+    ['readme-app.tsx', 'file-app.tsx', 'ref-app.tsx', 'ref-prompt-app.tsx', 'work-items-preact.tsx', 'managed-host.ts']);
   const readme = await checked('readme-execution', [path.join(output, 'readme-host.mjs'), path.join(output, 'full-out/readme-app.js')]);
   assert.match(readme, /\bCount: 1\b/);
   facts.readmeCounter = true;
@@ -103,9 +106,24 @@ if (!plain) {
   assert.doesNotMatch(JSON.stringify(receipt), /Inspections:/);
   facts.sourceHost = { receipt, workspace, resourcesReleased: true };
 
+  const archive = fileURLToPath(new URL('./baselines/work-items-sdk-0.9.0.tgz', import.meta.url));
+  const archiveSHA256 = createHash('sha256').update(await fs.readFile(archive)).digest('hex');
+  assert.equal(archiveSHA256, '01e700d0db0394a247e7f97683ade6453605ea31d3cd9e0b466660f71a0c07b1');
+  const baseline = await fs.mkdtemp(path.join(output, 'work-items-baseline-'));
+  await execute('tar', ['-xzf', archive, '-C', baseline, '--strip-components', '1']);
+  const assembly = await checked('assembly-provider-execution', [
+    '--experimental-import-meta-resolve', path.join(output, 'assembly-consumer.mjs'), baseline,
+  ]);
+  facts.assembly = { archiveSHA256, ...lastJson(assembly) };
+
+  const refPrompt = await checked('ref-prompt-provider-execution', [
+    path.join(output, 'ref-prompt-consumer.mjs'), '--assert-hints', '--assert-list-words',
+  ]);
+  facts.refPrompt = lastJson(refPrompt);
+
   const commitFixture = path.join(output, 'verify-preact-commit.mjs');
   await fs.copyFile(new URL('./verify-preact-commit.mjs', import.meta.url), commitFixture);
-  const commit = lastJson(await checked('preact-commit-execution', [commitFixture]));
+  const commit = lastJson(await checked('preact-commit-execution', [commitFixture, '--assert-prepare-diagnostic']));
   const sdkPackage = JSON.parse(await fs.readFile(path.join(sdkRoot, 'package.json'), 'utf8'));
   assert.equal(commit.version, sdkPackage.peerDependencies.preact);
   facts.preactCommit = commit;

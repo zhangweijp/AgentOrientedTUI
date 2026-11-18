@@ -47,6 +47,9 @@ importers:
       ai:
         specifier: 6.0.326
         version: 6.0.326(zod@3.25.76)
+      eventsource-parser:
+        specifier: 3.1.1
+        version: 3.1.1
     devDependencies:
       '@types/node':
         specifier: ^20.0.0

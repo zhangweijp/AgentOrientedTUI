@@ -7,7 +7,7 @@ import type {
 } from '../../spi/index.js';
 import type { ViewToolInvocationTerminal } from '../../spi/worker-protocol/index.js';
 
-import { SemanticProjectionCoordinator, type AppProjectionFrame, type CompleteProjectionFrame } from '../../core/projection/coordinator.js';
+import { commitAppFrame, SemanticProjectionCoordinator } from '../../core/projection/coordinator.js';
 import { hostedObservationCapacityIssue } from '../../core/invocation/observation-registry.js';
 import type { ProjectionLimits } from '../../core/invocation/observation-types.js';
 import { createViewOwnedTools } from '../../core/tool/view-owned-tools.js';
@@ -165,25 +165,6 @@ export class AppKernel {
         if (!this.closing && !this.projectionOwner.signal.aborted) this.instance?.onLLMUsage?.(event);
     }
 
-    private prepareFrame(frame: AppProjectionFrame): CompleteProjectionFrame {
-        this.assertActive();
-        if (!frame || Object.keys(frame).length !== 1 || !Array.isArray(frame.views))
-            throw new SnapshotDataError('SNAPSHOT_INVALID', '$', 'Expected a complete View frame');
-        const views: AppProjectionFrame['views'] = frame.views;
-        const plan = this.viewOwnedTools.prepareFrame(views);
-        return {
-            views: views.map(({ id, type, name, kind, content }, index) => {
-                const { viewInstanceId, toolBindings } = plan.instances[index]!;
-                return { id, type, name, kind, content, viewInstanceId, toolBindings };
-            }),
-            refs: views.flatMap(({ id, refs }, index) => refs.map(ref => ({
-                ...ref, viewId: id, viewInstanceId: plan.instances[index]!.viewInstanceId,
-            }))),
-            tools: plan.tools,
-            accept: plan.accept,
-        };
-    }
-
     private async initializeInstance(): Promise<void> {
         const { launchConfig, projectionLimits, persistence } = this.config;
         const runtimeContext: RuntimeContext = {
@@ -198,7 +179,11 @@ export class AppKernel {
             },
             publishFrame: (build, options) => {
                 this.assertActive();
-                return this.projection.commit(() => this.prepareFrame(build()), options);
+                return commitAppFrame(this.projection, this.viewOwnedTools, () => {
+                    const frame = build();
+                    this.assertActive();
+                    return frame;
+                }, options);
             },
             ...(persistence === undefined ? {} : { persistence }),
             appLifecycle: this.appLifecycle.port,
