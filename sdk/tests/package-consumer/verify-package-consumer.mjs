@@ -78,11 +78,12 @@ await compile('core', { lib: ['ES2022'], types: [], outDir: './core-out' },
 
 if (!plain) {
   await stageFixtures(sdkFixtures, ['file-app.tsx', 'file-tools.ts', 'ref-app.tsx', 'work-items-preact.tsx', 'source-host.mjs', 'assembly-consumer.mjs']);
+  await stageFixtures(sdkFixtures, ['ref-prompt-app.tsx', 'ref-prompt-consumer.mjs']);
   await stageFixtures(runtimeFixtures, ['managed-host.ts', 'managed-host-app.mjs']);
   await stageReadmeExample(sdkRoot, 'tsx', 'readme-app.tsx');
   await stageReadmeExample(runtimeRoot, 'js', 'readme-host.mjs');
   await compile('full', { lib: ['ES2022', 'DOM'], types: ['node'], jsx: 'react-jsx', jsxImportSource: 'preact', outDir: './full-out' },
-    ['readme-app.tsx', 'file-app.tsx', 'ref-app.tsx', 'work-items-preact.tsx', 'managed-host.ts']);
+    ['readme-app.tsx', 'file-app.tsx', 'ref-app.tsx', 'ref-prompt-app.tsx', 'work-items-preact.tsx', 'managed-host.ts']);
   const readme = await checked('readme-execution', [path.join(output, 'readme-host.mjs'), path.join(output, 'full-out/readme-app.js')]);
   assert.match(readme, /\bCount: 1\b/);
   facts.readmeCounter = true;
@@ -114,6 +115,11 @@ if (!plain) {
     '--experimental-import-meta-resolve', path.join(output, 'assembly-consumer.mjs'), baseline,
   ]);
   facts.assembly = { archiveSHA256, ...lastJson(assembly) };
+
+  const refPrompt = await checked('ref-prompt-provider-execution', [
+    path.join(output, 'ref-prompt-consumer.mjs'), '--assert-hints',
+  ]);
+  facts.refPrompt = lastJson(refPrompt);
 
   const commitFixture = path.join(output, 'verify-preact-commit.mjs');
   await fs.copyFile(new URL('./verify-preact-commit.mjs', import.meta.url), commitFixture);

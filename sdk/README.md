@@ -65,6 +65,22 @@ npx tsc --module NodeNext --target ES2022 --strict --jsx react-jsx --jsxImportSo
 
 Preact 用 `useDataRef`、`useArrayRef` 发布数据；普通 TypeScript 用 `ref`、`arrayRef` 和 `formatRef`。Tool 用 `refParam` 声明接受的业务类型和目标值 Schema，handler 收到已解析的深只读值，无须让模型抄写内部业务 ID。
 
+把 Ref hook 放在 `<View>` 渲染的内容子组件里。返回 `<View>` 的函数自身无法读取它提供的作用域。
+
+```tsx
+const FilesType = defineViewType({ name: 'Files' });
+type File = { path: string };
+
+function FilesPage({ files }: { files: readonly File[] }) {
+  return <View id="files" type={FilesType} kind="state"><FilesContent files={files} /></View>;
+}
+
+function FilesContent({ files }: { files: readonly File[] }) {
+  const [allFiles] = useArrayRef('items', files, { itemType: 'File' });
+  return <p>{allFiles('全部文件')}</p>;
+}
+```
+
 | `id="detail"` 页面内的展示 | 显式 Ref 参数中的调用地址 |
 | --- | --- |
 | `[First note](Note:notes[0])` | `detail.notes[0]` |
@@ -73,6 +89,8 @@ Preact 用 `useDataRef`、`useArrayRef` 发布数据；普通 TypeScript 用 `re
 展示标记带类型和局部名称，调用地址不带 `Note:`。顶层 `view_id` 选择执行页面，Ref 前缀选择数据来源页；可以从同一 App 运行实例、同一原 Observation 的另一页取 Ref。View id 和 Ref 局部名称禁止点号 `.`，普通文件路径和业务文本不受这条地址规则限制。Runtime 保持原观察值；对象是否仍存在、归属、权限及外部冲突由 App 判断。数据为只读观察值，App 仍可通过合法操作发布新值。[Ref 格式与捕获](src/app-factory/refs.ts)负责具体命名和展示校验。
 
 业务参数使用 TypeBox 对象 Schema，无参数时可省略声明。值域为 JSON：null、布尔、有限数字、字符串、数组和普通对象；循环引用、类实例等不能作为 Ref payload。普通路径、标题和内容按原有参数输入。显式 Ref 支持顶层单值、数组多选及可选参数，整数组与元素按声明的目标值校验；没有通用嵌套 Ref 表达式或字段访问语法。
+
+工具参数说明在固定字节内提示声明的 Ref 类型和可确认的值形状。例如，指向整组文件的参数仍填一个地址，选择多个文件的参数填地址数组。
 
 TypeBox 可表达的范围大于当前支持子集。常用类型、对象属性、数组、`enum`、`const`、`anyOf` 及部分范围约束可用；不支持的关键词在声明期给出 code 和路径。当前拒绝 Schema 的 `pattern` 关键词，业务参数名仍可叫 `pattern`。`default` 是注释，不自动填值，也不自动转换输入类型。精确子集见仓库的 [TypeBox 导出](src/tools/typebox-schema.ts)与 [Runtime 参数编译器](../runtime/src/core/tool/tool-parameters.ts)。业务格式检查在副作用前由 App 完成。
 

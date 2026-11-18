@@ -1,0 +1,94 @@
+import Type from 'typebox';
+import { createTUIApp, defineViewType, refParam, useArrayRef, useDataRef, useState, View } from '@aotui/sdk';
+
+const File = Type.Object({ path: Type.String() });
+const Task = Type.Object({ name: Type.String() });
+const files = [{ path: 'dir/a.txt' }, { path: 'dir/b.txt' }];
+const refOptions = { itemType: 'File', schema: Type.Array(File) };
+const description = 'Choose the source.';
+const target = <S extends Type.TSchema>(refType: string, schema: S) =>
+  Object.assign(refParam(refType, schema), { description });
+
+const List = defineViewType({ name: 'List' });
+const Editor = defineViewType<{ enabled: boolean; record(value: string): void; reverse(): void }>()({
+  name: 'Editor',
+  tools: {
+    select_file: {
+      description, inputSchema: Type.Object({ target: target('File', File) }),
+      enabled: context => context.enabled,
+      execute({ input, context }) { context.record(input.target.path); return { success: true }; },
+    },
+    select_task: {
+      description, inputSchema: Type.Object({ target: target('Task', Task) }),
+      enabled: context => context.enabled,
+      execute({ input, context }) { context.record(input.target.name); return { success: true }; },
+    },
+    select_all: {
+      description, inputSchema: Type.Object({ target: target('File', Type.Array(File)) }),
+      enabled: context => context.enabled,
+      execute({ input, context }) { context.record(input.target.map(file => file.path).join(',')); return { success: true }; },
+    },
+    select_many: {
+      description,
+      inputSchema: Type.Object({
+        target: Type.Optional(Type.Array(target('File', File), { description })),
+        path: Type.String(),
+        text: Type.String(),
+      }),
+      enabled: context => context.enabled,
+      execute({ input, context }) {
+        context.record(JSON.stringify([input.target?.map(file => file.path) ?? null, input.path, input.text]));
+        return { success: true };
+      },
+    },
+    reverse: {
+      description: 'Reverse the file list.',
+      enabled: context => context.enabled,
+      execute({ context }) { context.reverse(); return { success: true }; },
+    },
+  },
+});
+export const viewTypes = [List, Editor];
+
+function FilesContent({ entries }: { entries: typeof files }) {
+  const [all, item] = useArrayRef('items', entries, refOptions);
+  return <p>{all('all files')} {item(0, 'label')} {item(1, 'other file')}</p>;
+}
+
+function FilesPage({ entries }: { entries: typeof files }) {
+  return <View id="files" type={List} kind="state"><FilesContent entries={entries} /></View>;
+}
+
+function BrokenFilesPage({ entries }: { entries: typeof files }) {
+  const [all, item] = useArrayRef('items', entries, refOptions);
+  return <View id="files" type={List} kind="state">
+    <p>{all('all files')} {item(0, 'label')} {item(1, 'other file')}</p>
+  </View>;
+}
+
+function TaskContent() {
+  const item = useDataRef('items', { name: 'review task' }, { refType: 'Task', schema: Task });
+  return <p>{item('review task')}</p>;
+}
+
+export function refPromptApp(Page = FilesPage) {
+  function App() {
+    const [entries, setEntries] = useState(files);
+    const [actions, setActions] = useState<string[]>([]);
+    const context = {
+      enabled: true,
+      record(value: string) { setActions(current => [...current, value]); },
+      reverse() { setEntries(current => [...current].reverse()); },
+    };
+    return <>
+      <Page entries={entries} />
+      <View id="tasks" type={List} kind="state"><TaskContent /></View>
+      <View id="editor" type={Editor} kind="state" context={context}><pre>{JSON.stringify(actions)}</pre></View>
+      <View id="read_only" type={Editor} kind="state" context={{ ...context, enabled: false }}>Read only</View>
+    </>;
+  }
+  return createTUIApp({ app_name: 'refs', component: App, viewTypes });
+}
+
+export const broken = refPromptApp(BrokenFilesPage);
+export default refPromptApp();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compileToolParameters, compileValueSchema, type CompileResult } from './tool-parameters.js';
+import { compileToolParameters, compileValueSchema, modelToolSchema, type CompileResult } from './tool-parameters.js';
 
 function contract(result: CompileResult) {
   expect(result.ok).toBe(true);
@@ -17,6 +17,31 @@ function invalid(result: CompileResult, unsupported = false) {
 }
 const schema = (properties: object, extra: object = {}) => ({ type: 'object', properties, ...extra });
 const compile = (properties: object, extra: object = {}) => contract(compileToolParameters(schema(properties, extra)));
+
+describe('Model Ref parameter descriptions', () => {
+  it.each([
+    ['File', { anyOf: [{ type: 'object' }, { type: 'array', items: { type: 'object' } }] },
+      'Ref type "File". Value shape object or array. '],
+    ['File', { anyOf: [{ type: 'object' }, {}] }, 'Ref type "File". '],
+    ['File', { anyOf: [{ type: 'object' }, { type: 'object', properties: { internal: { type: 'string' } } }] },
+      'Ref type "File". Value shape object. '],
+    ['unknown', { type: 'array', items: { type: 'string' } }, 'Value shape array. '],
+    ['unknown', { enum: [{ internal: 'secret' }, []] }, ''],
+    ['File"'.repeat(10), { type: 'object' }, 'Value shape object. '],
+    ['界😀'.repeat(20), { type: 'object' }, 'Value shape object. '],
+    ['File\nOther', { type: 'object' }, 'Value shape object. '],
+  ])('uses bounded information from %s and %j', (refType, value, prefix) => {
+    const description = 'Choose the source.\n';
+    const field = { type: 'string', minLength: 1, description, 'x-aotui-ref-kind': refType, 'x-aotui-ref-value': value };
+    const normalized = compile({ target: field }).schema;
+    const model = modelToolSchema(normalized, 'Editor');
+    expect(json(model.properties).target).toEqual({
+      type: 'string', minLength: 1,
+      description: description + ' ' + prefix + 'Use view_id.ref_id (source View id + exact local name with any index).',
+    });
+    expect(json(normalized.properties).target['x-aotui-ref-kind']).toBe(refType);
+  });
+});
 
 describe('W07-B1 ordinary parameter contract', () => {
   it('normalizes required order and preserves the supported Schema vocabulary', () => {
