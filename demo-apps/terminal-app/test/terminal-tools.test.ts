@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { captureViewBindings } from '../../../sdk/src/tools/view-type-tool.js';
+import { captureViewBindings, captureViewTypes } from '../../../sdk/src/tools/view-type-tool.js';
 import { TerminalType, type TerminalActions } from '../src/tui/TerminalTools.js';
 import { TerminalView } from '../src/tui/TerminalView.js';
 import type { TerminalSession } from '../src/types.js';
@@ -14,7 +14,7 @@ const terminal = (id: string, status: TerminalSession['status'] = 'idle'): Termi
 });
 
 function terminalTool(name: keyof typeof TerminalType.tools, terminal: TerminalSession, actions: Partial<TerminalActions> = {}) {
-    return captureViewBindings(TerminalType, terminal.id, {
+    return captureViewBindings(captureViewTypes([TerminalType]).values().next().value!, terminal.id, {
         terminal,
         onSendCommand: () => { throw Error('Unexpected send'); },
         onCloseTerminal: () => { throw Error('Unexpected close'); },

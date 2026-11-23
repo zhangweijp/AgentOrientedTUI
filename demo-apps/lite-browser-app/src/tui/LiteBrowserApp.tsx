@@ -1,4 +1,4 @@
-import { createTUIApp, View, useCallback, useState } from '@aotui/sdk';
+import { createTUIApp, useCallback, useState } from '@aotui/sdk';
 import { runWebFetch } from '../core/webfetch.js';
 import { runWebSearch } from '../core/websearch.js';
 import type { FetchFormat, PageState, SearchQuery, SearchState } from '../types.js';
@@ -80,22 +80,22 @@ function LiteBrowserRoot() {
 
     return (
         <>
-            <View kind="instruction" id="root" type={RootType} context={{ onFetch: handleFetch }} name="Root">
+            <RootType id="root" context={{ onFetch: handleFetch }} name="Root">
                 <RootView />
-            </View>
-            <View kind="state" id="search" type={SearchType} context={{ onSearch: handleSearch }} name="Search">
+            </RootType>
+            <SearchType id="search" context={{ onSearch: handleSearch }} name="Search">
                 <SearchView state={searchState} />
-            </View>
+            </SearchType>
             {hasResults ? (
-                <View kind="state" key={searchState.updatedAt} id="results" type={ResultListType}
+                <ResultListType key={searchState.updatedAt} id="results"
                     context={{ results: searchState.results, onOpenResult: handleOpenResult, onClearResults: handleClearResults }} name="Result List">
                     <ResultListView results={searchState.results} />
-                </View>
+                </ResultListType>
             ) : null}
             {hasPage ? (
-                <View kind="state" key={pageState.document?.url ?? 'error'} id="page" type={PageType} context={{ onClosePage: handleClosePage }} name="Page">
+                <PageType key={pageState.document?.url ?? 'error'} id="page" context={{ onClosePage: handleClosePage }} name="Page">
                     <PageView state={pageState} />
-                </View>
+                </PageType>
             ) : null}
         </>
     );

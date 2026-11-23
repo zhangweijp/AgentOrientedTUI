@@ -33,7 +33,7 @@ const fetchUrlInput = Type.Object({
     timeout: Type.Optional(Type.Number({ description: 'Timeout in seconds (maximum 120)' })),
 }, { additionalProperties: false });
 
-export const SearchType = defineViewType<Pick<BrowserActions, 'onSearch'>>()({ name: 'Search', tools: {
+export const SearchType = defineViewType<Pick<BrowserActions, 'onSearch'>>()({ name: 'Search', multiplicity: 'single', region: 'dynamic', tools: {
         search_web: { description: 'Run a web search. Read the results from Search and ResultList Views.',
             inputSchema: searchWebInput,
             async execute({ input: args, context: { onSearch } }) {
@@ -53,7 +53,7 @@ export const SearchType = defineViewType<Pick<BrowserActions, 'onSearch'>>()({ n
         },
 } });
 
-export const ResultListType = defineViewType<ResultListContext>()({ name: 'ResultList', tools: {
+export const ResultListType = defineViewType<ResultListContext>()({ name: 'ResultList', multiplicity: 'single', region: 'dynamic', tools: {
         open_result: { description: 'Open a URL from the current result list. Page will contain the fetched content.',
             inputSchema: openResultInput,
             async execute({ input: { url }, context: { results, onOpenResult } }) {
@@ -77,7 +77,7 @@ export const ResultListType = defineViewType<ResultListContext>()({ name: 'Resul
         },
 } });
 
-export const RootType = defineViewType<Pick<BrowserActions, 'onFetch'>>()({ name: 'Root', tools: {
+export const RootType = defineViewType<Pick<BrowserActions, 'onFetch'>>()({ name: 'Root', multiplicity: 'single', region: 'static', tools: {
         fetch_url: { description: 'Fetch a URL and show its content in Page.',
             inputSchema: fetchUrlInput,
             async execute({ input: args, context: { onFetch } }) {
@@ -95,7 +95,7 @@ export const RootType = defineViewType<Pick<BrowserActions, 'onFetch'>>()({ name
         },
 } });
 
-export const PageType = defineViewType<Pick<BrowserActions, 'onClosePage'>>()({ name: 'Page', tools: {
+export const PageType = defineViewType<Pick<BrowserActions, 'onClosePage'>>()({ name: 'Page', multiplicity: 'single', region: 'dynamic', tools: {
         close_page: { description: 'Close the current Page View and remove its tool.',
             inputSchema: emptyInput,
             async execute({ context: { onClosePage } }) {

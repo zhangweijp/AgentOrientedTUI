@@ -1,4 +1,4 @@
-import { createTUIApp, View, useCallback, useMemo, useRef, useState, useAppRuntimeContext } from '@aotui/sdk';
+import { createTUIApp, useCallback, useMemo, useRef, useState, useAppRuntimeContext } from '@aotui/sdk';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import os from 'os';
 import { RootView } from './RootView.js';
@@ -207,16 +207,16 @@ function TerminalRoot() {
 
     return (
         <>
-            <View kind="instruction" id="root" type={RootType} name="Root">
+            <RootType id="root" name="Root">
                 <RootView />
-            </View>
-            <View kind="state" id="term_console" type={TerminalConsoleType} context={{ onSendCommandNewTerminal: sendCommandNewTerminal }} name="TerminalConsole">
+            </RootType>
+            <TerminalConsoleType id="term_console" context={{ onSendCommandNewTerminal: sendCommandNewTerminal }} name="TerminalConsole">
                 <TerminalConsoleView projectPath={projectPath} terminals={terminals} />
-            </View>
+            </TerminalConsoleType>
             {terminals.map((terminal: TerminalSession) => (
-                <View kind="state" key={terminal.id} id={terminal.id} type={TerminalType} context={{ terminal, onSendCommand: sendCommand, onLoadMoreOutput: setOutputTail, onCloseTerminal: closeTerminal }} name={`Terminal ${terminal.id}`}>
+                <TerminalType key={terminal.id} context={{ terminal, onSendCommand: sendCommand, onLoadMoreOutput: setOutputTail, onCloseTerminal: closeTerminal }} name={`Terminal ${terminal.id}`}>
                     <TerminalView terminal={terminal} />
-                </View>
+                </TerminalType>
             ))}
         </>
     );

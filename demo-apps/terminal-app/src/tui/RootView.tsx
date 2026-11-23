@@ -1,5 +1,3 @@
-import { ToolCatalog } from '@aotui/sdk';
-import { terminalViewTypes } from './TerminalTools.js';
 export function RootView() {
     return <section>
         <h1>Terminal App - Application Instruction</h1>
@@ -22,6 +20,5 @@ export function RootView() {
         </ul>
         <p>Terminal tools are registered once for the Terminal View Type. Their view_id parameter selects a live Terminal listed here and shown in its View.</p>
         <p>The project path sets the initial working directory and limits the built-in cd command. Shell commands run with the Host's operating-system permissions.</p>
-    <ToolCatalog viewTypes={terminalViewTypes} />
         </section>;
 }

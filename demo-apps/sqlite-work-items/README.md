@@ -18,7 +18,7 @@ node demo-apps/sqlite-work-items/demo.mjs "$demo_db_dir/work-items.sqlite"
 sqlite3 -json "$demo_db_dir/work-items.sqlite" 'SELECT title, status, revision FROM work_items ORDER BY id;'
 ```
 
-`demo.mjs` 通过公开 `AppRegistry`、`getAppInteraction` 和观察采用来调用 `open_item`、`set_status`，然后输出 View 与收据。第一项应显示 `done` 和 `revision 1`。脚本会关闭 Runtime。上面创建的示例数据库保留在 `demo_db_dir`，供独立查询。
+`demo.mjs` 通过公开的 Desktop 登记与启动接口、`getAppInteraction` 和观察采用来调用 `open_item`、`set_status`，然后输出 View 与收据。第一项应显示 `done` 和 `revision 1`。脚本会关闭 Runtime。上面创建的示例数据库保留在 `demo_db_dir`，供独立查询。
 
 已有仓库依赖的离线环境可以复用根目录链接的 Runtime 和 SDK，并用下面的命令替代示例 App 的 `install` 和 `build`。
 
@@ -32,7 +32,7 @@ PATH="$PWD/runtime/node_modules/.bin:$PATH" pnpm --dir "$demo_app" build
 
 ## 调用与恢复
 
-- 列表中的 `[Review SDK guide](WorkItem:items[0])` 位于 `items` View。`open_item` 的 `item` 参数传 `items.items[0]`。打开后用 `detail.current` 调用 `set_status`。`close_item` 关闭详情并撤下更新 Tool。
+- 列表中的 `[Review SDK guide](items[0])` 位于 `items` View。`open_item` 的 `item` 参数传 `$sqlite_work_items.items.items[0]`。打开后用 `$sqlite_work_items.detail.current` 调用 `set_status`。`close_item` 关闭详情并撤下更新 Tool。
 - App 校验 Ref 属于当前选中项，用安全整数和状态枚举执行一次 `WHERE id = … AND revision = …` 条件更新。在同一个新 SQLite 连接中，`changes()` 统计直接改动，`total_changes()` 统计包括触发器在内的连接行改动。命令成功退出且计数有效时，直接改动一行确认写入，两个计数都为零返回 `VERSION_CONFLICT`，只有总计数非零则返回业务错误 `SQLITE_WRITE_PARTIAL`，提示刷新以核对 SQLite 中已经发生的行变更。
 - 已确认写入随后刷新失败时，收据为 `written: true, refreshed: false`。已启动的写命令无法确认结果时，App 返回业务失败，错误消息提示刷新，诊断 View 显示 `SQLITE_WRITE_UNCONFIRMED`。刷新失败、仅确认部分写入或写入未确认时，诊断 View 撤下旧正文、Ref 和更新 Tool，保留刷新入口。`refresh` 只执行 `SELECT`，用原请求读取收据只读记录。
 

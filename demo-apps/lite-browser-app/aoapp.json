@@ -3,7 +3,7 @@
   "description": "AOTUI Lite Browser App - web search and fetch views for LLM workflows",
   "whatItIs": "A lightweight TUI browser that runs web searches and fetches URL content into structured views for LLM workflows.",
   "whenToUse": "Use Lite Browser when you need to search the web for current information and fetch specific URLs into a readable format.",
-  "toolAuthoringProtocol": "view-type-tools-v6",
+  "toolAuthoringProtocol": "view-type-tools-v7",
   "appLifecycleSupport": "app-lifecycle-v2",
   "version": "0.1.0",
   "entry": {

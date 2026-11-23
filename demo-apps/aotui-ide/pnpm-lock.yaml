@@ -13,6 +13,7 @@ overrides:
   preact: 10.29.1
   brace-expansion@1: ^1.1.20
   brace-expansion@2: ^2.1.2
+  '@aotui/runtime': link:../../runtime
 
 importers:
 
@@ -37,6 +38,9 @@ importers:
         specifier: ^3.17.5
         version: 3.17.5
     devDependencies:
+      '@aotui/runtime':
+        specifier: link:../../runtime
+        version: link:../../runtime
       '@jest/globals':
         specifier: 29.7.0
         version: 29.7.0

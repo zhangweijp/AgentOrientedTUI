@@ -1,4 +1,4 @@
-import { arrayRef, createApp, createView, defineViewType, formatRef, getToolCatalog, ref, refParam,
+import { arrayRef, createApp, createView, defineViewType, formatRef, ref, refParam,
     type PublishedRef, type ToolResult } from '@aotui/sdk/app';
 import Type from 'typebox';
 import { Check } from 'typebox/value';
@@ -25,9 +25,9 @@ type WorkListContext = { available: boolean; openItem: (id: number) => Promise<T
 type WorkDetailContext = { available: boolean; id: number; setStatus: (id: number, item: ItemSelector, status: ItemStatus) => Promise<ToolResult>;
     closeItem: () => Promise<ToolResult> };
 
-export const WorkInstructionsType = defineViewType({ name: 'WorkInstructions' });
+export const WorkInstructionsType = defineViewType({ name: 'WorkInstructions', multiplicity: 'single', region: 'static' });
 
-export const WorkListType = defineViewType<WorkListContext>()({ name: 'WorkList', tools: {
+export const WorkListType = defineViewType<WorkListContext>()({ name: 'WorkList', multiplicity: 'single', region: 'dynamic', tools: {
         open_item: { description: 'Open a work item from the current list.',
             inputSchema: Type.Object({ item: refParam('WorkItem', selector) }, { additionalProperties: false }),
             enabled: ({ available }) => available,
@@ -39,7 +39,7 @@ export const WorkListType = defineViewType<WorkListContext>()({ name: 'WorkList'
         },
 } });
 
-export const WorkDetailType = defineViewType<WorkDetailContext>()({ name: 'WorkDetail', tools: {
+export const WorkDetailType = defineViewType<WorkDetailContext>()({ name: 'WorkDetail', multiplicity: 'single', region: 'dynamic', tools: {
         set_status: { description: 'Set the status of the currently selected work item.',
             inputSchema: Type.Object({ item: refParam('WorkItem', selector), status }, { additionalProperties: false }),
             enabled: ({ available }) => available,
@@ -54,9 +54,8 @@ export const WorkDetailType = defineViewType<WorkDetailContext>()({ name: 'WorkD
 export const workViewTypes = [WorkInstructionsType, WorkListType, WorkDetailType] as const;
 
 const instructions = [
-    'Use the receiving page’s XML id as view_id in each operation.',
-    ...getToolCatalog(workViewTypes).map(tool => `- ${tool.viewType}.${tool.name}`),
-    'Choose an item by its title. For `[label](WorkItem:local_ref)`, pass `view_id.local_ref` as the item argument. Use `detail.current` to update the selected item.',
+    'Each page type has one instance. Supply the business parameters shown in the native tool.',
+    'Choose an item by its title. Use the actual app_id and view_id from the XML in $app_id.view_id.items[0] to select a list item. For an update select $app_id.detail.current.',
     'After an operation, observe the current Views for work item data. Use refresh after a conflict, a partial or unknown write, or an unavailable View.',
 ].join('\n');
 
@@ -86,10 +85,10 @@ export default createApp({
         let listContent: Content = { body: 'Loading work items.' };
         let detailContent: Content = { body: 'Detail unavailable. Use refresh to read it again.' };
         const root = createView(WorkInstructionsType, {
-            id: 'root', kind: 'instruction', name: 'SQLite work items', render: () => ({ body: instructions }),
+            id: 'root', region: 'static', name: 'SQLite work items', render: () => ({ body: instructions }),
         });
         const list = createView(WorkListType, {
-            id: 'items', kind: 'state', name: 'Work items',
+            id: 'items', region: 'dynamic', name: 'Work items',
             render: () => ({ ...listContent, context: { available, openItem, refresh: refreshReceipt } }),
         });
 
@@ -135,7 +134,7 @@ SELECT changes() AS direct, total_changes() AS total;`);
 
         function createDetail(id: number) {
             return createView(WorkDetailType, {
-                id: 'detail', kind: 'state', name: 'Work item detail',
+                id: 'detail', region: 'dynamic', name: 'Work item detail',
                 render: () => ({ ...detailContent, context: { available, id, setStatus, closeItem } }),
             });
         }
@@ -177,14 +176,14 @@ CASE WHEN id = ${selectedId ?? 'NULL'} THEN body ELSE NULL END AS body FROM work
             const selected = items.find(item => item.id === selectedId);
             const missing = selectedId !== undefined && !selected;
             const listRef = arrayRef('items', items.map(({ id, revision }) => ({ id, revision })),
-                { itemType: 'WorkItem', schema: selectors });
+                { scope: 'protected', itemType: 'WorkItem', schema: selectors });
             listContent = {
                 body: items.map((item, index) => '- ' + itemLine(item, formatRef(item.title, listRef, index))).join('\n') || 'No work items.',
                 refs: [listRef],
             };
             if (selected) {
                 if (selected.body === null) return unavailable({ code: 'SQLITE_INVALID_OUTPUT', message: 'SQLite omitted the selected body.' });
-                const current = ref('current', { id: selected.id, revision: selected.revision }, { refType: 'WorkItem', schema: selector });
+                const current = ref('current', { id: selected.id, revision: selected.revision }, { scope: 'private', refType: 'WorkItem', schema: selector });
                 detailContent = {
                     body: `${itemLine(selected, formatRef(selected.title, current))}\n\n${literalBlock(selected.body)}`,
                     refs: [current],

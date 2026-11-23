@@ -66,7 +66,7 @@ function start(extra = [], nodeArgs = []) {
         const receiver = observation.views.find(view => view.type === tool.viewType);
         assert.ok(receiver, 'Expected a View for ' + name);
         const invocationId = 'local-' + sequence;
-        const request = { op: 'invoke', invocationId, observationId: observation.observationId, toolId: tool.id, input: { view_id: receiver.id, ...input } };
+        const request = { op: 'invoke', invocationId, observationId: observation.observationId, toolId: tool.id, input: { ...input, ...(tool.multiplicity === 'multiple' ? { view_id: receiver.id } : {}) } };
         const result = await send(request);
         assert.equal(result.kind, 'receipt', JSON.stringify(result));
         assert.equal(result.receipt.outcome.status, 'succeeded', JSON.stringify(result));

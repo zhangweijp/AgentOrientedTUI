@@ -32,9 +32,3 @@ export interface Plan {
     description?: string;
     phases: Phase[];
 }
-
-export interface PlanInput {
-    title: string;
-    description?: string;
-    phases?: PhaseInput[];
-}

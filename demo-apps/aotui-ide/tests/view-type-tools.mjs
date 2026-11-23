@@ -8,12 +8,12 @@ async function prepareTools(type, viewId, context) {
     app_name: 'ide_tool_fixture',
     viewTypes: [type],
     initialize({ prepareProjection }) {
-      prepareProjection({ views: [createView(type, { id: viewId, kind: 'state', render: () => ({ body: '', context }) })] });
+      prepareProjection({ views: [createView(type, { ...(type.multiplicity === 'single' ? { id: viewId } : { idPrefix: viewId }), region: 'dynamic', render: () => ({ body: '', context }) })] });
     },
   });
   await factory.initialize({
-    appLifecycle: { protocol: factory.appLifecycleSupport },
-    defineTools() {},
+    appLifecycle: { protocol: factory.appLifecycleSupport, register() {} },
+    defineViewTypes() {},
     signal: new AbortController().signal,
     publishFrame(build) {
       bindings = build().views[0].bindings;

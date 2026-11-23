@@ -1,8 +1,8 @@
 # AOTUI IDE package integration
 
-The package exports a default managed `TUIAppFactory`, created with `createTUIApp` and backed by `ScopedIDEApp`. It has one business owner per App and uses instance-bound Runtime interaction, committed snapshots and managed app state. Normal Host startup uses standard AppRegistry installation and the generic Semantic Source. [Runtime README](../../runtime/README.md)
+The package exports a default managed `TUIAppFactory`, created with `createTUIApp` and backed by `ScopedIDEApp`. It has one business owner per App and uses instance-bound Runtime interaction, committed snapshots and managed app state. Normal Host startup registers the local package on a Desktop and uses the Semantic Source. [Runtime README](../../runtime/README.md)
 
-The current authoring contract uses SDK 0.9.0 with Runtime 8.0.0. `createTUIApp` supplies `toolAuthoringProtocol: 'view-type-tools-v6'`, which Runtime checks when it loads the factory. The IDE declares Tool inputs once with TypeBox 1.4.3 and supplies per-page context. [SDK README and runnable App](../../sdk/README.md)
+The current authoring contract uses SDK 0.9.0 with Runtime 8.0.0. `createTUIApp` supplies `toolAuthoringProtocol: 'view-type-tools-v7'`, which Runtime checks when it loads the factory. The IDE declares Tool inputs once with TypeBox 1.4.3 and supplies per-page context. [SDK README and runnable App](../../sdk/README.md)
 
 ## Standard installation and explicit custom hosts
 
@@ -15,7 +15,7 @@ const runtime = createRuntime();
 const desktopId = await runtime.createDesktop(createDesktopId('dt_my-ide'));
 const appModulePath = import.meta.resolve('@agentina/aotui-ide');
 const appId = await runtime.installDynamicWorkerApp(desktopId, appModulePath, {
-    appId: 'my-ide',
+    installationId: 'my-ide',
     config: {
         projectPath: '/absolute/project',
         ideSessionKey: 'my-project',
@@ -33,7 +33,7 @@ The normal Host supplies App identity, Desktop identity, project path and manage
 
 ## All tools and business targets
 
-All page Tool calls require the receiving View's XML `view_id` in addition to the business arguments below. FileDetail operations use that page's current loaded file. Workspace operations use explicit paths when the path is part of the operation, such as opening or creating a file. The IDE checks permissions and the current file version. `?` denotes optional arguments.
+FileDetail and WorkspaceCreate calls require the receiving page's XML `view_id`. Workspace and SearchResult are single-instance ViewTypes and accept only their business arguments. FileDetail operations use that page's current loaded file. Workspace operations use explicit paths when the path is part of the operation, such as opening or creating a file. The IDE checks permissions and the current file version. `?` denotes optional arguments.
 
 | Tool | Parameters | View / business target |
 | --- | --- | --- |
@@ -146,7 +146,7 @@ node node_modules/@agentina/aotui-ide/examples/local-scoped-ide.mjs \
 
 Both project and data paths are explicit. The session defaults to a stable digest of the real project directory. The example runs with the local operator's permissions and never rebuilds the repository's shared dist. It prints the actual Runtime and IDE module URLs at startup, including normal package-manager resolution.
 
-Send JSON lines with `op`: `views`, `observe`, `adopt`, `invoke`, `release` or `exit`. `observe` prepares an observation; explicitly `adopt` its ID before invoking a Tool from it. Adoption replaces the previous calling qualification. `views` lists current pages through the read-only preview. Find the Tool in the observation and supply the receiving page in `input.view_id`.
+Send JSON lines with `op`: `views`, `observe`, `adopt`, `invoke`, `release` or `exit`. `observe` prepares an observation; explicitly `adopt` its ID before invoking a Tool from it. Adoption replaces the previous calling qualification. `views` lists current pages through the read-only preview. Find the Tool in the observation and follow its `inputSchema`. Supply the receiving page in `input.view_id` when required.
 
 An `invoke` command contains `invocationId`, `observationId`, `toolId` and `input`. If the ID is omitted the example generates one. To read the same completed receipt again, resend the same complete request with the same ID: Core checks its fingerprint and independently authorizes receipt reading without entering the handler again. There is no standalone `receipt` command. Do not turn an unknown outcome into a new write attempt. Inspect the returned receipt's succeeded/rejected/failed/unknown outcome.
 
