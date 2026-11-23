@@ -107,7 +107,7 @@ In `AgentOrientedTUI`, `Read File` can mean something different:
 At `t1`, the runtime can add the file view as a User Message.
 
 ```xml
-<view id="file_index" type="FileDetail" kind="state" name="src/index.ts" app_id="ide_demo" app_name="system_ide">
+<view view_id="file_index" view_type="FileDetail" app_id="system_ide" app_name="system_ide">
   path: src/index.ts
   language: typescript
   dirty: false
@@ -175,12 +175,14 @@ That usually means at least four primitives.
 First, the system exposes a view of the current world:
 
 ```xml
-<view id="contacts" type="ContactList" kind="state" name="Contacts" app_id="messaging" app_name="messaging">
+<view view_id="contacts" view_type="ContactList" app_id="messaging" app_name="messaging">
   ## Contacts
 
-  - [Wills Guo](Contact:contacts[0]) - online
-  - [Emma Chen](Contact:contacts[1]) - away
-  - [JY Chen](Contact:contacts[2]) - online
+  [Contact list](protected contacts: Contact[])
+
+  - [Wills Guo](contacts[0]) - online
+  - [Emma Chen](contacts[1]) - away
+  - [JY Chen](contacts[2]) - online
 </view>
 ```
 
@@ -191,12 +193,12 @@ This View presents the current contacts and their Refs. The request's `Tools` li
 The crucial step is not the label by itself, but the typed reference:
 
 ```md
-[JY Chen](Contact:contacts[2])
+[JY Chen](contacts[2])
 ```
 
 `JY Chen` is the readable label.
 
-`Contact:contacts[2]` is the display marker with the business type and local Ref name. With the containing View's `id="contacts"`, the call address is `contacts.contacts[2]`.
+The declaration on the page identifies the collection as `Contact[]`. With the App and View IDs from the surrounding XML, the call address is `$messaging.contacts.contacts[2]`.
 
 That turns "seeing a name" into "binding to a concrete object."
 
@@ -204,14 +206,13 @@ Without references, an agent may know what exists in the application while still
 
 ### 3. Tool
 
-The agent uses `messaging-open_chat` from the current `Tools` list and passes the selected contact.
+The agent uses `messaging-open_chat` from the current `Tools` list and passes the selected contact. ContactList is a single ViewType, so the tool already has one receiving page.
 
 ```json
 {
   "tool": "messaging-open_chat",
   "arguments": {
-    "view_id": "contacts",
-    "contact": "contacts.contacts[2]"
+    "contact": "$messaging.contacts.contacts[2]"
   }
 }
 ```
@@ -223,14 +224,14 @@ The runtime resolves the contact Ref from the observation bound to the call. The
 After that transition, the runtime can expose a new current view:
 
 ```xml
-<view id="chat_jy" type="ChatDetail" kind="state" name="Chat with JY Chen" app_id="messaging" app_name="messaging">
+<view view_id="chat_jy" view_type="ChatDetail" app_id="messaging" app_name="messaging">
   ## Chat with JY Chen
 
-  - [Current conversation](Chat:current_chat)
+  - [Current conversation](protected current_chat: Chat)
 </view>
 ```
 
-The `Tools` list now offers the send tool. The agent passes the ChatDetail XML ID as `view_id`.
+The `Tools` list now offers the send tool. ChatDetail can have multiple open pages, so the agent passes its XML `view_id`.
 
 ```json
 {
@@ -307,6 +308,3 @@ If agent-oriented interfaces are going to mature into infrastructure rather than
 ## Repository Guide
 
 This README focuses on the interface model itself. If you want the repository map, architecture layers, tech stack, and local development workflow, see [GUIDE.md](./GUIDE.md).
-
-
-当前 View 必须显式声明 `type` 和 `kind="instruction" | "state"`，实例 `id` 标识页面实例。App 提交原始正文，XML 文本在最终呈现时转义一次。 [SDK README](sdk/README.md)
