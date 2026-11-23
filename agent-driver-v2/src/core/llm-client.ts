@@ -10,10 +10,12 @@
  */
 
 import { createHash } from 'node:crypto';
-import { APICallError, streamText, wrapLanguageModel, type Tool, type ModelMessage } from 'ai';
-import type { LLMConfig, LLMResponse, ModelInputLimits } from './interfaces.js';
+import { OpenAICompatibleChatLanguageModel } from '@ai-sdk/openai-compatible';
+import { asSchema, streamText, wrapLanguageModel, type LanguageModelUsage, type Tool, type ModelMessage } from 'ai';
+import type { LLMConfig, LLMResponse, ModelInputLimits, ModelInputMeasurement } from './interfaces.js';
 import { Logger } from '../utils/logger.js';
 import { createLanguageModelWithChatFetch, observeChatStreamEnd, validateModelConfig } from './provider-factory.js';
+import { createProviderToolSchemaPolicy, ProviderToolSchemaError, type ProviderToolSchemaPolicy } from './provider-tool-schema.js';
 
 export class ModelInputError extends Error {
     constructor(readonly code: 'MODEL_INPUT_BUDGET_EXCEEDED' | 'MODEL_INPUT_LIMITS_UNAVAILABLE' | 'MODEL_INPUT_UNMEASURABLE', message: string, readonly details?: Readonly<Record<string, number | string>>) {
@@ -21,15 +23,71 @@ export class ModelInputError extends Error {
     }
 }
 
-function checkInputBudget(limits: ModelInputLimits, request: string, messages: number, tools: number): void {
-    const available = Math.min(limits.maxInputTokens ?? Infinity, limits.contextWindow - limits.maxOutputTokens);
-    const bytes = Buffer.byteLength(request, 'utf8');
-    const safety = Math.max(256, Math.ceil(bytes * 0.05)) + 8 * (messages + tools);
-    if (bytes + safety > available) {
-        throw new ModelInputError('MODEL_INPUT_BUDGET_EXCEEDED',
-            `Estimated model input requires ${bytes + safety} tokens (including margin); ${available} are available. Open fewer Views, reduce history, or select a larger model.`,
-            { method: 'utf8-bytes', inputBytes: bytes, safety, inputLimit: available, outputReserved: limits.maxOutputTokens });
+type StreamParams = Parameters<ReturnType<typeof createLanguageModelWithChatFetch>['doStream']>[0];
+
+function verifyMeasurable(params: StreamParams, limits: ModelInputLimits): void {
+    if (params.tools?.some(tool => tool.type !== 'function') || params.maxOutputTokens !== limits.maxOutputTokens) {
+        throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'The model request uses unsupported tools or output settings.');
     }
+    if (params.prompt.some(message => typeof message.content !== 'string' &&
+        message.content.some(part => part.type === 'file' || (part.type === 'tool-result' &&
+            part.output.type === 'content' && part.output.value.some(item => item.type !== 'text'))))) {
+        throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'This Host cannot count media inputs, including media in tool history.');
+    }
+}
+
+async function encodedInput(input: Parameters<typeof fetch>[0], options?: RequestInit): Promise<string> {
+    const body = options?.body ?? (input instanceof Request ? await input.clone().text() : undefined);
+    if (typeof body !== 'string') throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'The Provider did not encode a measurable JSON request.');
+    return body;
+}
+
+function measureInput(limits: ModelInputLimits, request: string, params: StreamParams): ModelInputMeasurement {
+    const inputBytes = Buffer.byteLength(request, 'utf8');
+    let encoded: Record<string, unknown>;
+    try { encoded = JSON.parse(request); }
+    catch { throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'The Provider did not send JSON model input.'); }
+    if (!encoded || typeof encoded !== 'object' || Array.isArray(encoded))
+        throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'The Provider did not send a JSON model request.');
+    const messages = encoded.messages ?? encoded.input ?? encoded.contents;
+    const messageCount = Array.isArray(messages) ? messages.length : params.prompt.length;
+    const toolCount = Array.isArray(encoded.tools) ? encoded.tools.length : params.tools?.length ?? 0;
+    const safety = Math.max(256, Math.ceil(inputBytes * 0.05)) + 8 * (messageCount + toolCount);
+    return { method: 'utf8-bytes', inputBytes, safety, estimated: inputBytes + safety,
+        inputLimit: Math.min(limits.maxInputTokens ?? Infinity, limits.contextWindow - limits.maxOutputTokens),
+        outputReserved: limits.maxOutputTokens };
+}
+
+export function inputBudgetExceeded(cost: ModelInputMeasurement): ModelInputError {
+    return new ModelInputError('MODEL_INPUT_BUDGET_EXCEEDED',
+        `Estimated model input requires ${cost.estimated} tokens including margin and ${cost.inputLimit} are available. Reduce window or history costs, or select a larger model.`,
+        { ...cost });
+}
+
+type RawUsage = NonNullable<LanguageModelUsage['raw']>;
+type UsageFrameFormat = 'chat' | 'responses' | 'generate-content';
+
+function decodedObject(value: unknown): RawUsage | undefined {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as RawUsage;
+}
+
+function readUsageFrame(frame: unknown, format: UsageFrameFormat): RawUsage | undefined {
+    const value = decodedObject(frame);
+    if (!value) return;
+    if (format === 'chat') return decodedObject(value.usage);
+    if (format === 'generate-content') return decodedObject(value.usageMetadata);
+    if (value.type === 'response.completed' || value.type === 'response.incomplete') {
+        return decodedObject(decodedObject(value.response)?.usage);
+    }
+}
+
+function reportedUsage(usage: LanguageModelUsage, streamRaw?: RawUsage): LanguageModelUsage | undefined {
+    const { raw, ...counts } = usage;
+    const reportedRaw = streamRaw ?? raw;
+    if (reportedRaw) return { ...counts, raw: reportedRaw };
+    const { inputTokens, outputTokens, totalTokens, inputTokenDetails, outputTokenDetails } = counts;
+    if ([inputTokens, outputTokens, totalTokens, ...Object.values(inputTokenDetails), ...Object.values(outputTokenDetails)]
+        .some(count => typeof count === 'number')) return counts;
 }
 
 /**
@@ -44,6 +102,7 @@ function checkInputBudget(limits: ModelInputLimits, request: string, messages: n
 export class LLMClient {
     private logger: Logger;
     private readonly config: LLMConfig;
+    private providerToolPolicy?: Promise<ProviderToolSchemaPolicy>;
 
     constructor(config: LLMConfig) {
         validateModelConfig(config);
@@ -51,8 +110,72 @@ export class LLMClient {
         this.logger = new Logger('LLMClient');
     }
 
-    private createProvider(chatFetch?: typeof globalThis.fetch) {
-        return createLanguageModelWithChatFetch(this.config, chatFetch);
+    private createProvider(chatFetch?: typeof globalThis.fetch, httpFetch?: typeof globalThis.fetch) {
+        return createLanguageModelWithChatFetch(this.config, chatFetch, httpFetch);
+    }
+
+    toolSchemaPolicy(): Promise<ProviderToolSchemaPolicy> {
+        return this.providerToolPolicy ??= createProviderToolSchemaPolicy(this.config);
+    }
+
+    private async prepareInput(messages: ModelMessage[], tools: Record<string, Tool>, budget: ModelInputLimits | undefined, preserveTools: boolean) {
+        const capabilities = budget?.capabilities ?? this.config.modelCapabilities;
+        messages = this.applyInputCapabilityGuard(messages, capabilities);
+        if (budget && messages.some(message => Array.isArray(message.content) &&
+            message.content.some(part => part.type === 'file' || part.type === 'image'))) {
+            throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'This Host cannot count media inputs. Remove the attachment to continue.');
+        }
+        if (capabilities?.toolCall === false && Object.keys(tools).length > 0) {
+            if (preserveTools) throw new ProviderToolSchemaError((await this.toolSchemaPolicy()).label,
+                'required tools', '$', 'The selected model does not support the tools required by this context.');
+            return { messages, tools: {} };
+        }
+        const policy = await this.toolSchemaPolicy();
+        const definitions: [string, Tool][] = [];
+        for (const [name, { execute: _execute, ...definition }] of Object.entries(tools)) {
+            if (definition.type === 'provider') {
+                definitions.push([name, definition]);
+                continue;
+            }
+            const issue = policy.check ? policy.check(await asSchema(definition.inputSchema).jsonSchema) : undefined;
+            if (issue) throw new ProviderToolSchemaError(policy.label, name, issue.path, issue.reason);
+            definitions.push([name, { ...definition, ...(policy.strict === undefined ? {} : { strict: policy.strict }) }]);
+        }
+        return { messages, tools: Object.fromEntries(definitions) };
+    }
+
+    /** Run the real Provider encoder with a local fetch that cannot send. */
+    async createInputMeasurement() {
+        const budget = await this.inputLimits();
+        if (!budget) return;
+        return async (messages: ModelMessage[], tools: Record<string, Tool>, preserveTools: boolean): Promise<ModelInputMeasurement> => {
+            const input = await this.prepareInput(messages, tools, budget, preserveTools);
+            let params: StreamParams | undefined;
+            let measurement: ModelInputMeasurement | undefined;
+            let failure: unknown;
+            const capture: typeof fetch = async (url, init) => {
+                try {
+                    if (!params) throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'No Provider input to count.');
+                    measurement = measureInput(budget, await encodedInput(url, init), params);
+                } catch (error) { failure = error; }
+                throw new Error('Local model input measurement completed');
+            };
+            const model = wrapLanguageModel({ model: this.createProvider(capture, capture), middleware: {
+                specificationVersion: 'v3',
+                wrapStream: ({ params: value, doStream }) => {
+                    verifyMeasurable(value, budget);
+                    params = value;
+                    return doStream();
+                },
+            } });
+            const trial = streamText({ model, ...input, maxOutputTokens: budget.maxOutputTokens,
+                temperature: this.config.temperature ?? 0.7, maxRetries: 0, onError: () => {} });
+            try {
+                for await (const part of trial.fullStream) if (part.type === 'error') throw part.error;
+            } catch (error) { if (!measurement) throw failure ?? error; }
+            if (!measurement) throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'The Provider did not supply the encoded input.');
+            return measurement;
+        };
     }
 
     /**
@@ -77,24 +200,9 @@ export class LLMClient {
         let requestFailure: unknown;
         try {
             const budget = await this.inputLimits();
-            const capabilities = budget?.capabilities ?? this.config.modelCapabilities;
-            messages = this.applyInputCapabilityGuard(messages, capabilities);
-            const shouldDisableTools =
-                capabilities?.toolCall === false &&
-                Object.keys(tools).length > 0;
-            // Driver owns Source execution; the model SDK only receives the definition.
-            const effectiveTools = shouldDisableTools ? {} : Object.fromEntries(
-                Object.entries(tools).map(([name, { execute: _execute, ...definition }]) => [name, definition])
-            );
-
-            if (shouldDisableTools) {
-                if (callbacks?.preserveTools) throw new Error('The selected model does not support tools required by the current context.');
-                this.logger.warn('Tool calls disabled by model capability metadata', {
-                    model: this.config.model,
-                    providerId: this.config.provider.id,
-                    reason: 'models.dev.tool_call=false',
-                });
-            }
+            const input = await this.prepareInput(messages, tools, budget, !!callbacks?.preserveTools);
+            messages = input.messages;
+            const effectiveTools = input.tools;
 
             this.logger.info('Calling LLM', {
                 model: this.config.model,
@@ -109,64 +217,63 @@ export class LLMClient {
             console.log('Tools:', Object.keys(effectiveTools));
             console.log('====================\n');
             
-            if (budget && messages.some(message => Array.isArray(message.content) &&
-                message.content.some(part => part.type === 'file' || part.type === 'image'))) {
-                throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'This Host cannot count media inputs. Remove the attachment to continue.');
-            }
             const hasTools = Object.keys(effectiveTools).length > 0;
             const streamEnd = hasTools ? observeChatStreamEnd() : undefined;
-            const provider = this.createProvider(streamEnd?.fetch);
-            // A request with adopted context must keep the same tools at the provider boundary.
-            const retryWithoutTools = !callbacks?.preserveTools &&
-                this.config.provider.id === 'openrouter' && hasTools;
             let admitted: Promise<void> | undefined;
-            const model = budget || callbacks?.beforeRequest || retryWithoutTools ? wrapLanguageModel({ model: provider, middleware: {
+            let paramsForFetch: StreamParams | undefined;
+            const admit = (input: string, output: number | undefined) => {
+                if (!callbacks?.beforeRequest) return;
+                const signature = createHash('sha256')
+                    .update(JSON.stringify([this.config.provider.id, this.config.model])).update(input)
+                    .update(String(output)).digest('hex');
+                return admitted ??= Promise.resolve().then(() => callbacks.beforeRequest!(signature));
+            };
+            const guard = (send: typeof fetch): typeof fetch => async (url, init) => {
+                try {
+                    if (!budget || !paramsForFetch) throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'No Provider input to count.');
+                    const body = await encodedInput(url, init);
+                    const cost = measureInput(budget, body, paramsForFetch);
+                    if (cost.estimated > cost.inputLimit) throw inputBudgetExceeded(cost);
+                    await admit(body, paramsForFetch.maxOutputTokens);
+                } catch (error) { requestFailure = error; throw error; }
+                return send(url, init);
+            };
+            const provider = this.createProvider(budget ? guard(streamEnd?.fetch ?? globalThis.fetch) : streamEnd?.fetch,
+                budget ? guard(globalThis.fetch) : undefined);
+            const model = budget || callbacks?.beforeRequest ? wrapLanguageModel({ model: provider, middleware: {
                 specificationVersion: 'v3',
                 wrapStream: async ({ params, doStream }) => {
                     try {
                         if (budget) {
-                            if (params.tools?.some(tool => tool.type !== 'function') || params.maxOutputTokens !== budget.maxOutputTokens) {
-                                throw new ModelInputError('MODEL_INPUT_UNMEASURABLE', 'The model request uses unsupported tools or output settings.');
-                            }
-                            const hasMedia = params.prompt.some(message => typeof message.content !== 'string' &&
-                                message.content.some(part => part.type === 'file' || (part.type === 'tool-result' &&
-                                    part.output.type === 'content' && part.output.value.some(item => item.type !== 'text'))));
-                            if (hasMedia) throw new ModelInputError('MODEL_INPUT_UNMEASURABLE',
-                                'This Host cannot count media inputs, including media in tool history.');
-                        }
-                        const input = JSON.stringify({ messages: params.prompt, tools: params.tools ?? [], toolChoice: params.toolChoice });
-                        if (budget) checkInputBudget(budget, input, params.prompt.length, params.tools?.length ?? 0);
-                        if (callbacks?.beforeRequest) {
-                            const signature = createHash('sha256')
-                                .update(JSON.stringify([this.config.provider.id, this.config.model])).update(input)
-                                .update(String(params.maxOutputTokens)).digest('hex');
-                            admitted ??= Promise.resolve().then(() => callbacks.beforeRequest!(signature));
-                            await admitted;
-                        }
+                            verifyMeasurable(params, budget);
+                            paramsForFetch = params;
+                        } else if (callbacks?.beforeRequest) await admit(
+                            JSON.stringify({ messages: params.prompt, tools: params.tools ?? [], toolChoice: params.toolChoice }), params.maxOutputTokens);
                     } catch (error) {
                         requestFailure = error;
                         throw error;
                     }
-                    try {
-                        return await doStream();
-                    } catch (error) {
-                        if (!retryWithoutTools || !params.tools?.length || !this.isToolCompatibilityError(error)) {
-                            throw error;
-                        }
-                        this.logger.warn('OpenRouter tool-call compatibility issue detected, retrying without tools', {
-                            model: this.config.model,
-                        });
-                        return provider.doStream({ ...params, tools: undefined, toolChoice: undefined });
-                    }
+                    return doStream();
                 },
             } }) : provider;
 
+            let streamRaw: RawUsage | undefined;
+            // Select the actual adapter: OpenAI with a compatible URL uses Chat, while xAI uses Responses.
+            const usageFormat: UsageFrameFormat | undefined = provider instanceof OpenAICompatibleChatLanguageModel ? 'chat'
+                : provider.provider === 'openai.responses' ? 'responses'
+                : provider.provider === 'google.generative-ai' ? 'generate-content'
+                : undefined;
             const result = streamText({
                 model,
                 messages,
                 tools: effectiveTools,
                 maxOutputTokens: budget?.maxOutputTokens,
                 temperature: this.config.temperature ?? 0.7,
+                includeRawChunks: usageFormat !== undefined,
+                onError: ({ error }) => { requestFailure ??= error; },
+                onChunk: usageFormat ? ({ chunk }) => {
+                    if (chunk.type === 'raw') streamRaw = readUsageFrame(chunk.rawValue, usageFormat) ?? streamRaw;
+                } : undefined,
             });
 
             let text: string;
@@ -252,7 +359,7 @@ export class LLMClient {
                 finishReason === 'other' && (await result.rawFinishReason) === undefined) {
                 throw new Error('The model stream ended without a termination signal. Tool calls require a complete response.');
             }
-            const usage = await result.usage;
+            const usage = reportedUsage(await result.usage, streamRaw);
 
             const hasText = typeof text === 'string' && text.trim().length > 0;
             const hasToolCalls = toolCalls.length > 0;
@@ -297,14 +404,7 @@ export class LLMClient {
                 text,
                 toolCalls,
                 finishReason: finishReason || 'unknown',
-                usage: usage
-                    ? {
-                        // AI SDK v6 usage 字段
-                        promptTokens: (usage as any).promptTokens ?? 0,
-                        completionTokens: (usage as any).completionTokens ?? 0,
-                        totalTokens: (usage as any).totalTokens ?? 0,
-                    }
-                    : undefined,
+                ...(usage && { usage }),
                 assistantMessage,
             };
 
@@ -312,7 +412,7 @@ export class LLMClient {
                 textLength: text.length,
                 toolCallCount: toolCalls.length,
                 finishReason: response.finishReason,
-                usage: response.usage,
+                usage: usage && { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens },
             });
             
             // 🔍 打印 LLM 响应
@@ -447,14 +547,4 @@ export class LLMClient {
         });
     }
 
-    private isToolCompatibilityError(error: unknown): boolean {
-        if (!APICallError.isInstance(error)) return false;
-        const message = error.message.trim();
-        if (error.statusCode === 404) {
-            return /^No endpoints found that support tool use\b/i.test(message);
-        }
-        if (error.statusCode !== 400) return false;
-        return /\b(?:does not|doesn't) support (?:tools|tool use|(?:tool|function) calling)(?=$|[.!](?:\s|$))/i.test(message)
-            || /\b(?:tool|function) calling is not supported(?: for this model)?(?=$|[.!](?:\s|$))/i.test(message);
-    }
 }

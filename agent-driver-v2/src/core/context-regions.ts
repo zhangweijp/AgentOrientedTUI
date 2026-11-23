@@ -1,16 +1,11 @@
 import type { ModelMessage } from 'ai';
 import type { ContextRegion, MessageWithTimestamp } from './interfaces.js';
 
-type TimedModelMessage = ModelMessage & {
-  timestamp: number;
-  region?: ContextRegion;
-};
-
 function normalizeRegion(region?: ContextRegion): ContextRegion {
   return region ?? 'session';
 }
 
-function stripTiming(message: TimedModelMessage): ModelMessage {
+function stripTiming(message: MessageWithTimestamp): ModelMessage {
   const { timestamp: _timestamp, region: _region, ...modelMessage } = message;
   return modelMessage as ModelMessage;
 }
@@ -131,17 +126,17 @@ export function assembleContextRegions(messages: MessageWithTimestamp[]): ModelM
   const staticMessages = messages
     .filter((message) => normalizeRegion(message.region) === 'static')
     .sort((a, b) => a.timestamp - b.timestamp)
-    .map((message) => stripTiming(message as TimedModelMessage));
+    .map(stripTiming);
 
   const sessionMessages = messages
     .filter((message) => normalizeRegion(message.region) === 'session')
     .sort((a, b) => a.timestamp - b.timestamp)
-    .map((message) => stripTiming(message as TimedModelMessage));
+    .map(stripTiming);
 
   const dynamicMessages = messages
     .filter((message) => normalizeRegion(message.region) === 'dynamic')
     .sort((a, b) => a.timestamp - b.timestamp)
-    .map((message) => stripTiming(message as TimedModelMessage));
+    .map(stripTiming);
 
   const { sessionMessages: compactedSessionMessages, activeTailMessages } = splitActiveTail(sessionMessages);
 

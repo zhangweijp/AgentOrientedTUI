@@ -24,7 +24,7 @@ describe('context-regions', () => {
       },
       {
         role: 'tool',
-        content: [{ type: 'tool-result', toolCallId: 'tc_1', toolName: 'tool_tail', result: { ok: true } }] as any,
+        content: [{ type: 'tool-result', toolCallId: 'tc_1', toolName: 'tool_tail', output: { type: 'json', value: { ok: true } } }] as any,
         timestamp: 121,
         region: 'session',
       },
@@ -48,7 +48,7 @@ describe('context-regions', () => {
       },
       {
         role: 'tool',
-        content: [{ type: 'tool-result', toolCallId: 'tc_2', toolName: 'search_files', result: { ok: true } }] as any,
+        content: [{ type: 'tool-result', toolCallId: 'tc_2', toolName: 'search_files', output: { type: 'json', value: { ok: true } } }] as any,
       },
     ] as any);
 

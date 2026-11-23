@@ -31,7 +31,11 @@ async function runTurn(driver: AgentDriverV2): Promise<void> {
 
 function response(toolCalls: LLMResponse['toolCalls'] = []): LLMResponse {
     return { text: toolCalls.length ? '' : 'ok', toolCalls, finishReason: toolCalls.length ? 'tool-calls' : 'stop',
-        usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3 },
+        usage: {
+            inputTokens: 2, outputTokens: 1, totalTokens: 3,
+            inputTokenDetails: { noCacheTokens: 2, cacheReadTokens: undefined, cacheWriteTokens: undefined },
+            outputTokenDetails: { textTokens: 1, reasoningTokens: undefined },
+        },
         assistantMessage: { role: 'assistant', content: toolCalls.length
             ? toolCalls.map(call => ({ type: 'tool-call' as const, toolCallId: call.toolCallId, toolName: call.toolName, input: call.args }))
             : 'ok' },
@@ -86,6 +90,26 @@ class MockDrivenSource implements ContextDrivenSource {
         this.updateCallback?.();
     }
 }
+
+it.each(['subscribe', 'start'] as const)('releases all acquired subscriptions when Driver %s fails', phase => {
+    const startupError = new Error('startup failed');
+    const cleanupError = new Error('unsubscribe failed');
+    const first = new MockDrivenSource('first');
+    const second = new MockDrivenSource('second');
+    const third = new MockDrivenSource('third');
+    const releaseFirst = vi.fn(() => { throw cleanupError; });
+    const releaseSecond = vi.fn();
+    vi.spyOn(first, 'onUpdate').mockReturnValue(releaseFirst);
+    vi.spyOn(second, 'onUpdate').mockReturnValue(releaseSecond);
+    if (phase === 'subscribe') vi.spyOn(third, 'onUpdate').mockImplementation(() => { throw startupError; });
+    else vi.spyOn(AgentDriverV2.prototype, 'start').mockImplementationOnce(() => { throw startupError; });
+
+    expect(() => new AgentDriverV2({ sources: [first, second, third], llm: {
+        provider: { id: 'openai' }, model: 'gpt-4', apiKey: 'test-only',
+    } })).toThrow(expect.objectContaining({ cause: startupError, errors: [startupError, cleanupError] }));
+    expect(releaseFirst).toHaveBeenCalledOnce();
+    expect(releaseSecond).toHaveBeenCalledOnce();
+});
 
 describe('AgentDriverV2', () => {
     let driver: AgentDriverV2;
@@ -302,16 +326,17 @@ describe('AgentDriverV2', () => {
         expect(results[0].output.value).toEqual({ success: true, data: { foo: 'bar' } });
         expect(results[1].toolName).toBe('tool2');
         expect(results[1].output.value).toEqual({ success: true, data: { baz: 'qux' } });
-        expect(first).toHaveBeenCalledExactlyOnceWith('tool1', { foo: 'bar' }, '1');
-        expect(second).toHaveBeenCalledExactlyOnceWith('tool2', { baz: 'qux' }, '2');
+        expect(first).toHaveBeenCalledExactlyOnceWith('tool1', { foo: 'bar' }, '1', undefined, expect.any(AbortSignal));
+        expect(second).toHaveBeenCalledExactlyOnceWith('tool2', { baz: 'qux' }, '2', undefined, expect.any(AbortSignal));
         expect(first.mock.contexts[0]).toBe(await captureFirst.mock.results[0].value);
         expect(second.mock.contexts[0]).toBe(await captureSecond.mock.results[0].value);
-        expect(driver.getToolSource('tool1')).toBe(source1);
-        expect(driver.getToolSource('tool2')).toBe(source2);
+        const executed = onToolResult.mock.calls[0][1];
+        expect(executed[0]).toBe(await first.mock.results[0].value);
+        expect(executed[1]).toBe(await second.mock.results[0].value);
         expect(onToolResult).toHaveBeenCalledExactlyOnceWith({ role: 'tool', content: [
             { type: 'tool-result', toolCallId: '1', toolName: 'tool1', output: { type: 'json', value: { success: true, data: { foo: 'bar' } } } },
             { type: 'tool-result', toolCallId: '2', toolName: 'tool2', output: { type: 'json', value: { success: true, data: { baz: 'qux' } } } },
-        ] });
+        ] }, expect.any(Array));
     });
 
     it('应该处理工具未找到的情况', async () => {
@@ -326,7 +351,7 @@ describe('AgentDriverV2', () => {
             { type: 'tool-result', toolCallId: '1', toolName: 'nonExistentTool', output: { type: 'error-json', value: {
                 code: 'E_TOOL_NOT_FOUND', message: 'No DrivenSource can execute tool: nonExistentTool',
             } } },
-        ] });
+        ] }, expect.any(Array));
     });
 
     it.skip('应该监听更新信号', async () => {
@@ -380,13 +405,12 @@ describe('AgentDriverV2', () => {
             name, getContext: vi.fn(async () => context), onUpdate: () => () => {},
         });
 
-        it('captures each context once in source order, ignores legacy methods and retains original tool/Schema references', async () => {
+        it('captures each context once in source order and retains original tool and Schema references', async () => {
             let released = false;
             const context: DrivenSourceContext = { messages, tools: { atomic: tool },
                 release: vi.fn(async () => { await Promise.resolve(); released = true; }) };
             const atomic = {
                 name: 'atomic', getContext: vi.fn(async () => context),
-                getMessages: vi.fn(async () => { throw new Error('legacy messages must not run'); }), getTools: vi.fn(async () => { throw new Error('legacy tools must not run'); }),
                 executeTool: vi.fn(), onUpdate: () => () => {},
             };
             const split = new MockDrivenSource('split', [{ role: 'user', content: 'split', timestamp: 2 }], { split: tool });
@@ -396,8 +420,6 @@ describe('AgentDriverV2', () => {
             await runTurn(localDriver);
 
             expect(atomic.getContext).toHaveBeenCalledTimes(1);
-            expect(atomic.getMessages).not.toHaveBeenCalled();
-            expect(atomic.getTools).not.toHaveBeenCalled();
             expect(readContext).toHaveBeenCalledTimes(1);
             expect(atomic.getContext.mock.invocationCallOrder[0]).toBeLessThan(readContext.mock.invocationCallOrder[0]);
             expect(model).toHaveBeenCalledTimes(1);
@@ -405,9 +427,6 @@ describe('AgentDriverV2', () => {
             expect(model.mock.calls[0][1].atomic).toBe(tool);
             expect(model.mock.calls[0][1].split).toBe(tool);
             expect(model.mock.calls[0][1].atomic.inputSchema).toBe(schema);
-            expect(localDriver.getToolSource('atomic')).toBe(atomic);
-            expect(localDriver.getToolSource('split')).toBe(split);
-            expect(readContext).toHaveBeenCalledTimes(1); // Public lookup does not recapture.
             expect(context.release).toHaveBeenCalledTimes(1);
             expect(released).toBe(true);
         });
@@ -423,18 +442,15 @@ describe('AgentDriverV2', () => {
             expect(model).toHaveBeenCalledTimes(1);
             expect(model.mock.calls[0][0]).toEqual([{ role: 'user', content: 'controlled turn' }]);
             expect(model.mock.calls[0][1]).toEqual({ healthy: tool });
-            expect(localDriver.getToolSource('bad')).toBeUndefined();
-            expect(localDriver.getToolSource('healthy')).toBe(healthy);
             expect(release).toHaveBeenCalledTimes(1);
             expect(onRunError).not.toHaveBeenCalled();
         });
 
-        it('does not fall back to split reads after atomic capture fails, and releases previous captures', async () => {
+        it('releases previous captures when a source fails', async () => {
             const release = vi.fn(), failure = new Error('atomic failed');
             const earlier = contextSource('earlier', { messages, tools: {}, release });
             const failed = {
                 name: 'failed', getContext: vi.fn().mockRejectedValue(failure),
-                getMessages: vi.fn(async () => messages), getTools: vi.fn(async () => ({ ignored: tool })),
                 executeTool: vi.fn(), onUpdate: () => () => {},
             };
             const later = contextSource('later', { messages, tools: {} });
@@ -444,15 +460,13 @@ describe('AgentDriverV2', () => {
             await runTurn(localDriver);
 
             expect(failed.getContext).toHaveBeenCalledTimes(1);
-            expect(failed.getMessages).not.toHaveBeenCalled();
-            expect(failed.getTools).not.toHaveBeenCalled();
             expect(later.getContext).not.toHaveBeenCalled();
             expect(model).not.toHaveBeenCalled();
             expect(onRunError).toHaveBeenCalledExactlyOnceWith(failure);
             expect(release).toHaveBeenCalledTimes(1);
         });
 
-        it('keeps the captured winner, sends a changed tool definition and preserves routes on capture failure', async () => {
+        it('keeps the captured winner and sends a changed tool definition after capture', async () => {
             const firstExecute = vi.fn(async (toolName: string, args: unknown, toolCallId: string) => ({ toolName, toolCallId, result: { first: args } }));
             const secondExecute = vi.fn(async (toolName: string, args: unknown, toolCallId: string) => ({ toolName, toolCallId, result: { second: args } }));
             const firstContext: DrivenSourceContext = { messages, tools: { shared: tool }, executeTool: firstExecute, release: vi.fn() };
@@ -464,7 +478,6 @@ describe('AgentDriverV2', () => {
             model.mockImplementationOnce(async (_messages, tools, callbacks) => {
                 await callbacks?.beforeRequest?.('winner definition');
                 expect(tools.shared).toBe(winner);
-                expect(localDriver.getToolSource('shared')).toBe(second);
                 // A later capture would differ; this turn must still use its captured route.
                 secondContext.tools = {};
                 return response([{ toolCallId: 'winner-call', toolName: 'shared', args: { value: 7 } }]);
@@ -473,10 +486,10 @@ describe('AgentDriverV2', () => {
             await runTurn(localDriver);
 
             expect(firstExecute).not.toHaveBeenCalled();
-            expect(secondExecute).toHaveBeenCalledExactlyOnceWith('shared', { value: 7 }, 'winner-call');
+            expect(secondExecute).toHaveBeenCalledExactlyOnceWith('shared', { value: 7 }, 'winner-call', undefined, expect.any(AbortSignal));
             expect(secondExecute.mock.contexts[0]).toBe(secondContext);
             expect(result).toHaveBeenCalledExactlyOnceWith({ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'winner-call', toolName: 'shared',
-                output: { type: 'json', value: { second: { value: 7 } } } }] });
+                output: { type: 'json', value: { second: { value: 7 } } } }] }, expect.any(Array));
             model.mockImplementationOnce(async (_messages, tools, callbacks) => {
                 expect(tools.shared).toBe(tool);
                 await callbacks?.beforeRequest?.('first definition');
@@ -484,7 +497,6 @@ describe('AgentDriverV2', () => {
             });
             await runTurn(localDriver);
             expect(model).toHaveBeenCalledTimes(2);
-            expect(localDriver.getToolSource('shared')).toBe(first);
             expect(first.getContext).toHaveBeenCalledTimes(2);
             expect(second.getContext).toHaveBeenCalledTimes(2);
             expect(firstContext.release).toHaveBeenCalledTimes(2);
@@ -492,11 +504,44 @@ describe('AgentDriverV2', () => {
             const failure = new Error('next capture failed');
             vi.mocked(second.getContext).mockRejectedValueOnce(failure);
             await runTurn(localDriver);
-            expect(localDriver.getToolSource('shared')).toBe(first);
             expect(onRunError).toHaveBeenCalledExactlyOnceWith(failure);
             expect(model).toHaveBeenCalledTimes(2);
             expect(firstContext.release).toHaveBeenCalledTimes(3);
             expect(secondContext.release).toHaveBeenCalledTimes(2);
+        });
+
+        it('admits an explicit retry with a replacement route after the first model request fails', async () => {
+            const old = vi.fn(async () => undefined);
+            const current = vi.fn(async () => undefined);
+            const adopt = vi.fn();
+            let executeTool = old;
+            const source: ContextDrivenSource = {
+                name: 'app', onUpdate: () => () => {},
+                getContext: async () => ({ messages, tools: { edit: tool }, executeTool, adopt }),
+            };
+            const attempts = vi.fn(), onRunError = vi.fn();
+            const failure = new Error('First model request failed');
+            model.mockImplementation(async (_messages, _tools, callbacks) => {
+                await callbacks?.beforeRequest?.('same input');
+                attempts();
+                if (attempts.mock.calls.length === 1) throw failure;
+                return response([{ toolCallId: 'retry', toolName: 'edit', args: { value: 1 } }]);
+            });
+            const local = createDriver({ sources: [source], llm: { model: 'gpt-4', provider: { id: 'openai' } }, onRunError });
+
+            await runTurn(local);
+            executeTool = current;
+            await local['handleUpdate']();
+            await local['runInFlight'];
+            expect(attempts).toHaveBeenCalledOnce();
+
+            await runTurn(local);
+            await runTurn(local);
+            expect(onRunError).toHaveBeenCalledExactlyOnceWith(failure);
+            expect(attempts).toHaveBeenCalledTimes(2);
+            expect(adopt).toHaveBeenCalledTimes(2);
+            expect(old).not.toHaveBeenCalled();
+            expect(current).toHaveBeenCalledExactlyOnceWith('edit', { value: 1 }, 'retry', undefined, expect.any(AbortSignal));
         });
 
         it.each(['context', 'late-source', 'missing', 'undefined'] as const)('preserves executor selection and full results: %s', async mode => {
@@ -520,15 +565,14 @@ describe('AgentDriverV2', () => {
             expect(execute).toHaveBeenCalledTimes(mode === 'missing' || mode === 'late-source' ? 0 : 1);
             expect(fallback).not.toHaveBeenCalled();
             if (mode !== 'missing' && mode !== 'late-source') {
-                expect(execute).toHaveBeenCalledWith('counter', { value: 9 }, 'selection-call');
+                expect(execute).toHaveBeenCalledWith('counter', { value: 9 }, 'selection-call', undefined, expect.any(AbortSignal));
                 expect(execute.mock.contexts[0]).toBe(context);
             }
             const output = mode === 'missing' || mode === 'late-source' ? { type: 'error-json', value: { code: 'E_SOURCE_UNAVAILABLE', message: 'The captured context has no executor for this tool.' } }
                 : mode === 'undefined' ? { type: 'error-json', value: { code: 'E_TOOL_NOT_FOUND', message: 'Tool counter not found' } }
                 : { type: 'json', value: { mode, args: { value: 9 } } };
-            expect(result).toHaveBeenCalledExactlyOnceWith({ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'selection-call', toolName: 'counter', output }] });
+            expect(result).toHaveBeenCalledExactlyOnceWith({ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'selection-call', toolName: 'counter', output }] }, expect.any(Array));
             expect(context.release).toHaveBeenCalledTimes(1);
-            expect(localDriver.getToolSource('counter')).toBe(source);
         });
 
         it.each(['stop', 'disable'] as const)('rechecks the %s gate for the second call after the first executor entered', async mode => {
@@ -554,11 +598,10 @@ describe('AgentDriverV2', () => {
             const work = runTurn(localDriver);
             try {
                 await entered.promise;
-                expect(localDriver.getToolSource('second')).toBe(second);
             } finally { proceed.resolve(); }
             await work;
 
-            expect(firstExecute).toHaveBeenCalledExactlyOnceWith('first', {}, 'gate-1');
+            expect(firstExecute).toHaveBeenCalledExactlyOnceWith('first', {}, 'gate-1', undefined, expect.any(AbortSignal));
             expect(secondExecute).not.toHaveBeenCalled();
             expect(assistant).toHaveBeenCalledExactlyOnceWith(response(calls).assistantMessage);
             expect(result).toHaveBeenCalledExactlyOnceWith({ role: 'tool', content: [
@@ -566,7 +609,7 @@ describe('AgentDriverV2', () => {
                 { type: 'tool-result', toolCallId: 'gate-2', toolName: 'second', output: { type: 'error-json', value: {
                     code: 'E_SOURCE_UNAVAILABLE', message: 'The driver or tool source is no longer active',
                 } } },
-            ] });
+            ] }, expect.any(Array));
             expect(releases).toEqual(['second', 'first']);
             expect(model).toHaveBeenCalledTimes(1);
         });

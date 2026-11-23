@@ -40,7 +40,7 @@ afterEach(async () => {
     vi.restoreAllMocks();
 });
 
-function controlledModel(beforeResponse = async () => {}, toolCall = true) {
+function controlledModel(beforeResponse = async () => {}, toolCall = true, moreCallIds: string[] = []) {
     const model = new MockLanguageModelV3({ doStream: async () => {
         await beforeResponse();
         return { stream: convertArrayToReadableStream([
@@ -52,7 +52,9 @@ function controlledModel(beforeResponse = async () => {}, toolCall = true) {
             { type: 'text-delta', id: 'text', delta: 'Run ' },
             { type: 'text-delta', id: 'text', delta: 'once.' },
             { type: 'text-end', id: 'text' },
-            ...(toolCall ? [{ type: 'tool-call' as const, toolCallId: 'owner-call', toolName: 'counter', input: JSON.stringify(input) }] : []),
+            ...(toolCall ? ['owner-call', ...moreCallIds].map(toolCallId => ({
+                type: 'tool-call' as const, toolCallId, toolName: 'counter', input: JSON.stringify(input),
+            })) : []),
             { type: 'finish', finishReason: { unified: toolCall ? 'tool-calls' : 'stop', raw: toolCall ? 'tool_calls' : 'stop' },
                 usage: { inputTokens: { total: 3, noCache: 3, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 5, text: 3, reasoning: 2 } } },
         ]) };
@@ -125,16 +127,24 @@ describe('Source tool execution owner', () => {
         const forwarded = sdk.mock.calls[0][0].tools!.counter;
         expect(forwarded).not.toHaveProperty('execute');
         expect(Object.keys(forwarded).sort()).toEqual(Object.keys(original).filter(key => key !== 'execute').sort());
-        for (const key of Object.keys(forwarded)) expect(Reflect.get(forwarded, key)).toBe(Reflect.get(original, key));
+        expect(forwarded.strict).toBe(false);
+        for (const key of Object.keys(forwarded).filter(key => key !== 'strict')) expect(Reflect.get(forwarded, key)).toBe(Reflect.get(original, key));
         expect(forwarded.inputSchema).toBe(inputSchema);
         expect(tools.counter).toBe(original);
         expect(original.execute).toBe(execute);
         expect(Object.isFrozen(original)).toBe(true);
         expect(response).toEqual({
             text: 'Run once.', toolCalls: [{ toolCallId: 'owner-call', toolName: 'counter', args: input }],
-            finishReason: 'tool-calls', usage: { promptTokens: 0, completionTokens: 0, totalTokens: 8 },
+            finishReason: 'tool-calls',
+            usage: {
+                inputTokens: 3, outputTokens: 5, totalTokens: 8,
+                inputTokenDetails: { noCacheTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0 },
+                outputTokenDetails: { textTokens: 3, reasoningTokens: 2 },
+                cachedInputTokens: 0, reasoningTokens: 2,
+            },
             assistantMessage,
         });
+        expect(response.usage).not.toHaveProperty('raw');
         expect(onTextDelta.mock.calls).toEqual(streaming ? [['Run '], ['once.']] : []);
         expect(onReasoningDelta.mock.calls).toEqual(streaming ? [['Plan once.']] : []);
     });
@@ -149,12 +159,12 @@ describe('Source tool execution owner', () => {
         await current.driver['run']();
 
         expect(execute).toHaveBeenCalledTimes(1);
-        expect(current.executeTool).toHaveBeenCalledExactlyOnceWith('counter', input, 'owner-call');
+        expect(current.executeTool).toHaveBeenCalledExactlyOnceWith('counter', input, 'owner-call', undefined, expect.any(AbortSignal));
         expect(current.onAssistantMessage).toHaveBeenCalledExactlyOnceWith(assistantMessage);
         expect(current.onToolResult).toHaveBeenCalledExactlyOnceWith({
             role: 'tool', content: [{ type: 'tool-result', toolCallId: 'owner-call', toolName: 'counter',
                 output: { type: 'json', value: { count: 1, args: input } } }],
-        });
+        }, expect.any(Array));
         expect(current.release).toHaveBeenCalledTimes(1);
         expect(current.release.mock.invocationCallOrder[0]).toBeGreaterThan(current.onToolResult.mock.invocationCallOrder[0]);
         expect(current.onRunError).not.toHaveBeenCalled();
@@ -163,7 +173,7 @@ describe('Source tool execution owner', () => {
         expect(current.driver.hasPendingUpdate()).toBe(false);
     });
 
-    it.each(['stop', 'disable'] as const)('does not bypass the Driver %s gate on a late provider response', async gate => {
+    it.each(['stop', 'close', 'disable'] as const)('does not bypass the Driver %s gate on a late provider response', async gate => {
         if (gate === 'disable') vi.useFakeTimers();
         const started = barrier(), response = barrier();
         const model = controlledModel(async () => { started.resolve(); await response.promise; });
@@ -173,6 +183,7 @@ describe('Source tool execution owner', () => {
         try {
             await started.promise;
             if (gate === 'stop') current.driver.stop();
+            else if (gate === 'close') await current.driver.closeToolTurn();
             else current.driver.setSourceEnabled(current.source.name, false);
         } finally { response.resolve(); }
         await work;
@@ -182,7 +193,7 @@ describe('Source tool execution owner', () => {
         expect(current.release).toHaveBeenCalledTimes(1);
         expect(current.onRunError).not.toHaveBeenCalled();
         expect(model.doStreamCalls).toHaveLength(1);
-        if (gate === 'stop') {
+        if (gate !== 'disable') {
             expect(current.onAssistantMessage).not.toHaveBeenCalled();
             expect(current.onToolResult).not.toHaveBeenCalled();
         } else {
@@ -190,8 +201,92 @@ describe('Source tool execution owner', () => {
             expect(current.onToolResult).toHaveBeenCalledExactlyOnceWith({
                 role: 'tool', content: [{ type: 'tool-result', toolCallId: 'owner-call', toolName: 'counter',
                     output: { type: 'error-json', value: { code: 'E_SOURCE_UNAVAILABLE', message: 'The driver or tool source is no longer active' } } }],
-            });
+            }, expect.any(Array));
         }
+    });
+
+    it.each(['external success', 'external rejection', 'settles on abort'] as const)('closes the published tool turn once with a pending %s executor', async pending => {
+        controlledModel(undefined, true, ['pending-call', 'queued-call']);
+        const entered = barrier(), allowed = barrier(), saving = barrier(), saved = barrier();
+        const managed = pending === 'settles on abort';
+        const execute = vi.fn(async (_args: unknown, { toolCallId }: { toolCallId: string }) => {
+            if (toolCallId === 'owner-call') return { output: ['already returned'], subcalls: ['original-receipt'] };
+            entered.resolve();
+            await allowed.promise;
+            if (pending === 'external rejection') throw new Error('late executor error');
+            return { output: ['pending result'] };
+        });
+        const current = turn(descriptor(execute), execute);
+        if (managed) {
+            const capture = current.source.getContext;
+            current.source.getContext = async () => ({ ...await capture(), toolsSettlingOnAbort: new Set(['counter']) });
+        }
+        current.onToolResult.mockImplementation(async () => { saving.resolve(); await saved.promise; });
+        const work = current.driver['run']();
+        await entered.promise;
+        let complete = false;
+        const paired = current.driver.closeToolTurn().then(() => { complete = true; });
+        try {
+            if (managed) {
+                expect(current.onToolResult).not.toHaveBeenCalled();
+                allowed.resolve();
+            }
+            await saving.promise;
+            expect(complete).toBe(false);
+            const [message, results] = current.onToolResult.mock.calls[0];
+            expect(message.content.map((item: { toolCallId: string }) => item.toolCallId)).toEqual(['owner-call', 'pending-call', 'queued-call']);
+            expect(results.map((result: { result?: unknown; error?: { code: string } }) => result.result ?? result.error?.code)).toEqual([
+                { output: ['already returned'], subcalls: ['original-receipt'] },
+                managed ? { output: ['pending result'] } : 'E_TOOL_OUTCOME_UNKNOWN',
+                'E_TOOL_NOT_DISPATCHED',
+            ]);
+            expect(current.executeTool).toHaveBeenCalledTimes(2);
+            saved.resolve();
+            await paired;
+        } finally { allowed.resolve(); saved.resolve(); }
+        await work;
+        expect(current.onToolResult).toHaveBeenCalledTimes(1);
+        expect(current.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports a failed save when closing the published tool turn', async () => {
+        controlledModel();
+        const exec = vi.fn(async () => ({ ok: true }));
+        const current = turn(descriptor(exec), exec);
+        const error = new Error('tool message could not be saved');
+        current.onToolResult.mockRejectedValueOnce(error);
+        await current.driver['run']();
+        await expect(current.driver.closeToolTurn()).rejects.toBe(error);
+        expect(current.onRunError).toHaveBeenCalledExactlyOnceWith(error);
+        expect(current.onToolResult).toHaveBeenCalledTimes(1);
+    });
+
+    it('saves a completed result even if closing interrupts the trial for budget feedback', async () => {
+        controlledModel();
+        const measuring = barrier(), measured = barrier();
+        const measurement = { method: 'utf8-bytes' as const, inputBytes: 1, safety: 1, estimated: 2, inputLimit: 100, outputReserved: 10 };
+        vi.spyOn(LLMClient.prototype, 'createInputMeasurement').mockResolvedValue(async () => measurement);
+        const execute = vi.fn(async () => ({ ok: true }));
+        const current = turn(descriptor(execute), execute, { ...config, inputBudget: () => ({ contextWindow: 110, maxOutputTokens: 10 }) });
+        const retainFeedback = vi.fn(), capture = current.source.getContext;
+        current.source.getContext = async () => ({ ...await capture(), async fitModelBudget(_, includeToolFeedback) {
+            if (!includeToolFeedback) return { measurement };
+            measuring.resolve();
+            await measured.promise;
+            return { measurement, feedback: { report_id: 'never saved' }, retainFeedback };
+        } });
+        const work = current.driver['run']();
+        await measuring.promise;
+        try {
+            await current.driver.closeToolTurn();
+            await work;
+            expect(current.onToolResult).toHaveBeenCalledExactlyOnceWith({ role: 'tool', content: [
+                { type: 'tool-result', toolCallId: 'owner-call', toolName: 'counter', output: { type: 'json', value: { ok: true } } },
+            ] }, expect.any(Array));
+            expect(current.release).toHaveBeenCalledTimes(1);
+        } finally { measured.resolve(); }
+        await vi.waitFor(() => expect(current.release).toHaveBeenCalledTimes(2));
+        expect(retainFeedback).not.toHaveBeenCalled();
     });
 
     it('keeps a single effect and the existing unknown error mapping when execution throws', async () => {
@@ -203,13 +298,13 @@ describe('Source tool execution owner', () => {
         await current.driver['run']();
 
         expect(effects).toBe(1);
-        expect(current.executeTool).toHaveBeenCalledExactlyOnceWith('counter', input, 'owner-call');
+        expect(current.executeTool).toHaveBeenCalledExactlyOnceWith('counter', input, 'owner-call', undefined, expect.any(AbortSignal));
         expect(current.onAssistantMessage).toHaveBeenCalledExactlyOnceWith(assistantMessage);
         expect(current.onToolResult).toHaveBeenCalledExactlyOnceWith({
             role: 'tool', content: [{ type: 'tool-result', toolCallId: 'owner-call', toolName: 'counter',
                 output: { type: 'error-json', value: { code: 'E_EXECUTION_ERROR', retryable: false,
                     message: 'after-effect The Tool call may have had effects. Check the application View before retrying.' } } }],
-        });
+        }, expect.any(Array));
         expect(current.release).toHaveBeenCalledTimes(1);
         expect(current.driver.hasPendingUpdate()).toBe(false);
         expect(current.onRunError).not.toHaveBeenCalled();
@@ -241,9 +336,7 @@ describe('Source tool execution owner', () => {
 
         await current.driver['run']();
 
-        expect(current.onRunError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-            name: 'AI_NoOutputGeneratedError', message: 'No output generated. Check the stream for errors.',
-        }));
+        expect(current.onRunError).toHaveBeenCalledExactlyOnceWith(failure);
         expect(current.release).toHaveBeenCalledTimes(1);
         expect(execute).not.toHaveBeenCalled();
         expect(current.executeTool).not.toHaveBeenCalled();

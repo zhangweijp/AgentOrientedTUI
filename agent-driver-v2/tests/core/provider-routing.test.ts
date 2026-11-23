@@ -10,13 +10,116 @@ afterEach(() => {
 
 const messages = [{ role: 'user' as const, content: 'Reply with a confirmation.' }];
 
-function chatResponse(model: string) {
-    const frame = { id: 'fixture', object: 'chat.completion.chunk', created: 1, model,
-        choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] };
-    return new Response('data: ' + JSON.stringify(frame) + '\n\ndata: [DONE]\n\n', {
+function streamFrames(frames: readonly object[]) {
+    return new Response(frames.map(frame => 'data: ' + JSON.stringify(frame) + '\n\n').join('') + 'data: [DONE]\n\n', {
         headers: { 'content-type': 'text/event-stream' },
     });
 }
+
+function chatResponse(model: string) {
+    const frame = { id: 'fixture', object: 'chat.completion.chunk', created: 1, model,
+        choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] };
+    return streamFrames([frame]);
+}
+
+const vendor = { detail: [false, 0, null] };
+const responsesUsage = { input_tokens: 11, output_tokens: 7, total_tokens: 18,
+    input_tokens_details: { cached_tokens: 4, cache_write_tokens: 2 }, output_tokens_details: { reasoning_tokens: 3 }, vendor };
+const chatUsage = { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18,
+    prompt_tokens_details: { cached_tokens: 4, vendor }, completion_tokens_details: { reasoning_tokens: 3, vendor },
+    cost: 0, vendor };
+const googleUsage = { promptTokenCount: 11, candidatesTokenCount: 4, thoughtsTokenCount: 3,
+    totalTokenCount: 18, cachedContentTokenCount: 4, trafficType: 'ON_DEMAND',
+    promptTokensDetails: [{ modality: 'TEXT', tokenCount: 11 }],
+    candidatesTokensDetails: [{ modality: 'TEXT', tokenCount: 4 }], vendor };
+const anthropicStart = { input_tokens: 5, cache_creation_input_tokens: 2, cache_read_input_tokens: 4, vendor };
+const anthropicDelta = { output_tokens: 7, end_vendor: vendor };
+
+it.each([
+    { id: 'openai', baseURL: 'https://api.openai.com/v1', terminal: 'response.completed', incompleteDetails: null },
+    { id: 'xai', baseURL: 'https://api.x.ai/v1', terminal: 'response.incomplete', incompleteDetails: { reason: 'max_output_tokens' } },
+])('preserves the complete raw object from $id $terminal', async ({ id, baseURL, terminal, incompleteDetails }) => {
+    const item = { type: 'message', id: 'message-1' };
+    const fetch = vi.fn(async (url: string) => {
+        expect(url).toBe(baseURL + '/responses');
+        return streamFrames([
+            { type: 'response.output_item.added', output_index: 0, item },
+            { type: 'response.output_text.delta', item_id: item.id, delta: 'ok' },
+            { type: 'response.output_item.done', output_index: 0, item },
+            { type: terminal, response: { usage: responsesUsage, incomplete_details: incompleteDetails } },
+        ]);
+    });
+    vi.stubGlobal('fetch', fetch);
+    const response = await new LLMClient({ provider: { id, baseURL }, model: 'fixture', apiKey: 'test' }).call(messages, {});
+    expect(response).toMatchObject({ text: 'ok', finishReason: incompleteDetails ? 'length' : 'stop',
+        usage: { inputTokens: 11, outputTokens: 7, totalTokens: 18 } });
+    expect(response.usage?.raw).toEqual(responsesUsage);
+    expect(fetch).toHaveBeenCalledOnce();
+});
+
+it('uses the Anthropic adapter merge of start and delta usage', async () => {
+    const fetch = vi.fn(async (url: string) => {
+        expect(url).toBe('https://anthropic.test/v1/messages');
+        return streamFrames([
+            { type: 'message_start', message: { usage: anthropicStart } },
+            { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+            { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
+            { type: 'content_block_stop', index: 0 },
+            { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: anthropicDelta },
+            { type: 'message_stop' },
+        ]);
+    });
+    vi.stubGlobal('fetch', fetch);
+    const response = await new LLMClient({
+        provider: { id: 'anthropic', baseURL: 'https://anthropic.test/v1' }, model: 'fixture', apiKey: 'test',
+    }).call(messages, {});
+    expect(response).toMatchObject({ text: 'ok', usage: {
+        inputTokens: 11, outputTokens: 7, totalTokens: 18, raw: { ...anthropicStart, ...anthropicDelta },
+    } });
+    expect(fetch).toHaveBeenCalledOnce();
+});
+
+it.each([true, false])('keeps the latest Google usageMetadata through later missing and null fields (%s)', async (reported) => {
+    const fetch = vi.fn(async (url: string) => {
+        expect(url).toMatch(/\/models\/fixture:streamGenerateContent\?alt=sse$/);
+        return streamFrames([
+            ...(reported ? [{ usageMetadata: { promptTokenCount: 1 } }, { usageMetadata: googleUsage }] : []),
+            { usageMetadata: null },
+            { candidates: [{ content: { role: 'model', parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] },
+        ]);
+    });
+    vi.stubGlobal('fetch', fetch);
+    const response = await new LLMClient({
+        provider: { id: 'google', baseURL: 'https://google.test/v1beta' }, model: 'fixture', apiKey: 'test',
+    }).call(messages, {});
+    expect(response.text).toBe('ok');
+    if (reported) {
+        expect(response.usage).toMatchObject({ inputTokens: 11, outputTokens: 7, totalTokens: 18 });
+        expect(response.usage?.raw).toEqual(googleUsage);
+    } else expect(response).not.toHaveProperty('usage');
+    expect(fetch).toHaveBeenCalledOnce();
+});
+
+it.each([
+    { path: 'chat/completions', model: 'vendor/model', choice: { delta: { content: 'ok' } } },
+    { path: 'completions', model: 'openai/gpt-3.5-turbo-instruct', choice: { text: 'ok' } },
+])('keeps the OpenRouter $path adapter usage from the terminal chunk', async ({ path, model, choice }) => {
+    const fetch = vi.fn(async (url: string, init: RequestInit) => {
+        expect(url).toBe('https://openrouter.test/v1/' + path);
+        expect(JSON.parse(String(init.body))).toMatchObject({ stream_options: { include_usage: true } });
+        return streamFrames([
+            { id: 'fixture', object: 'chat.completion.chunk', model, choices: [{ ...choice, index: 0, finish_reason: 'stop' }] },
+            { id: 'fixture', object: 'chat.completion.chunk', model, choices: [], usage: chatUsage },
+        ]);
+    });
+    vi.stubGlobal('fetch', fetch);
+    const response = await new LLMClient({
+        provider: { id: 'openrouter', baseURL: 'https://openrouter.test/v1' }, model, apiKey: 'test',
+    }).call(messages, {});
+    expect(response).toMatchObject({ usage: { inputTokens: 11, outputTokens: 7, totalTokens: 18 } });
+    expect(response.usage?.raw).toEqual(chatUsage);
+    expect(fetch).toHaveBeenCalledOnce();
+});
 
 it.each(['gateway/team/model:fast', 'gateway:team/model:fast'])(
     'uses the same explicit Provider and verbatim model for the budget and request (%s)', async model => {
@@ -71,6 +174,120 @@ it('selects Responses for the OpenAI endpoint and Chat for the resolved compatib
 const routerModel = 'vendor/model:suffix';
 const routerTool = { fixture: { inputSchema: jsonSchema({ type: 'object' }) } };
 
+const closed = (properties: Record<string, unknown>) => ({ type: 'object', additionalProperties: false,
+    properties, required: Object.keys(properties) });
+const seatSchema = closed({ seat: { anyOf: [
+    { type: 'array', items: false, minItems: 2, prefixItems: [{ type: 'string' }, { type: 'integer', minimum: 1 }] },
+    { type: 'string', pattern: '^[$][^$]' },
+] } });
+
+it('checks OpenAI strict enum totals per tool, including alternatives and nested properties', async () => {
+    const station = (count: number) => ({ type: 'string', enum: Array.from({ length: count }, (_, index) => `S${index}`) });
+    const provider = { id: 'openai', toolSchemaMode: 'strict' as const };
+    const policy = await new LLMClient({ model: 'fixture', provider }).toolSchemaPolicy();
+    const check = policy.check!;
+    expect(check(closed({ station: station(1000) }))).toBeUndefined();
+    expect(check(closed({ station: station(1001) }))).toEqual({ path: '$.properties.station.enum',
+        reason: expect.stringContaining('1001 enum values') });
+    const split = (count: number) => closed({ outward: { anyOf: [station(501), { type: 'null' }] },
+        return: closed({ code: station(count) }) });
+    expect(check(split(499))).toBeUndefined();
+    expect(check(split(500))).toEqual({ path: '$.properties.return.properties.code.enum',
+        reason: expect.stringContaining('1000 per tool schema') });
+    expect(check(closed({ station: station(1000) }))).toBeUndefined();
+    expect(check(closed({ line: station(1000) }))).toBeUndefined();
+    const deepseek = await new LLMClient({ model: 'fixture', provider: { ...provider, id: 'deepseek', baseURL: 'https://api.deepseek.com/beta' } }).toolSchemaPolicy();
+    expect(deepseek.check?.(closed({ station: station(1001) }))).toBeUndefined();
+});
+
+it('checks reachable OpenAI strict nesting and the large string enum boundary', async () => {
+    const policy = await new LLMClient({ model: 'fixture', provider: { id: 'openai', toolSchemaMode: 'strict' } }).toolSchemaPolicy();
+    const check = policy.check!;
+    let nested = closed({ value: { type: 'string' } });
+    for (let level = 1; level < 10; level++) nested = closed({ child: nested });
+    expect(check(nested)).toBeUndefined();
+    expect(check(closed({ child: { anyOf: [nested, { type: 'null' }] } }))).toMatchObject({
+        path: '$.properties.child.anyOf[0]' + '.properties.child'.repeat(9), reason: expect.stringContaining('11 levels') });
+    const codes = Array.from({ length: 251 }, (_, index) => 'a'.repeat(index < 191 ? 57 : 56) + String(index).padStart(3, '0'));
+    expect(codes.reduce((total, code) => total + code.length, 0)).toBe(15_000);
+    expect(check(closed({ line: { type: 'string', enum: codes } }))).toBeUndefined();
+    codes[0] += '🚉';
+    expect(check(closed({ line: { type: 'string', enum: codes } }))).toEqual({ path: '$.properties.line.enum',
+        reason: expect.stringContaining('15001 characters') });
+    expect(check(closed({ line: { type: 'string', enum: codes.slice(0, 250).map(code => code + '123') } }))).toBeUndefined();
+});
+
+it.each([
+    ['openai', 'https://api.openai.com/v1', '/responses', false],
+    ['openai', 'https://api.openai.com/v1', '/responses', true],
+    ['openai', 'https://compatible.test/v1', '/chat/completions', false],
+    ['openai', 'https://compatible.test/v1', '/chat/completions', true],
+    ['deepseek', 'https://api.deepseek.com', '/chat/completions', false],
+    ['deepseek', 'https://api.deepseek.com/beta', '/chat/completions', true],
+] as const)('checks and encodes %s %s strict mode %s (%s) without hiding a 400', async (id, baseURL, route, strict) => {
+    const fetch = vi.fn(async (url: string, init: RequestInit) => {
+        expect(url).toBe(baseURL + route);
+        expect(typeof init.body).toBe('string');
+        return Response.json({ error: { message: 'fixture refused this request', type: 'invalid_request_error' } }, { status: 400 });
+    });
+    vi.stubGlobal('fetch', fetch);
+    const client = new LLMClient({ apiKey: 'fixture', model: 'fixture', provider: { id, baseURL,
+        ...(strict ? { toolSchemaMode: 'strict' as const } : {}) } });
+    const beforeRequest = vi.fn();
+    if (strict) {
+        await expect(client.call(messages, { cinema: { inputSchema: jsonSchema(seatSchema) } }, { beforeRequest, preserveTools: true }))
+            .rejects.toMatchObject({ code: 'MODEL_TOOL_SCHEMA_UNSUPPORTED', tool: 'cinema', path: '$.properties.seat.anyOf[0].prefixItems' });
+        expect(fetch).not.toHaveBeenCalled();
+        expect(beforeRequest).not.toHaveBeenCalled();
+        const policy = await client.toolSchemaPolicy();
+        expect(policy.check?.({ ...closed({ note: { type: 'string' } }), required: [] })?.path).toBe('$.properties.note');
+    }
+    const input = strict ? closed({ note: { type: 'string' } }) : seatSchema;
+    await expect(client.call(messages, { published: { inputSchema: jsonSchema(input) } }, { beforeRequest, preserveTools: true }))
+        .rejects.toMatchObject({ statusCode: 400, message: 'fixture refused this request' });
+    expect(beforeRequest).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledOnce();
+    const [tool] = JSON.parse(String(fetch.mock.calls[0]![1].body)).tools;
+    expect(tool.function ?? tool).toMatchObject({ name: 'published', strict, parameters: input });
+});
+
+it('rejects DeepSeek strict without its Beta endpoint and a model without required tools before request admission', async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    const beforeRequest = vi.fn();
+    const tools = { open: { inputSchema: jsonSchema(closed({ installation_id: { type: 'string' } })) } };
+    const flags = { beforeRequest, preserveTools: true };
+    const nonBeta = new LLMClient({ apiKey: 'fixture', model: 'fixture', provider: { id: 'deepseek', toolSchemaMode: 'strict' } });
+    await expect(nonBeta.call(messages, tools, flags)).rejects.toMatchObject({ code: 'MODEL_TOOL_SCHEMA_UNSUPPORTED', reason: expect.stringContaining('/beta') });
+    const noTools = new LLMClient({ apiKey: 'fixture', model: 'fixture', provider: { id: 'openai' }, modelCapabilities: { toolCall: false } });
+    await expect(noTools.call(messages, tools, flags)).rejects.toMatchObject({ code: 'MODEL_TOOL_SCHEMA_UNSUPPORTED', tool: 'required tools' });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(beforeRequest).not.toHaveBeenCalled();
+});
+
+it.each([
+    { id: 'openai', baseURL: 'https://api.openai.com/v1' },
+    { id: 'openai', baseURL: 'https://compatible.test/v1' },
+    { id: 'anthropic' }, { id: 'google' }, { id: 'deepseek' }, { id: 'xai' }, { id: 'openrouter' },
+])('trials the actual encoders without fetching and checks the same byte count on send ($id $baseURL)', async provider => {
+    const fetch = vi.fn(async (_url: string, init: RequestInit) => {
+        expect(typeof init.body).toBe('string');
+        return Response.json({ error: { message: 'fixture response', type: 'invalid_request_error' } }, { status: 400 });
+    });
+    vi.stubGlobal('fetch', fetch);
+    const client = new LLMClient({ apiKey: 'fixture', provider, model: 'fixture',
+        inputBudget: () => ({ contextWindow: 32_000, maxOutputTokens: 190 }) });
+    const trial = await client.createInputMeasurement();
+    const measurement = await trial!(messages, routerTool, true);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(measurement).toMatchObject({ inputLimit: 31_810, outputReserved: 190, method: 'utf8-bytes' });
+    const adopt = vi.fn();
+    await expect(client.call(messages, routerTool, { beforeRequest: adopt, preserveTools: true })).rejects.toBeDefined();
+    expect(adopt).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(measurement.inputBytes).toBe(Buffer.byteLength(String(fetch.mock.calls[0]![1].body)));
+});
+
 function captureOpenRouterRequests(respond: (attempt: number) => Response) {
     const requests: { model: string; tools?: unknown[]; max_tokens?: number; messages: unknown[] }[] = [];
     const beforeRequest = vi.fn();
@@ -92,17 +309,14 @@ it.each([
     [400, 'This model does not support tools'],
     [400, 'Function calling is not supported for this model.'],
     [404, 'No endpoints found that support tool use.'],
-])('retries an explicit OpenRouter tool incompatibility (HTTP %i: %s)', async (status, message) => {
+])('preserves an explicit OpenRouter tool incompatibility (HTTP %i: %s)', async (status, message) => {
     const { client, beforeRequest, requests } = captureOpenRouterRequests(attempt => attempt === 1
         ? Response.json({ error: { message, code: status } }, { status })
         : chatResponse(routerModel));
-    expect((await client.call(messages, routerTool, { beforeRequest })).text)
-        .toBe('ok');
+    await expect(client.call(messages, routerTool, { beforeRequest })).rejects.toMatchObject({ statusCode: status, message });
     expect(beforeRequest).toHaveBeenCalledOnce();
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({ model: routerModel, tools: [expect.anything()], max_tokens: 400 });
-    expect(requests[1]).toMatchObject({ model: routerModel, max_tokens: 400, messages: requests[0]?.messages });
-    expect(requests[1]?.tools ?? []).toEqual([]);
 });
 
 it('keeps adopted context tools on the request when OpenRouter rejects them', async () => {

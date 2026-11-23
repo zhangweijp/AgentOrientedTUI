@@ -10,7 +10,7 @@
  * 基于 Vercel AI SDK v6
  */
 
-import type { ModelMessage, Tool } from 'ai';
+import type { LanguageModelUsage, ModelMessage, Tool } from 'ai';
 
 /**
  * AgentState - AgentDriver 状态
@@ -34,15 +34,12 @@ export type ContextRegion = 'static' | 'session' | 'dynamic';
  *   timestamp: Date.now()
  * };
  */
-export interface MessageWithTimestamp {
-    /** ModelMessage 的所有字段 */
-    role: ModelMessage['role'];
-    content: ModelMessage['content'];
+export type MessageWithTimestamp = ModelMessage & {
     /** Unix timestamp (ms) */
     timestamp: number;
     /** Context layering hint for region-first assembly */
     region?: ContextRegion;
-}
+};
 
 /**
  * ToolResult - 工具执行结果
@@ -65,6 +62,30 @@ export interface ToolResult {
     };
 }
 
+export interface ModelInputMeasurement {
+    readonly method: 'utf8-bytes';
+    readonly inputBytes: number;
+    readonly safety: number;
+    readonly estimated: number;
+    readonly inputLimit: number;
+    readonly outputReserved: number;
+}
+
+export type MeasureModelRequest = (candidate: DrivenSourceContext, feedback?: object) => Promise<ModelInputMeasurement>;
+
+export interface FittedModelRequest {
+    /** Omit when the original presentation fits. */
+    readonly context?: DrivenSourceContext;
+    readonly measurement: ModelInputMeasurement;
+    readonly feedback?: object;
+    /** Store the exact report used when sealing the Tool message. */
+    readonly retainFeedback?: () => void;
+}
+
+export interface ToolExecutionBudget {
+    checkExpansion(candidate: DrivenSourceContext, result: ToolResult): Promise<ModelInputMeasurement>;
+}
+
 /** One source's messages, tools and invocation route captured for one model turn. */
 export interface DrivenSourceContext {
     messages: MessageWithTimestamp[];
@@ -73,11 +94,19 @@ export interface DrivenSourceContext {
     adopt?: () => void | Promise<void>;
     /** Request admission must preserve the tools supplied by this context. */
     preserveTools?: boolean;
+    /** Trial presentations from the captured observation, without adopting any. */
+    fitModelBudget?: (measure: MeasureModelRequest, includeToolFeedback: boolean) => Promise<FittedModelRequest>;
+    /** This candidate only carries management tools and its required directory. */
+    managementOnly?: boolean;
+    /** Captured executors that complete promptly on abort with their original result or receipt. */
+    toolsSettlingOnAbort?: ReadonlySet<string>;
     /** Uses the bindings captured with this context, rather than a later source read. */
     executeTool?: (
         toolName: string,
         args: unknown,
-        toolCallId: string
+        toolCallId: string,
+        budget?: ToolExecutionBudget,
+        signal?: AbortSignal,
     ) => Promise<ToolResult | undefined>;
     /** Releases this turn's retained observation after model and tool execution finish. */
     release?: () => void | Promise<void>;
@@ -89,19 +118,16 @@ export interface DrivenSourceContext {
  */
 export interface ContextDrivenSource {
     readonly name: string;
-    getContext(): Promise<DrivenSourceContext>;
+    getContext(toolSchema?: import('./provider-tool-schema.js').ProviderToolSchemaPolicy): Promise<DrivenSourceContext>;
     onUpdate(callback: () => void): () => void;
 }
-
-/** One captured context per source and model turn. */
-export type DrivenSource = ContextDrivenSource;
 
 /**
  * AgentDriverV2Config - 配置接口
  */
 export interface AgentDriverV2Config {
     /** Driven Sources 列表 */
-    sources: DrivenSource[];
+    sources: ContextDrivenSource[];
 
     /** 
      * LLM 配置
@@ -139,6 +165,8 @@ export interface AgentDriverV2Config {
      * 当 ToolCall 执行完成，生成 toolresult message 时触发
      * 
      * @param message - Tool Message (包含一个或多个 tool-result)
+     * @param results - The execution results used to build this message, in part order.
+     * Return the save promise when persistence is asynchronous so session close can await it.
      * 
      * @example
      * onToolResult: (message) => {
@@ -146,18 +174,10 @@ export interface AgentDriverV2Config {
      *   messageService.addMessage(topicId, message);
      * }
      */
-    onToolResult?: (message: ModelMessage) => void;
+    onToolResult?: (message: ModelMessage, results: readonly ToolResult[]) => void | Promise<void>;
 
-    /**
-     * LLM Usage 事件监听器
-     *
-     * 当 LLM 返回 token 使用情况时触发
-     */
-    onLLMUsage?: (usage: {
-        promptTokens: number;
-        completionTokens: number;
-        totalTokens: number;
-    }) => void;
+    /** Usage reported for a successful model response, separate from session messages. */
+    onLLMUsage?: (usage: LanguageModelUsage) => void;
 
     /** 状态变化监听器 (可选，用于调试) */
     onStateChange?: (oldState: AgentState, newState: AgentState) => void;
@@ -228,6 +248,9 @@ export interface ProviderConfig {
      */
     baseURL?: string;
 
+    /** Function schema mode for OpenAI and DeepSeek. Non-strict is the default. */
+    toolSchemaMode?: 'non-strict' | 'strict';
+
     /** 自定义 HTTP Headers */
     headers?: Record<string, string>;
 }
@@ -248,13 +271,6 @@ export interface LLMConfig {
 
     /** Defaults to the API key environment variable for the selected Provider. */
     apiKey?: string;
-
-    /** 
-     * 最大步数 (默认 5)
-     * 
-     * ReAct 循环的最大迭代次数
-     */
-    maxSteps?: number;
 
     /** 
      * 温度 (默认 0.7)
@@ -297,11 +313,7 @@ export interface LLMResponse {
     /** 结束原因 */
     finishReason: string;
     /** Token 使用情况 */
-    usage?: {
-        promptTokens: number;
-        completionTokens: number;
-        totalTokens: number;
-    };
+    usage?: LanguageModelUsage;
     /** Assistant Message (用于构建消息历史) */
     assistantMessage?: ModelMessage;
 }

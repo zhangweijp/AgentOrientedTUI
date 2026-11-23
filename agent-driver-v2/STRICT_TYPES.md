@@ -6,7 +6,7 @@ The Driver tar contains `patches/provider-utils-4.0.65.patch`. Before your first
 
 ```sh
 mkdir -p patches
-tar -xOf ../../artifacts/aotui-agent-driver-v2-0.3.1.tgz package/patches/provider-utils-4.0.65.patch > patches/provider-utils-4.0.65.patch
+tar -xOf ../../artifacts/aotui-agent-driver-v2-0.3.2.tgz package/patches/provider-utils-4.0.65.patch > patches/provider-utils-4.0.65.patch
 ```
 
 Add the exact dependencies and `patchedDependencies` to your consumer manifest. The paths below use the local delivery layout. The Driver itself also declares `@types/json-schema` as a direct dependency for its public types.
@@ -14,10 +14,10 @@ Add the exact dependencies and `patchedDependencies` to your consumer manifest. 
 ```json
 {
   "dependencies": {
-    "@aotui/agent-driver-v2": "file:../../artifacts/aotui-agent-driver-v2-0.3.1.tgz",
+    "@aotui/agent-driver-v2": "file:../../artifacts/aotui-agent-driver-v2-0.3.2.tgz",
     "ai": "6.0.326",
     "@ai-sdk/provider-utils": "4.0.65",
-    "zod": "3.25.76"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/json-schema": "7.0.15"
@@ -40,4 +40,4 @@ Commit your patch, manifest and lockfile. Subsequent clean installs use `pnpm in
 
 The patch changes only `NeverOptional`'s erased generic branch in source and declarations. Runtime JavaScript and concrete Tool input/output contracts are unchanged. Remove this explicit temporary consumer requirement when a verified formal upstream release incorporates the fix. A normal Driver tar alone does not automatically repair third-party declarations.
 
-The verified local consumer graph uses Zod 3.25.76. With repository development links, separately installed Zod 3 and Zod 4 peer contexts can produce distinct `provider-utils` schema identities even when the AI version and patch match.
+The repository Driver and Host use the same Zod 4.6.7 peer context. When linking a local Driver into a Host, keep their Zod versions aligned so TypeScript resolves one `provider-utils` schema identity.

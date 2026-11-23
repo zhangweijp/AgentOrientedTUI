@@ -41,7 +41,8 @@ export function createLanguageModel(config: LLMConfig): Extract<LanguageModel, {
 }
 
 /** The Driver can observe the two Chat adapters whose parsers discard [DONE]. */
-export function createLanguageModelWithChatFetch(config: LLMConfig, chatFetch?: FetchFunction): Extract<LanguageModel, { specificationVersion: 'v3' }> {
+export function createLanguageModelWithChatFetch(config: LLMConfig, chatFetch?: FetchFunction,
+    requestFetch?: FetchFunction): Extract<LanguageModel, { specificationVersion: 'v3' }> {
     validateModelConfig(config);
     const { id: providerId, baseURL, headers } = config.provider;
     const apiKey = config.apiKey || getApiKeyFromEnv(providerId);
@@ -52,7 +53,7 @@ export function createLanguageModelWithChatFetch(config: LLMConfig, chatFetch?: 
         );
     }
 
-    return buildProvider(providerId, apiKey, baseURL, headers, chatFetch).languageModel(config.model);
+    return buildProvider(providerId, apiKey, baseURL, headers, chatFetch ?? requestFetch, requestFetch).languageModel(config.model);
 }
 
 export function observeChatStreamEnd() {
@@ -91,17 +92,18 @@ function buildProvider(
     customBaseURL: string | undefined,
     headers: Record<string, string> | undefined,
     chatFetch?: FetchFunction,
+    requestFetch?: FetchFunction,
 ) {
     const { baseURL } = resolveProviderEndpoint(providerId, customBaseURL);
     switch (providerId) {
         case 'anthropic':
-            return createAnthropic({ apiKey, baseURL, headers });
+            return createAnthropic({ apiKey, baseURL, headers, fetch: requestFetch });
         case 'google':
-            return createGoogleGenerativeAI({ apiKey, baseURL, headers });
+            return createGoogleGenerativeAI({ apiKey, baseURL, headers, fetch: requestFetch });
         case 'deepseek':
             return createDeepSeek({ apiKey, baseURL, headers, fetch: chatFetch });
         case 'xai':
-            return createOpenAI({ apiKey, baseURL, headers });
+            return createOpenAI({ apiKey, baseURL, headers, fetch: requestFetch });
         case 'openai':
             if (baseURL && !isOpenAIResponsesEndpoint(baseURL)) {
                 return createOpenAICompatible({
@@ -112,13 +114,14 @@ function buildProvider(
                     fetch: chatFetch,
                 });
             }
-            return createOpenAI({ apiKey, baseURL, headers });
+            return createOpenAI({ apiKey, baseURL, headers, fetch: requestFetch });
         case 'openrouter':
             return createOpenRouter({
                 apiKey,
                 baseURL,
                 headers,
                 compatibility: 'strict',
+                fetch: requestFetch,
             });
         default: {
             if (!baseURL) {
@@ -139,7 +142,7 @@ function buildProvider(
     }
 }
 
-function isOpenAIResponsesEndpoint(baseURL: string): boolean {
+export function isOpenAIResponsesEndpoint(baseURL: string): boolean {
     try {
         const { hostname } = new URL(baseURL);
         return hostname === 'api.openai.com';
