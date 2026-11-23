@@ -49,7 +49,7 @@
 
 - Ref 表达当前观察中可选择的只读 JSON 值；ArrayRef 支持整数组及其元素。它们是数据引用，不是独立工具类别，也不是永久业务身份。
 - 对已通过 Ref 呈现的业务对象，模型无需再抄写 `plan_id`、`phase_id`、`task_id` 等内部 ID。ID 可以留在 App 状态或 Ref payload 中，由 handler 使用。
-- 页面正文可使用局部标记，例如 `[设计](completed_phases[0])`。调用时提供完整 Ref 地址，带点号的键写成 `["display.name"]`。现版使用 `$` 地址和 `$$` 转义。目标设计让 Native Tool 用 `{"$aotui_ref":"…"}` 显式传引用，`run_code` 用 `ref(地址)`，普通字符串如 `"$HOME"` 按原文接收。
+- 页面正文可使用局部标记，例如 `[设计](completed_phases[0])`。调用时提供完整 Ref 地址，带点号的键写成 `["display.name"]`。现版使用 `$` 地址和 `$$` 转义。目标设计让 Native Tool、Console（`run_code`）与 `system-inspect_ref` 统一用 `"$ref.<app_id>.<view_id>.<ref_id>[...path]"` 显式传引用，普通字符串如 `"$HOME"`、`"$100"`、`"$.user.name"` 及普通对象如 `{"$ref": "#/defs/User"}` 均按原文接收，仅当整个参数或直接数组元素字面以 `$ref.` 开头时用 `$$ref.` 转义。
 - 顶层 `view_id` 选择执行页面，Ref 地址选择来源页及其 JSON 路径。`private` 限发布它的 View 实例使用，`protected` 限同一 App 实例使用，`public` 可以跨 App 使用。Runtime 根据本轮来源、范围和接收页的路径许可判断能否传值。
 - 普通参数接受字面值或获准路径上的兼容 JSON 值。显式 `refParam` 要求真实的已发布整项或有标签的 ArrayRef 元素。已确认的查看规则要求 Ref 发布时提供 Schema 并校验值。本轮可见的 Ref 可查看完整声明结构，只有可见的 `public` Ref 可由 Agent 直接读值。
 - Runtime 从调用绑定的原 Observation 解析值。按目标合同，主线程解引用并校验最终参数，Worker 在进入 handler 前核对当前页面挂载、工具激活和本地 Ref 范围，并用本地业务 Schema 复验参数。App 检查对象是否仍存在、归属是否正确，以及业务状态和权限是否允许操作。

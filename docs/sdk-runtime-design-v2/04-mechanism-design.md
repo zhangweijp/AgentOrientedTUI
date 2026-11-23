@@ -58,41 +58,48 @@
 ---
 
 <a id="mec-03"></a>
-## MEC-03：Ref 与普通字面值的无歧义表达（已选定待验证）
+## MEC-03：Ref 与普通字面值的无歧义表达（已选定待验证，2026-11-24 修订为统一 `$ref.`）
 
 - **问题证实度**：代码已证实
 - **理想态明确度**：已明确
 - **实现方案状态**：**已选定待验证**（三家 Provider 严格模式兼容性记为**待真实接口验证**）
 
 ### 1. 现状事实（代码证实）
-- 当前 Native Tool 路径对普通参数（[tool-parameters.ts](../../core/src/tool/tool-parameters.ts#L375-L393)）在 JSON 字符串通道上带内重载了 Ref 地址（`` `$app_id.view_id.ref` ``），导致所有以 `$` 开头的普通字面文本（如 `$HOME`、`$100`）必须双写转义为 `$$HOME`、`$$100`。
-- 即使业务对象只允许一个固定字段，只要该字段恰好也叫 `$aotui_ref`，单靠 `{"$aotui_ref": "..."}` 仍会同时命中“业务对象”和“引用”两种解释。
-- 在 `run_code` 路径，脚本与宿主通过 JSON 跨进程传递参数（[program-child.mts](../../agent-driver-adapter/src/console/program-child.mts#L143)），直接依赖 JS 私有标记会在 JSON 序列化时丢失。
+- 当前 Native Tool 路径对普通参数（[tool-parameters.ts](../../core/src/tool/tool-parameters.ts#L375-L393)）在 JSON 字符串通道上使用单 `$` 前缀（`$app_id.view_id.ref`），导致所有以 `$` 开头的普通字面文本（如 `$HOME`、`$100`、Shell/代码变量）必须双写转义为 `$$HOME`、`$$100`。
+- 当前 Console（`run_code`）路径普通参数直传 JS/JSON 值（`encodeProgramArguments` 自动转义 `$` 前缀），仅 `refParam` 字段接受 `$app_id.view_id.ref` 字符串，两端规则不统一。
 
-### 2. 已确认决策
-1. **作用域与统一心智**：Ref 表达规则只存在于 `[模型 / 入口适配器] ↔ [Runtime]` 之间，App 业务代码始终直接接收 Runtime 解析好的只读值。**`refParam` 与普通参数使用同一种引用写法**：
-   - Native 统一写 `{"$aotui_ref": "地址"}`；
-   - `run_code` 统一写 `ref("地址")`；
-   - 普通参数可以直接填业务字面值；`refParam` 必须选一个真实发布、类型匹配的 Ref，手抄一模一样的值也不能充当该 Ref。
-2. **`run_code` 入口（`ref(地址)` + 发送前显式编码）**：
-   - 区分两个不同动作：`refs` 是“让脚本读取该值进变量”，`ref("地址")` 是“请 Runtime 把这一项转交给目标页面”。即使脚本无权读邮箱，也能用 `ref(...)` 帮获准的发邮件页选中该邮箱；Runtime 在真正调用时按本轮名单与目标页核对权限，猜中地址也拿不到值。
-   - 实现约束：脚本入口必须在跨进程 JSON 发送前识别 `ref(...)` 句柄，以显式协议标记告知 Runtime“这是引用”；脚本自己构造的普通对象始终按普通业务数据传递。
-3. **Native 入口（方案 B + 按需投影 + 原样 JSON 逃生通道）**：
-   - 普通字符串（`$HOME`、`$100`、`$$HOME` 乃至形似 Ref 地址的普通字符串）及普通对象（如 `{"$ref": "#/defs/User"}`）一律原样保留，彻底废除 `$$` 字符串转义。
-   - **识别位置限定**：引用**只在整个参数槽位或直接数组元素位置识别**，不深入文件正文或嵌套对象内部扫描。
-   - **原样业务对象逃生通道**：为解决业务对象本身恰好单键叫 `$aotui_ref`（或 `$aotui_literal_json`）的撞名问题，提供显式“按 JSON 原样传”写法 `{"$aotui_literal_json": "..."}`——内部 JSON 字符串只解析一次，随后直接按业务类型校验，里面再出现任何标记均视为纯数据。
-   - **Schema 按需展示（B-按需）**：按需改变的是展示给模型的工具说明，引用本身的语义固定。无可用兼容 Ref 时展示纯普通参数 Schema；本轮存在获准交给该类型页面且类型可能匹配的 Ref 时，才在工具说明中加入引用写法（同时规避 Claude 严格模式整次请求最多 16 个联合类型参数的上限）。同类型多页仍共享一份工具说明，执行时按实际选中的接收页核对权限，甲页授权乙页不得借用。授权变化导致工具说明变动的缓存影响须后续实测。
+### 2. 已修正/撤回意见
+- **撤回初版方案 B（`{"$aotui_ref": ...}` + `{"$aotui_literal_json": ...}` + `run_code` 的 `ref(...)`）**：Native 嵌套大括号与长键名对模型过于啰嗦，且会使所有 `string` 参数被迫拆成 `anyOf` 联合类型；同时 `run_code` 与 Native 格式不统一，增加认知与跨进程编码复杂度。
+- **排除 `$.` 前缀方案（如 `$.contacts.list...`）**：与 JSONPath（如 `$.items[0].name`、SQLite `json_extract`、AOTUI 诊断路径 `$.views`）及 jQuery（`$.ajax(opts)`）高频冲突。
 
-### 3. 必过验收测试（看 App 最终实际收到什么）
+### 3. 已确认决策（全链路统一 `$ref.`）
+1. **双端统一扁平格式**：Ref 表达规则只存在于 `[模型 / 入口适配器] ↔ [Runtime]` 之间，App 业务代码始终直接接收 Runtime 解析好的只读值。Native Tool、Console（`run_code`）与 `system-inspect_ref`（[CON-04](01-conceptual-design.md#con-04)）**全部统一使用同一种扁平字符串写法**（普通参数与 `refParam` 写法一致）：
+   - 完整格式：**`"$ref.<app_id>.<view_id>.<ref_id>[...path]"`**（必须包含 `app_id` 以区分跨 App 同名页面），例如 `"$ref.contacts.list.people[0].email"`，带点号的键写成 `"$ref.contacts.list.people[0][\"display.name\"]"`。
+   - **混用示例**：
+     - Native Tool：`{ "to": ["boss@co.com", "$ref.contacts.list.people[0].email"] }`
+     - Console（`run_code`）：`tools.mail.send({ to: ["boss@co.com", "$ref.contacts.list.people[0].email"] })`
+   - 普通参数可以直接填业务字面值或兼容的 `$ref.` 地址；`refParam` 必须选一个真实发布、类型匹配的 Ref，手抄一模一样的值也不能充当该 Ref。
+2. **极低撞车与最小转义规则**：
+   - 普通字符串 `"$HOME"`、`"$100"`、`"$$HOME"`、JSONPath `"$.items[0].name"`、jQuery `"$.ajax(opts)"` 以及普通对象 `{"$ref": "#/defs/User"}` 一律原样保留，**无需任何转义**。
+   - **识别位置限定**：引用**只在顶层参数槽位或直接数组元素位置**且字符串以 `$ref.` 开头时识别，不深入文件正文中间或嵌套对象内部扫描。
+   - **罕见撞前缀转义**：只有当整个参数值或直接数组元素字面本身以 `$ref.` 开头时，才双写为 `"$$ref...."`（去掉一个前导 `$` 后按原文交付）。
+3. **Console（`run_code`）语义分工**：
+   - 保持两个动作清晰分离：`refs` 供脚本直接读取本轮可见的 `public` 值进变量参与计算/循环；传入 `"$ref.contacts.list.people[0].email"` 字符串则请 Runtime 把引用转交给目标页面（即使脚本无权读 `private`/`protected` 值也可安全转交，且循环拼接索引如 `` `$ref.contacts.list.people[${i}].email` `` 天然无 Proxy 陷阱）。Runtime 在真正调用时按本轮名单与目标页核对权限，猜中地址也拿不到值。
+4. **Native Schema 按需展示（B-按需，大幅减少联合类型）**：
+   - 按需改变的是展示给模型的工具说明，引用本身的语义固定。
+   - **`string` 类型参数天然兼容 `"$ref...."`，无需再拆成 `anyOf` 联合类型**（显著规避 Claude 严格模式整次请求最多 16 个联合类型参数的上限）；仅对**非字符串参数**（如对象、整数、元组），当本轮存在获准交给该类型页面且类型可能匹配的 Ref 时，才在工具说明中按需加入引用字符串分支。同类型多页仍共享一份工具说明，执行时按实际选中的接收页核对权限。
+
+### 4. 必过验收测试（看 App 最终实际收到什么）
 | 要测的事 | 通过标准 |
 | :--- | :--- |
-| 原文有没有被改 | `$HOME`、`$$HOME` 以及恰好拼成有效 Ref 地址的普通字符串都逐字保留；用**真正接收 JSON 对象的工具**测试 `$ref` 和 `$aotui_ref` 撞名（含 `{"$aotui_literal_json": ...}` 原样传递），不只测把它们写进文件字符串。 |
-| 隐藏字段/跨页 Ref 能不能正确转交 | Native 和 `run_code` 都能把“手填值 + 引用”按原顺序交给获准页面；对 `private`/`protected` Ref 直接读值、换一个未获准页面、把整条不匹配对象当成字符串字段传入，均应在业务函数执行前被拒绝（注：按 [`CON-04`](01-conceptual-design.md#con-04) 最终口径，本轮对 Agent 可见的 `public` Ref 允许 Agent 直接读值，不再以“可见 `public` 邮箱却禁 Agent 打印”为例）。 |
-| 旧引用会不会指错人 | 通讯录更新后，同一轮的有效引用仍取当轮选中的邮箱；原页关闭后同名重开，或切到下一轮再使用脚本保存的旧 `ref(...)`，均明确拒绝。 |
-| 三家严格模式能不能真用 | **（当前状态：待真实接口验证）** 将实际生成的整组 Native 工具分别发给 OpenAI、DeepSeek、Claude 并开启严格模式，验证服务端接受、模型能写对、App 收到正确值（不得仅靠测 `run_code` 外层代码字符串替代 Native 测试）。 |
+| 原文有没有被改 | `$HOME`、`$100`、`$$HOME`、`$.items[0].name`、`$.ajax(opts)` 及对象 `{"$ref": "#/defs/User"}` 都逐字原样保留；整个槽位传 `"$$ref.contacts.list.x"` 时准确还原为字面文本 `"$ref.contacts.list.x"`；文件正文中间包含 `$ref.xxx` 不触发解析。 |
+| 隐藏字段/跨页 Ref 能不能正确转交 | Native 和 `run_code` 都能把“手填值 + `$ref....` 引用”按原顺序交给获准页面；对 `private`/`protected` Ref 直接读值、换一个未获准页面、把整条不匹配对象当成字符串字段传入，均应在业务函数执行前被拒绝。 |
+| 旧引用会不会指错人 | 通讯录更新后，同一轮的有效引用仍取当轮选中的邮箱；原页关闭后同名重开，或切到下一轮再使用旧 `$ref....` 地址，均明确拒绝。 |
+| 三家严格模式能不能真用 | **（当前状态：待真实接口验证）** 将实际生成的整组 Native 工具（含字符串参数与按需联合的非字符串参数）分别发给 OpenAI、DeepSeek、Claude 并开启严格模式，验证服务端接受、模型能写对、App 收到正确值。 |
 
-### 4. 决策记录
-- **2026-11-23（已确认）**：选定 `run_code` 用 `ref(地址)`（发送前识别编码）、Native 选方案 B（`{"$aotui_ref": ...}`）+ `{"$aotui_literal_json": ...}` 逃生通道 + B-按需展示 + `refParam` 统一显式引用；三家严格模式兼容性标为待真实接口验证，确认 4 项验收标准。
+### 5. 决策记录
+- **2026-11-23（初版，已被下方替代）**：曾暂定 `run_code` 用 `ref(地址)`、Native 用 `{"$aotui_ref": ...}` + `{"$aotui_literal_json": ...}`。
+- **2026-11-24（修订确认）**：撤回 `{"$aotui_ref": ...}` 与 `ref(...)`，排除与 JSONPath/jQuery 冲突的 `$.`；正式定为 Native Tool、Console（`run_code`）与 `system-inspect_ref` 全链路统一扁平字符串 **`"$ref.<app_id>.<view_id>.<ref_id>[...path]"`**（仅整槽位字面以 `$ref.` 开头时用 `$$ref.` 转义），确认 4 项验收标准。
 
 ---
 
