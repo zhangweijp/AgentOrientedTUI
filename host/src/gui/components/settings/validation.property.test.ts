@@ -21,7 +21,7 @@ const arbitraryProviderConfig = (): fc.Arbitrary<ProviderConfig> => {
         isActive: fc.boolean(),
         model: fc.string({ minLength: 3, maxLength: 30 }),
         temperature: fc.float({ min: 0, max: 2 }),
-        maxSteps: fc.integer({ min: 1, max: 100 }),
+
         createdAt: fc.integer({ min: 1600000000000, max: 1700000000000 }),
         updatedAt: fc.integer({ min: 1600000000000, max: 1700000000000 }),
     });
@@ -202,7 +202,7 @@ describe('Validation Utilities - Property-Based Tests', () => {
                         isActive: false,
                         model: 'gpt-4',
                         temperature: 0.7,
-                        maxSteps: 10,
+
                         createdAt: Date.now(),
                         updatedAt: Date.now(),
                     };

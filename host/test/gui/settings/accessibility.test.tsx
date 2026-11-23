@@ -24,7 +24,7 @@ vi.mock('../../../src/gui/hooks/useProviderConfigs.js', () => ({
                 apiKey: 'sk-test1234',
                 model: 'gpt-4',
                 temperature: 0.7,
-                maxSteps: 10,
+
                 isActive: true,
                 createdAt: Date.now(),
                 updatedAt: Date.now(),

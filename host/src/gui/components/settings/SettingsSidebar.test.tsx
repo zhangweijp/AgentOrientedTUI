@@ -55,7 +55,7 @@ describe('SettingsSidebar', () => {
     describe('active tab highlighting', () => {
         it('should highlight Model tab when activeTab is "model"', () => {
             const onTabChange = vi.fn();
-            const { container } = render(
+            render(
                 <SettingsSidebar activeTab="model" onTabChange={onTabChange} />
             );
 
@@ -66,7 +66,7 @@ describe('SettingsSidebar', () => {
 
         it('should highlight Theme tab when activeTab is "theme"', () => {
             const onTabChange = vi.fn();
-            const { container } = render(
+            render(
                 <SettingsSidebar activeTab="theme" onTabChange={onTabChange} />
             );
 

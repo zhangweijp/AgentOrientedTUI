@@ -85,7 +85,7 @@ export class SettingsErrorBoundary extends React.Component<
                             <summary className="cursor-pointer text-sm text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] mb-2">
                                 Error Details (Development Only)
                             </summary>
-                            <pre className="text-xs text-[var(--color-danger)] bg-[var(--color-bg-elevated)] p-4 rounded-lg overflow-auto max-h-48 border border-[var(--color-border)]">
+                            <pre className="text-xs text-[var(--color-danger)] bg-[var(--color-bg-elevated)] p-4 rounded-lg overflow-auto max-h-48 border border-[var(--mat-border)]">
                                 {this.state.error.toString()}
                                 {this.state.error.stack && `\n\n${this.state.error.stack}`}
                             </pre>

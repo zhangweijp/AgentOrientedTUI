@@ -23,7 +23,7 @@ function arbitraryLLMConfig(overrides?: Partial<LLMConfigRecord>): fc.Arbitrary<
         baseUrl: fc.option(fc.webUrl({ validSchemes: ['https'] }), { nil: undefined }),
         apiKey: fc.option(fc.string({ minLength: 10 }), { nil: undefined }),
         temperature: fc.double({ min: 0, max: 1 }),
-        maxSteps: fc.integer({ min: 1, max: 100 }),
+
         isActive: fc.boolean(),
         createdAt: fc.integer({ min: 1000000000000, max: 9999999999999 }),
         updatedAt: fc.integer({ min: 1000000000000, max: 9999999999999 }),
@@ -96,7 +96,7 @@ describe('ModelTab - Property-Based Tests', () => {
                         baseUrl: activeConfigData.baseUrl,
                         apiKey: activeConfigData.apiKey,
                         temperature: activeConfigData.temperature,
-                        maxSteps: activeConfigData.maxSteps,
+
                     });
 
                     // Set it as active
@@ -127,7 +127,7 @@ describe('ModelTab - Property-Based Tests', () => {
                             model: 'temp-model',
                             providerId: 'temp',
                             temperature: 0.7,
-                            maxSteps: 10,
+
                         });
                         llmConfigService.setActiveConfig(tempConfig.id);
                         llmConfigService.deleteConfig(createdConfig.id);
@@ -163,7 +163,7 @@ describe('ModelTab - Property-Based Tests', () => {
                         baseUrl: activeConfigData.baseUrl,
                         apiKey: activeConfigData.apiKey,
                         temperature: activeConfigData.temperature,
-                        maxSteps: activeConfigData.maxSteps,
+
                     });
 
                     // Set it as active
@@ -177,7 +177,7 @@ describe('ModelTab - Property-Based Tests', () => {
                         baseUrl: inactiveConfigData.baseUrl,
                         apiKey: inactiveConfigData.apiKey,
                         temperature: inactiveConfigData.temperature,
-                        maxSteps: inactiveConfigData.maxSteps,
+
                     });
 
                     // Verify it's inactive
@@ -202,7 +202,7 @@ describe('ModelTab - Property-Based Tests', () => {
                         model: 'temp-model',
                         providerId: 'temp',
                         temperature: 0.7,
-                        maxSteps: 10,
+
                     });
                     llmConfigService.setActiveConfig(tempConfig.id);
                     llmConfigService.deleteConfig(activeConfig.id);
@@ -233,7 +233,7 @@ describe('ModelTab - Property-Based Tests', () => {
                         baseUrl: activeConfigData.baseUrl,
                         apiKey: activeConfigData.apiKey,
                         temperature: activeConfigData.temperature,
-                        maxSteps: activeConfigData.maxSteps,
+
                     });
 
                     // Set it as active
@@ -247,7 +247,7 @@ describe('ModelTab - Property-Based Tests', () => {
                         baseUrl: inactiveConfigData.baseUrl,
                         apiKey: inactiveConfigData.apiKey,
                         temperature: inactiveConfigData.temperature,
-                        maxSteps: inactiveConfigData.maxSteps,
+
                     });
 
                     // Get active config before deletion
@@ -269,7 +269,7 @@ describe('ModelTab - Property-Based Tests', () => {
                         model: 'temp-model',
                         providerId: 'temp',
                         temperature: 0.7,
-                        maxSteps: 10,
+
                     });
                     llmConfigService.setActiveConfig(tempConfig.id);
                     llmConfigService.deleteConfig(activeConfig.id);

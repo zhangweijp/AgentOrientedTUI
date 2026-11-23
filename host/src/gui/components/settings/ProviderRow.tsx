@@ -22,7 +22,6 @@ const customToConfig = (cp: CustomProviderRecord): ProviderConfig => ({
     isActive: false,
     model: '',
     temperature: 0,
-    maxSteps: 0,
     createdAt: 0,
     updatedAt: 0,
 });

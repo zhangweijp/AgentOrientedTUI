@@ -76,7 +76,7 @@ export const ProviderLogo: React.FC<ProviderLogoProps> = ({
         // Fallback: Show provider initial in colored circle
         return (
             <div
-                className={`flex items-center justify-center rounded-md border border-[var(--color-border)] font-medium text-white ${className}`}
+                className={`flex items-center justify-center rounded-md border border-[var(--mat-border)] font-medium text-white ${className}`}
                 style={{
                     width: sizeInPx ? `${sizeInPx}px` : '100%',
                     height: sizeInPx ? `${sizeInPx}px` : '100%',
@@ -95,7 +95,7 @@ export const ProviderLogo: React.FC<ProviderLogoProps> = ({
         <img
             src={logoUrl}
             alt={`${providerName} logo`}
-            className={`rounded-md border border-[var(--color-border)] object-contain ${className}`}
+            className={`rounded-md border border-[var(--mat-border)] object-contain ${className}`}
             style={{
                 width: sizeInPx ? `${sizeInPx}px` : '100%',
                 height: sizeInPx ? `${sizeInPx}px` : '100%',

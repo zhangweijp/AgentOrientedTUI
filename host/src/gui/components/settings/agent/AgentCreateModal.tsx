@@ -6,7 +6,7 @@
  * "Add Model Provider →" link switches to Settings Model page.
  */
 import { parseModelSelection } from '../../../../types/llm-config.js';
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AgentEditorModal } from './AgentEditorModal.js';
 import { useChatBridge } from '../../../ChatBridge.js';
 import { IconBrain, IconPrompt, IconApps, IconSkills, IconPlug, IconAgentIdle, IconAgentWorking, IconAgentSleeping, IconAgentPaused } from '../../Icons.js';
@@ -481,7 +481,6 @@ export const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
 
                 {/* ─── SKILLS TAB ─── */}
                 {activeTab === 'skills' && (() => {
-                    const allSkillNames = [...skills.global.map(s => s.name), ...(projectPath ? skills.project.map(s => s.name) : [])];
                     const anySkillsEnabled = Object.values(enabledSkills).some(arr => arr.length > 0);
                     const toggleAllSkills = (v: boolean) => {
                         if (v) {

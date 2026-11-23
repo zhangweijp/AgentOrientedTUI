@@ -64,7 +64,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
     // Refs for focus trap
     const panelRef = useRef<HTMLDivElement>(null);
-    const firstFocusableRef = useRef<HTMLButtonElement>(null);
     const exitButtonRef = useRef<HTMLButtonElement>(null);
 
     // Screen reader announcements

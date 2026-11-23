@@ -12,7 +12,7 @@ describe('ThemeTab', () => {
     describe('theme card rendering', () => {
         it('should render both dark and light theme cards', () => {
             const onThemeChange = vi.fn();
-            const { container } = render(
+            render(
                 <ThemeTab currentTheme="dark" onThemeChange={onThemeChange} />
             );
 

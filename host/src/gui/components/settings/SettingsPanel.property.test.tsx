@@ -29,9 +29,8 @@ describe('SettingsPanel - Property-Based Tests', () => {
         it('clicking backdrop closes modal regardless of unsaved changes state', () => {
             fc.assert(
                 fc.property(
-                    fc.boolean(), // Has unsaved changes (simulated by different states)
                     fc.constantFrom('dark' as const, 'light' as const), // Current theme
-                    (hasUnsavedChanges, theme) => {
+                    (theme) => {
                         // Track if onClose was called
                         let closeCalled = false;
                         const onClose = () => {

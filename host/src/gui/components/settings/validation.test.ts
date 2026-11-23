@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { validateProviderConfig } from './validation.js';
 import type { ProviderConfig, NewProviderConfig } from './types.js';
-import { createMockProvider } from './test-helpers.js';
+import { createMockProvider } from './__tests__/mock-provider.js';
 
 describe('validateProviderConfig', () => {
     const mockExistingProviders: ProviderConfig[] = [

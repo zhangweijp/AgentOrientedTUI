@@ -7,7 +7,7 @@
  * @vitest-environment happy-dom
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { SettingsPanel } from './SettingsPanel.js';
 import { SettingsSidebar } from './SettingsSidebar.js';

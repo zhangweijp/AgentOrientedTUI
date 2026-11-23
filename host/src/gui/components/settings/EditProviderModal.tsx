@@ -234,7 +234,7 @@ export const EditProviderModal: React.FC<EditProviderModalProps> = ({
                         <label className="text-[11px] font-medium text-[var(--color-text-tertiary)]">
                             Provider
                         </label>
-                        <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-surface)]">
+                        <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-[var(--mat-border)] bg-[var(--color-bg-surface)]">
                             <ProviderLogo
                                 providerId={provider.providerId}
                                 providerName={provider.customName}

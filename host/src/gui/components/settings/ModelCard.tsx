@@ -69,10 +69,6 @@ export const ModelCard: React.FC<ModelCardProps> = ({
     isActive,
     onSelect,
 }) => {
-    const handleCardClick = () => {
-        onSelect();
-    };
-
     const hasToolCall = model.tool_call ?? false;
     const hasReasoning = model.reasoning ?? false;
     const hasVision = hasVisionCapability(model);
@@ -108,7 +104,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
                             className="
                                 shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium transition-all duration-200
                                 bg-[var(--color-bg-surface)] hover:bg-[var(--color-accent)]/15 text-[var(--color-text-secondary)] hover:text-[var(--color-accent)]
-                                border border-[var(--color-border)] hover:border-[var(--color-accent)]/30
+                                border border-[var(--mat-border)] hover:border-[var(--color-accent)]/30
                                 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto
                                 focus:opacity-100 focus:pointer-events-auto
                             "
@@ -133,23 +129,23 @@ export const ModelCard: React.FC<ModelCardProps> = ({
             </div>
 
             {/* Separator */}
-            <div className="h-px w-full bg-[var(--color-border)]" />
+            <div className="h-px w-full bg-[var(--mat-border)]" />
 
             {/* Capability Badges */}
             {(hasToolCall || hasReasoning || hasVision) && (
                 <div className="flex flex-wrap gap-1.5">
                     {hasToolCall && (
-                        <span className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-medium border bg-[var(--color-bg-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)]">
+                        <span className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-medium border bg-[var(--color-bg-surface)] border-[var(--mat-border)] text-[var(--color-text-secondary)]">
                             Tools
                         </span>
                     )}
                     {hasReasoning && (
-                        <span className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-medium border bg-[var(--color-bg-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)]">
+                        <span className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-medium border bg-[var(--color-bg-surface)] border-[var(--mat-border)] text-[var(--color-text-secondary)]">
                             Reasoning
                         </span>
                     )}
                     {hasVision && (
-                        <span className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-medium border bg-[var(--color-bg-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)]">
+                        <span className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-medium border bg-[var(--color-bg-surface)] border-[var(--mat-border)] text-[var(--color-text-secondary)]">
                             Vision
                         </span>
                     )}
@@ -179,7 +175,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
 
             {/* Activate Button - Only visible when not active */}
             {/* {!isActive && (
-                <div className="mt-2 pt-2 border-t border-[var(--color-border)] flex justify-end">
+                <div className="mt-2 pt-2 border-t border-[var(--mat-border)] flex justify-end">
                     <button
                         onClick={(e) => {
                             e.stopPropagation();
@@ -188,7 +184,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
                         className="
                             px-3 py-1.5 rounded-[8px] text-[11px] font-medium transition-all duration-200
                             bg-[var(--color-bg-surface)] hover:bg-[var(--color-accent)]/15 text-[var(--color-text-secondary)] hover:text-[var(--color-accent)]
-                            border border-[var(--color-border)] hover:border-[var(--color-accent)]/30
+                            border border-[var(--mat-border)] hover:border-[var(--color-accent)]/30
                         "
                     >
                         Activate

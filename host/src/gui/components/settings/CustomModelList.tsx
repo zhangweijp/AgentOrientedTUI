@@ -114,7 +114,7 @@ const CustomModelCard: React.FC<{
                             px-2 py-0.5 rounded-full text-[10px] font-medium transition-all duration-200
                             bg-[var(--color-bg-surface)] hover:bg-[var(--color-accent)]/15
                             text-[var(--color-text-secondary)] hover:text-[var(--color-accent)]
-                            border border-[var(--color-border)] hover:border-[var(--color-accent)]/30
+                            border border-[var(--mat-border)] hover:border-[var(--color-accent)]/30
                             opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto
                             disabled:opacity-50 disabled:cursor-not-allowed
                         "

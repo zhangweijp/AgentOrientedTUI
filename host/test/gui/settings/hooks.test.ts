@@ -22,7 +22,7 @@ describe('sortProviders - Unit Tests', () => {
                 isActive: false,
                 model: 'model1',
                 temperature: 0.7,
-                maxSteps: 10,
+
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
             },
@@ -34,7 +34,7 @@ describe('sortProviders - Unit Tests', () => {
                 isActive: true,
                 model: 'model2',
                 temperature: 0.7,
-                maxSteps: 10,
+
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
             },
@@ -46,7 +46,7 @@ describe('sortProviders - Unit Tests', () => {
                 isActive: false,
                 model: 'model3',
                 temperature: 0.7,
-                maxSteps: 10,
+
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
             },
@@ -68,7 +68,7 @@ describe('sortProviders - Unit Tests', () => {
                 isActive: false,
                 model: 'model1',
                 temperature: 0.7,
-                maxSteps: 10,
+
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
             },
@@ -80,7 +80,7 @@ describe('sortProviders - Unit Tests', () => {
                 isActive: true,
                 model: 'model2',
                 temperature: 0.7,
-                maxSteps: 10,
+
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
             },
@@ -110,7 +110,7 @@ describe('sortProviders - Unit Tests', () => {
                 isActive: false,
                 model: 'model1',
                 temperature: 0.7,
-                maxSteps: 10,
+
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
             },
@@ -122,7 +122,7 @@ describe('sortProviders - Unit Tests', () => {
                 isActive: false,
                 model: 'model2',
                 temperature: 0.7,
-                maxSteps: 10,
+
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
             },
