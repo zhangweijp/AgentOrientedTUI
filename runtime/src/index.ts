@@ -10,7 +10,7 @@
  * import { createRuntime } from '@aotui/runtime';
  * ```
  * 
- * ### For Types (SPI Layer)
+ * ### For Host Types
  * ```typescript
  * import type { IKernel, ToolResult } from '@aotui/runtime';
  * ```
@@ -22,7 +22,7 @@
  * 
  * ## ⚠️ Internal APIs
  * Engine implementations stay internal. Use the explicit package exports
- * below and the pure semantic contracts from `@aotui/runtime/core`.
+ * below and the separate `@aotui/core` package for portable semantics.
  * 
  * @module @aotui/runtime
  */
@@ -38,6 +38,11 @@ export type {
     AppInteraction,
     AppInteractionPolicy,
     AppInvocation,
+    CancellationSignal,
+    ConsoleInputs,
+    ConsoleInputPath,
+    RequestSources,
+    RequestSourceSelection,
     ReceiptQuery,
     InvocationReceipt,
     ReceiptAccess,
@@ -46,51 +51,41 @@ export type {
     AppPreviewResult,
     InvocationContext,
     ReceiptMetadata,
-    Issue as InteractionIssue,
-} from './core/invocation/app-interaction-types.js';
-export type { Observation, ObservationSelection, ObservationGrant, ObservedTool } from './core/invocation/observation-types.js';
+    InteractionIssue,
+} from '@aotui/core';
+export type { Observation, ObservationSelection, ObservationWindowSelection, ViewIdentity, ObservationGrant, ObservedTool, ObservedRef, ObservedRefPath,
+    ProgramToolInput, ProgramRefPath, RefConsumer, RefGrant, RefPathGrant } from '@aotui/core';
+export type { RefPath } from '@aotui/core';
+export type { AppWindows, ViewWindow, ViewWindowTarget, ViewCloseResult } from './spi/runtime/windows.js';
 
-export {
-    AOTUIError,
-    createDesktopId,
-    createAppId,
-} from './spi/index.js';
+export { AOTUIError } from '@aotui/core';
+export { createDesktopId, createAppId } from './spi/core/id-factory.js';
 export type {
     AppContext,
-    AppDiscoveryInfo,
-    AppInteractionOptions,
     AppID,
     AppLaunchConfig,
-    AppInteractionResult,
     AppStatePersistence,
+    DesktopID,
+    ErrorCode,
+    ProjectionLimitOverrides,
+    ProjectionLimits,
+    ToolError,
+    ToolResult,
+} from '@aotui/core';
+export type { UpdateSignal } from './spi/core/signals.js';
+export type { AppDiscoveryInfo, IDesktop, IKernel, RegisterPendingAppOptions, ReinitializeDesktopAppsOptions, ReinitializeDesktopAppsResult } from './spi/runtime/kernel.interface.js';
+export type { AppInteractionOptions, AppInteractionResult } from './spi/runtime/app-interaction.interface.js';
+export type {
     CloseHandle,
     CloseReport,
     DesktopCloseHandle,
     DesktopCloseOptions,
     DesktopCloseReport,
-    DesktopID,
-    ErrorCode,
-    IDesktop,
-    IKernel,
     InteractionCloseReport,
-    LLMUsageEvent,
-    ProjectionLimitOverrides,
-    ProjectionLimits,
-    ToolError,
-    ToolResult,
-    ReinitializeDesktopAppsOptions,
-    ReinitializeDesktopAppsResult,
     RuntimeCloseHandle,
     RuntimeCloseReport,
     ShutdownOptions,
-    UpdateSignal,
-} from './spi/index.js';
+} from './spi/runtime/close.interface.js';
 
-// ============================================================================
-// 🟢 Public: App Registry (Third-Party App Management)
-// Used by Product Layer to load and manage third-party TUI apps
-// ============================================================================
-export type { StateStorageBackend } from './core/persistence/state-storage.js';
-export { AppRegistry } from './engine/app/registry.js';
-export type { LoadedApp, AppRegistryEntry, AppRegistryOptions, AppRegistryInstallOptions, AppRegistryFailure, AppDiscoveryResult, AppInstallResult } from './engine/app/registry.js';
-export type { TUIConfig, AppConfigEntry } from './engine/app/config.js';
+export type { StateStorageBackend } from '@aotui/core/internal';
+export { readAppManifest, type AppManifest } from './engine/app/manifest.js';

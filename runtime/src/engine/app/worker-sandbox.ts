@@ -4,13 +4,12 @@
  * @module @aotui/runtime/engine/app-sandbox
  */
 
-import type { AppID, DesktopID } from '../../spi/index.js';
-import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
+import type { AppID, DesktopID } from '@aotui/core';
 import { AppWorkerHost, type HostResourceReport } from './worker-host.js';
 import type { WorkerCapacity } from './worker-capacity.js';
 import type { StateStorageBackend } from './state-storage-host.js';
 import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
-import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
+import type { AppInteractionPolicy } from '@aotui/core';
 import { captureProjectionLimits, captureToolsEnabled } from './interaction-config.js';
 
 /**
@@ -42,7 +41,7 @@ export interface WorkerSandboxConfig extends AppInteractionOptions {
      */
     workerScriptPath?: string;
     /** 应用启动配置 (环境变量、初始状态等) */
-    config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
+    config?: import('@aotui/core').AppLaunchConfig;
     /** [RFC-005] Runtime Config */
     runtimeConfig?: import('../../spi/config/index.js').RuntimeConfig;
 }
@@ -54,7 +53,7 @@ export interface SandboxCloseReport {
     readonly state: 'active' | 'closing' | 'settled'; readonly intent: null | 'close' | 'delete';
     readonly ok: boolean; readonly resourcesReleased: boolean;
     readonly host?: HostResourceReport;
-    readonly issues: readonly ('INSTALL_FAILED' | 'DELETE_FAILED' | 'APP_CLOSE_FAILED' | 'APP_CLOSE_DEADLINE_EXCEEDED' | 'RESOURCE_RELEASE_FAILED')[];
+    readonly issues: readonly ('INSTALL_FAILED' | 'DELETE_FAILED' | 'APP_CLOSE_FAILED' | 'APP_CLOSE_DEADLINE_EXCEEDED' | 'PERSISTENCE_CLOSE_FAILED' | 'RESOURCE_RELEASE_FAILED')[];
 }
 const lifecycleError = (code: 'SANDBOX_CLOSED' | 'SANDBOX_ALREADY_INSTALLED' | 'INSTALL_FAILED' | 'LIFECYCLE_CONFLICT' | 'SANDBOX_CLOSE_FAILED', report?: SandboxCloseReport) =>
     Object.assign(new Error(code), { code, ...(report ? { report } : {}) });
@@ -97,6 +96,10 @@ export class WorkerSandbox {
 
     get appInstanceId(): string | undefined {
         return this.workerHost?.appInstanceId;
+    }
+
+    get windowActions(): Pick<AppWorkerHost, 'collapseNote' | 'getWindows' | 'setAppWindow' | 'setViewWindow' | 'closeView'> | undefined {
+        return !this.intent && this._status === 'running' ? this.workerHost ?? undefined : undefined;
     }
 
     getAppInteraction(expectedInstanceId: string, policy?: AppInteractionPolicy): AppInteractionResult {
@@ -163,7 +166,7 @@ export class WorkerSandbox {
                 catch (error) {
                     const code = (error as { code?: string })?.code;
                     this.closeIssues.add(code === 'APP_DELETE_FAILED' ? 'DELETE_FAILED' :
-                        code === 'APP_CLOSE_DEADLINE_EXCEEDED' ? code : 'APP_CLOSE_FAILED');
+                        code === 'APP_CLOSE_DEADLINE_EXCEEDED' || code === 'PERSISTENCE_CLOSE_FAILED' ? code : 'APP_CLOSE_FAILED');
                 }
             }
             await this.installPromise?.catch(() => {});
@@ -203,12 +206,6 @@ export class WorkerSandbox {
         this.beginCleanup('delete');return this.close();
     }
     disposeAsync(): Promise<SandboxCloseReport> { return this.beginCleanup(this.intent ?? 'close'); }
-
-    pushLLMUsage(event: LLMUsageEvent): void {
-        if (!this.intent) this.workerHost?.pushLLMUsage(event);
-    }
-
-
 
     // ════════════════════════════════════════════════════════════════
     //  Internal

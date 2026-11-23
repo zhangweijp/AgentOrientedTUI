@@ -35,11 +35,10 @@ describe('Desktop', () => {
             cleanupAsync: vi.fn(async () => undefined),
             reinitializeAll: vi.fn().mockResolvedValue({
                 reinitializedAppIds: ['app_0'],
-                skippedAppIds: ['app_1'],
+                skippedInstallationIds: ['app_1'],
                 failedAppIds: [],
             }),
             getInstalledApps: vi.fn().mockReturnValue([]),
-            broadcastLLMUsage: vi.fn(),
         };
         const delegatedDesktop = new Desktop('dt_phase1' as any, {
             appManager: appManager as any,
@@ -56,7 +55,7 @@ describe('Desktop', () => {
         expect(result).toEqual({
             desktopId: 'dt_phase1',
             reinitializedAppIds: ['app_0'],
-            skippedAppIds: ['app_1'],
+            skippedInstallationIds: ['app_1'],
             failedAppIds: [],
         });
         expect(emitSignalSpy).toHaveBeenCalledWith('dt_phase1', 'manual_refresh');

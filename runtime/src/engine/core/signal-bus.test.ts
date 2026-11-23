@@ -5,7 +5,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SignalBus, type SignalListener } from './signal-bus.js';
-import type { DesktopID, UpdateSignal } from '../../spi/index.js';
+import type { DesktopID } from '@aotui/core';
+import type { UpdateSignal } from '../../spi/core/signals.js';
 
 describe('SignalBus', () => {
     let bus: SignalBus;

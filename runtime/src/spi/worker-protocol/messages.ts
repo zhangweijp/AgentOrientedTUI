@@ -23,11 +23,10 @@ import type { ManagedPersistenceReport } from '../../worker-runtime/state-persis
  */
 
 import type { WORKER_PROTOCOL, RequestID, AppID, DesktopID } from './types.js';
-import type { AppLaunchConfig } from '../app/app-config.interface.js';
-import type { ViewToolReceiver, SnapshotPrepareIssue, ToolInvocationDescriptor } from '../../core/snapshot/types.js';
-import type { ProjectionLimits } from '../../core/invocation/observation-types.js';
-import type { SnapshotValueRefSource } from '../../core/tool/snapshot-value-arguments.js';
-import type { LLMUsageEvent } from '../core/llm-usage.js';
+import type { AppLaunchConfig } from '@aotui/core';
+import type { JsonValue, ViewToolReceiver, SnapshotDraftEnvelope, SnapshotPrepareIssue, ToolInvocationDescriptor } from '@aotui/core/internal';
+import type { ProjectionLimits } from '@aotui/core';
+import type { SnapshotValueRefSource } from '@aotui/core';
 
 // ============================================================================
 // Main → Worker Messages
@@ -66,16 +65,20 @@ export interface AppLifecycleMessage {
     reason?: string;
 }
 
-import type { ViewToolInvocationTerminal } from '../../core/tool/invocation-terminal.js';
-export type { ViewToolInvocationTerminal } from '../../core/tool/invocation-terminal.js';
+import type { ViewToolInvocationTerminal } from '@aotui/core';
+export type { ViewToolInvocationTerminal } from '@aotui/core';
 
 /** The qualified receiver and Ref provenance are distinct from business parameters. */
 export type ViewToolInvokeMessage = Readonly<{
-    type: 'VIEW_TOOL_INVOKE'; requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string;
+    type: 'VIEW_TOOL_INVOKE'; requestId: RequestID; appId: AppID; instanceId: string; snapshotId: string; observationId: string;
     tool: ToolInvocationDescriptor;
     receiver: ViewToolReceiver;
-    rawArgs: Readonly<Record<string, unknown>>; effectiveArgs: Readonly<Record<string, unknown>>;
+    rawArgs: Readonly<Record<string, JsonValue>>;
     refSources: readonly SnapshotValueRefSource[];
+}>;
+export type ViewCloseMessage = Readonly<{
+    type: 'VIEW_CLOSE'; requestId: RequestID; appId: AppID; instanceId: string;
+    viewId: string; viewInstanceId: string;
 }>;
 export type ViewToolInvokeResponse = Readonly<{
     type: 'VIEW_TOOL_INVOKE_RESPONSE'; requestId: RequestID; appId: AppID; instanceId: string;
@@ -87,12 +90,12 @@ export type ViewToolInvokeResponse = Readonly<{
  * 主线程 → Worker 消息联合类型
  */
 export type MainToWorkerMessage =
-    | Readonly<{ type: 'FLUSH_PROJECTION'; requestId: RequestID }>
+    | Readonly<{ type: 'FLUSH_PROJECTION'; requestId: RequestID; known?: SnapshotDraftEnvelope }>
     | ViewToolInvokeMessage
+    | ViewCloseMessage
     | StateStorageResponse
     | InitMessage
-    | AppLifecycleMessage
-    | Readonly<{ type: 'LLM_USAGE'; event: LLMUsageEvent }>;
+    | AppLifecycleMessage;
 
 // ============================================================================
 // Worker → Main Messages
@@ -179,6 +182,8 @@ export interface SnapshotPrepareFailedPush {
     suppressSignal: boolean;
 }
 
+export type ProjectionCurrentMessage = SnapshotDraftEnvelope & Readonly<{ type: 'PROJECTION_CURRENT'; requestId: RequestID }>;
+
 /**
  * Worker → 主线程消息联合类型
  */
@@ -189,4 +194,5 @@ export type WorkerToMainMessage =
     | LifecycleResponse
     | ErrorResponse
     | SnapshotPreparedPush
-    | SnapshotPrepareFailedPush;
+    | SnapshotPrepareFailedPush
+    | ProjectionCurrentMessage;

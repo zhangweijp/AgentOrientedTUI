@@ -16,7 +16,7 @@ class Channel extends EventEmitter {
             requestId: message.requestId, success: true,
             ...(message.type === 'INIT' ? {
                 appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: message.appInstanceId },
-                persistence: { protocol: 'state-session-v1', version: 1, instanceId: message.appInstanceId },
+                persistence: { protocol: 'state-session-v2', version: 2, instanceId: message.appInstanceId },
                 protocol: message.protocol, toolsEnabled: message.toolsEnabled, appInstanceId: message.appInstanceId,
                 projectionLimits: message.projectionLimits,
             } : {}),
@@ -33,8 +33,8 @@ function make(options: any = {}) {
 }
 const modes = [{ name: 'read-only mode', toolsEnabled: false }, { name: 'tools enabled', toolsEnabled: true }];
 function draft(host: AppWorkerHost, producerSeq = 1) {
-    return { schemaVersion: 6, appId: host.appId, instanceId: host.appInstanceId, producerSeq, sourceEpoch: producerSeq,
-        capturedAt: producerSeq, views: [{ toolBindings: [], id: 'vv', viewInstanceId: 'vi', type: 'File', name: 'File', kind: 'state',
+    return { schemaVersion: 7, appId: host.appId, instanceId: host.appInstanceId, producerSeq, sourceEpoch: producerSeq,
+        capturedAt: producerSeq, views: [{ toolBindings: [], id: 'vv', viewInstanceId: 'vi', type: 'File', name: 'File', region: 'dynamic',
             content: { format: 'markdown-v1', value: 'generation ' + producerSeq } }], refs: {}, tools: {} };
 }
 function clean(host: AppWorkerHost) {
@@ -45,7 +45,7 @@ function clean(host: AppWorkerHost) {
 function initAck(host: AppWorkerHost, init: any, patch: Record<string, unknown> = {}) {
     return { type: 'INIT_RESPONSE', requestId: init.requestId, success: true,
         appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: host.appInstanceId },
-        persistence: { protocol: 'state-session-v1', version: 1, instanceId: host.appInstanceId },
+        persistence: { protocol: 'state-session-v2', version: 2, instanceId: host.appInstanceId },
         protocol: init.protocol, toolsEnabled: init.toolsEnabled, appInstanceId: host.appInstanceId,
         projectionLimits: init.projectionLimits, ...patch };
 }
@@ -96,7 +96,7 @@ describe('Worker Host owns exactly one application initialization', () => {
             expect(host.getSemanticSnapshotReport()?.health).toBe('stopped'); const retired = host.getSemanticSnapshotReport();
             savedListener({ type: 'INIT_RESPONSE', requestId: init.requestId, success: true,
                 appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: host.appInstanceId },
-                persistence: { protocol: 'state-session-v1', version: 1, instanceId: host.appInstanceId },
+                persistence: { protocol: 'state-session-v2', version: 2, instanceId: host.appInstanceId },
                 protocol: WORKER_PROTOCOL, toolsEnabled: true, appInstanceId: host.appInstanceId,
                 projectionLimits: init.projectionLimits });
             savedListener({ type: 'SNAPSHOT_PREPARED', draft: draft(host, 2) });
@@ -133,6 +133,7 @@ describe('Worker Host owns exactly one application initialization', () => {
     });
     it.each([
         { label: 'missing protocol', patch: { protocol: undefined }, code: 'WORKER_PROTOCOL_UNSUPPORTED' },
+        { label: 'retired protocol', patch: { protocol: 'app-worker/v5' }, code: 'WORKER_PROTOCOL_UNSUPPORTED' },
         { label: 'unknown protocol', patch: { protocol: 'app-worker/future' }, code: 'WORKER_PROTOCOL_UNSUPPORTED' },
         { label: 'missing toolsEnabled', patch: { toolsEnabled: undefined }, code: 'APP_INIT_ACK_INVALID' },
         { label: 'different authorization', patch: { toolsEnabled: true }, code: 'APP_INIT_ACK_INVALID' },

@@ -19,17 +19,18 @@ async function facts(name: string, value: object) { const root = process.env.AOT
 it.each(['sync', 'async'] as const)('C2-18/20 actual SDK %s unmount failure is fixed and preserves confirmed flush', async mode => {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c2-unmount-')), app = join(dir, 'app.mjs');
     await linkPreactPeer(dir);
-    await capture(app, `import {h} from 'preact';import Type from 'typebox';import { createTUIApp, usePersistentState, View, defineViewType } from ${JSON.stringify(url(join(repo,'sdk/dist/index.js')))};
-const RootType = defineViewType()({ name: 'Root', tools: {
+    await capture(app, `import {h} from 'preact';import Type from 'typebox';import { createTUIApp, useAppRuntimeContext, defineViewType, StaticView } from ${JSON.stringify(url(join(repo,'sdk/dist/index.js')))};
+const RootType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Root', tools: {
     save: {
         description: 'Save a value',
         inputSchema: Type.Object({ value: Type.Number() }, { additionalProperties: false }),
-        async execute({ input, context }) { context.set(input.value); return { success: true }; },
+        async execute({ input, context }) { await context.set(input.value); return { success: true }; },
     },
 } });
 function Root() {
-    const [, set] = usePersistentState('value', 0);
-    return h('div', null, h(View, { kind: 'instruction', id: 'root', type: RootType, context: { set } }, 'Managed state'));
+    const {persistence} = useAppRuntimeContext();
+    const set = value => persistence.save('value',value);
+    return h('div', null, h(StaticView, { idPrefix: 'root', type: RootType, context: { set } }, 'Managed state'));
 }
 const factory=createTUIApp({persistence:true,viewTypes:[RootType], app_name:'close',component:Root});
 const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,${mode === 'async' ? 'async ' : ''}close(){renderer.close();${mode === 'async' ? 'await Promise.resolve();' : ''}throw Error('private renderer detail');}};};export default factory;`);
@@ -38,7 +39,8 @@ const initialize=factory.initialize.bind(factory);factory.initialize=async(...ar
     try {
         await sandbox.installDynamic();await invokeObservedTool((sandbox as any).workerHost,'save',{value:7},'root');const worker = (sandbox as any).workerHost.worker;
         const close = sandbox.close();await expect(close).rejects.toHaveProperty('code','SANDBOX_CLOSE_FAILED');const report = await sandbox.disposeAsync();
-        expect(report).toMatchObject({ state:'settled', resourcesReleased:true, ok:false, host:{ worker:'exited', storage:{ support:'managed', lifecycle:{ unmount:'failed', flush:{ok:true}, dispose:{release:{status:'released'}} } } } });
+        expect(report).toMatchObject({ state:'settled', resourcesReleased:true, ok:false, host:{ worker:'exited', storage:{ support:'managed', unsafe:false,
+            lifecycle:{ ok:true, unmount:'failed', flush:{ok:true}, dispose:{release:{status:'released'}} } } } });
         expect(worker.threadId).toBe(-1);expect(JSON.parse(readSqliteState(join(dir, 'data/app-state'), 'd', 'close', 'value')!).value).toBe(7);
         expect(JSON.stringify(report)).not.toContain('private renderer detail');await facts('unmount-'+mode,{report,threadId:worker.threadId});
     } finally { await sandbox.disposeAsync();await rm(dir,{recursive:true,force:true}); }

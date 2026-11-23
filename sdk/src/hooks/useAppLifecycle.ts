@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import { useInternalAppRuntimeContext } from '../context/AppRuntimeContext.js';
-import type { AppLifecycleCallbacks } from '@aotui/runtime/spi';
-export type { AppLifecycleCallbacks } from '@aotui/runtime/spi';
+import type { AppLifecycleCallbacks } from '@aotui/core';
+export type { AppLifecycleCallbacks } from '@aotui/core';
 
 export function useAppLifecycle(callbacks: AppLifecycleCallbacks): void {
     const port = useInternalAppRuntimeContext().appLifecycle;

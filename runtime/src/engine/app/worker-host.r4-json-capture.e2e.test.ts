@@ -1,11 +1,11 @@
-import { projectCompleteViews } from '../../core/invocation/observation-registry.js';
+import { projectCompleteViews } from '@aotui/core/internal';
 import { Worker } from 'node:worker_threads';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
 import { describe, expect, it } from 'vitest';
-import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
+import type { AppInteractionPolicy } from '@aotui/core';
 import { AppWorkerHost } from './worker-host.js';
 
 type Capture =
@@ -18,8 +18,8 @@ function appSource(): string {
         import { h } from 'preact';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
         import Type from 'typebox';
-        import { createTUIApp, View, useDataRef, defineViewType } from '@aotui/sdk';
-        const DetailType = defineViewType()({ name: 'Detail', tools: {
+        import { createTUIApp, useDataRef, defineViewType, DynamicView } from '@aotui/sdk';
+        const DetailType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Detail', tools: {
             stats: {
                 description: 'Read the getter counter', inputSchema: Type.Object({}, { additionalProperties: false }),
                 execute: async () => ({ success: true, data: { getterCalls } }),
@@ -38,7 +38,7 @@ function appSource(): string {
             const data = useMemo(() => state.mode === 'getter'
                 ? getterData
                 : state.mode === 'oversized' ? oversizedData : { value: 'valid' }, [state.mode]);
-            const ref = useDataRef('payload', data);
+            const ref = useDataRef('payload', data, { scope: 'protected' });
             return h('section', {}, [
                 h('p', {}, [state.mode, ref('payload')]),
             ]);
@@ -56,7 +56,7 @@ function appSource(): string {
                 parentPort.on('message', onCommand);
                 return () => parentPort.off('message', onCommand);
             }, []);
-            return h('div', null, h(View, { kind: 'state', id: 'detail', type: DetailType, context: {} }, h(Detail, { state })));
+            return h('div', null, h(DynamicView, { idPrefix: 'detail', type: DetailType, context: {} }, h(Detail, { state })));
         }
 
         export default createTUIApp({viewTypes:[DetailType],  app_name: 'strict_json_capture', component: Root });
@@ -68,7 +68,10 @@ async function buildFixture(directory: string): Promise<{ app: string; workerScr
     const modules = join(directory, 'node_modules');
     await mkdir(modules, { recursive: true });
     await symlink(join(runtime, 'node_modules/preact'), join(modules, 'preact'), 'dir');
-    await symlink(join(runtime, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+    await symlink(join(runtime, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+    await symlink(join(runtime, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
+    await mkdir(join(modules, '@aotui'), { recursive: true });
+    await symlink(resolve(runtime, '../core'), join(modules, '@aotui/core'), 'dir');
     await symlink(join(runtime, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
     const appSourcePath = join(directory, 'app.mjs');
     const app = join(directory, 'app.bundle.mjs');
@@ -79,9 +82,6 @@ async function buildFixture(directory: string): Promise<{ app: string; workerScr
         format: 'esm', target: 'node20', packages: 'external',
         alias: {
             '@aotui/sdk': resolve(runtime, '../sdk/src/index.ts'),
-            '@aotui/runtime/spi': resolve(runtime, 'src/spi/index.ts'),
-            '@aotui/runtime/core': resolve(runtime, 'src/core/index.ts'),
-            '@aotui/runtime/adapters/dom': resolve(runtime, 'src/adapters/dom-app.ts'),
         },
         logLevel: 'silent',
     });

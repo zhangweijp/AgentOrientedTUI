@@ -1,11 +1,11 @@
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import Type from 'typebox';
-import { ToolCatalog, createTUIApp, defineViewType, refParam, View, useDataRef } from '@aotui/sdk';
+import { createTUIApp, defineViewType, refParam, DynamicView, StaticView, useDataRef } from '@aotui/sdk';
 
 const FileSchema = Type.Object({ filePath: Type.String(), text: Type.String() }, { additionalProperties: false });
-const Guide = defineViewType({ name: 'Root' });
-const FileDetail = defineViewType()({ name: 'Detail', tools: {
+const Guide = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Root' });
+const FileDetail = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Detail', tools: {
   ordinary: {
     description: 'Apply text to the selected file. Read the updated Detail.',
     inputSchema: Type.Object({ text: Type.String() }, { additionalProperties: false }),
@@ -28,21 +28,20 @@ const FileDetail = defineViewType()({ name: 'Detail', tools: {
 const viewTypes = [Guide, FileDetail];
 
 function FileBody({ count, text, filePath }) {
-  const file = useDataRef('file', { filePath, text }, { refType: 'File' });
+  const file = useDataRef('file', { filePath, text }, { scope: 'protected', refType: 'File' });
   return h('section', {}, h('p', {}, 'Open file: ' + filePath), h('p', {}, file('Current file value')), h('pre', {}, text),
     h('p', {}, 'Completed actions: ' + count));
 }
 function Detail({ id, filePath }) {
   const [count, setCount] = useState(0), [text, setText] = useState('original');
-  return h(View, { kind: 'state', id, type: FileDetail, context: { filePath, setText, setCount } },
+  return h(DynamicView, { idPrefix: id, type: FileDetail, context: { filePath, setText, setCount } },
     h(FileBody, { count, text, filePath }));
 }
 function Root() {
   return h('main', {}, [
-    h(View, { kind: 'instruction', id: 'root', type: Guide }, h('section', {},
+    h(StaticView, { idPrefix: 'root', type: Guide }, h('section', {},
       h('h1', {}, 'File Application Instruction'),
-      h('p', {}, 'Select the receiving View by XML id. For a File Ref, combine its View id and local name (detail.file).'),
-      h(ToolCatalog, { viewTypes }))),
+      h('p', {}, 'Select the receiving View by view_id. For a File Ref, use the App ID, View ID and local Ref name.'))),
     h(Detail, { id: 'detail', filePath: '/open/note.txt' }),
   ]);
 }

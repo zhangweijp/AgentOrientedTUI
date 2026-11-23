@@ -18,7 +18,9 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
             await mkdir(join(modules, '@aotui'), { recursive: true });
             await symlink(join(root, 'node_modules/preact'), join(modules, 'preact'), 'dir');
             await symlink(join(root, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
-            await symlink(join(root, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+            await symlink(join(root, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+            await symlink(join(root, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
+            await symlink(join(root, '../core'), join(modules, '@aotui/core'), 'dir');
             await symlink(root, join(modules, '@aotui/runtime'), 'dir');
             await build({
                 entryPoints: [join(root, 'src/worker-runtime/index.ts')],
@@ -29,12 +31,12 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
                 import { h } from 'preact';
                 import Type from 'typebox';
                 import { createTUIApp, defineViewType } from './sdk/src/index.ts';
-                import { View } from './sdk/src/components/View.tsx';
+                import { StaticView } from './sdk/src/components/View.tsx';
 
 
 
                 const noArgs = Type.Object({}, { additionalProperties: false });
-                const FileDetail = defineViewType()({ name: 'FileDetail', tools: {
+                const FileDetail = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'FileDetail', tools: {
                     fail: {
                         description: 'Fails as business result', inputSchema: noArgs,
                         execute: async () => ({ success: false, error: {
@@ -53,7 +55,7 @@ describe('P0: real WorkerHost TypeTool outcome is not transport status', () => {
                 } });
 
                 function App() {
-                    return h('div', null, h(View, { kind: 'instruction', id: 'root', type: FileDetail, context: {} }, 'Tool receipts'));
+                    return h('div', null, h(StaticView, { idPrefix: 'root', type: FileDetail, context: {} }, 'Tool receipts'));
                 }
                 export default createTUIApp({viewTypes:[FileDetail], app_name:'test_result',component:App});
             `;

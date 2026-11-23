@@ -26,14 +26,14 @@ function respond(worker: EventEmitter, request: Request) {
         requestId: request.requestId, success: true,
         ...(init ? {
             appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId },
-            persistence: { protocol: 'state-session-v1', version: 1, instanceId },
+            persistence: { protocol: 'state-session-v2', version: 2, instanceId },
             protocol: (init as any).protocol, toolsEnabled: (init as any).toolsEnabled,
             projectionLimits: (init as any).projectionLimits,
             appInstanceId: instanceId,
         } : {}),
         ...(!init && closesApp ? { appCleanup: { protocol: 'app-lifecycle-v2', instanceId,
             state: fullyClosed ? 'completed' : 'stopped', issues: [] } } : {}),
-        ...(!init && closesPersistence ? { persistence: { protocol: 'state-session-v1', instanceId,
+        ...(!init && closesPersistence ? { persistence: { protocol: 'state-session-v2', instanceId,
             ok: fullyClosed, unmount: fullyClosed ? 'completed' : 'pending', flush: { status: 'completed', ok: true, entries: [] },
             ...(fullyClosed ? { dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } : {}) } } : {}),
     });
@@ -67,14 +67,14 @@ const workerSource = `
             requestId: message.requestId, success: true,
             ...(init ? {
                 appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId: message.appInstanceId },
-                persistence: { protocol: 'state-session-v1', version: 1, instanceId: message.appInstanceId },
+                persistence: { protocol: 'state-session-v2', version: 2, instanceId: message.appInstanceId },
                 protocol: message.protocol, toolsEnabled: message.toolsEnabled,
                 projectionLimits: message.projectionLimits,
                 appInstanceId: message.appInstanceId,
             } : {}),
             ...(!init && closesApp ? { appCleanup: { protocol: 'app-lifecycle-v2', instanceId: appInstanceId,
                 state: fullyClosed ? 'completed' : 'stopped', issues: [] } } : {}),
-            ...(!init && closesPersistence ? { persistence: { protocol: 'state-session-v1', instanceId: appInstanceId,
+            ...(!init && closesPersistence ? { persistence: { protocol: 'state-session-v2', instanceId: appInstanceId,
                 ok: fullyClosed, unmount: fullyClosed ? 'completed' : 'pending', flush: { status: 'completed', ok: true, entries: [] },
                 ...(fullyClosed ? { dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } : {}) } } : {}),
         });
@@ -167,7 +167,7 @@ describe('Stage 8 R1: fulfilled lifecycle transport does not outlive its context
             sent.push(message);
             if (message.type === 'APP_CLOSE') {
                 waitingForRelease = message;
-                queueMicrotask(() => worker.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1,
+                queueMicrotask(() => worker.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 2,
                     instanceId: managedInstances.get(worker), sequence: 1, action: 'release' }));
             } else if (message.type === 'STATE_STORAGE_RESPONSE' && waitingForRelease) {
                 const request = waitingForRelease;waitingForRelease = undefined;queueMicrotask(() => respond(worker, request));

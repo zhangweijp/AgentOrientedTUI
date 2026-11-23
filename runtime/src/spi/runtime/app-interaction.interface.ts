@@ -1,5 +1,5 @@
-import type { AppInteraction, Issue } from '../../core/invocation/app-interaction-types.js';
-import type { ProjectionLimitOverrides } from '../../core/invocation/observation-types.js';
+import type { AppInteraction, Issue } from '@aotui/core/internal';
+import type { ProjectionLimitOverrides } from '@aotui/core';
 
 export interface AppInteractionOptions {
     /** Trusted Host option. Defaults to true. False allows View observation without Tool execution. */

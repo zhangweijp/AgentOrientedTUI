@@ -1,4 +1,5 @@
-import { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION } from '../spi/runtime/app-lifecycle.interface.js';
+import { APP_LIFECYCLE_PROTOCOL } from '@aotui/core';
+import { APP_LIFECYCLE_VERSION } from '../spi/runtime/app-lifecycle.interface.js';
 import { captureInvocationJson, exact, invocationObject } from './worker-message-capture.js';
 import type { AppCleanupReport } from '../spi/runtime/app-lifecycle.interface.js';
 export interface AppLifecycleAck { readonly protocol: typeof APP_LIFECYCLE_PROTOCOL; readonly version: typeof APP_LIFECYCLE_VERSION; readonly instanceId: string }

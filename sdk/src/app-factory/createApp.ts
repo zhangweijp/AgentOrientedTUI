@@ -1,10 +1,11 @@
-import { MARKDOWN_VIEW_FORMAT, SnapshotDataError } from '@aotui/runtime/core';
+import { MARKDOWN_VIEW_FORMAT, SnapshotDataError, type ViewRegion } from '@aotui/core';
 import {
-    createRefCapture, type AppLifecycleCallbacks, type AppProjectionFrame, type PreparedProjection, type RuntimeContext, type TUIAppFactory,
-} from '@aotui/runtime/spi';
-import { captureViewBindings, requireViewType, type ViewContextProps, type ViewType } from '../tools/view-type-tool.js';
-import { createAppFactory, VIEW_ID_PATTERN, type AppConfig } from './app-factory.js';
-import { capturedRefValue, captureRefEntries, type PublishedRef } from './refs.js';
+    createRefCapture, type AppFrameView, type AppLifecycleCallbacks, type AppProjectionFrame, type PreparedProjection, type RuntimeContext,
+} from '@aotui/core';
+import { captureViewBindings, captureViewPlacement, requireViewType, type ViewContextProps, type ViewNamingProps,
+    type ViewRegionProps, type ViewType } from '../tools/view-type-tool.js';
+import { createAppFactory, type AppConfig, type TUIAppFactory } from './app-factory.js';
+import { publishedValue, capturePublication, type PublishedRef } from './refs.js';
 
 declare const viewHandle: unique symbol;
 export interface ViewHandle { readonly [viewHandle]: true }
@@ -25,9 +26,11 @@ export type CreateAppConfig = AppConfig & {
 };
 
 interface ViewMetadata {
-    readonly id: string;
-    readonly kind: 'instruction' | 'state';
-    readonly name?: string;
+    readonly id?: string | undefined;
+    readonly idPrefix?: string | undefined;
+    readonly region?: ViewRegion | undefined;
+    readonly name?: string | undefined;
+    readonly onClose?: AppFrameView['onClose'];
 }
 type ViewRender = { readonly body: string; readonly refs?: readonly PublishedRef[] };
 const handles = new WeakMap<object, {
@@ -40,11 +43,12 @@ const handles = new WeakMap<object, {
 /** Create a stable author handle. Its first publication binds it to the App. */
 export function createView<const Definition extends ViewType>(
     type: Definition,
-    options: ViewMetadata & { render: () => ViewRender & ViewContextProps<NoInfer<Definition>> },
+    options: ViewNamingProps<Definition> & ViewRegionProps<Definition> & { readonly name?: string; readonly onClose?: AppFrameView['onClose'];
+        render: () => ViewRender & ViewContextProps<NoInfer<Definition>> },
 ): ViewHandle {
-    const { id, name, kind, render } = options;
+    const { render, ...metadata } = options;
     const handle = Object.freeze({}) as ViewHandle;
-    handles.set(handle, { type, metadata: { id, kind, ...(name === undefined ? {} : { name }) }, render });
+    handles.set(handle, { type, metadata, render });
     return handle;
 }
 
@@ -62,34 +66,31 @@ export function createApp(config: CreateAppConfig): TUIAppFactory {
             if (signal.aborted) throw Object.assign(new Error('App projection is closed'), { code: 'PROJECTION_CLOSED' });
             const capture = createRefCapture();
             const views: AppProjectionFrame['views'][number][] = [];
-            const viewIds = new Set<string>();
             for (const handle of frame.views) {
                 const view = handles.get(handle);
                 if (!view || view.app !== undefined && view.app !== app)
                     invalid('$.views', 'Expected a View handle belonging to this App instance');
                 view.app = app;
-                const { metadata: { id, kind, name = id }, render } = view;
+                const { metadata, render } = view;
                 const type = requireViewType(types, view.type);
-                if (typeof id !== 'string' || !VIEW_ID_PATTERN.test(id) || viewIds.has(id))
-                    invalid('$.views', 'View IDs must be unique and use only ASCII letters, digits or underscores');
-                viewIds.add(id);
-                const path = 'View ' + id;
+                const label = metadata.id ?? metadata.idPrefix ?? type.name;
+                const path = 'View ' + label;
                 const { body, refs = [], context } = render();
-                if (kind !== 'instruction' && kind !== 'state' || typeof name !== 'string' || !name.trim() || typeof body !== 'string')
-                    invalid(path, 'Expected View kind, name and Markdown body');
+                const placement = captureViewPlacement(type, metadata, context);
+                if (typeof body !== 'string') invalid(path, 'Expected a Markdown body');
 
                 const refIds = new Set<string>();
                 const captured: AppProjectionFrame['views'][number]['refs'][number][] = [];
                 for (const item of refs) {
-                    for (const [refId, value] of captureRefEntries(capture, item)) {
-                        if (refIds.has(refId)) invalid(path + '.refs', 'Ref IDs must be unique within this View');
-                        refIds.add(refId);
-                        captured.push({ id: refId, value: capturedRefValue(id, refId, value), refType: item.refType });
-                    }
+                    const ref = publishedValue(label, capturePublication(capture, item));
+                    if (refIds.has(ref.id)) invalid(path + '.refs', 'Ref IDs must be unique within this View');
+                    refIds.add(ref.id);
+                    captured.push(ref);
                 }
                 views.push({
-                    id, type: type.name, name, kind, owner: handle, content: { format: MARKDOWN_VIEW_FORMAT, value: body }, refs: captured,
-                    bindings: captureViewBindings(type, id, context),
+                    ...placement, type: type.name, owner: handle, content: { format: MARKDOWN_VIEW_FORMAT, value: body }, refs: captured,
+                    bindings: captureViewBindings(type, label, context),
+                    ...(metadata.onClose === undefined ? {} : { onClose: metadata.onClose }),
                 });
             }
             return { views };

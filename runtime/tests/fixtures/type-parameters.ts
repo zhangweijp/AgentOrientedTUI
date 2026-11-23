@@ -1,4 +1,4 @@
-import { compileToolParameters } from '../../src/core/tool/tool-parameters.js';
+import { compileToolParameters } from '@aotui/core';
 import { validateInvocationParameters } from '../../src/adapters/tool-invocation.js';
 import type { ViewToolInvokeMessage } from '../../src/spi/worker-protocol/messages.js';
 

@@ -3,26 +3,14 @@ import { Kernel } from './index.js';
 import { Desktop } from '../engine/core/desktop.js';
 import { createRuntime } from '../facades/facades.js';
 import { WorkerSandbox } from '../engine/app/worker-sandbox.js';
-import { createCloseHandle, freezeClose, newCloseState, snapshotClose } from '../engine/core/close-handle.js';
+import { createDesktopId } from '../spi/core/id-factory.js';
 
-function kernelFixture() {
-    let current: any = { id: 'd', isClosing: false, getAppInteraction: () => ({ status: 'rejected', issue: { code: 'APP_INTERACTION_UNAVAILABLE', message: 'App scope is unavailable' } }) };
-    const runtimeState = newCloseState('runtime');runtimeState.state = 'settled';
-    const runtimeReport = () => freezeClose({ ...snapshotClose(runtimeState), scope: 'runtime' as const, intent: 'close' as const });
-    const manager: any = { get: () => current, listDesktopIds: () => [], destroy: vi.fn(async () => {}),
-        beginDesktopShutdown: vi.fn(() => { throw new Error('unexpected desktop close'); }),
-        beginShutdown: vi.fn(() => createCloseHandle(runtimeReport, Promise.resolve(runtimeReport()))) };
-    const kernel = new Kernel(manager);
-    return { kernel, manager, get: () => current, set: (next: any) => { current = next; } };
-}
-
-it('B2 C02/13 missing Desktop/old DI and a closed parent reject explicitly without a TypeError', async () => {
-    const f = kernelFixture();expect(f.kernel.getAppInteraction('d' as any, 'a', 'instance')).toMatchObject({ issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });
-    for (const name of ['acquireSnapshot', 'releaseSnapshot', 'execute', 'getSystemToolDefinitions', 'acquireLock', 'releaseLock', 'experimentalCreateAppScope']) {
-        expect(f.kernel).not.toHaveProperty(name);
-    }
-    f.set(undefined);expect(f.kernel.getAppInteraction('d' as any, 'a', 'instance').status).toBe('rejected');
+it('B2 C02/13 missing Desktop and a closed parent reject explicitly without a TypeError', async () => {
     const runtime = createRuntime();
+    expect(runtime.getAppInteraction(createDesktopId('d'), 'a', 'instance')).toMatchObject({ issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });
+    for (const name of ['acquireSnapshot', 'releaseSnapshot', 'execute', 'getSystemToolDefinitions', 'acquireLock', 'releaseLock', 'experimentalCreateAppScope']) {
+        expect(runtime).not.toHaveProperty(name);
+    }
     try {
         const id = await runtime.createDesktop('d' as any);
         expect(runtime.getAppInteraction(id, 'pending', 'instance')).toMatchObject({ issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });
@@ -31,12 +19,29 @@ it('B2 C02/13 missing Desktop/old DI and a closed parent reject explicitly witho
 });
 
 it.each(['replace', 'close', 'shutdown', 'getter'] as const)('B2 C13 Kernel keeps the captured Desktop object through trusted %s reentry', async change => {
-    const f = kernelFixture(), old = f.get(), close = vi.fn();let calls = 0;
-    const delegate = () => { calls++;if (change === 'replace') f.set({ ...old });if (change === 'close') old.isClosing = true;if (change === 'shutdown') f.kernel.beginShutdown();return { status: 'ready', interaction: { close } }; };
-    if (change === 'getter') Object.defineProperty(old, 'getAppInteraction', { get() { old.isClosing = true;return delegate; } });
-    else old.getAppInteraction = delegate;
-    expect(f.kernel.getAppInteraction('d' as any, 'a', 'instance')).toMatchObject({ issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });
-    expect(calls).toBe(change === 'getter' ? 0 : 1);expect(close).not.toHaveBeenCalled();
+    const runtime = new Kernel(), id = await runtime.createDesktop(createDesktopId('d'));
+    const old = runtime.getDesktop(id), close = vi.fn();
+    const desktops = (runtime as unknown as { desktops: Map<string, unknown> }).desktops;
+    const delegate = vi.fn(() => {
+        if (change === 'replace') desktops.set(id, new Desktop(id));
+        if (change === 'close') old.beginClose();
+        if (change === 'shutdown') runtime.beginShutdown();
+        return { status: 'ready', interaction: { close } };
+    });
+    if (change === 'getter') Object.defineProperty(old, 'getAppInteraction', { get() { old.beginClose();return delegate; } });
+    else old.getAppInteraction = delegate as any;
+    try {
+        expect(runtime.getAppInteraction(id, 'a', 'instance')).toMatchObject({ issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });
+        expect(delegate).toHaveBeenCalledTimes(change === 'getter' ? 0 : 1);
+        expect(close).not.toHaveBeenCalled();
+    } finally {
+        const replacement = desktops.get(id);
+        if (replacement instanceof Desktop && replacement !== old) {
+            desktops.set(id, old);
+            await replacement.beginClose().completion;
+        }
+        await runtime.beginShutdown().completion;
+    }
 });
 
 it.each(['replace', 'close'] as const)('B2 C13 Desktop keeps the captured AppManager through trusted %s reentry', async change => {
@@ -54,18 +59,19 @@ it.each(['replace', 'close'] as const)('B2 C13 Desktop keeps the captured AppMan
     }
 });
 
-it('B2 C04/05 Kernel/Desktop reject descriptors before dependency calls or environment config mutation', async () => {
-    const f = kernelFixture(), install = vi.fn(async () => 'a');f.get().installDynamicWorkerApp = install;let getters = 0;
+it('B2 C04/05 Kernel/Desktop reject descriptors before dependency calls or launch config mutation', async () => {
+    const runtime = createRuntime(), id = await runtime.createDesktop(createDesktopId('d'));
+    const install = vi.spyOn(runtime.getDesktop(id), 'installDynamicWorkerApp').mockResolvedValue('a');
+    let getters = 0;
     const invalid = Object.defineProperty({}, 'toolsEnabled', { enumerable: true, get() { getters++;return false; } });
-    await expect(f.kernel.installDynamicWorkerApp('d' as any, '/app', invalid)).rejects.toHaveProperty('code', 'TOOLS_ENABLED_INVALID');expect(install).not.toHaveBeenCalled();expect(getters).toBe(0);
-    const input: any = { toolsEnabled: false };await f.kernel.installDynamicWorkerApp('d' as any, '/app', input);input.toolsEnabled = true;
+    await expect(runtime.installDynamicWorkerApp(id, '/app', invalid)).rejects.toHaveProperty('code', 'TOOLS_ENABLED_INVALID');expect(install).not.toHaveBeenCalled();expect(getters).toBe(0);
+    const input: any = { toolsEnabled: false };await runtime.installDynamicWorkerApp(id, '/app', input);input.toolsEnabled = true;
     expect(install.mock.calls[0][1].toolsEnabled).toBe(false);
-    const runtime = createRuntime();
     try {
-        const id = await runtime.createDesktop('real' as any, { env: { X: 'injected' } }), desktop = runtime.getDesktop(id);
+        const id = await runtime.createDesktop('real' as any), desktop = runtime.getDesktop(id);
         const config: any = {};Object.defineProperty(invalid, 'config', { value: config });
         await expect(desktop.installDynamicWorkerApp('/app', invalid)).rejects.toHaveProperty('code', 'TOOLS_ENABLED_INVALID');
-        await expect(desktop.registerPendingApp(Object.defineProperties({ modulePath: '/app' }, Object.getOwnPropertyDescriptors(invalid)))).rejects.toHaveProperty('code', 'TOOLS_ENABLED_INVALID');
+        await expect(desktop.registerPendingApp(Object.defineProperties({ installationId: 'pending', localPath: '/app' }, Object.getOwnPropertyDescriptors(invalid)))).rejects.toHaveProperty('code', 'TOOLS_ENABLED_INVALID');
         expect(config).toEqual({});expect(getters).toBe(0);
     } finally { await runtime.beginShutdown().completion; }
 });

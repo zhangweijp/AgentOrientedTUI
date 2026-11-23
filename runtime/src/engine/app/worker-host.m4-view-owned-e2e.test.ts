@@ -17,7 +17,9 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
             await mkdir(join(modules, '@aotui'), { recursive: true });
             await symlink(join(root, 'node_modules/preact'), join(modules, 'preact'), 'dir');
             await symlink(join(root, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
-            await symlink(join(root, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+            await symlink(join(root, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+            await symlink(join(root, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
+            await symlink(join(root, '../core'), join(modules, '@aotui/core'), 'dir');
             await symlink(root, join(modules, '@aotui/runtime'), 'dir');
 
             await build({
@@ -30,10 +32,10 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
                 import { h } from 'preact';
                 import Type from 'typebox';
                 import { createTUIApp } from './sdk/src/app-factory/createTUIApp.ts';
-                import { View } from './sdk/src/components/View.tsx';
+                import { DynamicView } from './sdk/src/components/View.tsx';
 
                 import { defineViewType } from './sdk/src/tools/view-type-tool.ts';
-                const FileDetail = defineViewType()({ name: 'FileDetail', tools: {
+                const FileDetail = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'FileDetail', tools: {
                     inspect: {
                         description: 'Inspect the selected file',
                         inputSchema: Type.Object({ filePath: Type.String() }, { additionalProperties: false }),
@@ -48,9 +50,9 @@ describe('Semantic WorkerHost View identity and instance Tool bindings', () => {
                 }
                 function App() {
                     return h('div', null, h('main', {}, [
-                        h(View, { kind: 'state', id: 'fd_0', type: FileDetail, context: {}, key: 'a' },
+                        h(DynamicView, { idPrefix: 'fd_0', type: FileDetail, context: {}, key: 'a' },
                             h(Detail, {label:'App.tsx'})),
-                        h(View, { kind: 'state', id: 'fd_1', type: FileDetail, context: {}, key: 'b' },
+                        h(DynamicView, { idPrefix: 'fd_1', type: FileDetail, context: {}, key: 'b' },
                             h(Detail, {label:'package.json'}))
                     ]));
                 }

@@ -1,8 +1,10 @@
-import { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION, STATE_SESSION_VERSION, VIEW_TYPE_TOOL_PROTOCOL, captureAppMetadata } from '../spi/index.js';
+import { APP_LIFECYCLE_PROTOCOL, VIEW_TYPE_TOOL_PROTOCOL, captureAppMetadata } from '@aotui/core';
+import { APP_LIFECYCLE_VERSION } from '../spi/runtime/app-lifecycle.interface.js';
+import { STATE_SESSION_VERSION } from '../adapters/storage/state-storage-protocol.js';
 import { WORKER_PROTOCOL } from '../spi/worker-protocol/types.js';
 import { initializationFailure } from '../adapters/initialization-error.js';
 import { captureAppLifecycleAck } from '../adapters/app-lifecycle-protocol.js';
-import { hasViewTypeToolAuthoringProtocol } from '../spi/app/app-factory.interface.js';
+import { hasViewTypeToolAuthoringProtocol } from '@aotui/core';
 import { createStateStorageProxy } from './state-storage-proxy.js';
 import { createAppStatePersistence } from './state-persistence.js';
 import { capturePersistenceOffer, STATE_SESSION_PROTOCOL } from '../adapters/storage/state-storage-protocol.js';
@@ -18,14 +20,16 @@ import type {
     AppID,
 } from '../spi/worker-protocol/index.js';
 
-import type { SignalPolicy } from '../spi/index.js';
-import { createAppId, isTUIAppFactory } from '../spi/index.js';
-import { AOTUIError } from '../spi/core/errors.js';
-import { captureSnapshotPrepareIssue } from '../core/snapshot/snapshot-support.js';
-import { normalizeProjectionLimits } from '../core/invocation/observation-registry.js';
+import type { SignalPolicy } from '@aotui/core';
+import { createAppId } from '../spi/core/id-factory.js';
+import { isTUIAppFactory } from '@aotui/core';
+import { AOTUIError } from '@aotui/core';
+import { captureSnapshotDraftEnvelope, captureSnapshotPrepareIssue, hasUnsupportedPersistence, type SnapshotDraftEnvelope } from '@aotui/core/internal';
+import { normalizeProjectionLimits } from '@aotui/core/internal';
 
 import { AppKernel } from './app-kernel/AppKernel.js';
 import { invokeViewTool } from './tool-invocation.js';
+import { toolInvocationResponse } from '../adapters/tool-invocation.js';
 
 type PersistenceRecord = { proxy: ReturnType<typeof createStateStorageProxy>; session: ReturnType<typeof createAppStatePersistence> };
 type WorkerApp = Readonly<{
@@ -42,15 +46,17 @@ let initAttempted = false;
 let lifecycleGeneration = 0;
 
 const persistenceCloseFailure = { code: 'PERSISTENCE_CLOSE_FAILED', message: 'Managed persistence did not complete successfully' };
+const appUnmountFailure = { code: 'APP_UNMOUNT_FAILED', message: 'App cleanup did not complete successfully' };
 
-async function closeApplication(kernel: AppKernel, record: PersistenceRecord | undefined, failed = false): Promise<WorkerError | undefined> {
+async function closeApplication(kernel: AppKernel, record: PersistenceRecord | undefined): Promise<WorkerError | undefined> {
     kernel.beginShutdown();
     if (record) {
-        const result = await record.session.close(() => kernel.onClose(), failed);
+        const result = await record.session.close(() => kernel.onClose());
+        if (result.unmount === 'failed') return appUnmountFailure;
         return result.ok ? undefined : persistenceCloseFailure;
     }
     try { await kernel.onClose(); }
-    catch { return { code: 'APP_UNMOUNT_FAILED', message: 'App cleanup did not complete successfully' }; }
+    catch { return appUnmountFailure; }
 }
 
 let projectionUnsubscribe: (() => void) | undefined;
@@ -64,11 +70,13 @@ const PUBLICATION_THROTTLE_MS = 16;
 parentPort?.on('message', async (msg: MainToWorkerMessage) => {
     if (msg.type === 'STATE_STORAGE_RESPONSE') { app?.persistence?.proxy.receive(msg);return; }
     if (msg.type === 'FLUSH_PROJECTION') {
-        const kernel = app?.kernel;
+        const current = app;
         try {
-            if (!kernel) throw new Error('Projection source unavailable');
-            await kernel.whenProjectionCommitted();
-            flushInteractionProjection(msg.requestId);
+            if (!current || current.generation !== lifecycleGeneration) throw new Error('Projection source unavailable');
+            await current.kernel.whenProjectionCommitted();
+            if (app !== current || current.generation !== lifecycleGeneration) throw new Error('Projection source replaced');
+            const known = captureSnapshotDraftEnvelope(msg.known);
+            flushInteractionProjection(msg.requestId, known && Reflect.ownKeys(msg.known!).length === 4 ? known : undefined);
         } catch { sendError(msg.requestId, 'PROJECTION_CLOSED', 'Projection source unavailable'); }
         return;
     }
@@ -82,6 +90,7 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
                 validateBinding: (tool, receiver) => kernel.validateBoundTypeTool(tool, receiver),
                 getParameterContract: (tool, receiver) => kernel.getBoundTypeToolContract(tool, receiver),
                 isRefViewLive: (id, instanceId) => kernel.isRefViewLive(id, instanceId),
+                refScope: (id, instanceId, refId) => kernel.refScope(id, instanceId, refId),
                 invokeBinding: (tool, receiver, args) => kernel.invokeBoundTypeTool(tool, receiver, args),
             } : undefined);
             if (response) {
@@ -90,6 +99,25 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
                 finally { parentPort?.postMessage(response); }
             }
         } catch { /* No trusted terminal: Host records unknown. */ }
+        return;
+    }
+    if (msg.type === 'VIEW_CLOSE') {
+        const current = app;
+        let terminal: import('../spi/worker-protocol/messages.js').ViewToolInvokeResponse['terminal'];
+        if (!current?.toolsEnabled || current.generation !== lifecycleGeneration ||
+            current.appId !== msg.appId || current.instanceId !== msg.instanceId) {
+            terminal = { phase: 'not-entered', result: { success: false,
+                error: { code: 'VIEW_CLOSE_UNAVAILABLE', message: 'The App no longer accepts this close action.' } } };
+        } else {
+            try { terminal = await current.kernel.closeView(msg.viewId, msg.viewInstanceId); }
+            catch { terminal = { phase: 'finished-unknown' }; }
+            try {
+                await current.kernel.whenProjectionCommitted();
+                if (app === current) flushInteractionProjection();
+            } catch { /* The close result and the accepted projection are separate. */ }
+        }
+        const response = toolInvocationResponse(msg, terminal) ?? toolInvocationResponse(msg, { phase: 'finished-unknown' });
+        if (response) parentPort?.postMessage(response);
         return;
     }
     if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE', 'APP_REINITIALIZE'].includes(msg.type)) lifecycleGeneration++;
@@ -109,7 +137,7 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
                 sendLifecycleResponse(msg.requestId);
                 break;
             case 'APP_SHUTDOWN':
-                await handleAppShutdown(msg.requestId);
+                sendLifecycleResponse(msg.requestId);
                 break;
             case 'APP_REINITIALIZE':
                 await handleAppReinitialize(msg.requestId, msg.reason);
@@ -119,9 +147,6 @@ parentPort?.on('message', async (msg: MainToWorkerMessage) => {
                 break;
             case 'APP_DELETE':
                 await handleAppDelete(msg.requestId);
-                break;
-            case 'LLM_USAGE':
-                app?.kernel.dispatchLLMUsage(msg.event);
                 break;
         }
     } catch (error) {
@@ -173,6 +198,10 @@ async function handleInit(msg: InitMessage): Promise<void> {
         }
 
         const factory: unknown = appModule.default;
+        if (hasUnsupportedPersistence(factory)) {
+            sendError(msg.requestId, 'PERSISTENCE_UNAVAILABLE', 'This Runtime requires ' + STATE_SESSION_PROTOCOL);
+            return;
+        }
         if (!isTUIAppFactory(factory)) {
             throw new AOTUIError('APP_INVALID_EXPORT', { modulePath: msg.appModulePath });
         }
@@ -198,7 +227,7 @@ async function handleInit(msg: InitMessage): Promise<void> {
             const field = Object.getOwnPropertyDescriptor(msg, 'persistence');
             offer = field?.enumerable && 'value' in field ? capturePersistenceOffer(field.value, msg.appInstanceId) : null;
             if (!offer) {
-                sendError(msg.requestId, 'PERSISTENCE_UNAVAILABLE', 'App requires a valid state-session-v1 persistence offer in INIT');
+                sendError(msg.requestId, 'PERSISTENCE_UNAVAILABLE', 'App requires a valid ' + STATE_SESSION_PROTOCOL + ' persistence offer in INIT');
                 return;
             }
             const configured = launchConfig?.AOTUI_APP_KEY;
@@ -239,8 +268,8 @@ async function handleInit(msg: InitMessage): Promise<void> {
     } catch (error) {
         const failure = initializationFailure('INIT', error);
         if (generation === lifecycleGeneration) lifecycleGeneration++;
-        if (app) await closeApplication(app.kernel, persistence, true);
-        else if (persistence) await persistence.session.close(() => {}, true);
+        if (app) await closeApplication(app.kernel, persistence);
+        else if (persistence) await persistence.session.close(() => {});
         sendError(msg.requestId, failure.code, failure.message, failure.diagnostic);
     }
 }
@@ -257,7 +286,7 @@ async function handleAppOpen(requestId: RequestID): Promise<void> {
     try { await kernel.onOpen(); }
     catch (error) {
         const failure = initializationFailure('OPEN', error);
-        await closeApplication(kernel, persistence, true);
+        await closeApplication(kernel, persistence);
         sendLifecycleResponse(requestId, failure, persistence, kernel);
         return;
     }
@@ -292,12 +321,6 @@ async function handleAppReinitialize(requestId: RequestID, _reason?: string): Pr
     sendLifecycleResponse(requestId);
 }
 
-async function handleAppShutdown(requestId: RequestID): Promise<void> {
-    const record = app?.persistence;
-    const result = await record?.session.shutdown();
-    sendLifecycleResponse(requestId, result?.ok === false ? persistenceCloseFailure : undefined, record);
-}
-
 async function handleAppDelete(requestId: RequestID): Promise<void> {
     try { await app?.kernel.onDelete(); }
     catch {
@@ -320,13 +343,14 @@ function schedulePublication(): void {
     }, PUBLICATION_THROTTLE_MS);
 }
 
-/** Observation requests a full frame. A Tool terminal flushes queued publication work. */
-function flushInteractionProjection(requestId?: RequestID): void {
+function flushInteractionProjection(requestId?: RequestID, known?: SnapshotDraftEnvelope): void {
     if (publicationTimer) {
         clearTimeout(publicationTimer);
         publicationTimer = null;
     }
-    pushSemanticSnapshot(requestId);
+    if (requestId && known && app?.kernel.getProjectionCoordinator().confirmsPublication(known)) {
+        parentPort?.postMessage({ type: 'PROJECTION_CURRENT', requestId, ...known } satisfies WorkerToMainMessage);
+    } else pushSemanticSnapshot(requestId);
 }
 
 function pushSemanticSnapshot(requestId?: RequestID): void {
@@ -348,12 +372,13 @@ function pushSemanticSnapshot(requestId?: RequestID): void {
 
 function sendLifecycleResponse(requestId: RequestID, failure?: WorkerError, record?: PersistenceRecord, kernel = app?.kernel): void {
     const appCleanup = kernel?.getAppCleanupReport();
+    const persistence = record?.session.getReport();
     parentPort?.postMessage({
         type: 'LIFECYCLE_RESPONSE',
         requestId,
         success: !failure,
         ...(appCleanup ? { appCleanup } : {}),
-        ...(record ? { persistence: record.session.getReport() } : {}),
+        ...(persistence ? { persistence } : {}),
         ...(failure ? { error: failure } : {}),
     } satisfies WorkerToMainMessage);
 }

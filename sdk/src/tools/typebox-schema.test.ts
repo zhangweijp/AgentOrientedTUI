@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import Type from 'typebox';
-import { exportTypeBoxSchema, TypeBoxSchemaExportError } from './typebox-schema.js';
+import { exportTypeBoxSchema, exportTypeBoxValueSchema } from './typebox-schema.js';
 
 describe('exportTypeBoxSchema', () => {
   it('removes only TypeBox node metadata and keeps JSON Schema fields and descriptions', () => {
@@ -74,6 +74,27 @@ describe('exportTypeBoxSchema', () => {
       type: 'object', properties: { list: { type: 'array', items: { type: 'string' } } },
       additionalProperties: false,
     });
+  });
+
+  it('exports fixed TypeBox positions as 2020-12 and keeps array values as data', () => {
+    const seat = Type.Tuple([Type.String({ description: 'Row' }), Type.Integer({ minimum: 1 }), Type.Tuple([])], {
+      description: 'Seat', default: ['A', 12, []], enum: [['A', 12, []], ['B', 3, []]],
+    });
+    expect(exportTypeBoxValueSchema(Type.Readonly(Type.Optional(seat)))).toEqual({
+      type: 'array', description: 'Seat', default: ['A', 12, []], enum: [['A', 12, []], ['B', 3, []]],
+      prefixItems: [{ type: 'string', description: 'Row' }, { type: 'integer', minimum: 1 },
+        { type: 'array', items: false, minItems: 0 }], items: false, minItems: 3,
+    });
+    expect(JSON.stringify(seat)).toContain('additionalItems');
+  });
+
+  it.each([
+    [Type.Tuple([Type.String()], { minItems: 0 }), '$.minItems'],
+    [Type.Tuple([Type.String()], { maxItems: 2 }), '$.maxItems'],
+    [Type.Tuple([Type.String()], { prefixItems: [Type.Integer()] }), '$.prefixItems'],
+    [{ type: 'array', items: [{ type: 'string' }], additionalItems: false, minItems: 1 }, '$.items'],
+  ])('reports incompatible tuple declarations at %j', (value, path) => {
+    expect(() => exportTypeBoxSchema(value)).toThrowError(expect.objectContaining({ path }));
   });
 
   it('charges structural commas only for validated exported keys at the byte boundary', () => {

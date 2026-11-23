@@ -27,15 +27,17 @@ async function facts(name: string, report: object) {
 async function fixture(extra: object = {}) {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-host-')), app = join(dir, 'app.mjs');
     await linkPreactPeer(dir);
-    await capture(app, `import {h} from 'preact';import Type from 'typebox';import {createTUIApp,defineViewType,usePersistentState,View} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let setter;
+    await capture(app, `import {h} from 'preact';import Type from 'typebox';import { createTUIApp, defineViewType, useAppLifecycle, useAppRuntimeContext, useEffect, StaticView } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};let draft;
 
 
-const RootType = defineViewType()({ name: 'Root', tools: {
+const RootType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Root', tools: {
   set: { description:'Set persisted value', inputSchema:Type.Object({value:Type.Number()}, {additionalProperties:false}) , execute: ({ input, context }) => context.set(input) },
 } });
 function Root(){
-  [,setter] = usePersistentState('value',0);
-  return h(View, {kind:'instruction',id:'root',type:RootType,context: { set: async args=>{setter(args.value);return {success:true};} }}, 'Managed state');
+  const {persistence} = useAppRuntimeContext();
+  useEffect(() => { void persistence.load('value').catch(() => {}); }, [persistence]);
+  useAppLifecycle({ async close() { if (draft !== undefined) await persistence.save('value',draft); } });
+  return h(StaticView, { idPrefix: 'root',type:RootType,context: { set: async args=>{draft=args.value;return {success:true};} }}, 'Managed state');
 }
 export default createTUIApp({persistence:true,app_name:'c1',component:Root,viewTypes:[RootType]});`);
     const host = new AppWorkerHost({ appId: 'app' as any, desktopId: 'd' as any, appModulePath: url(app), timeout: 2000,

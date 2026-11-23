@@ -3,7 +3,7 @@ import type { RuntimeCloseReport } from '../../spi/runtime/close.interface.js';
 import { closeTimeout, closeVoid, createCloseHandle, sandboxCloseReport, newCloseState, mergeCloseReport, addCloseFailure, snapshotClose, displayCloseId } from './close-handle.js';
 import { createMemoryStateStorage } from '../../adapters/storage/memory-state-storage.js';
 import { createAppStatePersistence } from '../../worker-runtime/state-persistence.js';
-import { failedMutation, unknownMutation } from '../../core/persistence/state-storage.js';
+import { failedMutation, unknownMutation } from '@aotui/core/internal';
 
 function fixture() {
     let finish!: (value: RuntimeCloseReport) => void;
@@ -67,24 +67,33 @@ it('C2-25 Q01 rejected negotiation remains mixed without fabricating unknown res
         unverifiedParticipants: 0, apps: { accepted: 1, settled: 1, pending: 0, notVerifiedReleased: 0 },
         persistence: { unnegotiatedApps: 1, managedApps: 0, missingCloseReceipts: 0, absentFlushes: 0, unknownApps: 0 } });
 });
-it.each(['normal', 'failed', 'unknown', 'unmount'])('C2-25 Q02 actual B2 controller/memory %s report keeps progress separate from known failure', async mode => {
+it.each(['normal', 'failed', 'unknown', 'unmount', 'both'])('C2-25 Q02 actual controller/memory %s report keeps App and storage failures separate', async mode => {
     const backend = createMemoryStateStorage({ maxStoredKeys: 4, maxStoredBytes: 100000, maxRecordBytes: 10000, maxAddressBytes: 1024, maxActiveOwners: 2, maxClaimedNamespaces: 2 });
     const opened = backend.open('i');if (opened.status !== 'opened') throw Error('fixture');
-    const storage = { ...opened.storage, ...(mode === 'failed' ? { replace: async () => failedMutation('IO_FAILED') } : mode === 'unknown' ? { replace: async () => unknownMutation() } : {}) };
+    const unmountFailed = mode === 'unmount' || mode === 'both';
+    const storageFailed = mode === 'failed' || mode === 'both' || mode === 'unknown';
+    const storage = { ...opened.storage, ...(storageFailed ? { replace: async () => mode === 'unknown' ? unknownMutation() : failedMutation('IO_FAILED') } : {}) };
     const managed = createAppStatePersistence({ instanceId: 'i', desktopId: 'd', appKey: 'a', storage, now: () => 1 });
-    const bound = managed.port.bind('k', 0, { hydrate: false });if (bound.status !== 'bound') throw Error('fixture bind');const recovery = await bound.binding.recovery;bound.binding.confirmInitialization(recovery, { status: 'ready' });bound.binding.update(3);
-    await managed.shutdown();const progress = envelope(managed.getReport()), before = sandboxCloseReport(progress, 'd', 'a');
-    expect(managed.getReport()).toMatchObject({ ok: false, unmount: 'pending' });expect(before.hasFailures).toBe(mode === 'failed' || mode === 'unknown');
-    expect(before.persistence.closeReceipts).toBe(1);expect(before.persistence.confirmedFlushes).toBe(mode === 'normal' || mode === 'unmount' ? 1 : 0);
-    const lifecycle = await managed.close(() => { if (mode === 'unmount') throw Error('private unmount'); });
-    const final = envelope(lifecycle, { state: 'settled', resourcesReleased: true });final.host = { ...final.host, state: 'settled', worker: 'exited', resourcesReleased: true,
+    const progress = envelope(managed.getReport()), before = sandboxCloseReport(progress, 'd', 'a');
+    expect(managed.getReport()).toBeUndefined();expect(before.hasFailures).toBe(false);
+    expect(before.persistence.closeReceipts).toBe(0);expect(before.persistence.confirmedFlushes).toBe(0);
+    const lifecycle = await managed.close(async () => {
+        await managed.port.save('k', 3).catch(() => {});
+        if (unmountFailed) throw Error('private unmount');
+    });
+    const final = envelope(lifecycle, { state: 'settled', resourcesReleased: true,
+        issues: storageFailed && !unmountFailed ? ['PERSISTENCE_CLOSE_FAILED'] : [] });
+    final.host = { ...final.host, state: 'settled', worker: 'exited', resourcesReleased: true,
         storage: { ...final.host.storage, ownerRetained: false, release: { status: 'released' } } };
     const report = sandboxCloseReport(final, 'd', 'a');expect(report.resourcesReleased).toBe(true);expect(report.ok).toBe(mode === 'normal');expect(backend.getStats().activeOwners).toBe(0);
     expect(report.persistence.unknownApps).toBe(mode === 'unknown' ? 1 : 0);expect(before.state).toBe('closing');
-    if (mode === 'unmount') { expect(report.persistence.confirmedFlushes).toBe(1);expect(report.persistence.failedFlushes).toBe(0);expect(report.failures.some(x => x.codes.includes('APP_UNMOUNT_FAILED'))).toBe(true); }
+    expect(report.persistence).toMatchObject({ confirmedFlushes: storageFailed ? 0 : 1, failedFlushes: storageFailed ? 1 : 0 });
+    expect(report.failures.some(x => x.stage === 'persistence')).toBe(storageFailed);
+    expect(report.failures.some(x => x.stage === 'apps')).toBe(unmountFailed);
+    expect(report.failures.some(x => x.codes.includes('APP_UNMOUNT_FAILED'))).toBe(unmountFailed);
     if (mode === 'normal') {
         const missing = sandboxCloseReport({ ...final, host: { ...final.host, storage: { ...final.host.storage, lifecycle: progress.host.storage.lifecycle } } }, 'd', 'a');
-        expect(missing.hasFailures).toBe(true);expect(missing.persistence.closeReceipts).toBe(1);expect(missing.persistence.missingCloseReceipts).toBe(0);
+        expect(missing.hasFailures).toBe(true);expect(missing.persistence.closeReceipts).toBe(0);expect(missing.persistence.missingCloseReceipts).toBe(1);
     }
 });
 it('keeps callback failure separate from released resources through Runtime aggregation', async () => {

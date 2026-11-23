@@ -1,10 +1,11 @@
-import { APP_LIFECYCLE_PROTOCOL, APP_LIFECYCLE_VERSION, STATE_SESSION_VERSION } from '../../spi/index.js';
+import { APP_LIFECYCLE_PROTOCOL } from '@aotui/core';
+import { APP_LIFECYCLE_VERSION } from '../../spi/runtime/app-lifecycle.interface.js';
+import { STATE_SESSION_VERSION } from '../../adapters/storage/state-storage-protocol.js';
 import { WORKER_PROTOCOL } from '../../spi/worker-protocol/types.js';
 import { initializationError } from '../../adapters/initialization-error.js';
 import { captureAppLifecycleAck, captureAppCleanupReport } from '../../adapters/app-lifecycle-protocol.js';
 import { withToolAuthorization } from '../../adapters/tool-execution-policy.js';
 import type { AppCleanupReport } from '../../spi/runtime/app-lifecycle.interface.js';
-import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
 import { createStateStorageHost, resolveStateDirectory, type StateStorageBackend } from './state-storage-host.js';
 import { capturePersistenceAck, captureManagedPersistenceReport, DEFAULT_STATE_SESSION_LIMITS, DEFAULT_STATE_TRANSPORT_LIMITS, STATE_SESSION_PROTOCOL } from '../../adapters/storage/state-storage-protocol.js';
 import type { ManagedPersistenceReport } from '../../worker-runtime/state-persistence.js';
@@ -20,8 +21,9 @@ import type { ManagedPersistenceReport } from '../../worker-runtime/state-persis
  */
 
 import { appInteractionUnavailable, type AppInteractionOptions, type AppInteractionResult } from '../../spi/runtime/app-interaction.interface.js';
-import { normalizeProjectionLimits, projectCompleteViews } from '../../core/invocation/observation-registry.js';
-import type { ProjectionLimits } from '../../core/invocation/observation-types.js';
+import { normalizeProjectionLimits, projectCompleteViews } from '@aotui/core/internal';
+import type { ObservationWindowSelection, ProjectionLimits, ViewIdentity, ViewWindowAccess } from '@aotui/core';
+import type { AppWindows, ViewCloseResult } from '../../spi/runtime/windows.js';
 import { captureProjectionLimits, captureToolsEnabled } from './interaction-config.js';
 import { captureToolInvocation } from '../../adapters/tool-invocation.js';
 import { Worker } from 'worker_threads';
@@ -29,15 +31,16 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { SemanticSnapshotReceiver, type SemanticSnapshotReport } from '../../adapters/snapshot/receiver.js';
 import type { CancellationSignal, ExecutionBinding, ExecutionFact, AppInteraction, InstanceInteraction, InteractionStats,
-    InvocationContext, InvocationSource, Issue, AppInteractionPolicy, ReceiptQuery } from '../../core/invocation/app-interaction-types.js';
-import { captureSnapshotPrepareIssue } from '../../core/snapshot/snapshot-support.js';
+    InvocationContext, InvocationSource, Issue, AppInteractionPolicy, ReceiptQuery, RequestSources } from '@aotui/core/internal';
+import { forwardRequestSource } from '@aotui/core/internal';
+import { captureSnapshotDraftEnvelope, captureSnapshotPrepareIssue, type SnapshotDraftEnvelope } from '@aotui/core/internal';
 import { captureToolInvocationTerminal } from '../../adapters/worker-message-capture.js';
 import type { WorkerCapacity } from './worker-capacity.js';
 import { closeError } from '../core/close-handle.js';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 
-import type { AppID, DesktopID } from '../../spi/index.js';
+import type { AppID, DesktopID } from '@aotui/core';
 import { WORKER_DEFAULTS, type WorkerConfig } from '../../spi/config/index.js';
 
 import {
@@ -56,6 +59,8 @@ const claimedWorkers = new WeakSet<Worker>();
 /**
  * 待处理请求
  */
+type WorkerLifecycle = { worker: Worker; version: number };
+
 interface PendingRequest {
     resolve: (value: any) => void;
     reject: (error: Error) => void;
@@ -63,9 +68,9 @@ interface PendingRequest {
     init?: { worker: Worker; version: number };
     tool?: { worker: Worker; appId: string; instanceId: string; completion: Promise<ExecutionFact> };
     initialOpen?: true;
-    persistence?: 'APP_SHUTDOWN' | 'APP_CLOSE';
+    persistence?: true;
     appCleanup?: 'APP_STOP' | 'APP_SHUTDOWN' | 'APP_CLOSE';
-    projection?: { worker: Worker; version: number };
+    projection?: WorkerLifecycle & { known?: SnapshotDraftEnvelope; timedOut?: true };
 }
 
 /**
@@ -89,7 +94,7 @@ export interface AppWorkerHostConfig extends AppInteractionOptions {
     /** A fresh dedicated Worker, for adapters that supply the thread themselves. */
     existingWorker?: Worker;
     workerCapacity?: WorkerCapacity;
-    config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig; // Configuration Injection
+    config?: import('@aotui/core').AppLaunchConfig; // Configuration Injection
     runtimeConfig?: { worker: WorkerConfig };
 }
 
@@ -130,7 +135,7 @@ export class AppWorkerHost {
     readonly appId: AppID;
     readonly desktopId: DesktopID;
     readonly name?: string;
-    private readonly config?: import('../../spi/app/app-config.interface.js').AppLaunchConfig;
+    private readonly config?: import('@aotui/core').AppLaunchConfig;
     private readonly projectionLimits: ProjectionLimits;
 
     private worker: Worker | null = null;
@@ -142,7 +147,12 @@ export class AppWorkerHost {
     /** Assigned by the Runtime per logical App execution; distinct from Worker thread ID. */
     readonly appInstanceId: string;
     private readonly snapshotReceiver: SemanticSnapshotReceiver;
+    private windowRevision = 0;
+    private appWindowEpoch = 0;
+    private appNote: string | undefined;
+    private readonly viewWindows = new Map<string, { epoch: number; note?: string }>();
     private projectionRefresh?: { requestId: RequestID; promise: Promise<void> };
+    private projectionBaseline?: WorkerLifecycle;
     private readonly toolsEnabled: boolean;
     private readyWorker: { worker: Worker; version: number } | null = null;
     private interactionsClosed = false;
@@ -232,17 +242,17 @@ export class AppWorkerHost {
     beginInteractionClose(): void {
         if (this.interactionsClosed) return;
         this.interactionsClosed = true;
+        this.appNote = undefined;
+        this.viewWindows.clear();
         this.revokeInteraction();
     }
 
     private revokeInteraction(): void {
+        this.projectionBaseline = undefined;
         if (this.projectionRefresh) {
-            const pending = this.pendingRequests.get(this.projectionRefresh.requestId);
-            if (pending) {
-                clearTimeout(pending.timeout);
-                this.pendingRequests.delete(this.projectionRefresh.requestId);
-                pending.reject(Object.assign(new Error('Projection owner closed'), { code: 'PROJECTION_CLOSED' }));
-            }
+            const { requestId } = this.projectionRefresh;
+            const pending = this.pendingRequests.get(requestId);
+            if (pending) this.finishProjection(requestId, pending, closeError('PROJECTION_CLOSED'));
             this.projectionRefresh = undefined;
         }
         this.readyWorker = null;
@@ -265,6 +275,66 @@ export class AppWorkerHost {
             this.status === 'running' && !this.closePromise;
     }
 
+    get collapseNote(): string | undefined { return this.appNote; }
+
+    getWindows(): AppWindows {
+        return {
+            appId: this.appId, instanceId: this.appInstanceId, revision: this.windowRevision,
+            ...(this.appNote === undefined ? {} : { note: this.appNote }),
+            views: this.snapshotReceiver.currentViews().map(view => {
+                const note = this.viewWindows.get(view.viewInstanceId)?.note;
+                return { viewId: view.id, viewInstanceId: view.viewInstanceId, name: view.name,
+                    type: view.type, region: view.region, canClose: !!view.canClose && this.canExecuteTools(),
+                    ...(note === undefined ? {} : { note }) };
+            }),
+        };
+    }
+
+    private readonly windowAccess: ViewWindowAccess = ({ viewInstanceId }) => {
+        const window = this.viewWindows.get(viewInstanceId);
+        return { epoch: Math.max(this.appWindowEpoch, window?.epoch ?? 0),
+            expanded: this.appNote === undefined && window?.note === undefined };
+    };
+
+    setAppWindow(note: string | undefined): void {
+        if (note !== undefined && typeof note !== 'string') throw closeError('WINDOW_NOTE_INVALID');
+        if (note === this.appNote) return;
+        this.windowRevision++;
+        if (note !== undefined) this.appWindowEpoch = this.windowRevision;
+        this.appNote = note;
+    }
+
+    setViewWindow(target: ViewIdentity, note: string | undefined): void {
+        if (!this.snapshotReceiver.currentViews().some(view =>
+            view.id === target.viewId && view.viewInstanceId === target.viewInstanceId)) throw closeError('VIEW_INSTANCE_REVOKED');
+        if (note !== undefined && typeof note !== 'string') throw closeError('WINDOW_NOTE_INVALID');
+        const previous = this.viewWindows.get(target.viewInstanceId);
+        if (previous?.note === note) return;
+        this.windowRevision++;
+        this.viewWindows.set(target.viewInstanceId, note === undefined ? { epoch: previous!.epoch }
+            : { epoch: this.windowRevision, note });
+    }
+
+    async closeView(target: ViewIdentity): Promise<ViewCloseResult> {
+        const view = this.snapshotReceiver.currentViews().find(view => view.id === target.viewId && view.viewInstanceId === target.viewInstanceId);
+        if (!view) return { status: 'rejected', issue: { code: 'VIEW_INSTANCE_REVOKED', message: 'The selected View closed or was replaced.' } };
+        if (!view.canClose || !this.canExecuteTools() || !this.interactionAvailable() || this.pendingTool())
+            return { status: 'rejected', issue: { code: 'VIEW_CLOSE_UNAVAILABLE', message: 'This View has no available close action.' } };
+        const dispatched = this.dispatchViewOperation({ type: 'VIEW_CLOSE', requestId: generateRequestId(), appId: this.appId,
+            instanceId: this.appInstanceId, viewId: target.viewId, viewInstanceId: target.viewInstanceId }, this.worker!);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            const fact = await Promise.race([dispatched, new Promise<ExecutionFact>(resolve => {
+                timer = setTimeout(() => resolve({ kind: 'unknown' }), this.timeout);
+            })]);
+            if (fact.kind !== 'tool-result')
+                return { status: 'unknown', issue: { code: 'VIEW_CLOSE_RESULT_UNKNOWN', message: 'The close result is still unconfirmed. Check the current window before retrying.' } };
+            if (!fact.result.success) return { status: 'rejected', issue: fact.result.error, result: fact.result };
+            const stillMounted = this.snapshotReceiver.currentViews().some(current => current.viewInstanceId === target.viewInstanceId);
+            return { status: !this.interactionAvailable() || stillMounted ? 'accepted' : 'closed', result: fact.result };
+        } finally { clearTimeout(timer); }
+    }
+
     getAppInteraction(policy?: AppInteractionPolicy): AppInteractionResult {
         if (!this.interactionAvailable()) return appInteractionUnavailable();
         if (policy !== undefined) {
@@ -284,7 +354,8 @@ export class AppWorkerHost {
         if (!this.instanceInteraction) {
             const execution = { resolve: this.resolveInteractionSource };
             this.instanceInteraction = this.snapshotReceiver.interaction(
-                withToolAuthorization(policy, () => this.canExecuteTools()), execution, this.projectionLimits);
+                withToolAuthorization(policy, () => this.canExecuteTools()), execution, this.projectionLimits, this.windowAccess);
+            forwardRequestSource(this.interaction, this.instanceInteraction);
             this.interactionPolicy = policy;
         }
         return this.instanceInteraction;
@@ -309,11 +380,11 @@ export class AppWorkerHost {
                 return this.interactionAvailable() ? this.snapshotReceiver.preview() : appInteractionUnavailable();
             } catch (error) { return this.projectionRejection(error); }
         },
-        adoptObservation: (id: string) => this.interactionAvailable() && this.instanceInteraction
-            ? this.instanceInteraction.adoptObservation(id) : appInteractionUnavailable(),
+        adoptObservation: (id: string, selection?: ObservationWindowSelection) => this.interactionAvailable() && this.instanceInteraction
+            ? this.instanceInteraction.adoptObservation(id, selection) : appInteractionUnavailable(),
         releaseObservation: (id: string) => { this.instanceInteraction?.releaseObservation(id); },
-        invoke: (request: unknown, timeoutMs?: number) => this.interactionAvailable() && this.instanceInteraction
-            ? this.instanceInteraction.invoke(request, timeoutMs ?? this.timeout)
+        invoke: (request: unknown, timeoutMs?: number, sources?: RequestSources, signal?: CancellationSignal) => this.interactionAvailable() && this.instanceInteraction
+            ? this.instanceInteraction.invoke(request, timeoutMs ?? this.timeout, sources, signal)
             : Promise.resolve({ kind: 'refused' as const, ...appInteractionUnavailable().issue }),
         readReceipt: (query: ReceiptQuery, timeoutMs?: number) => this.interactionAvailable() && this.instanceInteraction
             ? this.instanceInteraction.readReceipt(query, timeoutMs ?? this.timeout)
@@ -330,11 +401,24 @@ export class AppWorkerHost {
         if (!this.interactionAvailable()) return Promise.reject(Object.assign(new Error('Projection source unavailable'), { code: 'PROJECTION_CLOSED' }));
         if (!this.projectionRefresh) {
             const requestId = generateRequestId();
-            const promise = this.sendRequest<void>({ type: 'FLUSH_PROJECTION', requestId });
+            const known = this.ownsProjection(this.projectionBaseline) ? this.snapshotReceiver.currentPublication() : undefined;
+            const promise = this.sendRequest<void>({ type: 'FLUSH_PROJECTION', requestId, ...(known ? { known } : {}) });
             if (!this.pendingRequests.has(requestId)) return promise;
             this.projectionRefresh = { requestId, promise };
         }
         return this.projectionRefresh.promise;
+    }
+
+    private ownsProjection(owner?: WorkerLifecycle): boolean {
+        return !!owner && owner.worker === this.worker && owner.version === this.lifecycleContextVersion;
+    }
+
+    private finishProjection(requestId: RequestID, pending: PendingRequest, error?: Error): void {
+        clearTimeout(pending.timeout);
+        this.pendingRequests.delete(requestId);
+        if (this.projectionRefresh?.requestId === requestId) this.projectionRefresh = undefined;
+        if (error) pending.reject(error);
+        else pending.resolve(undefined);
     }
 
     getInteractionReport(): Readonly<{ toolsEnabled: boolean; workerToolPending: boolean; core: InteractionStats }> | null {
@@ -357,8 +441,8 @@ export class AppWorkerHost {
                 this.lifecycleContextVersion === version && this.canExecuteTools() }),
             execute: (context: InvocationContext) => this.dispatchTool({ type: 'VIEW_TOOL_INVOKE', requestId: generateRequestId(),
                 appId: source.appId as AppID, instanceId: source.instanceId, snapshotId: source.snapshotId,
-                tool, receiver: source.receiver, rawArgs: context.rawInput,
-                effectiveArgs: context.effectiveInput, refSources: context.refSources,
+                observationId: context.observationId, tool, receiver: source.receiver, rawArgs: context.rawInput,
+                refSources: context.refSources,
             }, { worker, version, signal: context.signal }),
         });
         this.interactionBindings.set(source, binding);
@@ -375,12 +459,16 @@ export class AppWorkerHost {
         try { message = captureToolInvocation(message); }
         catch { return refused('REF_ARGUMENT_BUDGET_EXCEEDED', 'Complete Ref request exceeds the transport budget'); }
         if (!live() || this.pendingTool()) return refused('TOOL_EXECUTION_UNAVAILABLE', 'Worker Tool execution is unavailable');
+        return this.dispatchViewOperation(message, expected.worker);
+    }
+
+    private dispatchViewOperation(message: Extract<MainToWorkerMessage, { type: 'VIEW_TOOL_INVOKE' | 'VIEW_CLOSE' }>, worker: Worker): Promise<ExecutionFact> {
         const { requestId, appId, instanceId } = message;
         let resolve!: (fact: ExecutionFact) => void;
         const completion = new Promise<ExecutionFact>(complete => { resolve = complete; });
         this.pendingRequests.set(requestId, { resolve, reject: () => {},
-            tool: { worker: expected.worker, appId, instanceId, completion } });
-        try { expected.worker.postMessage(message); }
+            tool: { worker, appId, instanceId, completion } });
+        try { worker.postMessage(message); }
         catch { /* Without a terminal or exit, this attempt cannot prove completion. */ }
         return completion;
     }
@@ -609,24 +697,16 @@ export class AppWorkerHost {
         catch (error) { failure ??= error; }
         try { await this.sendRequest<void>({ type: 'APP_CLOSE', requestId: generateRequestId() }); }
         catch (error) { failure ??= error; }
-        if (failure) throw failure;
         const storage = this.persistenceHost;
         // An idle session never contacted storage, so the Host stops its own admission here.
         if (storage?.getStats().highWater === 0 && this.lastPersistence?.ok) await storage.disconnect();
         if (this.persistenceSupport === 'managed' && (!this.lastPersistence?.ok || storage?.getStats().uncertain ||
             storage?.getStats().release?.status !== 'released')) {
             this.persistenceUnsafe = true;
-            throw new Error('PERSISTENCE_CLOSE_FAILED: Managed persistence did not complete');
+            failure ??= closeError('PERSISTENCE_CLOSE_FAILED');
         }
+        if (failure) throw failure;
     }
-
-    // ════════════════════════════════════════════════════════════════
-    //  External Event
-    pushLLMUsage(event: LLMUsageEvent): void {
-        if (this.status === 'closing' || this.status === 'closed') return;
-        this.worker?.postMessage({ type: 'LLM_USAGE', event } satisfies MainToWorkerMessage);
-    }
-
 
     // ════════════════════════════════════════════════════════════════
     //  Terminate
@@ -683,7 +763,7 @@ export class AppWorkerHost {
         }
     }
 
-    private sendRequest<T>(message: Exclude<MainToWorkerMessage, { type: 'VIEW_TOOL_INVOKE' }>): Promise<T> {
+    private sendRequest<T>(message: Exclude<MainToWorkerMessage, { type: 'VIEW_TOOL_INVOKE' | 'VIEW_CLOSE' }>): Promise<T> {
         if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE'].includes(message.type)) this.lifecycleContextVersion++;
         if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE', 'APP_DELETE', 'APP_REINITIALIZE'].includes(message.type)) {
             this.revokeInteraction();
@@ -697,18 +777,21 @@ export class AppWorkerHost {
             if (!worker) { reject(new Error('Worker not started')); return; }
             const requestId = 'requestId' in message ? message.requestId : undefined;
             if (!requestId) { reject(new Error('Message missing requestId')); return; }
+            const projection: PendingRequest['projection'] = message.type === 'FLUSH_PROJECTION'
+                ? { worker, version: this.lifecycleContextVersion, ...(message.known ? { known: message.known } : {}) } : undefined;
             const timeout = setTimeout(() => {
                 // A timed-out flush still owns its Worker wait. Keep the single
                 // slot until the real reply or App close, rather than stacking retries.
-                if (message.type !== 'FLUSH_PROJECTION') this.pendingRequests.delete(requestId);
+                if (projection) projection.timedOut = true;
+                else this.pendingRequests.delete(requestId);
                 reject(Object.assign(new Error(`Request ${requestId} timed out after ${this.timeout}ms`),
-                    message.type === 'FLUSH_PROJECTION' ? { code: 'PROJECTION_TIMEOUT' } : {}));
+                    projection ? { code: 'PROJECTION_TIMEOUT' } : {}));
             }, this.timeout);
             this.pendingRequests.set(requestId, { resolve, reject, timeout,
-                ...(message.type === 'FLUSH_PROJECTION' ? { projection: { worker, version: this.lifecycleContextVersion } } : {}),
+                ...(projection ? { projection } : {}),
                 ...(message.type === 'APP_OPEN' ? { initialOpen: true as const } : {}),
                 ...(this.appLifecycleSupport === 'managed' && (message.type === 'APP_STOP' || message.type === 'APP_SHUTDOWN' || message.type === 'APP_CLOSE') ? { appCleanup: message.type } : {}),
-                ...(this.persistenceSupport === 'managed' && (message.type === 'APP_SHUTDOWN' || message.type === 'APP_CLOSE') ? { persistence: message.type } : {}),
+                ...(this.persistenceSupport === 'managed' && message.type === 'APP_CLOSE' ? { persistence: true as const } : {}),
                 ...(message.type === 'INIT' ? { init: { worker, version: this.lifecycleContextVersion } } : {}),
             });
             try { worker.postMessage(message); }
@@ -737,51 +820,72 @@ export class AppWorkerHost {
         }
         // Routing reads only a data descriptor; terminal content is captured before validation.
         const id = Object.getOwnPropertyDescriptor(msg, 'requestId')?.value;
-        const toolPending = typeof id === 'string' ? this.pendingRequests.get(id) : undefined;
-        if (toolPending?.tool) {
-            const { worker, appId, instanceId } = toolPending.tool;
+        const pending = typeof id === 'string' ? this.pendingRequests.get(id) : undefined;
+        if (pending?.tool) {
+            const { worker, appId, instanceId } = pending.tool;
             if (worker !== this.worker || typeField.value !== 'VIEW_TOOL_INVOKE_RESPONSE') return;
             const terminal = captureToolInvocationTerminal(msg, { requestId: id, appId, instanceId });
             if (!terminal) return;
             this.pendingRequests.delete(id);
-            toolPending.resolve(terminal.phase === 'finished-unknown' ? { kind: 'unknown' } : { kind: 'tool-result', ...terminal } satisfies ExecutionFact);
+            pending.resolve(terminal.phase === 'finished-unknown' ? { kind: 'unknown' } : { kind: 'tool-result', ...terminal } satisfies ExecutionFact);
+            return;
+        }
+        if (typeField.value === 'PROJECTION_CURRENT') {
+            if (!pending?.projection) return;
+            const projection = pending.projection;
+            if (!this.ownsProjection(projection)) {
+                this.finishProjection(id, pending, closeError('PROJECTION_CLOSED'));
+            } else if (projection.timedOut) {
+                this.finishProjection(id, pending);
+            } else if (projection.known && Reflect.ownKeys(msg).length === 6 &&
+                isDeepStrictEqual(captureSnapshotDraftEnvelope(msg), projection.known) &&
+                isDeepStrictEqual(this.snapshotReceiver.currentPublication(), projection.known)) {
+                this.finishProjection(id, pending);
+            } else {
+                this.projectionBaseline = undefined;
+                this.finishProjection(id, pending, closeError('OBSERVATION_REFRESH_FAILED'));
+            }
             return;
         }
         if ((msg.type === 'INIT_RESPONSE' || msg.type === 'LIFECYCLE_RESPONSE' || msg.type === 'ERROR_RESPONSE') &&
             typeof id === 'string' && 'success' in msg) {
-            const pending = this.pendingRequests.get(id);
             if (pending) {
                 if (pending.projection) {
-                    clearTimeout(pending.timeout); this.pendingRequests.delete(msg.requestId);
-                    if (this.projectionRefresh?.requestId === msg.requestId) this.projectionRefresh = undefined;
-                    pending.reject(Object.assign(new Error('Worker did not return an accepted projection'), { code: 'OBSERVATION_REFRESH_FAILED' }));
+                    const current = this.ownsProjection(pending.projection);
+                    if (current && !pending.projection.timedOut) this.projectionBaseline = undefined;
+                    this.finishProjection(id, pending, closeError(current ? 'OBSERVATION_REFRESH_FAILED' : 'PROJECTION_CLOSED'));
                     return;
                 }
                 let appCleanupFailed = false;
                 let appCleanupSucceeded = false;
+                let appUnmountFailed = false;
                 let persistenceFailed = false;
-                let persistenceSucceeded = false;
                 let lifecycleTerminalMismatch = false;
                 if (pending.init) {
-                    const rejectInitialization = (code: string, error?: Error) => {
+                    const rejectInitialization = (code: string, error?: Error, storageUnverified = true) => {
                         this.readyWorker = null;
                         this.persistenceSupport = 'rejected';
-                        this.persistenceUnsafe = true;
+                        this.persistenceUnsafe = storageUnverified;
                         clearTimeout(pending.timeout); this.pendingRequests.delete(msg.requestId);
                         // A successful INIT may have left an App and persistence session
                         // alive in a Worker whose initialization cannot be used.
                         this.terminate();
-                        pending.reject(error ?? new Error(code));
+                        pending.reject(error ?? closeError(code));
                     };
                     if (msg.type === 'ERROR_RESPONSE' && msg.success === false) {
                         this.appLifecycleSupport = 'rejected';
                         const error = initializationError(Object.getOwnPropertyDescriptor(msg, 'error')?.value, String(this.appId), 'INIT');
-                        rejectInitialization(error.code, error);
+                        // A verified App initialization error precedes storage negotiation.
+                        rejectInitialization(error.code, error, error.code !== 'E_INIT_FAILED' || error.cause === undefined);
                         return;
                     }
                     if (msg.type !== 'INIT_RESPONSE' || Object.getOwnPropertyDescriptor(msg, 'success')?.value !== true) {
                         this.appLifecycleSupport = 'rejected';
                         rejectInitialization('APP_INIT_ACK_INVALID'); return;
+                    }
+                    const protocol = Object.getOwnPropertyDescriptor(msg, 'protocol');
+                    if (!protocol?.enumerable || protocol.value !== WORKER_PROTOCOL) {
+                        rejectInitialization('WORKER_PROTOCOL_UNSUPPORTED'); return;
                     }
                     const field = Object.getOwnPropertyDescriptor(msg, 'appLifecycle');
                     const appLifecycleAck = field?.enumerable && 'value' in field
@@ -794,13 +898,9 @@ export class AppWorkerHost {
                         rejectInitialization('APP_LIFECYCLE_NEGOTIATION_FAILED'); return;
                     }
                     if (ackField && !persistenceAck) {
-                        rejectInitialization('PERSISTENCE_NEGOTIATION_FAILED: Invalid persistence acknowledgment'); return;
+                        rejectInitialization('PERSISTENCE_UNAVAILABLE'); return;
                     }
                     const init = pending.init;
-                    const protocol = Object.getOwnPropertyDescriptor(msg, 'protocol');
-                    if (!protocol?.enumerable || protocol.value !== WORKER_PROTOCOL) {
-                        rejectInitialization('WORKER_PROTOCOL_UNSUPPORTED'); return;
-                    }
                     const tools = Object.getOwnPropertyDescriptor(msg, 'toolsEnabled');
                     if (!tools?.enumerable || tools.value !== this.toolsEnabled) {
                         rejectInitialization('APP_INIT_ACK_INVALID'); return;
@@ -837,10 +937,8 @@ export class AppWorkerHost {
                     if (this.appStopRequested) this.beginApplicationStop();
                 }
                 if (pending.initialOpen && msg.success !== true) {
-                    // APP_OPEN can fail after the Worker has initialized managed
-                    // persistence and has already disposed that session. Preserve
-                    // its terminal facts so the Host cannot hide the failed commit
-                    // or treat the Worker as a clean persistence owner.
+                    // A failed APP_OPEN can already have closed its storage session.
+                    // Keep its storage receipt and reject with the original App error.
                     const persistence = msg.type === 'LIFECYCLE_RESPONSE'
                         ? captureManagedPersistenceReport(Object.getOwnPropertyDescriptor(msg, 'persistence')?.value, this.appInstanceId) : null;
                     if (persistence) this.lastPersistence = persistence;
@@ -860,40 +958,32 @@ export class AppWorkerHost {
                     if (validPhase) this.lastAppCleanup = report;
                     appCleanupSucceeded = !!validPhase && report.issues.length === 0 &&
                         (pending.appCleanup === 'APP_CLOSE' ? report.state === 'completed' : report.state === 'stopped');
-                    // APP_STOP has no persistence request whose result can explain a failed terminal.
-                    // APP_SHUTDOWN/APP_CLOSE are evaluated with their persistence report below.
+                    // Only APP_CLOSE combines application and storage terminal facts.
                     appCleanupFailed = !validPhase || !appCleanupSucceeded ||
-                        pending.appCleanup === 'APP_STOP' && msg.success !== true;
+                        pending.appCleanup !== 'APP_CLOSE' && msg.success !== true;
                 }
                 if (pending.persistence) {
                     const report = msg.type === 'LIFECYCLE_RESPONSE'
                         ? captureManagedPersistenceReport(Object.getOwnPropertyDescriptor(msg, 'persistence')?.value, this.appInstanceId) : null;
                     if (report) this.lastPersistence = report;
-                    persistenceSucceeded = !!report && (pending.persistence === 'APP_CLOSE' ? report.ok : report.flush?.ok === true);
-                    persistenceFailed = !persistenceSucceeded;
+                    appUnmountFailed = report?.unmount === 'failed';
+                    persistenceFailed = report?.ok !== true;
                     if (persistenceFailed) this.persistenceUnsafe = true;
 
-                    const expectedTerminalSuccess = pending.persistence === 'APP_CLOSE'
-                        ? (!pending.appCleanup || appCleanupSucceeded) && persistenceSucceeded
-                        : persistenceSucceeded;
+                    const expectedTerminalSuccess = (!pending.appCleanup || appCleanupSucceeded) && !appUnmountFailed && !persistenceFailed;
                     lifecycleTerminalMismatch = msg.success !== expectedTerminalSuccess;
                     if (lifecycleTerminalMismatch) this.persistenceUnsafe = true;
                 }
 
                 // Validate the facts independently before using the combined terminal bit. In particular,
                 // APP_CLOSE success includes both lifecycle cleanup and persistence completion.
-                if (appCleanupFailed) {
-                    clearTimeout(pending.timeout); this.pendingRequests.delete(msg.requestId);
-                    pending.reject(new Error('APP_CLEANUP_FAILED')); return;
-                }
-                if (persistenceFailed || lifecycleTerminalMismatch) {
-                    clearTimeout(pending.timeout);this.pendingRequests.delete(msg.requestId);
-                    pending.reject(new Error('PERSISTENCE_CLOSE_FAILED: Managed persistence did not complete'));return;
-                }
                 clearTimeout(pending.timeout);
                 this.pendingRequests.delete(msg.requestId);
 
-                if (msg.success) pending.resolve(undefined);
+                if (appCleanupFailed) pending.reject(closeError('APP_CLEANUP_FAILED'));
+                else if (appUnmountFailed) pending.reject(closeError('APP_UNMOUNT_FAILED'));
+                else if (persistenceFailed || lifecycleTerminalMismatch) pending.reject(closeError('PERSISTENCE_CLOSE_FAILED'));
+                else if (msg.success) pending.resolve(undefined);
                 else {
                     pending.reject(new Error((msg as any).error?.message || 'Unknown error'));
                 }
@@ -902,8 +992,11 @@ export class AppWorkerHost {
         }
 
         if (msg.type === 'SNAPSHOT_PREPARED' || msg.type === 'SNAPSHOT_PREPARE_FAILED') {
-            const request = msg.requestId && this.pendingRequests.get(msg.requestId);
-            const pending = request && request.projection ? request : undefined;
+            const projection = pending?.projection;
+            if (projection && !this.ownsProjection(projection)) {
+                this.finishProjection(id, pending!, closeError('PROJECTION_CLOSED'));
+                return;
+            }
             let notify = false;
             try {
                 const result = msg.type === 'SNAPSHOT_PREPARED'
@@ -914,14 +1007,14 @@ export class AppWorkerHost {
                         issue: captureSnapshotPrepareIssue(msg.error),
                     });
                 notify = result.status === 'published' || result.healthChanged;
-                if (pending && msg.requestId) {
-                    clearTimeout(pending.timeout);
-                    this.pendingRequests.delete(msg.requestId);
-                    if (this.projectionRefresh?.requestId === msg.requestId) this.projectionRefresh = undefined;
-                    if (pending.projection!.worker !== this.worker || pending.projection!.version !== this.lifecycleContextVersion)
-                        pending.reject(Object.assign(new Error('Projection source replaced'), { code: 'PROJECTION_CLOSED' }));
-                    else if (result.status === 'rejected') pending.reject(new ProjectionRefreshFailure(result.issue));
-                    else pending.resolve(undefined);
+                if (result.status === 'published' && this.viewWindows.size) {
+                    const live = new Set(result.snapshot.views.map(view => view.viewInstanceId));
+                    for (const mount of this.viewWindows.keys()) if (!live.has(mount)) this.viewWindows.delete(mount);
+                }
+                if (projection) {
+                    if (!projection.timedOut) this.projectionBaseline = result.status === 'rejected' ? undefined
+                        : { worker: projection.worker, version: projection.version };
+                    this.finishProjection(id, pending!, result.status === 'rejected' ? new ProjectionRefreshFailure(result.issue) : undefined);
                 }
             } catch {
                 this.handleError(new Error('Semantic snapshot reception failed'));
@@ -938,7 +1031,7 @@ export class AppWorkerHost {
     private handleError(_error: Error): void {
         this.resourceIssues.add('WORKER_ERROR');
         this.beginInteractionClose();
-        if (this.persistenceSupport === 'managed') this.persistenceUnsafe = true;
+        if (this.persistenceSupport === 'managed' && !this.lastPersistence?.ok) this.persistenceUnsafe = true;
         this.lifecycleContextVersion++;
         console.error('[AppWorkerHost] Worker failed for App', this.appId);
         if (!this.terminationRequested) this.status = 'error';

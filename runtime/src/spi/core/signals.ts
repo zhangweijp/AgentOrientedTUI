@@ -4,7 +4,7 @@
  * 定义 Runtime 发出的信号类型。
  */
 
-import type { DesktopID } from './types.js';
+import type { DesktopID } from '@aotui/core';
 
 /**
  * 更新信号

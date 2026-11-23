@@ -32,7 +32,7 @@ describe('createTUIApp', () => {
     it('advertises the managed lifecycle contract without requiring app cleanup callbacks', () => {
         const factory = createTUIApp({viewTypes: [], app_name: 'test_app', component: () => null });
         expect(factory.appLifecycleSupport).toBe('app-lifecycle-v2');
-        expect(Object.getOwnPropertyDescriptor(factory, 'toolAuthoringProtocol')?.value).toBe('view-type-tools-v6');
+        expect(Object.getOwnPropertyDescriptor(factory, 'toolAuthoringProtocol')?.value).toBe('view-type-tools-v7');
         expect(factory.kernelConfig.onDelete).toBeUndefined();
         expect(factory.kernelConfig.onReinitialize).toBeUndefined();
     });
@@ -58,11 +58,11 @@ describe('createTUIApp', () => {
         ).toThrow(/app_name/);
     });
     it.each([{}, { name: 'only_name' }, { app_name: undefined }, { app_name: null }, { app_name: 123 }, { app_name: {} }, { app_name: ['valid'] }])('rejects non-string JS configuration %j without regexp coercion', value => {
-        expect(() => createTUIApp({ ...value, component: () => null } as any)).toThrow(/app_name.*string/);
+        expect(() => createTUIApp({ ...value, component: () => null } as any)).toThrow(/APP_METADATA_INVALID.*app_name/);
     });
     it('does not coerce an object name and returns only the component factory contract', () => {
         const coercion = vi.fn(() => 'valid');
-        expect(() => createTUIApp({ app_name: { toString: coercion }, component: () => null } as any)).toThrow(/app_name.*string/);
+        expect(() => createTUIApp({ app_name: { toString: coercion }, component: () => null } as any)).toThrow(/APP_METADATA_INVALID.*app_name/);
         expect(coercion).not.toHaveBeenCalled();
         const factory = createTUIApp({viewTypes: [], app_name: 'valid_123', whatItIs: 'What', whenToUse: 'When', component: () => null });
         expect(factory.kernelConfig).toEqual({ appName: 'valid_123', whatItIs: 'What', whenToUse: 'When' });

@@ -1,12 +1,12 @@
-import { viewToolReceiver } from '../../src/core/tool/source-binding.js';
-import type { AppProjectionFrame } from '../../src/core/projection/coordinator.js';
+import { viewToolReceiver } from '@aotui/core/internal';
+import type { AppProjectionFrame } from '@aotui/core';
 import type { AppKernel } from '../../src/worker-runtime/app-kernel/AppKernel.js';
 
 type TestView = AppProjectionFrame['views'][number];
 
 export function detailFrame(fields: Partial<TestView> = {}): TestView {
     return {
-        id: 'v', type: 'Detail', name: 'Detail', kind: 'state', owner: {}, bindings: [], refs: [],
+        createId: () => 'v', type: 'Detail', name: 'Detail', region: 'dynamic', owner: {}, bindings: [], refs: [],
         content: { format: 'markdown-v1', value: 'Detail' }, ...fields,
     };
 }

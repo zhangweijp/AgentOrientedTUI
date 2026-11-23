@@ -1,7 +1,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { defineRuntimeConfig, RUNTIME_DEFAULTS } from '../../../src/spi/config/define-config.js';
-import { AOTUIError } from '../../../src/spi/core/errors.js';
+import { AOTUIError } from '@aotui/core';
 import * as configExports from '../../../src/spi/config/index.js';
 
 function captureError(run: () => unknown): unknown {

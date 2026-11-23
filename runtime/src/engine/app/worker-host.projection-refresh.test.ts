@@ -1,18 +1,18 @@
-import { projectCompleteViews } from '../../core/invocation/observation-registry.js';
+import { projectCompleteViews } from '@aotui/core/internal';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AppWorkerHost } from './worker-host.js';
 import { SemanticSnapshotReceiver } from '../../adapters/snapshot/receiver.js';
-import { SemanticProjectionCoordinator } from '../../core/projection/coordinator.js';
-import type { ToolDescriptor } from '../../core/snapshot/types.js';
-import { compileToolParameters } from '../../core/tool/tool-parameters.js';
+import { SemanticProjectionCoordinator } from '@aotui/core';
+import type { ToolDescriptor } from '@aotui/core';
+import { compileToolParameters } from '@aotui/core';
 
 const policy = { project: () => ({ refs: [], toolIds: [] }), authorize: () => true, canReadReceipt: () => true };
 function draft(instanceId: string, seq: number, value = 'current') {
-    return { schemaVersion: 6, appId: 'app', instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
-        views: [{ toolBindings: [], id: 'file', viewInstanceId: 'file-instance', type: 'File', name: 'File', kind: 'state',
+    return { schemaVersion: 7, appId: 'app', instanceId, producerSeq: seq, sourceEpoch: seq, capturedAt: seq,
+        views: [{ toolBindings: [], id: 'file', viewInstanceId: 'file-instance', type: 'File', name: 'File', region: 'dynamic',
             content: { format: 'markdown-v1', value } }], refs: {}, tools: {} };
 }
 const cleanup: Array<() => void> = [];
@@ -26,10 +26,19 @@ function fixture(projectionLimits?: ConstructorParameters<typeof AppWorkerHost>[
     internals.snapshotReceiver.acceptPrepared(draft(host.appInstanceId, 1));
     cleanup.push(() => { host.beginInteractionClose(); internals.snapshotReceiver.close(); rmSync(directory, { recursive: true, force: true }); });
     const opened = host.getAppInteraction(policy); if (opened.status !== 'ready') throw new Error(opened.issue.code);
-    const publish = (seq: number, value = 'updated') => internals.handleMessage({ type: 'SNAPSHOT_PREPARED',
-        requestId: worker.postMessage.mock.calls.at(-1)![0].requestId,
+    const sent = () => worker.postMessage.mock.calls.at(-1)![0];
+    const send = (message: object) => internals.handleMessage(message);
+    const publish = (seq: number, value = 'updated', correlated = true) => send({ type: 'SNAPSHOT_PREPARED',
+        ...(correlated ? { requestId: sent().requestId } : {}),
         draft: draft(host.appInstanceId, seq, value), suppressSignal: true });
-    return { host, internals, worker, client: opened.interaction, publish };
+    const confirm = (override?: object) => send({ type: 'PROJECTION_CURRENT', requestId: sent().requestId,
+        ...sent().known, ...override });
+    const prime = async () => {
+        const refresh = opened.interaction.preview();
+        publish(2);
+        expect((await refresh).status).toBe('previewed');
+    };
+    return { host, internals, worker, client: opened.interaction, sent, send, publish, confirm, prime };
 }
 
 describe('refresh before the existing Scope observation', () => {
@@ -56,10 +65,10 @@ describe('refresh before the existing Scope observation', () => {
         let value = 1;
         const projection = new SemanticProjectionCoordinator({ identity: () => ({ appId: 'app', instanceId: 'instance' }) });
         const prepare = (payload = { value }) => projection.commit(() => ({
-                views: [{ toolBindings: [{ toolId, activationId: 'active-' + value }], id: target.viewId, viewInstanceId: target.viewInstanceId, type: 'File', name: 'File', kind: 'state',
+                views: [{ toolBindings: [{ toolId, activationId: 'active-' + value }], id: target.viewId, viewInstanceId: target.viewInstanceId, type: 'File', name: 'File', region: 'dynamic',
                     content: { format: 'markdown-v1', value: 'body:' + value } }],
-                refs: [{ ...target, id: 'selected', refType: 'Record', value: payload }],
-                tools: [{ id: toolId, name: 'edit', viewType: 'File', nameSharedAcrossViewTypes: false, description: 'Edit',
+                refs: [{ ...target, scope: 'protected', id: 'selected', refType: 'Record', value: payload }],
+                tools: [{ multiplicity: 'multiple', id: toolId, name: 'edit', viewType: 'File', nameSharedAcrossViewTypes: false, description: 'Edit',
                     inputSchema: profile } satisfies ToolDescriptor],
         }));
         const publish = () => {
@@ -160,6 +169,101 @@ describe('refresh before the existing Scope observation', () => {
         expect((await preview).status).toBe('previewed');
         expect((await observation).status).toBe('observed');
         expect(x.host.getInteractionReport()!.core.observations).toMatchObject({ observations: 1, reservations: 0 });
+    });
+
+    it('uses the newest accepted publication, including an unchanged push, without publishing or equating the observations', async () => {
+        const x = fixture();
+        await x.prime();
+        const report = x.host.getSemanticSnapshotReport();
+        x.publish(3, 'updated', false);
+        expect(x.host.getSemanticSnapshotReport()!.snapshotId).toBe(report!.snapshotId);
+        x.host.onUpdateRequest = vi.fn();
+        const before = x.host.getSemanticSnapshotReport();
+        const first = x.client.observe({ all: true });
+        const preview = x.client.preview();
+        expect(x.sent().known).toEqual({ appId: 'app', instanceId: x.host.appInstanceId, sourceEpoch: 3, producerSeq: 3 });
+        expect(x.worker.postMessage).toHaveBeenCalledTimes(2);
+        x.confirm({ requestId: 'unowned' });
+        expect(x.internals.pendingRequests.size).toBe(1);
+        x.confirm();
+        expect((await preview).status).toBe('previewed');
+        const a = await first;
+        if (a.status !== 'observed') throw new Error(a.issue.code);
+        expect(x.client.adoptObservation(a.observation.observationId)).toEqual({ status: 'adopted' });
+        const next = x.client.observe({ all: true });
+        x.confirm();
+        const b = await next;
+        if (b.status !== 'observed') throw new Error(b.issue.code);
+        expect(x.client.adoptObservation(b.observation.observationId)).toEqual({ status: 'adopted' });
+        expect(b.observation.source).toEqual(a.observation.source);
+        expect(b.observation.observationId).not.toBe(a.observation.observationId);
+        expect(x.host.getSemanticSnapshotReport()).toEqual(before);
+        expect(x.host.onUpdateRequest).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['before first full', false, {}],
+        ['foreign App', true, { appId: 'other' }],
+        ['old mount', true, { instanceId: 'old' }],
+        ['wrong epoch', true, { sourceEpoch: 1 }],
+        ['wrong sequence', true, { producerSeq: 3 }],
+        ['additional data', true, { draft: {} }],
+    ])('rejects an active confirmation with %s and falls back to a full refresh', async (_name, prime, fields) => {
+        const x = fixture();
+        if (prime) await x.prime();
+        const waiting = x.client.observe({ all: true });
+        x.confirm(fields);
+        expect(await waiting).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_REFRESH_FAILED' } });
+        const next = x.client.observe({ all: true });
+        expect(x.sent().known).toBeUndefined();
+        x.publish(3);
+        expect((await next).status).toBe('observed');
+    });
+
+    it.each(['advanced', 'degraded'])('rejects an answer whose resident publication has %s', async (mode) => {
+        const x = fixture();
+        await x.prime();
+        const waiting = x.client.observe({ all: true });
+        if (mode === 'advanced') x.publish(3, 'new body', false);
+        else x.send({ type: 'SNAPSHOT_PREPARE_FAILED', ...x.sent().known, producerSeq: 3, suppressSignal: true,
+            error: { code: 'SNAPSHOT_INVALID', message: 'source fault', path: '$.views' } });
+        x.confirm();
+        expect(await waiting).toMatchObject({ status: 'rejected', issue: { code: 'OBSERVATION_REFRESH_FAILED' } });
+        const recovered = x.client.observe({ all: true });
+        expect(x.sent().known).toBeUndefined();
+        x.publish(4);
+        expect((await recovered).status).toBe('observed');
+    });
+
+    it('consumes only the original slot for a late confirmation, without clearing a healthy basis or completing a later slot', async () => {
+        vi.useFakeTimers();
+        const x = fixture();
+        await x.prime();
+        const waiting = x.client.observe({ all: true });
+        const expired = x.sent();
+        await vi.advanceTimersByTimeAsync(50);
+        expect(await waiting).toMatchObject({ status: 'rejected', issue: { code: 'PROJECTION_TIMEOUT' } });
+        x.confirm({ producerSeq: 999 });
+        expect(x.internals.pendingRequests.size).toBe(0);
+        const next = x.client.observe({ all: true });
+        expect(x.sent().known).toEqual(expired.known);
+        x.confirm({ requestId: expired.requestId });
+        expect(x.internals.pendingRequests.size).toBe(1);
+        x.confirm();
+        expect((await next).status).toBe('observed');
+    });
+
+    it('discards a previous lifecycle response and requires a full refresh for the successor', async () => {
+        const x = fixture();
+        await x.prime();
+        const waiting = x.client.observe({ all: true });
+        x.internals.lifecycleContextVersion++;
+        x.confirm();
+        expect(await waiting).toMatchObject({ status: 'rejected', issue: { code: 'PROJECTION_CLOSED' } });
+        const next = x.client.observe({ all: true });
+        expect(x.sent().known).toBeUndefined();
+        x.publish(3);
+        expect((await next).status).toBe('observed');
     });
 
     it('does not treat a generic response as a fresh Snapshot and releases its failed request for an explicit retry', async () => {

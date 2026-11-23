@@ -1,0 +1,38 @@
+{
+  "name": "@aotui/core",
+  "version": "0.1.0",
+  "description": "Portable AOTUI projection, observation and invocation contracts",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./internal": {
+      "types": "./dist/internal.d.ts",
+      "import": "./dist/internal.js"
+    }
+  },
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "files": ["dist", "examples/public-core.ts"],
+  "license": "Apache-2.0",
+  "publishConfig": { "access": "public" },
+  "dependencies": { "acorn": "8.19.0", "typebox": "1.4.3" },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "vitest": "^4.1.12"
+  },
+  "pnpm": {
+    "overrides": {
+      "picomatch@4.0.3": "4.0.4",
+      "rollup": "^4.60.1"
+    }
+  }
+}

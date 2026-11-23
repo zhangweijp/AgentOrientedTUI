@@ -28,23 +28,24 @@ async function facts(name: string, value: object) {
 async function fixture(scenario = 'normal') {
     const dir = await mkdtemp(join(tmpdir(), 'aotui-c1-sandbox-')), app = join(dir, 'app.mjs');
     await linkPreactPeer(dir);
-    const body = `import {h} from 'preact';import Type from 'typebox';import {createTUIApp,defineViewType,usePersistentState,useAppRuntimeContext,View} from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};
-let setter,value,port;globalThis.__p1Probe=(globalThis.__p1Probe??0)+1;let inspections=0;const noArgs=Type.Object({}, {additionalProperties:false});
+    const body = `import {h} from 'preact';import Type from 'typebox';import { createTUIApp, defineViewType, useAppLifecycle, useState, useAppRuntimeContext, StaticView } from ${JSON.stringify(url(join(repo, 'sdk/dist/index.js')))};
+let setter,value,port,draft;globalThis.__p1Probe=(globalThis.__p1Probe??0)+1;let inspections=0;const noArgs=Type.Object({}, {additionalProperties:false});
 
 
 
 
 
-const RootType = defineViewType()({ name: 'Root', tools: {
+const RootType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Root', tools: {
   set: { description:'Set persisted value', inputSchema: Type.Object({value:Type.Number()}, {additionalProperties:false}) , execute: ({ input, context }) => context.set(input) },
   flush: { description:'Flush persisted state', inputSchema: noArgs , execute: ({ input, context }) => context.flush(input) },
   inspect: { description:'Inspect persisted state', inputSchema: noArgs , execute: ({ input, context }) => context.inspect(input) },
 } });
 function Root() {
-  ${scenario === 'initial-failure' ? "usePersistentState('value',0);" : ''}
-  [value,setter] = usePersistentState('value',0);
+  ${scenario === 'initial-failure' ? "throw Error('controlled initial failure');" : ''}
+  [value,setter] = useState(0);
   port = useAppRuntimeContext().persistence;
-  return h(View, {kind:'instruction', id:'root', type:RootType, context: { set: async args=>{setter(args.value);return {success:true};}, flush: async()=>({success:true,data:await port.flush()}), inspect: async()=>({success:true,data:{value,inspections:++inspections,realm:globalThis.__p1Probe}}) }}, 'Persistent state');
+  useAppLifecycle({ async close() { if (draft !== undefined) await port.save('value',draft); } });
+  return h(StaticView, { idPrefix: 'root', type:RootType, context: { set: async args=>{draft=args.value;setter(draft);return {success:true};}, flush: async()=>({success:true,data:await port.flush()}), inspect: async()=>({success:true,data:{value:draft ?? (await port.load('value')) ?? value,inspections:++inspections,realm:globalThis.__p1Probe}}) }}, 'Persistent state');
 }
 const factory=createTUIApp({persistence:true,app_name:'c1',component:Root,viewTypes:[RootType]});
 ${scenario === 'unmount-failure' ? "const initialize=factory.initialize.bind(factory);factory.initialize=async(...args)=>{const renderer=await initialize(...args);return {...renderer,close(){renderer.close();throw Error('private unmount failure');}};};" : ''}
@@ -104,7 +105,7 @@ it('starts A → B → A in fresh realms at capacity 1 and preserves only persis
 
 it.each(['save-failure', 'lost-reply', 'unmount-failure', 'initial-failure'])('C1-15/16 actual SDK %s keeps failure facts after the Worker exits', async scenario => {
     const f = await fixture(scenario), backend = createSqliteStateStorage(DEFAULT_NODE_STATE_LIMITS);
-    const persistenceBackend = scenario === 'save-failure' ? { async open(input: any) { const result = await backend.open(input);return result.status !== 'opened' ? result : { status: 'opened', storage: { ...result.storage, async replace() { return { status: 'failed', issue: { code: 'IO_FAILED' } }; } } }; } } : backend;
+    const persistenceBackend = scenario === 'save-failure' ? { async open(input: any) { const result = await backend.open(input);return result.status !== 'opened' ? result : { status: 'opened', storage: { ...result.storage, async replace() { return { status: 'failed', effects: 'none', issue: { code: 'IO_FAILED' } }; } } }; } } : backend;
     const sandbox = new WorkerSandbox({ ...f.options, persistenceBackend } as any);
     try {
         if (scenario === 'initial-failure') await expect(sandbox.installDynamic()).rejects.toHaveProperty('code', 'INSTALL_FAILED');
@@ -114,9 +115,15 @@ it.each(['save-failure', 'lost-reply', 'unmount-failure', 'initial-failure'])('C
         }
         const worker = (sandbox as any).workerHost.worker, reportPromise = sandbox.disposeAsync();expect(sandbox.disposeAsync()).toBe(reportPromise);
         await expect(sandbox.close()).rejects.toHaveProperty('code', 'SANDBOX_CLOSE_FAILED');const report = await reportPromise;
-        expect(report).toMatchObject({ state: 'settled', ok: false, resourcesReleased: true, host: { worker: 'exited', storage: { support: 'managed', unsafe: true } } });
+        const storageFailed = scenario === 'save-failure' || scenario === 'lost-reply';
+        expect(report).toMatchObject({ state: 'settled', ok: false, resourcesReleased: true,
+            host: { worker: 'exited', storage: { support: 'managed', unsafe: storageFailed } } });
         expect(worker.threadId).toBe(-1);expect(backend.getStats().ownerSlots).toBe(0);expect(report.issues.length).toBeLessThanOrEqual(5);expect(JSON.stringify(report)).not.toContain('private');
-        expect(sandbox.getCloseReport()).toBe(report);if (scenario === 'lost-reply') expect(JSON.parse(f.read()!).value).toBe(7);
+        expect(sandbox.getCloseReport()).toBe(report);
+        if (!storageFailed) expect(report.host?.storage.lifecycle).toMatchObject({ ok: true, flush: { ok: true }, dispose: { release: { status: 'released' } } });
+        if (scenario === 'save-failure') expect(report.host?.storage.lifecycle?.flush.entries).toMatchObject([{ status: 'failed', issue: { code: 'IO_FAILED' } }]);
+        if (scenario === 'lost-reply' || scenario === 'unmount-failure') expect(JSON.parse(f.read()!).value).toBe(7);
+        else expect(f.read()).toBeUndefined();
         await facts('sandbox-' + scenario, { report, backend: backend.getStats(), physicalThreadId: worker.threadId });
     } finally { await sandbox.disposeAsync();await rm(f.dir, { recursive: true, force: true }); }
 }, 20000);

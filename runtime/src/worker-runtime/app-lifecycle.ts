@@ -1,5 +1,5 @@
-import { APP_LIFECYCLE_PROTOCOL } from '../spi/index.js';
-import type { AppCleanupReport, AppLifecycleCallbacks, AppLifecyclePort } from '../spi/runtime/app-lifecycle.interface.js';
+import { APP_LIFECYCLE_PROTOCOL, type AppLifecycleCallbacks, type AppLifecyclePort } from '@aotui/core';
+import type { AppCleanupReport } from '../spi/runtime/app-lifecycle.interface.js';
 
 export function createAppLifecycle(instanceId: string) {
     let owner: AppLifecycleCallbacks | undefined, stopped = false;

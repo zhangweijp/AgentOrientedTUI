@@ -32,6 +32,7 @@ export async function invokeObservedTool(
     name: string,
     input: Record<string, unknown> = {},
     targetViewId?: string,
+    timeoutMs?: number,
 ): Promise<any> {
     const opened = host.getAppInteraction();
     if (opened.status !== 'ready') throw new Error(opened.issue.code);
@@ -54,7 +55,7 @@ export async function invokeObservedTool(
             observationId: observed.observation.observationId,
             toolId: tool.id,
             input: { view_id: viewId, ...input },
-        });
+        }, timeoutMs);
     } finally {
         if (observationId) client.releaseObservation(observationId);
     }

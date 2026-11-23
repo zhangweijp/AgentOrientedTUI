@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-const REF_A = 'aa.alpha', REF_B = 'bb.beta', BIG_A = 'aa.capacity_alpha';
+const REF_A = '$app.aa.alpha', REF_B = '$app.bb.beta', BIG_A = '$app.aa.capacity_alpha';
 const NORMAL_HOST_TIMEOUT_MS = 3000;
 const FAULT_HOST_TIMEOUT_MS = 1500;
 const invokes = (m: any) => m.type === 'VIEW_TOOL_INVOKE';
@@ -92,9 +92,10 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref invocation', () 
         Host = (await import(pathToFileURL(join(runtime, 'dist/engine/app/worker-host.js')).href)).AppWorkerHost;
         const modules = join(temporary, 'node_modules');
         await mkdir(join(modules, '@aotui'), { recursive: true });
-        for (const name of ['preact', 'linkedom']) await symlink(join(runtime, 'node_modules', name), join(modules, name), 'dir');
+        for (const [owner, name] of [['.', 'preact'], ['../sdk', 'linkedom'], ['../core', 'acorn']]) await symlink(join(runtime, owner, 'node_modules', name), join(modules, name), 'dir');
         await symlink(join(sdk, 'node_modules/typebox'), join(modules, 'typebox'), 'dir');
         await symlink(runtime, join(modules, '@aotui/runtime'), 'dir');
+        await symlink(resolve(runtime, '../core'), join(modules, '@aotui/core'), 'dir');
         appFile = join(temporary, 'app.mjs');
         await build({ stdin: { contents: await readFile(join(runtime, 'tests/fixtures/ref-v2-slice.mjs'), 'utf8'), resolveDir: runtime,
             sourcefile: 'ref-v2-slice.mjs', loader: 'js' }, outfile: appFile,
@@ -107,7 +108,7 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref invocation', () 
         const x = await start(), s = scope(x), o = await s.observe(), input = { file: REF_A, choice: 'ok', text: '😀', tags: ['a', 'b'] };
         const a = value(await s.invoke(s.request(o, 'inspect', input, 'aa'))), b = value(await s.invoke(s.request(o, 'inspect', { ...input, file: REF_B }, 'bb')));
         expect(a.data.view).toBe('aa');expect(b.data.view).toBe('bb');expect(a.data.args.file).toMatchObject({ label: 'A', view: 'aa' });expect(Object.hasOwn(a.data.args, 'n')).toBe(false);
-        const post = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE' && m.refSources[0].viewId === 'aa');expect(post.rawArgs).toEqual(input);expect(post.effectiveArgs).toEqual(a.data.args);expect(post.tool.inputSchema.properties.file).toMatchObject({ 'x-aotui-ref-kind': 'Data' });
+        const post = x.posts().find((m: any) => m.type === 'VIEW_TOOL_INVOKE' && m.refSources[0].viewId === 'aa');expect(post.rawArgs).toEqual(input);expect(post).not.toHaveProperty('effectiveArgs');expect(post.refSources[0].value).toEqual(a.data.args.file);expect(post.tool.inputSchema.properties.file).toMatchObject({ 'x-aotui-ref-kind': 'Data' });
         expect(post.refSources[0]).toMatchObject({ refId: 'alpha', snapshotId: post.snapshotId, viewId: 'aa' });expect(s.authorizations.find(a => a.effectiveInput.file.view === 'aa').effectiveInput).toEqual(a.data.args);
         expect(x.entries().filter((e: any) => e.name === 'inspect')).toHaveLength(2);
     });
@@ -139,7 +140,7 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref invocation', () 
         expect(x.entries()).toHaveLength(names.length);expect(x.entries().every((e: any) => e.frozen && e.refFrozen)).toBe(true);
     });
     it.each(['foreign', 'type'])('R10 refuses %s Ref before policy', async kind => {
-        const x = await start(), s = scope(x, ['aa']), o = await s.observe();const result = receipt(await s.invoke(s.request(o, kind === 'type' ? 'typed' : 'inspect', { file: kind === 'foreign' ? 'bb.private_beta' : REF_A, ...(kind === 'foreign' ? { choice: 'ok' } : {}) })));
+        const x = await start(), s = scope(x, ['aa']), o = await s.observe();const result = receipt(await s.invoke(s.request(o, kind === 'type' ? 'typed' : 'inspect', { file: kind === 'foreign' ? '$app.bb.private_beta' : REF_A, ...(kind === 'foreign' ? { choice: 'ok' } : {}) })));
         expect(result.outcome.code).toBe(kind === 'type' ? 'REF_TYPE_MISMATCH' : 'REF_NOT_VISIBLE');expect(s.authorizations).toHaveLength(0);expect(x.posts()).toHaveLength(0);expect(x.entries()).toHaveLength(0);expect(x.handlerEntries()).toHaveLength(0);
     });
     it.each(['default', 'ref-metadata', 'unmount', 'close'])('R11 revokes %s during awaited policy before dispatch', async kind => {
@@ -149,7 +150,7 @@ describe('R07–R24 actual SDK / emitted Host / Node Worker Ref invocation', () 
         const beforeReplacement = x.snapshot();
         try {
         if (kind === 'default') await change(x, { defaultValue: 3 }, draft => remounted(beforeReplacement, draft));
-        if (kind === 'ref-metadata') await change(x, { refType: 'File' }, draft => remounted(beforeReplacement, draft));
+        if (kind === 'ref-metadata') await change(x, { scope: 'protected', refType: 'File' }, draft => remounted(beforeReplacement, draft));
         if (kind === 'default' || kind === 'ref-metadata') assertReceiverReplacement(x, beforeReplacement);
         if (kind === 'unmount') await change(x, { show: false }, d => !d.views.some((v: any) => v.id === 'aa'));if (kind === 'close') x.host.beginInteractionClose();
         } finally { release.resolve(); await running.catch(() => undefined); }

@@ -1,11 +1,11 @@
-import { projectCompleteViews } from '../../core/invocation/observation-registry.js';
+import { projectCompleteViews } from '@aotui/core/internal';
 import { Worker } from 'node:worker_threads';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
 import { describe, expect, it } from 'vitest';
-import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
+import type { AppInteractionPolicy } from '@aotui/core';
 import { AppWorkerHost } from './worker-host.js';
 
 type Capture =
@@ -18,15 +18,15 @@ function appSource(): string {
         import { h } from 'preact';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
         import Type from 'typebox';
-        import { createTUIApp, View, useDataRef, defineViewType } from '@aotui/sdk';
+        import { createTUIApp, useDataRef, defineViewType, DynamicView } from '@aotui/sdk';
         const inputSchema = Type.Object({}, { additionalProperties: false });
-        const ParentType = defineViewType()({ name: 'Parent', tools: {
+        const ParentType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Parent', tools: {
             parent_action: {
                 description: 'Run the parent action', inputSchema,
                 execute: async () => ({ success: true, data: { owner: 'parent' } }),
             },
         } });
-        const SiblingType = defineViewType()({ name: 'Sibling', tools: {
+        const SiblingType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Sibling', tools: {
             sibling_action: {
                 description: 'Run the sibling action', inputSchema,
                 execute: async () => ({ success: true, data: { owner: 'sibling' } }),
@@ -34,20 +34,20 @@ function appSource(): string {
         } });
 
         function Parent({ state }) {
-            const ref = useDataRef('parent_ref', useMemo(() => ({ owner: 'parent' }), []));
+            const ref = useDataRef('parent_ref', useMemo(() => ({ owner: 'parent' }), []), { scope: 'protected' });
             return h('section', {}, [
                 h('div', {}, h('article', {}, 'ORDINARY_NESTED_DOM_MARKER')),
                 h('p', {}, ref('PARENT_REF_MARKER')),
                 h('p', {}, state.parentText),
                 state.injectRawView
-                    ? h('div', { 'data-view-id': 'raw_child', 'data-view-type': 'RawChild' },
+                    ? h('div', { 'data-aotui-view': 'RawChild' },
                         h('p', {}, 'RAW_NESTED_VIEW_MARKER'))
                     : null,
             ]);
         }
 
         function Sibling() {
-            const ref = useDataRef('sibling_ref', useMemo(() => ({ owner: 'sibling' }), []));
+            const ref = useDataRef('sibling_ref', useMemo(() => ({ owner: 'sibling' }), []), { scope: 'protected' });
             return h('section', {}, [
                 h('p', {}, ref('SIBLING_REF_MARKER')),
             ]);
@@ -74,8 +74,8 @@ function appSource(): string {
                 return () => parentPort.off('message', onCommand);
             }, []);
             return h('div', null, h('main', {}, [
-                h(View, { kind: 'state', id: 'parent', type: ParentType, context: {} }, h(Parent, { state })),
-                state.siblingOpen ? h(View, { kind: 'state', id: 'sibling', type: SiblingType, context: {} }, h(Sibling)) : null,
+                h(DynamicView, { idPrefix: 'parent', type: ParentType, context: {} }, h(Parent, { state })),
+                state.siblingOpen ? h(DynamicView, { idPrefix: 'sibling', type: SiblingType, context: {} }, h(Sibling)) : null,
             ]));
         }
 
@@ -88,7 +88,10 @@ async function buildFixture(directory: string): Promise<{ app: string; workerScr
     const modules = join(directory, 'node_modules');
     await mkdir(modules, { recursive: true });
     await symlink(join(runtime, 'node_modules/preact'), join(modules, 'preact'), 'dir');
-    await symlink(join(runtime, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+    await symlink(join(runtime, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+    await symlink(join(runtime, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
+    await mkdir(join(modules, '@aotui'), { recursive: true });
+    await symlink(resolve(runtime, '../core'), join(modules, '@aotui/core'), 'dir');
     await symlink(join(runtime, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
     const sourcePath = join(directory, 'app.mjs');
     const app = join(directory, 'app.bundle.mjs');
@@ -99,9 +102,6 @@ async function buildFixture(directory: string): Promise<{ app: string; workerScr
         format: 'esm', target: 'node20', packages: 'external',
         alias: {
             '@aotui/sdk': resolve(runtime, '../sdk/src/index.ts'),
-            '@aotui/runtime/spi': resolve(runtime, 'src/spi/index.ts'),
-            '@aotui/runtime/core': resolve(runtime, 'src/core/index.ts'),
-            '@aotui/runtime/adapters/dom': resolve(runtime, 'src/adapters/dom-app.ts'),
         },
         logLevel: 'silent',
     });
@@ -147,7 +147,7 @@ function policyForSelection(): AppInteractionPolicy {
 }
 
 describe('R2 DOM Producer rejects nested View identities in a real Worker', () => {
-    it('rejects a raw nested data-view-id, recovers atomically, and keeps sibling lifecycle valid', async () => {
+    it('rejects a raw nested View marker, recovers atomically, and keeps sibling lifecycle valid', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'aotui-r2-view-boundary-'));
         let host: AppWorkerHost | undefined;
         let worker: Worker | undefined;
@@ -242,8 +242,8 @@ describe('R2 DOM Producer rejects nested View identities in a real Worker', () =
             expect(invalid).toMatchObject({ type: 'SNAPSHOT_PREPARE_FAILED', error: { code: 'SNAPSHOT_INVALID' } });
             if (invalid.type !== 'SNAPSHOT_PREPARE_FAILED') throw new Error('Expected nested View rejection');
             expect(invalid.error.message).toContain('NESTED_VIEW_UNSUPPORTED');
-            expect(invalid.error.message).toContain('parent');
-            expect(invalid.error.message).toContain('raw_child');
+            expect(invalid.error.message).toContain('Parent');
+            expect(invalid.error.message).toContain('RawChild');
             expect(invalid.error.message).toContain('Declare independent Views.');
             expect(invalid.error.message.length).toBeLessThanOrEqual(160);
             expect(host.getSemanticSnapshotReport()).toMatchObject({

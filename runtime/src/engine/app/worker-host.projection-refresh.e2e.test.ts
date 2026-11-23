@@ -1,4 +1,4 @@
-import { projectCompleteViews } from '../../core/invocation/observation-registry.js';
+import { projectCompleteViews } from '@aotui/core/internal';
 import { Worker } from 'node:worker_threads';
 import { mkdtemp, mkdir, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
-import type { AppInteractionPolicy, AppInteraction } from '../../core/invocation/app-interaction-types.js';
+import type { AppInteractionPolicy, AppInteraction } from '@aotui/core';
 
 let directory: string, workerPath: string, appPath: string;
 const hosts: AppWorkerHost[] = [];
@@ -20,8 +20,8 @@ beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 'aotui-refresh-worker-'));
     const modules = join(directory, 'node_modules'); await mkdir(join(modules, '@aotui'), { recursive: true });
     for (const [name, target] of [['preact', join(runtime, 'node_modules/preact')],
-        ['linkedom', join(runtime, 'node_modules/linkedom')], ['typebox', resolve(runtime, '../sdk/node_modules/typebox')],
-        ['@aotui/runtime', runtime]]) await symlink(target, join(modules, name), 'dir');
+        ['acorn', join(runtime, '../core/node_modules/acorn')], ['linkedom', join(runtime, '../sdk/node_modules/linkedom')], ['typebox', resolve(runtime, '../sdk/node_modules/typebox')],
+        ['@aotui/core', resolve(runtime, '../core')], ['@aotui/runtime', runtime]]) await symlink(target, join(modules, name), 'dir');
     workerPath = join(directory, 'worker.mjs'); appPath = join(directory, 'app.mjs');
     await build({ entryPoints: [join(runtime, 'src/worker-runtime/index.ts')], outfile: workerPath,
         platform: 'node', format: 'esm', bundle: true, packages: 'external', logLevel: 'silent' });
@@ -30,8 +30,8 @@ beforeAll(async () => {
         import { h, options } from 'preact';
         import { useState, useLayoutEffect, useMemo } from 'preact/hooks';
         import Type from 'typebox';
-        import { createTUIApp, View, useDataRef, refParam, defineViewType } from '@aotui/sdk';
-        const WorkspaceType = defineViewType()({ name: 'Workspace', tools: {
+        import { createTUIApp, useDataRef, refParam, defineViewType, DynamicView } from '@aotui/sdk';
+        const WorkspaceType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Workspace', tools: {
             change: {
                 description: 'Change the fixture',
                 inputSchema: Type.Object({ value: Type.Number(), invalid: Type.Optional(Type.Boolean()) },
@@ -47,7 +47,7 @@ beforeAll(async () => {
                 execute: () => ({ success: true, data: { calls } }),
             },
         } });
-        const FileType = defineViewType()({ name: 'File', tools: {
+        const FileType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'File', tools: {
             edit: {
                 description: 'Edit the current file', inputSchema: Type.Object({}),
                 enabled: ({ value }) => value > 0,
@@ -59,7 +59,7 @@ beforeAll(async () => {
                 execute: ({ input }) => ({ success: true, data: { value: input.record.value } }),
             },
         } });
-        const OtherType = defineViewType({ name: 'Other' });
+        const OtherType = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Other' });
 
         const queued = []; options.debounceRendering = cb => queued.push(cb);
         let calls = 0;
@@ -68,12 +68,12 @@ beforeAll(async () => {
         function File({state}) {
             const data=useMemo(()=>state.invalid ? {value:()=>state.value} : {value:state.value},[state.value,state.invalid]);
             const [, tick] = useState(0); redrawFile = () => tick(n => n + 1); currentRecord = data;
-            const ref=useDataRef('selected',data,{refType:'Record'});
+            const ref=useDataRef('selected',data,{scope: 'protected', refType:'Record'});
             return h('p',{},'file:'+(state.invalid ? state.value : data.value)+ref('Selection'));
         }
         function Other() {
             const [value, tick] = useState(0); redrawOther = () => tick(n => n + 1);
-            return h(View, {kind:'state',id:'other',type:OtherType}, h('p', {}, 'other:'+value));
+            return h(DynamicView, {idPrefix: 'other',type:OtherType}, h('p', {}, 'other:'+value));
         }
         function App() {
             const [state,set]=useState({value:0,invalid:false});
@@ -90,9 +90,9 @@ beforeAll(async () => {
                 return ()=>parentPort.off('message', onCommand);
             },[]);
             return h('div', null, [
-                h(View, { kind: 'state', id: 'workspace', type: WorkspaceType, context: { set }, key: 'root' },
+                h(DynamicView, { idPrefix: 'workspace', type: WorkspaceType, context: { set }, key: 'root' },
                     h('p', {}, 'workspace:' + state.value)),
-                state.value > 0 ? h(View, { kind: 'state', id: 'file', type: FileType, context: state, key: 'file' }, h(File, { state })) : null,
+                state.value > 0 ? h(DynamicView, { idPrefix: 'file', type: FileType, context: state, key: 'file' }, h(File, { state })) : null,
                 h(Other, { key: 'other' }),
             ]);
         }
@@ -135,14 +135,14 @@ describe('real SDK Worker observation refresh', () => {
         const preparing = client.observe({ all: true }); host['worker']!.postMessage({ type: 'TEST_COMMAND', command: 'release' });
         const next = await preparing; if (next.status !== 'observed') throw Error(next.issue.code);
         expect((await client.preview()).status).toBe('previewed');
-        expect(await invoke(client, next.observation, 'read', { record: 'file.selected' }))
+        expect(await invoke(client, next.observation, 'read', { record: '$refresh_app.file.selected' }))
             .toMatchObject({ kind: 'refused', code: 'OBSERVATION_NOT_ADOPTED' });
-        expect(await invoke(client, first, 'read', { record: 'file.selected' }))
+        expect(await invoke(client, first, 'read', { record: '$refresh_app.file.selected' }))
             .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { value: 1 } } } } });
         expect(client.adoptObservation(next.observation.observationId)).toEqual({ status: 'adopted' });
-        expect(await invoke(client, first, 'read', { record: 'file.selected' }))
+        expect(await invoke(client, first, 'read', { record: '$refresh_app.file.selected' }))
             .toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
-        expect(await invoke(client, next.observation, 'read', { record: 'file.selected' }))
+        expect(await invoke(client, next.observation, 'read', { record: '$refresh_app.file.selected' }))
             .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { value: 2 } } } } });
         const store = (host as any).snapshotReceiver.core.store;
         expect(store.getById(first.source.snapshotId).status).toBe('rejected');
@@ -151,6 +151,8 @@ describe('real SDK Worker observation refresh', () => {
     });
     it('observes queued commits and compatible View/Ref/Tool without a prior notification or fixed sleep', async () => {
         const { host, client } = await start(); const initial = await observe(client);
+        const messages: Array<{ type: string; requestId?: string }> = [];
+        host['worker']!.on('message', message => messages.push(message));
         const business = await invoke(client, initial, 'change', { value: 1 });
         expect(business).toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { calls: 1 } } } } });
         const observing = observe(client);
@@ -161,12 +163,18 @@ describe('real SDK Worker observation refresh', () => {
         expect(snapshot.views.map((v: any) => v.content.value).join(' ')).toContain('workspace:1');
         expect(Object.values(snapshot.refs)).toMatchObject([{ target: { payload: { value: 1 } } }]);
         expect(host.onUpdateRequest).not.toHaveBeenCalled();
+        expect(messages.filter(message => message.type === 'SNAPSHOT_PREPARED')).toEqual([
+            expect.objectContaining({ requestId: expect.any(String) }),
+        ]);
         const received = host.getSemanticSnapshotReport()!.prepared;
-        expect(await invoke(client, next, 'read', { record: 'file.selected' }))
+        expect(await invoke(client, next, 'read', { record: '$refresh_app.file.selected' }))
             .toMatchObject({ kind: 'receipt', receipt: { outcome: { status: 'succeeded', value: { data: { value: 1 } } } } });
         expect(host.getSemanticSnapshotReport()!.prepared).toBe(received);
         const confirmed = await observe(client);
-        expect(host.getSemanticSnapshotReport()!.prepared).toBe(received + 1);
+        expect(host.getSemanticSnapshotReport()!.prepared).toBe(received);
+        expect(messages.filter(message => message.type === 'PROJECTION_CURRENT')).toEqual([
+            expect.objectContaining({ requestId: expect.any(String) }),
+        ]);
         expect(confirmed.source).toEqual(next.source);
         client.releaseObservation(confirmed.observationId);
         expect(host.getInteractionReport()!.core.observations.observations).toBe(0);
@@ -176,6 +184,27 @@ describe('real SDK Worker observation refresh', () => {
         const { host, client } = await start(); await observe(client); const id = host.getSemanticSnapshotReport()!.snapshotId;
         await observe(client); expect(host.getSemanticSnapshotReport()!.snapshotId).toBe(id);
         expect(host.onUpdateRequest).not.toHaveBeenCalled();
+    });
+
+    it('answers raw requests without a valid known identity with a complete frame', async () => {
+        const { host, client } = await start();
+        await observe(client);
+        const worker = host['worker']!;
+        const known = host['snapshotReceiver'].currentPublication()!;
+        for (const [index, invalid] of [undefined, { ...known, producerSeq: '2' }, { ...known, extra: true }].entries()) {
+            const requestId = 'legacy-' + index;
+            const reply = new Promise<{ type: string }>(resolve => {
+                const receive = (message: { type: string; requestId?: string }) => {
+                    if (message.requestId !== requestId) return;
+                    worker.off('message', receive);
+                    resolve(message);
+                };
+                worker.on('message', receive);
+            });
+            worker.postMessage({ type: 'FLUSH_PROJECTION', requestId, ...(invalid ? { known: invalid } : {}) });
+            expect(await reply).toMatchObject({ type: 'SNAPSHOT_PREPARED', requestId });
+        }
+        expect((await client.preview()).status).toBe('previewed');
     });
 
     it('observes cached values after a live mutation and only changes a Ref when its owner commits', async () => {
@@ -191,19 +220,19 @@ describe('real SDK Worker observation refresh', () => {
         await event('mutate-live');
         const cached = await observe(client);
         expect(cached.source.snapshotId).toBe(first.source.snapshotId);
-        expect(await invoke(client, cached, 'read', { record: 'file.selected' })).toMatchObject(resultFor(1));
+        expect(await invoke(client, cached, 'read', { record: '$refresh_app.file.selected' })).toMatchObject(resultFor(1));
 
         await event('redraw-other'); await event('release');
         const unrelated = await observe(client);
         expect(unrelated.source.snapshotId).not.toBe(first.source.snapshotId);
         expect(JSON.stringify(unrelated)).toContain('other:1');
         expect(JSON.stringify(unrelated)).toContain('file:1');
-        expect(await invoke(client, unrelated, 'read', { record: 'file.selected' })).toMatchObject(resultFor(1));
+        expect(await invoke(client, unrelated, 'read', { record: '$refresh_app.file.selected' })).toMatchObject(resultFor(1));
 
         await event('redraw-file'); await event('release');
         const updated = await observe(client);
         expect(JSON.stringify(updated)).toContain('file:9');
-        expect(await invoke(client, updated, 'read', { record: 'file.selected' })).toMatchObject(resultFor(9));
+        expect(await invoke(client, updated, 'read', { record: '$refresh_app.file.selected' })).toMatchObject(resultFor(9));
 
     });
 

@@ -159,8 +159,7 @@ export function sandboxCloseReport(report: SandboxCloseReport, desktopId: string
             state.persistence.managedApps = 1;
             if (lifecycle) {
                 state.persistence.closeReceipts = 1;
-                if (!lifecycle.flush) state.persistence.absentFlushes = 1;
-                else if (lifecycle.flush.status === 'completed' && lifecycle.flush.ok) state.persistence.confirmedFlushes = 1;
+                if (lifecycle.flush.ok) state.persistence.confirmedFlushes = 1;
                 else state.persistence.failedFlushes = 1;
             } else state.persistence.missingCloseReceipts = 1;
         } else if (storage!.support === 'not-used') {
@@ -172,18 +171,19 @@ export function sandboxCloseReport(report: SandboxCloseReport, desktopId: string
         state.resources.retainedStorageOwners = storage!.ownerRetained ? 1 : 0;
         state.resources.storageActualIO = storage!.actualIO;
         state.resources.openingStorageOwners = storage!.opening ? 1 : 0;
-        state.persistence.unsavedKeys = lifecycle?.dispose?.unsaved.length ?? 0;
-        const unknown = storage!.uncertain || storage!.release?.status === 'unknown' || lifecycle?.dispose?.release.status === 'unknown' || lifecycle?.flush?.entries.some(entry => entry.status === 'unknown') || lifecycle?.dispose?.unsaved.some(entry => entry.status === 'unknown');
+        state.persistence.unsavedKeys = new Set(lifecycle?.dispose.unsaved.map(entry => JSON.stringify([entry.address.namespace, entry.address.key]))).size;
+        const unknown = storage!.uncertain || storage!.release?.status === 'unknown' || lifecycle?.dispose.release.status === 'unknown' ||
+            lifecycle?.flush.entries.some(entry => entry.status === 'unknown') || lifecycle?.dispose.unsaved.some(entry => entry.status === 'unknown');
         state.persistence.unknownApps = unknown ? 1 : 0;
-        const finalMissing = report.state === 'settled' && storage!.support === 'managed' && (!lifecycle?.ok || lifecycle.unmount !== 'completed' || !lifecycle.flush || !lifecycle.dispose || lifecycle.dispose.release.status !== 'released' || storage!.release?.status !== 'released');
-        // B2 shutdown receipts can still have ok=false/unmount=pending while their flush is successful.
-        const failedLifecycle = lifecycle?.ok === false && lifecycle.unmount !== 'pending';
-        if (storage!.unsafe || unknown || state.persistence.failedFlushes || state.persistence.unsavedKeys || finalMissing || failedLifecycle || storage!.release?.status === 'failed' || lifecycle?.dispose?.release.status === 'failed')
+        const finalMissing = report.state === 'settled' && storage!.support === 'managed' &&
+            (lifecycle?.dispose.release.status !== 'released' || storage!.release?.status !== 'released');
+        if (report.issues.includes('PERSISTENCE_CLOSE_FAILED') || storage!.unsafe || unknown || state.persistence.failedFlushes || state.persistence.unsavedKeys || finalMissing ||
+            storage!.release?.status === 'failed' || lifecycle?.dispose.release.status === 'failed')
             addCloseFailure(state, 'persistence', ['PERSISTENCE_CLOSE_FAILED'], ids);
         if (lifecycle?.unmount === 'failed') addCloseFailure(state, 'apps', ['APP_UNMOUNT_FAILED'], ids);
     }
     state.apps.notVerifiedReleased = state.resourcesReleased ? 0 : 1;
-    addCloseFailure(state, 'apps', report.issues, ids);
+    addCloseFailure(state, 'apps', report.issues.filter(code => code !== 'PERSISTENCE_CLOSE_FAILED'), ids);
     addCloseFailure(state, 'worker', host?.issues ?? [], ids);
     return freezeClose({ ...snapshotClose(state), scope: 'app-manager' as const });
 }

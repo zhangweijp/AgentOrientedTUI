@@ -20,20 +20,20 @@ class ControlledWorker extends EventEmitter {
             if (init) Object.assign(response, { appInstanceId: instanceId, protocol: message.protocol, toolsEnabled: message.toolsEnabled,
                 projectionLimits: message.projectionLimits,
                 appLifecycle: { protocol: 'app-lifecycle-v2', version: 2, instanceId },
-                persistence: { protocol: 'state-session-v1', version: 1, instanceId } });
+                persistence: { protocol: 'state-session-v2', version: 2, instanceId } });
             if (['APP_STOP', 'APP_SHUTDOWN', 'APP_CLOSE'].includes(message.type)) Object.assign(response, {
                 appCleanup: { protocol: 'app-lifecycle-v2', instanceId,
                     state: message.type === 'APP_CLOSE' ? 'completed' : 'stopped', issues: [] },
             });
             if (message.type === 'APP_SHUTDOWN' || message.type === 'APP_CLOSE') Object.assign(response, {
-                persistence: { protocol: 'state-session-v1', instanceId, ok: message.type === 'APP_CLOSE',
+                persistence: { protocol: 'state-session-v2', instanceId, ok: message.type === 'APP_CLOSE',
                     unmount: message.type === 'APP_CLOSE' ? 'completed' : 'pending',
                     flush: { status: 'completed', ok: true, entries: [] },
                     ...(message.type === 'APP_CLOSE' ? { dispose: { status: 'disposed', unsaved: [], release: { status: 'released' } } } : {}) },
             });
             if (message.type === 'APP_CLOSE') {
                 this.pendingCloseResponse = response;
-                this.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 1, instanceId, sequence: 1, action: 'release' });
+                this.emit('message', { type: 'STATE_STORAGE_REQUEST', version: 2, instanceId, sequence: 1, action: 'release' });
                 return;
             }
             this.emit('message', response);

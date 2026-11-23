@@ -1,8 +1,7 @@
-import { STATE_SESSION_VERSION } from '../spi/runtime/state-persistence.interface.js';
-import { captureStorageRequest, captureStorageResponse } from '../adapters/storage/state-storage-protocol.js';
+import { captureStorageRequest, captureStorageResponse, STATE_SESSION_VERSION } from '../adapters/storage/state-storage-protocol.js';
 import type { StateStorageRequest, StateTransportLimits } from '../adapters/storage/state-storage-protocol.js';
-import { failedRead, failedMutation, stateFields, stateIssue, unknownMutation } from '../core/persistence/state-storage.js';
-import type { StateAddress, StateStorage, StateReadResult, StateMutationResult, StateReleaseResult } from '../core/persistence/state-storage.js';
+import { failedRead, failedMutation, stateFields, stateIssue, unknownMutation } from '@aotui/core/internal';
+import type { StateAddress, StateStorage, StateReadResult, StateMutationResult, StateReleaseResult } from '@aotui/core';
 
 /** A timer counts IPC only. The Host separately owns every actual backend request. */
 export function createStateStorageProxy(instanceId: string, limits: StateTransportLimits, send: (request: StateStorageRequest) => void | boolean) {

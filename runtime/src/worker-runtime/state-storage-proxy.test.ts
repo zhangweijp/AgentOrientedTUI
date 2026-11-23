@@ -34,14 +34,14 @@ it('B16: release has independent supervision admission and shared completion; se
     const read = proxy.storage.read(address);
     expect((await proxy.storage.read(address)).status).toBe('failed');
     const release = proxy.storage.release();expect(proxy.storage.release()).toBe(release);expect(sent).toHaveLength(2);
-    proxy.receive({ type: 'STATE_STORAGE_RESPONSE', version: 1, instanceId: 'i', sequence: 1, action: 'read', result: { status: 'missing' } });
-    proxy.receive({ type: 'STATE_STORAGE_RESPONSE', version: 1, instanceId: 'i', sequence: 2, action: 'release', result: { status: 'released' } });
+    proxy.receive({ type: 'STATE_STORAGE_RESPONSE', version: 2, instanceId: 'i', sequence: 1, action: 'read', result: { status: 'missing' } });
+    proxy.receive({ type: 'STATE_STORAGE_RESPONSE', version: 2, instanceId: 'i', sequence: 2, action: 'release', result: { status: 'released' } });
     expect((await read).status).toBe('missing');expect((await release).status).toBe('released');
     expect((await proxy.storage.remove(address)).status).toBe('failed');expect(proxy.getStats().sequence).toBe(2);
 });
 it('B14/B16: exhausted sequence refuses before send and never wraps', async () => {
     const sent: StateStorageRequest[] = [], proxy = createStateStorageProxy('i', { ...defaults, maxSequence: 1 }, r => { sent.push(r); });
-    const first = proxy.storage.read(address);proxy.receive({ type: 'STATE_STORAGE_RESPONSE', version: 1, instanceId: 'i', sequence: 1, action: 'read', result: { status: 'missing' } });
+    const first = proxy.storage.read(address);proxy.receive({ type: 'STATE_STORAGE_RESPONSE', version: 2, instanceId: 'i', sequence: 1, action: 'read', result: { status: 'missing' } });
     await first;expect(await proxy.storage.remove(address)).toMatchObject({ status: 'failed', effects: 'none', issue: { code: 'REVISION_EXHAUSTED' } });
     expect(sent).toHaveLength(1);expect(proxy.getStats().sequence).toBe(1);
 });

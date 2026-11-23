@@ -1,13 +1,14 @@
-import { utf8Size } from '../../core/snapshot/json.js';
+import { utf8Size } from '@aotui/core/internal';
 import { captureStateAddress, captureStateMutationResult, captureStateReadResult, captureStateReleaseResult,
-    requireStateLimits, stateFields, validStateOwner } from '../../core/persistence/state-storage.js';
-import type { StateAddress, StateMutationResult, StateReadResult, StateReleaseResult } from '../../core/persistence/state-storage.js';
-import type { StateSessionLimits } from '../../core/persistence/state-session.js';
-import type { StateFlushEntry, StateFlushReport, StateDisposeReport } from '../../core/persistence/state-session.js';
+    requireStateLimits, stateFields, validStateOwner } from '@aotui/core/internal';
+import type { StateAddress, StateMutationResult, StateReadResult, StateReleaseResult } from '@aotui/core';
+import type { StateSessionLimits } from '@aotui/core';
+import type { StateFlushEntry, StateFlushReport, StateDisposeReport } from '@aotui/core';
 import type { ManagedPersistenceReport } from '../../worker-runtime/state-persistence.js';
 
-import { STATE_SESSION_PROTOCOL, STATE_SESSION_VERSION } from '../../spi/runtime/state-persistence.interface.js';
-export { STATE_SESSION_PROTOCOL, STATE_SESSION_VERSION };
+import { STATE_SESSION_PROTOCOL } from '@aotui/core';
+export { STATE_SESSION_PROTOCOL };
+export const STATE_SESSION_VERSION = 2 as const;
 export const DEFAULT_STATE_SESSION_LIMITS: StateSessionLimits = Object.freeze({ maxKeys: 128, maxDepth: 32, maxNodes: 16384,
     maxValueBytes: 262144, maxRecordBytes: 262272, maxAddressBytes: 1024, maxRetainedBytes: 8388608,
     maxPendingRequests: 128, maxConcurrentRequests: 4, maxRevision: Number.MAX_SAFE_INTEGER });
@@ -85,8 +86,8 @@ export function captureStorageResponse(input: unknown, request: StateStorageRequ
 
 /** Bounded lifecycle facts only. Capture fixed issues; never retain arbitrary Worker error text. */
 export function captureManagedPersistenceReport(input: unknown, instanceId: string): ManagedPersistenceReport | null {
-    function entries(input: unknown): readonly StateFlushEntry[] | null {
-        if (!Array.isArray(input) || input.length > DEFAULT_STATE_SESSION_LIMITS.maxKeys) return null;
+    function entries(input: unknown, limit: number): readonly StateFlushEntry[] | null {
+        if (!Array.isArray(input) || input.length > limit) return null;
         const descriptors = Object.getOwnPropertyDescriptors(input);
         if (Reflect.ownKeys(descriptors).length !== input.length + 1) return null;
         const result: StateFlushEntry[] = [];
@@ -94,33 +95,31 @@ export function captureManagedPersistenceReport(input: unknown, instanceId: stri
             const descriptor = descriptors[String(i)];if (!descriptor || !('value' in descriptor)) return null;
             const f = stateFields(descriptor.value), status = f?.status?.value;
             const issue = f?.issue ? captureStateReadResult({ status: 'failed', issue: f.issue.value }, 1) : undefined;
-            if (!['saved', 'unchanged', 'blocked', 'failed', 'unknown'].includes(status) ||
+            const applied = status === 'saved' || status === 'removed';
+            if ((!applied && status !== 'failed' && status !== 'unknown') ||
                 !exact(f, ['address', 'revision', 'status', ...(f?.issue ? ['issue'] : [])]) ||
                 !Number.isSafeInteger(f!.revision!.value) || f!.revision!.value < 1) return null;
             const address = captureStateAddress(f!.address!.value, 1024);
-            if (address.status !== 'captured' || !['saved', 'unchanged'].includes(status) && (!issue || issue.status !== 'failed' || issue.issue.code === 'INVALID_RECEIPT')) return null;
+            if (address.status !== 'captured' || (applied ? issue !== undefined : !issue || issue.status !== 'failed' ||
+                issue.issue.code === 'INVALID_RECEIPT' || (status === 'unknown' && issue.issue.code !== 'UNKNOWN_OUTCOME'))) return null;
             result.push(Object.freeze({ address: address.address, revision: f!.revision!.value, status,
                 ...(issue?.status === 'failed' ? { issue: issue.issue } : {}) }));
         }
         return Object.freeze(result);
     }
     const f = stateFields(input);
-    if (!f || !exact(f, ['protocol', 'instanceId', 'ok', 'unmount', ...(f.flush ? ['flush'] : []), ...(f.dispose ? ['dispose'] : [])]) ||
+    if (!f || !exact(f, ['protocol', 'instanceId', 'ok', 'unmount', 'flush', 'dispose']) ||
         f.protocol!.value !== STATE_SESSION_PROTOCOL || f.instanceId!.value !== instanceId || typeof f.ok!.value !== 'boolean' ||
-        !['pending', 'completed', 'failed'].includes(f.unmount!.value)) return null;
-    let flush: StateFlushReport | undefined, dispose: StateDisposeReport | undefined;
-    if (f.flush) {
-        const value = stateFields(f.flush.value), list = entries(value?.entries?.value);
-        if (!exact(value, ['status', 'ok', 'entries']) || !['completed', 'disposed'].includes(value!.status!.value) || typeof value!.ok!.value !== 'boolean' || !list ||
-            value!.ok!.value !== (value!.status!.value === 'completed' && list.every(e => e.status === 'saved' || e.status === 'unchanged'))) return null;
-        flush = Object.freeze({ status: value!.status!.value, ok: value!.ok!.value, entries: list });
-    }
-    if (f.dispose) {
-        const value = stateFields(f.dispose.value), unsaved = entries(value?.unsaved?.value);
-        if (!exact(value, ['status', 'unsaved', 'release']) || value!.status!.value !== 'disposed' || !unsaved) return null;
-        dispose = Object.freeze({ status: 'disposed', unsaved, release: captureStateReleaseResult(value!.release!.value) });
-    }
-    if (f.ok!.value && (!flush?.ok || f.unmount!.value !== 'completed' || !dispose || dispose.release.status !== 'released' || dispose.unsaved.length)) return null;
-    return Object.freeze({ protocol: STATE_SESSION_PROTOCOL, instanceId, ok: f.ok!.value, unmount: f.unmount!.value,
-        ...(flush ? { flush } : {}), ...(dispose ? { dispose } : {}) });
+        !['completed', 'failed'].includes(f.unmount!.value)) return null;
+    const { maxKeys, maxPendingRequests } = DEFAULT_STATE_SESSION_LIMITS;
+    const flushFields = stateFields(f.flush!.value), list = entries(flushFields?.entries?.value, 3 * maxKeys + maxPendingRequests);
+    if (!exact(flushFields, ['status', 'ok', 'entries']) || flushFields!.status!.value !== 'completed' || !list ||
+        flushFields!.ok!.value !== list.every(e => e.status === 'saved' || e.status === 'removed')) return null;
+    const flush: StateFlushReport = Object.freeze({ status: 'completed', ok: flushFields!.ok!.value, entries: list });
+    const disposeFields = stateFields(f.dispose!.value), unsaved = entries(disposeFields?.unsaved?.value, 2 * maxKeys);
+    if (!exact(disposeFields, ['status', 'unsaved', 'release']) || disposeFields!.status!.value !== 'disposed' || !unsaved ||
+        unsaved.some(e => e.status !== 'failed' && e.status !== 'unknown')) return null;
+    const dispose: StateDisposeReport = Object.freeze({ status: 'disposed', unsaved, release: captureStateReleaseResult(disposeFields!.release!.value) });
+    if (f.ok!.value !== (flush.ok && dispose.release.status === 'released' && dispose.unsaved.length === 0)) return null;
+    return Object.freeze({ protocol: STATE_SESSION_PROTOCOL, instanceId, ok: f.ok!.value, unmount: f.unmount!.value, flush, dispose });
 }

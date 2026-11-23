@@ -6,9 +6,9 @@ import * as path from 'node:path';
 import { createStateStorageHost, DEFAULT_NODE_STATE_LIMITS, resolveStateDirectory } from './state-storage-host.js';
 import { createSqliteStateStorage } from '../../adapters/storage/sqlite-state-storage.js';
 import { DEFAULT_STATE_TRANSPORT_LIMITS } from '../../adapters/storage/state-storage-protocol.js';
-import { stateIssue } from '../../core/persistence/state-storage.js';
+import { stateIssue } from '@aotui/core/internal';
 const defer = <T = void>() => { let resolve!: (v: T) => void;const promise = new Promise<T>(r => { resolve = r; });return { promise, resolve }; };
-const req = (sequence: number, action = 'read', extra: object = {}) => ({ type: 'STATE_STORAGE_REQUEST', version: 1, instanceId: 'i', sequence, action,
+const req = (sequence: number, action = 'read', extra: object = {}) => ({ type: 'STATE_STORAGE_REQUEST', version: 2, instanceId: 'i', sequence, action,
     ...(action === 'release' ? {} : { address: { namespace: '["d","a"]', key: 'k' } }), ...extra });
 it('B03: no use means zero open; release is shared and closes admission synchronously', async () => {
     let calls = 0;const host = createStateStorageHost({ instanceId: 'i', desktopId: 'd', rootDirectory: '/unused', backend: { open: async () => { calls++;return { status: 'rejected', issue: stateIssue('IO_FAILED') }; } } });

@@ -1,10 +1,13 @@
+import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { captureProjectionLimits, captureToolsEnabled } from './interaction-config.js';
-import { DEFAULT_PROJECTION_LIMITS } from '../../core/invocation/observation-registry.js';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
 import { AppWorkerHost } from './worker-host.js';
 import { WorkerSandbox } from './worker-sandbox.js';
 import { AppManager } from './manager.js';
 import { Desktop } from '../core/desktop.js';
+
+const localPath = fileURLToPath(new URL('../../../test/fixtures/pending-app/', import.meta.url));
 
 const hostConfig = { appId: 'a' as any, desktopId: 'd' as any, appModulePath: '/unused' };
 
@@ -32,7 +35,7 @@ it('rejects invalid Tool setting descriptors before allocation without running g
     }
     expect(getters).toBe(0);
     expect(manager.getInstalledApps()).toEqual([]);
-    expect(manager.registerPendingApp({ modulePath: '/unused' })).toBe('app_0');
+    expect(manager.registerPendingApp({ modulePath: '/unused', name: 'unused' })).toBe('app_0');
     await manager.cleanupAsync();
 });
 
@@ -45,13 +48,13 @@ it('rejects unknown Host options before allocating a Worker or pending App', asy
     await expect(desktop.installDynamicWorkerApp('/unused', unknown)).rejects.toMatchObject({
         code: 'CONFIG_INVALID', context: { path: 'options.interactionModes' },
     });
-    await expect(desktop.registerPendingApp({ modulePath: '/unused', extra: true } as never)).rejects.toMatchObject({
+    await expect(desktop.registerPendingApp({ installationId: 'pending', localPath, extra: true } as never)).rejects.toMatchObject({
         code: 'CONFIG_INVALID', context: { path: 'options.extra' },
     });
     await expect(desktop.installDynamicWorkerApp('/unused', [] as never)).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
     expect(reads).toBe(0);
     expect(desktop.getInstalledApps()).toEqual([]);
-    expect(await desktop.registerPendingApp({ modulePath: '/unused', toolsEnabled: false })).toBe('app_0');
+    expect(await desktop.registerPendingApp({ installationId: 'pending', localPath, toolsEnabled: false })).toBe('pending');
     await desktop.dispose();
 });
 
@@ -85,10 +88,10 @@ it('rejects out-of-range, unknown and accessor limits before an instance is rese
         const error = { code: 'CONFIG_INVALID', context: { path: `options.projectionLimits.${field}` } };
         await expect(desktop.installDynamicWorkerApp('/unused', { projectionLimits } as never)).rejects.toMatchObject(error);
     }
-    await expect(desktop.registerPendingApp({ modulePath: '/unused', projectionLimits: { maxViews: 0 } }))
+    await expect(desktop.registerPendingApp({ installationId: 'pending', localPath, projectionLimits: { maxViews: 0 } }))
         .rejects.toMatchObject({ code: 'CONFIG_INVALID', context: { path: 'options.projectionLimits.maxViews' } });
     expect(reads).toBe(0);
     expect(desktop.getInstalledApps()).toEqual([]);
-    expect(await desktop.registerPendingApp({ modulePath: '/unused' })).toBe('app_0');
+    expect(await desktop.registerPendingApp({ installationId: 'pending', localPath })).toBe('pending');
     await desktop.dispose();
 });

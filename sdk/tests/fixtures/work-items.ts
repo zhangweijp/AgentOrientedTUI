@@ -6,14 +6,14 @@ const itemValue = Type.Union([
     Type.String(), Type.Integer(), Type.Boolean(), Type.Null(), jsonList,
     Type.Object({ nested: jsonList }, { additionalProperties: false }),
 ]);
-export const itemRefOptions = { refType: 'Data', schema: itemValue };
-export const listRefOptions = { itemType: 'Data', schema: Type.Array(itemValue) };
+export const itemRefOptions = { scope: 'protected' as const, refType: 'Data', schema: itemValue };
+export const listRefOptions = { scope: 'protected' as const, itemType: 'Data', schema: Type.Array(itemValue) };
 type ItemValue = DeepReadonly<Type.Static<typeof itemValue>>;
 const operation = Type.Enum(['null', 'reset', 'reverse', 'empty', 'close', 'open', 'invalid', 'oversized', 'wait']);
 
 type ItemContext = { change(update: (state: State) => State): ToolResult | void };
 
-export const WorkspaceType = defineViewType<ItemContext & { options: WorkItemOptions }>()({
+export const WorkspaceType = defineViewType<ItemContext & { options: WorkItemOptions }>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,
     name: 'Workspace',
     tools: {
         update: {
@@ -52,7 +52,7 @@ export const WorkspaceType = defineViewType<ItemContext & { options: WorkItemOpt
     },
 });
 
-export const ItemType = defineViewType<ItemContext>()({
+export const ItemType = defineViewType<ItemContext>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,
     name: 'Item',
     tools: {
         inspect: {

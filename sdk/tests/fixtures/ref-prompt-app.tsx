@@ -1,17 +1,17 @@
 import Type from 'typebox';
-import { createTUIApp, defineViewType, refParam, useArrayRef, useDataRef, useState, View,
+import { createTUIApp, defineViewType, refParam, useArrayRef, useDataRef, useState, DynamicView,
   type ArrayRefHandle, type ItemRefFormatter } from '@aotui/sdk';
 
 const File = Type.Object({ path: Type.String() });
 const Task = Type.Object({ name: Type.String() });
 const files = [{ path: 'dir/a.txt' }, { path: 'dir/b.txt' }];
-const refOptions = { itemType: 'File', schema: Type.Array(File) };
+const refOptions = { scope: 'protected' as const, itemType: 'File', schema: Type.Array(File) };
 const description = 'Choose the source.';
 const target = <S extends Type.TSchema>(refType: string, schema: S) =>
   Object.assign(refParam(refType, schema), { description });
 
-const List = defineViewType({ name: 'List' });
-const Editor = defineViewType<{ enabled: boolean; record(value: string): void; reverse(): void }>()({
+const List = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'List' });
+const Editor = defineViewType<{ enabled: boolean; record(value: string): void; reverse(): void }>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,
   name: 'Editor',
   tools: {
     select_file: {
@@ -91,18 +91,18 @@ function FilesContent({ entries }: { entries: typeof files }) {
 }
 
 function FilesPage({ entries }: { entries: typeof files }) {
-  return <View id="files" type={List} kind="state"><FilesContent entries={entries} /></View>;
+  return <DynamicView idPrefix="files" type={List} ><FilesContent entries={entries} /></DynamicView>;
 }
 
 function BrokenFilesPage({ entries }: { entries: typeof files }) {
   const refs = useArrayRef('items', entries, refOptions);
-  return <View id="files" type={List} kind="state">
+  return <DynamicView idPrefix="files" type={List} >
     <FilesRows refs={refs} />
-  </View>;
+  </DynamicView>;
 }
 
 function TaskContent() {
-  const item = useDataRef('items', { name: 'review task' }, { refType: 'Task', schema: Task });
+  const item = useDataRef('items', { name: 'review task' }, { scope: 'protected', refType: 'Task', schema: Task });
   return <p>{item('review task')}</p>;
 }
 
@@ -117,9 +117,9 @@ export function refPromptApp(Page = FilesPage) {
     };
     return <>
       <Page entries={entries} />
-      <View id="tasks" type={List} kind="state"><TaskContent /></View>
-      <View id="editor" type={Editor} kind="state" context={context}><pre>{JSON.stringify(actions)}</pre></View>
-      <View id="read_only" type={Editor} kind="state" context={{ ...context, enabled: false }}>Read only</View>
+      <DynamicView idPrefix="tasks" type={List} ><TaskContent /></DynamicView>
+      <DynamicView idPrefix="editor" type={Editor}  context={context}><pre>{JSON.stringify(actions)}</pre></DynamicView>
+      <DynamicView idPrefix="read_only" type={Editor}  context={{ ...context, enabled: false }}>Read only</DynamicView>
     </>;
   }
   return createTUIApp({ app_name: 'refs', component: App, viewTypes });

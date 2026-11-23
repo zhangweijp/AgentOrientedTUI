@@ -7,12 +7,12 @@ import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
+import type { AppInteractionPolicy } from '@aotui/core';
 
 let Host: typeof import('./worker-host.js').AppWorkerHost;
 let temporary: string, appFile: string, workerFile: string;
 const running: any[] = [], facts: any[] = [];
-const REF_A = 'aa.alpha', REF_B = 'bb.beta';
+const REF_A = '$scoped_sdk.aa.alpha', REF_B = '$scoped_sdk.bb.beta';
 const SENTINEL = 'W03_B_SDK_PRIVATE_b6143_秘密';
 function deferred<T = any>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }
 function receipt(value: any) { expect(value.kind).toBe('receipt'); if (value.kind !== 'receipt') throw Error(value.code); return value.receipt; }
@@ -72,8 +72,9 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         temporary = await mkdtemp(join(process.env.AOTUI_MIGRATION_TEMP_DIR ?? tmpdir(), 'aotui-scoped-c-'));
         Host = (await import(pathToFileURL(join(runtime, 'dist/engine/app/worker-host.js')).href)).AppWorkerHost;
         const modules = join(temporary, 'node_modules'); await mkdir(join(modules, '@aotui'), { recursive: true });
-        for (const pkg of ['preact', 'linkedom']) await symlink(join(runtime, 'node_modules', pkg), join(modules, pkg), 'dir');
+        for (const [owner, pkg] of [['.', 'preact'], ['../sdk', 'linkedom'], ['../core', 'acorn']]) await symlink(join(runtime, owner, 'node_modules', pkg), join(modules, pkg), 'dir');
         await symlink(runtime, join(modules, '@aotui/runtime'), 'dir');
+        await symlink(resolve(runtime, '../core'), join(modules, '@aotui/core'), 'dir');
         await symlink(join(runtime, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
         appFile = join(temporary, 'app.mjs'); workerFile = join(runtime, 'dist/worker-runtime/index.js');
         await build({ stdin: { contents: await readFile(join(runtime, 'src/e2e-test/fixtures/snapshot-value-sdk.mjs'), 'utf8'), resolveDir: runtime,
@@ -144,13 +145,17 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         expect(x.refs().at(-1).snapshotId).toBe(old.source.snapshotId);
         const newer = await s.observe();
         expect(newer.source.snapshotId).not.toBe(old.source.snapshotId);
-        await configure(x, { showRef: false });
         expect(receipt(await s.client.invoke(s.request(newer, 'new'))).outcome).toMatchObject({
             value: { data: { args: { file: { text: 'B' } } } },
         });
+        await configure(x, { showRef: false });
+        expect(receipt(await s.client.invoke(s.request(newer, 'removed-ref')))).toMatchObject({
+            executionPhase: 'not-dispatched', outcome: { status: 'rejected', code: 'REF_NOT_VISIBLE' },
+        });
         expect(await s.client.invoke(s.request(old, 'stale'))).toMatchObject({ kind: 'refused', code: 'OBSERVATION_UNAVAILABLE' });
         expect(receipt(await s.client.readReceipt({ observationId: oldRequest.observationId, invocationId: oldRequest.invocationId }))).toEqual(first);
-        facts.push({ id: 'C06', originalA: true, newB: true, afterDeletion: true, wire: x.refs().length });
+        expect(x.refs()).toHaveLength(2);
+        facts.push({ id: 'C06', originalA: true, newB: true, withdrawalRejects: true, wire: x.refs().length });
     });
     it.each(['published', 'unpublished'])('rejects an actually disabled SDK binding after authorize (%s)', async visibility => {
         const x = await start(), s = scope(x), o = await s.observe(), gate = deferred(), entered = deferred();
@@ -192,7 +197,7 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
             toolId: 'unobserved-tool', input: {view_id:'aa', file: REF_A } }))).toMatchObject({
             executionPhase: 'not-dispatched', outcome: { status: 'rejected' },
         });
-        for (const [id, name, file] of [['unknown-ref', 'read', 'entity'], ['foreign-ref', 'read', 'bb.private_beta']]) {
+        for (const [id, name, file] of [['unknown-ref', 'read', 'entity'], ['foreign-ref', 'read', '$scoped_sdk.bb.private_beta']]) {
             expect(receipt(await s.client.invoke(s.request(o, id, { file }, name))).outcome.status).toBe('rejected');
         }
         expect(x.refs()).toHaveLength(0);
@@ -203,11 +208,11 @@ describe('C actual emitted Host / accepted SDK / safe Worker App interaction cha
         const x = await start(), s = scope(x), o = await s.observe();
         const metadata: any = Object.values(x.snapshot().refs).find((ref: any) => ref.id === 'metadata_alpha');
         expect(metadata.refType).toBe('Data'); expect(metadata.target.payload.type).toBe('File');
-        const typed = receipt(await s.client.invoke(s.request(o, 'wrong-real-type', { file: 'aa.metadata_alpha' }, 'typed')));
+        const typed = receipt(await s.client.invoke(s.request(o, 'wrong-real-type', { file: '$scoped_sdk.aa.metadata_alpha' }, 'typed')));
         expect(typed.outcome).toMatchObject({ status: 'rejected', code: 'REF_TYPE_MISMATCH' });
         const array: any = Object.values(x.snapshot().refs).find((ref: any) => ref.id === 'array_alpha');
         expect(array.refType).toBe('Data'); expect(Array.isArray(array.target.payload)).toBe(true);
-        const shape = receipt(await s.client.invoke(s.request(o, 'wrong-payload-shape', { file: 'aa.array_alpha' })));
+        const shape = receipt(await s.client.invoke(s.request(o, 'wrong-payload-shape', { file: '$scoped_sdk.aa.array_alpha' })));
         expect(shape.outcome).toMatchObject({ status: 'rejected', code: 'REF_VALUE_UNSUPPORTED' });
         expect(x.refs()).toHaveLength(0); expect(await counts(x)).toMatchObject({ calls: 0, handlerEntries: 0, guards: 0 });
         facts.push({ id: 'metadata-and-shape-controls', typed, shape, dispatches: 0, handlerEntries: 0 });

@@ -1,8 +1,10 @@
 export { createApp, createView } from './app-factory/createApp.js';
 export type { AppAuthorContext, CreateAppConfig, ViewHandle } from './app-factory/createApp.js';
+export type { TUIAppFactory } from './app-factory/app-factory.js';
 export { ref, arrayRef, formatRef } from './app-factory/refs.js';
 export type { PublishedRef, RefOptions, ArrayRefOptions } from './app-factory/refs.js';
-export { defineViewType, getToolCatalog, refParam } from './tools/view-type-tool.js';
-export type { ArgsOf, ContextualViewType, DeepReadonly, ViewType } from './tools/view-type-tool.js';
-export type { JsonValue } from '@aotui/runtime/core';
-export type { PreparedProjection, ProjectionLimits, ToolResult } from '@aotui/runtime/spi';
+export { defineViewType, refParam } from './tools/view-type-tool.js';
+export { ViewRegion, ViewMultiplicity, type RefScope } from '@aotui/core';
+export type { ArgsOf, ContextualViewType, ContextToolMetadata, DeepReadonly, ViewType } from './tools/view-type-tool.js';
+export type { JsonValue } from '@aotui/core';
+export type { AppStatePersistence, PreparedProjection, ProjectionLimits, StatePersistenceOptions, StateValue, StateFlushReport, StateIssue, ToolResult } from '@aotui/core';

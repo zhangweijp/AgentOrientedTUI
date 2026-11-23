@@ -1,61 +1,13 @@
-/**
- * SPI Layer - ID Factory Functions
- * 
- * 提供类型安全的 ID 创建函数。
- * 
- * 使用工厂函数代替直接 `as TYPE` 断言，确保 ID 格式一致性。
- * 
- * @example
- * ```typescript
- * import { createDesktopId, createAppId } from '@aotui/runtime';
- * 
- * const desktopId = createDesktopId();           // 'dt_abc12345'
- * const customId = createDesktopId('dt_my-id');  // 'dt_my-id'
- * const appId = createAppId(0);                   // 'app_0'
- * ```
- * 
- * @module @aotui/runtime/spi/core
- */
+import { randomUUID } from 'node:crypto';
+import type { DesktopID, AppID } from '@aotui/core';
 
-import { randomUUID } from 'crypto';
-import type { DesktopID, AppID } from './types.js';
-
-// ============================================================================
-// ID Prefixes (Internal Convention)
-// ============================================================================
-
-/**
- * ID 前缀约定（内部使用）
- * 
- * @internal
- */
-export const ID_PREFIXES = {
-    Desktop: 'dt_',
-    App: 'app_',
-} as const;
-// ============================================================================
-// Factory Functions
-// ============================================================================
-
-/**
- * 创建 DesktopID
- * 
- * @param id - 可选的自定义 ID（应包含 'dt_' 前缀）
- * @returns Branded DesktopID
- */
+/** Use the supplied Desktop ID or generate one. */
 export function createDesktopId(id?: string): DesktopID {
-    return (id ?? `${ID_PREFIXES.Desktop}${randomUUID().slice(0, 8)}`) as DesktopID;
+    return (id ?? `dt_${randomUUID().slice(0, 8)}`) as DesktopID;
 }
 
-/**
- * 创建 AppID
- * 
- * @param indexOrId - App 索引号或现有 ID 字符串
- * @returns Branded AppID
- */
-export function createAppId(indexOrId: number | string): AppID {
-    if (typeof indexOrId === 'number') {
-        return `${ID_PREFIXES.App}${indexOrId}` as AppID;
-    }
-    return indexOrId as AppID;
+/** Mark an existing App ID. Registration assigns the actual running ID. */
+export function createAppId(id: string): AppID {
+    if (typeof id !== 'string') throw new TypeError('App ID must be a string');
+    return id as AppID;
 }

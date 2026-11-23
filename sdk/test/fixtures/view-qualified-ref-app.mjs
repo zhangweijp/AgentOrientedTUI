@@ -1,10 +1,10 @@
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import Type from 'typebox';
-import { View, createTUIApp, defineViewType, refParam, useArrayRef } from '@aotui/sdk';
+import { StaticView, DynamicView, createTUIApp, defineViewType, refParam, useArrayRef } from '@aotui/sdk';
 
 const Phase = Type.Object({ owner: Type.String(), title: Type.String() }, { additionalProperties: false });
-const PhasesType = defineViewType()({ name: 'Phases', tools: {
+const PhasesType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Phases', tools: {
   read_item: {
     description: 'Read one phase.', inputSchema: Type.Object({ phase: refParam('Phase', Phase) }),
     execute: ({ input: { phase } }) => ({ success: true, data: { owner: phase.owner, readonly: Object.isFrozen(phase) } }),
@@ -16,7 +16,7 @@ const PhasesType = defineViewType()({ name: 'Phases', tools: {
     } }),
   },
 } });
-const Guide = defineViewType()({ name: 'Guide', tools: {
+const Guide = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Guide', tools: {
   update_b: {
     description: 'Update plan B.', inputSchema: Type.Object({}),
     execute: ({ context }) => { context.setOwner('B updated'); return { success: true }; },
@@ -27,17 +27,17 @@ const Guide = defineViewType()({ name: 'Guide', tools: {
   },
 } });
 function Phases({ owner }) {
-  const [list, item] = useArrayRef('completed_phases', [{ owner, title: 'Design ' + owner }], { itemType: 'Phase' });
+  const [list, item] = useArrayRef('completed_phases', [{ owner, title: 'Design ' + owner }], { scope: 'protected', itemType: 'Phase' });
   return h('section', {}, [h('h2', {}, list('Completed phases')), h('p', {}, item(0, 'Design ' + owner))]);
 }
 function App() {
   const [owner, setOwner] = useState('B');
   const [open, setOpen] = useState(true);
   return h('main', {}, [
-    h(View, { id: 'root', type: Guide, kind: 'instruction', context: { setOwner, setOpen } },
+    h(StaticView, { idPrefix: 'root', type: Guide, context: { setOwner, setOpen } },
       'Select a Ref using its containing View id and local name.'),
-    h(View, { id: 'plan_a', type: PhasesType, kind: 'state', context: {} }, h(Phases, { owner: 'A' })),
-    open ? h(View, { id: 'plan_b', type: PhasesType, kind: 'state', context: {} }, h(Phases, { owner })) : null,
+    h(DynamicView, { idPrefix: 'plan_a', type: PhasesType, context: {} }, h(Phases, { owner: 'A' })),
+    open ? h(DynamicView, { idPrefix: 'plan_b', type: PhasesType, context: {} }, h(Phases, { owner })) : null,
   ]);
 }
 export default createTUIApp({ app_name: 'refviews', component: App, viewTypes: [Guide, PhasesType] });

@@ -8,7 +8,7 @@
  * - 提供日志查询接口
  */
 
-import type { DesktopID } from '../../spi/index.js';
+import type { DesktopID } from '@aotui/core';
 
 /**
  * 日志条目

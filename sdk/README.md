@@ -1,32 +1,111 @@
 # @aotui/sdk
 
-为 Agent 构建 AOTUI App。App 持有业务状态，View 呈现当前状态，Tool 发起操作并返回收据。SDK 将准备好的页面、Ref 和操作一起交给 Runtime。
+为 Agent 编写 AOTUI App。App 持有业务状态，View 展示当前状态，Tool 发起操作并返回结果。一次完整提交同时交付页面、Ref 和工具能力。
 
 ## 构建第一个 App
 
-使用同一交付的 SDK 0.9.0 和 Runtime 8.0.0，以及 `typebox@1.4.3`。升级时用同批 SDK 重编 App，并重新生成 `aoapp.json`。默认作者入口是 `@aotui/sdk`，使用 `preact@10.29.1`。App 与 SDK 必须解析到同一个 Preact 模块实例。打包时将 Preact 及其子路径设为 external。
+在新的 Node ESM 项目里写一个计数器。普通 TypeScript 使用 `@aotui/sdk/app`。写 JSX 时还要安装 Preact，再从 `@aotui/sdk` 导入。
 
-将两个 tar 的绝对路径分别设为 `aotui_runtime_tar` 和 `aotui_sdk_tar`。在新的 App 目录安装依赖，使用 Node ESM。
+### 初始化作者项目
 
 ```sh
 npm init -y
 npm pkg set type=module
-npm install "$aotui_runtime_tar" "$aotui_sdk_tar" typebox@1.4.3 preact@10.29.1
-npm install -D typescript@7.0.2
+npm install --save-exact typebox@1.4.3
+npm install --save-dev --save-exact typescript@7.0.2
 ```
 
-保存为 `app.tsx`。调用 `add` 时传入 `{ "view_id": "counter", "by": 1 }`。收据只报告操作结果，下一次成功观察显示新的计数。
+### JSX 所需的 Preact
+
+普通 TypeScript 跳过这一步。App 和 SDK 使用同一个 Preact 模块实例。使用 bundler 时将 Preact 及其子路径设为 external。
+
+```sh
+npm install --save-exact preact@10.29.1
+```
+
+### 从 npm registry 安装 SDK
+
+在此步骤和下方的本地待发包步骤中选一种。npm 会把精确版本写入 App 的 `package.json`。
+
+```sh
+npm install --save-exact @aotui/sdk@0.9.0
+```
+
+### 使用本地待发包
+
+在初始化并装好其余依赖后，将 `aotui_sdk_tar` 和 `aotui_core_tar` 设为同批 SDK 和 Core 包的绝对路径。tarball 供作者本机编译，App 的 `dependencies` 记录 SDK 的版本号。接收方配置的 npm registry 须提供该版本的 SDK 及其依赖。待发版本也可以由内部 registry 按版本提供。
+
+```sh
+npm install --no-save --package-lock=false "$aotui_sdk_tar" "$aotui_core_tar"
+npm pkg set "dependencies.@aotui/sdk=$(node -p "require('./node_modules/@aotui/sdk/package.json').version")"
+```
+
+registry 可以解析该版本后，作者可用 `npm install` 将 SDK 写入项目的 lockfile。
+
+### 普通 TypeScript 计数器
+
+将代码存为 `app.ts`。
+
+```ts
+import Type from 'typebox';
+import { createApp, createView, defineViewType, ViewMultiplicity, ViewRegion } from '@aotui/sdk/app';
+
+const Counter = defineViewType<{ add(by: number): void }>()({
+  name: 'counter',
+  multiplicity: ViewMultiplicity.Single,
+  region: ViewRegion.Dynamic,
+  tools: {
+    add: {
+      description: 'Increase the counter, then read the current page.',
+      inputSchema: Type.Object({ by: Type.Integer() }, { additionalProperties: false }),
+      execute({ input, context }) {
+        context.add(input.by);
+        return { success: true };
+      },
+    },
+  },
+});
+
+export default createApp({ app_name: 'counter', viewTypes: [Counter], initialize({ prepareProjection }) {
+  let count = 0;
+  const page = createView(Counter, { render: () => ({
+    body: `Count ${count}`,
+    context: { add(by) { count += by; publish(); } },
+  }) });
+  function publish() { prepareProjection({ views: [page] }); }
+  publish();
+} });
+```
+
+将下方配置存为 `tsconfig.json`。
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "NodeNext", "lib": ["ES2022"], "types": [],
+    "strict": true, "exactOptionalPropertyTypes": true, "skipLibCheck": false,
+    "declaration": true, "outDir": "dist"
+  },
+  "files": ["app.ts"]
+}
+```
+
+### JSX 计数器
+
+将代码存为 `app.tsx`。
 
 ```tsx
 import Type from 'typebox';
 import { useState } from 'preact/hooks';
-import { createTUIApp, defineViewType, View } from '@aotui/sdk';
+import { createTUIApp, defineViewType, ViewMultiplicity, ViewRegion } from '@aotui/sdk';
 
 const Counter = defineViewType<{ add(by: number): void }>()({
-  name: 'Counter',
+  name: 'counter',
+  multiplicity: ViewMultiplicity.Single,
+  region: ViewRegion.Dynamic,
   tools: {
     add: {
-      description: 'Increase the counter, then read its View.',
+      description: 'Increase the counter, then read the current page.',
       inputSchema: Type.Object({ by: Type.Integer() }, { additionalProperties: false }),
       execute({ input, context }) {
         context.add(input.by);
@@ -38,83 +117,116 @@ const Counter = defineViewType<{ add(by: number): void }>()({
 
 function App() {
   const [count, setCount] = useState(0);
-  return <View id="counter" kind="state" type={Counter}
-    context={{ add: by => setCount(value => value + by) }}>
-    <p>Count: {count}</p>
-  </View>;
+  return <Counter context={{ add: by => setCount(value => value + by) }}>
+    <p>Count {count}</p>
+  </Counter>;
 }
 
 export default createTUIApp({ app_name: 'counter', component: App, viewTypes: [Counter] });
 ```
 
-```sh
-npx tsc --module NodeNext --target ES2022 --strict --jsx react-jsx --jsxImportSource preact --outDir dist app.tsx
+将下方配置存为 `tsconfig.json`。
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "NodeNext", "lib": ["ES2022", "DOM"], "types": [],
+    "strict": true, "exactOptionalPropertyTypes": true, "skipLibCheck": false,
+    "jsx": "react-jsx", "jsxImportSource": "preact", "declaration": true, "outDir": "dist"
+  },
+  "files": ["app.tsx"]
+}
 ```
 
-按照 `@aotui/runtime` 包内 README 运行 `dist/app.js`。App 分发时可用 `AppRegistry` 安装带 `aoapp.json` 的目录。仓库中的 `scripts/generate-aoapp.mjs <app-dir>` 从编译后的默认工厂与包元数据生成清单。
+### 生成制品
 
-## 页面与实例工具
+两种计数器使用同一组构建命令。
 
-每页显式声明 `id`、`type` 和 `kind`（`instruction` 或 `state`）。View id 在同一个 App 内唯一，使用 ASCII 字母、数字或下划线。页面并列声明，正文不带框架的 XML 外壳；最终呈现边界负责包装和转义一次。Preact 的 `pre` 和 `code` 可呈现需要保留空白的内容。
+```sh
+npm exec -- tsc -p tsconfig.json
+npm pkg set main=./dist/app.js types=./dist/app.d.ts 'files[0]=dist' 'files[1]=aoapp.json'
+npm exec -- generate-aoapp .
+npm pack
+```
 
-用 `defineViewType<Context>()` 将工具名称、说明、业务参数和实现声明一次。每个 View 实例提供自己的 `context`，handler 通过 `execute({ input, context })` 使用所选页的业务状态、函数和服务。框架自动向模型 Schema 加入必填 `view_id`，消费它并校验接收页；作者不重复声明，业务 `input` 不包含该路由字段。
+`generate-aoapp <app-dir>` 读取 `package.json` 指定的已编译入口，校验默认导出的 App 工厂并生成 `aoapp.json`。将 `npm pack` 生成的压缩包交给宿主，例如在接收方项目中运行 `npm install ./counter-plain-1.0.0.tgz`。工具 `add` 接收 `{"by":1}`，下一次观察会显示新的计数。宿主调用示例随 `@aotui/runtime` 的 README 提供。
 
-至少有一个页面打开且满足 `enabled(context)` 时，对应共享 Tool 才激活。同类型页面共用 Schema，但各有执行上下文；共享 Tool 仍存在，不代表已关闭的页面还能调用。Root 可用 `<ToolCatalog />` 简列名称和流程，完整说明与参数 Schema 进入当轮请求的 Tools。静态名称目录不能代替实际工具可用性。声明与类型见 [ViewType 实现](src/tools/view-type-tool.ts)。
+## 页面、实例和工具
 
-## Ref 与参数
+`defineViewType` 一次声明类型、实例数和工具。页面各自提供 `context`。`ViewRegion.Static` 和 `ViewRegion.Dynamic` 决定消息位置。直接 JSX 与 `createView` 可覆盖类型的默认区域，缺省时必须在挂载时指定。共享的普通 TypeScript 声明可通过 `<StaticView type={Definition}>` 或 `<DynamicView type={Definition}>` 挂载。
 
-Preact 用 `useDataRef`、`useArrayRef` 发布数据；普通 TypeScript 用 `ref`、`arrayRef` 和 `formatRef`。Tool 用 `refParam` 声明接受的业务类型和目标值 Schema，handler 收到已解析的深只读值，无须让模型抄写内部业务 ID。
+单实例默认用类型名作 ID，挂载可传 `id`，调用只填业务参数。多实例共享一组工具，调用必须填接收页面的 XML `view_id`。默认编号从 1 开始，挂载可传 `idPrefix`，类型上可用同步 `createId({ prefix, sequence, context })` 指定完整 ID。同一挂载更新或重排时沿用 ID。声明名、前缀和最终实例 ID 区分大小写，使用 ASCII 字母、数字或下划线，至少有一个非数字字符。
 
-把 Ref hook 放在 `<View>` 渲染的内容子组件里。返回 `<View>` 的函数自身无法读取它提供的作用域。
+打开且满足 `enabled(context)` 的页面让工具进入观察。页面组件写业务 Markdown 或相应的语义标签，正文由 Runtime 的呈现入口统一包装。Root 说明业务流程。当轮 Tools 提供当前可用的工具名称、说明与 Schema。
+
+直接 JSX、`StaticView`、`DynamicView` 和 `createView` 都可在挂载处声明 `onClose?: () => ToolResult | Promise<ToolResult>`。由 App 检查业务约束并提交移除该页的新投影。Runtime 分别报告回调已接受与原挂载已移除。宿主收起窗口或替换预算提示时，App 继续持有页面。
+
+## Markdown 正文
+
+直接将 Markdown 字符串作为 View 的子节点，或从普通 TypeScript 的 `render()` 返回 `{ body: markdown }`。框架保留原文的缩进、换行和空白，并在模型消息边界包装 View XML。用 JSX 写行内内容时，在词之间明确写出空格，例如 `<p>库存 <strong>充足</strong>。</p>`。代码和 Mermaid 可以使用 `<pre><code class="language-mermaid">{source}</code></pre>`。
+
+用 JSX 写表格时，第一行全部使用 `th`，其余各行使用相同列数的 `td`。行可以直接放在 `table` 下，也可以放在 `thead` 或 `tbody` 中。空格子用 `<td />`。`<td>{filename}</td>` 按字面值呈现文件名，包括 `__init__.py`、方括号和 `|`。用 `<strong>`、`<em>`、`<a>` 或 `<code>` 表达明确的行内格式。相对链接可以直接在 `href` 中使用带空格的路径。
 
 ```tsx
-const FilesType = defineViewType({ name: 'Files' });
-type File = { path: string };
-
-function FilesPage({ files }: { files: readonly File[] }) {
-  return <View id="files" type={FilesType} kind="state"><FilesContent files={files} /></View>;
-}
-
-function FilesContent({ files }: { files: readonly File[] }) {
-  const [allFiles] = useArrayRef('items', files, { itemType: 'File' });
-  return <p>{allFiles('全部文件')}</p>;
-}
+<table>
+  <thead><tr><th>文件</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>{'__init__.py'}</td><td><code>A|B</code></td></tr>
+    <tr><td><a href="docs/stock list.md">库存清单</a></td><td>12</td></tr>
+  </tbody>
+</table>
 ```
 
-| `id="detail"` 页面内的展示 | 显式 Ref 参数中的调用地址 |
+合并格、嵌套表格、行宽不符和格内换行会使这次投影返回 `SNAPSHOT_INVALID`，诊断会指出对应的 View、表格及可确定的行列。用简单表格或分组列表表达这些内容。直接传入的 Markdown 字符串按原文交付。
+
+## 发布 Ref 与传业务参数
+
+用 `useDataRef`、`useArrayRef` 或普通 TypeScript 的 `ref`、`arrayRef` 和 `formatRef` 发布只读 JSON。`private` 只供发布页使用，`protected` 可供同一 App 实例的页面使用，`public` 还允许同一轮模型请求中可见的其他 App 取值。比如通讯录发布 `public` 邮箱数组后，邮件草稿的普通 `string[]` 参数可接收 `"$contacts.list.emails"`。Runtime 按原观察取值。ArrayRef 的整体和元素共用一个登记。
+
+| 页面 `app_id="notes"` `view_id="detail"` 中的标记 | 调用参数 |
 | --- | --- |
-| `[First note](Note:notes[0])` | `detail.notes[0]` |
-| `[All notes](Note[]:notes)` | `detail.notes` |
+| `[列表](protected items: Note[])` | `"$notes.detail.items"` |
+| `[首项](items[0])` | `"$notes.detail.items[0]"` |
+| 字面名为 `items[0]` 的单独 Ref | `'$notes.detail["items[0]"]'` |
 
-展示标记带类型和局部名称，调用地址不带 `Note:`。顶层 `view_id` 选择执行页面，Ref 前缀选择数据来源页；可以从同一 App 运行实例、同一原 Observation 的另一页取 Ref。View id 和 Ref 局部名称禁止点号 `.`，普通文件路径和业务文本不受这条地址规则限制。Runtime 保持原观察值；对象是否仍存在、归属、权限及外部冲突由 App 判断。数据为只读观察值，App 仍可通过合法操作发布新值。[Ref 格式与捕获](src/app-factory/refs.ts)负责具体命名和展示校验。
+每个具名业务参数接受字面值或兼容的 Ref 地址。直接同类数组还可以逐项混用。前缀 `$$` 去掉一个 `$` 并按原文交付。已有的 `refParam(refType, schema)` 适用于必须选真实已发布值的参数。handler 始终接收校验后的业务值。Runtime 绑定原观察，App 检查当前对象及外部变更。
 
-业务参数使用 TypeBox 对象 Schema，无参数时可省略声明。值域为 JSON：null、布尔、有限数字、字符串、数组和普通对象；循环引用、类实例等不能作为 Ref payload。普通路径、标题和内容按原有参数输入。显式 Ref 支持顶层单值、数组多选及可选参数，整数组与元素按声明的目标值校验；没有通用嵌套 Ref 表达式或字段访问语法。
+地址可以沿已授权的对象键和数组下标取值。以下是普通 TypeScript 通讯录的 `contacts.list` 页使用的 Ref。把 `body` 和 `refs` 随页面 `context` 一起交给 `render()` 的返回值。
 
-工具参数说明在固定字节内提示声明的 Ref 类型和可确认的值形状。例如，指向整组文件的参数仍填一个地址，选择多个文件的参数填地址数组。
+```ts
+import Type from 'typebox';
+import { formatRef, ref } from '@aotui/sdk/app';
 
-TypeBox 可表达的范围大于当前支持子集。常用类型、对象属性、数组、`enum`、`const`、`anyOf` 及部分范围约束可用；不支持的关键词在声明期给出 code 和路径。当前拒绝 Schema 的 `pattern` 关键词，业务参数名仍可叫 `pattern`。`default` 是注释，不自动填值，也不自动转换输入类型。精确子集见仓库的 [TypeBox 导出](src/tools/typebox-schema.ts)与 [Runtime 参数编译器](../runtime/src/core/tool/tool-parameters.ts)。业务格式检查在副作用前由 App 完成。
+const people = ref('people', [{ email: 'reader@example.test' }], {
+  scope: 'public', schema: Type.Array(Type.Object({ email: Type.String() })),
+});
+const body = formatRef('联系人', people);
+const refs = [people];
+```
 
-## 准备完整投影
+邮件工具用 `inputSchema: Type.Object({ to: Type.String() })` 声明参数。Host 授权这个字段后，模型可传入 `{ "to": "$contacts.list.people[0].email" }`，handler 收到实际邮箱字符串。`["0"]` 选择对象自有键，`[0]` 选择数组元素，`["display.name"]` 选择带点号的键。普通字段通过业务 Schema 验型。`refParam` 的来源资格限于整项 Ref 和已标记的 ArrayRef 元素。
 
-默认 Preact 入口中，`useAppRuntimeContext().prepareProjection(update)` 接收同步状态更新回调，等待本次实际渲染准备完成。可撤回的开页使用 `prepareOpeningProjection(update, revert)`，两个回调都同步，保留原页面挂载，开页容量拒绝时恢复导航。这是明确的导航恢复合同，业务事务和已经发生的外部写入由 App 负责。
+参数使用 TypeBox 支持子集，类型、对象、数组、固定长度的 `Type.Tuple`、`enum`、`const`、`anyOf` 和常用范围约束可用。作者 Schema 的 `pattern` 在声明期拒绝，业务字段可叫 `pattern`。框架从同一份登记派生原生 Tool 与 Console 参数。Console 的普通参数直接接收 JSON，`refParam` 仍要求已发布的地址。
 
-常规准备需要该 App 产生一次真实提交。同步回调把状态设成当前值时，Preact 可能跳过提交，此时准备调用以 `SNAPSHOT_INVALID` 拒绝并给出排查提示。已记录的提交故障优先返回原诊断。准备结果和业务操作结果各自独立。
+用 `Type.Tuple([Type.String(), Type.Integer({ minimum: 1 })])` 声明影院座位时，handler 收到只读的 `[string, number]`。原生工具可以填 `['A', 12]` 或选择一份获准的完整座位 Ref。固定位置由 JSON Schema 2020-12 的 `prefixItems` 表达，`items: false` 禁止尾项。元组位置直接按业务值检查。同类数组仍允许逐项混合引用和字面值。默认值只用于说明和声明校验，缺席的可选键在调用中仍然缺席。
 
-普通 TypeScript 入口 `@aotui/sdk/app` 无需 Preact。用 `createApp`、`createView` 和 `defineViewType`，保留稳定页面 handle，在 `render` 返回 Markdown、`context` 和 Ref 描述。`prepareProjection({ views })` 提供全部打开页面；`prepareOpeningProjection({ views })` 准备可放弃的开页候选，成功后再确认 App 自己的导航状态。
+## 投影与资源
 
-两种入口都只承诺本地准备，返回 `PreparedProjection`。Host 的下一次成功观察才确认新数据可观察。作者只读取得 Host 固定的 `projectionLimits`，用于选择内容和分页大小；是否容纳取决于完整候选，模型总 token 预算另由 Host 检查。一般业务更新若已写入却准备失败，收据保留真实结果和呈现恢复提示，再从当前业务数据修复 View，不能重做写入来伪装恢复。
+Preact 用 `prepareProjection(update)` 等待同步回调排入的渲染。实际提交会更新完整页面、Ref 和工具绑定。设置相同值等更新若跳过本 App 的渲染，已有健康帧时返回该帧的 `sourceEpoch`，无需发布页面。首次没有成功帧、仍有投影故障或 App 已关闭时会返回对应错误。只需交付业务结果的工具直接返回 `ToolResult`。
 
-## 持久化与清理
+新开页用 `prepareOpeningProjection(update, revert)`，成功需要本 App 真正产生提交。新增页被本地容量限制拒绝时，框架调用一次 `revert` 并核对是否恢复原投影。恢复也失败时，`AggregateError.errors` 依次保留容量拒绝和恢复错误。普通 TypeScript 用稳定的 `createView` handle，在 `render` 返回正文、Ref 和 context，提交时提供全部打开页。下一次成功观察确认模型可见。业务已写入而投影失败时，保留真实写入结果，从当前业务状态修复页面。
 
-需要框架保存小型 JSON 状态时，在工厂中显式设 `persistence: true`；未启用的 App 不创建存储会话。暂存状态与落盘分开：收据若承诺已保存，先等待并检查 `persistence.flush()`。默认 SQLite 的原生驱动由 Host 安装，App 负责业务数据含义与迁移。
+App 可用 `useAppLifecycle` 或 `registerCleanup` 登记清理。 [Preact 声明](dist/index.d.ts) · [普通 TypeScript 声明](dist/app.d.ts)
 
-Preact 用 `useAppLifecycle`，普通 TypeScript 用 `registerCleanup`，登记 App 自己的停止与关闭清理。后台任务的进度、取消和业务恢复由 App 定义，Runtime 负责其托管调用与资源的实际结束。
+## 由 App 主动保存和读取
 
-## 入口与可执行例子
+在 App 配置中设置 `persistence: true`。普通 TypeScript 从初始化上下文取 `persistence`，Preact 从 `useAppRuntimeContext()` 取得。下例的 `store` 就是该端口。在两个独立的业务动作里使用它。
 
-| 作者入口 | 仓库源码 | 仓库中的可执行例子 |
-| --- | --- | --- |
-| `@aotui/sdk`（默认 Preact） | [公开导出](src/index.ts) | [工作项 App](tests/fixtures/work-items-preact.tsx) |
-| `@aotui/sdk/app`（普通 TypeScript） | [公开导出](src/app.ts) | [同语义工作项 App](tests/fixtures/work-items-plain.ts) |
+```ts
+await store.save('draft', draftText);
+const previous = await store.load('draft');
+```
 
-表中链接用于阅读本仓库。安装包通过上述包入口导入，声明分别在 `dist/index.d.ts` 与 `dist/app.d.ts`；无需导入仓库源码或内部 Worker 协议。
+`await save` 在后端确认成功后返回。保存时捕获 JSON，之后修改原对象需要另一次保存。`load` 只在确认缺键时返回 `undefined`，`null`、`false`、`0` 和空字符串原样返回。App 决定是否采用读回的值，用自己的状态更新入口刷新 View。`remove(key)` 明确删除一个键。三个方法都可用最后一个参数 `{ storageKey }` 选择独立空间。失败时 Promise 拒绝并给出 `code`，包括无法确认已发出写入的 `UNKNOWN_OUTCOME`。
+
+需要等待批量提交时调用 `flush()`，它捕获当时已受理的操作并返回各键和版本的结果。单次已确认的 `save` 或 `remove` 即已完成。页面打开、重画和结束只处理 App 主动发起的存取。App 也可以选择在既有异步清理回调中等待一次保存。

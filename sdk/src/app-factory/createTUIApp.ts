@@ -1,10 +1,10 @@
-import type { AppInstance, RuntimeContext, TUIAppFactory } from '@aotui/runtime/spi';
-import { createDOMAppRoot, dispatchDOMAppEvent, readDOMAppViews } from '@aotui/runtime/adapters/dom';
+import type { AppInstance, RuntimeContext } from '@aotui/core';
+import { createDOMAppRoot, readDOMAppViews } from '../preact/dom-app.js';
 import { h, render, type ComponentType } from 'preact';
 import { AppRuntimeContext } from '../context/AppRuntimeContext.js';
-import { createRenderCommit, prepareRenderProjection, trackRenderCommits, whenRenderCommitted } from './render-commit.js';
-import { createAppFactory, type AppConfig } from './app-factory.js';
-import type { ViewType } from '../tools/view-type-tool.js';
+import { createRenderCommit, createViewRefs, prepareRenderProjection, trackRenderCommits, whenRenderCommitted } from './render-commit.js';
+import { createAppFactory, type AppConfig, type TUIAppFactory } from './app-factory.js';
+import { requireViewType, type ViewType } from '../tools/view-type-tool.js';
 
 // Retain interrupted DOM cleanup until the same container is reused.
 const pendingUnmounts = new WeakMap<HTMLElement, () => void>();
@@ -43,7 +43,7 @@ export async function mountPreactApp(
     trackRenderCommits();
     pendingUnmounts.get(container)?.();
     type RenderContext = NonNullable<import('preact').ContextType<typeof AppRuntimeContext>>;
-    const views: RenderContext['views'] = new WeakMap();
+    const views: RenderContext['views'] = new Map();
     const appContextValue: RenderContext = {
         appId: context.appId,
         desktopId: context.desktopId,
@@ -52,6 +52,8 @@ export async function mountPreactApp(
         ...(context.persistence === undefined ? {} : { persistence: context.persistence }),
         appLifecycle: context.appLifecycle,
         viewTypes,
+        resolveViewType: definition => requireViewType(viewTypes, definition),
+        createViewRefs: label => createViewRefs(appContextValue, label),
         views,
         prepareProjection: update => prepareRenderProjection(appContextValue, context.signal, update),
         prepareOpeningProjection: (update, revert) => prepareRenderProjection(appContextValue, context.signal, update, { revert }),
@@ -61,7 +63,7 @@ export async function mountPreactApp(
         views: readDOMAppViews(container, node => {
             const attached = views.get(node);
             return attached && { ...attached, refs: attached.readRefs(refs) };
-        }),
+        }, views.size),
     }));
     let attached = true;
     let unmounting = false;
@@ -89,7 +91,6 @@ export async function mountPreactApp(
 
     return {
         whenCommitted: signal => whenRenderCommitted(signal, appContextValue),
-        onLLMUsage: event => dispatchDOMAppEvent(container, 'aotui:llm-usage', event),
         close,
     };
 }

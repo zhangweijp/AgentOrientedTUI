@@ -4,24 +4,14 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": [
-      "ES2022"
+      "ES2022",
+      "DOM"
     ],
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "./dist",
     "rootDir": "./src",
-    "paths": {
-      "@aotui/runtime": [
-        "../runtime/dist/index.d.ts"
-      ],
-      "@aotui/runtime/spi": [
-        "../runtime/dist/spi/index.d.ts"
-      ],
-      "@aotui/runtime/*": [
-        "../runtime/dist/*"
-      ]
-    },
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -39,6 +29,7 @@
     "node_modules",
     "dist",
     "**/*.test.ts",
-    "**/*.test.tsx"
+    "**/*.test.tsx",
+    "**/__tests__/**"
   ]
 }

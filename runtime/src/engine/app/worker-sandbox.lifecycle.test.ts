@@ -32,7 +32,6 @@ vi.mock('./worker-host.js', () => ({ AppWorkerHost: class {
     }
     getStatus() { return this.state; }
     getAppInteraction() { control.log.push('scope');return { status: 'rejected', issue: { code: 'APP_INTERACTION_UNAVAILABLE' } }; }
-    pushLLMUsage() { control.log.push('push'); }
 } }));
 
 import { WorkerSandbox } from './worker-sandbox.js';
@@ -78,15 +77,13 @@ it.each(['start', 'open'] as const)('closing during %s joins the same cleanup an
     if (stage === 'start') expect(control.log).not.toContain('open');
 });
 
-it('keeps the first close intent and stops new App events and scopes synchronously', async () => {
+it('keeps the first close intent and stops new interaction scopes synchronously', async () => {
     const s = sandbox();await s.installDynamic();
     const gate = defer();control.close = gate.promise;
     const closing = s.close();
     await expect(s.delete()).rejects.toMatchObject({ code: 'LIFECYCLE_CONFLICT' });
     await expect(s.reinitialize()).rejects.toMatchObject({ code: 'SANDBOX_CLOSED' });
-    s.pushLLMUsage({ timestamp: 0, providerId: 'p', modelId: 'm', promptTokens: 0, completionTokens: 0, totalTokens: 0 });
     expect(s.getAppInteraction('instance')).toMatchObject({ status: 'rejected', issue: { code: 'APP_INTERACTION_UNAVAILABLE' } });
-    expect(control.log).not.toContain('push');
     expect(control.log).not.toContain('scope');
     gate.resolve();
     await closing;

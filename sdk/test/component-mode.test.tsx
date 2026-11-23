@@ -4,13 +4,13 @@
  * 验证createTUIApp + View组件的基础功能
  */
 import { describe, it, expect } from 'vitest';
-import { createTUIApp, View } from '../src/index.js';
+import { createTUIApp, DynamicView } from '../src/index.js';
 import { h } from 'preact';
 
 describe('[RFC-027] Component Mode', () => {
     it('should create TUIApp with component field', () => {
         function TestApp() {
-            return h(View, { kind: 'state', id: 'test_view', type: 'TestView', name: 'TestView' }, 'Hello');
+            return h(DynamicView, { region: 'dynamic', idPrefix: 'test_view', type: 'TestView', name: 'TestView' }, 'Hello');
         }
 
         const app = createTUIApp({ viewTypes: [],
@@ -29,7 +29,7 @@ describe('[RFC-027] Component Mode', () => {
 
     it('keeps the component out of neutral kernel metadata', () => {
         function TestApp() {
-            return h(View, { kind: 'state', id: 'test_view', type: 'TestView', name: 'TestView' }, 'Hello');
+            return h(DynamicView, { region: 'dynamic', idPrefix: 'test_view', type: 'TestView', name: 'TestView' }, 'Hello');
         }
 
         const app = createTUIApp({ viewTypes: [],

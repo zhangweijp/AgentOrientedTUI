@@ -1,5 +1,5 @@
 import {
-  ToolCatalog, View, createTUIApp, useAppRuntimeContext, useState, type ToolResult,
+  DynamicView, StaticView, createTUIApp, useAppRuntimeContext, useState, type ToolResult,
 } from '@aotui/sdk';
 import { FileDetailType, fileViewTypes, RootType, WorkspaceType } from './file-tools.js';
 
@@ -16,15 +16,15 @@ function FileDetail({ filePath, file }: { filePath: string; file: FileState }) {
   async function edit(next: string): Promise<ToolResult> {
     file.content = next;
     try {
-      if (content !== next) await prepareProjection(() => setContent(file.content));
+      await prepareProjection(() => setContent(file.content));
     } catch {
       return { success: true, data: { message: 'Edit applied. View refresh failed.' } };
     }
     return { success: true, data: { message: 'Read the updated FileDetail View.' } };
   }
-  return <View kind="state" id={file.viewId} type={FileDetailType} name={filePath} context={{ edit }}>
+  return <DynamicView  idPrefix={file.viewId} type={FileDetailType} name={filePath} context={{ edit }}>
     <p>filePath: {filePath}</p><pre>{content}</pre>
-  </View>;
+  </DynamicView>;
 }
 
 function AppRoot() {
@@ -49,15 +49,14 @@ function AppRoot() {
     return { success: true, data: { message: 'File closed.' } };
   }
   return <>
-    <View kind="instruction" id="root" type={RootType} name="Demo instructions">
+    <StaticView  idPrefix="root" type={RootType} name="Demo instructions">
       <h1>File Demo Application Instruction</h1>
       <p>This in-memory demo opens a.txt and b.txt. It does not read or write disk. Closing discards edits; reopening restores the initial demo text.</p>
       <p>Pass view_id=workspace to open_file or close_file with a filePath. To edit a file, pass its FileDetail XML id to edit_file and read the updated page.</p>
-      <ToolCatalog viewTypes={fileViewTypes} />
-    </View>
-    <View kind="state" id="workspace" type={WorkspaceType} context={{ hasOpenFiles: Object.keys(opened).length > 0, openFile, closeFile }} name="Workspace">
+    </StaticView>
+    <DynamicView  idPrefix="workspace" type={WorkspaceType} context={{ hasOpenFiles: Object.keys(opened).length > 0, openFile, closeFile }} name="Workspace">
       <p>Available demo paths: a.txt, b.txt. FileDetail Views show opened files.</p>
-    </View>
+    </DynamicView>
     {Object.entries(opened).map(([filePath, file]) => <FileDetail key={filePath} filePath={filePath} file={file} />)}
   </>;
 }

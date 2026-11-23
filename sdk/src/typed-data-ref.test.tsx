@@ -1,18 +1,19 @@
-import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
+import { mountedViews, preparedRefs } from './__tests__/projection-facts.js';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
 import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { describe, expect, it } from 'vitest';
 import { h } from 'preact';
 import { act } from 'preact/test-utils';
 import { useMemo, useState } from 'preact/hooks';
 import Type from 'typebox';
-import { compileToolParameters } from '@aotui/runtime/core';
+import { compileToolParameters } from '@aotui/core';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
-import { createTUIApp, View, useArrayRef, useDataRef, refParam, defineViewType } from './index.js';
+import { createTUIApp, DynamicView, useArrayRef, useDataRef, refParam, defineViewType } from './index.js';
 import { arrayRef, formatRef, ref, refParam as plainRefParam } from './app.js';
 
-const Detail=defineViewType({name:'Detail'});
+const Detail=defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'Detail'});
 function setup(Content: () => any) {
- const factory = createTUIApp({ app_name: 'typed_refs', viewTypes:[Detail], component: () => h(View, {kind: 'state',id:'detail',type:Detail},h(Content, {})) });
+ const factory = createTUIApp({ app_name: 'typed_refs', viewTypes:[Detail], component: () => h(DynamicView, {idPrefix:'detail',type:Detail},h(Content, {})) });
  const kernel = new AppKernel({ ...factory.kernelConfig, factory,
      appId: createAppId('app'), desktopId: createDesktopId('desktop'),
      instanceId: 'typed-data-ref-run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
@@ -21,7 +22,7 @@ function setup(Content: () => any) {
  async close(){await kernel.onClose();}};
 }
 const schema=Type.Object({id:Type.String(),title:Type.String()},{additionalProperties:false});
-const define = (parameter: Type.TSchema) => defineViewType<object>()({ name: 'Detail', tools: {
+const define = (parameter: Type.TSchema) => defineViewType<object>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Detail', tools: {
     edit: {
         description: 'Edit selected Plan',
         inputSchema: Type.Object({ plan: parameter, title: Type.String() }, { additionalProperties: false }),
@@ -41,87 +42,87 @@ describe('Ref authoring and value contracts',()=>{
    let set!:(state:{id:string;refId:string;refType:string})=>void;
    function Content(){const [state,update]=useState({id:'one',refId:'current_plan',refType:'Plan'});set=update;
      const data=useMemo(()=>({id:state.id,title:'Plan title'}),[state.id]);
-     const ref=useDataRef(state.refId,data,{refType:state.refType});return h('p',{},ref('Selected'));
+     const ref=useDataRef(state.refId,data,{ scope: 'protected',refType:state.refType});return h('p',{},ref('Selected'));
    }
    const x=setup(Content);
    try{
-    await x.open();expect(x.container.textContent).toContain('[Selected](Plan:current_plan)');
-    expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'current_plan',refType:'Plan',value:{id:'one',title:'Plan title'}}]);
+    await x.open();expect(x.container.textContent).toContain('[Selected](protected current_plan: Plan)');
+    expect(preparedRefs(x.kernel)).toEqual([{viewId:'detail',refId:'current_plan',refType:'Plan',value:{id:'one',title:'Plan title'}}]);
     await act(async()=>set({id:'two',refId:'current_plan',refType:'Plan'}));
-    expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'current_plan',refType:'Plan',value:{id:'two',title:'Plan title'}}]);
+    expect(preparedRefs(x.kernel)).toEqual([{viewId:'detail',refId:'current_plan',refType:'Plan',value:{id:'two',title:'Plan title'}}]);
     await act(async()=>set({id:'two',refId:'renamed',refType:'Plan'}));
-    expect(x.kernel.getViewRefs().map(ref => ref.refId)).toEqual(['renamed']);
+    expect(preparedRefs(x.kernel).map(ref => ref.refId)).toEqual(['renamed']);
     await act(async()=>set({id:'two',refId:'renamed',refType:'DraftPlan'}));
-    expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'renamed',refType:'DraftPlan',value:{id:'two',title:'Plan title'}}]);
-    expect(x.container.textContent).toContain('[Selected](DraftPlan:renamed)');
-   }finally{await x.close();}expect(x.kernel.getViewRefs()).toEqual([]);
+    expect(preparedRefs(x.kernel)).toEqual([{viewId:'detail',refId:'renamed',refType:'DraftPlan',value:{id:'two',title:'Plan title'}}]);
+    expect(x.container.textContent).toContain('[Selected](protected renamed: DraftPlan)');
+   }finally{await x.close();}expect(preparedRefs(x.kernel)).toEqual([]);
  });
- it('keeps a two-argument Ref untyped through registration and display',async()=>{
-   const x=setup(()=>{const mark=useDataRef('raw',{id:'one'});return h('p',{},mark('Raw'));});
-   try{await x.open();expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'raw',value:{id:'one'}}]);expect(x.container.textContent).toContain('[Raw](raw)');}finally{await x.close();}
+ it('keeps a Ref without business type untyped through registration and display',async()=>{
+   const x=setup(()=>{const mark=useDataRef('raw',{id:'one'}, { scope: 'protected' });return h('p',{},mark('Raw'));});
+   try{await x.open();expect(preparedRefs(x.kernel)).toEqual([{viewId:'detail',refId:'raw',value:{id:'one'}}]);expect(x.container.textContent).toContain('[Raw](protected raw: unknown)');}finally{await x.close();}
  });
- it.each(['file)', 'Plan:raw', 'name with spaces', 'file\\name', 'name&amp;other', 'file.txt',
+ it.each(['file)', 'Plan:raw', 'name with spaces', 'file\\name', 'name&amp;other',
    Symbol('invalid') as unknown as string])(
    'rejects invalid Ref ID %s in the descriptor formatter and during Hook publication', async id => {
      const path = typeof id === 'string' ? 'Ref ' + id : '$.refs.id';
      const issue = expect.objectContaining({ code: 'SNAPSHOT_INVALID', path });
-     expect(() => formatRef('Label', ref(id, false))).toThrow(issue);
-     const x = setup(() => { useDataRef(id, false); return null; });
+     expect(() => formatRef('Label', ref(id, false, { scope: 'protected' }))).toThrow(issue);
+     const x = setup(() => { useDataRef(id, false, { scope: 'protected' }); return null; });
      try {
        await expect(x.open()).rejects.toMatchObject(issue);
-       expect(x.kernel.getViewRefs()).toEqual([]);
+       expect(preparedRefs(x.kernel)).toEqual([]);
      } finally { await x.close(); }
    },
  );
  it('formats a plain descriptor and only addresses present array elements', () => {
-   const list = arrayRef('items', ['file (draft).txt'], { itemType: 'Doc.版本' });
-   expect(formatRef('All', list)).toBe('[All](Doc.版本[]:items)');
-   expect(formatRef('One [draft]', list, 0)).toBe('[One \\[draft\\]](Doc.版本:items[0])');
-   expect(formatRef('Name', ref('文件-1', null))).toBe('[Name](文件-1)');
-   expect(formatRef('Empty', arrayRef('items', []))).toBe('[Empty](items)');
+   const list = arrayRef('items', ['file (draft).txt'], { scope: 'protected', itemType: 'Doc.版本' });
+   expect(formatRef('All', list)).toBe('[All](protected items: Doc.版本[])');
+   expect(formatRef('One [draft]', list, 0)).toBe('[One \\[draft\\]](items[0])');
+   expect(formatRef('Name', ref('文件-1', null, { scope: 'protected' }))).toBe('[Name](protected ["文件-1"]: unknown)');
+   expect(formatRef('Empty', arrayRef('items', [], { scope: 'protected' }))).toBe('[Empty](protected items: unknown[])');
    expect(() => formatRef('Missing', list, 1)).toThrow(expect.objectContaining({
      code: 'SNAPSHOT_INVALID', path: 'Ref items', message: expect.stringContaining('index'),
    }));
  });
  it('rejects duplicate typed publishers without replacing the first owner',async()=>{
-   function Publisher(){useDataRef('current_plan',{id:'one'},{refType:'Plan'});return null;}
+   function Publisher(){useDataRef('current_plan',{id:'one'},{ scope: 'protected',refType:'Plan'});return null;}
    const x=setup(()=>h('section',{},[h(Publisher,{key:'one'}),h(Publisher,{key:'two'})]));
-   try{await expect(x.open()).rejects.toMatchObject({code:'REF_ALREADY_REGISTERED'});expect(x.kernel.getViewRefs()).toEqual([]);}finally{await x.close();}
+   try{await expect(x.open()).rejects.toMatchObject({code:'REF_ALREADY_REGISTERED'});expect(preparedRefs(x.kernel)).toEqual([]);}finally{await x.close();}
  });
  it('rejects same local ID even when publishers use different display types',async()=>{
-   function PlanPublisher(){useDataRef('selected',{id:'one'},{refType:'Plan'});return null;}
-   function PhasePublisher(){useDataRef('selected',{id:'two'},{refType:'Phase'});return null;}
+   function PlanPublisher(){useDataRef('selected',{id:'one'},{ scope: 'protected',refType:'Plan'});return null;}
+   function PhasePublisher(){useDataRef('selected',{id:'two'},{ scope: 'protected',refType:'Phase'});return null;}
    const x=setup(()=>h('section',{},[h(PlanPublisher,{}),h(PhasePublisher,{})]));
-   try{await expect(x.open()).rejects.toMatchObject({code:'REF_ALREADY_REGISTERED'});expect(x.kernel.getViewRefs()).toEqual([]);}finally{await x.close();}
+   try{await expect(x.open()).rejects.toMatchObject({code:'REF_ALREADY_REGISTERED'});expect(preparedRefs(x.kernel)).toEqual([]);}finally{await x.close();}
  });
  it('does not let a typed publisher cleanup delete a successor with the same full ID',async()=>{
    let show!:(id: string | null)=>void;
-   function Publisher({id}: {id: string}){useDataRef('current_plan',{id},{refType:'Plan'});return null;}
+   function Publisher({id}: {id: string}){useDataRef('current_plan',{id},{ scope: 'protected',refType:'Plan'});return null;}
    function Content(){const [id,set]=useState<string | null>('first');show=set;return id === null ? null : h(Publisher,{id,key:id});}
    const x=setup(Content);
    try{
      await x.open();
-     const instance = x.kernel.getViewOwnedViewInstances()[0]!.viewInstanceId;
+     const instance = mountedViews(x.kernel)[0]!.viewInstanceId;
      await act(() => show('successor'));
-     expect(x.kernel.getViewRefs()).toEqual([{viewId:'detail',refId:'current_plan',refType:'Plan',value:{id:'successor'}}]);
-     expect(x.kernel.getViewOwnedViewInstances()[0]!.viewInstanceId).toBe(instance);
+     expect(preparedRefs(x.kernel)).toEqual([{viewId:'detail',refId:'current_plan',refType:'Plan',value:{id:'successor'}}]);
+     expect(mountedViews(x.kernel)[0]!.viewInstanceId).toBe(instance);
      await act(() => show(null));
-     expect(x.kernel.getViewRefs()).toEqual([]);
+     expect(preparedRefs(x.kernel)).toEqual([]);
    }finally{await x.close();}
  });
  it.each(['', '   ', 'Plan)', 'Type:Plan', 42, null])('rejects invalid explicit refType %s',async refType=>{
-   const x=setup(()=>{useDataRef('current_plan',{id:'one'},{refType} as any);return null;});
+   const x=setup(()=>{useDataRef('current_plan',{id:'one'},{ scope: 'protected', refType } as any);return null;});
    try {
      await expect(x.open()).rejects.toMatchObject({ code: 'SNAPSHOT_INVALID', path: 'Ref current_plan' });
-     expect(x.kernel.getViewRefs()).toEqual([]);
+     expect(preparedRefs(x.kernel)).toEqual([]);
    } finally { await x.close(); }
  });
  it.each([null,42,false,'',[],['one']].map(value => [value]))('captures typed JSON payload %j',async value=>{
-   const x=setup(()=>{useDataRef('current_plan',value,{refType:'Plan'});return null;});
-   try{await x.open();expect(x.kernel.getViewRefs()[0]?.value).toEqual(value);}finally{await x.close();}
+   const x=setup(()=>{useDataRef('current_plan',value,{ scope: 'protected',refType:'Plan'});return null;});
+   try{await x.open();expect(preparedRefs(x.kernel)[0]?.value).toEqual(value);}finally{await x.close();}
  });
  it('leaves empty/wrong type and unsupported Schema diagnostics to existing declaration capture',()=>{
-   for(const [type,value,code] of [['',schema,'TOOL_SCHEMA_INVALID'],[42,schema,'TOOL_SCHEMA_INVALID'],['Plan',Type.Tuple([Type.String()]),'TOOL_SCHEMA_UNSUPPORTED']] as const){
+   for(const [type,value,code] of [['',schema,'TOOL_SCHEMA_INVALID'],[42,schema,'TOOL_SCHEMA_INVALID'],['Plan',Type.String({ pattern: '^a' }),'TOOL_SCHEMA_UNSUPPORTED']] as const){
      expect(()=>define(refParam(type as any,value))).toThrow(expect.objectContaining({code}));
    }
  });
@@ -138,22 +139,22 @@ describe('Ref authoring and value contracts',()=>{
  });
  it('rejects a pattern in the Ref source Schema before registering a value', async () => {
    const value = Type.Array(Type.String({ pattern: '^plan$' }));
-   const x = setup(() => { useDataRef('plans', ['plan'], { schema: value }); return null; });
+   const x = setup(() => { useDataRef('plans', ['plan'], { scope: 'protected', schema: value }); return null; });
    try {
      await expect(x.open()).rejects.toMatchObject({ code: 'TOOL_SCHEMA_UNSUPPORTED', path: '$.items.pattern' });
-     expect(x.kernel.getViewRefs()).toEqual([]);
+     expect(preparedRefs(x.kernel)).toEqual([]);
    } finally { await x.close(); }
  });
  it('reports a standalone Ref schema copy limit at publication without registering the value', async () => {
    const schema = Type.Array(Type.Number(), { default: Array(3_000).fill(0) });
-   const x = setup(() => { useDataRef('values', [], { refType: 'Numbers', schema }); return null; });
+   const x = setup(() => { useDataRef('values', [], { scope: 'protected', refType: 'Numbers', schema }); return null; });
    try {
      await expect(x.open()).rejects.toMatchObject({ code: 'TOOL_SCHEMA_CAPACITY', path: expect.stringContaining('default') });
-     expect(x.kernel.getViewRefs()).toEqual([]);
+     expect(preparedRefs(x.kernel)).toEqual([]);
    } finally { await x.close(); }
  });
  it('checks whole-array constraints on untyped input at publication', async () => {
-   const options = { itemType: 'Plan', schema: Type.Array(schema, { minItems: 1 }) };
+   const options = { scope: 'protected' as const, itemType: 'Plan', schema: Type.Array(schema, { minItems: 1 }) };
    const x = setup(() => { useArrayRef('plans', JSON.parse('[]'), options); return null; });
    try {
      await x.open();
@@ -161,16 +162,16 @@ describe('Ref authoring and value contracts',()=>{
      expect(projection.nextPublication()).toMatchObject({
        failure: { issue: { code: 'SNAPSHOT_INVALID', path: 'Ref detail.plans $' } },
      });
-     expect(x.kernel.getViewRefs()).toEqual([]);
+     expect(preparedRefs(x.kernel)).toEqual([]);
    } finally { await x.close(); }
  });
  it('captures arrays of Ref names and preserves exact resolved value witnesses',()=>{
    const input=Type.Object({plans:Type.Array(refParam('Plan',schema),{maxItems:3}),
      optional:Type.Optional(refParam('Plan',schema))},{additionalProperties:false});
-   const tool=defineViewType<object>()({name:'Plan',tools:{choose:{description:'Choose Plans',inputSchema:input,execute:()=>({success:true})}}}).tools.choose;
+   const tool=defineViewType<object>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'Plan',tools:{choose:{description:'Choose Plans',inputSchema:input,execute:()=>({success:true})}}}).tools.choose;
    const compiled=compileToolParameters(tool.inputSchema);
    expect(compiled.ok).toBe(true);if(!compiled.ok)throw Error('contract');
-   expect(compiled.contract.validateModelInput({plans:['detail.a','detail.b']}).ok).toBe(true);
+   expect(compiled.contract.validateModelInput({plans:['$app.detail.a','$app.detail.b']}).ok).toBe(true);
    expect(compiled.contract.validateResolvedInput({plans:[{id:'a',title:'A'},{id:'b',title:'B'}]}).ok).toBe(true);
    expect(Object.isFrozen(tool.inputSchema)).toBe(true);
    expect(()=>define(Type.Array(refParam(' ',schema)))).toThrow(expect.objectContaining({code:'TOOL_SCHEMA_INVALID'}));

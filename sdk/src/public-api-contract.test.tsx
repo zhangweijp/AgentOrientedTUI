@@ -1,4 +1,5 @@
-import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
+import { mountedViews, preparedRefs } from './__tests__/projection-facts.js';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
 import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 import { h } from 'preact';
 import { act } from 'preact/test-utils';
@@ -6,7 +7,7 @@ import { renderToString } from 'preact-render-to-string';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as SDK from './index.js';
 import { createApp } from './app.js';
-import { createTUIApp, defineViewType, View, useState, useDataRef, useLLMUsage, useAppRuntimeContext } from './index.js';
+import { createTUIApp, defineViewType, DynamicView, useState, useDataRef, useAppRuntimeContext } from './index.js';
 import { useContext } from 'preact/hooks';
 import { ViewRuntimeContext } from './contexts/view-runtime-context.js';
 import { AppRuntimeContext } from './context/AppRuntimeContext.js';
@@ -14,9 +15,9 @@ import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel
 
 const closing: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of closing.splice(0)) await close();vi.restoreAllMocks();vi.unstubAllGlobals(); });
-const Detail = defineViewType({name:'Detail'});
-async function mount(Body: () => any, options: { outside?: boolean } = {}) {
-    const factory = createTUIApp({ app_name: 'public_api', viewTypes:[Detail], component: () => options.outside ? h(Body, {}) : h(View, {kind: 'state', id: 'detail', type: Detail }, h(Body, {})) });
+const Detail = defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'Detail'});
+async function mount(Body: () => any) {
+    const factory = createTUIApp({ app_name: 'public_api', viewTypes:[Detail], component: () => h(DynamicView, {idPrefix: 'detail', type: Detail }, h(Body, {})) });
     const kernel = new AppKernel({ ...factory.kernelConfig, factory,
         appId: createAppId('app'), desktopId: createDesktopId('desktop'),
         instanceId: 'public_api_run', projectionLimits: DEFAULT_PROJECTION_LIMITS,
@@ -26,11 +27,6 @@ async function mount(Body: () => any, options: { outside?: boolean } = {}) {
     await act(async () => { await kernel.onOpen(); });
     return { kernel, container: document.getElementById('app-root-app')!, close };
 }
-const currentOutputEvent = 'aotui:llm-usage';
-const outputEvents = [currentOutputEvent, 'aotui:llm-text'];
-const usage = { timestamp: 10, providerId: 'provider', modelId: 'model', promptTokens: 2, completionTokens: 1, totalTokens: 3 };
-function emit(name = currentOutputEvent, detail = usage) { document.dispatchEvent(new CustomEvent(name, { detail })); }
-const calls = (spy: any) => spy.mock.calls.filter((args: any[]) => outputEvents.includes(args[0]));
 
 it.each([
     ['TypeScript', createApp],
@@ -40,7 +36,7 @@ it.each([
     const config = { ...common, persistence: true };
     const enabled = create(config);
     config.persistence = false;
-    expect(enabled.persistenceSupport).toBe('state-session-v1');
+    expect(enabled.persistenceSupport).toBe('state-session-v2');
     expect(create(config)).not.toHaveProperty('persistenceSupport');
     expect(create(common)).not.toHaveProperty('persistenceSupport');
     expect(() => create({ ...common, persistence: 1 } as any)).toThrow(expect.objectContaining({
@@ -50,19 +46,29 @@ it.each([
     const accessor = Object.defineProperty({ ...common }, 'persistence', { enumerable: true, get() { getterCalls++; return true; } });
     expect(() => create(accessor)).toThrow(expect.objectContaining({ code: 'CONFIG_INVALID' }));
     expect(getterCalls).toBe(0);
-    const context = { appLifecycle: { protocol: 'app-lifecycle-v2', register() {} } } as any;
+    const defineViewTypes = vi.fn();
+    const context = { appLifecycle: { protocol: 'app-lifecycle-v2', register() {} }, defineViewTypes } as any;
     expect(() => enabled.initialize(context)).toThrow(expect.objectContaining({ code: 'PERSISTENCE_UNAVAILABLE' }));
+    expect(() => enabled.initialize({ ...context, persistence: {
+        protocol: 'state-session-v1', instanceId: 'public_api_run', bind() {}, flush() {},
+    } })).toThrow(expect.objectContaining({ code: 'PERSISTENCE_UNAVAILABLE' }));
+    expect(() => enabled.initialize({ ...context, persistence: {
+        protocol: 'state-session-v2', instanceId: 'public_api_run', load() {}, save() {}, flush() {},
+    } })).toThrow(expect.objectContaining({ code: 'PERSISTENCE_UNAVAILABLE' }));
+    expect(defineViewTypes).not.toHaveBeenCalled();
 });
 
 describe('C04/C09 SDK root exports and app context', () => {
     it('exposes exactly the supported JavaScript entry points', () => {
         expect(Object.keys(SDK).sort()).toEqual([
             'AOTUIError',
-            'ToolCatalog',
-            'View',
+            'DynamicView',
+            'StaticView',
+            'ViewMultiplicity',
+            'ViewRegion',
             'createTUIApp',
             'defineViewType',
-            'formatRef', 'getToolCatalog',
+            'formatRef',
             'refParam',
             'useAppLifecycle',
             'useAppRuntimeContext',
@@ -70,9 +76,7 @@ describe('C04/C09 SDK root exports and app context', () => {
             'useCallback',
             'useDataRef',
             'useEffect',
-            'useLLMUsage',
             'useMemo',
-            'usePersistentState',
             'useReducer',
             'useRef',
             'useState',
@@ -82,8 +86,8 @@ describe('C04/C09 SDK root exports and app context', () => {
     it('does not expose retired View registry, InlineView, selector, or ref-registry assembly values', () => {
         for (const name of [
             'ViewRegistry', 'createInlineView', 'useViewSelector', 'useRefRegistry',
-            'defineParams', 'escapeHtml', 'escapeJsonForAttr', 'useAppConfig',
-            'useAppEnv', 'useLLMOutputChannel', 'useLLMOutputHistory', 'useViewSnapshotTool',
+            'defineParams', 'escapeHtml', 'escapeJsonForAttr', 'useAppConfig', 'usePersistentState',
+            'useAppEnv', 'useLLMOutputChannel', 'useLLMOutputHistory', 'useLLMUsage', 'useViewSnapshotTool',
             'createToolBindings', 'AppTools', 'defineToolSet', 'defineViewTypeTool', 'ToolRef', 'useViewContext',
         ]) {
             expect(Object.hasOwn(SDK, name), name).toBe(false);
@@ -99,13 +103,14 @@ describe('C04/C09 SDK root exports and app context', () => {
     });
 
     it('exposes metadata, persistence and local preparation without exposing the renderer ports', async () => {
-        const report = { ok: true, entries: [] };
+        const report = { status: 'completed', ok: true, entries: [] } as const;
         const flush = vi.fn(async () => report);
-        const bind = vi.fn();
-        const captureValue = vi.fn();
+        const load = vi.fn(async () => null);
+        const save = vi.fn(async () => {});
+        const remove = vi.fn(async () => {});
         const prepareProjection = vi.fn();
         const prepareOpeningProjection = vi.fn();
-        const persistence = { protocol: 'state-session-v1', instanceId: 'public_api_run', captureValue, bind, flush };
+        const persistence: SDK.AppStatePersistence = { protocol: 'state-session-v2', instanceId: 'public_api_run', load, save, remove, flush };
         let publicContext: any;
         const projectionLimits = Object.freeze({ maxViews: 1, maxRefs: 1, maxTools: 1,
             observation: Object.freeze({ maxDepth: 16, maxNodes: 128, maxApproxBytes: 1024, maxCanonicalBytes: 1024 }),
@@ -127,9 +132,10 @@ describe('C04/C09 SDK root exports and app context', () => {
         expect(Object.keys(publicContext).sort()).toEqual(['appId', 'desktopId', 'launchConfig', 'persistence', 'prepareOpeningProjection', 'prepareProjection', 'projectionLimits']);
         expect(publicContext.projectionLimits).toBe(projectionLimits);
         expect(publicContext.persistence).toBe(persistence);
-        expect(Object.keys(publicContext.persistence).sort()).toEqual(['bind', 'captureValue', 'flush', 'instanceId', 'protocol']);
-        expect(publicContext.persistence.bind).toBe(bind);
-        expect(publicContext.persistence.captureValue).toBe(captureValue);
+        expect(Object.keys(publicContext.persistence).sort()).toEqual(['flush', 'instanceId', 'load', 'protocol', 'remove', 'save']);
+        expect(publicContext.persistence.load).toBe(load);
+        expect(publicContext.persistence.save).toBe(save);
+        expect(publicContext.persistence.remove).toBe(remove);
         expect(publicContext.persistence.flush).toBe(flush);
         expect(publicContext.prepareProjection).toBe(prepareProjection);
         expect(publicContext.prepareOpeningProjection).toBe(prepareOpeningProjection);
@@ -140,7 +146,7 @@ describe('C04/C09 SDK root exports and app context', () => {
         expect(flush).toHaveBeenCalledOnce();
     });
 
-    it('returns the actual subtree preparation and rejects a render that failed or did not commit', async () => {
+    it('reuses the healthy preparation for the same value and preserves the original render fault', async () => {
         let prepare!: (value: number) => Promise<unknown>;
         let noUpdate!: () => Promise<unknown>;
         const renderFailure = Object.assign(new Error('render failure'), { code: 'SNAPSHOT_INVALID', path: '$.views.detail' });
@@ -156,9 +162,7 @@ describe('C04/C09 SDK root exports and app context', () => {
         const projection = x.kernel.getProjectionCoordinator();
         const first = projection.token().epoch;
         await expect(prepare(1)).resolves.toEqual({ status: 'prepared', sourceEpoch: first + 1 });
-        await expect(prepare(1)).rejects.toMatchObject({
-            code: 'SNAPSHOT_INVALID', path: '$.views', message: expect.stringContaining('did not observe a Preact commit for this App'),
-        });
+        await expect(prepare(1)).resolves.toEqual({ status: 'prepared', sourceEpoch: first + 1 });
         expect(projection.failure).toBeUndefined();
         expect(projection.token().epoch).toBe(first + 1);
         const fault = { code: 'SNAPSHOT_INVALID', path: '$.views.detail', message: 'render failure' };
@@ -222,30 +226,14 @@ describe('C01/C02 actual component capability honesty', () => {
     it('keeps actual View/Ref registration without obsolete component registries', async () => {
         let context: any;
         let refFormatter: any;
-        function Body() { context = useContext(ViewRuntimeContext);const ref = useDataRef('record', { label: 'value' });refFormatter = ref;return h('p', {}, ref('Record')); }
-        const x = await mount(Body);expect(context).not.toHaveProperty('llmOutput');expect(x.kernel.getViewOwnedViewInstances()).toHaveLength(1);
-        expect(x.kernel.getViewRefs()).toContainEqual(expect.objectContaining({ viewId: 'detail', refId: 'record' }));expect(x.container.textContent).toContain('[Record](record)');
+        function Body() { context = useContext(ViewRuntimeContext);const ref = useDataRef('record', { label: 'value' }, { scope: 'protected' });refFormatter = ref;return h('p', {}, ref('Record')); }
+        const x = await mount(Body);expect(context).not.toHaveProperty('llmOutput');expect(mountedViews(x.kernel)).toHaveLength(1);
+        expect(preparedRefs(x.kernel)).toContainEqual(expect.objectContaining({ viewId: 'detail', refId: 'record' }));expect(x.container.textContent).toContain('[Record](protected record: unknown)');
         expect(refFormatter).not.toHaveProperty('data');
         expect(refFormatter).not.toHaveProperty('id');
         expect(Object.hasOwn(context, 'mountable')).toBe(false);
         expect(Object.hasOwn(context, 'dynamic')).toBe(false);
         expect(Object.hasOwn(context, 'typeTools')).toBe(false);expect(Object.hasOwn(context, 'config')).toBe(false);
-        await x.close();expect(x.kernel.getViewOwnedViewInstances()).toHaveLength(0);expect(x.kernel.getViewRefs()).toHaveLength(0);
-    });
-});
-
-describe('C03–C06 actual component subscriptions', () => {
-    it('subscribes during commit to the current DOM event and cleans it up exactly', async () => {
-        const add = vi.spyOn(document, 'addEventListener'), remove = vi.spyOn(document, 'removeEventListener'), received: any[] = [];let update!: () => void;
-        function Body() { const [revision, set] = useState(1);update = () => set(2);useLLMUsage(e => received.push({ revision, event: e }));return null; }
-        const x = await mount(Body, { outside: true });expect(x.kernel.getViewOwnedViewInstances()).toHaveLength(0);expect(calls(add)).toHaveLength(1);
-        emit();expect(received).toEqual([{ revision: 1, event: usage }]);
-        emit('aotui:llm-text');expect(received).toHaveLength(1);
-        await act(update);emit();expect(received.at(-1).revision).toBe(2);expect(calls(add)).toHaveLength(1);
-        await x.close();expect(calls(remove)).toHaveLength(1);emit();expect(received).toHaveLength(2);
-    });
-    it('rejects unavailable live output in a no-document SSR hook environment', () => {
-        vi.stubGlobal('document', undefined);
-        expect(() => renderToString(h(() => { useLLMUsage(() => {});return null; }, {}))).toThrow(/SDK_LLM_USAGE_UNAVAILABLE.*document event bridge/);
+        await x.close();expect(mountedViews(x.kernel)).toHaveLength(0);expect(preparedRefs(x.kernel)).toHaveLength(0);
     });
 });

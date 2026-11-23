@@ -1,7 +1,7 @@
-import { DEFAULT_PROJECTION_LIMITS } from '../../core/invocation/observation-registry.js';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
 import { detailFrame, publishedTool } from '../../../tests/fixtures/app-frame.js';
 import { expect, it, vi } from 'vitest';
-import type { AppContext } from '../../spi/index.js';
+import type { AppContext } from '@aotui/core';
 import { AppKernel } from './AppKernel.js';
 const defer = () => { let resolve!: () => void;const promise = new Promise<void>(yes => { resolve = yes; });return { promise, resolve }; };
 function fixture(initialize: (context: any) => Promise<any> | any, extra = {}) {
@@ -23,12 +23,14 @@ it('passes the App lifecycle port to the App and waits for its cleanup', async (
 });
 it.each(['sync', 'async'])('C2-18 %s unmount failure still clears owned registries', async kind => {
     const f = fixture(context => {
-        context.publishFrame(() => ({ views: [detailFrame({ refs: [{ id: 'key', refType: 'Value', value: {} }] })] }));
+        context.defineViewTypes([{ name: 'Detail', multiplicity: 'multiple', tools: [] }]);
+        context.publishFrame(() => ({ views: [detailFrame({ refs: [{ scope: 'protected', id: 'key', refType: 'Value', value: {} }] })] }));
         return { close: () => { if (kind === 'sync') throw Error('private sync');return Promise.reject(Error('private async')); } };
     });
-    await f.open();expect(f.kernel.getViewOwnedViewInstances()).toHaveLength(1);expect(f.kernel.getViewRefs()).toHaveLength(1);
+    await f.open();expect(f.kernel['viewOwnedTools'].inspect().views).toBe(1);
+    expect(Object.keys(f.kernel.getProjectionCoordinator()['prepared']?.refs ?? {})).toHaveLength(1);
     const closing = f.kernel.onClose();expect(f.kernel.onClose()).toBe(closing);await expect(closing).rejects.toMatchObject({ code: 'APP_UNMOUNT_FAILED', message: 'APP_UNMOUNT_FAILED' });
-    expect(f.kernel.getViewRefs()).toEqual([]);expect(f.kernel.getViewOwnedViewInstances()).toHaveLength(0);
+    expect(f.kernel.getProjectionCoordinator()['prepared']).toBeUndefined();expect(f.kernel['viewOwnedTools'].inspect().views).toBe(0);
     expect((f.kernel as any).viewRegistry).toBeUndefined();expect((f.kernel as any).typeTools).toBeUndefined();expect((f.kernel as any).viewKeyToId).toBeUndefined();
 });
 it('C2-19 closing during initialization owns the late renderer without registering or reviving', async () => {
@@ -66,7 +68,8 @@ it.each(['delete','close'] as const)('PF01 %s hanging rejects ordinary and Ref p
             parameters: schema({ n: { type: 'number' } }),
             snapshot: schema({ file: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'File', 'x-aotui-ref-value': { type: 'object' } } }),
         };
-        context.defineTools(Object.entries(schemas).map(([name, inputSchema]) => ({ viewType: 'Detail', name, description: name, inputSchema })));
+        context.defineViewTypes([{ name: 'Detail', multiplicity: 'multiple', tools: Object.entries(schemas)
+            .map(([name, inputSchema]) => ({ name, description: name, inputSchema })) }]);
         context.publishFrame(() => ({ views: [detailFrame({ bindings: Object.keys(schemas).map(name => ({
             name, enabled: true, async execute() {
                 calls.push(name);
@@ -90,5 +93,5 @@ it.each(['delete','close'] as const)('PF01 %s hanging rejects ordinary and Ref p
     for (const { tool, receiver } of operations) expect(f.kernel.validateBoundTypeTool(tool, receiver).success).toBe(false);
     for(const call of invoke){const result:any=await call();expect(result.result?.success).toBe(false);if('phase'in result)expect(result.phase).toBe('not-entered');}
     expect(calls).toHaveLength(initial);handlerGate.resolve();expect(await running).toMatchObject({phase:'entered-returned',result:{success:true,data:{value:19}}});
-    lifecycle.resolve();await closing;await f.kernel.onClose();expect(f.kernel.getViewOwnedViewInstances()).toHaveLength(0);
+    lifecycle.resolve();await closing;await f.kernel.onClose();expect(f.kernel['viewOwnedTools'].inspect().views).toBe(0);
 });

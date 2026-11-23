@@ -7,9 +7,8 @@ import type { StateStorageBackend } from '../engine/app/state-storage-host.js';
  * 
  */
 
-import { DesktopManager } from '../engine/core/manager.js';
 import { Kernel } from '../kernel/index.js';
-import type { IKernel } from '../spi/index.js';
+import type { IKernel } from '../spi/runtime/kernel.interface.js';
 import {
     type RuntimeConfig,
     type RuntimeConfigInput,
@@ -50,7 +49,6 @@ export interface RuntimeOptions {
  */
 export function createRuntime(input: RuntimeConfigInput = {}, options?: RuntimeOptions): IKernel {
     const config: RuntimeConfig = defineRuntimeConfig(input);
-    const desktopManager = new DesktopManager(config, options?.storageBackend);
-    return new Kernel(desktopManager);
+    return new Kernel(config, options?.storageBackend);
 }
 

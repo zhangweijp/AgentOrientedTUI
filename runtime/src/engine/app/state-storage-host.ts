@@ -1,12 +1,12 @@
 import * as path from 'node:path';
 import { homedir } from 'node:os';
 import { createSqliteStateStorage, type SqliteStateStorageLimits } from '../../adapters/storage/sqlite-state-storage.js';
-import { captureStorageRequest, DEFAULT_STATE_TRANSPORT_LIMITS } from '../../adapters/storage/state-storage-protocol.js';
+import { captureStorageRequest, DEFAULT_STATE_TRANSPORT_LIMITS, STATE_SESSION_VERSION } from '../../adapters/storage/state-storage-protocol.js';
 import type { StateStorageRequest, StateStorageResponse, StateTransportLimits } from '../../adapters/storage/state-storage-protocol.js';
 import { captureStateReadResult, captureStateMutationResult, captureStateReleaseResult, failedRead, failedMutation,
-    stateIssue, unknownMutation } from '../../core/persistence/state-storage.js';
-import type { StateStorage, StateReleaseResult, StateIssueCode, StateStorageBackend } from '../../core/persistence/state-storage.js';
-export type { StateStorageBackend } from '../../core/persistence/state-storage.js';
+    stateIssue, unknownMutation } from '@aotui/core/internal';
+import type { StateStorage, StateReleaseResult, StateIssueCode, StateStorageBackend } from '@aotui/core/internal';
+export type { StateStorageBackend } from '@aotui/core/internal';
 
 export const DEFAULT_NODE_STATE_LIMITS: SqliteStateStorageLimits = Object.freeze({ maxActiveOwners: 64, maxRoots: 16,
     maxClaimedNamespaces: 512, maxPendingRequests: 256, maxRecordBytes: 262272, maxAddressBytes: 1024,
@@ -62,7 +62,7 @@ export function createStateStorageHost(options: Readonly<{ instanceId: string; d
         })();
         return releasePromise;
     }
-    const denied = (request: StateStorageRequest, code: StateIssueCode): StateStorageResponse => ({ type: 'STATE_STORAGE_RESPONSE', version: 1,
+    const denied = (request: StateStorageRequest, code: StateIssueCode): StateStorageResponse => ({ type: 'STATE_STORAGE_RESPONSE', version: STATE_SESSION_VERSION,
         instanceId, sequence: request.sequence, action: request.action,
         result: request.action === 'read' ? failedRead(code) : request.action === 'release' ? { status: 'failed', issue: stateIssue(code) } : failedMutation(code) });
     function accept(input: unknown): Promise<StateStorageResponse> | null {
@@ -70,7 +70,7 @@ export function createStateStorageHost(options: Readonly<{ instanceId: string; d
         if (!request || request.instanceId !== instanceId) return null;
         if (request.sequence <= highWater) return Promise.resolve(denied(request, 'INVALID_INPUT'));
         highWater = request.sequence; // Before any await, including opening the owner.
-        if (request.action === 'release') return release().then(result => ({ type: 'STATE_STORAGE_RESPONSE', version: 1, instanceId,
+        if (request.action === 'release') return release().then(result => ({ type: 'STATE_STORAGE_RESPONSE', version: STATE_SESSION_VERSION, instanceId,
             sequence: request.sequence, action: request.action, result }));
         if (closing) return Promise.resolve(denied(request, 'OWNER_RELEASED'));
         if (uncertain && request.action !== 'read') return Promise.resolve(denied(request, 'UNKNOWN_OUTCOME'));
@@ -92,7 +92,7 @@ export function createStateStorageHost(options: Readonly<{ instanceId: string; d
                 else result = captureStateMutationResult(await opened.storage.remove(request.address!));
             } catch { result = request.action === 'read' ? failedRead('IO_FAILED') : unknownMutation(); }
             if (result.status === 'unknown') uncertain = true;
-            return { type: 'STATE_STORAGE_RESPONSE', version: 1, instanceId, sequence: request.sequence, action: request.action, result };
+            return { type: 'STATE_STORAGE_RESPONSE', version: STATE_SESSION_VERSION, instanceId, sequence: request.sequence, action: request.action, result };
         });
         active.add(task);
         void task.finally(() => { active.delete(task);bufferedBytes -= bytes; });

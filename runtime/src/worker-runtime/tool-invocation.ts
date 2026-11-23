@@ -3,11 +3,12 @@ import {
   toolInvocationResponse,
   validateInvocationParameters,
 } from '../adapters/tool-invocation.js';
-import type { ToolParameterContract } from '../core/tool/tool-parameters.js';
-import type { ToolResultData } from '../core/tool/tool-result.js';
-import type { ToolInvocationDescriptor, ViewToolReceiver } from '../core/snapshot/types.js';
+import type { ToolParameterContract } from '@aotui/core';
+import type { ToolResultData } from '@aotui/core';
+import type { RefScope, ToolInvocationDescriptor, ViewToolReceiver } from '@aotui/core/internal';
 import type { ViewToolInvocationTerminal } from '../spi/worker-protocol/messages.js';
-import { checkRefViews } from '../core/tool/snapshot-value-arguments.js';
+import { checkRefViews } from '@aotui/core/internal';
+import { refPath, scopeAllows } from '@aotui/core/internal';
 
 export async function invokeViewTool(
   input: unknown,
@@ -18,6 +19,7 @@ export async function invokeViewTool(
     validateBinding?: (tool: ToolInvocationDescriptor, receiver: ViewToolReceiver) => ToolResultData;
     getParameterContract?: (tool: ToolInvocationDescriptor, receiver: ViewToolReceiver) => ToolParameterContract | undefined;
     isRefViewLive?: (viewId: string, viewInstanceId: string) => boolean;
+    refScope?: (viewId: string, viewInstanceId: string, refId: string) => RefScope | undefined;
     invokeBinding?: (
       tool: ToolInvocationDescriptor,
       receiver: ViewToolReceiver,
@@ -25,7 +27,7 @@ export async function invokeViewTool(
     ) => ViewToolInvocationTerminal | Promise<ViewToolInvocationTerminal>;
   }>
 ) {
-  let message;
+  let message: ReturnType<typeof captureToolInvocation> | undefined;
   const failure = (code: string, message: string): ToolResultData => ({
     success: false,
     error: { code, message },
@@ -44,18 +46,31 @@ export async function invokeViewTool(
       result = failure('TOOL_EXECUTION_UNAVAILABLE', 'The App has no execution binding');
     else {
       result = context.validateBinding(message.tool, message.receiver);
-      if (result.success) result = validateInvocationParameters(message, context.getParameterContract(message.tool, message.receiver));
-      if (result.success && message.refSources.length) {
-        const issue = checkRefViews(message.refSources, message.rawArgs, context.isRefViewLive ?? (() => false));
-        if (issue) result = { success: false, error: { code: issue.code, message: issue.message, context: { path: issue.path } } };
-      }
       if (result.success) {
-        try {
-          const terminal = toolInvocationResponse(message,
-            await context.invokeBinding(message.tool, message.receiver, message.effectiveArgs));
-          if (terminal) return terminal;
-        } catch { /* Execution ended with an unreportable outcome. */ }
-        return toolInvocationResponse(message, { phase: 'finished-unknown' });
+        const prepared = validateInvocationParameters(message, context.getParameterContract(message.tool, message.receiver));
+        const appId = message.appId;
+        const localRefs = prepared.status === 'prepared' ? message.refSources.filter(source => source.appId === appId) : [];
+        let issue = prepared.status === 'rejected' ? prepared.issue
+          : checkRefViews(localRefs, context.isRefViewLive ?? (() => false));
+        if (!issue) {
+          const receiver = message.receiver;
+          const denied = localRefs.find(source => {
+            const scope = context.refScope?.(source.viewId, source.viewInstanceId, source.refId);
+            return !scope || !scopeAllows(scope, source.viewInstanceId, receiver.viewInstanceId);
+          });
+          if (denied) issue = { code: 'REF_NOT_VISIBLE', message: 'The publishing page no longer grants this Ref.',
+            path: refPath(denied.param, denied.index) };
+        }
+        if (issue) result = { success: false, error: { code: issue.code, message: issue.message,
+          ...(issue.path ? { context: { path: issue.path } } : {}) } };
+        else if (prepared.status === 'prepared') {
+          try {
+            const terminal = toolInvocationResponse(message,
+              await context.invokeBinding(message.tool, message.receiver, prepared.effectiveArgs));
+            if (terminal) return terminal;
+          } catch { /* Execution ended with an unreportable outcome. */ }
+          return toolInvocationResponse(message, { phase: 'finished-unknown' });
+        }
       }
     }
   } catch {

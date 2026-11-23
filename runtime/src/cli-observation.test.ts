@@ -1,11 +1,11 @@
-import { projectCompleteViews } from './core/invocation/observation-registry.js';
+import { projectCompleteViews } from '@aotui/core/internal';
 import { buildViewMessageMarkup } from './adapters/view-message.js';
 import { readFileSync } from 'node:fs';
 import { transformSync } from 'esbuild';
 import { Linter, type Rule, type SourceCode } from 'eslint';
 import { describe, expect, it, vi } from 'vitest';
-import { createAppInteraction, createSnapshotCore, createViewOwnedTools, refKey } from './core/index.js';
-import type { AppInteraction, AppInteractionPolicy } from './core/index.js';
+import { createAppInteraction, createSnapshotCore, createViewOwnedTools, refKey } from '@aotui/core';
+import type { AppInteraction, AppInteractionPolicy } from '@aotui/core';
 
 const cli = transformSync(readFileSync(new URL('../../host/src/app-distribution/cli.ts', import.meta.url), 'utf8'), { loader: 'ts', target: 'es2022' }).code;
 const example = readFileSync(new URL('../../demo-apps/aotui-ide/examples/local-scoped-ide.mjs', import.meta.url), 'utf8');
@@ -30,22 +30,18 @@ function exampleViews(client: AppInteraction, emit: (value: unknown) => void): (
 function fixture(project?: AppInteractionPolicy['project']) {
     const core = createSnapshotCore({ appId: 'app', instanceId: 'run', now: () => 0 });
     const tools = createViewOwnedTools('app', 'run');
-    tools.defineTools([
-        { viewType: 'Detail', name: 'edit', description: 'Edit',
-            inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
-        { viewType: 'Detail', name: 'inspect', description: 'Inspect', inputSchema: { type: 'object', properties: {
+    tools.defineViewTypes([{ name: "Detail", multiplicity: 'multiple', tools: [{ name: 'edit', description: 'Edit', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }, { name: 'inspect', description: 'Inspect', inputSchema: { type: 'object', properties: {
             record: { type: 'string', minLength: 1, 'x-aotui-ref-kind': 'unknown', 'x-aotui-ref-value': { type: 'object' } },
-        }, required: ['record'], additionalProperties: false } },
-    ]);
+        }, required: ['record'], additionalProperties: false } }] }]);
     const frame = tools.prepareFrame(['first', 'second'].map(id => ({
-        id, type: 'Detail', owner: {}, bindings: ['edit', 'inspect'].map(name => ({ name, enabled: true, execute: () => ({ success: true }) })),
+        createId: () => id, type: 'Detail', owner: {}, bindings: ['edit', 'inspect'].map(name => ({ name, enabled: true, execute: () => ({ success: true }) })),
     })));
     frame.accept();
     const views = frame.instances;
-    const published = core.committer.accept({ schemaVersion: 6, appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
+    const published = core.committer.accept({ schemaVersion: 7, appId: 'app', instanceId: 'run', producerSeq: 1, sourceEpoch: 1, capturedAt: 0,
         views: views.map(view => ({ toolBindings: view.toolBindings, id: view.viewId, viewInstanceId: view.viewInstanceId, type: view.viewType, name: view.viewId,
-            kind: 'state', content: { format: 'markdown-v1', value: 'Current content' } })),
-        refs: Object.fromEntries(views.map(view => [refKey(view.viewId, view.viewInstanceId, 'data'), {
+            region: 'dynamic', content: { format: 'markdown-v1', value: 'Current content' } })),
+        refs: Object.fromEntries(views.map(view => [refKey(view.viewId, view.viewInstanceId, 'data'), { scope: 'protected',
             id: 'data', ownerViewId: view.viewId, ownerViewInstanceId: view.viewInstanceId, refType: 'unknown', target: { kind: 'snapshot-value', payload: { value: 1 } },
         }])), tools: Object.fromEntries(frame.tools.map(tool => [tool.id, tool])) });
     expect(published.status).toBe('published');

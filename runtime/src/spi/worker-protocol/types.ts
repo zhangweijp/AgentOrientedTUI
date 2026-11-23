@@ -1,4 +1,4 @@
-export const WORKER_PROTOCOL = 'app-worker/v1' as const;
+export const WORKER_PROTOCOL = 'app-worker/v6' as const;
 
 /**
  * Worker Protocol - Type Definitions
@@ -10,7 +10,7 @@ export const WORKER_PROTOCOL = 'app-worker/v1' as const;
  * @module @aotui/runtime/spi/worker-protocol
  */
 
-import type { AppID, DesktopID } from '../core/types.js';
+import type { AppID, DesktopID } from '@aotui/core';
 
 // ============================================================================
 // Re-export core types for convenience

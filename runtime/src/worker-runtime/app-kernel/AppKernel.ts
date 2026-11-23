@@ -1,23 +1,17 @@
-import type { ToolResultData } from '../../core/tool/tool-result.js';
-import type {
-    AppContext,
-    AppKernelConfig,
-    AppLaunchConfig,
-    AppInstance, RuntimeContext, TUIAppFactory,
-} from '../../spi/index.js';
+import type { ToolResultData } from '@aotui/core';
+import type { AppContext, AppKernelConfig, AppLaunchConfig, AppInstance, RuntimeContext, TUIAppFactory } from '@aotui/core';
 import type { ViewToolInvocationTerminal } from '../../spi/worker-protocol/index.js';
 
-import { commitAppFrame, SemanticProjectionCoordinator } from '../../core/projection/coordinator.js';
-import { hostedObservationCapacityIssue } from '../../core/invocation/observation-registry.js';
-import type { ProjectionLimits } from '../../core/invocation/observation-types.js';
-import { createViewOwnedTools } from '../../core/tool/view-owned-tools.js';
-import type { ToolParameterContract } from '../../core/tool/tool-parameters.js';
-import type { ToolInvocationDescriptor, ViewToolReceiver } from '../../core/snapshot/types.js';
+import { commitAppFrame, SemanticProjectionCoordinator } from '@aotui/core/internal';
+import { hostedObservationCapacityIssue } from '@aotui/core/internal';
+import type { ProjectionLimits } from '@aotui/core';
+import { createViewOwnedTools } from '@aotui/core';
+import type { ToolParameterContract } from '@aotui/core';
+import type { ToolInvocationDescriptor, ViewToolReceiver } from '@aotui/core/internal';
 import { createAppLifecycle } from '../app-lifecycle.js';
-import type { AppStatePersistence } from '../../spi/runtime/state-persistence.interface.js';
-import { SnapshotDataError } from '../../core/snapshot/json.js';
+import type { AppStatePersistence } from '@aotui/core';
+import { SnapshotDataError } from '@aotui/core';
 import { closeError } from '../../engine/core/close-handle.js';
-import type { LLMUsageEvent } from '../../spi/core/llm-usage.js';
 
 /**
  * App Kernel Implementation
@@ -79,8 +73,14 @@ export class AppKernel {
         return this.viewOwnedTools.getView(viewId)?.viewInstanceId === viewInstanceId;
     }
 
-    getViewOwnedViewInstances() {
-        return this.viewOwnedTools.listViews();
+    closeView(viewId: string, viewInstanceId: string): ViewToolInvocationTerminal | Promise<ViewToolInvocationTerminal> {
+        if (this.closing || this.projectionOwner.signal.aborted)
+            return { phase: 'not-entered', result: this.closedToolResult() };
+        return this.viewOwnedTools.closeView(viewId, viewInstanceId);
+    }
+
+    refScope(viewId: string, viewInstanceId: string, refId: string) {
+        return this.projection.refScope(viewId, viewInstanceId, refId);
     }
 
     constructor(private readonly config: AppKernelConfig & AppContext & {
@@ -133,13 +133,7 @@ export class AppKernel {
 
     async onReinitialize(reason?: string): Promise<void> {
         this.assertActive();
-        if (this.config.onReinitialize) {
-            await this.config.onReinitialize({
-                ...this.context,
-                reason: reason ?? (this.config.launchConfig as { __aotuiLifecycle?: { reason?: string } } | undefined)
-                    ?.__aotuiLifecycle?.reason,
-            });
-        }
+        await this.config.onReinitialize?.({ ...this.context, reason });
     }
 
     onDelete(): Promise<void> {
@@ -153,17 +147,9 @@ export class AppKernel {
         void this.deletePromise.catch(() => {});return this.deletePromise;
     }
 
-    getViewRefs() {
-        return this.projection.getViewRefs();
-    }
-
     // ─────────────────────────────────────────────────────────────
     //  Private: View Initialization
     // ─────────────────────────────────────────────────────────────
-
-    dispatchLLMUsage(event: LLMUsageEvent): void {
-        if (!this.closing && !this.projectionOwner.signal.aborted) this.instance?.onLLMUsage?.(event);
-    }
 
     private async initializeInstance(): Promise<void> {
         const { launchConfig, projectionLimits, persistence } = this.config;
@@ -172,10 +158,10 @@ export class AppKernel {
             launchConfig,
             projectionLimits,
             signal: this.projectionOwner.signal,
-            defineTools: definitions => {
+            defineViewTypes: definitions => {
                 this.assertActive();
                 this.projection.assertWritable();
-                this.viewOwnedTools.defineTools(definitions);
+                this.viewOwnedTools.defineViewTypes(definitions);
             },
             publishFrame: (build, options) => {
                 this.assertActive();
@@ -184,6 +170,10 @@ export class AppKernel {
                     this.assertActive();
                     return frame;
                 }, options);
+            },
+            readPreparedProjection: () => {
+                if (this.projectionOwner.signal.aborted) throw closeError('PROJECTION_CLOSED');
+                return this.projection.readPreparedProjection();
             },
             ...(persistence === undefined ? {} : { persistence }),
             appLifecycle: this.appLifecycle.port,

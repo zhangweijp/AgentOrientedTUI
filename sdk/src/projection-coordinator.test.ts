@@ -1,29 +1,28 @@
-import { DEFAULT_PROJECTION_LIMITS } from '../../runtime/src/core/invocation/observation-registry.js';
+import { mountedViews, preparedRefs } from './__tests__/projection-facts.js';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
 import { createAppId, createDesktopId } from '../../runtime/src/spi/core/id-factory.js';
 /**
  * M3 real SDK + Preact + AppKernel contract probes (NOT hand-authored HTML).
  * Assertions compare mounted View identities, Ref/Tool projections and the Core epoch.
  */
 import { describe, expect, it } from 'vitest';
-import { h, render } from 'preact';
+import { h } from 'preact';
 import { act } from 'preact/test-utils';
 import { useState } from 'preact/hooks';
 import { createTUIApp } from './app-factory/createTUIApp.js';
-import { createRefCapture } from '@aotui/runtime/spi';
-import { View } from './components/View.js';
+import { DynamicView } from './components/View.js';
 import { useDataRef } from './hooks/useRef.js';
 import { useArrayRef } from './hooks/useArrayRef.js';
 import { defineViewType, type ViewType } from './tools/view-type-tool.js';
 import Type from 'typebox';
-import { ViewRuntimeContext } from './contexts/view-runtime-context.js';
 import { AppKernel } from '../../runtime/src/worker-runtime/app-kernel/AppKernel.js';
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const refsOf = (kernel: AppKernel) => Object.fromEntries(
-    kernel.getViewRefs().map(ref => [`${ref.viewId}:${ref.refId}`, ref.value]),
+    preparedRefs(kernel).map(ref => [`${ref.viewId}:${ref.refId}`, ref.value]),
 );
 
-const EmptyWorkspace=defineViewType({name:'Workspace'});
+const EmptyWorkspace=defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'Workspace'});
 function toolsOf(kernel:AppKernel) {
     const projection=kernel.getProjectionCoordinator();
     if (!projection.token().ready) return [];
@@ -51,35 +50,34 @@ describe('M3 SDK semantic projection commit', () => {
     it('exposes View, Ref, ArrayRef and one Tool activation on the initial committed frame', async () => {
         function Content() {
             const [task] = useState({ id: 'A' });
-            const ref = useDataRef('selected', task);
-            const [listLabel, itemLabel] = useArrayRef('pending', [task], { itemType: 'Task' });
+            const ref = useDataRef('selected', task, { scope: 'protected' });
+            const [listLabel, itemLabel] = useArrayRef('pending', [task], { scope: 'protected', itemType: 'Task' });
             return h('section', {}, [
                 h('p', { key: 'selected' }, ref('Stable')),
                 h('p', { key: 'item' }, itemLabel(0, 'Stable')),
                 h('p', { key: 'list' }, listLabel('List')),
             ]);
         }
-        const Workspace=defineViewType<object>()({name:'Workspace',tools:{complete:{description:'Complete the current task.',inputSchema:Type.Object({}),execute:()=>({success:true})}}});
+        const Workspace=defineViewType<object>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'Workspace',tools:{complete:{description:'Complete the current task.',inputSchema:Type.Object({}),execute:()=>({success:true})}}});
 
         function App() {
-            return h(View,{kind:'state',id:'workspace',type:Workspace,context:{}},h(Content,{}));
+            return h(DynamicView,{idPrefix:'workspace',type:Workspace,context:{}},h(Content,{}));
         }
         const x = setup(App,[Workspace]);
         try {
             await x.open();
-            const view = x.container.querySelector('[data-view-id="workspace"]');
+            const view = x.container.querySelector('[data-aotui-view="Workspace"]');
             expect(view).not.toBeNull();
-            expect(x.kernel.getViewOwnedViewInstances()[0]?.viewInstanceId).toEqual(expect.any(String));
+            expect(mountedViews(x.kernel)[0]?.viewInstanceId).toEqual(expect.any(String));
             expect(Object.keys(refsOf(x.kernel)).sort()).toEqual([
-                'workspace:pending[0]',
                 'workspace:pending',
                 'workspace:selected',
             ].sort());
             const allRefs = refsOf(x.kernel) as Record<string, any>;
-            expect(allRefs['workspace:pending[0]']).toMatchObject({ id: 'A' });
+            expect(allRefs['workspace:pending'][0]).toMatchObject({ id: 'A' });
             expect(allRefs['workspace:pending']).toHaveLength(1);
-            expect(x.container.innerHTML).toContain('(Task:pending[0])');
-            expect(x.container.innerHTML).toContain('(Task[]:pending)');
+            expect(x.container.innerHTML).toContain('(pending[0])');
+            expect(x.container.innerHTML).toContain('(protected pending: Task[])');
             const tools = toolsOf(x.kernel);
             expect(tools).toHaveLength(1);
             expect(tools[0]).toMatchObject({name:'complete',viewType:'Workspace'});
@@ -95,15 +93,15 @@ describe('M3 SDK semantic projection commit', () => {
     it('publishes View, Ref and disabled type Tool together from one state commit', async () => {
         let update!: (state: { id: string; enabled: boolean }) => void;
         function Content({ id }: { id: string }) {
-            const left = useDataRef('left', { id });
-            const right = useDataRef('right', { id });
+            const left = useDataRef('left', { id }, { scope: 'protected' });
+            const right = useDataRef('right', { id }, { scope: 'protected' });
             return h('section', {}, [h('p', { key: 'left' }, left('Stable')), h('p', { key: 'right' }, right('Stable'))]);
         }
-        const Workspace=defineViewType<{enabled:boolean}>()({name:'Workspace',tools:{inspect:{description:'Inspect the Workspace.',inputSchema:Type.Object({}),enabled:ct=>ct.enabled,execute:()=>({success:true})}}});
+        const Workspace=defineViewType<{enabled:boolean}>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'Workspace',tools:{inspect:{description:'Inspect the Workspace.',inputSchema:Type.Object({}),enabled:ct=>ct.enabled,execute:()=>({success:true})}}});
 
         function App() {
             const [state, setState] = useState({ id: 'A', enabled: true }); update = setState;
-            return h(View,{kind:'state',id:'workspace',type:Workspace,context:{enabled:state.enabled}},
+            return h(DynamicView,{idPrefix:'workspace',type:Workspace,context:{enabled:state.enabled}},
                 h(Content,{id:state.id}));
         }
         const x = setup(App,[Workspace]);
@@ -145,10 +143,10 @@ describe('M3 SDK semantic projection commit', () => {
         function Content() {
             const [value, setValue] = useState({ id: 'A' });
             update = setValue;
-            const ref = useDataRef('selected', value);
+            const ref = useDataRef('selected', value, { scope: 'protected' });
             return h('p', {}, ref('Stable label'));
         }
-        function App() { return h(View, {kind: 'state', id: 'workspace', type: EmptyWorkspace }, h(Content, {})); }
+        function App() { return h(DynamicView, {idPrefix: 'workspace', type: EmptyWorkspace }, h(Content, {})); }
         const x = setup(App);
         const epochs: number[] = [];
         const unsub = x.kernel.getProjectionCoordinator().subscribe(token => epochs.push(token.epoch));
@@ -180,20 +178,20 @@ describe('M3 SDK semantic projection commit', () => {
         function App() {
             const [visible, update] = useState(true);
             setVisible = update;
-            return visible ? h(View, {kind: 'state', id: 'workspace', type: EmptyWorkspace }, h('p', {}, 'Visible')) : null;
+            return visible ? h(DynamicView, {idPrefix: 'workspace', type: EmptyWorkspace }, h('p', {}, 'Visible')) : null;
         }
         const x = setup(App);
         try {
             await x.open();
-            const original = x.kernel.getViewOwnedViewInstances()[0]?.viewInstanceId;
+            const original = mountedViews(x.kernel)[0]?.viewInstanceId;
             expect(original).toBeTruthy();
             setVisible(false);
             await sleep(35);
-            expect(x.container.querySelector('[data-view-id="workspace"]')).toBeNull();
-            expect(x.kernel.getViewOwnedViewInstances()).toEqual([]);
+            expect(x.container.querySelector('[data-aotui-view="Workspace"]')).toBeNull();
+            expect(mountedViews(x.kernel)).toEqual([]);
             setVisible(true);
             await sleep(35);
-            const fresh = x.kernel.getViewOwnedViewInstances()[0]?.viewInstanceId;
+            const fresh = mountedViews(x.kernel)[0]?.viewInstanceId;
             expect(fresh).toBeTruthy();
             expect(fresh).not.toBe(original);
             expect(x.kernel.getProjectionCoordinator().token().ready).toBe(true);
@@ -209,14 +207,14 @@ describe('M3 observable commit-phase consistency', () => {
         function Content() {
             const [state, setState] = useState({ id: 'A' });
             update = setState;
-            const left = useDataRef('left', state);
-            const right = useDataRef('right', state);
+            const left = useDataRef('left', state, { scope: 'protected' });
+            const right = useDataRef('right', state, { scope: 'protected' });
             return h('section', {}, [
                 h('p', {key:'left'}, left('Fixed label')),
                 h('p', {key:'right'}, right('Fixed label')),
             ]);
         }
-        function App() { return h(View, {kind: 'state', id: 'workspace', type: EmptyWorkspace }, h(Content, {})); }
+        function App() { return h(DynamicView, {idPrefix: 'workspace', type: EmptyWorkspace }, h(Content, {})); }
         const x = setup(App);
         const seen: Array<{ left?: string; right?: string; ready: boolean }> = [];
         const unsubscribe = x.kernel.getProjectionCoordinator().subscribe(token => {
@@ -255,20 +253,20 @@ describe('M3 ArrayRef marker and registry parity', () => {
                 itemType: 'Task',
             });
             setItems = update;
-            const [list, item] = useArrayRef('pending', state.items, { itemType: state.itemType });
+            const [list, item] = useArrayRef('pending', state.items, { scope: 'protected', itemType: state.itemType });
             return h('section', {}, [
                 h('p', { key: 'list' }, list('List')),
                 h('p', { key: 'first' }, state.items.length ? item(0, 'Stable') : 'None'),
             ]);
         }
-        function App() { return h(View, {kind: 'state', id: 'workspace', type: EmptyWorkspace }, h(Content, {})); }
+        function App() { return h(DynamicView, {idPrefix: 'workspace', type: EmptyWorkspace }, h(Content, {})); }
         const x = setup(App);
         const key = (ref: string) => 'workspace:' + ref;
         try {
             await x.open();
             const refs = () => refsOf(x.kernel) as Record<string, any>;
             expect(refs()[key('pending')]).toEqual([{ id: 'A' }, { id: 'B' }]);
-            expect(refs()[key('pending[0]')]).toEqual({ id: 'A' });
+            expect(refs()[key('pending')][0]).toEqual({ id: 'A' });
             expect(refs()[key('Task:pending[0]')]).toBeUndefined();
             expect(refs()[key('Task[]:pending')]).toBeUndefined();
 
@@ -282,15 +280,15 @@ describe('M3 ArrayRef marker and registry parity', () => {
             observer.disconnect();
             expect(domMutations).toBe(0);
             expect(x.container.innerHTML).toBe(beforeHtml);
-            expect(refs()[key('pending[0]')]).toEqual({ id: 'B' });
+            expect(refs()[key('pending')][0]).toEqual({ id: 'B' });
             expect(refs()[key('pending')]).toEqual([{ id: 'B' }, { id: 'A' }]);
             expect(x.kernel.getProjectionCoordinator().token().epoch).toBeGreaterThan(beforeEpoch);
 
             setItems({ items: [{ id: 'B' }], itemType: 'Job' });
             await sleep(40);
-            expect(x.kernel.getViewRefs().filter(r => r.viewId === 'workspace').every(r => r.refType === 'Job')).toBe(true);
+            expect(preparedRefs(x.kernel).filter(r => r.viewId === 'workspace').every(r => r.refType === 'Job')).toBe(true);
             expect(refs()[key('pending')]).toEqual([{ id: 'B' }]);
-            expect(refs()[key('pending[0]')]).toEqual({ id: 'B' });
+            expect(refs()[key('pending')][0]).toEqual({ id: 'B' });
             expect(refs()[key('Task:pending[0]')]).toBeUndefined();
             expect(refs()[key('Task[]:pending')]).toBeUndefined();
 
@@ -311,19 +309,19 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
         let mutate!: (next: State) => void;
         let expected: State = { show: true, data: [{ id: 'A' }], enabled: true };
         function Details({ data }: { data: Task[] }) {
-            const [list, item] = useArrayRef('tasks', data, { itemType: 'Task' });
+            const [list, item] = useArrayRef('tasks', data, { scope: 'protected', itemType: 'Task' });
             return h('section', {}, [
                 h('p', { key: 'list' }, list('List')),
                 data.length ? h('p', { key: 'first' }, item(0, 'Stable')) : null,
             ]);
         }
-        const Workspace=defineViewType<{enabled:boolean}>()({name:'Workspace',tools:{inspect:{description:'Inspect the current Workspace.',inputSchema:Type.Object({}),enabled:ct=>ct.enabled,execute:()=>({success:true})}}});
+        const Workspace=defineViewType<{enabled:boolean}>()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix,name:'Workspace',tools:{inspect:{description:'Inspect the current Workspace.',inputSchema:Type.Object({}),enabled:ct=>ct.enabled,execute:()=>({success:true})}}});
 
         function App() {
             const [state, set] = useState<State>(expected);
             mutate = next => { expected = next; set(next); };
             return state.show
-                ? h(View,{kind:'state',id:'workspace',type:Workspace,context:{enabled:state.enabled}},
+                ? h(DynamicView,{idPrefix:'workspace',type:Workspace,context:{enabled:state.enabled}},
                     h('section',{},h(Details,{data:state.data})))
                 : null;
         }
@@ -331,20 +329,20 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
         const observed: string[] = [];
         let torn = 0;
         const unlisten = x.kernel.getProjectionCoordinator().subscribe(token => {
-            const views = x.kernel.getViewOwnedViewInstances();
+            const views = mountedViews(x.kernel);
             const refs = refsOf(x.kernel) as Record<string, any>;
             const ids = Object.keys(refs);
             const tools = toolsOf(x.kernel);
             if (!token.ready) torn++;
             if (views.length === 0) {
-                if (ids.length || tools.length || x.container.querySelector('[data-view-id=workspace]')) torn++;
+                if (ids.length || tools.length || x.container.querySelector('[data-aotui-view=Workspace]')) torn++;
             } else {
-                const domNode = x.container.querySelector('[data-view-id="workspace"]');
+                const domNode = x.container.querySelector('[data-aotui-view="Workspace"]');
                 if (!domNode || !views[0]?.viewInstanceId) torn++;
                 // An emitted Ref must be registered under the same exact key.
                 if (!Object.hasOwn(refs, 'workspace:tasks')) torn++;
-                if (Object.hasOwn(refs, 'workspace:tasks[0]') &&
-                    !domNode?.textContent?.includes('(Task:tasks[0])')) torn++;
+                if (refs['workspace:tasks']?.length &&
+                    !domNode?.textContent?.includes('(tasks[0])')) torn++;
                 if (tools.length !== (expected.enabled ? 1 : 0)) torn++;
                 if (tools.length && tools[0]!.viewType !== 'Workspace') torn++;
             }
@@ -365,7 +363,7 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
                 }));
                 mutate({ show, data, enabled });
                 await sleep(8);
-                const currentViews = x.kernel.getViewOwnedViewInstances();
+                const currentViews = mountedViews(x.kernel);
                 const refs = refsOf(x.kernel);
                 const tools = toolsOf(x.kernel);
                 if (!show) {
@@ -374,7 +372,7 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
                     expect(tools).toHaveLength(0);
                 } else {
                     expect(currentViews).toHaveLength(1);
-                    expect(Object.keys(refs).length).toBe(1 + data.length);
+                    expect(Object.keys(refs).length).toBe(1);
                     expect(tools).toHaveLength(enabled ? 1 : 0);
                 }
             }
@@ -387,49 +385,33 @@ describe('M3 rapid lifecycle and asynchronous projection resilience', () => {
     });
 });
 
-describe('M3 ArrayRef cleanup on registration failure', () => {
-    it('removes every Ref registered before a later item registration throws', () => {
-        const refs = new Map<string, object>();
-        const registry = {
-            captureRef: createRefCapture(),
-            registerRef(id: string, value: object) {
-                if (id === 'pending[1]') throw new Error('controlled Ref registration failure');
-                refs.set(id, value);
-                return {
-                    update(next: object) { refs.set(id, next); },
-                    release() { refs.delete(id); },
-                };
-            },
-        };
+describe('ArrayRef registration failure', () => {
+    it('keeps the projection atomic when another publisher owns the collection ID', async () => {
         function Content() {
-            useArrayRef('pending', [{ id: 'A' }, { id: 'B' }], { itemType: 'Task' });
+            useDataRef('pending', { id: 'first' }, { scope: 'protected' });
+            useArrayRef('pending', [{ id: 'A' }, { id: 'B' }], { scope: 'protected', itemType: 'Task' });
             return null;
         }
-        const container = document.createElement('div');
-        expect(() => render(
-            h(ViewRuntimeContext.Provider, {
-                value: { viewId: 'example', ...registry },
-            }, h(Content, {})),
-            container,
-        )).toThrow('controlled Ref registration failure');
-        expect([...refs.keys()]).toEqual([]);
-        render(null, container);
+        const x = setup(() => h(DynamicView, { idPrefix: 'workspace', type: EmptyWorkspace }, h(Content, {})));
+        try {
+            await expect(x.open()).rejects.toMatchObject({ code: 'REF_ALREADY_REGISTERED' });
+            expect(preparedRefs(x.kernel)).toEqual([]);
+        } finally { await x.close(); }
     });
 });
 
 describe('M3 untyped ArrayRef marker and registry parity', () => {
     it('registers only bare IDs when itemType is omitted', async () => {
         function Content() {
-            const [, item] = useArrayRef('pending', [{ id: 'A' }]);
+            const [, item] = useArrayRef('pending', [{ id: 'A' }], { scope: 'protected' });
             return h('p', {}, item(0, 'Stable'));
         }
-        function App() { return h(View, {kind: 'state', id: 'workspace', type: EmptyWorkspace }, h(Content, {})); }
+        function App() { return h(DynamicView, {idPrefix: 'workspace', type: EmptyWorkspace }, h(Content, {})); }
         const x = setup(App);
         try {
             await x.open();
             expect(Object.keys(refsOf(x.kernel)).sort()).toEqual([
                 'workspace:pending',
-                'workspace:pending[0]',
             ]);
             expect(x.container.textContent).toContain('(pending[0])');
         } finally {
@@ -444,13 +426,13 @@ describe('M3 batched semantic updates', () => {
         function Content() {
             const [state, setter] = useState({ id: 'first' });
             setState = setter;
-            const selected = useDataRef('selected', state);
+            const selected = useDataRef('selected', state, { scope: 'protected' });
             return h('section', {}, [
                 h('p', {}, selected('Unchanging')),
             ]);
         }
         function App() {
-            return h(View, {kind: 'state', id: 'workspace', type: EmptyWorkspace }, h(Content, {}));
+            return h(DynamicView, {idPrefix: 'workspace', type: EmptyWorkspace }, h(Content, {}));
         }
         const x = setup(App);
         const events: Array<{ epoch: number; id: string }> = [];

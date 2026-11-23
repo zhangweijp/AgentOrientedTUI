@@ -1,4 +1,4 @@
-import { projectCompleteViews } from '../../core/invocation/observation-registry.js';
+import { projectCompleteViews } from '@aotui/core/internal';
 import { Worker } from 'node:worker_threads';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AppWorkerHost } from './worker-host.js';
-import type { AppInteractionPolicy } from '../../core/invocation/app-interaction-types.js';
+import type { AppInteractionPolicy } from '@aotui/core';
 
 type SignalPolicy = 'auto' | 'never' | undefined;
 type Capture =
@@ -32,11 +32,11 @@ function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, f
         import { h } from 'preact';
         import Type from 'typebox';
         import { useLayoutEffect, useMemo, useState } from 'preact/hooks';
-        import { createTUIApp, View, useDataRef, defineViewType } from '@aotui/sdk';
+        import { createTUIApp, useDataRef, defineViewType, DynamicView } from '@aotui/sdk';
 
         Date.now = () => 1700000000000;
         let businessCalls = 0;
-        const WorkspaceType = defineViewType()({ name: 'Workspace', tools: {
+        const WorkspaceType = defineViewType()({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Workspace', tools: {
             refresh: {
                 description: 'Refresh the current view',
                 inputSchema: Type.Object({ query: Type.String() }, { additionalProperties: false }),
@@ -71,7 +71,7 @@ function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, f
             const selection = useMemo(() => state.invalidRef
                 ? { value: () => 'not cloneable' }
                 : { value: state.refValue }, [state.invalidRef, state.refValue]);
-            const ref = useDataRef('selection', selection);
+            const ref = useDataRef('selection', selection, { scope: 'protected' });
             useLayoutEffect(() => { if (state.invalidLayout) throw new Error('Layout did not finish'); });
             return h('section', {}, h('p', {}, state.text + ' ' + ref('Selection')));
         }
@@ -103,7 +103,7 @@ function applicationSource(signalPolicy: SignalPolicy, initiallyOpen: boolean, f
                 return () => parentPort.off('message', onCommand);
             }, []);
             return h('div', null, state.open
-                ? h(View, { kind: 'state', id: 'workspace', type: WorkspaceType, context: { state, setState }, name: 'Workspace' },
+                ? h(DynamicView, { idPrefix: 'workspace', type: WorkspaceType, context: { state, setState }, name: 'Workspace' },
                     h(Workspace, { state }))
                 : null);
         }
@@ -121,9 +121,6 @@ async function compileApplication(name: string, signalPolicy: SignalPolicy, init
         platform: 'node', format: 'esm', target: 'node20', packages: 'external',
         alias: {
             '@aotui/sdk': resolve(process.cwd(), '../sdk/src/index.ts'),
-            '@aotui/runtime/spi': resolve(process.cwd(), 'src/spi/index.ts'),
-            '@aotui/runtime/core': resolve(process.cwd(), 'src/core/index.ts'),
-            '@aotui/runtime/adapters/dom': resolve(process.cwd(), 'src/adapters/dom-app.ts'),
         },
         logLevel: 'silent',
     });
@@ -137,7 +134,10 @@ beforeAll(async () => {
     const modules = join(temporaryDirectory, 'node_modules');
     await mkdir(modules, { recursive: true });
     await symlink(join(runtime, 'node_modules/preact'), join(modules, 'preact'), 'dir');
-    await symlink(join(runtime, 'node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+    await symlink(join(runtime, '../sdk/node_modules/linkedom'), join(modules, 'linkedom'), 'dir');
+    await symlink(join(runtime, '../core/node_modules/acorn'), join(modules, 'acorn'), 'dir');
+    await mkdir(join(modules, '@aotui'), { recursive: true });
+    await symlink(resolve(runtime, '../core'), join(modules, '@aotui/core'), 'dir');
     await symlink(join(runtime, '../sdk/node_modules/typebox'), join(modules, 'typebox'), 'dir');
     workerScriptPath = join(temporaryDirectory, 'worker-runtime.mjs');
     await build({

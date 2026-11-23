@@ -8,7 +8,8 @@
  * - 发布信号到订阅者
  */
 
-import type { DesktopID, UpdateSignal } from '../../spi/index.js';
+import type { DesktopID } from '@aotui/core';
+import type { UpdateSignal } from '../../spi/core/signals.js';
 
 export type SignalListener = (signal: UpdateSignal) => void;
 

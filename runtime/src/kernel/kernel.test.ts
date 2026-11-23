@@ -1,21 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { Kernel } from './index.js';
-import { DesktopManager } from '../engine/core/manager.js';
+import { createRuntime, createDesktopId } from '../index.js';
 
 describe('Kernel lifecycle entry points', () => {
-    it('creates and destroys Desktops through the manager', async () => {
-        const manager = new DesktopManager();
-        const kernel = new Kernel(manager);
-        const id = await kernel.createDesktop('kernel-test');
+    it('creates registered Desktops with default and supplied IDs', async () => {
+        const kernel = createRuntime();
+        const generated = await kernel.createDesktop();
+        expect(generated).toMatch(/^dt_/);
+        expect(kernel.getDesktop(generated).id).toBe(generated);
+        const id = await kernel.createDesktop(createDesktopId('kernel-test'));
+        expect(id).toBe('kernel-test');
 
         expect(kernel.getDesktop(id).id).toBe(id);
         await kernel.destroyDesktop(id);
-        expect(manager.get(id)).toBeUndefined();
+        expect(() => kernel.getDesktop(id)).toThrow(expect.objectContaining({ code: 'DESKTOP_NOT_FOUND' }));
         await kernel.shutdown();
     });
 
     it('does not expose the retired snapshot, lock, or dispatcher Kernel APIs', () => {
-        const kernel = new Kernel(new DesktopManager());
+        const kernel = createRuntime();
         expect(kernel).toHaveProperty('getAppInteraction');
 
         for (const name of [
@@ -26,6 +28,7 @@ describe('Kernel lifecycle entry points', () => {
             'acquireLock',
             'releaseLock',
             'experimentalCreateAppScope',
+            'desktopManager',
         ]) {
             expect(kernel).not.toHaveProperty(name);
         }

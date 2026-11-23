@@ -4,10 +4,12 @@ export function staticCases(api, Type) {
   const inputSchema = Type.Object({ path: Type.String() });
   const execute = () => ({ success: true });
   const declaration = () => ({ description: 'Inspect a working object.', inputSchema, execute });
-  const define = api.defineViewType();
+  const defineWithContext = api.defineViewType();
+  const define = declaration => defineWithContext({ multiplicity: 'multiple', ...declaration });
   const make = (name = 'File', names = ['read']) => define({
     name, tools: Object.fromEntries(names.map(tool => [tool, declaration()])),
   });
+  const register = viewTypes => api.createApp({ app_name: 'files', viewTypes, initialize() {} });
   const code = expected => error => error?.code === expected;
   const frozen = value => {
     if (value !== null && typeof value === 'object') {
@@ -64,31 +66,19 @@ export function staticCases(api, Type) {
       assert.equal(descriptor.tools.constructor.description, 'Inspect a working object.');
       assert.equal(descriptor.tools.__proto__.description, 'Prototype-shaped name');
       assert.equal(Object.getPrototypeOf(descriptor.tools), null);
-      assert.equal(api.getToolCatalog([descriptor]).length, 2);
+      assert.doesNotThrow(() => register([descriptor]));
     }],
     ['rejects cloned descriptors and duplicate type declarations', () => {
       const page = make();
       for (const value of [{ ...page }, JSON.parse(JSON.stringify(page)), Object.create(page), {}, null]) {
-        assert.throws(() => api.getToolCatalog([value]), code('VIEW_TYPE_INVALID'));
+        assert.throws(() => register([value]), code('VIEW_TYPE_INVALID'));
       }
-      assert.throws(() => api.getToolCatalog([page, make()]), code('VIEW_TYPE_DUPLICATE'));
-      const catalog = api.getToolCatalog([make('A'), make('B'), make('A-B', ['c']), make('C', ['A-B'])]);
-      assert.equal(catalog.length, 4);
-    }],
-    ['produces a sorted, frozen catalog with one model receiver and no live bindings', () => {
-      const descriptors = [make('B', ['z']), make('A', ['z', 'a'])];
-      const first = api.getToolCatalog(descriptors);
-      assert.deepEqual(first.map(item => [item.viewType, item.name]), [['A', 'a'], ['A', 'z'], ['B', 'z']]);
-      assert.equal(JSON.stringify(first), JSON.stringify(api.getToolCatalog(descriptors)));
-      for (const item of first) assert.deepEqual(Object.keys(item).sort(), ['description', 'inputSchema', 'name', 'viewType']);
-      assert.deepEqual(first[0].inputSchema.required, ['view_id', 'path']);
-      assert.equal(first[0].inputSchema.properties.path.type, 'string');
-      assert.equal(first[0].inputSchema.properties.view_id.type, 'string');
-      assert.equal(Object.hasOwn(first[0].inputSchema.properties.view_id, 'enum'), false);
-      frozen(first);
+      assert.throws(() => register([page, make()]), code('VIEW_TYPE_DUPLICATE'));
+      assert.doesNotThrow(() => register([make('A'), make('B'), make('A_B', ['c']), make('C', ['A-B'])]));
     }],
     ['supports empty types and the business parameter pattern, and rejects unsupported schema', () => {
-      assert.deepEqual(api.getToolCatalog([api.defineViewType({ name: 'Empty' })]), []);
+      const empty = api.defineViewType({ multiplicity: 'multiple', createId: ({ prefix }) => prefix, name: 'Empty' });
+      assert.doesNotThrow(() => register([empty]));
       const search = inputSchema => define({ name: 'Search', tools: { search: { ...declaration(), inputSchema } } });
       assert.throws(() => search(Type.Object({ path: Type.String({ format: 'email' }) })), code('TOOL_SCHEMA_UNSUPPORTED'));
       for (const path of [Type.String({ pattern: '^file$' }), Type.TemplateLiteral('file-${number}')]) {

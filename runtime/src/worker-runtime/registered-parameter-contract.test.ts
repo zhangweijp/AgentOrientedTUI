@@ -1,8 +1,8 @@
-import { DEFAULT_PROJECTION_LIMITS } from '../core/invocation/observation-registry.js';
+import { DEFAULT_PROJECTION_LIMITS } from '@aotui/core/internal';
 import { expect, it, vi } from 'vitest';
 import { AppKernel } from './app-kernel/AppKernel.js';
 import { detailFrame, publishedTool } from '../../tests/fixtures/app-frame.js';
-import type { AppContext, RuntimeContext } from '../spi/index.js';
+import type { AppContext, RuntimeContext } from '@aotui/core';
 
 it.each([false, true])('reuses the shared contract across View reactivation and replacement (Ref=%s)', async typed => {
     let runtime!: RuntimeContext;
@@ -18,7 +18,7 @@ it.each([false, true])('reuses the shared contract across View reactivation and 
     const identity = { appId: 'example', desktopId: 'desktop' } as AppContext;
     const kernel = new AppKernel({ ...identity, instanceId: 'registered-parameters', projectionLimits: DEFAULT_PROJECTION_LIMITS, appName: 'example', factory: { initialize(context) {
         runtime = context;
-        context.defineTools([{ viewType: 'Detail', name: 'read', description: 'Read', inputSchema }]);
+        context.defineViewTypes([{ name: "Detail", multiplicity: 'multiple', tools: [{ name: 'read', description: 'Read', inputSchema }] }]);
         publish();
         return { close() {} };
     } } } as any);
