@@ -1,58 +1,50 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 
-test('setup.sh does not rely on root workspace install or include mobile-ai-native-react-native', async () => {
-  const content = await readFile(new URL('../setup.sh', import.meta.url), 'utf-8');
+const apps = ['demo-apps/aotui-ide', 'demo-apps/planning-app', 'demo-apps/terminal-app', 'demo-apps/lite-browser-app'];
+const packages = ['core', 'sdk', 'runtime', 'agent-driver-v2', 'agent-driver-adapter', ...apps, 'host'];
 
-  assert.equal(content.includes('mobile-ai-native-react-native'), false);
-  assert.equal(content.includes('pnpm install --ignore-workspace'), true);
-  assert.equal(content.includes('pnpm install\n'), false);
-  assert.equal(content.includes('pnpm --filter ./runtime build'), false);
-  assert.match(content, /^cd host\nnpm link$/m);
-});
+test('first launch installs, builds and registers once, then subsequent launches only rebuild', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'aotui-dev-shell-')));
+    const bin = join(root, 'bin');
+    try {
+        for (const directory of [...packages, 'bin', 'scripts']) await mkdir(join(root, directory), { recursive: true });
+        for (const path of ['setup.sh', 'run.sh', 'scripts/dev-packages.sh'])
+            await copyFile(new URL('../' + path, import.meta.url), join(root, path));
 
-test('run.sh builds explicit app/package directories and skips mobile-ai-native-react-native', async () => {
-  const content = await readFile(new URL('../run.sh', import.meta.url), 'utf-8');
+        const command = `#!/bin/bash
+printf '%s|%s|%s\\n' "\${0##*/}" "\${PWD#\$AOTUI_TEST_ROOT/}" "\$*"
+if [ "\${0##*/}" = pnpm ]; then
+    if [ "\$1" = install ]; then mkdir -p node_modules; fi
+    if [ "\$1" = -C ] && [ "\$3" = install ]; then mkdir -p "\$2/node_modules/linkedom"; fi
+fi
+`;
+        for (const name of ['pnpm', 'npm', 'node']) await writeFile(join(bin, name), command, { mode: 0o755 });
+        const env = { ...process.env, PATH: bin + delimiter + process.env.PATH,
+            AOTUI_TEST_ROOT: root, AOTUI_CONSOLE_NODE: process.execPath };
+        const run = () => execFileSync('bash', ['run.sh'], { cwd: root, env, encoding: 'utf8' }).trim().split('\n');
+        const calls = run();
+        const actualPackages = action => calls.filter(line => line.startsWith('pnpm|') && line.includes(' ' + action))
+            .map(line => line.split('|')[2].split(' ')[1]);
+        assert.deepEqual(actualPackages('install'), packages);
+        assert.deepEqual(actualPackages('build'), packages);
+        assert.equal(calls.filter(line => line === 'npm|host|link').length, 1);
+        assert.deepEqual(calls.filter(line => line.includes('/app-distribution/cli.js install . --force'))
+            .map(line => line.split('|')[1]), apps);
+        assert.deepEqual(calls.filter(line => line.includes('/scripts/link-local-preact.mjs'))
+            .map(line => line.split(' ').at(-1).slice(root.length + 1)), apps);
+        assert.equal(calls.at(-1), 'pnpm|host|electron:dev');
 
-  assert.equal(content.includes('mobile-ai-native-react-native'), false);
-  assert.equal(content.includes('pnpm --filter ./runtime build'), false);
-  assert.equal(content.includes('pnpm --filter "./$app" build'), false);
-});
-
-test('setup.sh links local agent-driver/runtime/sdk before building dependent packages', async () => {
-  const content = await readFile(new URL('../setup.sh', import.meta.url), 'utf-8');
-
-  assert.equal(content.includes('pnpm link "../agent-driver-v2"'), false);
-  assert.equal(content.includes('pnpm link "../runtime"'), false);
-  assert.equal(content.includes('pnpm link "../sdk"'), false);
-  assert.equal(content.includes('REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"'), true);
-  assert.equal(content.includes('ln -sfn "$source_path" "$scope_dir/$package_name"'), true);
-});
-
-test('run.sh preserves local core build order for linked dependencies', async () => {
-  const content = await readFile(new URL('../run.sh', import.meta.url), 'utf-8');
-  const agentDriverIndex = content.indexOf('pnpm -C agent-driver-v2 build');
-  const runtimeIndex = content.indexOf('pnpm -C runtime build');
-  const sdkIndex = content.indexOf('pnpm -C sdk build');
-
-  assert.notEqual(agentDriverIndex, -1);
-  assert.notEqual(runtimeIndex, -1);
-  assert.notEqual(sdkIndex, -1);
-  assert.equal(agentDriverIndex < runtimeIndex, true);
-  assert.equal(runtimeIndex < sdkIndex, true);
-});
-
-test('setup.sh and run.sh use the default App list', async () => {
-  const setupContent = await readFile(new URL('../setup.sh', import.meta.url), 'utf-8');
-  const runContent = await readFile(new URL('../run.sh', import.meta.url), 'utf-8');
-
-  for (const content of [setupContent, runContent]) {
-    assert.equal(content.includes('"demo-apps/aotui-ide"'), true);
-    assert.equal(content.includes('"demo-apps/planning-app"'), true);
-    assert.equal(content.includes('"demo-apps/terminal-app"'), true);
-    assert.equal(content.includes('"demo-apps/lite-browser-app"'), true);
-    assert.equal(content.includes('"demo-apps/token-monitor-app"'), false);
-  }
-  assert.match(setupContent, /^\s*agentina install \. --force$/m);
+        const subsequent = run();
+        assert.deepEqual(subsequent.filter(line => line.endsWith(' build'))
+            .map(line => line.split('|')[2].split(' ')[1]), packages);
+        assert.equal(subsequent.filter(line => line.includes('install') || line === 'npm|host|link').length, 0);
+        assert.equal(subsequent.at(-1), 'pnpm|host|electron:dev');
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
 });

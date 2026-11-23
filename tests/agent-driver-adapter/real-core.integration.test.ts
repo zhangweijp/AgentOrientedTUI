@@ -1,14 +1,20 @@
-import { projectCompleteViews } from '../../runtime/src/core/invocation/observation-registry.js';
-import { expect, it } from 'vitest';
+import { projectCompleteViews } from '@aotui/core/internal';
+import { expect, it, vi } from 'vitest';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
+import { AgentDriverV2 } from '@aotui/agent-driver-v2';
 import { SemanticSnapshotReceiver } from '../../runtime/src/adapters/snapshot/receiver.js';
-import { commitAppFrame, SemanticProjectionCoordinator } from '../../runtime/src/core/projection/coordinator.js';
-import { createViewOwnedTools } from '../../runtime/src/core/tool/view-owned-tools.js';
-import { compileToolParameters } from '../../runtime/src/core/tool/tool-parameters.js';
+import { Desktop } from '../../runtime/src/engine/core/desktop.js';
+import type { AppManager } from '../../runtime/src/engine/app/manager.js';
+import { commitAppFrame, SemanticProjectionCoordinator } from '@aotui/core/internal';
+import { createViewOwnedTools } from '@aotui/core';
+import { compileToolParameters } from '@aotui/core';
 import type { AppDiscoveryInfo, IDesktop, IKernel } from '../../runtime/src/spi/runtime/kernel.interface.js';
-import type { ExecutionBinding, InvocationContext, AppInteractionPolicy } from '@aotui/runtime/core';
-import type { ViewToolInvocationTerminal } from '../../runtime/src/core/tool/invocation-terminal.js';
-import type { SnapshotCore } from '../../runtime/src/core/snapshot/types.js';
+import type { ExecutionBinding, InvocationContext, AppInteractionPolicy } from '@aotui/core';
+import type { ViewToolInvocationTerminal } from '@aotui/core';
+import type { SnapshotCore } from '@aotui/core';
+import { fixtureProvider } from '../fixtures/batch-two-support.mjs';
 
 type ReceiverCoreInspection = { core: SnapshotCore };
 
@@ -24,8 +30,10 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
     const invoked: string[] = [];
     let type = viewType;
     let owner = {};
-    registry.defineTools([...new Set([viewType, 'Workspace'])].map(viewType => ({
-        viewType, name: 'run', description: 'Run the current App Tool.', inputSchema: input.contract.schema,
+    const toolName = () => type === 'InvalidAlias' ? 'run-file' : 'run';
+    registry.defineViewTypes([...new Set([viewType, 'Workspace'])].map(name => ({
+        name, multiplicity: 'multiple', tools: [{ name: name === 'InvalidAlias' ? 'run-file' : 'run',
+            description: 'Run the current App Tool.', inputSchema: input.contract.schema }],
     })));
     const execute = async (args: Readonly<Record<string, unknown>>) => {
         const value = String(args.value);
@@ -51,9 +59,9 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
     const projection = new SemanticProjectionCoordinator({ identity: () => ({ appId, instanceId }) });
     const publish = (nextBody = body) => {
         commitAppFrame(projection, registry, () => ({ views: [{
-            id: 'workspace', type, name: viewName, kind: 'state', owner,
+            createId: () => 'workspace', type, name: viewName, region: 'dynamic', owner,
             content: { format: 'markdown-v1', value: nextBody }, refs: [],
-            bindings: [{ name: 'run', enabled: true, execute }],
+            bindings: [{ name: toolName(), enabled: true, execute }],
         }] }));
         const publication = projection.nextPublication();
         const accepted = 'draft' in publication
@@ -66,7 +74,7 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
     publish();
 
     return {
-        app: { appId: appId as AppDiscoveryInfo['appId'], appInstanceId: instanceId, name, status: 'running' as const },
+        app: { installationId: appId + ':install', appId: appId as AppDiscoveryInfo['appId'], appInstanceId: instanceId, name, status: 'running' as const },
         registry, receiver, projection, execution, invoked,
         repairViewType(next: string) {
             type = next;
@@ -77,7 +85,7 @@ function createApp(appId: string, name: string, instanceId: string, viewType: st
 }
 
 it('uses real Registries and Receivers to isolate, recover and release Semantic App projections', async () => {
-    const bad = createApp('bad_app', 'bad_app', 'bad-instance', 'A-B', 'BAD_APP_BODY');
+    const bad = createApp('bad_app', 'bad_app', 'bad-instance', 'InvalidAlias', 'BAD_APP_BODY');
     const collidingB = createApp('collision_b', 'shared_app', 'collision-b-instance', 'Workspace', 'COLLISION_B_BODY');
     const collidingA = createApp('collision_a', 'shared_app', 'collision-a-instance', 'Workspace', 'COLLISION_A_BODY');
     const healthyBody = '<view id="literal">HEALTHY_APP_BODY</view>';
@@ -86,9 +94,11 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
     const subscriptions = new Set<() => void>();
     const desktop = {
         id: 'real-core-test-desktop',
+        bindRequestSources: () => undefined,
         getInstalledApps: () => assemblies.map(assembly => assembly.app),
+        getAppWindows: () => undefined,
         getSystemLogs: () => [],
-        openApp: async () => {}, closeApp: async () => {}, collapseApp: async () => {}, showApp: async () => {},
+        openApp: async () => {}, closeApp: async () => {}, collapseApp: async () => {}, expandApp: async () => {},
         output: { subscribe: (listener: () => void) => subscriptions.add(listener),
             unsubscribe: (listener: () => void) => subscriptions.delete(listener) },
     } as unknown as IDesktop;
@@ -106,30 +116,30 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
     const contexts: Awaited<ReturnType<typeof source.getContext>>[] = [];
 
     try {
-        // Core V5 accepts this identity. The stricter native alias rule belongs
+        // The Core accepts this Tool name. The stricter native alias rule belongs
         // to Semantic Source, which must isolate only this App at projection time.
         expect(bad.receiver.report()).toMatchObject({ health: 'ready', published: 1 });
-        expect(bad.registry.listViews()[0]?.viewType).toBe('A-B');
+        expect(bad.registry.getView('workspace')?.viewType).toBe('InvalidAlias');
         expect(JSON.stringify(bad.receiver.report())).not.toContain('AOTUI_TOOL_NAME_INVALID');
 
         const first = await source.getContext();
         contexts.push(first);
         await first.adopt!();
-        expect(first.tools['bad_app-A-B-run']).toBeUndefined();
-        expect(first.tools['shared_app-run']).toBeDefined();
+        expect(first.tools['bad_app-run-file']).toBeUndefined();
+        expect(first.tools['collision_a-run']).toBeDefined();
         expect(first.tools['healthy_app-run']).toBeDefined();
         const firstText = JSON.stringify(first.messages);
         expect(firstText).not.toContain('BAD_APP_BODY');
-        expect(firstText).not.toContain('COLLISION_B_BODY');
+        expect(firstText).toContain('COLLISION_B_BODY');
         expect(firstText).toContain('COLLISION_A_BODY');
         expect(firstText).toContain('HEALTHY_APP_BODY');
         const healthyMessage = String(first.messages.find(message => String(message.content).includes('HEALTHY_APP_BODY'))?.content);
-        expect(healthyMessage).toContain('name="foo&gt;bar"');
+        expect(healthyMessage).toContain('view_id="workspace" view_type="Workspace" app_id="healthy_app" app_name="healthy_app"');
         expect(healthyMessage).toContain('\n&lt;view id="literal"&gt;HEALTHY_APP_BODY&lt;/view&gt;\n</view>');
-        expect(firstText).toContain('AOTUI_TOOL_NAME_INVALID: viewType');
-        expect(firstText).toContain('AOTUI_TOOL_NAME_COLLISION');
+        expect(firstText).toContain('AOTUI_TOOL_NAME_INVALID: toolName');
+        expect(first.tools['collision_b-run']).toBeDefined();
 
-        expect(await first.executeTool!('shared_app-run', { view_id: 'workspace', value: 'winner' }, 'collision-winner'))
+        expect(await first.executeTool!('collision_a-run', { view_id: 'workspace', value: 'winner' }, 'collision-winner'))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { appId: 'collision_a', value: 'winner' } });
         expect(await first.executeTool!('healthy_app-run', { view_id: 'workspace', value: 'usable' }, 'healthy-call'))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { appId: 'healthy_app', value: 'usable' } });
@@ -138,8 +148,6 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         expect(healthy.invoked).toEqual(['usable']);
         expect(bad.invoked).toEqual([]);
         expect(bad.receiver.getInteractionStats()).toMatchObject({ combinedBytes: 0,
-            observations: { observations: 0, reservations: 0, totalBytes: 0 } });
-        expect(collidingB.receiver.getInteractionStats()).toMatchObject({ combinedBytes: 0,
             observations: { observations: 0, reservations: 0, totalBytes: 0 } });
 
         await first.release!();
@@ -156,9 +164,9 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
         const recovered = await source.getContext();
         contexts.push(recovered);
         await recovered.adopt!();
-        expect(recovered.tools['bad_app-Workspace-run']).toBeDefined();
+        expect(recovered.tools['bad_app-run']).toBeDefined();
         expect(JSON.stringify(recovered.messages)).toContain('bad_app repaired View content.');
-        expect(await recovered.executeTool!('bad_app-Workspace-run', { view_id: 'workspace', value: 'recovered' }, 'bad-recovered'))
+        expect(await recovered.executeTool!('bad_app-run', { view_id: 'workspace', value: 'recovered' }, 'bad-recovered'))
             .toMatchObject({ outcomeStatus: 'succeeded', result: { appId: 'bad_app', value: 'recovered' } });
         expect(bad.invoked).toEqual(['recovered']);
 
@@ -182,6 +190,89 @@ it('uses real Registries and Receivers to isolate, recover and release Semantic 
             await assembly.receiver.close();
             assembly.projection.close();
             assembly.registry.dispose();
+        }
+    }
+});
+
+it('uses the Host App limit even when an adopted request contains more than 128 sources', async () => {
+    const maxApps = 150;
+    const assemblies = Array.from({ length: maxApps + 1 }, (_, index) => {
+        const id = 'capacity_' + index;
+        return createApp(id, id, id + '_run', 'Workspace', 'Short page.');
+    });
+    const byId = new Map(assemblies.map(assembly => [assembly.app.appId, assembly]));
+    const desktop = new Desktop();
+    const manager = (desktop as unknown as { appManager: AppManager }).appManager;
+    let directorySize = 0;
+    const policy: AppInteractionPolicy = {
+        project: () => ({ refs: [], toolIds: [] }), authorize: () => true, canReadReceipt: () => true,
+    };
+    vi.spyOn(manager, 'getInstalledApps').mockImplementation(() => assemblies.slice(0, directorySize).map(item => item.app));
+    vi.spyOn(manager, 'isRunningApp').mockImplementation((id, instance) => byId.get(id)?.app.appInstanceId === instance);
+    const issueClient = vi.spyOn(manager, 'getAppInteraction').mockImplementation((id, instance) => {
+        const assembly = byId.get(id);
+        if (!assembly || assembly.app.appInstanceId !== instance) throw new Error('Unexpected capacity fixture identity');
+        return { status: 'ready', interaction: assembly.receiver.interaction(policy, assembly.execution) };
+    });
+    const bind = vi.spyOn(desktop, 'bindRequestSources');
+    const kernel = { getAppInteraction: (_desktopId: string, id: string, instanceId: string) =>
+        desktop.getAppInteraction(id, instanceId) } as IKernel;
+    const provider = await fixtureProvider();
+    const facts = [];
+    try {
+        for (directorySize of [128, 129, 151]) {
+            const errors: Error[] = [];
+            const source = new SemanticAOTUIDrivenSource(desktop, kernel, { maxApps, includeInstruction: false });
+            const driver = new AgentDriverV2({ sources: [source], llm: {
+                model: 'capacity-fixture', provider: { id: 'capacity-fixture', baseURL: provider.url }, apiKey: 'test-only',
+                inputBudget: () => ({ contextWindow: 100_000, maxOutputTokens: 2048 }),
+            }, onRunError: error => errors.push(error) });
+            bind.mockClear();
+            issueClient.mockClear();
+            const sent = provider.requests.length;
+            try {
+                await driver.trigger();
+                await (driver as unknown as { runInFlight?: Promise<void> }).runInFlight;
+                const newRequests = provider.requests.slice(sent);
+                const pages = newRequests.flatMap(request => request.body.messages.filter(({ role, content }) =>
+                    role === 'user' && typeof content === 'string' && content.startsWith('<view ')));
+                facts.push({ directorySize, maxApps, issuedClients: issueClient.mock.calls.length,
+                    bindAttempts: bind.mock.calls.map(([request]) => request.apps.length),
+                    bound: bind.mock.results.filter(result => result.type === 'return').length,
+                    requests: newRequests.length, pages: pages.length, errors: errors.map(error => error.message) });
+                if (directorySize > maxApps) {
+                    expect(errors.map(error => error.message)).toEqual(['SEMANTIC_APP_CAPACITY']);
+                    expect(issueClient).not.toHaveBeenCalled();
+                    expect(bind).not.toHaveBeenCalled();
+                    expect(newRequests).toHaveLength(0);
+                } else {
+                    expect(errors).toEqual([]);
+                    expect(bind).toHaveBeenCalledTimes(1);
+                    expect(bind.mock.calls[0]![0].apps).toHaveLength(directorySize);
+                    expect(pages).toHaveLength(directorySize);
+                    expect(newRequests).toHaveLength(1);
+                }
+                expect(provider.failures).toEqual([]);
+                for (const { receiver } of assemblies)
+                    expect(receiver.getInteractionStats()?.observations.observations ?? 0).toBe(0);
+            } finally {
+                driver.stop();
+                driver.dispose();
+                source.dispose();
+            }
+        }
+    } finally {
+        for (const assembly of assemblies) {
+            await assembly.receiver.close();
+            assembly.projection.close();
+            assembly.registry.dispose();
+        }
+        await desktop.dispose();
+        await provider.close();
+        const evidence = process.env.AOTUI_BATCH_TWO_EVIDENCE;
+        if (evidence) {
+            await mkdir(evidence, { recursive: true });
+            await writeFile(join(evidence, 'source-capacity.json'), JSON.stringify(facts, null, 2));
         }
     }
 });
