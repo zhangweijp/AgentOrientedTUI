@@ -41,84 +41,50 @@ export class LLMConfigService {
     async resolveLLMConfig(selection?: string): Promise<LLMConfig> {
         const active = this.getActiveLLMConfigRecord();
         const override = selection?.trim() ? selection : undefined;
-        const target = override
-            ? await this.resolveModelSelection(override, active?.providerId)
-            : active?.providerId
-                ? { providerId: active.providerId, modelId: active.model }
-                : active && await this.resolveModelSelection(active.model);
-        if (!target) {
+        const target = override ? parseModelSelection(override)
+            : active && { providerId: active.providerId, modelId: active.model };
+        if (!override && !target) {
             throw new Error('No active LLM config found. Choose a Provider and model in Settings.');
         }
-        const { providerId, modelId } = target;
-        if (!providerId.trim() || providerId !== providerId.trim() || !modelId.trim()) {
-            throw new Error('Choose a Provider and nonempty model in Settings.');
+        if (!target?.providerId?.trim() || target.providerId !== target.providerId.trim() || !target.modelId.trim()) {
+            throw new Error('Choose a Provider and nonempty model. Reselect the model in Settings.');
         }
+        const { providerId, modelId: model } = target;
 
         const custom = await this.resolveCustomProvider(providerId);
         if (providerId.startsWith('custom:') && !custom) {
             throw new Error(`Provider "${providerId}" is unavailable. Reselect the model in Settings.`);
         }
-        const catalog = custom ? [] : await this.readCatalog(providerId);
-        const rawModel = (value: string) => this.findCatalogModel(catalog, value)?.id ?? value;
-        const model = rawModel(modelId);
-
         let record = active;
         if (override) {
             const records = this.getAllConfigs().filter(candidate => candidate.providerId === providerId);
             const sameProviderActive = active?.providerId === providerId ? active : undefined;
-            record = sameProviderActive && rawModel(sameProviderActive.model) === model
+            record = sameProviderActive?.model === model
                 ? sameProviderActive
-                : records.find(candidate => rawModel(candidate.model) === model) ?? sameProviderActive ?? records[0] ?? null;
+                : records.find(candidate => candidate.model === model) ?? sameProviderActive ?? records[0] ?? null;
         }
 
         const id = custom?.protocol ?? providerId;
         const configuredURL = custom?.baseUrl ?? (record?.baseUrl || await this.resolveBaseUrl(providerId));
-        const { baseURL } = resolveProviderEndpoint(id, configuredURL);
+        const { baseURL, defaultBaseURL } = resolveProviderEndpoint(id, configuredURL);
         if (!baseURL) {
             throw new Error(`Provider "${providerId}" requires a baseURL. Set the endpoint or reselect the model in Settings.`);
         }
         if (custom && !custom.apiKey) {
             throw new Error(`API key not found for provider "${providerId}". Set its key in Settings.`);
         }
+        const modes = (await Config.getTuiConfig()).toolSchemaModes;
+        const key = `${id}:${model}`;
+        const endpoint = baseURL.replace(/\/$/, '');
+        const endpointKey = `${key}@${endpoint}`;
+        const toolSchemaMode = modes && Object.hasOwn(modes, endpointKey) ? modes[endpointKey]
+            : modes && endpoint === defaultBaseURL && Object.hasOwn(modes, key) ? modes[key] : undefined;
         return {
             model,
-            provider: { id, baseURL },
+            provider: { id, baseURL, ...(toolSchemaMode === undefined ? {} : { toolSchemaMode }) },
             apiKey: custom ? custom.apiKey : record?.apiKey,
             temperature: record?.temperature,
-            maxSteps: record?.maxSteps,
         };
-    }
-
-    private async resolveModelSelection(selection: string, activeProviderId?: string) {
-        const explicit = parseModelSelection(selection);
-        if (explicit) return explicit;
-
-        if (!selection.startsWith('custom:')) {
-            const slash = selection.indexOf('/');
-            if (slash > 0) {
-                const providerId = selection.slice(0, slash);
-                const model = (await this.readCatalog(providerId)).find(candidate => candidate.catalogId === selection);
-                if (model) return { providerId, modelId: model.id };
-                if (activeProviderId && (await this.readCatalog(activeProviderId)).some(candidate => candidate.id === selection)) {
-                    return { providerId: activeProviderId, modelId: selection };
-                }
-            } else if (activeProviderId && !selection.includes(':')) {
-                return { providerId: activeProviderId, modelId: selection };
-            }
-        }
-        throw new Error('Cannot resolve the Provider and model for this selection. Reselect the model in Settings.');
-    }
-
-    private async readCatalog(providerId: string) {
-        try {
-            return await this.modelRegistry.getModels({ providerId });
-        } catch {
-            return [];
-        }
-    }
-
-    private findCatalogModel(models: Awaited<ReturnType<ModelRegistry['getModels']>>, value: string) {
-        return models.find(model => model.id === value) ?? models.find(model => model.catalogId === value);
     }
 
     /** Resolve the budget after the Desktop or IM model override has been applied. */
@@ -227,7 +193,6 @@ export class LLMConfigService {
         modelId: string;
         name?: string;
         temperature?: number;
-        maxSteps?: number;
         setActive?: boolean;
     }): Promise<LLMConfigRecord> {
         const customProvider = await this.resolveCustomProvider(input.customProviderId);
@@ -245,7 +210,6 @@ export class LLMConfigService {
             model: modelId,
             providerId: customProvider.id,
             temperature: input.temperature ?? 0.7,
-            maxSteps: input.maxSteps ?? 10,
             skipValidation: true,
         });
 
@@ -276,21 +240,14 @@ export class LLMConfigService {
         modelId: string,
         skipValidation: boolean = false
     ): Promise<boolean> {
-        if (skipValidation) {
-            this.logger.debug('Model validation skipped', { providerId, modelId });
-            return true;
-        }
+        if (skipValidation) return true;
 
         try {
             const models = await this.modelRegistry.getModels({ providerId });
 
-            const exists = this.findCatalogModel(models, modelId) !== undefined;
+            const exists = models.some(model => model.id === modelId);
             
-            if (exists) {
-                this.logger.debug('Model validated successfully', { providerId, modelId });
-            } else {
-                this.logger.warn('Model not found in registry', { providerId, modelId });
-            }
+            if (!exists) this.logger.warn('Model not found in registry', { providerId, modelId });
             
             return exists;
         } catch (error) {
@@ -313,59 +270,6 @@ export class LLMConfigService {
             this.logger.error('Model validation failed', { error, providerId, modelId });
             // 验证失败时返回 false，但不抛出异常
             return false;
-        }
-    }
-
-    /**
-     * 获取模型的推荐配置
-     * 
-     * 根据模型能力（reasoning, tool_call）推荐合适的 temperature 和 maxSteps
-     * 
-     * @param providerId - Provider ID
-     * @param modelId - 模型 ID
-     * @returns 推荐的配置
-     */
-    async getModelRecommendedConfig(
-        providerId: string,
-        modelId: string
-    ): Promise<{ temperature: number; maxSteps: number }> {
-        try {
-            const models = await this.modelRegistry.getModels({ providerId });
-
-            // 查找模型（兼容 provider/model 与 vendor/model）
-            const model = this.findCatalogModel(models, modelId);
-            
-            if (!model) {
-                this.logger.debug('Model not found, using default config', { providerId, modelId });
-                return { temperature: 0.7, maxSteps: 10 };
-            }
-            
-            // 根据模型能力推荐配置
-            let temperature = 0.7;
-            let maxSteps = 10;
-            
-            // Reasoning 模型通常需要更低的 temperature 和更多的 steps
-            if (model.reasoning) {
-                temperature = 0.5;
-                maxSteps = 20;
-                this.logger.debug('Reasoning model detected, using lower temperature', {
-                    modelId,
-                    temperature,
-                    maxSteps,
-                });
-            }
-            
-            // Tool-calling 模型可以使用标准配置
-            if (model.tool_call && !model.reasoning) {
-                temperature = 0.7;
-                maxSteps = 10;
-            }
-            
-            return { temperature, maxSteps };
-        } catch (error) {
-            this.logger.error('Failed to get model recommended config', { error, providerId, modelId });
-            // 返回默认配置
-            return { temperature: 0.7, maxSteps: 10 };
         }
     }
 

@@ -2,6 +2,7 @@ import { EventEmitter } from 'events'
 import type { ContextDrivenSource, DrivenSourceContext, MessageWithTimestamp, ToolResult } from '@aotui/agent-driver-v2'
 import type { ModelMessage } from 'ai'
 import { jsonSchema } from '@aotui/agent-driver-v2'
+import { COMPACTION_TOOL_NAME, isCompactionAnchor } from '../core/compaction-receipt.js'
 type SessionMessageWithTimestamp = MessageWithTimestamp & {
   region?: 'session'
 }
@@ -22,8 +23,6 @@ interface CompactionPolicyInput {
   modelHint?: string
 }
 
-const COMPACTION_TOOL_NAME = 'context_compact'
-const COMPACTED_TOOL_RESULT_PLACEHOLDER = '[Older tool result summarized by IM context compaction]'
 const COMPACTION_TOOL_DESCRIPTION = [
   'Compact IM session context for long-running chat sessions while preserving execution continuity.',
   '',
@@ -66,17 +65,6 @@ function getMessageParts(message: MessageWithTimestamp): MessagePart[] {
 
 function isCompactionToolPart(part: MessagePart): boolean {
   return (part.type === 'tool-call' || part.type === 'tool-result') && part.toolName === COMPACTION_TOOL_NAME
-}
-
-function isCompactionAnchor(message: MessageWithTimestamp): boolean {
-  return getMessageParts(message).some((part) => {
-    if (part.type !== 'tool-result' || part.toolName !== COMPACTION_TOOL_NAME) {
-      return false
-    }
-
-    const result = part.result ?? part.output
-    return !result || typeof result !== 'object' || result.success !== false
-  })
 }
 
 function getActiveWindow(messages: MessageWithTimestamp[]): MessageWithTimestamp[] {
@@ -185,7 +173,7 @@ function createCompactionMessages(
             ...(reason ? { reason } : {}),
           },
         },
-      ] as any,
+      ],
       timestamp: timestampBase,
       region: 'session',
     } as SessionMessageWithTimestamp,
@@ -196,19 +184,18 @@ function createCompactionMessages(
           type: 'tool-result',
           toolCallId,
           toolName: COMPACTION_TOOL_NAME,
-          result: {
-            success: true,
-            trigger,
-            summary,
-            compactedMessageCount,
-            cleanedToolResultCount,
-          },
-          metadata: {
-            aotuiCompactionAnchor: true,
-            placeholder: COMPACTED_TOOL_RESULT_PLACEHOLDER,
+          output: {
+            type: 'json',
+            value: {
+              success: true,
+              trigger,
+              summary,
+              compactedMessageCount,
+              cleanedToolResultCount,
+            },
           },
         },
-      ] as any,
+      ],
       timestamp: timestampBase + 1,
       region: 'session',
     } as SessionMessageWithTimestamp,
@@ -256,12 +243,8 @@ function extractDisplayText(message: MessageWithTimestamp): string {
     }
 
     if (part.type === 'tool-result') {
-      const output = part.output ?? part.result
-      if (typeof output === 'string') {
-        textParts.push(output)
-      } else if (output !== undefined) {
-        textParts.push(JSON.stringify(output))
-      }
+      textParts.push(part.output.type === 'text' || part.output.type === 'error-text'
+        ? part.output.value : JSON.stringify(part.output))
     }
   }
 
@@ -347,13 +330,8 @@ export class IMDrivenSource implements ContextDrivenSource {
   }
 
   async getContext(): Promise<DrivenSourceContext> {
-    try {
-      const messages = await this.captureMessages()
-      return { messages, tools: this.createTools(), executeTool: (name, args, id) => this.executeCompaction(name, args, id) }
-    } catch (error) {
-      console.error('Failed to capture context from IM:', error)
-      return { messages: [], tools: {} }
-    }
+    const messages = await this.captureMessages()
+    return { messages, tools: this.createTools(), executeTool: (name, args, id) => this.executeCompaction(name, args, id) }
   }
 
   private async captureMessages(): Promise<MessageWithTimestamp[]> {
@@ -504,27 +482,6 @@ export class IMDrivenSource implements ContextDrivenSource {
     }
   }
 
-  public getCompactionToolName(): string {
-    return COMPACTION_TOOL_NAME
-  }
-
-  public async runHardFallbackCompaction(reason?: string): Promise<{
-    compacted: boolean
-    syntheticMessages: MessageWithTimestamp[]
-    summary: string
-    compactedMessageCount: number
-    cleanedToolResultCount: number
-  }>
-  public async runHardFallbackCompaction(
-    reason: string | undefined,
-    options: Pick<CompactionPolicyInput, 'minMessages' | 'keepRecentMessages'>,
-  ): Promise<{
-    compacted: boolean
-    syntheticMessages: MessageWithTimestamp[]
-    summary: string
-    compactedMessageCount: number
-    cleanedToolResultCount: number
-  }>
   public async runHardFallbackCompaction(
     reason?: string,
     options?: Pick<CompactionPolicyInput, 'minMessages' | 'keepRecentMessages'>,
@@ -660,8 +617,7 @@ export class IMDrivenSource implements ContextDrivenSource {
 
   addMessage(message: ModelMessage, timestamp?: number): MessageWithTimestamp {
     const record: SessionMessageWithTimestamp = {
-      role: message.role,
-      content: message.content,
+      ...message,
       timestamp: typeof timestamp === 'number' ? timestamp : this.now(),
       region: 'session',
     }

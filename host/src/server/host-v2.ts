@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import express from 'express';
-import { desktopManager, desktopManagerReady } from '../core/desktop-manager.js';
+import { desktopManager } from '../core/desktop-manager.js';
 import type { LLMConfigService } from '../core/llm-config-service.js';
 import { HostManagerV2 } from '../core/host-manager-v2.js';
 import * as db from '../db/index.js';
@@ -15,7 +15,7 @@ export async function createHostV2Core(modelRegistry: ModelRegistry): Promise<{
     imRuntimeBridge: IMRuntimeBridge;
 }> {
     // 1. Wait for Runtime initialization
-    await desktopManagerReady;
+    await desktopManager.initialize();
     console.log('[HostV2] DesktopManager initialized');
 
     // 2. Initialize database

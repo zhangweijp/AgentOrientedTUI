@@ -823,7 +823,7 @@ host/test/im/
 |------|--------|------|---------|
 | **WebSocket 断连** | 高 | 中 | Lark SDK 内置自动重连；加 heartbeat 探测 + 手动重连 |
 | **流式卡片 API 限流** | 中 | 中 | 100ms 节流控制 (streaming-card.ts 已有)；降级为普通卡片 |
-| **LLM 响应时间过长** | 中 | 低 | 添加 typing 指示器；设置 maxSteps 限制 |
+| **LLM 响应时间过长** | 中 | 低 | 添加 typing 指示器 |
 | **消息去重失败** | 低 | 低 | 内存 LRU (1000条) 兜底；飞书 message_id 全局唯一 |
 | **IM Session 内存泄漏** | 中 | 中 | 空闲 30min 自动清理 + maxSessions 限制 (与 GUI 一致) |
 | **Agent 配置变更** | 低 | 中 | IM Session 创建时 snapshot Agent 配置；重建 Session 时刷新 |

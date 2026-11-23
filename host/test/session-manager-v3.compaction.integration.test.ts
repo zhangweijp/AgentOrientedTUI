@@ -120,70 +120,22 @@ describe('SessionManagerV3 compaction integration', () => {
     expect(events.map((event) => event.type)).toEqual(['assistant', 'tool', 'user']);
   });
 
-  it('marks compaction anchor only when context_compact succeeds', () => {
-    const markToolCompactionAnchor = vi.fn();
-    (manager as any).sessions.set('topic_1', {
-      sources: {
-        host: {
-          getCompactionToolName: () => 'context_compact',
-          markToolCompactionAnchor,
-          notifyNewMessage: vi.fn(),
-        },
-      },
-    });
-
-    const successToolMessage: ModelMessage = {
+  it.each([true, false])('persists and delivers the original compaction receipt with success=%s', success => {
+    const notifyNewMessage = vi.fn();
+    const delivered = vi.fn();
+    manager.on('message', delivered);
+    (manager as any).sessions.set('topic_1', { sources: { host: { notifyNewMessage } } });
+    const message: ModelMessage = {
       role: 'tool',
-      content: [
-        {
-          type: 'tool-result',
-          toolName: 'context_compact',
-          toolCallId: 'tc_success',
-          result: {
-            success: true,
-            summary: '## Goal\ncontinue',
-          },
-        },
-      ],
-    } as any;
-
-    (manager as any).handleMessage('topic_1', 'tool', successToolMessage);
-
-    expect(markToolCompactionAnchor).toHaveBeenCalledWith('user_msg_1', '## Goal\ncontinue');
-    (manager as any).sessions.clear();
-  });
-
-  it('does not mark compaction anchor when context_compact is skipped/failed', () => {
-    const markToolCompactionAnchor = vi.fn();
-    (manager as any).sessions.set('topic_1', {
-      sources: {
-        host: {
-          getCompactionToolName: () => 'context_compact',
-          markToolCompactionAnchor,
-          notifyNewMessage: vi.fn(),
-        },
-      },
-    });
-
-    const failedToolMessage: ModelMessage = {
-      role: 'tool',
-      content: [
-        {
-          type: 'tool-result',
-          toolName: 'context_compact',
-          toolCallId: 'tc_failed',
-          result: {
-            success: false,
-            summary: '',
-            note: 'skipped due threshold',
-          },
-        },
-      ],
-    } as any;
-
-    (manager as any).handleMessage('topic_1', 'tool', failedToolMessage);
-
-    expect(markToolCompactionAnchor).not.toHaveBeenCalled();
+      content: [{
+        type: 'tool-result', toolName: 'context_compact', toolCallId: 'tc_compaction',
+        output: { type: 'json', value: { success, summary: success ? 'Continue the task' : '' } },
+      }],
+    };
+    (manager as any).handleMessage('topic_1', 'tool', message);
+    expect(messageService.addMessage).toHaveBeenCalledExactlyOnceWith('topic_1', message);
+    expect(notifyNewMessage).toHaveBeenCalledOnce();
+    expect(delivered).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ type: 'tool', message: expect.objectContaining(message) }));
     (manager as any).sessions.clear();
   });
 });

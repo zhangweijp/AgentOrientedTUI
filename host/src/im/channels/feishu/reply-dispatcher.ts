@@ -1,4 +1,4 @@
-import type { FeishuReceiveIdType } from './targets.js'
+import type { FeishuReceiveIdType } from './send.js'
 
 export interface FeishuStreamingSessionLike {
   isActive: () => boolean

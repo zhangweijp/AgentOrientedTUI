@@ -1,28 +1,37 @@
-/**
- * @aotui/host - Database V2
- * 
- * 直接存储 AI SDK v6 的 ModelMessage
- * 
- * 设计原则:
- * - ✅ 完全对齐 AI SDK v6
- * - ✅ 零转换成本
- * - ✅ 极简 schema
- */
-
 import type { Database } from 'sql.js';
-import type { Message, MessageRow } from './types-v2.js';
-import { messageToRow, rowToMessage } from './types-v2.js';
+import type { Message } from '../types/messages.js';
+import { readStoredMessage, type StoredMessageRow } from './stored-message.js';
+
+interface MessageRow extends StoredMessageRow {
+    topic_id: string;
+}
 
 // ============================================================================
-// Messages CRUD
+// Helper Functions
 // ============================================================================
 
 /**
- * 创建消息 (V2 格式)
+ * 将 Message 转换为数据库行
+ */
+function messageToRow(topicId: string, message: Message): MessageRow {
+    return {
+        id: message.id,
+        topic_id: topicId,
+        role: message.role,
+        content: JSON.stringify(message.content),
+        timestamp: message.timestamp,
+        provider_options: message.providerOptions
+            ? JSON.stringify(message.providerOptions)
+            : undefined,
+    };
+}
+
+/**
+ * 创建消息
  * 
  * 直接存储 AI SDK v6 的 ModelMessage
  */
-export function createMessageV2(db: Database, topicId: string, message: Message): void {
+export function createMessage(db: Database, topicId: string, message: Message): void {
     const row = messageToRow(topicId, message);
 
     db.run(`
@@ -39,33 +48,26 @@ export function createMessageV2(db: Database, topicId: string, message: Message)
 }
 
 /**
- * 获取话题的所有消息 (V2 格式)
+ * 获取话题的所有消息
  */
-export function getMessagesV2(db: Database, topicId: string): Message[] {
+export function getMessages(db: Database, topicId: string): Message[] {
     const stmt = db.prepare('SELECT * FROM messages_v2 WHERE topic_id = ? ORDER BY timestamp ASC');
-    stmt.bind([topicId]);
-
-    const messages: Message[] = [];
-    while (stmt.step()) {
-        const row = stmt.getAsObject() as unknown as MessageRow;
-        messages.push(rowToMessage(row));
+    try {
+        stmt.bind([topicId]);
+        const messages: Message[] = [];
+        while (stmt.step()) {
+            messages.push(readStoredMessage(stmt.getAsObject() as unknown as StoredMessageRow));
+        }
+        return messages;
+    } finally {
+        stmt.free();
     }
-    stmt.free();
-
-    return messages;
 }
 
 /**
- * 删除消息 (V2 格式)
+ * 更新消息
  */
-export function deleteMessageV2(db: Database, id: string): void {
-    db.run('DELETE FROM messages_v2 WHERE id = ?', [id]);
-}
-
-/**
- * 更新消息 (V2 格式)
- */
-export function updateMessageV2(db: Database, topicId: string, message: Message): void {
+export function updateMessage(db: Database, topicId: string, message: Message): void {
     const row = messageToRow(topicId, message);
 
     db.run(`
@@ -85,7 +87,7 @@ export function updateMessageV2(db: Database, topicId: string, message: Message)
 /**
  * 创建 messages_v2 表
  */
-export function createMessagesV2Table(db: Database): void {
+export function createMessagesTable(db: Database): void {
     db.run(`
         CREATE TABLE IF NOT EXISTS messages_v2 (
             id TEXT PRIMARY KEY,

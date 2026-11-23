@@ -15,18 +15,18 @@
  * - **资源管理**: 空闲清理 + 并发限制，防止内存泄漏
  */
 
-import type { IKernel, IDesktop } from '@aotui/runtime';
+import { AOTUIError, createDesktopId, type DesktopCloseHandle, type IKernel, type ReceiptAccess } from '@aotui/runtime';
 import { SemanticAOTUIDrivenSource } from '@aotui/agent-driver-adapter';
-import { AgentDriverV2, ModelInputError } from '@aotui/agent-driver-v2';
+import { AgentDriverV2, ModelInputError, ProviderToolSchemaError, type LLMConfig, type ToolResult } from '@aotui/agent-driver-v2';
 import type { ModelMessage } from 'ai';
 import { EventEmitter } from 'events';
 import type { LLMConfigService } from './llm-config-service.js';
-import type { MessageServiceV2 } from './message-service-v2.js';
+import type { MessageService } from './message-service.js';
 import { HostDrivenSourceV2 } from '../adapters/host-driven-source.js';
 import { SystemPromptDrivenSource } from '../adapters/system-prompt-source.js';
 import { McpDrivenSource } from '../mcp/source.js';
 import { SkillDrivenSource } from '../skills/skill-driven-source.js';
-import type { Session, SessionManagerConfig, GuiUpdateEvent } from '../types/session.js';
+import type { Session, SessionManagerConfig, GuiUpdateEvent, ModelUsageEvent } from '../types/session.js';
 import { Logger } from '../utils/logger.js';
 import type { DesktopManager } from './desktop-manager.js';
 import * as db from '../db/index.js';
@@ -34,6 +34,8 @@ import { projectService } from './project-service.js';
 import { isMcpItemKey, parseMcpServerItemKey, MCP_PERMISSION_RECONFIGURE } from '../shared/source-control-keys.js';
 import { Config } from '../config/config.js';
 import { applySourceControlsToSources, createSourceControlsFromAgent, normalizeSourceControlsSnapshot, type SourceControlsSnapshot } from './source-controls.js';
+import { PendingAppReceipts, type AppReceiptMessageQuery } from './pending-app-receipts.js';
+import { checkCloseTasks, checkDesktopClose, DesktopCloseError, rethrowAfterCleanup, rethrowAfterDesktopClose } from './desktop-close.js';
 
 type SourceControl = { enabled: boolean; disabledItems: Set<string> };
 type TopicSourceControls = {
@@ -41,6 +43,8 @@ type TopicSourceControls = {
     mcp: SourceControl & { allowedServers?: Set<string> };
     skill: SourceControl;
 };
+type ClosingSession = { started: Promise<DesktopCloseHandle | undefined>; completion: Promise<void> };
+type OpeningSession = { completion: Promise<Session>; closing?: ClosingSession };
 
 /**
  * SessionManagerV3
@@ -49,11 +53,11 @@ type TopicSourceControls = {
  */
 export class SessionManagerV3 extends EventEmitter {
     private sessions: Map<string, Session> = new Map();
-    private inFlightSessions: Map<string, Promise<Session>> = new Map();
+    private readonly inFlightSessions = new Map<string, OpeningSession>();
     private kernel: IKernel;
     private desktopManager: DesktopManager;
     private llmConfigService: LLMConfigService;
-    private messageService: MessageServiceV2;
+    private messageService: MessageService;
     private logger: Logger;
     private cleanupTimer: NodeJS.Timeout | null = null;
     private compactionGlobalPolicyCache: {
@@ -74,7 +78,7 @@ export class SessionManagerV3 extends EventEmitter {
         kernel: IKernel,
         desktopManager: DesktopManager,
         llmConfigService: LLMConfigService,
-        messageService: MessageServiceV2,
+        messageService: MessageService,
         config?: SessionManagerConfig
     ) {
         super();
@@ -105,52 +109,49 @@ export class SessionManagerV3 extends EventEmitter {
      */
     getSession(topicId: string): Session | undefined {
         const session = this.sessions.get(topicId);
-        if (session) {
-            session.lastAccessTime = Date.now();
-            this.logger.debug('Session reused', { topicId });
-        }
+        if (session?.closing) return undefined;
+        if (session) session.lastAccessTime = Date.now();
         return session;
+    }
+
+    async readAppReceipt(topicId: string, query: AppReceiptMessageQuery, timeoutMs?: number): Promise<ReceiptAccess> {
+        const session = this.sessions.get(topicId);
+        if (!session || session.closing) return { kind: 'unavailable', code: 'RECEIPT_LOCATOR_UNAVAILABLE', message: 'The owning topic session is unavailable.' };
+        return session.appReceipts.read(query, {
+            desktop: session.desktop,
+            kernel: this.kernel,
+            isCurrent: () => this.sessions.get(topicId) === session && !session.closing,
+            isAppEnabled: installationId => session.sources.aotui.isAppEnabled(installationId),
+        }, timeoutMs);
     }
 
     /**
      * 确保 Session 存在（幂等 + 并发去重）
      */
     async ensureSession(topicId: string): Promise<Session> {
+        const opening = this.inFlightSessions.get(topicId);
+        const closing = opening?.closing ?? this.sessions.get(topicId)?.closing;
+        if (closing) {
+            await closing.completion.catch(() => {});
+            if (opening) await opening.completion.catch(() => {});
+            return this.ensureSession(topicId);
+        }
+        if (opening) return opening.completion;
+
         const existing = this.getSession(topicId);
-        if (existing) {
-            return existing;
-        }
+        if (existing) return existing;
 
-        const inFlight = this.inFlightSessions.get(topicId);
-        if (inFlight) {
-            return inFlight;
-        }
+        const createPromise = Promise.resolve().then(async () => {
+            const active = [...this.sessions.values()].filter(session => !session.closing).length;
+            if (active >= this.config.maxSessions) await this.evictOldestSession();
+            return this.createSession(topicId);
+        });
 
-        if (this.sessions.size >= this.config.maxSessions) {
-            this.logger.warn('Max sessions reached, evicting oldest', {
-                maxSessions: this.config.maxSessions,
-                currentSessions: this.sessions.size,
-            });
-            await this.evictOldestSession();
-        }
-
-        const createPromise = this.createSession(topicId)
-            .then((session) => {
-                this.sessions.set(topicId, session);
-
-                this.logger.info('Session created', {
-                    topicId,
-                    totalSessions: this.sessions.size,
-                });
-
-                return session;
-            })
-            .finally(() => {
-                this.inFlightSessions.delete(topicId);
-            });
-
-        this.inFlightSessions.set(topicId, createPromise);
-        return createPromise;
+        const task: OpeningSession = { completion: createPromise.finally(() => {
+            if (!task.closing) this.inFlightSessions.delete(topicId);
+        }) };
+        this.inFlightSessions.set(topicId, task);
+        return task.completion;
     }
 
     /**
@@ -161,7 +162,7 @@ export class SessionManagerV3 extends EventEmitter {
      */
     private async createSession(topicId: string): Promise<Session> {
         // 1. 创建 Desktop（通过 DesktopManager，确保 Apps 被安装）
-        const desktopId = topicId as any; // Topic ID = Desktop ID
+        const desktopId = createDesktopId(topicId);
 
         const topic = db.getTopic(topicId);
         const config = topic?.agentId ? await Config.get() : undefined;
@@ -177,63 +178,79 @@ export class SessionManagerV3 extends EventEmitter {
             ? { projectPath, workspace_dir_path: projectPath }
             : undefined;
 
-        let desktop: IDesktop;
+        const { desktop } = await this.desktopManager.createDesktop(desktopId, appConfig);
+        let sourceControls: TopicSourceControls | undefined;
+        let appReceipts: PendingAppReceipts | undefined;
+        let aotuiSource: SemanticAOTUIDrivenSource | undefined;
+        let agentDriver: AgentDriverV2 | undefined;
+        let session: Session | undefined;
         try {
-            // ✅ 使用 DesktopManager.createDesktop() 而非直接调用 kernel
-            // 这样可以自动安装 AppRegistry 中的所有 Apps
-            const info = await this.desktopManager.createDesktop(desktopId, appConfig);
-            desktop = this.kernel.getDesktop(info.desktopId)!;
+            sourceControls = await this.getOrInitSourceControls(topicId, config);
+            if (desktop.isClosing) throw new AOTUIError('DESKTOP_DISPOSED', { desktopId });
 
-            this.logger.debug('Desktop created with apps', {
-                desktopId: info.desktopId,
-                thirdPartyAppCount: info.thirdPartyAppCount,
-                projectPath,
+            const receipts = appReceipts = new PendingAppReceipts();
+            aotuiSource = new SemanticAOTUIDrivenSource(desktop, this.kernel, {
+                includeInstruction: true,
+                onReceiptPending: (locator, result, subcallId) => receipts.remember(locator, result, subcallId),
             });
+            const sources: Session['sources'] = {
+                systemPrompt: new SystemPromptDrivenSource({ systemPrompt: effectiveSystemPrompt }),
+                aotui: aotuiSource,
+                host: new HostDrivenSourceV2(this.messageService, topicId),
+                skill: new SkillDrivenSource({ projectPath }),
+                mcp: new McpDrivenSource(sourceControls.mcp.allowedServers),
+            };
+            const controls = applySourceControlsToSources(this.snapshotSourceControls(sourceControls), {
+                aotuiSource, mcpSource: sources.mcp, skillSource: sources.skill,
+            });
+            agentDriver = this.createAgentDriver(topicId, sources, effectiveLLMConfig, receipts);
+            agentDriver.setSourceEnabled(sources.skill.name, controls.skill.enabled);
+            agentDriver.setSourceEnabled(sources.mcp.name, controls.mcp.enabled);
+            if (desktop.isClosing) throw new AOTUIError('DESKTOP_DISPOSED', { desktopId });
+
+            const now = Date.now();
+            session = { topicId, desktop, agentDriver, sources, appReceipts: receipts,
+                state: 'active', createdAt: now, lastAccessTime: now };
+            this.sessions.set(topicId, session);
+            this.emit('message', { topicId, type: 'agent_state', state: 'idle' } satisfies GuiUpdateEvent);
+            // A Topic subscription can outlive its previous Desktop.
+            this.emit('message', { topicId, type: 'snapshot' } satisfies GuiUpdateEvent);
+            if (session.closing || desktop.isClosing) throw new AOTUIError('DESKTOP_DISPOSED', { desktopId });
+
+            this.logger.info('Session created', { topicId, desktopId, agentDriverId: agentDriver.getId() });
+            return session;
         } catch (error) {
-            this.logger.error('Failed to create desktop', { topicId, error });
-            throw new Error(`Failed to create desktop for topic: ${topicId}`);
+            if (session) {
+                const { completion } = this.beginSessionClose(session);
+                return rethrowAfterCleanup(error, () => completion);
+            }
+            if (sourceControls && this.sourceControlsByTopic.get(topicId) === sourceControls) {
+                this.sourceControlsByTopic.delete(topicId);
+            }
+            appReceipts?.clear();
+            return rethrowAfterDesktopClose(desktop, error, () => this.releaseSessionComponents(agentDriver, aotuiSource));
         }
+    }
 
-        // 3. 创建 DrivenSources
-        const systemPromptSource = new SystemPromptDrivenSource({
-            systemPrompt: effectiveSystemPrompt,
-        });
-
-        const aotuiSource = new SemanticAOTUIDrivenSource(desktop, this.kernel, {
-            includeInstruction: true,
-        });
-
-        const hostSource = new HostDrivenSourceV2(
-            this.messageService,
-            topicId
-        );
-
-        const sourceControls = await this.getOrInitSourceControls(topicId, config);
-        const mcpDrivenSource = new McpDrivenSource(sourceControls.mcp.allowedServers);
-        const skillDrivenSource = new SkillDrivenSource({ projectPath });
-        const controls = applySourceControlsToSources(this.snapshotSourceControls(sourceControls), {
-            aotuiSource, mcpSource: mcpDrivenSource, skillSource: skillDrivenSource,
-        });
-
-        // 4. 创建 AgentDriver
-        const { model: modelId, provider: { id: providerId } } = effectiveLLMConfig;
-
-        const agentDriver = new AgentDriverV2({
-            sources: [
-                systemPromptSource, // timestamp=0
-                aotuiSource,        // timestamp=1 (instruction) + dynamic (state)
-                hostSource,         // timestamp=now (user/assistant messages)
-                skillDrivenSource,
-                mcpDrivenSource,    // Custom MCP Tools
-            ],
-            llm: this.llmConfigService.withModelInputBudget(effectiveLLMConfig),
+    private createAgentDriver(topicId: string, sources: Session['sources'], config: LLMConfig, appReceipts: PendingAppReceipts): AgentDriverV2 {
+        const isCurrent = () => {
+            const session = this.sessions.get(topicId);
+            return session?.appReceipts === appReceipts && !session.closing;
+        };
+        const { model: modelId, provider: { id: providerId } } = config;
+        return new AgentDriverV2({
+            sources: [sources.systemPrompt, sources.aotui, sources.host, sources.skill, sources.mcp],
+            llm: this.llmConfigService.withModelInputBudget(config),
             onAssistantMessage: (message) => {
-                this.handleMessage(topicId, 'assistant', message);
+                if (isCurrent()) this.handleMessage(topicId, 'assistant', message);
             },
-            onToolResult: (message) => {
-                this.handleMessage(topicId, 'tool', message);
+            onToolResult: (message, results) => {
+                const session = this.sessions.get(topicId);
+                if (session?.appReceipts === appReceipts)
+                    this.handleMessage(topicId, 'tool', message, results, !session.closing);
             },
             onTextDelta: (delta) => {
+                if (!isCurrent()) return;
                 const event: GuiUpdateEvent = {
                     topicId,
                     type: 'text_delta',
@@ -242,6 +259,7 @@ export class SessionManagerV3 extends EventEmitter {
                 this.emit('message', event);
             },
             onReasoningDelta: (delta) => {
+                if (!isCurrent()) return;
                 const event: GuiUpdateEvent = {
                     topicId,
                     type: 'reasoning_delta',
@@ -249,15 +267,13 @@ export class SessionManagerV3 extends EventEmitter {
                 };
                 this.emit('message', event);
             },
-            onLLMUsage: ({ promptTokens, completionTokens, totalTokens }) => {
-                desktop.broadcastLLMUsage({ timestamp: Date.now(), providerId, modelId, promptTokens, completionTokens, totalTokens });
+            onLLMUsage: (usage) => {
+                if (isCurrent()) {
+                    this.emit('model-usage', { kind: 'topic', sessionId: topicId, providerId, modelId, usage } satisfies ModelUsageEvent);
+                }
             },
-            onStateChange: (oldState, newState) => {
-                this.logger.debug('AgentDriver state changed', {
-                    topicId,
-                    oldState,
-                    newState,
-                });
+            onStateChange: (_oldState, newState) => {
+                if (!isCurrent()) return;
 
                 const event: GuiUpdateEvent = {
                     topicId,
@@ -267,48 +283,9 @@ export class SessionManagerV3 extends EventEmitter {
                 this.emit('message', event);
             },
             onRunError: (error) => {
-                this.handleAgentRunError(topicId, error);
+                if (isCurrent()) this.handleAgentRunError(topicId, error);
             },
         });
-
-        agentDriver.setSourceEnabled(aotuiSource.name, controls.apps.enabled);
-        agentDriver.setSourceEnabled(skillDrivenSource.name, controls.skill.enabled);
-        agentDriver.setSourceEnabled(mcpDrivenSource.name, controls.mcp.enabled);
-
-        // 5. 启动 AgentDriver
-        agentDriver.start();
-
-        // 向 GUI 发消息：会话创建完成，Agent 进入 idle
-        // 这样 ChatBridge 能知道该 Topic 已有活跃 Session（不再显示 sleeping）
-        const initEvent: GuiUpdateEvent = {
-            topicId,
-            type: 'agent_state',
-            state: 'idle',
-        };
-        this.emit('message', initEvent);
-
-        this.logger.info('Session components initialized', {
-            topicId,
-            desktopId,
-            agentDriverId: agentDriver.getId(),
-            sources: ['SystemPrompt', 'AOTUI', 'Host'],
-        });
-
-        return {
-            topicId,
-            desktop,
-            agentDriver,
-            sources: {
-                systemPrompt: systemPromptSource,
-                aotui: aotuiSource,
-                host: hostSource,
-                skill: skillDrivenSource,
-                mcp: mcpDrivenSource,
-            },
-            state: 'active',
-            createdAt: Date.now(),
-            lastAccessTime: Date.now(),
-        };
     }
 
     private async getOrInitSourceControls(topicId: string, config?: Config.InfoType): Promise<TopicSourceControls> {
@@ -476,8 +453,7 @@ export class SessionManagerV3 extends EventEmitter {
 
         if (session) {
             if (source === 'apps') {
-                session.agentDriver.setSourceEnabled(session.sources.aotui.name, enabled);
-                session.sources.aotui.setEnabled(enabled);
+                session.sources.aotui.setAppsEnabled(enabled);
             } else if (source === 'mcp') {
                 session.agentDriver.setSourceEnabled(session.sources.mcp.name, enabled);
                 session.sources.mcp.setEnabled(enabled);
@@ -625,11 +601,6 @@ export class SessionManagerV3 extends EventEmitter {
         };
         this.emit('message', event);
 
-        this.logger.debug('User message sent', {
-            topicId,
-            contentLength: content.length,
-            attachmentCount: attachments.length,
-        });
     }
 
     /**
@@ -647,41 +618,8 @@ export class SessionManagerV3 extends EventEmitter {
      * 
      * @param topicId - Topic ID
      */
-    async destroySession(topicId: string): Promise<void> {
-        const session = this.sessions.get(topicId);
-        if (!session) {
-            this.logger.warn('Attempted to destroy non-existent session', { topicId });
-            return;
-        }
-
-        try {
-            // 1. 停止 AgentDriver
-            session.agentDriver.stop();
-            session.agentDriver.dispose();
-            await session.sources.aotui.dispose();
-
-            // 2. 销毁 Desktop
-            await this.kernel.destroyDesktop(session.desktop.id);
-
-            // 3. 更新状态
-            session.state = 'destroyed';
-
-            // 4. 清理引用
-            this.sessions.delete(topicId);
-            this.inFlightSessions.delete(topicId);
-            this.sourceControlsByTopic.delete(topicId);
-
-            this.logger.info('Session destroyed', {
-                topicId,
-                remainingSessions: this.sessions.size,
-            });
-        } catch (error) {
-            this.logger.error('Failed to destroy session', { topicId, error });
-            // 即使失败也要清理引用
-            this.sessions.delete(topicId);
-            this.inFlightSessions.delete(topicId);
-            this.sourceControlsByTopic.delete(topicId);
-        }
+    destroySession(topicId: string): Promise<void> {
+        return this.closeSession(topicId)?.completion ?? Promise.resolve();
     }
 
     /**
@@ -690,44 +628,65 @@ export class SessionManagerV3 extends EventEmitter {
      * Allows apps to flush state before closing the Desktop.
      */
     async shutdownSession(topicId: string): Promise<void> {
+        const closing = this.closeSession(topicId);
+        if (!closing) return;
+        const handle = await closing.started;
+        if (!handle) return;
+        const result = await handle.wait({ timeoutMs: 5000 });
+        if (result.status === 'deadline') throw new DesktopCloseError('CLOSE_DEADLINE_EXCEEDED', result.report);
+        await closing.completion;
+    }
+
+    private closeSession(topicId: string): ClosingSession | undefined {
+        const opening = this.inFlightSessions.get(topicId);
+        if (opening?.closing) return opening.closing;
         const session = this.sessions.get(topicId);
-        if (!session) {
-            this.logger.warn('Attempted to shutdown non-existent session', { topicId });
-            return;
-        }
+        if (session) return this.beginSessionClose(session);
+        if (!opening) return;
+        const closing = opening.completion.then(created => this.beginSessionClose(created), () => undefined);
+        const started = closing.then(task => task?.started);
+        const completion = closing.then(task => task?.completion).finally(() => { this.inFlightSessions.delete(topicId); });
+        void started.catch(() => {});
+        void completion.catch(() => {});
+        return opening.closing = { started, completion };
+    }
 
-        try {
-            session.agentDriver.stop();
-            session.agentDriver.dispose();
-            await session.sources.aotui.dispose();
-            const handle = this.kernel.beginDesktopShutdown(session.desktop.id, { timeoutMs: 5000 });
-            const result = await handle.wait({ timeoutMs: 5000 });
-            if (result.status === 'deadline' || result.report.hasFailures) {
-                const code = result.status === 'deadline' ? 'CLOSE_DEADLINE_EXCEEDED' : 'DESKTOP_CLOSE_FAILED';
-                throw Object.assign(new Error(code), { code, report: result.report });
-            }
-            session.state = 'destroyed';
-            this.sessions.delete(topicId);
-            this.inFlightSessions.delete(topicId);
-            this.sourceControlsByTopic.delete(topicId);
-
-            this.logger.info('Session gracefully shutdown', {
-                topicId,
-                remainingSessions: this.sessions.size,
+    private beginSessionClose(session: Session): NonNullable<Session['closing']> {
+        if (session.closing) return session.closing;
+        const local = this.releaseSessionComponents(session.agentDriver, session.sources.aotui);
+        const closeDesktop = () => session.desktop.beginClose();
+        const started = local.then(closeDesktop, closeDesktop);
+        const desktop = started.then(handle => handle.completion).then(checkDesktopClose);
+        const completion = Promise.allSettled([local, desktop])
+            .then(results => checkCloseTasks(results, 'TOPIC_SESSION_CLOSE_FAILED'))
+            .finally(() => {
+                session.appReceipts.clear();
+                session.state = 'destroyed';
+                if (this.sessions.get(session.topicId) !== session) return;
+                this.sessions.delete(session.topicId);
+                this.sourceControlsByTopic.delete(session.topicId);
             });
-        } catch (error) {
-            this.logger.error('Failed to shutdown session', { topicId, error });
-            this.sessions.delete(topicId);
-            this.inFlightSessions.delete(topicId);
-            this.sourceControlsByTopic.delete(topicId);
-        }
+        void completion.catch(() => {});
+        return session.closing = { started, completion };
+    }
+
+    private async releaseSessionComponents(
+        agentDriver: AgentDriverV2 | undefined,
+        aotuiSource: SemanticAOTUIDrivenSource | undefined,
+    ): Promise<void> {
+        const results = await Promise.allSettled([
+            Promise.resolve().then(() => agentDriver?.closeToolTurn()),
+            Promise.resolve().then(() => agentDriver?.dispose()),
+            Promise.resolve().then(() => aotuiSource?.dispose()),
+        ]);
+        checkCloseTasks(results, 'TOPIC_SESSION_COMPONENT_CLEANUP_FAILED');
     }
 
     /**
      * 暂停 Session的 AgentDriver
      */
     pauseSession(topicId: string): void {
-        const session = this.sessions.get(topicId);
+        const session = this.getSession(topicId);
         if (!session) {
             this.logger.warn('pauseSession: session not found', { topicId });
             return;
@@ -742,7 +701,7 @@ export class SessionManagerV3 extends EventEmitter {
      * 恢复 Session的 AgentDriver
      */
     resumeSession(topicId: string): void {
-        const session = this.sessions.get(topicId);
+        const session = this.getSession(topicId);
         if (!session) {
             this.logger.warn('resumeSession: session not found', { topicId });
             return;
@@ -757,23 +716,14 @@ export class SessionManagerV3 extends EventEmitter {
      * 驱逐最旧的 Session
      */
     private async evictOldestSession(): Promise<void> {
-        let oldestTopicId: string | null = null;
-        let oldestTime = Infinity;
-
-        for (const [topicId, session] of this.sessions.entries()) {
-            if (session.lastAccessTime < oldestTime) {
-                oldestTime = session.lastAccessTime;
-                oldestTopicId = topicId;
-            }
+        let oldest: Session | undefined;
+        for (const session of this.sessions.values()) {
+            if (!session.closing && (!oldest || session.lastAccessTime < oldest.lastAccessTime)) oldest = session;
         }
-
-        if (oldestTopicId) {
-            const idleTime = Date.now() - oldestTime;
-            this.logger.warn('Evicting oldest session', {
-                topicId: oldestTopicId,
-                idleTimeMs: idleTime,
-            });
-            await this.destroySession(oldestTopicId);
+        if (oldest) {
+            const { topicId, lastAccessTime } = oldest;
+            this.logger.warn('Evicting oldest session', { topicId, idleTimeMs: Date.now() - lastAccessTime });
+            await this.beginSessionClose(oldest).completion.catch(error => this.logger.error('Failed to evict session', { topicId, error }));
         }
     }
 
@@ -783,24 +733,24 @@ export class SessionManagerV3 extends EventEmitter {
     private startCleanupTask(): void {
         this.cleanupTimer = setInterval(async () => {
             const now = Date.now();
-            const toDestroy: string[] = [];
+            const toDestroy: Session[] = [];
 
-            for (const [topicId, session] of this.sessions.entries()) {
+            for (const session of this.sessions.values()) {
                 const idleTime = now - session.lastAccessTime;
-                if (idleTime > this.config.idleTimeoutMs) {
-                    toDestroy.push(topicId);
+                if (!session.closing && idleTime > this.config.idleTimeoutMs) {
+                    toDestroy.push(session);
                 }
             }
 
             if (toDestroy.length > 0) {
                 this.logger.info('Cleaning up idle sessions', {
                     count: toDestroy.length,
-                    topics: toDestroy,
+                    topics: toDestroy.map(session => session.topicId),
                 });
 
-                for (const topicId of toDestroy) {
-                    await this.destroySession(topicId);
-                }
+                const results = await Promise.allSettled(toDestroy.map(session => this.beginSessionClose(session).completion));
+                for (const result of results) if (result.status === 'rejected')
+                    this.logger.error('Failed to close idle session', { error: result.reason });
             }
         }, this.config.cleanupIntervalMs);
 
@@ -830,7 +780,9 @@ export class SessionManagerV3 extends EventEmitter {
     private handleMessage(
         topicId: string,
         type: 'assistant' | 'tool',
-        message: ModelMessage
+        message: ModelMessage,
+        toolResults?: readonly ToolResult[],
+        publish = true,
     ): void {
         // 🔍 打印消息详情
         console.log('\n=== SessionManagerV3.handleMessage ===');
@@ -847,25 +799,14 @@ export class SessionManagerV3 extends EventEmitter {
         console.log('=====================================\n');
 
         // 1. 保存到数据库
-        const saved = this.messageService.addMessage(topicId, message);
-
         const session = this.sessions.get(topicId);
-        if (session && type === 'tool' && Array.isArray((saved as any).content)) {
-            const toolResultPart = (saved as any).content.find((part: any) => part?.type === 'tool-result');
-            if (toolResultPart?.toolName === session.sources.host.getCompactionToolName()) {
-                const resultPayload = toolResultPart.result ?? toolResultPart.output;
-                const success = resultPayload && typeof resultPayload === 'object'
-                    ? (resultPayload as { success?: unknown }).success
-                    : undefined;
-                if (success === true) {
-                    const summary = resultPayload && typeof resultPayload === 'object'
-                        ? (resultPayload as { summary?: unknown }).summary
-                        : undefined;
-                    const summaryText = typeof summary === 'string' ? summary : undefined;
-                    session.sources.host.markToolCompactionAnchor(saved.id, summaryText);
-                }
-            }
+        let saved: ReturnType<MessageService['addMessage']> | undefined;
+        try {
+            saved = this.messageService.addMessage(topicId, message);
+        } finally {
+            if (toolResults) session?.appReceipts.associate(saved?.id, toolResults);
         }
+        if (!publish) return;
 
         // A persisted tool receipt is new conversation input, even when a read-only
         // call did not change a View. Schedule observation of that result;
@@ -882,15 +823,11 @@ export class SessionManagerV3 extends EventEmitter {
         };
         this.emit('message', event);
 
-        this.logger.debug('Message handled', {
-            topicId,
-            type,
-            role: message.role,
-        });
     }
 
     private handleAgentRunError(topicId: string, error: Error): void {
         const { category, userFacingMessage } = this.classifyAgentError(error);
+        const inputError = error instanceof ModelInputError || error instanceof ProviderToolSchemaError;
 
         this.logger.warn('Agent run failed; emitting user-visible error message', {
             topicId,
@@ -905,11 +842,11 @@ export class SessionManagerV3 extends EventEmitter {
                 isAgentError: true,
                 errorCategory: category,
                 rawError: error.message,
-                ...(error instanceof ModelInputError ? { errorCode: error.code, errorDetails: error.details } : {}),
+                ...(inputError ? { errorCode: error.code, errorDetails: error.details } : {}),
             },
         } as unknown as ModelMessage;
 
-        if (error instanceof ModelInputError) {
+        if (inputError) {
             this.emit('message', { topicId, type: 'assistant', message: assistantErrorMessage });
         } else {
             this.handleMessage(topicId, 'assistant', assistantErrorMessage);
@@ -920,7 +857,8 @@ export class SessionManagerV3 extends EventEmitter {
         category: 'model_input' | 'provider' | 'network' | 'rate_limit' | 'unknown';
         userFacingMessage: string;
     } {
-        if (error instanceof ModelInputError) return { category: 'model_input', userFacingMessage: error.message };
+        if (error instanceof ModelInputError || error instanceof ProviderToolSchemaError)
+            return { category: 'model_input', userFacingMessage: error.message };
         const raw = error.message || 'Unknown error';
         const normalized = raw.toLowerCase();
 
@@ -1047,11 +985,10 @@ Remember: You control the Desktop. The user communicates with you through applic
         this.stopCleanupTask();
 
         // 销毁所有 Session
-        const topicIds = Array.from(this.sessions.keys());
-        for (const topicId of topicIds) {
-            await this.destroySession(topicId);
-        }
+        const topicIds = new Set([...this.sessions.keys(), ...this.inFlightSessions.keys()]);
+        const results = await Promise.allSettled([...topicIds].map(topicId => this.destroySession(topicId)));
 
         this.logger.info('All sessions cleaned up');
+        checkCloseTasks(results, 'TOPIC_SESSION_CLEANUP_FAILED');
     }
 }

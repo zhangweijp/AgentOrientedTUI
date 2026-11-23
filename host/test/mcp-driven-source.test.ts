@@ -142,7 +142,7 @@ describe('McpDrivenSource through the current Driver and model SDK', () => {
             expect(execute).toHaveBeenCalledTimes(1);
             expect(effects).toBe(1);
             expect(execute).toHaveBeenCalledWith({ value: 1 }, { toolCallId: 'mcp-owner-call', messages: [] });
-            expect(route).toHaveBeenCalledExactlyOnceWith('counter', { value: 1 }, 'mcp-owner-call');
+            expect(route).toHaveBeenCalledExactlyOnceWith('counter', { value: 1 }, 'mcp-owner-call', undefined, expect.any(AbortSignal));
             expect(getContext).toHaveBeenCalledTimes(1);
             expect((await getContext.mock.results[0].value).tools.counter).toBe(original);
             expect(original.execute).toBe(execute);
@@ -153,7 +153,7 @@ describe('McpDrivenSource through the current Driver and model SDK', () => {
             expect(onToolResult).toHaveBeenCalledExactlyOnceWith({
                 role: 'tool', content: [{ type: 'tool-result', toolCallId: 'mcp-owner-call', toolName: 'counter',
                     output: { type: 'json', value: mode === 'success' ? '{"count":1,"args":{"value":1}}' : 'Error: after-effect' } }],
-            });
+            }, expect.any(Array));
             expect(release).toHaveBeenCalledTimes(1);
             expect(onRunError).not.toHaveBeenCalled();
         } finally {
@@ -198,7 +198,8 @@ describe('MCP capture failure and live controls', () => {
         try {
             await driver.trigger(); await driver['runInFlight'];
             expect(calls).toEqual(['A']); expect(original.mock.contexts[0]).toBe(a);
-            expect(result).toHaveBeenCalledExactlyOnceWith({ role: 'tool', content: [{ type: 'tool-result', toolName: 'action', toolCallId: 'captured', output: { type: 'json', value: 'A' } }] });
+            expect(result).toHaveBeenCalledExactlyOnceWith({ role: 'tool', content: [{ type: 'tool-result', toolName: 'action', toolCallId: 'captured', output: { type: 'json', value: 'A' } }] },
+                [{ toolName: 'action', toolCallId: 'captured', result: 'A' }]);
             expect(await inspector?.executeTool?.('action', {}, 'inspector')).toEqual({ toolName: 'action', toolCallId: 'inspector', result: 'B' });
             expect(calls).toEqual(['A', 'B']); expect(a.execute).not.toHaveBeenCalled();
             expect(model).toHaveBeenCalledTimes(1);

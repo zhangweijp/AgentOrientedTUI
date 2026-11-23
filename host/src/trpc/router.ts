@@ -5,11 +5,12 @@ import superjson from 'superjson';
 import { z } from 'zod';
 import * as db from '../db/index.js';
 import { projectService } from '../core/project-service.js';
+import { DesktopCloseError } from '../core/desktop-close.js';
 // ✅ V2: Use HostManagerV2
 import type { HostManagerV2 } from '../core/host-manager-v2.js';
 import type { LLMConfigService } from '../core/llm-config-service.js';
 import type { ModelRegistry } from '../services/model-registry.js';
-import { MessageServiceV2 } from '../core/message-service-v2.js';
+import { MessageService } from '../core/message-service.js';
 import { Config } from '../config/config.js';
 import { ImConfig } from '../config/im-schema.js';
 import { McpConfig, Mcp } from '../config/mcp-schema.js';
@@ -30,11 +31,17 @@ export type Context = {
     hostManager: HostManagerV2;
     llmConfigService: LLMConfigService;
     modelRegistry: ModelRegistry;
-    messageService: MessageServiceV2;
+    messageService: MessageService;
 };
 
 const t = initTRPC.context<Context>().create({
     transformer: superjson,
+    errorFormatter({ shape, error }) {
+        const causes = error.cause instanceof AggregateError ? error.cause.errors : [error.cause];
+        const close = causes.find((cause): cause is DesktopCloseError => cause instanceof DesktopCloseError);
+        if (!close) return shape;
+        return { ...shape, data: { ...shape.data, desktopClose: { code: close.code, report: close.report } } };
+    },
 });
 
 export const router = t.router;
@@ -58,7 +65,7 @@ const dbRouter = router({
     getMessages: publicProcedure
         .input(z.object({ id: z.string() }))
         .query(async ({ input, ctx }) => {
-            // ✅ 修复: 使用 MessageServiceV2 从 messages_v2 表读取
+            // ✅ 修复: 使用 MessageService 从 messages_v2 表读取
             console.log('[TRPC] getMessages called for topic:', input.id);
             const messages = ctx.messageService.getMessages(input.id);
             console.log('[TRPC] getMessages returned:', messages.length, 'messages');
@@ -79,7 +86,7 @@ const dbRouter = router({
             }).optional(),
             sourceControls: sourceControlsSchema.optional(),
         }))
-        .mutation(async ({ input, ctx }) => {
+        .mutation(async ({ input }) => {
             console.log('[TRPC] createTopic called:', input.title);
             const id = `topic_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
             const topic = {
@@ -106,7 +113,7 @@ const dbRouter = router({
         }),
     deleteTopic: publicProcedure
         .input(z.object({ id: z.string() }))
-        .mutation(async ({ input, ctx }) => {
+        .mutation(async ({ input }) => {
             db.deleteTopic(input.id);
         }),
     renameTopic: publicProcedure
@@ -260,10 +267,10 @@ const sessionRouter = router({
             });
         }),
 
-    snapshot: publicProcedure
+    preview: publicProcedure
         .input(z.object({ id: z.string() }))
         .query(async ({ input, ctx }) => {
-            return ctx.hostManager.getSnapshot(input.id);
+            return ctx.hostManager.getDesktopPreview(input.id);
         }),
 
     shutdown: publicProcedure
@@ -322,7 +329,6 @@ const llmConfigRouter = router({
             baseUrl: z.string().optional(),
             apiKey: z.string().optional(),
             temperature: z.number(),
-            maxSteps: z.number(),
         }))
         .mutation(async ({ input, ctx }) => {
             if (input.providerId.startsWith('custom:')) {
@@ -340,7 +346,6 @@ const llmConfigRouter = router({
                 baseUrl: z.string().optional(),
                 apiKey: z.string().optional(),
                 temperature: z.number().optional(),
-                maxSteps: z.number().optional(),
             }),
         }))
         .mutation(async ({ input, ctx }) => {
@@ -395,7 +400,6 @@ const llmConfigRouter = router({
             modelId: z.string().min(1),
             name: z.string().optional(),
             temperature: z.number().optional(),
-            maxSteps: z.number().optional(),
             setActive: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {

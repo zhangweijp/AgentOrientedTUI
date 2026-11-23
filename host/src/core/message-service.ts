@@ -1,16 +1,10 @@
-/**
- * @aotui/host - Message Service V2
- * 
- * 基于 AI SDK v6 ModelMessage 的消息服务
- */
-
 import type { ModelMessage } from 'ai';
-import type { Message } from '../types-v2.js';
-import { createMessageId } from '../types-v2.js';
-import * as dbV2 from '../db-v2.js';
+import type { Message } from '../types/messages.js';
+import { createMessageId } from '../types/messages.js';
+import * as messageDb from '../db/messages.js';
 import { getDb, persistDatabase } from '../db/index.js';
+import { COMPACTION_TOOL_NAME, isCompactionAnchor } from './compaction-receipt.js';
 
-const COMPACTION_TOOL_NAME = 'context_compact';
 const TOOL_RESULT_COMPACTED_PLACEHOLDER = '[Old tool result content cleared by context compaction]';
 
 type CompactionTrigger = 'agent' | 'host_fallback';
@@ -82,12 +76,8 @@ function extractDisplayText(message: Message): string {
             continue;
         }
         if (part.type === 'tool-result') {
-            const output = part.output ?? part.result;
-            if (typeof output === 'string') {
-                parts.push(output);
-            } else {
-                parts.push(JSON.stringify(output));
-            }
+            parts.push(part.output.type === 'text' || part.output.type === 'error-text'
+                ? part.output.value : JSON.stringify(part.output));
         }
     }
 
@@ -115,23 +105,6 @@ function estimateTokensFromText(text: string, modelHint?: string): number {
     return Math.ceil(text.length / charsPerToken);
 }
 
-function isCompactionAnchor(message: Message): boolean {
-    if ((message as any)._aotuiCompactionAnchor === true) {
-        return true;
-    }
-
-    if (!Array.isArray(message.content)) {
-        return false;
-    }
-
-    return (message.content as any[]).some((part) => {
-        if (!part || typeof part !== 'object' || part.type !== 'tool-result') {
-            return false;
-        }
-        return part.toolName === COMPACTION_TOOL_NAME;
-    });
-}
-
 function isCompactionToolMessage(message: Message): boolean {
     if (!Array.isArray(message.content)) {
         return false;
@@ -152,33 +125,19 @@ function compactToolResultContent(message: Message): { changed: boolean; nextMes
     }
 
     let cleanedParts = 0;
-    const updatedParts = (message.content as any[]).map((part) => {
-        if (!part || typeof part !== 'object' || part.type !== 'tool-result') {
+    const updatedParts = message.content.map(part => {
+        if (part.type !== 'tool-result' || part.toolName === COMPACTION_TOOL_NAME) {
             return part;
         }
-
-        if (part.toolName === COMPACTION_TOOL_NAME) {
-            return part;
-        }
-
-        const output = part.output ?? part.result;
-        if (typeof output === 'string' && output === TOOL_RESULT_COMPACTED_PLACEHOLDER) {
+        if (part.output.type === 'text' && part.output.value === TOOL_RESULT_COMPACTED_PLACEHOLDER) {
             return part;
         }
 
         cleanedParts += 1;
-
-        const nextPart: any = {
+        return {
             ...part,
-            output: TOOL_RESULT_COMPACTED_PLACEHOLDER,
-            result: TOOL_RESULT_COMPACTED_PLACEHOLDER,
-            metadata: {
-                ...(part.metadata || {}),
-                aotuiCompacted: true,
-            },
+            output: { type: 'text' as const, value: TOOL_RESULT_COMPACTED_PLACEHOLDER },
         };
-
-        return nextPart;
     });
 
     if (cleanedParts === 0) {
@@ -191,30 +150,16 @@ function compactToolResultContent(message: Message): { changed: boolean; nextMes
         nextMessage: {
             ...message,
             content: updatedParts,
-            timestamp: Date.now(),
         },
     };
 }
 
-/**
- * Message Service V2
- * 
- * 完全对齐 AI SDK v6，零转换成本
- */
-export class MessageServiceV2 {
+export class MessageService {
     /**
      * 获取话题的所有消息
      */
     getMessages(topicId: string): Message[] {
-        try {
-            const db = getDb();
-            const messages = dbV2.getMessagesV2(db, topicId);
-            console.log(`[MessageServiceV2] getMessages for topic ${topicId}: ${messages.length} messages`);
-            return messages;
-        } catch (error) {
-            console.error('[MessageServiceV2] Failed to get messages:', error);
-            return [];
-        }
+        return messageDb.getMessages(getDb(), topicId);
     }
 
     /**
@@ -233,22 +178,22 @@ export class MessageServiceV2 {
                 timestamp: (message as any).timestamp || Date.now(),
             } as Message;
 
-            console.log(`[MessageServiceV2] addMessage to topic ${topicId}:`, {
+            console.log(`[MessageService] addMessage to topic ${topicId}:`, {
                 id: messageWithMeta.id,
                 role: messageWithMeta.role,
                 contentLength: typeof message.content === 'string' ? message.content.length : 'non-string'
             });
 
-            dbV2.createMessageV2(db, topicId, messageWithMeta);
+            messageDb.createMessage(db, topicId, messageWithMeta);
             
             // ✅ 持久化到磁盘
             persistDatabase();
             
-            console.log(`[MessageServiceV2] Message saved and persisted to disk`);
+            console.log(`[MessageService] Message saved and persisted to disk`);
 
             return messageWithMeta;
         } catch (error) {
-            console.error('[MessageServiceV2] Failed to add message:', error);
+            console.error('[MessageService] Failed to add message:', error);
             throw error;
         }
     }
@@ -256,11 +201,11 @@ export class MessageServiceV2 {
     updateMessage(topicId: string, message: Message): Message {
         try {
             const db = getDb();
-            dbV2.updateMessageV2(db, topicId, message);
+            messageDb.updateMessage(db, topicId, message);
             persistDatabase();
             return message;
         } catch (error) {
-            console.error('[MessageServiceV2] Failed to update message:', error);
+            console.error('[MessageService] Failed to update message:', error);
             throw error;
         }
     }
@@ -291,11 +236,6 @@ export class MessageServiceV2 {
         return messages.slice(start);
     }
 
-    estimateContextChars(topicId: string): number {
-        const messages = this.getMessagesForLLM(topicId);
-        return messages.reduce((total, message) => total + extractDisplayText(message).length, 0);
-    }
-
     estimateContextTokens(topicId: string, modelHint?: string): number {
         const messages = this.getMessagesForLLM(topicId);
         return messages.reduce((total, message) => {
@@ -304,25 +244,6 @@ export class MessageServiceV2 {
             const partOverhead = Array.isArray(message.content) ? message.content.length * 2 : 2;
             return total + estimateTokensFromText(display, modelHint) + roleOverhead + partOverhead;
         }, 0);
-    }
-
-    markCompactionAnchor(topicId: string, messageId: string, summary?: string): Message | null {
-        const messages = this.getMessages(topicId);
-        const target = messages.find((message) => message.id === messageId);
-        if (!target) {
-            return null;
-        }
-
-        const updatedRaw: any = {
-            ...target,
-            timestamp: Date.now(),
-            ...(summary ? { _aotuiCompactionSummary: summary } : {}),
-            _aotuiCompactionAnchor: true,
-        };
-        const updated = updatedRaw as Message;
-
-        this.updateMessage(topicId, updated);
-        return updated;
     }
 
     compactContext(topicId: string, options: CompactionOptions): CompactionResult {
@@ -398,7 +319,7 @@ export class MessageServiceV2 {
                         },
                     },
                 ],
-            } as any);
+            });
 
             const toolResult = this.addMessage(topicId, {
                 role: 'tool',
@@ -407,18 +328,20 @@ export class MessageServiceV2 {
                         type: 'tool-result',
                         toolCallId: compactCallId,
                         toolName: COMPACTION_TOOL_NAME,
-                        result: {
-                            success: true,
-                            trigger: options.trigger,
-                            summary,
-                            compactedMessageCount: activeWindow.length,
-                            cleanedToolResultCount,
+                        output: {
+                            type: 'json',
+                            value: {
+                                success: true,
+                                trigger: options.trigger,
+                                summary,
+                                compactedMessageCount: activeWindow.length,
+                                cleanedToolResultCount,
+                            },
                         },
                     },
                 ],
-            } as any);
+            });
 
-            this.markCompactionAnchor(topicId, toolResult.id, summary);
             syntheticMessages.push(assistantCall, toolResult);
         }
 
@@ -432,18 +355,4 @@ export class MessageServiceV2 {
         };
     }
 
-    /**
-     * 删除消息
-     */
-    deleteMessage(id: string): void {
-        try {
-            const db = getDb();
-            dbV2.deleteMessageV2(db, id);
-            persistDatabase();
-            console.log(`[MessageServiceV2] Message ${id} deleted and persisted`);
-        } catch (error) {
-            console.error('[MessageServiceV2] Failed to delete message:', error);
-            throw error;
-        }
-    }
 }

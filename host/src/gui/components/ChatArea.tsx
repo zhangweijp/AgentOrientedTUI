@@ -4,7 +4,7 @@ import { Button, Spinner, Card, CardBody } from "@heroui/react";
 import { IconPlay, IconPause, IconAgentSleeping, IconAgentIdle, IconAgentWorking, IconAgentPaused, IconApps, IconSkills, IconPlug, IconBrain, IconPrompt, IconWrench } from './Icons.js';
 import { EmptyState } from './EmptyState.js';
 import { MarkdownRenderer } from './MarkdownRenderer.js';
-import type { Message, ImageAttachment } from '../../types.js';
+import type { DisplayMessage, ImageAttachment } from '../../types.js';
 
 export type DisplayAgentState = 'sleeping' | 'idle' | 'working' | 'paused';
 
@@ -36,7 +36,7 @@ type TopicCapabilities = {
 };
 
 interface ChatAreaProps {
-    messages: Message[];
+    messages: DisplayMessage[];
     agentThinking: string;
     agentReasoning: string;
     onSendMessage: (content: string, attachments?: ImageAttachment[]) => void | Promise<void>;
@@ -281,13 +281,6 @@ export function ChatArea({ messages, agentThinking, agentReasoning, onSendMessag
         ? currentModelSelection.model
         : 'Model';
 
-    const contextPillMaterialStyle: React.CSSProperties = {
-        backgroundColor: 'color-mix(in srgb, var(--mat-lg-regular-bg) 60%, transparent)',
-        backdropFilter: 'blur(40px) saturate(150%)',
-        WebkitBackdropFilter: 'blur(40px) saturate(150%)',
-        border: '1px solid rgba(255, 255, 255, 0.1)',
-    };
-
     // Popovers use the same visual material as the context pill.
     // backdrop-filter works correctly here because the pill's blur layer is now an isolated
     // sibling element (absolute inset-0, no children), NOT an ancestor — so these popovers
@@ -337,40 +330,6 @@ export function ChatArea({ messages, agentThinking, agentReasoning, onSendMessag
             />
         </button>
     );
-
-    const toggleTraceExpand = (traceKey: string) => {
-        const scrollArea = scrollAreaRef.current;
-        const beforeBlock = scrollArea?.querySelector(`[data-trace-key="${traceKey}"]`) as HTMLElement | null;
-        const beforeAnchor = beforeBlock?.querySelector('[data-latest-toolcall-anchor="true"]') as HTMLElement | null;
-        const beforeAnchorTop = beforeAnchor?.getBoundingClientRect().top ?? null;
-        const beforeHeight = beforeBlock?.offsetHeight ?? null;
-        let nextExpanded = false;
-
-        setExpandedTraceKeys((prev) => {
-            nextExpanded = !prev[traceKey];
-            return { ...prev, [traceKey]: nextExpanded };
-        });
-
-        requestAnimationFrame(() => {
-            const nextScrollArea = scrollAreaRef.current;
-            if (!nextScrollArea) {
-                return;
-            }
-            const afterBlock = nextScrollArea.querySelector(`[data-trace-key="${traceKey}"]`) as HTMLElement | null;
-            const afterAnchor = afterBlock?.querySelector('[data-latest-toolcall-anchor="true"]') as HTMLElement | null;
-            const afterAnchorTop = afterAnchor?.getBoundingClientRect().top ?? null;
-
-            if (beforeAnchorTop !== null && afterAnchorTop !== null) {
-                nextScrollArea.scrollTop += afterAnchorTop - beforeAnchorTop;
-                return;
-            }
-
-            if (beforeHeight !== null && afterBlock) {
-                const afterHeight = afterBlock.offsetHeight;
-                nextScrollArea.scrollTop += afterHeight - beforeHeight;
-            }
-        });
-    };
 
     // Auto-resize textarea
     useEffect(() => {
@@ -610,7 +569,7 @@ export function ChatArea({ messages, agentThinking, agentReasoning, onSendMessag
                     </span>
                 </button>
                 {isExpanded && (
-                    <div className="border-l-2 border-[var(--color-border)] pl-3 py-1 mt-1 ml-3 text-[10px] leading-5 text-[var(--color-text-secondary)]">
+                    <div className="border-l-2 border-[var(--mat-border)] pl-3 py-1 mt-1 ml-3 text-[10px] leading-5 text-[var(--color-text-secondary)]">
                         {renderToolchainMarkdown(normalizedReasoning)}
                     </div>
                 )}
@@ -725,7 +684,7 @@ export function ChatArea({ messages, agentThinking, agentReasoning, onSendMessag
 
                     {/* Expanded reasoning content - no bubble, just left border */}
                     {isReasoningExpanded && (
-                        <div className="border-l-2 border-[var(--color-border)] pl-3 py-1 mt-1 ml-3 text-[10px] leading-5 text-[var(--color-text-secondary)]">
+                        <div className="border-l-2 border-[var(--mat-border)] pl-3 py-1 mt-1 ml-3 text-[10px] leading-5 text-[var(--color-text-secondary)]">
                             {renderToolchainMarkdown(item.text)}
                         </div>
                     )}
@@ -782,7 +741,7 @@ export function ChatArea({ messages, agentThinking, agentReasoning, onSendMessag
 
                     {/* Tool round content - expanded state with left border like reasoning */}
                     {isToolExpanded && (
-                        <div className="border-l-2 border-[var(--color-border)] pl-3 py-1 mt-1 ml-3 space-y-2">
+                        <div className="border-l-2 border-[var(--mat-border)] pl-3 py-1 mt-1 ml-3 space-y-2">
                             {/* Input - only show for latest round or if explicitly expanded */}
                             {(round.isLatest || isToolExpanded) && hasMeaningfulPayload(round.callArgs) && (
                                 <div>
@@ -877,7 +836,7 @@ export function ChatArea({ messages, agentThinking, agentReasoning, onSendMessag
 
             <div ref={scrollAreaRef} className="absolute inset-0 px-6 pt-[78px] pb-[60px] space-y-6 overflow-y-auto custom-scrollbar">
                 {messages.length === 0 && (
-                    <EmptyState onNewChat={() => { }} />
+                    <EmptyState />
                 )}
 
                 {agentReasoning && messages.length === 0 && renderLiveReasoningBlock()}

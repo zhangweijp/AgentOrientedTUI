@@ -9,7 +9,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { createTRPCProxyClient } from '@trpc/client';
 import { ipcLink } from 'electron-trpc/renderer';
 import superjson from 'superjson';
-import type { AppRouter } from '../../trpc/router-types.js';
+import type { AppRouter } from '../../trpc/router.js';
 import type { ModelsDevModel } from '../../services/index.js';
 
 export interface UseModelsResult {

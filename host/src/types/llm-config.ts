@@ -12,7 +12,7 @@ export interface LLMConfigRecord {
     id: number;
     /** 配置名称 */
     name: string;
-    /** Stored model ID. Older records may contain an explicit catalog key. */
+    /** Raw model ID sent to the selected Provider. */
     model: string;
     /** Provider ID (可选, e.g., "openai", "anthropic") */
     providerId?: string;
@@ -22,30 +22,12 @@ export interface LLMConfigRecord {
     apiKey?: string;
     /** Temperature (0-1) */
     temperature: number;
-    /** Max Steps */
-    maxSteps: number;
     /** 是否为激活配置 */
     isActive: boolean;
     /** 创建时间 */
     createdAt: number;
     /** 更新时间 */
     updatedAt: number;
-}
-
-/**
- * 可用的 Provider 信息
- */
-export interface ProviderInfo {
-    /** Provider ID */
-    id: string;
-    /** Provider 名称 */
-    name: string;
-    /** 默认 Base URL */
-    defaultBaseUrl?: string;
-    /** 是否需要 API Key */
-    requiresApiKey: boolean;
-    /** 支持的模型列表 */
-    models?: string[];
 }
 
 /**
@@ -58,7 +40,6 @@ export interface LLMConfigInput {
     baseUrl?: string;
     apiKey?: string;
     temperature?: number;
-    maxSteps?: number;
     skipValidation?: boolean;
 }
 
@@ -66,6 +47,6 @@ export interface LLMConfigInput {
 export function parseModelSelection(value: string): { providerId: string; modelId: string } | undefined {
     const separator = value.indexOf(':', value.startsWith('custom:') ? 'custom:'.length : 0);
     const slash = value.indexOf('/');
-    if (separator < 1 || (slash >= 0 && slash < separator)) return undefined;
+    if (separator < 1 || (slash >= 0 && slash < separator) || !value.slice(separator + 1).trim()) return undefined;
     return { providerId: value.slice(0, separator), modelId: value.slice(separator + 1) };
 }

@@ -31,10 +31,6 @@ export function parseInstallSource(input: string, cwd: string = process.cwd()): 
         throw new Error('Install source is required');
     }
 
-    if (value.startsWith('git:')) {
-        throw new Error('git source is not supported yet. Use npm package or local path');
-    }
-
     if (value.startsWith('local:')) {
         const localPath = value.slice('local:'.length);
         return parseLocalSource(localPath, cwd);
@@ -137,7 +133,7 @@ export function parseNpmSpecifier(raw: string): NpmSpecifier {
     };
 }
 
-export function looksLikeLocalPath(value: string): boolean {
+function looksLikeLocalPath(value: string): boolean {
     if (!value) return false;
     if (value.startsWith('.') || value.startsWith('/') || value.startsWith('~')) return true;
     if (/^[a-zA-Z]:[\\/]/.test(value)) return true;

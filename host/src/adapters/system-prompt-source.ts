@@ -21,11 +21,9 @@ import type { ContextDrivenSource, DrivenSourceContext } from '@aotui/agent-driv
 /**
  * SystemPromptDrivenSource 配置
  */
-export interface SystemPromptConfig {
+interface SystemPromptConfig {
     /** 系统提示词内容 */
     systemPrompt: string;
-    /** 可选的元数据 */
-    metadata?: Record<string, unknown>;
 }
 
 /**
@@ -47,10 +45,6 @@ export interface SystemPromptConfig {
  * - Always confirm before destructive actions
  * - Provide clear explanations
  * - Respect user privacy`,
- *   metadata: {
- *     version: '1.0',
- *     locale: 'en-US',
- *   },
  * });
  * 
  * const { messages } = await source.getContext();
@@ -116,10 +110,6 @@ export class SystemPromptDrivenSource implements ContextDrivenSource {
         this.listeners.forEach((listener) => listener());
     }
 
-    getSystemPrompt(): string {
-        return this.config.systemPrompt;
-    }
-    
     /**
      * 订阅更新
      * 
@@ -134,12 +124,4 @@ export class SystemPromptDrivenSource implements ContextDrivenSource {
         };
     }
     
-    /**
-     * 获取配置元数据
-     * 
-     * @returns 元数据对象
-     */
-    getMetadata(): Record<string, unknown> {
-        return this.config.metadata || {};
-    }
 }

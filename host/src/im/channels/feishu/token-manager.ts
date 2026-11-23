@@ -11,7 +11,7 @@
  */
 
 import { buildFeishuApiBase } from './client.js'
-import type { FeishuDomain } from './targets.js'
+import type { FeishuDomain } from './client.js'
 
 export interface TokenCacheEntry {
   token: string

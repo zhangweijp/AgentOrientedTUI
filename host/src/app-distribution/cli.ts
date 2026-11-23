@@ -17,12 +17,10 @@ import { buildViewMessageMarkup } from '@aotui/runtime/adapters';
  * @module @aotui/cli
  */
 
-import { AppRegistry, createRuntime, type AppID } from '@aotui/runtime';
+import { createRuntime } from '@aotui/runtime';
+import { AppCatalog } from './app-catalog.js';
 import * as readline from 'readline';
-import fs from 'fs';
-import { installNpmPackage, removeInstalledApp } from './npm-installer.js';
 import { searchCatalog } from './catalog.js';
-import { parseInstallSource, type ParsedInstallSource } from './sources.js';
 import { resolveCatalog, resolveCatalogOptionsFromConfig } from './catalog-resolver.js';
 import { renderInstalledAppLines } from './cli-list.js';
 
@@ -35,14 +33,14 @@ Commands:
   install <source>     Install app from local path or npm package
   search [query]       Search installable apps from catalog
   remove <name>        Uninstall an app
-  list                 List installed apps
+  list [--json]        List installed apps
   enable <name>        Enable an app
   disable <name>       Disable an app
   autostart <name> <on|off>  Set auto-start behavior
   run [name]           Run installed apps (or specific app)
 
 Options:
-  --force              Force install (overwrite existing, reinstall when needed)
+  --force              Replace an existing installation after validating the candidate
   --no-autostart       Install without auto-start
   --help               Show help
 
@@ -64,43 +62,40 @@ async function main(): Promise<void> {
     }
 
     const command = args[0];
-    const registry = new AppRegistry();
-    for (const result of await registry.loadFromConfig()) {
-        if (result.status === 'failed') console.error(`[TUI] Could not discover ${result.name}`, result.issue);
-    }
+    const catalog = new AppCatalog();
 
     try {
         switch (command) {
             case 'install':
-                await handleInstall(registry, args.slice(1));
+                await handleInstall(catalog, args.slice(1));
                 break;
 
             case 'search':
-                await handleSearch(registry, args.slice(1));
+                await handleSearch(catalog, args.slice(1));
                 break;
 
             case 'remove':
-                await handleRemove(registry, args.slice(1));
+                await handleRemove(catalog, args.slice(1));
                 break;
 
             case 'list':
-                handleList(registry);
+                await handleList(catalog, args[1] === '--json');
                 break;
 
             case 'enable':
-                await handleEnable(registry, args.slice(1), true);
+                await handleEnable(catalog, args.slice(1), true);
                 break;
 
             case 'disable':
-                await handleEnable(registry, args.slice(1), false);
+                await handleEnable(catalog, args.slice(1), false);
                 break;
 
             case 'autostart':
-                await handleAutoStart(registry, args.slice(1));
+                await handleAutoStart(catalog, args.slice(1));
                 break;
 
             case 'run':
-                await handleRun(registry, args.slice(1));
+                await handleRun(catalog, args.slice(1));
                 break;
 
             default:
@@ -108,8 +103,8 @@ async function main(): Promise<void> {
                 console.log(HELP);
                 process.exit(1);
         }
-    } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+    } catch (error) {
+        console.error(error instanceof Error ? error.message : error);
         process.exit(1);
     }
 }
@@ -121,12 +116,12 @@ async function main(): Promise<void> {
 interface ParsedInstallArgs {
     source: string;
     force: boolean;
-    autoStart: boolean;
+    autoStart?: boolean;
 }
 
 function parseInstallArgs(args: string[]): ParsedInstallArgs {
     let force = false;
-    let autoStart = true;
+    let autoStart: boolean | undefined;
     const positional: string[] = [];
 
     for (let i = 0; i < args.length; i++) {
@@ -156,9 +151,9 @@ function parseInstallArgs(args: string[]): ParsedInstallArgs {
     };
 }
 
-async function handleSearch(registry: AppRegistry, args: string[]): Promise<void> {
+async function handleSearch(catalog: AppCatalog, args: string[]): Promise<void> {
     const query = args[0];
-    const resolvedCatalog = await resolveCatalog(resolveCatalogOptionsFromConfig(registry.getConfig().catalog));
+    const resolvedCatalog = await resolveCatalog(resolveCatalogOptionsFromConfig((await catalog.getConfig()).catalog));
     const results = searchCatalog(query, resolvedCatalog.catalog);
 
     if (results.length === 0) {
@@ -185,95 +180,50 @@ async function handleSearch(registry: AppRegistry, args: string[]): Promise<void
     }
 }
 
-async function handleInstall(registry: AppRegistry, args: string[]): Promise<void> {
+async function handleInstall(catalog: AppCatalog, args: string[]): Promise<void> {
     const parsed = parseInstallArgs(args);
-    const resolvedSource = parseInstallSource(parsed.source);
-
-    const name = await installAppFromSource(registry, resolvedSource, parsed);
-    if (resolvedSource.kind === 'local') {
-        console.log(`✅ Successfully linked local app: ${name}`);
-        return;
-    }
-    console.log(`✅ Successfully installed npm app: ${name}`);
+    const result = await catalog.install(parsed.source, { force: parsed.force, autoStart: parsed.autoStart });
+    const action = result.distributionType === 'local' ? 'linked local' : 'installed npm';
+    console.log(`✅ Successfully ${action} app: ${result.name}`);
 }
 
-async function installAppFromSource(
-    registry: AppRegistry,
-    source: ParsedInstallSource,
-    options: ParsedInstallArgs
-): Promise<string> {
-    if (source.kind === 'local') {
-        if (!fs.existsSync(source.absolutePath)) {
-            throw new Error(`Local path does not exist: ${source.absolutePath}`);
-        }
-
-        console.log(`Linking ${source.absolutePath}...`);
-        return registry.add(source.source, {
-            force: options.force,
-            autoStart: options.autoStart,
-            originalSource: source.source,
-            distribution: {
-                type: 'local',
-                installedPath: source.absolutePath,
-                installedAt: new Date().toISOString()
-            }
-        });
-    }
-
-    console.log(`Installing ${source.packageSpec} from npm...`);
-    const result = await installNpmPackage(source.packageSpec, {
-        forceReinstall: options.force
-    });
-
-    return registry.add(result.localSource, {
-        force: options.force,
-        autoStart: options.autoStart,
-        originalSource: source.source,
-        distribution: {
-            type: 'npm',
-            packageName: result.packageName,
-            requested: result.packageSpec,
-            resolvedVersion: result.resolvedVersion ?? undefined,
-            installRoot: result.installRoot,
-            installedPath: result.installedPath,
-            installedAt: new Date().toISOString()
-        }
-    });
-}
-
-async function handleRemove(registry: AppRegistry, args: string[]): Promise<void> {
+async function handleRemove(catalog: AppCatalog, args: string[]): Promise<void> {
     if (args.length === 0) {
         console.error('Usage: agentina remove <name>');
         process.exit(1);
     }
 
     const name = args[0];
-    await removeInstalledApp(registry, name);
+    await catalog.remove(name);
     console.log(`✅ Successfully removed: ${name}`);
 }
 
-function handleList(registry: AppRegistry): void {
-    const config = registry.getConfig();
-    for (const line of renderInstalledAppLines(config, registry)) {
+async function handleList(catalog: AppCatalog, json: boolean): Promise<void> {
+    const entries = await catalog.discover();
+    if (json) {
+        console.log(JSON.stringify(entries));
+        return;
+    }
+    for (const line of renderInstalledAppLines(entries)) {
         console.log(line);
     }
 }
 
-async function handleEnable(registry: AppRegistry, args: string[], enable: boolean): Promise<void> {
+async function handleEnable(catalog: AppCatalog, args: string[], enable: boolean): Promise<void> {
     if (args.length === 0) {
         console.error(`Usage: agentina ${enable ? 'enable' : 'disable'} <name>`);
         process.exit(1);
     }
 
     const name = args[0];
-    await registry.setEnabled(name, enable);
+    await catalog.setEnabled(name, enable);
     console.log(`✅ ${enable ? 'Enabled' : 'Disabled'}: ${name}`);
 }
 
 /**
  * [RFC-014] Handle autostart command
  */
-async function handleAutoStart(registry: AppRegistry, args: string[]): Promise<void> {
+async function handleAutoStart(catalog: AppCatalog, args: string[]): Promise<void> {
     if (args.length < 2) {
         console.error('Usage: agentina autostart <name> <on|off>');
         process.exit(1);
@@ -287,11 +237,11 @@ async function handleAutoStart(registry: AppRegistry, args: string[]): Promise<v
         process.exit(1);
     }
 
-    await registry.setAutoStart(name, value === 'on');
+    await catalog.setAutoStart(name, value === 'on');
     console.log(`✅ Auto-start ${value === 'on' ? 'enabled' : 'disabled'}: ${name}`);
 }
 
-async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
+async function handleRun(catalog: AppCatalog, args: string[]): Promise<void> {
     const targetApp = args[0]; // Optional: run specific app
 
     console.log('[TUI] Starting Runtime...');
@@ -311,8 +261,8 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
     let isInteractive = false;
     async function printCurrentViews(): Promise<void> {
         for (const app of desktop.getInstalledApps()) {
-            if (app.status !== 'running' || !app.appInstanceId) continue;
-            const appId = String(app.appId);
+            if (app.status !== 'running' || !app.appId || !app.appInstanceId) continue;
+            const appId = app.appId;
             const access = runtime.getAppInteraction(desktopId, appId, app.appInstanceId);
             const result = access.status === 'ready' ? await access.interaction.preview() : access;
             if (result.status !== 'previewed') {
@@ -323,7 +273,7 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
             for (const view of result.views) {
                 if (!view.content) continue;
                 console.log(buildViewMessageMarkup({ appId, appName: app.name || appId,
-                    viewId: view.id, viewType: view.type, kind: view.kind, viewName: view.name,
+                    viewId: view.id, viewType: view.type,
                     markup: view.content.value }));
             }
         }
@@ -346,48 +296,24 @@ async function handleRun(registry: AppRegistry, args: string[]): Promise<void> {
         void printCurrentViews().then(() => rl.prompt(true)).catch(error => console.error('[TUI] Observation failed:', error));
     });
 
-    // Install apps from registry
-    const config = registry.getConfig();
-    const appsToRun = targetApp ? [targetApp] : Object.keys(config.apps);
-
-    const runningAppIds: string[] = [];
-
-    for (const name of appsToRun) {
-        const entry = config.apps[name];
-        if (!entry) {
-            console.error(`App "${name}" not found in registry.`);
-            continue;
-        }
-        if (!entry.enabled && !targetApp) {
-            continue;
-        }
-
-        const loadedApp = registry.get(name);
-        if (!loadedApp) {
-             console.error(`App "${name}" could not be loaded (check if enabled or valid source).`);
-             continue;
-        }
-
-        console.log(`[TUI] Installing ${name} from ${loadedApp.modulePath}...`);
-
-        try {
-            const appId = await runtime.installDynamicWorkerApp(desktopId, loadedApp.modulePath, {
-                name: name,
-                config: {} // TODO: support config injection
-            });
-            runningAppIds.push(appId);
-            console.log(`[TUI] Started ${name} (AppID: ${appId})`);
-            
-            // Auto open
-            await desktop.openApp(appId as AppID);
-        } catch (e: any) {
-            console.error(`[TUI] Failed to start ${name}: ${e.message}`);
+    const results = await catalog.installAll(desktop, { name: targetApp, startAll: true }).catch(async error => {
+        await stop();
+        throw error;
+    });
+    let running = false;
+    for (const result of results) {
+        if (result.status === 'installed') {
+            running = true;
+            console.log(`[TUI] Started ${result.name} (AppID: ${result.appId})`);
+        } else if (result.status === 'failed') {
+            console.error(`[TUI] ${result.name} failed during ${result.phase}`, result.issue);
         }
     }
 
-    if (runningAppIds.length === 0) {
+    if (!running) {
         console.log('[TUI] No apps started.');
         await stop();
+        if (targetApp) process.exitCode = 1;
         return;
     }
 

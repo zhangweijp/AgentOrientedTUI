@@ -2,93 +2,45 @@
  * DesktopManager Unit Tests
  * 
  * Tests the DesktopManager:
- * - Desktop creation with StoreFactory
- * - App installation
- * - Snapshot generation
+ * - Desktop creation and close ownership
  */
-import { describe, it, expect, beforeEach } from 'vitest';
-import { DesktopManager, type DesktopID } from '../src/core/desktop-manager.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { DesktopManager } from '../src/core/desktop-manager.js';
 
 describe('DesktopManager', () => {
     let desktopManager: DesktopManager;
 
-    beforeEach(() => {
+    beforeEach(async () => {
         desktopManager = new DesktopManager();
+        await desktopManager.initialize({ appEntries: [] });
     });
+    afterEach(async () => { await desktopManager.getKernel().shutdown(); });
 
     describe('createDesktop', () => {
         it('creates a Desktop with the reported number of installed Apps', async () => {
-            const { desktopId, thirdPartyAppCount } = await desktopManager.createDesktop();
-
-            // Verify Desktop was created
-            expect(desktopId).toBeDefined();
-            expect(desktopId).toMatch(/^dt_/);
-
-            const desktop = desktopManager.getDesktop(desktopId);
-            expect(desktop).not.toBeNull();
-            expect(thirdPartyAppCount).toBe(desktop?.getInstalledApps().length);
-        });
-
-        it('should set StoreFactory on Kernel (fix for E_NO_STORE_FACTORY)', async () => {
-            // This test verifies the bug fix:
-            // Before fix: createDesktop would throw "E_NO_STORE_FACTORY"
-            // After fix: should succeed because FileSystemAppStoreFactory is set
-
-            // Should not throw
-            await expect(desktopManager.createDesktop()).resolves.toBeDefined();
+            const { desktop, thirdPartyAppCount } = await desktopManager.createDesktop();
+            expect(desktop.id).toMatch(/^dt_/);
+            expect(desktopManager.getKernel().getDesktop(desktop.id)).toBe(desktop);
+            expect(thirdPartyAppCount).toBe(desktop.getInstalledApps().length);
         });
 
         it('should allow multiple Desktops to be created', async () => {
             const desktop1 = await desktopManager.createDesktop();
             const desktop2 = await desktopManager.createDesktop();
 
-            expect(desktop1.desktopId).not.toBe(desktop2.desktopId);
+            expect(desktop1.desktop.id).not.toBe(desktop2.desktop.id);
 
             // Both should be retrievable
-            expect(desktopManager.getDesktop(desktop1.desktopId)).not.toBeNull();
-            expect(desktopManager.getDesktop(desktop2.desktopId)).not.toBeNull();
+            expect(desktopManager.getDesktop(desktop1.desktop.id)).toBe(desktop1.desktop);
+            expect(desktopManager.getDesktop(desktop2.desktop.id)).toBe(desktop2.desktop);
         });
     });
 
-    describe('getSnapshot', () => {
-        it('should generate TUI snapshot for a Desktop', async () => {
-            const { desktopId } = await desktopManager.createDesktop();
-
-            const snapshot = await desktopManager.getSnapshot(desktopId);
-
-            // Should contain TUI markup
-            expect(snapshot).toBeDefined();
-            expect(snapshot).toContain('<desktop');
-        });
-
-        it('should return null for non-existent Desktop', async () => {
-            const snapshot = await desktopManager.getSnapshot('non-existent' as DesktopID);
-            expect(snapshot).toBeNull();
-        });
-    });
-
-
-
-    describe('deleteDesktop', () => {
-        it('should delete a Desktop', async () => {
-            const { desktopId } = await desktopManager.createDesktop();
-
-            // Verify it exists
-            expect(desktopManager.getDesktop(desktopId)).not.toBeNull();
-
-            // Delete
-            const result = await desktopManager.deleteDesktop(desktopId);
-            expect(result).toBe(true);
-
-            // Verify it's gone
-            expect(desktopManager.getDesktop(desktopId)).toBeNull();
-
-        });
-
-        it('should be idempotent (return true for non-existent Desktop)', async () => {
-            // deleteDesktop is idempotent - calling on non-existent Desktop is safe
-            const result = await desktopManager.deleteDesktop('non-existent' as DesktopID);
-            expect(result).toBe(true);
-        });
+    it('allows the assembled Desktop owner to close and free its ID', async () => {
+        const { desktop } = await desktopManager.createDesktop();
+        expect(await desktop.beginClose().completion).toMatchObject({ intent: 'close', resourcesReleased: true });
+        expect(desktopManager.getDesktop(desktop.id)).toBeNull();
+        const next = await desktopManager.createDesktop(desktop.id);
+        expect(next.desktop).not.toBe(desktop);
     });
 });

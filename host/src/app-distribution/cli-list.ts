@@ -1,12 +1,7 @@
-import type { AppRegistry, TUIConfig } from '@aotui/runtime';
+import type { AppDiscoveryResult } from './app-catalog.js';
 
-export function renderInstalledAppLines(
-    config: TUIConfig,
-    registry: Pick<AppRegistry, 'get'>
-): string[] {
-    const appNames = Object.keys(config.apps);
-
-    if (appNames.length === 0) {
+export function renderInstalledAppLines(apps: readonly AppDiscoveryResult[]): string[] {
+    if (apps.length === 0) {
         return [
             'No apps installed.',
             '',
@@ -16,19 +11,19 @@ export function renderInstalledAppLines(
 
     const lines = ['Installed apps:', ''];
 
-    for (const name of appNames) {
-        const entry = config.apps[name];
-        const loadedApp = registry.get(name);
+    for (const app of apps) {
+        const { name } = app;
+        if (app.status === 'failed') {
+            const { code, path, message } = app.issue;
+            lines.push(`  ⚠️ ${name} (invalid)`, `     ${code}${path ? ' ' + path : ''} ${message}`, '');
+            continue;
+        }
+        const { entry } = app;
         const enabledStatus = entry.enabled ? '✅' : '❌';
         const autoStartStatus = (entry.autoStart ?? true) ? '🚀' : '⏸️';
-
-        if (loadedApp) {
-            const version = entry.distribution?.resolvedVersion ?? 'N/A';
-            lines.push(`  ${enabledStatus}${autoStartStatus} ${name}`);
-            lines.push(`     Version: ${version}`);
-        } else {
-            lines.push(`  ${enabledStatus}${autoStartStatus} ${name} (disabled)`);
-        }
+        const status = app.status === 'disabled' ? ' (disabled)' : '';
+        lines.push(`  ${enabledStatus}${autoStartStatus} ${name}${status}`);
+        if (app.status === 'loaded') lines.push(`     Version: ${entry.distribution?.resolvedVersion ?? 'N/A'}`);
 
         if (entry.originalSource && entry.originalSource !== entry.source) {
             lines.push(`     Source: ${entry.originalSource}`);

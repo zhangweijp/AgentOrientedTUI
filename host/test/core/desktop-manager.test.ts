@@ -3,7 +3,7 @@ import { DesktopManager } from '../../src/core/desktop-manager.js';
 
 describe('DesktopManager', () => {
     let mockKernel: any;
-    let mockRegistry: any;
+    let mockCatalog: any;
 
     beforeEach(() => {
         mockKernel = {
@@ -11,10 +11,8 @@ describe('DesktopManager', () => {
             getDesktop: vi.fn().mockReturnValue({ id: 'dt_test', getInstalledApps: () => [{ id: 'app' }] }),
         };
 
-        mockRegistry = {
-            loadFromConfig: vi.fn().mockResolvedValue([]),
-            loadFromEntries: vi.fn().mockResolvedValue([]),
-            list: vi.fn().mockReturnValue([]),
+        mockCatalog = {
+            discover: vi.fn().mockResolvedValue([]),
             installAll: vi.fn().mockResolvedValue([]),
             getEntries: vi.fn().mockReturnValue({
                 'explicit-app': {
@@ -26,19 +24,21 @@ describe('DesktopManager', () => {
         };
     });
 
-    it('uses standard AppRegistry installation without restating the Runtime tool default', async () => {
-        const manager = new DesktopManager({ kernel: mockKernel, appRegistry: mockRegistry });
-        const desktop = await manager.createDesktop(undefined, { projectPath: '/test/workspace' });
+    it('uses standard AppCatalog installation without restating the Runtime tool default', async () => {
+        const manager = new DesktopManager({ kernel: mockKernel, appCatalog: mockCatalog });
+        const desktop = await manager.createDesktop('dt_test', { projectPath: '/test/workspace', AOTUI_DATA_DIR: '/fixture/state' });
+        expect(mockKernel.createDesktop).toHaveBeenCalledWith('dt_test');
         expect(desktop.thirdPartyAppCount).toBe(1);
-        expect(mockRegistry.installAll).toHaveBeenCalledWith(mockKernel.getDesktop(), {
-            dynamicConfig: { projectPath: '/test/workspace' },
+        expect(mockCatalog.installAll).toHaveBeenCalledWith(mockKernel.getDesktop(), {
+            entries: undefined,
+            dynamicConfig: { projectPath: '/test/workspace', AOTUI_DATA_DIR: '/fixture/state' },
         });
     });
 
     it('should prefer explicit app entries over ambient config loading', async () => {
         const manager = new DesktopManager({
             kernel: mockKernel,
-            appRegistry: mockRegistry,
+            appCatalog: mockCatalog,
         });
 
         await manager.initialize({
@@ -52,7 +52,7 @@ describe('DesktopManager', () => {
             ]
         });
 
-        expect(mockRegistry.loadFromEntries).toHaveBeenCalledWith([
+        expect(mockCatalog.discover).toHaveBeenCalledWith([
             {
                 name: 'explicit-app',
                 source: 'local:/explicit-app',
@@ -60,13 +60,13 @@ describe('DesktopManager', () => {
                 autoStart: true,
             }
         ]);
-        expect(mockRegistry.loadFromConfig).not.toHaveBeenCalled();
+        expect(mockCatalog.discover).toHaveBeenCalledTimes(1);
     });
 
     it('should expose app config from registry entries instead of Config singleton', async () => {
         const manager = new DesktopManager({
             kernel: mockKernel,
-            appRegistry: mockRegistry,
+            appCatalog: mockCatalog,
         });
 
         const apps = await manager.getAppsConfig();
@@ -78,6 +78,6 @@ describe('DesktopManager', () => {
                 autoStart: true,
             }
         });
-        expect(mockRegistry.getEntries).toHaveBeenCalled();
+        expect(mockCatalog.getEntries).toHaveBeenCalled();
     });
 });

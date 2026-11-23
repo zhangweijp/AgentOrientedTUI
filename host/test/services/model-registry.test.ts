@@ -491,7 +491,6 @@ describe('ModelRegistry Service', () => {
             const models = await registry.getModels({ providerId: 'openai' });
 
             expect(models).toHaveLength(2);
-            expect(models.every(m => m.catalogId?.startsWith('openai/'))).toBe(true);
             expect(models.map(m => m.id)).toEqual(['gpt-4o', 'gpt-4o-mini']);
         });
 
@@ -499,12 +498,7 @@ describe('ModelRegistry Service', () => {
             // Test with anthropic provider
             const anthropicModels = await registry.getModels({ providerId: 'anthropic' });
 
-            expect(anthropicModels).toHaveLength(2);
-            expect(anthropicModels.every(m => m.catalogId?.startsWith('anthropic/'))).toBe(true);
-            
-            // Ensure no models from other providers are included
-            expect(anthropicModels.some(m => m.catalogId?.startsWith('openai/'))).toBe(false);
-            expect(anthropicModels.some(m => m.catalogId?.startsWith('google/'))).toBe(false);
+            expect(anthropicModels.map(m => m.id).sort()).toEqual(Object.keys(mockModelsDevData.anthropic.models).sort());
         });
 
         it('should return empty array for non-existent provider', async () => {

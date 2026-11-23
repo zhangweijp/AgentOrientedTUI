@@ -11,15 +11,15 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import type { ModelMessage } from 'ai';
 import { SessionManagerV3 } from '../src/core/session-manager-v3.js';
-import { MessageServiceV2 } from '../src/core/message-service-v2.js';
+import { MessageService } from '../src/core/message-service.js';
 import { LLMConfigService } from '../src/core/llm-config-service.js';
-import type { IDesktop, IKernel } from '@aotui/runtime/spi';
+import { createDesktopId, createRuntime } from '@aotui/runtime';
 import type { DesktopManager } from '../src/core/desktop-manager.js';
 import { LLMClient } from '@aotui/agent-driver-v2/dist/core/llm-client.js';
 import { ModelInputError, type DrivenSourceContext, type LLMConfig } from '@aotui/agent-driver-v2';
 import type { ModelRegistry } from '../src/services/model-registry.js';
 import { getTopic } from '../src/db/index.js';
-import * as dbV2 from '../src/db-v2.js';
+import * as messageDb from '../src/db/messages.js';
 
 // Mock database
 const mockDb = {
@@ -52,7 +52,7 @@ vi.mock('../src/skills/skill-driven-source.js', () => ({ SkillDrivenSource: clas
     async getContext(): Promise<DrivenSourceContext> { return { messages: [], tools: {} }; }
 } }));
 vi.mock('@aotui/agent-driver-adapter', () => ({ SemanticAOTUIDrivenSource: class {
-    name = 'AOTUI'; setEnabled() {} setAppEnabled() {}
+    name = 'AOTUI'; setAppsEnabled() {} setAppEnabled() {}
     onUpdate() { return () => {}; }
     async getContext(): Promise<DrivenSourceContext> { return {
         messages: [
@@ -70,22 +70,16 @@ const createMockModelRegistry = (): ModelRegistry => ({
     getModels: vi.fn().mockResolvedValue([]),
 } as any);
 
-// Mock Kernel
+// Exercise the real empty Runtime while recording the assembly call.
 const createMockKernel = () => {
-    const desktops = new Map<string, IDesktop>();
-    return {
-        createDesktop: vi.fn(async (desktopId: string) => {
-            if (!desktops.has(desktopId)) desktops.set(desktopId, { id: desktopId, broadcastLLMUsage: vi.fn() } as unknown as IDesktop);
-            return desktops.get(desktopId)!;
-        }),
-        getDesktop: vi.fn((desktopId: string) => desktops.get(desktopId)),
-        destroyDesktop: vi.fn(async (desktopId: string) => { desktops.delete(desktopId); }),
-    };
+    const runtime = createRuntime();
+    vi.spyOn(runtime, 'createDesktop');
+    return runtime;
 };
 
 describe('SessionManager V3 Integration', () => {
     let sessionManager: SessionManagerV3;
-    let messageService: MessageServiceV2;
+    let messageService: MessageService;
     let llmConfigService: LLMConfigService;
     let mockKernel: ReturnType<typeof createMockKernel>;
     let mockModelRegistry: ModelRegistry;
@@ -95,18 +89,18 @@ describe('SessionManager V3 Integration', () => {
         mockMessages.length = 0;
 
         // Mock DB calls
-        vi.spyOn(dbV2, 'createMessageV2').mockImplementation((db, topicId, message) => {
+        vi.spyOn(messageDb, 'createMessage').mockImplementation((db, topicId, message) => {
             mockMessages.push({ ...message, topic_id: topicId });
         });
 
-        vi.spyOn(dbV2, 'getMessagesV2').mockImplementation((db, topicId) => {
+        vi.spyOn(messageDb, 'getMessages').mockImplementation((db, topicId) => {
             return mockMessages
                 .filter(m => m.topic_id === topicId)
                 .sort((a, b) => a.timestamp - b.timestamp);
         });
 
         // Create services
-        messageService = new MessageServiceV2();
+        messageService = new MessageService();
         mockModelRegistry = createMockModelRegistry();
         llmConfigService = new LLMConfigService(mockModelRegistry);
         
@@ -121,12 +115,12 @@ describe('SessionManager V3 Integration', () => {
 
         // Create SessionManager
         const desktopManager = { createDesktop: vi.fn(async (id: string) => {
-            await mockKernel.createDesktop(id);
-            return { desktopId: id, thirdPartyAppCount: 0 };
+            const key = await mockKernel.createDesktop(createDesktopId(id));
+            return { desktop: mockKernel.getDesktop(key), thirdPartyAppCount: 0 };
         }) };
         vi.spyOn(LLMClient.prototype, 'call').mockResolvedValue({ text: '', toolCalls: [], finishReason: 'stop' });
         sessionManager = new SessionManagerV3(
-            mockKernel as unknown as IKernel,
+            mockKernel,
             desktopManager as unknown as DesktopManager,
             llmConfigService,
             messageService
@@ -137,6 +131,7 @@ describe('SessionManager V3 Integration', () => {
         // Clean up
         if (sessionManager) {
             await sessionManager.cleanup();
+            await mockKernel.shutdown();
         }
     });
 
@@ -250,15 +245,21 @@ describe('SessionManager V3 Integration', () => {
         it('saves the user message and forwards the completed request usage', async () => {
             const topicId = 'topic_test_message_2';
             const content = 'Hello, AI!';
-            const usage = { promptTokens: 11, completionTokens: 7, totalTokens: 18 };
+            const usage = {
+                inputTokens: 11, outputTokens: 7, totalTokens: 18,
+                inputTokenDetails: { noCacheTokens: 11, cacheReadTokens: undefined, cacheWriteTokens: undefined },
+                outputTokenDetails: { textTokens: 7, reasoningTokens: undefined },
+            };
+            const listener = vi.fn();
+            sessionManager.on('model-usage', listener);
             vi.mocked(LLMClient.prototype.call).mockResolvedValueOnce({ text: 'Hello!', toolCalls: [], finishReason: 'stop', usage });
 
             // Act
-            const session = await sessionManager.ensureSession(topicId);
+            await sessionManager.ensureSession(topicId);
             await sessionManager.sendMessage(topicId, content);
 
             // Assert
-            expect(dbV2.createMessageV2).toHaveBeenCalledWith(
+            expect(messageDb.createMessage).toHaveBeenCalledWith(
                 expect.anything(),
                 topicId,
                 expect.objectContaining({
@@ -266,8 +267,8 @@ describe('SessionManager V3 Integration', () => {
                     content,
                 })
             );
-            await vi.waitFor(() => expect(session.desktop.broadcastLLMUsage).toHaveBeenCalledExactlyOnceWith({
-                timestamp: expect.any(Number), providerId: 'openai', modelId: 'gpt-4', ...usage,
+            await vi.waitFor(() => expect(listener).toHaveBeenCalledExactlyOnceWith({
+                kind: 'topic', sessionId: topicId, providerId: 'openai', modelId: 'gpt-4', usage,
             }));
         });
 
@@ -328,7 +329,7 @@ describe('SessionManager V3 Integration', () => {
 
             // Assert
             expect(session.state).toBe('destroyed');
-            expect(mockKernel.destroyDesktop).toHaveBeenCalledWith(topicId);
+            expect(() => mockKernel.getDesktop(createDesktopId(topicId))).toThrow(expect.objectContaining({ code: 'DESKTOP_NOT_FOUND' }));
             
             // Verify session is removed from map
             expect((sessionManager as any).sessions.has(topicId)).toBe(false);

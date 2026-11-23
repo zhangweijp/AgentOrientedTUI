@@ -41,18 +41,10 @@ export namespace McpAuth {
    */
   export async function getForUrl(mcpName: string, serverUrl: string): Promise<Entry | undefined> {
     const entry = await get(mcpName)
-    if (!entry) return undefined
-
-    // If no serverUrl is stored, this is from an old version - consider it invalid
-    if (!entry.serverUrl) return undefined
-
-    // If URL has changed, credentials are invalid
-    if (entry.serverUrl !== serverUrl) return undefined
-
-    return entry
+    return entry?.serverUrl === serverUrl ? entry : undefined
   }
 
-  export async function all(): Promise<Record<string, Entry>> {
+  async function all(): Promise<Record<string, Entry>> {
     return Filesystem.readJson<Record<string, Entry>>(filepath).catch(() => ({}))
   }
 
@@ -89,41 +81,9 @@ export namespace McpAuth {
     await set(mcpName, entry)
   }
 
-  export async function clearCodeVerifier(mcpName: string): Promise<void> {
-    const entry = await get(mcpName)
-    if (entry) {
-      delete entry.codeVerifier
-      await set(mcpName, entry)
-    }
-  }
-
   export async function updateOAuthState(mcpName: string, oauthState: string): Promise<void> {
     const entry = (await get(mcpName)) ?? {}
     entry.oauthState = oauthState
     await set(mcpName, entry)
-  }
-
-  export async function getOAuthState(mcpName: string): Promise<string | undefined> {
-    const entry = await get(mcpName)
-    return entry?.oauthState
-  }
-
-  export async function clearOAuthState(mcpName: string): Promise<void> {
-    const entry = await get(mcpName)
-    if (entry) {
-      delete entry.oauthState
-      await set(mcpName, entry)
-    }
-  }
-
-  /**
-   * Check if stored tokens are expired.
-   * Returns null if no tokens exist, false if no expiry or not expired, true if expired.
-   */
-  export async function isTokenExpired(mcpName: string): Promise<boolean | null> {
-    const entry = await get(mcpName)
-    if (!entry?.tokens) return null
-    if (!entry.tokens.expiresAt) return false
-    return entry.tokens.expiresAt < Date.now() / 1000
   }
 }

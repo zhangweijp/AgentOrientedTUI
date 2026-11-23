@@ -12,8 +12,8 @@
  */
 
 import { buildFeishuApiBase } from './client.js'
-import { getTenantAccessToken, type TenantTokenManagerOptions } from './token-manager.js'
-import type { FeishuDomain } from './targets.js'
+import { getTenantAccessToken } from './token-manager.js'
+import type { FeishuDomain } from './client.js'
 
 // ─── Types ──────────────────────────────────────────────────────────
 

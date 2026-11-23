@@ -70,13 +70,13 @@ function createMockBridge() {
             state.activeTopicId = null;
         }),
         getMessages: vi.fn().mockReturnValue([]),
-        getSnapshot: vi.fn().mockReturnValue(''),
+        getDesktopPreview: vi.fn().mockReturnValue(undefined),
         getAgentThinking: vi.fn().mockReturnValue(''),
         getAgentReasoning: vi.fn().mockReturnValue(''),
         getAgentState: vi.fn().mockReturnValue('IDLE'),
         isAgentPaused: vi.fn().mockReturnValue(false),
         getDisplayAgentState: vi.fn().mockReturnValue('sleeping'),
-        requestSnapshot: vi.fn().mockResolvedValue(undefined),
+        requestDesktopPreview: vi.fn().mockResolvedValue(undefined),
         pauseAgent: vi.fn(),
         resumeAgent: vi.fn(),
         deleteTopic: vi.fn(async (topicId: string) => {

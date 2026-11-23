@@ -8,11 +8,8 @@ export const IconNewChat = (props: IconProps) => <svg viewBox="0 0 24 24" fill="
 export const IconMenu = (props: IconProps) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props} className={`w-5 h-5 ${props.className || ''}`}><path d="M4 6h16M4 12h16M4 18h16" /></svg>;
 export const IconPlay = (props: IconProps) => <svg viewBox="0 0 24 24" fill="currentColor" {...props} className={`w-4 h-4 ${props.className || ''}`}><path d="M8 5v14l11-7z" /></svg>;
 export const IconPause = (props: IconProps) => <svg viewBox="0 0 24 24" fill="currentColor" {...props} className={`w-4 h-4 ${props.className || ''}`}><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>;
-export const IconStop = (props: IconProps) => <svg viewBox="0 0 24 24" fill="currentColor" {...props} className={`w-4 h-4 ${props.className || ''}`}><path d="M6 6h12v12H6z" /></svg>;
-export const IconSend = (props: IconProps) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props} className={`w-4 h-4 ${props.className || ''}`}><path d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>;
 export const IconDelete = (props: IconProps) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props} className={`w-4 h-4 ${props.className || ''}`}><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>;
 export const IconFolder = (props: IconProps) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props} className={`w-4 h-4 ${props.className || ''}`}><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>;
-export const IconModel = (props: IconProps) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props} className={`w-4 h-4 ${props.className || ''}`}><path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>;
 
 // Model: Lucide "brain" — official icon, verbatim paths, stroke-width tuned to 1.5
 export const IconBrain = (props: IconProps) => (
@@ -45,7 +42,6 @@ export const IconTheme = (props: IconProps) => <svg viewBox="0 0 24 24" fill="no
 export const IconSettings = (props: IconProps) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props} className={`w-4 h-4 ${props.className || ''}`}><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" /><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" /></svg>;
 export const IconPlug = (props: IconProps) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props} className={`w-4 h-4 ${props.className || ''}`}><path d="M12 22v-5" /><path d="M9 8V2" /><path d="M15 8V2" /><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" /></svg>;
 export const IconEllipsis = (props: IconProps) => <svg viewBox="0 0 24 24" fill="currentColor" {...props} className={`w-4 h-4 ${props.className || ''}`}><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>;
-export const IconPin = (props: IconProps) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props} className={`w-4 h-4 ${props.className || ''}`}><path d="M12 17v5" /><path d="M9 10.5V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v6.5l2 3H7l2-3z" /></svg>;
 export const IconPencil = (props: IconProps) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props} className={`w-4 h-4 ${props.className || ''}`}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>;
 export const IconChat = (props: IconProps) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props} className={`w-4 h-4 ${props.className || ''}`}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>;
 // IM: Multi-bubble icon representing instant messaging channels
@@ -56,7 +52,6 @@ export const IconIM = (props: IconProps) => (
     </svg>
 );
 export const IconTerminal = (props: IconProps) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props} className={`w-4 h-4 ${props.className || ''}`}><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></svg>;
-export const IconToolbox = (props: IconProps) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props} className={`w-4 h-4 ${props.className || ''}`}><path d="M3 9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z" /><path d="M9 7V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1" /><path d="M3 13h18" /></svg>;
 // Apps: Four rounded squares — macOS 26 superellipse grid
 // Design: Pure 2×2 grid. No hierarchy between cells; a deliberate
 // choice — the app launcher is a democracy. The rx=2.5 radius sits
@@ -81,31 +76,6 @@ export const IconApps = (props: IconProps) => (
 export const IconSkills = (props: IconProps) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props} className={`w-4 h-4 ${props.className || ''}`}>
     <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-  </svg>
-);
-
-// MCP: Vertical blade plug — macOS 26 precision connector
-// Design: Two flat-blade pins (rects, not lines — physicality matters)
-// sit above a well-proportioned housing body. The rx=3 housing radius
-// is concentric with the rx=1 pin radius at this scale, maintaining
-// the squircle-nesting relationship that defines macOS 26 geometry.
-// Two recessed contact-slot indicators (filled, 35% opacity) on the
-// housing face add depth without introducing noise — they read as
-// "structured protocol" at a glance and cleanly distinguish this
-// from the simpler IconPlug. Cable exits from the bottom center.
-export const IconMCP = (props: IconProps) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props} className={`w-4 h-4 ${props.className || ''}`}>
-    {/* Left blade pin */}
-    <rect x="8.25" y="1.5" width="2.5" height="6" rx="1.25" />
-    {/* Right blade pin */}
-    <rect x="13.25" y="1.5" width="2.5" height="6" rx="1.25" />
-    {/* Plug housing */}
-    <rect x="4" y="7.5" width="16" height="14" rx="3" />
-    {/* Recessed contact slots — structural face detail */}
-    <rect x="8.75" y="11" width="2.5" height="5.5" rx="1.25" fill="currentColor" fillOpacity={0.35} stroke="none" />
-    <rect x="12.75" y="11" width="2.5" height="5.5" rx="1.25" fill="currentColor" fillOpacity={0.35} stroke="none" />
-    {/* Cable exit */}
-    <line x1="12" y1="21.5" x2="12" y2="23.5" />
   </svg>
 );
 

@@ -15,8 +15,9 @@ describe('searchCatalog', () => {
     });
 
     it('matches by keyword and description', () => {
-        const results = searchCatalog('token');
-        expect(results.some((r) => r.id === 'system-token-monitor')).toBe(true);
+        const results = searchCatalog('crawl');
+        expect(results.map(entry => entry.id)).toEqual(['system-lite-browser']);
+        expect(searchCatalog('token')).toEqual([]);
     });
 
     it('returns empty array when no match', () => {

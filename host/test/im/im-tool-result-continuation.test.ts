@@ -1,14 +1,15 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { format } from 'node:util';
-import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { HostManagerV2 } from '../../src/core/host-manager-v2.js';
 import { IMSessionManager } from '../../src/im/im-session-manager.js';
 import { IMDrivenSource } from '../../src/im/im-driven-source.js';
 import { McpDrivenSource } from '../../src/mcp/source.js';
 import { AgentDriverV2, jsonSchema, type DrivenSourceContext, type MessageWithTimestamp, type ModelInputLimits, type ToolResult } from '@aotui/agent-driver-v2';
+import { createRuntime, createDesktopId } from '@aotui/runtime';
 import { LLMClient } from '@aotui/agent-driver-v2/dist/core/llm-client.js';
 import type { ModelRegistry } from '../../src/services/model-registry.js';
+import { fixtureProvider } from '../../../tests/fixtures/batch-two-support.mjs';
 
 type Message = Parameters<LLMClient['call']>[0][number];
 const fixture = vi.hoisted(() => ({
@@ -22,6 +23,7 @@ const fixture = vi.hoisted(() => ({
   diagnostics: [] as Array<{ level: string; text: string }>,
   quietExecutions: 0, mcpExecutions: 0, captures: 0,
   modelOverride: undefined as string | undefined, modelInputLimits: {} as Record<string, ModelInputLimits>,
+  endpoint: undefined as string | undefined,
   released: [] as number[],
   view: '',
 }));
@@ -31,15 +33,15 @@ const record = (kind: string, data: Record<string, unknown> = {}) => {
 
 // Replace external storage/configuration/resources; retain the IM and MCP Sources,
 // session manager, current compiled Driver, and Host callbacks.
-vi.mock('../../src/core/message-service-v2.js', () => ({
-  MessageServiceV2: class { getMessages() { return []; } },
+vi.mock('../../src/core/message-service.js', () => ({
+  MessageService: class { getMessages() { return []; } },
 }));
 vi.mock('../../src/core/llm-config-service.js', async importOriginal => {
   const { LLMConfigService } = await importOriginal<typeof import('../../src/core/llm-config-service.js')>();
   return { LLMConfigService: class extends LLMConfigService {
     override getActiveLLMConfigRecord() {
       return { id: 1, name: 'IM fixture', model: 'controlled-im-receipt', providerId: 'openai', apiKey: 'unused-no-network',
-        baseUrl: 'https://api.openai.com/v1', temperature: 0.7, maxSteps: 10, isActive: true, createdAt: 1, updatedAt: 1 };
+        baseUrl: fixture.endpoint ?? 'https://api.openai.com/v1', temperature: 0.7, isActive: true, createdAt: 1, updatedAt: 1 };
     }
     override getAllConfigs() { return []; }
   } };
@@ -85,8 +87,9 @@ vi.mock('@aotui/agent-driver-adapter', () => ({
   SemanticAOTUIDrivenSource: class {
     name = 'controlled-aotui';
     enabled = true;
-    setEnabled(enabled: boolean) { this.enabled = enabled; }
+    setAppsEnabled(enabled: boolean) { this.enabled = enabled; }
     setAppEnabled() {}
+    dispose() {}
     onUpdate() { return () => {}; }
     async getContext(): Promise<DrivenSourceContext> {
       const capture = ++fixture.captures;
@@ -127,7 +130,7 @@ beforeEach(() => {
   fixture.history.clear(); fixture.quietHandlers.clear();
   fixture.quietTools = {}; fixture.mcpTools = {};
   fixture.events = []; fixture.models = []; fixture.toolMessages = []; fixture.diagnostics = [];
-  fixture.modelOverride = undefined; fixture.modelInputLimits = {}; fixture.view = '';
+  fixture.modelOverride = undefined; fixture.modelInputLimits = {}; fixture.view = ''; fixture.endpoint = undefined;
   fixture.quietExecutions = 0; fixture.mcpExecutions = 0; fixture.captures = 0; fixture.released = [];
   vi.useFakeTimers();
   vi.setSystemTime(10_000);
@@ -147,26 +150,17 @@ afterAll(() => {
 
 describe('IM tool receipts continue through the real Host and Driver', () => {
   it('recovers the same pending IM input after a View shrinks without adopting or sending the rejected request', async () => {
+    vi.useRealTimers();
+    const provider = await fixtureProvider();
+    fixture.endpoint = provider.url;
     fixture.modelOverride = 'openai:small-im-model';
     const inputLimit = 2_600, userInput = '请读取当前页面。';
-    fixture.modelInputLimits['openai:small-im-model'] = { contextWindow: 5_000, maxInputTokens: inputLimit, maxOutputTokens: 100 };
-    fixture.view = 'Visible content ' + 'x'.repeat(1_400);
-    const modelRequest = vi.fn<(params: Parameters<MockLanguageModelV3['doStream']>[0]) => void>();
-    const model = new MockLanguageModelV3({ doStream: async params => {
-      modelRequest(params);
-      return { stream: convertArrayToReadableStream([
-        { type: 'stream-start', warnings: [] },
-        { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: {
-          inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
-          outputTokens: { total: 0, text: 0, reasoning: 0 },
-        } },
-      ]) };
-    } });
-    vi.spyOn(LLMClient.prototype as unknown as { createProvider(): unknown }, 'createProvider').mockReturnValue(model);
+    fixture.modelInputLimits['openai:small-im-model@' + provider.url] = { contextWindow: 5_000, maxInputTokens: inputLimit, maxOutputTokens: 100 };
+    fixture.view = 'Visible content ' + 'x'.repeat(2_800);
     const host = new HostManagerV2('unused-desktop-topic', {} as ModelRegistry);
-    const desktop = { id: 'probe-desktop' };
-    const kernel = { getDesktop: () => desktop };
-    const desktops = { createDesktop: async () => ({ desktopId: desktop.id }), deleteDesktop: async () => {}, getAppsConfig: async () => ({}) };
+    const kernel = createRuntime();
+    const desktop = kernel.getDesktop(await kernel.createDesktop(createDesktopId('probe-desktop')));
+    const desktops = { createDesktop: async () => ({ desktop }), getAppsConfig: async () => ({}) };
     type Init = Parameters<HostManagerV2['initAgentDriver']>;
     const gui = vi.fn(), off = host.onGuiUpdate(gui);
     try {
@@ -183,7 +177,7 @@ describe('IM tool receipts continue through the real Host and Driver', () => {
         metadata: expect.objectContaining({ errorCode: 'MODEL_INPUT_BUDGET_EXCEEDED',
           errorDetails: expect.objectContaining({ inputLimit, outputReserved: 100 }) }),
       }) }));
-      expect(modelRequest).not.toHaveBeenCalled();
+      expect(provider.requests).toHaveLength(0);
       expect(fixture.events.some(event => event.kind === 'context-adopt')).toBe(false);
       expect(fixture.released).toEqual([1]);
       const diagnostic = gui.mock.calls.map(([event]) => event.message)
@@ -194,11 +188,11 @@ describe('IM tool receipts continue through the real Host and Driver', () => {
       expect(removed).toBeLessThan(fixture.view.length - 'Visible content '.length);
       fixture.view = fixture.view.slice(0, -removed);
 
+      provider.replyNext({ calls: [], text: '' });
       await driver.trigger();
       await driver['runInFlight'];
-      expect(modelRequest).toHaveBeenCalledOnce();
-      const params = modelRequest.mock.calls[0]![0];
-      const prompt = JSON.stringify(params.prompt);
+      expect(provider.requests).toHaveLength(1);
+      const prompt = JSON.stringify(provider.requests[0]!.body.messages);
       expect(prompt).toContain(userInput);
       expect(prompt).toContain(fixture.view);
       expect(prompt).not.toContain(diagnostic.content);
@@ -206,11 +200,11 @@ describe('IM tool receipts continue through the real Host and Driver', () => {
 
       await driver.trigger();
       await driver['runInFlight'];
-      expect(modelRequest).toHaveBeenCalledOnce();
+      expect(provider.requests).toHaveLength(1);
       expect(fixture.events.filter(event => event.kind === 'context-adopt')).toHaveLength(1);
       expect(fixture.released).toEqual([1, 2, 3]);
     } finally {
-      off(); await host.dispose(); vi.restoreAllMocks(); vi.useRealTimers();
+      off(); await host.dispose(); await provider.close(); vi.restoreAllMocks(); vi.useRealTimers();
     }
   });
 
@@ -275,9 +269,9 @@ describe('IM tool receipts continue through the real Host and Driver', () => {
     });
     try {
       host = new HostManagerV2('unused-desktop-topic', {} as ModelRegistry);
-      const desktop = { id: 'probe-desktop' };
-      const kernel = { getDesktop: () => desktop };
-      const desktops = { createDesktop: async () => ({ desktopId: desktop.id }), deleteDesktop: async () => {}, getAppsConfig: async () => ({ 'probe-app': {} }) };
+      const kernel = createRuntime();
+      const desktop = kernel.getDesktop(await kernel.createDesktop(createDesktopId('probe-desktop')));
+      const desktops = { createDesktop: async () => ({ desktop }), getAppsConfig: async () => ({ 'probe-app': {} }) };
       type Init = Parameters<HostManagerV2['initAgentDriver']>;
       await host.initAgentDriver(kernel as unknown as Init[0], desktops as unknown as Init[1]);
       const sessionKey = 'agent:probe-agent:controlled:direct:probe-peer';

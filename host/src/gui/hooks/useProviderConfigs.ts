@@ -17,7 +17,6 @@ export interface ProviderConfig {
     isActive: boolean;
     model: string;
     temperature: number;
-    maxSteps: number;
     createdAt: number;
     updatedAt: number;
 }
@@ -28,7 +27,6 @@ export interface NewProviderConfig {
     apiKey: string;
     model?: string;
     temperature?: number;
-    maxSteps?: number;
 }
 
 export interface ProviderUpdates {
@@ -36,7 +34,6 @@ export interface ProviderUpdates {
     apiKey?: string;
     model?: string;
     temperature?: number;
-    maxSteps?: number;
 }
 
 export interface UseProviderConfigsResult {
@@ -50,7 +47,6 @@ export interface UseProviderConfigsResult {
         modelId: string;
         name?: string;
         temperature?: number;
-        maxSteps?: number;
         setActive?: boolean;
     }) => Promise<void>;
     updateProvider: (id: number, updates: ProviderUpdates) => Promise<void>;
@@ -71,7 +67,6 @@ function toProviderConfig(record: LLMConfigRecord): ProviderConfig {
         isActive: record.isActive,
         model: record.model,
         temperature: record.temperature,
-        maxSteps: record.maxSteps,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
     };
@@ -140,7 +135,6 @@ export function useProviderConfigs(): UseProviderConfigsResult {
                 providerId: config.providerId,
                 apiKey: config.apiKey,
                 temperature: config.temperature ?? 0.7,
-                maxSteps: config.maxSteps ?? 10,
             };
 
             await bridge.createLLMConfig(input);
@@ -160,7 +154,6 @@ export function useProviderConfigs(): UseProviderConfigsResult {
         modelId: string;
         name?: string;
         temperature?: number;
-        maxSteps?: number;
         setActive?: boolean;
     }): Promise<void> => {
         try {
@@ -194,9 +187,6 @@ export function useProviderConfigs(): UseProviderConfigsResult {
             }
             if (updates.temperature !== undefined) {
                 input.temperature = updates.temperature;
-            }
-            if (updates.maxSteps !== undefined) {
-                input.maxSteps = updates.maxSteps;
             }
 
             await bridge.updateLLMConfig(id, input);

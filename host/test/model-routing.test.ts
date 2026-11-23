@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it, vi } from 'vitest';
-import { MessageServiceV2 } from '../src/core/message-service-v2.js';
+import { MessageService } from '../src/core/message-service.js';
 import * as db from '../src/db/index.js';
 import { buildSessionKey } from '../src/im/routing.js';
 import { MCP } from '../src/mcp/index.js';
@@ -24,10 +24,10 @@ const providerModel = (id: string, output: number, tool_call: boolean) => ({
 const catalog = {
     openai: { id: 'openai', name: 'OpenAI', api: openaiURL, models: {
         [activeModel]: providerModel('openai/' + activeModel, 301, true),
-        local: providerModel('openai/local', 302, false),
+        local: providerModel('openai/local', 302, true),
     } },
     openrouter: { id: 'openrouter', name: 'OpenRouter', api: routerURL, models: {
-        [agentModel]: providerModel('openrouter/' + agentModel, 411, false),
+        [agentModel]: providerModel('openrouter/' + agentModel, 411, true),
     } },
 };
 
@@ -85,15 +85,14 @@ it('routes persisted and explicit models through Desktop and IM using the select
             mcp: { routing: { type: 'local', command: [process.execPath, fixture, 'routing'], enabled: true } },
         }));
         await writeFile(join(configDir, 'config.json'), JSON.stringify({ modelInputLimits: {
-            ['openai:openai:local@' + customURL]: { contextWindow: 16_000, maxOutputTokens: 512, capabilities: { toolCall: false } },
-            ['anthropic:anthropic/team:custom@' + anthropicURL]: { contextWindow: 16_000, maxOutputTokens: 768, capabilities: { toolCall: false } },
+            ['openai:openai:local@' + customURL]: { contextWindow: 16_000, maxOutputTokens: 512, capabilities: { toolCall: true } },
+            ['anthropic:anthropic/team:custom@' + anthropicURL]: { contextWindow: 16_000, maxOutputTokens: 768, capabilities: { toolCall: true } },
         } }));
 
         // A pre-existing ambiguous record can be opened and repaired in Settings.
         await db.initDatabase();
         const savedIM = buildSessionKey(agent.id, 'fixture', 'direct', 'saved-peer');
-        db.getDb().run('ALTER TABLE im_sessions DROP COLUMN source_controls');
-        db.getDb().run('INSERT INTO im_sessions VALUES (?, ?, ?, ?, ?, NULL, 1, 2, 3)',
+        db.getDb().run('INSERT INTO im_sessions (session_key, agent_id, channel, chat_type, peer_id, created_at, updated_at, last_access_time) VALUES (?, ?, ?, ?, ?, 1, 2, 3)',
             [savedIM, agent.id, 'fixture', 'direct', 'saved-peer']);
         db.getDb().run(`INSERT INTO llm_configs (name, model, is_active, created_at, updated_at)
             VALUES ('Ambiguous old row', 'gpt-4', 1, 1, 1)`);
@@ -103,7 +102,7 @@ it('routes persisted and explicit models through Desktop and IM using the select
         host = await createHostV2Core(registry);
         const caller = appRouter.createCaller({
             hostManager: host.hostManager, llmConfigService: host.llmConfigService, modelRegistry: registry,
-            messageService: new MessageServiceV2(),
+            messageService: new MessageService(),
         });
         const legacy = await caller.llmConfig.getActive();
         expect(legacy).toMatchObject({ model: 'gpt-4', isActive: true });
@@ -115,13 +114,12 @@ it('routes persisted and explicit models through Desktop and IM using the select
         expect(requests).toEqual([]);
 
         db.getDb().run("UPDATE llm_configs SET model = 'openai:local' WHERE is_active = 1");
-        expect(await host.llmConfigService.resolveLLMConfig())
-            .toMatchObject({ model: 'local', provider: { id: 'openai', baseURL: openaiURL } });
+        await expect(host.llmConfigService.resolveLLMConfig()).rejects.toThrow('Reselect the model in Settings');
 
         const lookup = await caller.modelRegistry.getModels({ providerId: 'openai' });
-        expect(lookup).toContainEqual(expect.objectContaining({ id: activeModel, catalogId: 'openai/' + activeModel }));
+        expect(lookup).toContainEqual(expect.objectContaining({ id: activeModel }));
         const active = await caller.llmConfig.create({ name: 'Configured OpenAI', providerId: 'openai',
-            model: 'openai/' + activeModel, apiKey: 'fixture-active', temperature: 0.7, maxSteps: 1 });
+            model: activeModel, apiKey: 'fixture-active', temperature: 0.7 });
         await caller.llmConfig.setActive({ id: active.id });
 
         const desktop = async (topic: Awaited<ReturnType<typeof caller.db.createTopic>>,
@@ -133,17 +131,18 @@ it('routes persisted and explicit models through Desktop and IM using the select
                 expect.objectContaining({ role: 'assistant', content: 'confirmed' })));
             expect(requests.slice(next)).toHaveLength(1);
             expect(requests[next]).toMatchObject(expected);
-            expect(requests[next]?.tools).toEqual(tool
-                ? expect.arrayContaining([expect.objectContaining({ function: expect.objectContaining({ name: tool }) })])
-                : []);
+            const names = (requests[next]?.tools as { function?: { name: string }; name?: string }[])
+                .map(tool => tool.function?.name ?? tool.name);
+            expect(names).toContain('run_code');
+            if (tool) expect(names).toContain(tool);
             await caller.session.shutdown({ id: topic.id });
         };
         await desktop(await caller.db.createTopic({ title: 'Active config' }),
             { url: openaiURL + '/chat/completions', key: 'Bearer fixture-active', model: activeModel, maxTokens: 301 },
             'mcp-routing-search');
-        expect((await caller.llmConfig.getActive())?.model).toBe('openai/' + activeModel);
+        expect((await caller.llmConfig.getActive())?.model).toBe(activeModel);
 
-        await desktop(await caller.db.createTopic({ title: 'Topic before agent', agentId: agent.id, modelOverride: 'openai/local' }),
+        await desktop(await caller.db.createTopic({ title: 'Topic before agent', agentId: agent.id, modelOverride: 'openai:local' }),
             { url: openaiURL + '/chat/completions', key: 'Bearer fixture-active', model: 'local', maxTokens: 302 });
 
         const before = requests.length;
@@ -164,14 +163,15 @@ it('routes persisted and explicit models through Desktop and IM using the select
             senderId: 'sender', chatId: 'chat', timestamp: Date.now(), triggerAgent: true });
         await vi.waitFor(() => expect(host?.hostManager.getIMMessages(sessionKey)).toContainEqual(
             expect.objectContaining({ role: 'assistant', content: 'confirmed' })));
-        expect(requests.slice(imStart)).toEqual([{ ...routerRoute, tools: [] }]);
+        expect(requests.slice(imStart)).toEqual([expect.objectContaining(routerRoute)]);
+        expect(requests[imStart]?.tools).toEqual(expect.arrayContaining([expect.objectContaining({ function: expect.objectContaining({ name: 'run_code' }) })]));
         expect(host.hostManager.getIMSession(sessionKey)?.sourceControls?.mcp.allowedServers).toEqual(['routing']);
 
         const proxy = await caller.llmConfig.customProvidersCreate({ id: 'openai', name: 'Local compatible',
             protocol: 'openai', baseUrl: customURL, apiKey: 'fixture-compatible' });
         const proxyModel = await caller.llmConfig.customModelConfigsCreate({ customProviderId: proxy.id, modelId: 'openai:local' });
         await caller.llmConfig.setActive({ id: proxyModel.id });
-        // These two models advertise text only. Keep the routing cases independent of the live App tools.
+        // Keep custom Provider routing independent of business App tools.
         const textOnlySources = {
             apps: { enabled: false, disabledItems: [] },
             mcp: { enabled: true, disabledItems: [] },

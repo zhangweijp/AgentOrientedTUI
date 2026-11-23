@@ -1,5 +1,6 @@
-import type { ModelMessage } from 'ai'
+import type { IDesktop } from '@aotui/runtime'
 import type { SourceControlsSnapshot } from '../core/source-controls.js'
+import type { IMDrivenSource } from './im-driven-source.js'
 
 export type ChatType = 'direct' | 'group'
 export type IMSessionScope = 'peer' | 'peer_sender' | 'peer_thread' | 'peer_thread_sender'
@@ -52,35 +53,9 @@ export interface IMInboundMessage {
   accountId?: string
 }
 
-export interface IMDesktopLike {
-  id: string
-  destroy?: () => void | Promise<void>
-}
-
 export interface IMAgentDriverLike {
   stop?: () => void | Promise<void>
-}
-
-export interface IMDrivenSourceLike {
-  name: string
-  addMessage: (message: ModelMessage, timestamp?: number) => unknown
-  notifyUpdate: () => void
-  getCompactionToolName?: () => string
-  maybeCompactByThreshold?: (policyInput?: {
-    enabled?: boolean
-    maxContextTokens?: number
-    minMessages?: number
-    keepRecentMessages?: number
-    modelHint?: string
-  }) => Promise<{
-    compacted: boolean
-    syntheticMessages: Array<{ role: string; content: unknown; timestamp: number }>
-    summary: string
-    compactedMessageCount: number
-    cleanedToolResultCount: number
-    currentTokens: number
-    thresholdTokens: number
-  }>
+  dispose?: () => void | Promise<void>
 }
 
 export interface IMSession {
@@ -92,9 +67,9 @@ export interface IMSession {
   botIdentity?: string
   accountId?: string
   sourceControls?: SourceControlsSnapshot
-  desktop: IMDesktopLike
+  desktop: IDesktop
   agentDriver: IMAgentDriverLike
-  source: IMDrivenSourceLike
+  source: IMDrivenSource
   createdAt: number
   lastAccessTime: number
 }

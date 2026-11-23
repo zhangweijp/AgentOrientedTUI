@@ -1,16 +1,16 @@
 /**
  * ViewBlock Component
  * 
- * Renders a single <view> block with its content.
+ * Renders one View's Markdown body.
  * Uses dashed border to distinguish from application blocks.
  * 
  * @module system-chat/gui/components/ViewBlock
  */
-import type { TuiView } from './TuiParser.js';
+import type { DesktopPreviewView } from '../../core/desktop-preview.js';
 import { MarkdownRenderer } from './MarkdownRenderer.js';
 
 interface ViewBlockProps {
-    view: TuiView;
+    view: DesktopPreviewView;
 }
 
 export function ViewBlock({ view }: ViewBlockProps) {

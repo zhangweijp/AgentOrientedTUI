@@ -1,14 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelMessage } from 'ai';
 import { SessionManagerV3 } from '../src/core/session-manager-v3.js';
-import { MessageServiceV2 } from '../src/core/message-service-v2.js';
+import { MessageService } from '../src/core/message-service.js';
 
 /** Unit boundary: the Host owns persisted conversation messages and their updates. */
 interface ReceiptHarness {
     sessions: Map<string, { sources: { host: {
         notifyNewMessage(): void;
-        getCompactionToolName(): string;
-        markToolCompactionAnchor(id: string, summary?: string): void;
     } } }>;
     handleMessage(topicId: string, type: 'assistant' | 'tool', message: ModelMessage): void;
 }
@@ -16,7 +14,7 @@ interface ReceiptHarness {
 describe('SessionManagerV3 tool receipt updates', () => {
     let manager: SessionManagerV3;
     let harness: ReceiptHarness;
-    let messages: MessageServiceV2;
+    let messages: MessageService;
     let order: string[];
     let notify: ReturnType<typeof vi.fn>;
     const topicId = 'receipt-topic';
@@ -27,7 +25,7 @@ describe('SessionManagerV3 tool receipt updates', () => {
 
     beforeEach(() => {
         order = [];
-        messages = new MessageServiceV2();
+        messages = new MessageService();
         vi.spyOn(console, 'log').mockImplementation(() => {});
         vi.spyOn(messages, 'addMessage').mockImplementation((_topic, message) => {
             order.push('persist');
@@ -42,8 +40,6 @@ describe('SessionManagerV3 tool receipt updates', () => {
         notify = vi.fn(() => { order.push('notify'); });
         harness.sessions.set(topicId, { sources: { host: {
             notifyNewMessage: notify,
-            getCompactionToolName: () => 'context_compact',
-            markToolCompactionAnchor: () => {},
         } } });
         manager.on('message', () => { order.push('gui'); });
     });

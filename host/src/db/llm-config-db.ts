@@ -20,7 +20,6 @@ export function createLLMConfigsTable(db: Database): void {
             base_url TEXT,
             api_key TEXT,
             temperature REAL DEFAULT 0.7,
-            max_steps INTEGER DEFAULT 10,
             is_active INTEGER DEFAULT 0,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
@@ -43,7 +42,6 @@ function rowToConfig(row: any): LLMConfigRecord {
         baseUrl: row.base_url || undefined,
         apiKey: row.api_key || undefined,
         temperature: row.temperature,
-        maxSteps: row.max_steps,
         isActive: row.is_active === 1,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -68,8 +66,8 @@ export function createLLMConfig(db: Database, input: LLMConfigInput): LLMConfigR
         `
         INSERT INTO llm_configs (
             name, model, provider_id, base_url, api_key,
-            temperature, max_steps, is_active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            temperature, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
         [
             input.name,
@@ -78,7 +76,6 @@ export function createLLMConfig(db: Database, input: LLMConfigInput): LLMConfigR
             input.baseUrl || null,
             input.apiKey || null,
             input.temperature ?? 0.7,
-            input.maxSteps ?? 10,
             isActive,
             now,
             now,
@@ -96,7 +93,6 @@ export function createLLMConfig(db: Database, input: LLMConfigInput): LLMConfigR
         baseUrl: input.baseUrl,
         apiKey: input.apiKey,
         temperature: input.temperature ?? 0.7,
-        maxSteps: input.maxSteps ?? 10,
         isActive: isActive === 1,
         createdAt: now,
         updatedAt: now,
@@ -196,10 +192,6 @@ export function updateLLMConfig(
     if (updates.temperature !== undefined) {
         fields.push('temperature = ?');
         values.push(updates.temperature);
-    }
-    if (updates.maxSteps !== undefined) {
-        fields.push('max_steps = ?');
-        values.push(updates.maxSteps);
     }
     if (updates.isActive !== undefined) {
         fields.push('is_active = ?');

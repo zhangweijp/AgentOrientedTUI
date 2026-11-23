@@ -2,14 +2,13 @@ import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { ChatArea } from '../ChatArea.js';
-import type { Message } from '../../../types.js';
+import type { DisplayMessage } from '../../../types.js';
 
 vi.mock('../Icons', async (importOriginal) => {
     const actual = await importOriginal<typeof import('../Icons')>();
     return {
         ...actual,
         IconNewChat: () => <div data-testid="icon-new-chat" />,
-        IconSend: () => <div data-testid="icon-send" />,
     };
 });
 
@@ -17,7 +16,7 @@ vi.mock('../Icons', async (importOriginal) => {
 window.HTMLElement.prototype.scrollIntoView = vi.fn();
 
 describe('ChatArea Component', () => {
-    const mockMessages: Message[] = [
+    const mockMessages: DisplayMessage[] = [
         { id: '1', role: 'user', content: 'Hello', timestamp: 1000 },
         { id: '2', role: 'assistant', content: 'Hi there', timestamp: 2000 }
     ];

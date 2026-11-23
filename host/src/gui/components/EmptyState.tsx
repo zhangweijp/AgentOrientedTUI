@@ -1,10 +1,4 @@
-import React from 'react';
-
-interface EmptyStateProps {
-    onNewChat: () => void;
-}
-
-export function EmptyState({ onNewChat }: EmptyStateProps) {
+export function EmptyState() {
     return (
         <div className="flex flex-col items-center justify-center h-full text-[var(--color-text-tertiary)] select-none pointer-events-none">
              <div className="flex flex-col items-center gap-4 opacity-40">

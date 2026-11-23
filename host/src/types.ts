@@ -9,12 +9,12 @@ import type { SourceControlsSnapshot } from './core/source-controls.js';
 /**
  * Message role - who sent the message
  */
-export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
+type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
 /**
  * Message type - what kind of message this is
  */
-export type MessageType = 'text' | 'reasoning' | 'tool_call' | 'tool_result' | 'snapshot';
+type DisplayMessageType = 'text' | 'reasoning' | 'tool_call' | 'tool_result';
 
 export interface ImageAttachment {
     id: string;
@@ -28,7 +28,7 @@ export interface ImageAttachment {
 /**
  * A single chat message
  */
-export interface Message {
+export interface DisplayMessage {
     /** Unique message ID */
     id: string;
     /** Who sent this message */
@@ -38,7 +38,7 @@ export interface Message {
     /** Unix timestamp when message was sent */
     timestamp: number;
     /** Message type - distinguishes text, reasoning, tool calls, etc. */
-    messageType?: MessageType;
+    messageType?: DisplayMessageType;
     /** Additional metadata for special message types */
     metadata?: {
         /** For reasoning messages */
@@ -47,8 +47,6 @@ export interface Message {
         toolCalls?: Array<{ toolCallId: string; toolName: string; input: unknown }>;
         /** For tool result messages */
         toolResults?: Array<{ toolCallId: string; toolName: string; result: unknown; isError: boolean }>;
-        /** For snapshot messages */
-        appId?: string;
         /** Generic metadata */
         attachments?: ImageAttachment[];
         [key: string]: any;
@@ -70,17 +68,6 @@ export interface Topic {
     /** Desktop lifecycle status */
     status: 'hot' | 'warm' | 'cold';
 
-    // ─────────────────────────────────────────────────────────────
-    //  Chat App Enhancement Fields
-    // ─────────────────────────────────────────────────────────────
-
-    /** Agent-defined topic summary (set via the update_topic Tool) */
-    summary?: string;
-    /** Agent-defined conversation stage (e.g., "需求澄清", "任务执行", "交付确认") */
-    stage?: string;
-    /** Timestamp of last Agent snapshot pull (for unread tracking) */
-    lastSnapshotTime?: number;
-    // [RFC-025] Project Association
     projectId?: string;
     /** Topic-level model override (e.g. provider:model) */
     modelOverride?: string;

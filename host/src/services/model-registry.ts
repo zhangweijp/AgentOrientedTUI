@@ -46,11 +46,6 @@ export interface ModelsDevModel {
     };
 }
 
-export interface CatalogModel extends ModelsDevModel {
-    /** Original catalog ID if it differs from the Provider's model key. */
-    catalogId?: string;
-}
-
 /**
  * models.dev Provider 配置
  */
@@ -157,7 +152,7 @@ export class ModelRegistry {
      * @param filter - 过滤条件 (可选)
      * @returns 模型列表
      */
-    async getModels(filter?: ModelFilter): Promise<CatalogModel[]> {
+    async getModels(filter?: ModelFilter): Promise<ModelsDevModel[]> {
         await this.ensureFresh();
 
         const providers = this.modelsDevData ?? {};
@@ -167,7 +162,6 @@ export class ModelRegistry {
         let models = selected.flatMap(provider => Object.entries(provider.models).map(([id, model]) => ({
             ...model,
             id,
-            ...(model.id !== id ? { catalogId: model.id } : {}),
         })));
 
         // 按 capability 过滤
@@ -345,9 +339,7 @@ export class ModelRegistry {
             });
 
             return cacheEntry;
-        } catch (error) {
-            // 缓存文件不存在或读取失败
-            this.logger.debug('Cache not found or invalid', { error });
+        } catch {
             return null;
         }
     }

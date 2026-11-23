@@ -1,58 +1,24 @@
-/**
- * Desktop Manager
- * 
- * Manages Desktop lifecycle using SDK createRuntime().
- * 
- * [RFC-021] TUI-chat has been removed. Desktop now:
- * - Only hosts TUI tool applications (third-party apps via AppRegistry)
- * - Chat/conversation is handled by ConversationManager (not a TUI App)
- * 
- * [SDK 标准化] 只使用 Runtime 的公开 API:
- * - createRuntime() - SDK Facade
- * - Kernel (IKernel) - 通过 createRuntime 获得
- * - 类型从 SPI 层导入
- */
 import {
-    // SDK Facade
     createRuntime,
-    // SPI Types
+    AOTUIError,
+    type AppLaunchConfig,
     type DesktopID,
     type IDesktop,
     type IKernel,
-    type AppLaunchConfig,
-    // Third-party Apps
-    AppRegistry,
-    type AppConfigEntry,
-    type AppRegistryEntry,
-    type AppRegistryFailure,
 } from '@aotui/runtime';
-import { installNpmPackage, removeInstalledApp } from '../app-distribution/npm-installer.js';
-import { parseInstallSource } from '../app-distribution/sources.js';
+import { AppCatalog, type AppCatalogEntry, type AppCatalogFailure, type AppConfigEntry,
+    type InstallAppOptions, type InstallAppResult } from '../app-distribution/app-catalog.js';
 import { resolveCatalog, resolveCatalogOptionsFromConfig, type ResolvedCatalog } from '../app-distribution/catalog-resolver.js';
 import { searchCatalog, type CatalogSearchResult } from '../app-distribution/catalog.js';
 import path from 'path';
 import os from 'os';
-import fs from 'fs';
-import { readSemanticDesktopSnapshot } from './semantic-desktop-snapshot.js';
+import { rethrowAfterDesktopClose } from './desktop-close.js';
 
-export type { DesktopID };
+export type { DesktopID, InstallAppOptions, InstallAppResult };
 
 export interface DesktopInfo {
-    desktopId: DesktopID;
+    desktop: IDesktop;
     thirdPartyAppCount: number;
-}
-
-export interface InstallAppOptions {
-    force?: boolean;
-    autoStart?: boolean;
-    enabled?: boolean;
-}
-
-export interface InstallAppResult {
-    name: string;
-    source: string;
-    originalSource: string;
-    distributionType: 'local' | 'npm';
 }
 
 export interface CatalogSearchEntry extends CatalogSearchResult {
@@ -71,40 +37,28 @@ export interface CatalogSearchResponse {
 
 export interface DesktopManagerOptions {
     kernel?: IKernel;
-    appRegistry?: AppRegistry;
+    appCatalog?: AppCatalog;
 }
 
 export interface DesktopManagerInitializeOptions {
-    appEntries?: AppRegistryEntry[];
-    loadFromConfig?: boolean;
+    appEntries?: AppCatalogEntry[];
 }
 
 export class DesktopManager {
-    private kernel: IKernel;
-    private appRegistry: AppRegistry;
+    private readonly kernel: IKernel;
+    private readonly appCatalog: AppCatalog;
+    private appEntries?: readonly AppCatalogEntry[];
 
     constructor(options?: DesktopManagerOptions) {
-        // [SDK 标准化] 使用 createRuntime() 代替手动实例化 Engine 组件
         this.kernel = options?.kernel ?? createRuntime();
-
-        // [Third-Party Apps] 初始化 AppRegistry
-        this.appRegistry = options?.appRegistry ?? new AppRegistry();
+        this.appCatalog = options?.appCatalog ?? new AppCatalog();
     }
 
-    /**
-     * 异步初始化 (加载第三方 App)
-     * 
-     * 必须在使用 createDesktop 之前调用此方法
-     */
     async initialize(options?: DesktopManagerInitializeOptions): Promise<void> {
-        const hasExplicitEntries = Array.isArray(options?.appEntries);
-        const shouldLoadFromConfig = options?.loadFromConfig ?? !hasExplicitEntries;
-
-        const discovery = hasExplicitEntries ? await this.appRegistry.loadFromEntries(options?.appEntries ?? [])
-            : shouldLoadFromConfig ? await this.appRegistry.loadFromConfig() : [];
+        this.appEntries = options?.appEntries;
+        const discovery = await this.appCatalog.discover(this.appEntries);
         for (const result of discovery) if (result.status === 'failed') this.reportAppFailure(result);
-
-        console.log(`[DesktopManager] Initialized with ${this.appRegistry.list().length} third-party apps`);
+        console.log(`[DesktopManager] Discovered ${discovery.filter(result => result.status === 'loaded').length} enabled apps`);
     }
 
     /**
@@ -119,46 +73,38 @@ export class DesktopManager {
     /**
      * Create a new Desktop
      * 
-     * [RFC-021] ChatApp has been removed. Desktop now only hosts third-party TUI apps.
-     * Chat/conversation is handled by ConversationManager in the Product Layer.
-     * 
-     * [Option D] Third-party apps are installed via AppRegistry.installAll()
-     * using the Runtime package Worker
-     * 
      * @param desktopId - Optional: specify a custom Desktop ID (for historical topics)
      * @param config - Optional: runtime config to inject into apps (e.g. projectPath)
      */
-    async createDesktop(desktopId?: DesktopID, config?: Record<string, any>): Promise<DesktopInfo> {
+    async createDesktop(desktopId?: DesktopID, config?: AppLaunchConfig): Promise<DesktopInfo> {
         const runtimeDataDir = process.env.AOTUI_DATA_DIR
             || path.join(os.homedir(), '.aotui', 'data');
 
-        const runtimeContext = {
-            env: {
-                AOTUI_DATA_DIR: runtimeDataDir,
-                AOTUI_TOPIC_ID: desktopId ?? '',
-            }
-        };
-
-        const actualDesktopId = await this.kernel.createDesktop(desktopId, runtimeContext);
+        const actualDesktopId = await this.kernel.createDesktop(desktopId);
+        const desktop = this.kernel.getDesktop(actualDesktopId);
         try {
-            const desktop = this.kernel.getDesktop(actualDesktopId);
-            const results = await this.appRegistry.installAll(desktop, {
-                dynamicConfig: config,
+            if (desktop.isClosing) throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: desktop.id });
+            const { AOTUI_DATA_DIR = runtimeDataDir, ...launchConfig } = { ...config };
+            const results = await this.appCatalog.installAll(desktop, {
+                entries: this.appEntries,
+                dynamicConfig: { ...launchConfig, AOTUI_DATA_DIR },
             });
             for (const result of results) {
                 if (result.status === 'failed') this.reportAppFailure(result);
             }
+            if (desktop.isClosing || this.getDesktop(desktop.id) !== desktop) {
+                throw new AOTUIError('DESKTOP_DISPOSED', { desktopId: desktop.id });
+            }
             const thirdPartyAppCount = desktop.getInstalledApps().length;
             console.log(`[DesktopManager] Created Desktop ${actualDesktopId} with ${thirdPartyAppCount} third-party apps (Semantic)`);
-            return { desktopId: actualDesktopId, thirdPartyAppCount };
+            return { desktop, thirdPartyAppCount };
         } catch (error) {
             console.error('[DesktopManager] Failed to install apps:', error);
-            await this.kernel.destroyDesktop(actualDesktopId);
-            throw error;
+            return rethrowAfterDesktopClose(desktop, error);
         }
     }
 
-    private reportAppFailure(result: AppRegistryFailure): void {
+    private reportAppFailure(result: AppCatalogFailure): void {
         console.warn(`[DesktopManager] App ${result.name} failed during ${result.phase}`, result.issue);
     }
 
@@ -173,48 +119,23 @@ export class DesktopManager {
         }
     }
 
-    /**
-     * Delete Desktop
-     */
-    async deleteDesktop(desktopId: DesktopID): Promise<boolean> {
-        try {
-            await this.kernel.destroyDesktop(desktopId);
-            return true;
-        } catch {
-            return false;
-        }
-    }
-
-    /**
-     * Get snapshot for a Desktop
-     * 
-     * Uses the same Semantic projection as the Agent with an independent observation.
-     */
-    async getSnapshot(desktopId: DesktopID): Promise<string | null> {
-        try {
-            const snapshot = await readSemanticDesktopSnapshot(this.kernel.getDesktop(desktopId), this.kernel);
-            return snapshot.markup;
-        } catch {
-            return null;
-        }
-    }
-
     async getAppsConfig(): Promise<Record<string, AppConfigEntry>> {
-        return this.appRegistry.getEntries();
+        return this.appCatalog.getEntries(this.appEntries);
     }
 
     async getAppDetail(name: string): Promise<AppConfigEntry> {
-        const app = (await this.getAppsConfig())[name];
-        if (!app) {
-            throw new Error(`App "${name}" not found`);
+        if (this.appEntries) {
+            const entries = await this.getAppsConfig();
+            if (!Object.hasOwn(entries, name)) throw new AOTUIError('APP_NOT_FOUND', { appId: name });
+            return entries[name];
         }
-        return app;
+        return this.appCatalog.getEntry(name);
     }
 
     async searchAppsCatalog(query?: string): Promise<CatalogSearchResponse> {
         const installedApps = await this.getAppsConfig();
         const installedEntries = Object.entries(installedApps);
-        const resolvedCatalog = await resolveCatalog(resolveCatalogOptionsFromConfig(this.appRegistry.getConfig().catalog));
+        const resolvedCatalog = await resolveCatalog(resolveCatalogOptionsFromConfig((await this.appCatalog.getConfig()).catalog));
 
         const apps = searchCatalog(query, resolvedCatalog.catalog).map((entry) => {
             const installedMatch = installedEntries.find(([, app]) => (
@@ -240,87 +161,21 @@ export class DesktopManager {
         };
     }
 
-    async installApp(sourceInput: string, options?: InstallAppOptions): Promise<InstallAppResult> {
-        const resolved = parseInstallSource(sourceInput);
-
-        if (resolved.kind === 'local') {
-            if (!fs.existsSync(resolved.absolutePath)) {
-                throw new Error(`Local path does not exist: ${resolved.absolutePath}`);
-            }
-
-            const name = await this.appRegistry.add(resolved.source, {
-                force: options?.force,
-                autoStart: options?.autoStart,
-                enabled: options?.enabled,
-                originalSource: resolved.source,
-                distribution: {
-                    type: 'local',
-                    installedPath: resolved.absolutePath,
-                    installedAt: new Date().toISOString()
-                }
-            });
-
-            return {
-                name,
-                source: resolved.source,
-                originalSource: resolved.source,
-                distributionType: 'local'
-            };
-        }
-
-        const installResult = await installNpmPackage(resolved.packageSpec, {
-            forceReinstall: options?.force
-        });
-
-        const name = await this.appRegistry.add(installResult.localSource, {
-            force: options?.force,
-            autoStart: options?.autoStart,
-            enabled: options?.enabled,
-            originalSource: resolved.source,
-            distribution: {
-                type: 'npm',
-                packageName: installResult.packageName,
-                requested: installResult.packageSpec,
-                resolvedVersion: installResult.resolvedVersion ?? undefined,
-                installedPath: installResult.installedPath,
-                installedAt: new Date().toISOString()
-            }
-        });
-
-        return {
-            name,
-            source: installResult.localSource,
-            originalSource: resolved.source,
-            distributionType: 'npm'
-        };
+    installApp(source: string, options?: InstallAppOptions): Promise<InstallAppResult> {
+        return this.appCatalog.install(source, options);
     }
 
-    async updateApp(name: string): Promise<InstallAppResult> {
-        const current = await this.getAppDetail(name);
-        const originalSource = current.originalSource;
-        if (!originalSource || !originalSource.startsWith('npm:')) {
-            throw new Error(`App "${name}" is not installed from npm and cannot be updated yet`);
-        }
-
-        return this.installApp(originalSource, {
-            force: true,
-            autoStart: current.autoStart,
-            enabled: current.enabled
-        });
+    updateApp(name: string): Promise<InstallAppResult> {
+        return this.appCatalog.update(name);
     }
 
-    async removeApp(name: string): Promise<void> {
-        await removeInstalledApp(this.appRegistry, name);
+    removeApp(name: string): Promise<void> {
+        return this.appCatalog.remove(name);
     }
 
-    async setAppEnabled(name: string, enabled: boolean): Promise<void> {
-        await this.appRegistry.setEnabled(name, enabled);
+    setAppEnabled(name: string, enabled: boolean): Promise<void> {
+        return this.appCatalog.setEnabled(name, enabled);
     }
 }
 
-// Singleton instance
 export const desktopManager = new DesktopManager();
-
-// Initialize immediately (fire-and-forget for backward compatibility)
-// Server should await this before processing requests
-export const desktopManagerReady = desktopManager.initialize();

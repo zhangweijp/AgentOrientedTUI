@@ -36,60 +36,6 @@ export namespace Log {
     }
 }
 
-export namespace NamedError {
-    export function create(name: string, schema: any) {
-        return class extends Error {
-            constructor(public data: any) {
-                super(name);
-                this.name = name;
-            }
-        };
-    }
-}
-
-export namespace Instance {
-    export function state<T, U>(init: () => Promise<T>, cleanup?: (state: T) => Promise<U>) {
-        let instance: T | undefined;
-        let initializing: Promise<T> | undefined;
-
-        const getState = async () => {
-            if (instance) return instance;
-            if (initializing) return initializing;
-            initializing = init().then((res) => {
-                instance = res;
-                return res;
-            });
-            return initializing;
-        };
-
-        // Note: we might need a way to trigger cleanup.
-        return getState;
-    }
-
-    export const directory = os.homedir();
-}
-
-export namespace Installation {
-    export const VERSION = "0.1.0";
-}
-
-export namespace BusEvent {
-    export function define(name: string, schema: any) {
-        return name;
-    }
-}
-
-export namespace Bus {
-    export async function publish(event: string, data: any) {
-        // Stub for now, can wire up Emittery if needed.
-        console.log(`[Bus] Event published: ${event}`, data);
-    }
-}
-
-export namespace TuiEvent {
-    export const ToastShow = "tui.toast.show";
-}
-
 export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {

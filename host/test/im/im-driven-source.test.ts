@@ -151,13 +151,13 @@ describe('IMDrivenSource', () => {
           expect.objectContaining({
             type: 'tool-result',
             toolName: 'context_compact',
-            result: expect.objectContaining({
+            output: { type: 'json', value: {
               success: true,
               trigger: 'agent',
               summary: 'Summarized prior IM work.',
               compactedMessageCount: 4,
               cleanedToolResultCount: 0,
-            }),
+            } },
           }),
         ],
         timestamp: 1_199,
@@ -237,7 +237,7 @@ describe('IMDrivenSource', () => {
         {
           role: 'tool',
           content: [
-            { type: 'tool-result', toolCallId: 'call_1', toolName: 'search_files', result: { hits: 2 } },
+            { type: 'tool-result', toolCallId: 'call_1', toolName: 'search_files', output: { type: 'json', value: { hits: 2 } } },
           ],
           timestamp: 1_200,
         },
@@ -266,7 +266,7 @@ describe('IMDrivenSource', () => {
       {
         role: 'tool',
         content: [
-          { type: 'tool-result', toolCallId: 'call_1', toolName: 'search_files', result: { hits: 2 } },
+          { type: 'tool-result', toolCallId: 'call_1', toolName: 'search_files', output: { type: 'json', value: { hits: 2 } } },
         ],
         timestamp: 1_200,
         region: 'session',
@@ -291,7 +291,7 @@ describe('IMDrivenSource', () => {
         {
           role: 'tool',
           content: [
-            { type: 'tool-result', toolCallId: 'compact_old', toolName: 'context_compact', result: { success: true, summary: 'old summary' } },
+            { type: 'tool-result', toolCallId: 'compact_old', toolName: 'context_compact', output: { type: 'json', value: { success: true, summary: 'old summary' } } },
           ],
           timestamp: 999,
         },
@@ -311,7 +311,7 @@ describe('IMDrivenSource', () => {
       {
         role: 'tool',
         content: [
-          { type: 'tool-result', toolCallId: 'compact_old', toolName: 'context_compact', result: { success: true, summary: 'old summary' } },
+          { type: 'tool-result', toolCallId: 'compact_old', toolName: 'context_compact', output: { type: 'json', value: { success: true, summary: 'old summary' } } },
         ],
         timestamp: 999,
         region: 'session',
@@ -351,7 +351,6 @@ describe('IMDrivenSource', () => {
   it('exposes compaction tool name and skips threshold compaction when disabled', async () => {
     const source = new IMDrivenSource({ sessionKey: 's1' })
 
-    expect(source.getCompactionToolName()).toBe('context_compact')
     await expect(source.maybeCompactByThreshold({
       enabled: false,
       maxContextTokens: 100,
@@ -497,10 +496,9 @@ describe('IMDrivenSource history initialization', () => {
     }
   })
 
-  it('degrades every failed capture, diagnoses the original error and shares the next explicit retry', async () => {
+  it('reports the original history error to each capture and shares the next explicit retry', async () => {
     const firstGate = deferred<MessageWithTimestamp[]>(), retryGate = deferred<MessageWithTimestamp[]>()
     const entered = deferred<void>(), failure = new Error('history unavailable')
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
     const history: MessageWithTimestamp[] = [{ role: 'user', content: 'recovered', timestamp: 1_000 }]
     let attempts = 0
     const loadHistory = vi.fn(() => { entered.resolve(); return ++attempts === 1 ? firstGate.promise : retryGate.promise })
@@ -511,10 +509,8 @@ describe('IMDrivenSource history initialization', () => {
       reads.push(observe(source.getContext()))
       firstGate.reject(failure)
       for (const result of await Promise.all(reads.map(read => read.done))) {
-        expect(result).toStrictEqual({ status: 'fulfilled', value: { messages: [], tools: {} } })
+        expect(result).toStrictEqual({ status: 'rejected', reason: failure })
       }
-      expect(diagnostic).toHaveBeenCalledTimes(2)
-      expect(diagnostic).toHaveBeenCalledWith('Failed to capture context from IM:', failure)
       await nextTurn()
       expect(loadHistory).toHaveBeenCalledTimes(1)
       const retries = [observe(source.getContext()), observe(source.getContext())]
@@ -550,9 +546,7 @@ describe('IMDrivenSource history initialization', () => {
       return Promise.resolve(history)
     })
     const source = new IMDrivenSource({ sessionKey: 'sync', loadHistory })
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
-    await expect(source.getContext()).resolves.toStrictEqual({ messages: [], tools: {} })
-    expect(diagnostic).toHaveBeenCalledExactlyOnceWith('Failed to capture context from IM:', failure)
+    await expect(source.getContext()).rejects.toBe(failure)
     await nextTurn()
     expect(loadHistory).toHaveBeenCalledTimes(1)
     await expect(source.getContext().then(context => context.messages)).resolves.toStrictEqual([{ ...history[0], region: 'session' }])
@@ -570,9 +564,7 @@ describe('IMDrivenSource history initialization', () => {
     let attempts = 0
     const loadHistory = vi.fn(() => Promise.resolve(++attempts === 1 ? [broken] : history))
     const source = new IMDrivenSource({ sessionKey: 'merge', loadHistory })
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
-    await expect(source.getContext()).resolves.toStrictEqual({ messages: [], tools: {} })
-    expect(diagnostic).toHaveBeenCalledExactlyOnceWith('Failed to capture context from IM:', failure)
+    await expect(source.getContext()).rejects.toBe(failure)
     expect(loadHistory).toHaveBeenCalledTimes(1)
     await expect(source.getContext().then(context => context.messages)).resolves.toStrictEqual([{ ...history[0], region: 'session' }])
     expect(loadHistory).toHaveBeenCalledTimes(2)
@@ -671,7 +663,11 @@ describe('IMDrivenSource history initialization', () => {
     const onRunError = vi.fn()
     const model = vi.spyOn(LLMClient.prototype, 'call').mockResolvedValue({
       text: 'complete', toolCalls: [], finishReason: 'stop',
-      usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3 },
+      usage: {
+        inputTokens: 2, outputTokens: 1, totalTokens: 3,
+        inputTokenDetails: { noCacheTokens: 2, cacheReadTokens: undefined, cacheWriteTokens: undefined },
+        outputTokenDetails: { textTokens: 1, reasoningTokens: undefined },
+      },
       assistantMessage: { role: 'assistant', content: 'complete' },
     })
     let driver: AgentDriverV2 | undefined

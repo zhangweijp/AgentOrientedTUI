@@ -114,9 +114,6 @@ describe('Bug Fix: Provider Model Filtering', () => {
         // Should only return 2 models from deepseek
         expect(deepseekModels).toHaveLength(2);
 
-        // Verify all models belong to deepseek provider
-        expect(deepseekModels.every(m => m.catalogId?.startsWith('deepseek/'))).toBe(true);
-
         // Verify specific models
         expect(deepseekModels.map(m => m.id)).toEqual([
             'deepseek-chat',
@@ -134,15 +131,7 @@ describe('Bug Fix: Provider Model Filtering', () => {
         // Should return 2 models from openai
         expect(openaiModels).toHaveLength(2);
 
-        // Verify all models belong to openai provider
-        expect(openaiModels.every(m => m.catalogId?.startsWith('openai/'))).toBe(true);
-
-        // Verify specific models
-        expect(openaiModels.map(m => m.id)).toContain('gpt-4o');
-        expect(openaiModels.map(m => m.id)).toContain('deepseek-compatible');
-
-        // Should NOT include deepseek models
-        expect(openaiModels.some(m => m.catalogId?.startsWith('deepseek/'))).toBe(false);
+        expect(openaiModels.map(m => m.id).sort()).toEqual(['deepseek-compatible', 'gpt-4o']);
     });
 
     it('should not leak models between providers', async () => {
@@ -193,33 +182,14 @@ describe('Bug Fix: Provider Model Filtering', () => {
         // Should return all 5 models (2 deepseek + 2 openai + 1 anthropic)
         expect(allModels).toHaveLength(5);
 
-        // Verify models from all providers are included
-        expect(allModels.some(m => m.catalogId?.startsWith('deepseek/'))).toBe(true);
-        expect(allModels.some(m => m.catalogId?.startsWith('openai/'))).toBe(true);
-        expect(allModels.some(m => m.catalogId?.startsWith('anthropic/'))).toBe(true);
+        const catalogKeys = Object.values(mockModelsDevData).flatMap(provider => Object.keys(provider.models));
+        expect(allModels.map(m => m.id).sort()).toEqual(catalogKeys.sort());
     });
 
     it('should correctly filter by provider even with similar model names', async () => {
-        // This is the key test case that would fail with the old implementation
-        
-        // Get deepseek models
         const deepseekModels = await registry.getModels({ providerId: 'deepseek' });
-
-        // Old buggy implementation would incorrectly include:
-        // - openai/deepseek-compatible (because it starts with "deepseek")
-        
-        // New correct implementation only includes:
-        // - deepseek/deepseek-chat
-        // - deepseek/deepseek-reasoner
-
-        expect(deepseekModels).toHaveLength(2);
-        expect(deepseekModels.every(m => {
-            // Must start with "deepseek/" (provider prefix)
-            return m.catalogId?.startsWith('deepseek/');
-        })).toBe(true);
-
-        // Explicitly verify the bug is fixed
-        const hasOpenAIModel = deepseekModels.some(m => m.id === 'deepseek-compatible');
-        expect(hasOpenAIModel).toBe(false);
+        const openaiModels = await registry.getModels({ providerId: 'openai' });
+        expect(openaiModels.map(m => m.id)).toContain('deepseek-compatible');
+        expect(deepseekModels.map(m => m.id)).not.toContain('deepseek-compatible');
     });
 });

@@ -1,5 +1,5 @@
 /**
- * @aotui/host - MessageServiceV2 Tests
+ * @aotui/host - MessageService Tests
  * 
  * 测试消息服务的核心功能：
  * - 保存和检索所有类型的消息（user/assistant/tool/system）
@@ -9,9 +9,9 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { ModelMessage } from 'ai';
-import { MessageServiceV2 } from '../src/core/message-service-v2.js';
+import { MessageService } from '../src/core/message-service.js';
 import * as db from '../src/db/index.js';
-import * as dbV2 from '../src/db-v2.js';
+import * as messageDb from '../src/db/messages.js';
 
 // Mock database
 const mockDb = {
@@ -31,34 +31,34 @@ vi.mock('../src/db/index.js', () => ({
     persistDatabase: vi.fn(),
 }));
 
-describe('MessageServiceV2', () => {
-    let messageService: MessageServiceV2;
+describe('MessageService', () => {
+    let messageService: MessageService;
     const testTopicId = 'topic_test_1';
 
     beforeEach(() => {
         vi.clearAllMocks();
         mockMessages.length = 0;
 
-        // Mock createMessageV2 to store messages
-        vi.spyOn(dbV2, 'createMessageV2').mockImplementation((db, topicId, message) => {
+        // Mock createMessage to store messages
+        vi.spyOn(messageDb, 'createMessage').mockImplementation((db, topicId, message) => {
             mockMessages.push({ ...message, topic_id: topicId });
         });
 
-        // Mock getMessagesV2 to return stored messages
-        vi.spyOn(dbV2, 'getMessagesV2').mockImplementation((db, topicId) => {
+        // Mock getMessages to return stored messages
+        vi.spyOn(messageDb, 'getMessages').mockImplementation((db, topicId) => {
             return mockMessages
                 .filter(m => m.topic_id === topicId)
                 .sort((a, b) => a.timestamp - b.timestamp);
         });
 
-        vi.spyOn(dbV2, 'updateMessageV2').mockImplementation((db, topicId, message) => {
+        vi.spyOn(messageDb, 'updateMessage').mockImplementation((db, topicId, message) => {
             const idx = mockMessages.findIndex((m) => m.topic_id === topicId && m.id === message.id);
             if (idx >= 0) {
                 mockMessages[idx] = { ...message, topic_id: topicId };
             }
         });
 
-        messageService = new MessageServiceV2();
+        messageService = new MessageService();
     });
 
     describe('addMessage', () => {
@@ -102,7 +102,7 @@ describe('MessageServiceV2', () => {
                         type: 'tool-call',
                         toolCallId: 'call_123',
                         toolName: 'search',
-                        args: { query: 'AI news' }
+                        input: { query: 'AI news' }
                     }
                 ]
             };
@@ -122,9 +122,7 @@ describe('MessageServiceV2', () => {
                         type: 'tool-result',
                         toolCallId: 'call_123',
                         toolName: 'search',
-                        result: {
-                            data: 'Found 10 results about AI news'
-                        }
+                        output: { type: 'json', value: { data: 'Found 10 results about AI news' } }
                     }
                 ]
             };
@@ -187,7 +185,7 @@ describe('MessageServiceV2', () => {
 
             messageService.addMessage(testTopicId, {
                 role: 'tool',
-                content: [{ type: 'tool-result', toolCallId: 'call_1', toolName: 'test', result: 'Tool' }]
+                content: [{ type: 'tool-result', toolCallId: 'call_1', toolName: 'test', output: { type: 'text', value: 'Tool' } }]
             });
 
             const messages = messageService.getMessages(testTopicId);
@@ -220,7 +218,7 @@ describe('MessageServiceV2', () => {
                         type: 'tool-call',
                         toolCallId: 'call_123',
                         toolName: 'search',
-                        args: { query: 'AI news' }
+                        input: { query: 'AI news' }
                     }
                 ]
             });
@@ -233,7 +231,7 @@ describe('MessageServiceV2', () => {
                         type: 'tool-result',
                         toolCallId: 'call_123',
                         toolName: 'search',
-                        result: { data: 'Results...' }
+                        output: { type: 'json', value: { data: 'Results...' } }
                     }
                 ]
             });
@@ -256,6 +254,19 @@ describe('MessageServiceV2', () => {
     });
 
     describe('Context Compaction', () => {
+        it('keeps history when the saved compaction receipt reports it was skipped', () => {
+            const messages = messageService;
+            messages.addMessage(testTopicId, { role: 'user', content: 'Keep this context' });
+            messages.addMessage(testTopicId, { role: 'assistant', content: [{
+                type: 'tool-call', toolCallId: 'skipped', toolName: 'context_compact', input: {},
+            }] });
+            messages.addMessage(testTopicId, { role: 'tool', content: [{
+                type: 'tool-result', toolCallId: 'skipped', toolName: 'context_compact',
+                output: { type: 'json', value: { success: false } },
+            }] });
+            expect(messages.getMessagesForLLM(testTopicId)).toEqual(messages.getMessages(testTopicId));
+        });
+
         it('should keep full GUI history but filter LLM messages after compaction anchor', () => {
             const keepCount = 10;
             for (let i = 0; i < 16; i += 1) {
@@ -281,7 +292,10 @@ describe('MessageServiceV2', () => {
             expect(llmMessages.length).toBe(2);
             expect(llmMessages[0].role).toBe('assistant');
             expect(llmMessages[1].role).toBe('tool');
-            expect((llmMessages[1] as any)._aotuiCompactionAnchor).toBe(true);
+            expect(llmMessages[1]).toMatchObject({ content: [{
+                type: 'tool-result', toolName: 'context_compact',
+                output: { type: 'json', value: { success: true } },
+            }] });
         });
 
         it('should clean old tool result outputs with placeholder but keep structure', () => {
@@ -300,7 +314,7 @@ describe('MessageServiceV2', () => {
                         type: 'tool-result',
                         toolCallId,
                         toolName: 'search_code',
-                        result: 'VERY_LONG_TOOL_OUTPUT_ABC',
+                        output: { type: 'text', value: 'VERY_LONG_TOOL_OUTPUT_ABC' },
                     },
                 ],
             } as ModelMessage);
@@ -331,9 +345,8 @@ describe('MessageServiceV2', () => {
 
             expect(oldToolMessage).toBeDefined();
             const resultPart = oldToolMessage.content.find((part: any) => part.toolName === 'search_code');
-            expect(resultPart.result).toBe('[Old tool result content cleared by context compaction]');
-            expect(resultPart.output).toBe('[Old tool result content cleared by context compaction]');
-            expect(resultPart.metadata.aotuiCompacted).toBe(true);
+            expect(resultPart.output).toEqual({ type: 'text', value: '[Old tool result content cleared by context compaction]' });
+            expect(resultPart).not.toHaveProperty('result');
         });
 
         it('should allow agent-trigger compaction without synthetic messages', () => {
@@ -396,7 +409,7 @@ describe('MessageServiceV2', () => {
             expect(llmWindow.length).toBe(2);
             expect(llmWindow[0].role).toBe('assistant');
             expect(llmWindow[1].role).toBe('tool');
-            expect((llmWindow[1] as any)._aotuiCompactionAnchor).toBe(true);
+            expect(llmWindow[1]).toEqual(expect.objectContaining(r2.syntheticMessages[1]));
 
             for (let i = 0; i < 14; i += 1) {
                 messageService.addMessage(testTopicId, {
@@ -417,7 +430,7 @@ describe('MessageServiceV2', () => {
             expect(llmWindow.length).toBe(2);
             expect(llmWindow[0].role).toBe('assistant');
             expect(llmWindow[1].role).toBe('tool');
-            expect((llmWindow[1] as any)._aotuiCompactionAnchor).toBe(true);
+            expect(llmWindow[1]).toEqual(expect.objectContaining(r3.syntheticMessages[1]));
         });
     });
 });

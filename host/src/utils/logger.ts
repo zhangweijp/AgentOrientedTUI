@@ -16,9 +16,4 @@ export class Logger {
     error(message: string, meta?: any): void {
         console.error(`[${this.context}] ${message}`, meta || '');
     }
-
-    debug(message: string, meta?: any): void {
-        // Simple debug, could check env var later
-        // console.debug(`[${this.context}] ${message}`, meta || '');
-    }
 }

@@ -32,7 +32,7 @@ describe('source-controls', () => {
 
     it('applies source controls across aotui, mcp, and skill sources', () => {
         const aotuiSource = {
-            setEnabled: vi.fn(),
+            setAppsEnabled: vi.fn(),
             setAppEnabled: vi.fn(),
         };
         const mcpSource = {
@@ -57,7 +57,7 @@ describe('source-controls', () => {
             skillSource: skillSource as any,
         });
 
-        expect(aotuiSource.setEnabled).toHaveBeenCalledWith(false);
+        expect(aotuiSource.setAppsEnabled).toHaveBeenCalledWith(false);
         expect(aotuiSource.setAppEnabled).toHaveBeenCalledWith('app-x', false);
         expect(mcpSource.setEnabled).toHaveBeenCalledWith(true);
         expect(mcpSource.setServerEnabled).toHaveBeenCalledWith('server-b', false);
