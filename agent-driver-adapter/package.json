@@ -13,26 +13,37 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE.deepseek-harness"
   ],
   "license": "Apache-2.0",
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc && esbuild src/console/program-child.mts --bundle --platform=node --target=node24 --format=esm --outfile=dist/console/program-child.mjs && node -e \"require('node:fs').copyFileSync('node_modules/acorn/LICENSE', 'dist/console/LICENSE.acorn')\"",
     "test:run": "vitest run",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@aotui/runtime": "8.0.0",
-    "@aotui/agent-driver-v2": "0.3.2"
+    "@aotui/agent-driver-v2": "0.3.2",
+    "@aotui/runtime": "8.0.0"
+  },
+  "dependencies": {
+    "@aotui/core": "0.1.0"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "typescript": "7.0.2",
-    "vitest": "^4.1.12",
+    "@aotui/agent-driver-v2": "link:../agent-driver-v2",
     "@aotui/runtime": "link:../runtime",
-    "@aotui/agent-driver-v2": "link:../agent-driver-v2"
+    "@types/node": "^20.0.0",
+    "acorn": "8.19.0",
+    "esbuild": "0.27.3",
+    "typescript": "7.0.2",
+    "vitest": "^4.1.12"
+  },
+  "pnpm": {
+    "overrides": {
+      "@aotui/core": "link:../core"
+    }
   }
 }
